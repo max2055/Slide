@@ -92,6 +92,38 @@ const jsonOf = (suffix: string) => {
   return call ? JSON.parse(String((call[1] as RequestInit).body)) : null;
 };
 
+it('MAX238 rebind sends canonically ordered pins regardless of selection order', async () => {
+  authFetch.mockImplementation(routes());
+  const element = await mount();
+  element.selected = [
+    { template_id: 'tpl-z', version: 1, content_hash: hash('a') },
+    { template_id: 'tpl-a', version: 2, content_hash: hash('b') },
+    { template_id: 'tpl-Z', version: 1, content_hash: hash('c') },
+  ];
+  await element.previewFlow();
+  expect(jsonOf('/preview').template_pins.map((pin: any) => pin.template_id)).toEqual(['tpl-Z', 'tpl-a', 'tpl-z']);
+  expect(element.selected.map((pin: any) => pin.template_id)).toEqual(['tpl-z', 'tpl-a', 'tpl-Z']);
+});
+
+it('MAX238 rebind probes the exact stopped revision before previewing an enabled draft', async () => {
+  const stopped = binding();
+  stopped.template_pins = [];
+  stopped.application = { ...stopped.application, status: 'applied', applied_revision: 5 };
+  stopped.pending.plan.settings.enabled = false;
+  authFetch.mockImplementation(routes({
+    '/template-bindings/instance/1': () => ({ ok: true, json: async () => stopped }),
+    '/probe': () => ({ ok: true, json: async () => ({ probed: true }) }),
+  }));
+  const element = await mount();
+  element.selected = binding().template_pins;
+  element.settings = { enabled: 'enable' };
+  await element.previewFlow();
+  expect(jsonOf('/probe')).toEqual(jsonOf('/preview'));
+  expect(jsonOf('/probe').expected_revision).toBe(5);
+  const urls = authFetch.mock.calls.map(call => String(call[0]));
+  expect(urls.findIndex(url => url.endsWith('/probe'))).toBeLessThan(urls.findIndex(url => url.endsWith('/preview')));
+});
+
 it('previews selected published pins without applying and keeps the draft on cancel', async () => {
   const pin = binding().template_pins[0];
   authFetch.mockImplementation(routes({ '/unbind-preview': () => ({ ok: true, json: async () => ({
@@ -879,4 +911,32 @@ it('an unconfirmed collection response is resolved by querying the same key, nev
   expect(posts).toBe(0);
   expect(element.collectResult?.state).toBe('completed');
   expect(element.collectPendingKey).toBeNull();
+});
+
+it('MAX238 carries last-pin removal into an explicit stopped draft without writing', async () => {
+  authFetch.mockImplementation(routes());
+  const element = await mount();
+  const pin = binding().template_pins[0];
+  element.unbindImpact = { revision: 5, removed_pins: [pin], remaining_pins: [], removed_items: [],
+    triggers: [], configuration: { group_id: null, overrides: {} } };
+  await element.updateComplete;
+  const button = [...element.shadowRoot.querySelectorAll('button')].find((b: any) => b.textContent.includes('将移除结果带入配置')) as HTMLButtonElement;
+  button.click(); await element.updateComplete;
+  expect(element.requestBody()).toEqual({ expected_revision: 5, template_pins: [], overrides: { enabled: 'disable' }, group_id: null });
+  expect(element.trial).toBeNull();
+  expect(element.preview).toBeNull();
+  expect(authFetch.mock.calls.some((entry: unknown[]) => String(entry[0]).endsWith('/apply'))).toBe(false);
+});
+
+
+it('MAX238 labels a stopped binding separately from the previous collection generation', async () => {
+  const stopped = binding(); stopped.template_pins = [];
+  stopped.application = { ...stopped.application, status: 'applied', applied_revision: 5 };
+  stopped.pending.plan.settings.enabled = false;
+  authFetch.mockImplementation(routes({ '/template-bindings/instance/1': () => ({ ok: true, json: async () => stopped }) }));
+  const element = await mount(); await element.updateComplete;
+  const text = element.shadowRoot.textContent;
+  expect(text).toContain('采集已停用');
+  expect(text).toContain('历史正式采集');
+  expect(text).toContain('不代表当前配置等待应用或产生了新样本');
 });

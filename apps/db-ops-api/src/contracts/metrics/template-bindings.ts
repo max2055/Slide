@@ -294,7 +294,7 @@ export const TemplateBindingApplyResponseSchema = z.union([
 export const TemplateBindingBodySchema = z.strictObject({
   /** The base the caller read; 0 is an unbound resource's first binding. */
   expected_revision: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
-  template_pins: z.array(TemplatePinSchema).min(1),
+  template_pins: z.array(TemplatePinSchema),
   overrides: z.record(z.string(), z.unknown()).optional(),
   group_id: z.string().regex(/^[A-Za-z0-9_-]{1,64}$/).nullable().optional(),
 });

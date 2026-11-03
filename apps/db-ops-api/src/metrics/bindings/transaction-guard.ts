@@ -1007,13 +1007,14 @@ async function verifyTemplateResolution(
   // The plan's own identity must be the resolution identity; a drift is a defect.
   if (plan.identity !== identity) throw new BindingTransactionError('TRANSACTION_RESOLUTION_INVALID');
 
-  if (!resolution.settings.enabled) throw new BindingTransactionError('TRANSACTION_RESOLUTION_DISABLED');
+  const stopped = compiled.binding.template_pins.length === 0 && compiled.binding.overrides.enabled === 'disable';
+  if (!resolution.settings.enabled && !stopped) throw new BindingTransactionError('TRANSACTION_RESOLUTION_DISABLED');
   const blocking = resolution.excluded
     .filter(entry => entry.blocking)
     .map(entry => ({ template_id: entry.template_id, item_id: entry.item_id, item_version: entry.item_version }))
     .sort(compareItem);
   if (blocking.length > 0) throw new BindingTransactionError('TRANSACTION_RESOLUTION_BLOCKED', blocking);
-  if (!plan.executable || !plan.releases.some(entry => entry.steps.length > 0)) {
+  if (!stopped && (!plan.executable || !plan.releases.some(entry => entry.steps.length > 0))) {
     throw new BindingTransactionError('TRANSACTION_RESOLUTION_EMPTY');
   }
 

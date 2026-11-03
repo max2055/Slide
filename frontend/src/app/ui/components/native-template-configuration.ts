@@ -576,7 +576,8 @@ export class NativeTemplateConfiguration extends LitElement {
     return overrides;
   }
   private requestBody() {
-    return { expected_revision: this.baseRevision(), template_pins: this.selected.map(pin => ({ ...pin })),
+    return { expected_revision: this.baseRevision(), template_pins: this.selected.map(pin => ({ ...pin }))
+      .sort((left, right) => left.template_id < right.template_id ? -1 : left.template_id > right.template_id ? 1 : 0),
       overrides: this.overrides(), group_id: this.groupId || null };
   }
   private invalidate(keepPreview: boolean) {
@@ -634,6 +635,15 @@ export class NativeTemplateConfiguration extends LitElement {
         <p>这里只比较固定版本中的指标引用，决策来自该绑定的发布快照；具体序列及当前能力是否保持未知，需结合当前显式设置与实际能力判断。</p>
         <p>已知触发器引用 ${impact.triggers.length} 个；仅列引用，实际规则和事件影响未知，未执行停止或恢复。</p>
         <ul>${impact.triggers.map(trigger => html`<li>${trigger.template_id} / ${trigger.rule_id}@${trigger.version} · ${trigger.scope}</li>`)}</ul>
+        <button class="btn" .disabled=${!this.canWrite() || this.busy || !impact.removed_pins.length}
+          @click=${() => {
+            this.selected = impact.remaining_pins.map(pin => ({ ...pin }));
+            const remaining = new Set(this.selected.map(pin => pin.template_id));
+            this.parameters = Object.fromEntries(Object.entries(this.parameters).filter(([id]) => remaining.has(id)));
+            if (!this.selected.length) { this.settings = { enabled: 'disable' }; this.metricToggles = {}; this.groupId = ''; }
+            this.invalidate(false);
+          }}>将移除结果带入配置</button>
+        <p>带入后需重新检查、试采并确认提交；取消预览不会修改绑定。全部移除会清空当前策略组与指标覆盖并停止采集，原设置保留在配置历史中。</p>
         <details><summary>当前显式设置与策略组</summary><pre>${JSON.stringify(impact.configuration, null, 2)}</pre></details></div>` : nothing}
     </app-card>`;
   }
@@ -684,7 +694,7 @@ export class NativeTemplateConfiguration extends LitElement {
     this.error = nativeError(error);
   }
   private async previewFlow() {
-    if (this.busy || !this.canWrite() || !this.selected.length) return;
+    if (this.busy || !this.canWrite() || (!this.selected.length && this.settings.enabled !== 'disable')) return;
     const generation = this.generation;
     const draft = this.draftVersion;
     // Every answer belongs to the exact draft that asked for it. A late response
@@ -693,10 +703,14 @@ export class NativeTemplateConfiguration extends LitElement {
     this.busy = true; this.error = ''; this.previewIssue = null;
     let probeFailure: unknown = null;
     try {
-      // An unbound resource has no capability facts yet; acquire them through a
+      // An unbound or explicitly stopped resource needs fresh capability facts through a
       // real bounded read-only probe before asking for the preview. Save-only
       // (explicitly disabled) needs no capability evidence.
-      if (this.firstBinding() && this.settings.enabled !== 'disable') {
+      const stopped = this.binding?.source === 'template' && this.binding.template_pins.length === 0
+        && this.binding.application?.status === 'applied'
+        && this.binding.application.applied_revision === this.binding.revision
+        && this.binding.pending?.plan.settings.enabled === false;
+      if ((this.firstBinding() || stopped) && this.settings.enabled !== 'disable') {
         try {
           await probeTemplateBinding(this.resourceType, this.resourceId, this.requestBody());
         } catch (error) {
@@ -718,7 +732,7 @@ export class NativeTemplateConfiguration extends LitElement {
       if (current()) this.flowError(error);
     } finally { if (generation === this.generation) this.busy = false; }
   }
-  private trialReady() { return !!this.preview && this.preview.executable && !this.previewStale && !this.busy; }
+  private trialReady() { return !!this.preview && (this.preview.executable || (!this.selected.length && this.settings.enabled === 'disable')) && !this.previewStale && !this.busy; }
   private trialPassed() { return nativeTrialPassed(this.trial); }
   private saveOnly() { return !!this.preview && this.preview.settings.enabled === false; }
   private applyReady() { return !!this.trial && !this.previewStale && (this.trialPassed() || this.saveOnly()); }
@@ -1374,9 +1388,12 @@ export class NativeTemplateConfiguration extends LitElement {
   private renderStatus() {    const status = this.collection;
     const binding = this.binding;
     const application = binding?.application;
+    const stopped = binding?.source === 'template' && binding.template_pins.length === 0
+      && application?.status === 'applied' && application.applied_revision === binding.revision
+      && binding.pending?.plan.settings.enabled === false;
     const pending = application?.status === 'applied' && application.applied_revision === binding?.pending?.target_revision ? null : binding?.pending;
     return html`<app-card class="state-card"><span class="eyebrow">当前权威状态</span>
-      ${status ? html`<app-badge variant=${status.formal_visibility.state === 'available' ? 'ok' : 'muted'}>
+      ${stopped ? html`<app-badge variant="muted">采集已停用</app-badge>` : status ? html`<app-badge variant=${status.formal_visibility.state === 'available' ? 'ok' : 'muted'}>
         ${status.formal_visibility.state === 'pending' ? '等待正式数据' : statusLabel(status.formal_visibility.state)}</app-badge>` : nothing}
       <dl class="facts">
         <div><dt>配置来源</dt><dd>${binding ? (binding.source === 'template' ? '原生固定版本模板' : binding.source === 'package' ? '旧版单包' : '未绑定') : '未知'}</dd></div>
@@ -1384,10 +1401,11 @@ export class NativeTemplateConfiguration extends LitElement {
         <div><dt>发布（已提交）</dt><dd>${binding?.revision ?? '—'}${binding?.published_at ? html` · ${new Date(binding.published_at).toLocaleString('zh-CN')}` : nothing}</dd></div>
         <div><dt>等待应用</dt><dd>${pending ? `目标版本 ${pending.target_revision} · ${new Date(pending.decided_at).toLocaleString('zh-CN')}` : '无待应用版本'}</dd></div>
         <div><dt>调度应用</dt><dd>${application ? `${statusLabel(application.status)} · 已应用 ${application.applied_revision ?? '—'}` : '未知'}</dd></div>
-        <div><dt>首样本</dt><dd>${status?.formal_visibility.last_observed_at ? new Date(status.formal_visibility.last_observed_at).toLocaleString('zh-CN') : '尚未收到正式首样本'}</dd></div>
-        <div><dt>正式采集</dt><dd>${status ? statusLabel(status.formal_visibility.state) : '未知'}${status?.formal_visibility.generation ? ` · 第 ${status.formal_visibility.generation} 代` : ''}</dd></div>
+        <div><dt>${stopped ? '历史首样本' : '首样本'}</dt><dd>${status?.formal_visibility.last_observed_at ? new Date(status.formal_visibility.last_observed_at).toLocaleString('zh-CN') : '尚未收到正式首样本'}</dd></div>
+        <div><dt>${stopped ? '历史正式采集' : '正式采集'}</dt><dd>${status ? statusLabel(status.formal_visibility.state) : '未知'}${status?.formal_visibility.generation ? ` · 第 ${status.formal_visibility.generation} 代` : ''}</dd></div>
       </dl>
       <p class="muted">已发布、等待应用、已应用、等待首样本与正式采集分别确认；配置发布成功或 API 返回 200 不代表健康。</p>
+      ${stopped ? html`<p class="muted" role="status">当前配置已停止采集；历史正式采集保留停止前采集代次的状态，不代表当前配置等待应用或产生了新样本。</p>` : nothing}
       ${status ? renderCollectionStatus(status) : html`<p>采集状态未知</p>`}
       ${this.applyResult ? html`<p role="status">${this.applyResult.replayed ? '已确认上次发布提交' : '配置已提交'}，目标版本 ${this.applyResult.revision}；应用与正式数据状态以左侧事实为准。</p>` : nothing}
       ${this.unresolved.length ? html`<p class="notice" role="status">上次发布结果尚未确认：请求可能仍在处理或结果未知。请查询发布结果，确认前不要重复发布。
@@ -1414,11 +1432,11 @@ export class NativeTemplateConfiguration extends LitElement {
         ${this.renderUnbindImpact()}
         ${this.selected.length ? this.renderOverrides() : nothing}
         <div class="actions">
-          <button class="btn" .disabled=${this.busy || !this.canWrite() || !this.selected.length}
+          <button class="btn" .disabled=${this.busy || !this.canWrite() || (!this.selected.length && this.settings.enabled !== 'disable')}
             @click=${() => void this.previewFlow()}>检查配置</button>
           <button class="btn" .disabled=${this.busy || !this.canWrite() || !this.trialReady()} @click=${() => void this.runTrial()}>试采</button>
           <button class="btn-primary" .disabled=${this.busy || !this.canWrite() || (!this.currentPending() && !this.applyReady())}
-            @click=${() => void this.applyFlow()}>${this.currentPending() ? '查询发布结果' : this.firstBinding() ? '首次绑定并启用' : '应用并启用'}</button>
+            @click=${() => void this.applyFlow()}>${this.currentPending() ? '查询发布结果' : !this.selected.length && this.settings.enabled === 'disable' ? '确认移除全部模板并停止采集' : this.firstBinding() ? '首次绑定并启用' : '应用并启用'}</button>
           <button class="btn" .disabled=${this.busy || !this.dirty} @click=${() => this.confirmDiscard(() => void this.reloadAll())}>放弃修改</button>
           <button class="btn btn-refresh" .disabled=${this.busy} @click=${() => this.confirmDiscard(() => void this.reloadAll())}>重新加载配置</button>
         </div>

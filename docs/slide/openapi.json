@@ -3164,7 +3164,8 @@
                       "enum": [
                         "application_report",
                         "scheduler_activation",
-                        "formal_observation_commit"
+                        "formal_observation_commit",
+                        "stop_commit"
                       ],
                       "type": "string"
                     },
@@ -19450,7 +19451,8 @@
                             "enum": [
                               "application_report",
                               "scheduler_activation",
-                              "formal_observation_commit"
+                              "formal_observation_commit",
+                              "stop_commit"
                             ],
                             "type": "string"
                           },
@@ -23795,7 +23797,8 @@
                           "enum": [
                             "application_report",
                             "scheduler_activation",
-                            "formal_observation_commit"
+                            "formal_observation_commit",
+                            "stop_commit"
                           ],
                           "type": "string"
                         },
@@ -24006,7 +24009,8 @@
                             "enum": [
                               "application_report",
                               "scheduler_activation",
-                              "formal_observation_commit"
+                              "formal_observation_commit",
+                              "stop_commit"
                             ],
                             "type": "string"
                           },
@@ -34631,7 +34635,6 @@
               ],
               "type": "object"
             },
-            "minItems": 1,
             "type": "array"
           }
         },
@@ -35966,7 +35969,6 @@
               ],
               "type": "object"
             },
-            "minItems": 1,
             "type": "array"
           }
         },
@@ -40587,6 +40589,28 @@
             ],
             "type": "object"
           },
+          "evaluation": {
+            "additionalProperties": false,
+            "properties": {
+              "reason": {
+                "type": "string"
+              },
+              "state": {
+                "enum": [
+                  "active",
+                  "pending",
+                  "stopped",
+                  "unknown"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "state",
+              "reason"
+            ],
+            "type": "object"
+          },
           "event_id": {
             "exclusiveMinimum": 0,
             "maximum": 9007199254740991,
@@ -41304,6 +41328,7 @@
           "alert_id",
           "episode",
           "snapshot",
+          "evaluation",
           "current",
           "processing",
           "deliveries",
@@ -42818,7 +42843,6 @@
                         ],
                         "type": "object"
                       },
-                      "minItems": 1,
                       "type": "array"
                     }
                   },
@@ -42879,7 +42903,6 @@
                         ],
                         "type": "object"
                       },
-                      "minItems": 1,
                       "type": "array"
                     }
                   },
@@ -43504,7 +43527,6 @@
                   ],
                   "type": "object"
                 },
-                "minItems": 1,
                 "type": "array"
               }
             },
@@ -43565,7 +43587,6 @@
                   ],
                   "type": "object"
                 },
-                "minItems": 1,
                 "type": "array"
               }
             },
@@ -44077,7 +44098,6 @@
               ],
               "type": "object"
             },
-            "minItems": 1,
             "type": "array"
           }
         },

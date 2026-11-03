@@ -90,6 +90,7 @@ const state = vi.hoisted(() => {
       receipt_id: string; payload: Record<string, unknown>;
     }>,
     /** Native operation journal rows for the lookup test (VARBINARY columns are Buffers). */
+    operationActors: [] as Array<{ operation_actor: number | null }>,
     operations: [] as Array<Record<string, unknown>>,
     /** One stored binding payload the status read returns; `null` is an unbound resource. */
     bindingPayload: null as string | null,
@@ -135,12 +136,13 @@ function fakeConnection() {
     async beginTransaction() { open = true; state.order.push('begin'); },
     async execute(sql: string, params: unknown[] = []): Promise<[unknown, unknown]> {
       const key = normalize(sql);
+      if (key.startsWith('SELECT JSON_EXTRACT(a.payload')) return [state.operationActors, []];
       // Transaction settings are setup, not an observable persistence step.
       if (/^SET TRANSACTION ISOLATION LEVEL READ COMMITTED$/i.test(key)) return [{}, []];
       state.order.push(key);
       state.statements.push(key);
       if (key === normalize(MYSQL_BINDING_HOST_SQL.lock)) return [[{ id: 1 }], []];
-      if (key.startsWith('SELECT capabilities FROM metric_policy_bindings')) return [[], []];
+      if (key.startsWith('SELECT capabilities, payload FROM metric_policy_bindings')) return [[], []];
       // Bootstrap evidence is a separate store; these fixtures never seed it, so
       // an unbound resource has no probed capability facts here.
       if (key.startsWith('SELECT payload FROM metric_capability_evidence')) return [[], []];
@@ -149,7 +151,7 @@ function fakeConnection() {
         return [[{ host: '127.0.0.1', port: 3306, username: 'operator', db_type: 'mysql',
           database_name: 'metrics', password_encrypted: 'fixture-ciphertext' }], []];
       }
-      if (key.startsWith('SELECT 1 FROM metric_policy_bindings')) return [[], []];
+      if (key.startsWith('SELECT payload AS stopped_payload FROM metric_policy_bindings')) return [[], []];
       if (key === normalize(TRIAL_RECEIPT_INSERT_SQL)) {
         await state.beforeInsert?.();
         const [receiptId, payload] = params as [string, string];
@@ -163,6 +165,9 @@ function fakeConnection() {
         }
         pending.set(receiptId, payload);
         return [{ affectedRows: 1 }, []];
+      }
+      if (key.startsWith('SELECT o.resource_key, o.target_revision')) {
+        return [state.operations.map(row => ({ ...row, operation_actor: state.operationActors.length ? state.operationActors[0].operation_actor : 7 })), []];
       }
       if (key.startsWith('SELECT resource_key, target_revision, candidate_digest, resolution_identity, status')) {
         // A key is globally unique; the fixture only holds what the test seeded.
@@ -221,7 +226,7 @@ async function appWith(requestActor: ActorContext, overrides: Partial<TemplateBi
 const reset = () => {
   state.statements = []; state.order = []; state.relationExists = true;
   state.receipts.clear(); state.beforeGetConnection = null; state.beforeInsert = null;
-  state.operations = []; state.bindingPayload = null;
+  state.operations = []; state.operationActors = []; state.bindingPayload = null;
   state.issue = state.issueDefault;
   pool = newPool();
   state.liveActor = (async () => admin) as never;
@@ -901,5 +906,79 @@ describe('template operation lookup — the host journal is the only authority',
       expect(response.statusCode).toBe(401);
       expect(response.json()).toEqual({ error: 'POLICY_AUTH_REQUIRED' });
     } finally { await server.close(); }
+  });
+});
+
+
+describe('MAX238 operation principal isolation', () => {
+  it('refuses another principal and an operation with no atomic audit owner', async () => {
+    for (const operation_actor of [8, null]) {
+      reset(); state.operationActors = [{ operation_actor }];
+      state.operations = [{ resource_key: Buffer.from('instance:1'), status: 'committed' }];
+      const { server } = await appWith(admin);
+      try {
+        const response = await server.inject({ method: 'GET', url: '/api/metrics/template-bindings/instance/1/operations/foreign' });
+        expect(response.statusCode).toBe(403);
+        expect(response.json()).toEqual({ error: 'TEMPLATE_BINDING_FORBIDDEN' });
+      } finally { await server.close(); }
+    }
+  });
+});
+
+// Chief independent counterexample: a foreign operation commits between the two reads.
+it('Chief rejects operation committed by another principal after owner lookup', async () => {
+  reset();
+  const execute = pool.execute.bind(pool);
+  pool.execute = (async (sql: string, params: unknown[]) => {
+    if (normalize(sql).startsWith('SELECT JSON_EXTRACT(a.payload') || normalize(sql).startsWith('SELECT o.resource_key')) {
+      state.operations = [{resource_key: Buffer.from('instance:1'), target_revision: 9,
+        candidate_digest: HASH, resolution_identity: HASH, status: 'committed'}];
+      state.operationActors = [{operation_actor: 8}];
+      if (normalize(sql).startsWith('SELECT JSON_EXTRACT(a.payload')) return [[], []]; // owner snapshot preceded actor8's atomic commit
+    }
+    return execute(sql, params);
+  }) as typeof pool.execute;
+  const { server } = await appWith(admin);
+  try {
+    const response = await server.inject({method:'GET',url:'/api/metrics/template-bindings/instance/1/operations/raced-key'});
+
+    expect(response.statusCode).toBe(403);
+  } finally { pool.execute = execute; await server.close(); }
+});
+
+
+describe('MAX238 operation snapshot boundaries', () => {
+  it('rejects foreign pending/unknown results and ambiguous ownership without returning facts', async () => {
+    for (const status of ['pending', 'unknown', 'committed']) {
+      reset();
+      state.operationActors = [{ operation_actor: 8 }];
+      state.operations = [{ resource_key: 'instance:1', status, target_revision: 9 }];
+      const { server } = await appWith(admin);
+      try {
+        const response = await server.inject({ method: 'GET', url: '/api/metrics/template-bindings/instance/1/operations/foreign' });
+        expect(response.statusCode).toBe(403);
+        expect(response.json()).toEqual({ error: 'TEMPLATE_BINDING_FORBIDDEN' });
+      } finally { await server.close(); }
+    }
+    reset(); state.operations = [{ operation_actor: 7 }, { operation_actor: 7 }];
+    const { server } = await appWith(admin);
+    try {
+      expect((await server.inject({ method: 'GET', url: '/api/metrics/template-bindings/instance/1/operations/ambiguous' })).statusCode).toBe(403);
+    } finally { await server.close(); }
+  });
+
+  it('does not turn a failed authoritative read into absent or any successful recovery', async () => {
+    reset(); const execute = pool.execute.bind(pool);
+    pool.execute = (async (sql: string, params: unknown[]) => {
+      if (normalize(sql).startsWith('SELECT o.resource_key')) throw new Error('controlled storage failure');
+      return execute(sql, params);
+    }) as typeof pool.execute;
+    const { server } = await appWith(admin);
+    try {
+      const response = await server.inject({ method: 'GET', url: '/api/metrics/template-bindings/instance/1/operations/read-error' });
+      expect(response.statusCode).toBeGreaterThanOrEqual(500);
+      expect(response.json().state).toBeUndefined();
+      expect(state.statements.some(isWrite)).toBe(false);
+    } finally { pool.execute = execute; await server.close(); }
   });
 });

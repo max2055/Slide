@@ -1,3 +1,5 @@
+import { triggerProviderState } from './provider-state.js';
+import { decodeBindingPayload } from '../bindings/persistence-codec.js';
 import type { FastifyInstance, preHandlerHookHandler } from 'fastify';
 import type { Pool, RowDataPacket } from 'mysql2/promise';
 import { z } from 'zod';
@@ -135,7 +137,10 @@ export async function registerTemplateTriggerRoutes(
             'SELECT payload FROM metric_policy_bindings WHERE resource_key=?',
             [rows[0].resource_key],
           );
-          const current = binding[0] ? parsed(binding[0].payload).binding : null;
+          const decoded = binding[0] ? decodeBindingPayload(binding[0].payload) : null;
+          const current = decoded?.binding ?? null;
+          const evaluation = triggerProviderState(decoded?.kind === 'template_pending' ? decoded : null,
+            episode.opened.metric, episode.last.dimensions ?? {});
           const [deliveries] = await c.execute<RowDataPacket[]>(
             `SELECT j.id AS job_id,j.state AS job_state,
           JSON_UNQUOTE(JSON_EXTRACT(j.payload,'$.channelId')) AS channel_id,
@@ -161,6 +166,7 @@ export async function registerTemplateTriggerRoutes(
             episode,
             snapshot: parsed(rows[0].snapshot),
             current,
+            evaluation,
             processing: alerts[0],
             deliveries,
             receipts,

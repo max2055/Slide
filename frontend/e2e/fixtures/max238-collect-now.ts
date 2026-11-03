@@ -1,3 +1,4 @@
+import '../../src/app/styles.css';
 import '../../src/app/ui/components/app-toast-container.ts';
 import '../../src/app/ui/components/native-template-configuration.ts';
 

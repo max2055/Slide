@@ -73,6 +73,7 @@ export const metricPublicSchemas = {
   MetricHistoryContext: MetricHistoryContextSchema,
   TemplateEventEvidence:z.strictObject({event_id:z.number().int().positive(),alert_id:z.number().int().positive(),
     episode:TemplateTriggerEpisodeSchema,snapshot:z.strictObject({configuration:TriggerResourceSnapshotSchema,opening:TemplateTriggerOpeningSchema}),
+    evaluation:z.strictObject({state:z.enum(['active','pending','stopped','unknown']),reason:z.string()}),
     current:ResourceBindingCandidateSchema.nullable(),processing:z.strictObject({status:z.string(),acknowledged_at:z.iso.datetime().nullable()}),
     deliveries:z.array(z.strictObject({job_id:z.string(),job_state:z.string(),channel_id:z.string().nullable(),state:z.string().nullable(),error_code:z.string().nullable(),attempt_id:z.string().nullable(),updated_at:z.iso.datetime().nullable()})),
     receipts:z.array(z.strictObject({id:z.number().int().positive(),channel_id:z.number().int().positive(),status:z.string(),sent_at:z.iso.datetime().nullable()}))}),

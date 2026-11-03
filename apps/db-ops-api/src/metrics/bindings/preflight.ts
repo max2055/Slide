@@ -223,7 +223,7 @@ export async function preflightResourceBinding(
   if (!parsed.success) throw INPUT_INVALID();
   const binding = parsed.data;
 
-  if (binding.template_pins.length === 0) {
+  if (binding.template_pins.length === 0 && binding.package !== null) {
     // The candidate schema already rejected the empty binding; a package remains.
     if (binding.package === null) throw INPUT_INVALID();
     return { kind: 'legacy', compiled: false, binding, package: binding.package };

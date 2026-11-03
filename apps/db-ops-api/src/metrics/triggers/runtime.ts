@@ -1,3 +1,4 @@
+import { continuesAfterPinRemoval } from './provider-state.js';
 import type { Pool, PoolConnection, RowDataPacket } from 'mysql2/promise';
 import type { NormalizedObservation } from '../../contracts/metrics/index.js';
 import { TriggerSampleSchema, TRIGGER_LIMITS, type TriggerSample } from '../../contracts/metrics/triggers.js';
@@ -35,6 +36,11 @@ export async function evaluateTemplateSamples(
   );
   requireRule(rows.length === 1, 'TRIGGER_SNAPSHOT_MISSING');
   const snapshot = verifyTriggerSnapshot(decode(rows[0].payload));
+  const [priorRows] = await c.execute<RowDataPacket[]>(
+    'SELECT payload FROM metric_trigger_snapshots WHERE resource_key=? AND config_revision=?',
+    [key, snapshot.config_revision - 1],
+  );
+  const priorSnapshot = priorRows[0] ? verifyTriggerSnapshot(decode(priorRows[0].payload)) : null;
   const applied = {
     resource: binding.binding.resource,
     applied_revision: binding.application.applied_revision,
@@ -73,7 +79,7 @@ export async function evaluateTemplateSamples(
     requireRule(dimensions.size <= TRIGGER_LIMITS.max_series, 'TRIGGER_SERIES_BUDGET');
     for (const dims of dimensions.values()) {
       const instance=discovered.flatMap(row=>row.state.members).find(m=>stable(m.dimensions)===stable(dims));
-      const identity = {
+      let identity = {
         resource: snapshot.resource,
         rule_id: rule.rule_id,
         version: rule.version,
@@ -82,12 +88,35 @@ export async function evaluateTemplateSamples(
         context_hash: hashOf({ snapshot: snapshot.snapshot_hash, item: rule.item,
           ...(instance?{discovery_instance:instance.id}:{dimensions:dims}) }),
       };
-      const hash = triggerEpisodeIdentityHash(identity);
-      await c.execute(
-        `INSERT INTO metric_trigger_heads(identity_hash,resource_key,config_revision,rule_id,dimensions) VALUES(?,?,?,?,?)
-        ON DUPLICATE KEY UPDATE dimensions=VALUES(dimensions)`,
-        [hash, key, snapshot.config_revision, rule.rule_id, JSON.stringify(dims)],
-      );
+      let hash = triggerEpisodeIdentityHash(identity);
+      let continued = false;
+      if (!discovered.length && continuesAfterPinRemoval(priorSnapshot, snapshot, rule)) {
+        const [priorHeads] = await c.execute<RowDataPacket[]>(
+          `SELECT h.identity_hash,h.payload,h.dimensions,e.snapshot FROM metric_trigger_heads h
+          JOIN metric_trigger_episodes e ON e.episode_id=JSON_UNQUOTE(JSON_EXTRACT(h.payload,'$.episode_id'))
+          WHERE h.resource_key=? AND h.config_revision=? AND h.rule_id=? FOR UPDATE`,
+          [key, snapshot.config_revision - 1, rule.rule_id],
+        );
+        const prior = priorHeads.filter(head => head.payload && stable(decode(head.dimensions)) === stable(dims));
+        if (prior.length === 1) {
+          const record = decode<TriggerEpisodeRecord>(prior[0].payload);
+          const origin = verifyTriggerSnapshot(decode<{ configuration: unknown }>(prior[0].snapshot).configuration);
+          identity = { resource: record.resource, rule_id: record.rule_id, version: record.version,
+            body_hash: record.body_hash, scope: record.scope,
+            context_hash: hashOf({ snapshot: origin.snapshot_hash, item: rule.item, dimensions: dims }) };
+          hash = triggerEpisodeIdentityHash(identity);
+          requireRule(hash === String(prior[0].identity_hash), 'TRIGGER_HEAD_IDENTITY');
+          await c.execute('UPDATE metric_trigger_heads SET config_revision=? WHERE identity_hash=?', [snapshot.config_revision, hash]);
+          continued = true;
+        }
+      }
+      if (!continued) {
+        await c.execute(
+          `INSERT INTO metric_trigger_heads(identity_hash,resource_key,config_revision,rule_id,dimensions) VALUES(?,?,?,?,?)
+          ON DUPLICATE KEY UPDATE dimensions=VALUES(dimensions)`,
+          [hash, key, snapshot.config_revision, rule.rule_id, JSON.stringify(dims)],
+        );
+      }
       const [locked] = await c.execute<RowDataPacket[]>(
         'SELECT payload,sample_watermark FROM metric_trigger_heads WHERE identity_hash=? FOR UPDATE',
         [hash],

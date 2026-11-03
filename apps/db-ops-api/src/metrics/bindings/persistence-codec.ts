@@ -35,6 +35,7 @@ import type { TemplateCollectionPlan } from './plan.js';
 export const BINDING_PAYLOAD_ENVELOPE = 'templates-v1';
 /** A successful normal formal commit, with an explicit base→target plan mapping. */
 export const BINDING_APPLIED_ENVELOPE = 'templates-applied-v1';
+export const BINDING_STOPPED_ENVELOPE = 'templates-stopped-v1';
 const FormalCommitSchema = z.strictObject({
   sample_ids: z.array(z.string().min(1).max(255)).min(1),
   attempt_ids: z.array(z.string().min(1).max(255)).min(1),
@@ -456,7 +457,7 @@ export function decodeBindingPayload(raw: string | unknown): DecodedBindingPaylo
   const payload = typeof raw === 'string' ? parseText(raw) : clone(raw);
 
   if (Object.hasOwn(payload, 'envelope')) {
-    if (payload.envelope === BINDING_PAYLOAD_ENVELOPE || payload.envelope === BINDING_APPLIED_ENVELOPE) return decodeTemplatePayload(payload);
+    if (payload.envelope === BINDING_PAYLOAD_ENVELOPE || payload.envelope === BINDING_APPLIED_ENVELOPE || payload.envelope === BINDING_STOPPED_ENVELOPE) return decodeTemplatePayload(payload);
     // The explicit legacy form: the same `Published` content, no template member.
     if (payload.envelope === BINDING_PAYLOAD_PACKAGE_ENVELOPE) return decodeLegacyPayload(payload, true);
     return fail('BINDING_PAYLOAD_UNKNOWN_ENVELOPE');
@@ -607,9 +608,10 @@ function checkPackageEffectiveSnapshot(
 }
 
 function decodeTemplatePayload(payload: Record<string, unknown>): DecodedTemplateBindingPayload {
-  const formallyApplied = payload.envelope === BINDING_APPLIED_ENVELOPE;
+  const stopped = payload.envelope === BINDING_STOPPED_ENVELOPE;
+  const formallyApplied = payload.envelope === BINDING_APPLIED_ENVELOPE || stopped;
   if (!hasOnlyKeys(payload, ['envelope', 'binding', 'template_resolution', 'application', 'effective', 'published_at',
-    ...(formallyApplied ? ['formal_commit'] : [])])) {
+    ...(stopped ? ['stop_commit'] : formallyApplied ? ['formal_commit'] : [])])) {
     return fail('BINDING_PAYLOAD_SHAPE_INVALID');
   }
   if (!isPlainObject(payload.binding)) return fail('BINDING_PAYLOAD_BINDING_INVALID');
@@ -622,7 +624,8 @@ function decodeTemplatePayload(payload: Record<string, unknown>): DecodedTemplat
       ? 'BINDING_PAYLOAD_BINDING_INVALID'
       : 'BINDING_PAYLOAD_AMBIGUOUS_SOURCE');
   }
-  if (!Array.isArray(payload.binding.template_pins) || payload.binding.template_pins.length === 0) {
+  if (!Array.isArray(payload.binding.template_pins) || (payload.binding.template_pins.length === 0
+    && (!isPlainObject(payload.binding.overrides) || payload.binding.overrides.enabled !== 'disable'))) {
     return fail('BINDING_PAYLOAD_MISSING_SOURCE');
   }
   const binding = ResourceBindingCandidateSchema.safeParse(payload.binding);
@@ -662,7 +665,13 @@ function decodeTemplatePayload(payload: Record<string, unknown>): DecodedTemplat
 
   const effective = parseEffective(payload.effective, binding.data.resource);
   if (formallyApplied) {
-    const proof = FormalCommitSchema.safeParse(payload.formal_commit);
+    const proof = stopped
+      ? z.strictObject({ at: TimestampSchema, operation_key: OperationKeySchema }).safeParse(payload.stop_commit)
+      : FormalCommitSchema.safeParse(payload.formal_commit);
+    if (stopped && (binding.data.template_pins.length !== 0 || binding.data.overrides.enabled !== 'disable'
+      || pendingPlan.settings.enabled || pendingPlan.releases.length !== 0 || pendingPlan.executable
+      || !proof.success || !('operation_key' in proof.data) || proof.data.operation_key !== pending.data.operation_key
+      || proof.data.at !== pending.data.decided_at)) return fail('BINDING_PAYLOAD_APPLICATION_INVALID');
     if (!proof.success || application.data.status !== 'applied'
       || application.data.applied_revision !== target
       || application.data.resolution_identity !== pending.data.resolution_identity
@@ -858,5 +867,19 @@ export function encodeTemplatePendingPayload(input: TemplatePendingWriteInput): 
   if (decodeBindingPayload(text).kind !== 'template_pending') {
     return fail('BINDING_PAYLOAD_SHAPE_INVALID');
   }
+  return text;
+}
+
+/** The publication transaction itself revokes all collectors; no sample or remote application is claimed. */
+export function encodeTemplateStoppedPayload(input: string): string {
+  const decoded = decodeBindingPayload(input);
+  if (decoded.kind !== 'template_pending' || decoded.binding.template_pins.length || decoded.pending.plan.settings.enabled)
+    return fail('BINDING_PAYLOAD_APPLICATION_INVALID');
+  const { target_revision: revision, resolution_identity, decided_at: at, operation_key } = decoded.pending;
+  const text = JSON.stringify({ ...decoded.payload, envelope: BINDING_STOPPED_ENVELOPE,
+    stop_commit: { at, operation_key }, application: { status: 'applied', applied_revision: revision,
+      reported_at: at, error_code: null, resolution_identity }, effective: { source: 'template', revision,
+      resolution_identity, plan: { ...decoded.pending.plan, revision } } });
+  decodeBindingPayload(text);
   return text;
 }

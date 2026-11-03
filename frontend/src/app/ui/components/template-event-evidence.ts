@@ -135,6 +135,8 @@ export class TemplateEventEvidence extends LitElement {
         <dd>
           ${e.unknown_segments.map((v: any) => `${v.from} → ${v.to ?? "持续"}（${v.reason}）`).join("；") || "无"}
         </dd>
+        <dt>当前评估</dt>
+        <dd>${d.evaluation?.state === 'stopped' ? '停止评估：没有有效指标提供者，原问题事实和恢复状态保留' : d.evaluation?.state === 'active' ? '当前提供者有效' : '当前评估状态待确认'}</dd>
         <dt>处理状态</dt>
         <dd>${d.processing.status} · 确认不表示恢复，不执行运维操作</dd>
       </dl>
