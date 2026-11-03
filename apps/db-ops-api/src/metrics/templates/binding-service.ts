@@ -417,12 +417,14 @@ export class TemplateBindingService {
     try { targetIdentity = await trustedTargetIdentity(connection, ref); }
     catch { throw new CapabilityEvidenceError('CAPABILITY_EVIDENCE_UNAVAILABLE'); }
     if (targetIdentity === null) fail('TEMPLATE_BINDING_RESOURCE_NOT_FOUND', 404);
-    const [caps] = await connection.execute('SELECT capabilities FROM metric_policy_bindings WHERE resource_key = ?',
+    const [caps] = await connection.execute('SELECT capabilities, payload FROM metric_policy_bindings WHERE resource_key = ?',
       [refKey(ref)]) as unknown as [RowDataPacket[], unknown];
-    // A stored binding is the only capability authority for a bound resource.
+    // An active stored binding is its capability authority. A stopped binding
+    // re-probes the exact candidate rather than reviving old support facts.
     // An unbound resource has no row at all; its bootstrap context comes from the
     // exact, unexpired read-only probe evidence for this candidate intent.
-    const capabilities = caps[0]
+    const stopped = candidate.template_pins.length > 0 && caps[0] && this.usesRebindEvidence(caps[0].payload, candidate.revision);
+    const capabilities = caps[0] && !stopped
       ? decode(caps[0].capabilities)
       : await this.bootstrapCapabilities(connection, ref, candidate, actorId, targetIdentity, recover);
     return { resource: resource!, group, capabilities, targetIdentity, at: this.now().toISOString() };
@@ -618,8 +620,26 @@ export class TemplateBindingService {
     } finally { if (reusable) connection.release(); }
   }
 
+  private usesRebindEvidence(payload: unknown, revision: number): boolean {
+    if (this.isStoppedBinding(payload, revision)) return true;
+    const decoded = decodeBindingPayload(payload);
+    // The host has staged this rebind on its own locked connection. Keep using
+    // the same candidate evidence through trigger staging and final authorization.
+    return decoded.kind === 'template_pending' && decoded.binding.revision === revision + 1
+      && decoded.pending.base_revision === revision && decoded.application.status === 'pending'
+      && decoded.effective?.source === 'template' && decoded.effective.revision === revision
+      && !decoded.effective.plan.settings.enabled && decoded.effective.plan.releases.length === 0;
+  }
+
+  private isStoppedBinding(payload: unknown, revision: number): boolean {
+    const decoded = decodeBindingPayload(payload);
+    return decoded.kind === 'template_pending' && decoded.binding.revision === revision
+      && decoded.binding.template_pins.length === 0 && decoded.application.status === 'applied'
+      && decoded.application.applied_revision === revision && !decoded.pending.plan.settings.enabled;
+  }
+
   /**
-   * Bootstrap capability acquisition for an unbound resource.
+   * Capability acquisition for an unbound or explicitly stopped resource.
    *
    * This is deliberately not the formal trial: it only runs bounded read-only
    * requests through already registered implementations, pinned versions and a
@@ -632,12 +652,12 @@ export class TemplateBindingService {
   async probe(actor: ActorContext, ref: Ref, body: unknown): Promise<TemplateProbeResult> {
     await this.assertAccess(actor, ref, true);
     const candidate = this.candidate(ref, body);
-    // A bound resource already has a capability authority; bootstrap evidence
-    // must never be substituted for its published facts.
+    // A stopped revision may acquire fresh candidate-scoped facts for rebind.
+    // Active bindings keep their published capability authority.
     const [bound] = await this.pool().execute(
-      'SELECT 1 FROM metric_policy_bindings WHERE resource_key = ? LIMIT 1', [refKey(ref)],
+      'SELECT payload AS stopped_payload FROM metric_policy_bindings WHERE resource_key = ? LIMIT 1', [refKey(ref)],
     ) as unknown as [RowDataPacket[], unknown];
-    if (bound[0]) fail('TEMPLATE_BINDING_ALREADY_BOUND', 409);
+    if (bound[0] && !this.isStoppedBinding(bound[0].stopped_payload, candidate.revision)) fail('TEMPLATE_BINDING_ALREADY_BOUND', 409);
 
     // Parameters/settings come from the exact pins; capabilities still come only
     // from the real probe below. The request cannot report support. Stored
@@ -842,7 +862,8 @@ export class TemplateBindingService {
     const receiptId = (body as { receipt_id?: unknown }).receipt_id;
     if (typeof receiptId !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(receiptId)) fail('TEMPLATE_BINDING_INPUT_INVALID');
     const { context, resolution, plan } = await this.resolve(ref, candidate, actor.userId);
-    if (!plan.executable) fail('TEMPLATE_BINDING_NOT_EXECUTABLE', 422);
+    const stopped = candidate.template_pins.length === 0 && candidate.overrides.enabled === 'disable';
+    if (!plan.executable && !stopped) fail('TEMPLATE_BINDING_NOT_EXECUTABLE', 422);
 
     const reservation = await new MysqlScheduleStore(this.pool(), this.deps.registry).reserve(ref);
     if (!reservation) fail('TEMPLATE_BINDING_BUSY', 409);
@@ -858,7 +879,7 @@ export class TemplateBindingService {
     let executed: Awaited<ReturnType<TemplateBindingService['execute']>>;
     try {
       await authorize();
-      executed = await this.execute(ref, plan, candidate.revision, authorize);
+      executed = stopped ? { results: [], access: null as never } : await this.execute(ref, plan, candidate.revision, authorize);
     } finally {
       await reservation!.release();
     }
@@ -949,7 +970,7 @@ export class TemplateBindingService {
     // generic host failure; keep that error to surface it unchanged.
     let authError: unknown;
     const store = new MysqlPolicyStore(this.deps.pool, {
-      trustedInputs: connection => this.trustedInputs(connection, actor, candidate, error => { authError = error; }),
+      trustedInputs: connection => this.trustedInputs(connection, actor, candidate, input.caller_key as string, error => { authError = error; }),
       trustedNow: () => this.now().toISOString(),
       registry: this.deps.registry,
     });
@@ -968,7 +989,7 @@ export class TemplateBindingService {
    * immutable versions: the converted templates never contain an item that was
    * not resolved to a collectable capability, so all of them are required.
    */
-  private trustedInputs(connection: BindingSqlConnection, actor: ActorContext, candidate: ResourceBindingCandidate,
+  private trustedInputs(connection: BindingSqlConnection, actor: ActorContext, candidate: ResourceBindingCandidate, callerKey: string,
     onAuthError?: (error: unknown) => void): TrustedBindingInputs {
     const versions = new MySqlTemplateRepository(connectionTemplatePool(connection));
     return {
@@ -991,12 +1012,13 @@ export class TemplateBindingService {
         // asynchronous read. Both answers come from a live grant, never from the
         // actor snapshot that opened the request.
         let current: ActorContext;
-        try { current = await this.live(actor); }
+        try { current = this.deps.reloadOnLocked
+          ? await this.deps.reloadOnLocked(actor, connection) : await this.liveOn(actor, connection); }
         catch (error) { onAuthError?.(error); throw error; }
         const live = await this.contextOn(connection, target, candidate, actor.userId);
         const dep = this.dependencyDigest(live, credentialReference(target));
         return {
-          allowed: canManageResource(current, target),
+          allowed: canManageResource(current, target) && await this.ownsOperation(connection, actor, callerKey),
           cancelled: false,
           dependency_digest: dep,
         };
@@ -1026,7 +1048,7 @@ export class TemplateBindingService {
             items.push({ template_id: item.template_id, item_id: item.item_id, item_version: item.item_version });
           }
         }
-        if (items.length === 0) throw new Error('TEMPLATE_BINDING_NOT_EXECUTABLE');
+        if (items.length === 0 && !(candidate.template_pins.length === 0 && candidate.overrides.enabled === 'disable')) throw new Error('TEMPLATE_BINDING_NOT_EXECUTABLE');
         return items;
       },
       templateVersions: () => versions,
@@ -1055,6 +1077,16 @@ export class TemplateBindingService {
     }), async connection => { await authorize(connection); });
   }
 
+  /** Existing atomic audit is the operation's principal authority; no second journal. */
+  private async ownsOperation(executor: Pick<BindingSqlConnection, 'execute'>, actor: ActorContext, key: string): Promise<boolean> {
+    const [rows] = await executor.execute(`SELECT JSON_EXTRACT(a.payload,'$.actor_id') AS operation_actor
+      FROM metric_policy_operations o LEFT JOIN metric_policy_audit a
+      ON a.target=o.resource_key AND JSON_UNQUOTE(JSON_EXTRACT(a.payload,'$.request_id'))=CONVERT(o.caller_key USING utf8mb4)
+      AND JSON_UNQUOTE(JSON_EXTRACT(a.payload,'$.action'))='template_binding.apply'
+      WHERE o.caller_key=? LIMIT 2`, [key]) as unknown as [RowDataPacket[], unknown];
+    return rows.length === 0 || (rows.length === 1 && Number(rows[0].operation_actor) === actor.userId);
+  }
+
   /**
    * The native host's own operation record for one caller key. It is written in
    * the same transaction as the binding revision and its audit, so a committed
@@ -1065,6 +1097,7 @@ export class TemplateBindingService {
   async operation(actor: ActorContext, ref: Ref, callerKey: string): Promise<TemplateOperationState> {
     await this.assertAccess(actor, ref, false);
     if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(callerKey)) fail('TEMPLATE_BINDING_INPUT_INVALID');
+    if (!await this.ownsOperation(this.pool(), actor, callerKey)) fail('TEMPLATE_BINDING_FORBIDDEN', 403);
     const [rows] = await this.pool().execute<RowDataPacket[]>(
       `SELECT resource_key, target_revision, candidate_digest, resolution_identity, status
          FROM metric_policy_operations WHERE caller_key = ? LIMIT 2`, [callerKey]);

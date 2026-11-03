@@ -483,6 +483,21 @@ export async function resolveTemplateBinding(
   layers.push({ overrides: restOverrides,
     origin: { layer: 'resource', id: refKey(candidate.binding.resource), revision: candidate.binding.revision } });
 
+  if (candidate.binding.template_pins.length === 0) {
+    const defaults: Settings = { enabled: false, interval_ms: 60000, timeout_ms: 5000,
+      stale_after_ms: 120000, max_counter_gap_ms: 300000, max_rows: 100,
+      max_concurrency: 1, max_series_per_resource: 100 };
+    const applied = applyLayers({ settings: defaults,
+      sources: Object.fromEntries(SETTINGS_KEYS.map(key => [key, { layer: 'platform', id: 'platform' }])) as Record<SettingsKey, Origin>,
+      toggles: new Map(), metricSources: {} }, layers);
+    validatePlatformSettings(applied.settings);
+    return { kind: 'template_resolution', internal: true, persisted: false, applied: false,
+      binding: candidate.binding, resource: { type: resource.type, id: resource.id }, revision: candidate.binding.revision,
+      group: group === null ? null : { id: group.id, revision: group.revision }, templates: [], triggers: [],
+      settings: applied.settings, sources: Object.fromEntries(SETTINGS_KEYS.map(key => [key, settingSource(applied.sources[key], [])])) as Record<SettingsKey, TemplateSettingSource>,
+      metric_sources: {}, platform_limits: { ...PLATFORM_LIMITS }, releases: [], excluded: [], executable: false };
+  }
+
   const initialToggles = new Map<string, boolean>();
   const ownMetricSources = new Map<string, TemplateMetricSource>();
   for (const collector of candidate.collectors) for (const item of collector.items) {

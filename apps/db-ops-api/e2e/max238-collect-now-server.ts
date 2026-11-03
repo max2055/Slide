@@ -1,3 +1,6 @@
+import { collectFixed } from '../src/metrics/packages/adapters.js';
+import { registerTemplateTriggerRoutes } from '../src/metrics/triggers/routes.js';
+import { evaluateTemplateClock } from '../src/metrics/triggers/runtime.js';
 /**
  * MAX-238 / NATIVE-COLLECT-NOW browser evidence backend.
  *
@@ -85,6 +88,10 @@ async function main() {
   await pool.execute('INSERT IGNORE INTO role_permissions (role_id, permission_id) VALUES (1, 1)');
   await pool.execute('INSERT IGNORE INTO user_roles (user_id, role_id) VALUES (1, 1)');
   await pool.execute("INSERT IGNORE INTO instance_permissions (user_id, instance_id, access_level) VALUES (1, ?, 'admin')", [instanceId]);
+  if (process.env.MAX238_UNBIND_FLOW === '1') {
+    await pool.execute("INSERT INTO users(id,username,password_hash,session_version,status) VALUES(902,'max238-second-actor','no-login',1,'active')");
+    await pool.execute('INSERT INTO user_roles(user_id,role_id) VALUES(902,1)');
+  }
   const now = new Date().toISOString();
   await pool.execute(`INSERT INTO database_instances
     (id, name, environment, db_type, db_version, host, port, username, password_encrypted, database_name, status,
@@ -124,17 +131,43 @@ async function main() {
     { status: 'active', updated_at: new Date(Date.parse(now) + 1000).toISOString() });
   const version = await repository.getVersion(template.template_id, published.version);
 
+  const extraPins: Array<{ template_id: string; version: number; content_hash: string }> = [];
+  if (process.env.MAX238_UNBIND_FLOW === '1') {
+    const extra = await templates.create(actor, { name: 'MAX238 connection capacity provider' });
+    const chosen = await templates.selectMetric(actor, extra.template_id,
+      { package: packagePin, metric: { id: 'mysql.connections.limit', semantic_version: '1.0.0' } });
+    const d = (await repository.getDraft(extra.template_id))!;
+    await repository.updateDraft(extra.template_id, d.revision, { aggregate: { ...d.aggregate,
+      items: [{ item_id: chosen.item.item_id, version: chosen.item.version }] }, updated_by: 1, updated_at: now });
+    const latest = (await repository.getDraft(extra.template_id))!;
+    const pub = await templates.publish(actor, extra.template_id, { expected_draft_revision: latest.revision, expected_revision: extra.revision });
+    const t = (await repository.getTemplate(extra.template_id))!;
+    await repository.updateTemplate(extra.template_id, t.revision, { status: 'active', updated_at: new Date().toISOString() });
+    const v = (await repository.getVersion(extra.template_id, pub.version))!;
+    extraPins.push({ template_id: extra.template_id, version: pub.version, content_hash: v.content_hash });
+  }
+
   const bindingService = new TemplateBindingService({
     pool: () => pool, registry, access: createAssetCollectorAccess(),
-    reload: async () => actor, inventory: undefined,
+    reload: current => actorContextService.revalidateActor(current, current.requestId),
+    reloadOn: (current, executor) => actorContextService.revalidateActorOn(executor as never, current, current.requestId),
+    reloadOnLocked: (current, executor) => actorContextService.revalidateActorOn(executor as never, current, current.requestId, true), inventory: undefined,
   });
   const collectService = new CollectNowService({
     pool: () => pool, registry,
     reload: current => actorContextService.revalidateActor(current, current.requestId),
     reloadOn: (current, executor) => actorContextService.revalidateActorOn(executor as never, current, current.requestId, true),
   });
+  let holdCollector = false, collectorWaiting = false, releaseCollector: (() => void) | undefined;
+  const controlledCollect: typeof collectFixed = async (...args) => {
+    const rows = await collectFixed(...args);
+    if (holdCollector) { holdCollector = false; collectorWaiting = true;
+      await new Promise<void>(resolve => { releaseCollector = resolve; }); collectorWaiting = false;
+    }
+    return rows;
+  };
   const scheduler = new MetricScheduler(new MysqlScheduleStore(pool, registry, 'production'), registry,
-    createAssetCollectorAccess(), Date.now, undefined, undefined, createCollectNowAuthorizer({
+    createAssetCollectorAccess(), Date.now, controlledCollect, undefined, createCollectNowAuthorizer({
       loadActor: (userId, sessionVersion) => actorContextService.loadActiveActor(userId, sessionVersion),
       loadActorOn: (executor, userId, sessionVersion) =>
         actorContextService.loadActiveActorOn(executor as never, userId, sessionVersion, undefined, true),
@@ -155,7 +188,27 @@ async function main() {
     createTrialStore(() => pool, registry), trialAccess, configurationReader(() => pool), async seed => seed);
   const app = Fastify({ logger: false });
   let shutdown: () => Promise<void>;
-  const auth = async (request: unknown) => { (request as { user?: ActorContext }).user = actor; };
+  const auth = async (request: any) => { request.user = request.headers['x-max238-actor'] === '2' ? { ...actor, userId: 902, username: 'max238-second-actor' } : actor; };
+  let policyLock: Awaited<ReturnType<Pool['getConnection']>> | undefined;
+  app.post('/__test/policy-lock', async () => {
+    if (policyLock) throw Error('lock already held');
+    policyLock = await pool.getConnection(); await policyLock.beginTransaction();
+    await policyLock.execute('SELECT id FROM metric_policy_lock WHERE id=1 FOR UPDATE');
+    return { held: true };
+  });
+  app.post('/__test/policy-release', async () => { await policyLock?.rollback(); policyLock?.release(); policyLock = undefined; return { released: true }; });
+  app.post('/__test/collector-hold', async () => { holdCollector = true; return { armed: true }; });
+  app.get('/__test/collector-status', async () => ({ waiting: collectorWaiting }));
+  app.post('/__test/collector-release', async () => { releaseCollector?.(); return { released: true }; });
+  app.get('/__test/writes', async () => ({
+    operations: (await pool.query('SELECT CONVERT(caller_key USING utf8mb4) AS caller_key, target_revision, status FROM metric_policy_operations'))[0],
+    audit: (await pool.query('SELECT target,payload FROM metric_policy_audit'))[0],
+    formal: (await pool.query("SELECT id, payload FROM metric_observations WHERE stage='normalized' ORDER BY id"))[0],
+  }));
+  app.post('/__test/session/:version', async request => {
+    await pool.execute('UPDATE users SET session_version = ? WHERE id = 1', [Number((request.params as {version: string}).version)]);
+    return { updated: true };
+  });
   app.get('/__health', async () => ({ ok: true }));
   app.post('/__test/shutdown', async () => {
     setTimeout(() => { void shutdown(); }, 50);
@@ -188,17 +241,33 @@ async function main() {
   await registerMetricPolicyRoutes(app, auth, policyService, async seed => seed);
   await registerMetricTemplateRoutes(app, auth, bindingService, collectService);
 
+  await registerTemplateTriggerRoutes(app, auth, () => pool);
+  app.get('/__test/episodes', async () => (await pool.query('SELECT event_id,payload FROM metric_trigger_episodes ORDER BY event_id'))[0]);
+  app.post('/__test/clock', async () => { await evaluateTemplateClock(pool, Date.now()); return { evaluated: true }; });
+  let firstPin = { template_id: template.template_id, version: published.version, content_hash: version!.content_hash };
+  if (process.env.MAX238_UNBIND_FLOW === '1') {
+    const response = await app.inject({ method: 'POST', url: `/api/metrics/templates/${template.template_id}/triggers`, payload: {
+      expected_version: firstPin.version, expected_content_hash: firstPin.content_hash, item_id: selected.item.item_id,
+      parameters: { schema: { threshold: { type: 'number' } }, defaults: { threshold: 0 } },
+      problem: { node: 'compare', select: { aggregation: 'last' }, operator: '>', threshold: { kind: 'parameter', name: 'threshold' } },
+      recovery: { node: 'compare', select: { aggregation: 'last' }, operator: '<', threshold: { kind: 'parameter', name: 'threshold' } },
+      quality: { accepted_quality: ['good','partial'], min_coverage: 1, allow_estimated: false },
+      clock: { stale_after_ms: 120000, nodata: { enabled: false } },
+    } });
+    if (response.statusCode !== 200) throw Error(`trigger publish failed: ${response.body}`);
+    const publication = response.json(); firstPin = { template_id: template.template_id, version: publication.version, content_hash: publication.content_hash };
+  }
   // Establish the binding through the real routes (real read-only probe/trial).
   const bindingBody = {
     expected_revision: 0,
-    template_pins: [{ template_id: template.template_id, version: published.version, content_hash: version!.content_hash }],
+    template_pins: [firstPin, ...extraPins].sort((a,b) => a.template_id.localeCompare(b.template_id)),
     overrides: { enabled: 'enable', interval_ms: { mode: 'set', value: 30000 }, max_rows: { mode: 'set', value: 50 } },
   };
   const probe = await app.inject({ method: 'POST', url: `/api/metrics/template-bindings/instance/${instanceId}/probe`, payload: bindingBody });
   if (probe.statusCode !== 200) throw new Error(`probe failed: ${probe.body}`);
   const trial = await app.inject({ method: 'POST', url: `/api/metrics/template-bindings/instance/${instanceId}/trial`,
     payload: { ...bindingBody, receipt_id: `collect-now-trial-${process.pid}` } });
-  if (trial.statusCode !== 200) throw new Error(`trial failed: ${trial.body}`);
+  if (trial.statusCode !== 200) { const p = await app.inject({method:'POST',url:`/api/metrics/template-bindings/instance/${instanceId}/preview`,payload:bindingBody}); throw new Error(`trial failed: ${trial.body}; preview: ${p.body}`); }
   const applied = await app.inject({ method: 'POST', url: `/api/metrics/template-bindings/instance/${instanceId}/apply`,
     payload: { ...bindingBody, receipt_id: `collect-now-trial-${process.pid}`, caller_key: `collect-now-apply-${process.pid}` } });
   if (applied.statusCode !== 200) throw new Error(`apply failed: ${applied.body}`);
@@ -207,7 +276,7 @@ async function main() {
   console.log(`MAX238 collect-now API on 127.0.0.1:${apiPort}; platform ${platformDb}; target ${targetDb}`);
 
   shutdown = async () => {
-    clearInterval(timer);
+    clearInterval(timer); releaseCollector?.(); await policyLock?.rollback(); policyLock?.release();
     try {
       await app.close();
       await worker.shutdown(2000);

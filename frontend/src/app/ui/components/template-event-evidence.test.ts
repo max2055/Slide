@@ -17,7 +17,7 @@ it.each([
   authFetch.mockResolvedValue({ ok: true, json: async () => ({
     episode: { rule_id: "rule", episode_id: "episode", resource: { type, id: "7" }, state: "open", opened: { value: 95, at: "2026-11-01T00:00:00Z" }, last: { value: 85, quality: "good", reason: "problem_retained" }, unknown_segments: [], recovery_count: 0 },
     snapshot: { configuration: { config_revision: 1, rules: [rule], templates: [{ template_id: "template", version: 2 }] }, opening: { sample_ids: ["sample"], samples: [], attempt_ids: ["attempt"] } },
-    current: { revision: 2 }, processing: { status: "acknowledged", acknowledged_at: "2026-11-01T00:01:00Z" }, deliveries: [], receipts: [],
+    evaluation: { state: "stopped", reason: "no_enabled_provider" }, current: { revision: 2 }, processing: { status: "acknowledged", acknowledged_at: "2026-11-01T00:01:00Z" }, deliveries: [], receipts: [],
   }) });
   const e = document.createElement("template-event-evidence") as any;
   e.eventId = 1;
@@ -34,5 +34,6 @@ it.each([
   expect(root.querySelector("a").textContent).toContain("r2");
   expect(root.textContent).toContain("配置 r1");
   expect(root.textContent).toContain("问题持续");
+  expect(root.textContent).toContain("停止评估：没有有效指标提供者");
   expect([...root.querySelectorAll("button")].find((b: any) => b.textContent.includes("确认处理"))!.disabled).toBe(true);
 });

@@ -501,8 +501,8 @@ const bindingCandidateShape = {
   overrides: z.record(z.string(), z.unknown()),
   template_pins: TemplatePinsSchema,
 };
-const requireAPin = (binding: { template_pins: unknown[]; package?: unknown }, ctx: z.RefinementCtx) => {
-  if (binding.template_pins.length === 0 && binding.package === null) {
+const requireAPin = (binding: { template_pins: unknown[]; package?: unknown; overrides: Record<string, unknown> }, ctx: z.RefinementCtx) => {
+  if (binding.template_pins.length === 0 && binding.package === null && binding.overrides.enabled !== 'disable') {
     ctx.addIssue({ code: 'custom', path: ['template_pins'], message: 'BINDING_PIN_REQUIRED: multi-pin set and legacy package are both empty' });
   }
 };

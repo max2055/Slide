@@ -634,6 +634,15 @@ export class NativeTemplateConfiguration extends LitElement {
         <p>这里只比较固定版本中的指标引用，决策来自该绑定的发布快照；具体序列及当前能力是否保持未知，需结合当前显式设置与实际能力判断。</p>
         <p>已知触发器引用 ${impact.triggers.length} 个；仅列引用，实际规则和事件影响未知，未执行停止或恢复。</p>
         <ul>${impact.triggers.map(trigger => html`<li>${trigger.template_id} / ${trigger.rule_id}@${trigger.version} · ${trigger.scope}</li>`)}</ul>
+        <button class="btn" .disabled=${!this.canWrite() || this.busy || !impact.removed_pins.length}
+          @click=${() => {
+            this.selected = impact.remaining_pins.map(pin => ({ ...pin }));
+            const remaining = new Set(this.selected.map(pin => pin.template_id));
+            this.parameters = Object.fromEntries(Object.entries(this.parameters).filter(([id]) => remaining.has(id)));
+            if (!this.selected.length) { this.settings = { enabled: 'disable' }; this.metricToggles = {}; this.groupId = ''; }
+            this.invalidate(false);
+          }}>将移除结果带入配置</button>
+        <p>带入后需重新检查、试采并确认提交；取消预览不会修改绑定。全部移除会清空当前策略组与指标覆盖并停止采集，原设置保留在配置历史中。</p>
         <details><summary>当前显式设置与策略组</summary><pre>${JSON.stringify(impact.configuration, null, 2)}</pre></details></div>` : nothing}
     </app-card>`;
   }
@@ -684,7 +693,7 @@ export class NativeTemplateConfiguration extends LitElement {
     this.error = nativeError(error);
   }
   private async previewFlow() {
-    if (this.busy || !this.canWrite() || !this.selected.length) return;
+    if (this.busy || !this.canWrite() || (!this.selected.length && this.settings.enabled !== 'disable')) return;
     const generation = this.generation;
     const draft = this.draftVersion;
     // Every answer belongs to the exact draft that asked for it. A late response
@@ -718,7 +727,7 @@ export class NativeTemplateConfiguration extends LitElement {
       if (current()) this.flowError(error);
     } finally { if (generation === this.generation) this.busy = false; }
   }
-  private trialReady() { return !!this.preview && this.preview.executable && !this.previewStale && !this.busy; }
+  private trialReady() { return !!this.preview && (this.preview.executable || (!this.selected.length && this.settings.enabled === 'disable')) && !this.previewStale && !this.busy; }
   private trialPassed() { return nativeTrialPassed(this.trial); }
   private saveOnly() { return !!this.preview && this.preview.settings.enabled === false; }
   private applyReady() { return !!this.trial && !this.previewStale && (this.trialPassed() || this.saveOnly()); }
@@ -1414,11 +1423,11 @@ export class NativeTemplateConfiguration extends LitElement {
         ${this.renderUnbindImpact()}
         ${this.selected.length ? this.renderOverrides() : nothing}
         <div class="actions">
-          <button class="btn" .disabled=${this.busy || !this.canWrite() || !this.selected.length}
+          <button class="btn" .disabled=${this.busy || !this.canWrite() || (!this.selected.length && this.settings.enabled !== 'disable')}
             @click=${() => void this.previewFlow()}>检查配置</button>
           <button class="btn" .disabled=${this.busy || !this.canWrite() || !this.trialReady()} @click=${() => void this.runTrial()}>试采</button>
           <button class="btn-primary" .disabled=${this.busy || !this.canWrite() || (!this.currentPending() && !this.applyReady())}
-            @click=${() => void this.applyFlow()}>${this.currentPending() ? '查询发布结果' : this.firstBinding() ? '首次绑定并启用' : '应用并启用'}</button>
+            @click=${() => void this.applyFlow()}>${this.currentPending() ? '查询发布结果' : !this.selected.length && this.settings.enabled === 'disable' ? '确认移除全部模板并停止采集' : this.firstBinding() ? '首次绑定并启用' : '应用并启用'}</button>
           <button class="btn" .disabled=${this.busy || !this.dirty} @click=${() => this.confirmDiscard(() => void this.reloadAll())}>放弃修改</button>
           <button class="btn btn-refresh" .disabled=${this.busy} @click=${() => this.confirmDiscard(() => void this.reloadAll())}>重新加载配置</button>
         </div>

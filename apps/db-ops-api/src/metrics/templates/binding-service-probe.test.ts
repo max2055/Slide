@@ -12,6 +12,7 @@ import type { ActorContext } from '../../auth/actor-context.js';
 import type { Pool } from 'mysql2/promise';
 import type { ResourceBindingCandidate } from '../../contracts/metrics/templates.js';
 import { TemplateBindingService } from './binding-service.js';
+import { encodeTemplatePendingPayload, encodeTemplateStoppedPayload } from '../bindings/persistence-codec.js';
 import { PolicyError } from '../policy/model.js';
 
 const AT = '2026-10-30T02:00:00.000Z';
@@ -22,6 +23,7 @@ const state = vi.hoisted(() => ({
   runs: [] as Array<{ selection: Record<string, unknown>; execution: Record<string, unknown> }>,
   runResult: null as null | (() => Record<string, unknown>),
   bound: false,
+  stopped: false,
   evidenceWrites: [] as Array<{ sql: string; params: unknown[] }>,
   evidenceRows: new Map<string, unknown>(),
   evidenceQueryFails: false,
@@ -100,6 +102,22 @@ const resolution = () => ({
   excluded: [], executable: false,
 });
 
+function storedBinding(stopped = false) {
+  const payload = encodeTemplatePendingPayload({
+    binding: { resource: { type: 'instance', id: 11 }, revision: 1, package: null, group_id: null,
+      template_pins: stopped ? [] : [PIN], overrides: stopped ? { enabled: 'disable' } : {} },
+    base_revision: 0, target_revision: 1, resolution_identity: hash('a'),
+    plan: { kind: 'template_collection_plan', internal: true, persisted: false, applied: false,
+      executable: !stopped, identity: hash('a'), resource: { type: 'instance', id: '11' }, revision: 0,
+      settings: { ...resolution().settings, enabled: !stopped }, parameters: [], triggers: [], releases: [], excluded: [],
+      budget: { estimate: true, request_unit: 'logical_reads', estimated_series_upper_bound: 0,
+        max_series_per_resource: 100, requests_per_hour_estimate: 0 } } as never,
+    decided_at: AT, operation_key: 'probe-stop', applied_revision: null,
+    previous_resolution_identity: null, previous_effective: null, published_at: AT,
+  });
+  return stopped ? encodeTemplateStoppedPayload(payload) : payload;
+}
+
 function fakePool() {
   const connection = {
     async beginTransaction() { return undefined; },
@@ -123,7 +141,7 @@ function fakePool() {
         return [[{ host: '127.0.0.1', port: 13421, username: 'target_ro', db_type: 'mysql',
           database_name: 'slide_target', password_encrypted: state.credentialVersion }], []];
       }
-      if (/^SELECT 1 FROM metric_policy_bindings/.test(key)) return [state.bound ? [{ 1: 1 }] : [], []];
+      if (/^SELECT payload AS stopped_payload FROM metric_policy_bindings/.test(key)) return [state.bound ? [{ stopped_payload: storedBinding(state.stopped) }] : [], []];
       throw new Error(`unexpected ${key}`);
     },
   };
@@ -134,8 +152,8 @@ function fakePool() {
         return [[{ host: '127.0.0.1', port: 13421, username: 'target_ro', db_type: 'mysql',
           database_name: 'slide_target', password_encrypted: state.credentialVersion }], []];
       }
-      if (/^SELECT 1 FROM metric_policy_bindings/.test(key)) return [state.bound ? [{ 1: 1 }] : [], []];
-      if (/^SELECT capabilities FROM metric_policy_bindings/.test(key)) return [[], []];
+      if (/^SELECT payload AS stopped_payload FROM metric_policy_bindings/.test(key)) return [state.bound ? [{ stopped_payload: storedBinding(state.stopped) }] : [], []];
+      if (/^SELECT capabilities, payload FROM metric_policy_bindings/.test(key)) return [state.bound ? [{ capabilities: [], payload: storedBinding(state.stopped) }] : [], []];
       if (/^SELECT payload FROM metric_capability_evidence/.test(key)) {
         if (state.evidenceQueryFails) throw new Error('driver detail');
         return [state.evidenceRows.has(String(params[0])) ? [{ payload: JSON.stringify(state.evidenceRows.get(String(params[0]))) }] : [], []];
@@ -168,7 +186,7 @@ const body = () => ({ expected_revision: 0, template_pins: [PIN], overrides: {},
 
 describe('bootstrap probe wiring', () => {
   const reset = () => {
-    state.runs = []; state.bound = false; state.evidenceWrites = []; state.evidenceRows.clear();
+    state.runs = []; state.bound = false; state.stopped = false; state.evidenceWrites = []; state.evidenceRows.clear();
     state.credentialVersion = 'fixture-ciphertext-v1'; state.evidenceQueryFails = false;
     state.liveCalls = 0; state.liveRevokedAfter = Number.POSITIVE_INFINITY;
     state.resolved = resolution();
@@ -186,6 +204,13 @@ describe('bootstrap probe wiring', () => {
     expect(state.evidenceWrites).toHaveLength(1);
     expect(result.capabilities).toHaveLength(1);
     expect(result.revision).toBe(0);
+  });
+
+  it('MAX238: an exact stopped revision can acquire fresh rebind evidence', async () => {
+    reset(); state.bound = true; state.stopped = true;
+    const result = await service().probe(admin, { type: 'instance', id: 11 }, { ...body(), expected_revision: 1 });
+    expect(result.capabilities).toHaveLength(1);
+    expect(state.evidenceWrites).toHaveLength(1);
   });
 
   it('a bound resource never gets bootstrap evidence', async () => {

@@ -7,7 +7,7 @@ import { decodeBindingPayload, type DecodedTemplateBindingPayload } from '../bin
 import { stable } from '../packages/model.js';
 import { PolicyError, refKey, type Ref } from './model.js';
 
-const Basis = z.enum(['publication', 'application_report', 'scheduler_activation', 'formal_observation_commit']);
+const Basis = z.enum(['publication', 'application_report', 'scheduler_activation', 'formal_observation_commit', 'stop_commit']);
 const RecordSchema = z.strictObject({ format: z.literal('configuration-history-v1'), basis: Basis,
   at: z.iso.datetime(), digest: z.string().regex(/^sha256:[a-f0-9]{64}$/), payload: z.unknown(),
   sample_ids: z.array(z.string().min(1)).max(100000) });
@@ -72,6 +72,7 @@ export async function readConfigurationHistory(c: Pick<PoolConnection, 'execute'
         || decoded.binding.revision !== revision || record.digest !== digestOf(record.payload)) throw new Error();
       const publishedAt = decoded.kind === 'template_pending' ? decoded.published_at : String(decoded.payload.published_at);
       if (Date.parse(record.at) < Date.parse(publishedAt)) throw new Error();
+      if (record.basis === 'stop_commit' && (decoded.kind !== 'template_pending' || decoded.payload.envelope !== 'templates-stopped-v1' || decoded.application.applied_revision !== revision)) throw new Error();
       if (record.basis === 'publication' && record.at !== publishedAt) throw new Error();
       if (record.basis === 'formal_observation_commit' && (decoded.kind !== 'template_pending' || !record.sample_ids.length)) throw new Error();
       if (['application_report', 'scheduler_activation'].includes(record.basis) && decoded.kind !== 'legacy_published') throw new Error();

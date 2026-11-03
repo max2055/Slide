@@ -880,3 +880,18 @@ it('an unconfirmed collection response is resolved by querying the same key, nev
   expect(element.collectResult?.state).toBe('completed');
   expect(element.collectPendingKey).toBeNull();
 });
+
+it('MAX238 carries last-pin removal into an explicit stopped draft without writing', async () => {
+  authFetch.mockImplementation(routes());
+  const element = await mount();
+  const pin = binding().template_pins[0];
+  element.unbindImpact = { revision: 5, removed_pins: [pin], remaining_pins: [], removed_items: [],
+    triggers: [], configuration: { group_id: null, overrides: {} } };
+  await element.updateComplete;
+  const button = [...element.shadowRoot.querySelectorAll('button')].find((b: any) => b.textContent.includes('将移除结果带入配置')) as HTMLButtonElement;
+  button.click(); await element.updateComplete;
+  expect(element.requestBody()).toEqual({ expected_revision: 5, template_pins: [], overrides: { enabled: 'disable' }, group_id: null });
+  expect(element.trial).toBeNull();
+  expect(element.preview).toBeNull();
+  expect(authFetch.mock.calls.some((entry: unknown[]) => String(entry[0]).endsWith('/apply'))).toBe(false);
+});
