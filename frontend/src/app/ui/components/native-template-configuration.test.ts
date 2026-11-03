@@ -92,6 +92,38 @@ const jsonOf = (suffix: string) => {
   return call ? JSON.parse(String((call[1] as RequestInit).body)) : null;
 };
 
+it('MAX238 rebind sends canonically ordered pins regardless of selection order', async () => {
+  authFetch.mockImplementation(routes());
+  const element = await mount();
+  element.selected = [
+    { template_id: 'tpl-z', version: 1, content_hash: hash('a') },
+    { template_id: 'tpl-a', version: 2, content_hash: hash('b') },
+    { template_id: 'tpl-Z', version: 1, content_hash: hash('c') },
+  ];
+  await element.previewFlow();
+  expect(jsonOf('/preview').template_pins.map((pin: any) => pin.template_id)).toEqual(['tpl-Z', 'tpl-a', 'tpl-z']);
+  expect(element.selected.map((pin: any) => pin.template_id)).toEqual(['tpl-z', 'tpl-a', 'tpl-Z']);
+});
+
+it('MAX238 rebind probes the exact stopped revision before previewing an enabled draft', async () => {
+  const stopped = binding();
+  stopped.template_pins = [];
+  stopped.application = { ...stopped.application, status: 'applied', applied_revision: 5 };
+  stopped.pending.plan.settings.enabled = false;
+  authFetch.mockImplementation(routes({
+    '/template-bindings/instance/1': () => ({ ok: true, json: async () => stopped }),
+    '/probe': () => ({ ok: true, json: async () => ({ probed: true }) }),
+  }));
+  const element = await mount();
+  element.selected = binding().template_pins;
+  element.settings = { enabled: 'enable' };
+  await element.previewFlow();
+  expect(jsonOf('/probe')).toEqual(jsonOf('/preview'));
+  expect(jsonOf('/probe').expected_revision).toBe(5);
+  const urls = authFetch.mock.calls.map(call => String(call[0]));
+  expect(urls.findIndex(url => url.endsWith('/probe'))).toBeLessThan(urls.findIndex(url => url.endsWith('/preview')));
+});
+
 it('previews selected published pins without applying and keeps the draft on cancel', async () => {
   const pin = binding().template_pins[0];
   authFetch.mockImplementation(routes({ '/unbind-preview': () => ({ ok: true, json: async () => ({

@@ -576,7 +576,8 @@ export class NativeTemplateConfiguration extends LitElement {
     return overrides;
   }
   private requestBody() {
-    return { expected_revision: this.baseRevision(), template_pins: this.selected.map(pin => ({ ...pin })),
+    return { expected_revision: this.baseRevision(), template_pins: this.selected.map(pin => ({ ...pin }))
+      .sort((left, right) => left.template_id < right.template_id ? -1 : left.template_id > right.template_id ? 1 : 0),
       overrides: this.overrides(), group_id: this.groupId || null };
   }
   private invalidate(keepPreview: boolean) {
@@ -702,10 +703,14 @@ export class NativeTemplateConfiguration extends LitElement {
     this.busy = true; this.error = ''; this.previewIssue = null;
     let probeFailure: unknown = null;
     try {
-      // An unbound resource has no capability facts yet; acquire them through a
+      // An unbound or explicitly stopped resource needs fresh capability facts through a
       // real bounded read-only probe before asking for the preview. Save-only
       // (explicitly disabled) needs no capability evidence.
-      if (this.firstBinding() && this.settings.enabled !== 'disable') {
+      const stopped = this.binding?.source === 'template' && this.binding.template_pins.length === 0
+        && this.binding.application?.status === 'applied'
+        && this.binding.application.applied_revision === this.binding.revision
+        && this.binding.pending?.plan.settings.enabled === false;
+      if ((this.firstBinding() || stopped) && this.settings.enabled !== 'disable') {
         try {
           await probeTemplateBinding(this.resourceType, this.resourceId, this.requestBody());
         } catch (error) {

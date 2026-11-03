@@ -11,7 +11,9 @@ import { resolve } from 'node:path';
 import { chromium } from '@playwright/test';
 const root = resolve(process.cwd(), '../..'),
   front = resolve(root, 'frontend');
-const out = resolve(root, 'outputs/max238-unbind-flow-' + Date.now());
+const out = process.env.MAX238_EVIDENCE_DIR
+  ? resolve(process.env.MAX238_EVIDENCE_DIR)
+  : resolve(root, 'outputs/max238-unbind-flow-' + Date.now());
 await mkdir(out, { recursive: true });
 const base = 'http://127.0.0.1:51976',
   ui = 'http://127.0.0.1:51977';
@@ -82,6 +84,15 @@ try {
   const path = '/api/metrics/template-bindings/instance/1';
   const original = await request(path);
   evidence.original = original;
+  // Production formalization accepts real evidence from the first batch;
+  // the next batch then publishes through that accepted semantic source.
+  await request(path + '/collect', { expected_revision: 1, caller_key: 'unbind-bootstrap' });
+  for (let i = 0; i < 100; i++) {
+    const v = await request('/__test/task?key=unbind-bootstrap');
+    if (v.task?.state === 'completed') { evidence.bootstrap = v; break; }
+    await new Promise((r) => setTimeout(r, 200));
+  }
+  assert(evidence.bootstrap?.formal.length);
   await request(path + '/collect', { expected_revision: 1, caller_key: 'unbind-before' });
   for (let i = 0; i < 100; i++) {
     const v = await request('/__test/task?key=unbind-before');
@@ -96,6 +107,15 @@ try {
   assert.equal(applied.application.applied_revision, 1);
   evidence.applied = applied;
   evidence.historyBefore = await request('/api/metrics/configuration-history/instance/1/1');
+  const sample = evidence.formal.formal.find((row: any) => row.observation.metric.id === 'mysql.processlist.count');
+  assert(sample);
+  const historyQuery = {
+    resource: { type: 'instance', id: 1 }, metric: sample.observation.metric, dimensions: {},
+    from: new Date(Date.parse(sample.observation.observed_at) - 1000).toISOString(),
+    to: new Date(Date.parse(sample.observation.observed_at) + 1).toISOString(),
+  };
+  evidence.samplesBefore = await request('/api/metrics/observations', historyQuery);
+  assert(evidence.samplesBefore.observations.some((row: any) => row.id === sample.id));
   const episodes = await request('/__test/episodes');
   assert(episodes.length);
   const eventPath = '/api/metrics/template-events/' + episodes[0].event_id;
@@ -192,6 +212,8 @@ try {
   assert.equal(evidence.stopped?.effective?.revision, 3);
   evidence.historyAfter = await request('/api/metrics/configuration-history/instance/1/1');
   assert.deepEqual(evidence.historyAfter, evidence.historyBefore);
+  evidence.samplesAfter = await request('/api/metrics/observations', historyQuery);
+  assert.deepEqual(evidence.samplesAfter, evidence.samplesBefore);
   evidence.stopHistory = await request('/api/metrics/configuration-history/instance/1/3');
   assert.equal(evidence.stopHistory.state, 'effective');
   evidence.eventStopped = await request(eventPath);
@@ -205,24 +227,33 @@ try {
   const revoked = await fetch(base + '/api/metrics/configuration-history/instance/1/1');
   evidence.revoked = revoked.status;
   assert.equal(revoked.status, 401);
+  const deniedSamples = await fetch(base + '/api/metrics/observations', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(historyQuery),
+  });
+  evidence.samplesRevoked = deniedSamples.status;
+  assert.equal(deniedSamples.status, 401);
   await request('/__test/session/1', {});
-  for (const width of [1366, 1440, 1920]) {
-    await page.setViewportSize({ width, height: 900 });
+  for (const [width, height] of [[1366, 768], [1440, 900], [1920, 1080]]) {
+    await page.setViewportSize({ width, height });
     await page.screenshot({ path: resolve(out, 'stopped-' + width + '.png'), fullPage: true });
   }
   assert.deepEqual(evidence.browserErrors, []);
-  const body = {
-    expected_revision: 3,
-    template_pins: original.template_pins,
-    overrides: original.configuration.overrides,
-    group_id: original.configuration.group_id,
-    receipt_id: 'unbind-rebind-trial',
-  };
-  await request(path + '/probe', body);
-  await request(path + '/trial', body);
-  evidence.rebind = await request(path + '/apply', { ...body, caller_key: 'unbind-rebind' });
+  await page.reload();
+  await host.getByRole('checkbox', { name: '选择模板 MAX238 collect now', exact: true }).check();
+  await host.getByRole('checkbox', { name: '选择模板 MAX238 connection capacity provider', exact: true }).check();
+  await host.getByRole('switch', { name: '启用此对象采集', exact: true }).check();
+  const rebindPreview = page.waitForResponse(r => r.url().endsWith(path + '/preview'));
+  await host.getByRole('button', { name: '检查配置', exact: true }).click();
+  evidence.rebindPreview = await (await rebindPreview).json();
+  await host.getByRole('button', { name: '试采', exact: true }).click();
+  const rebindResponse = page.waitForResponse(r => r.url().endsWith(path + '/apply'));
+  await host.getByRole('button', { name: '应用并启用', exact: true }).click();
+  const response = await rebindResponse;
+  assert.equal(response.status(), 200);
+  const body = response.request().postDataJSON();
+  evidence.rebind = await response.json();
   assert.equal(evidence.rebind.kind, 'committed');
-  evidence.replay = await request(path + '/apply', { ...body, caller_key: 'unbind-rebind' });
+  evidence.replay = await request(path + '/apply', body);
   assert.equal(evidence.replay.kind, 'replay');
   await request(path + '/collect', { expected_revision: 4, caller_key: 'unbind-after' });
   for (let i = 0; i < 100; i++) {
@@ -241,7 +272,7 @@ try {
   const collision = await fetch(base + path + '/apply', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ ...body, overrides: { enabled: 'disable' }, caller_key: 'unbind-rebind' }),
+    body: JSON.stringify({ ...body, overrides: { enabled: 'disable' } }),
   });
   evidence.collision = collision.status;
   assert.equal(collision.status, 409);
@@ -321,7 +352,7 @@ try {
   const foreign = await fetch(base + '/api/metrics/template-bindings/instance/2/apply', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ ...body, caller_key: 'unbind-rebind' }),
+    body: JSON.stringify(body),
   });
   evidence.foreignResource = { status: foreign.status, data: await foreign.json() };
   assert.notEqual(evidence.foreignResource.status, 200);
@@ -343,6 +374,11 @@ try {
   assert.equal((await request(path)).revision, 6);
 } catch (error) {
   evidence.failure = String(error);
+  const page = browser?.contexts()[0]?.pages()[0];
+  if (page) {
+    evidence.failureText = await page.locator('body').innerText();
+    await page.screenshot({ path: resolve(out, 'failure.png'), fullPage: true });
+  }
   throw error;
 } finally {
   await browser?.close();

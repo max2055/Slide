@@ -1,5 +1,7 @@
 import { collectFixed } from '../src/metrics/packages/adapters.js';
 import { registerTemplateTriggerRoutes } from '../src/metrics/triggers/routes.js';
+import { registerMetricConsumerRoutes } from '../src/metrics/consumers/routes.js';
+import { MetricFormalization } from '../src/metrics/rollout/formalization.js';
 import { evaluateTemplateClock } from '../src/metrics/triggers/runtime.js';
 /**
  * MAX-238 / NATIVE-COLLECT-NOW browser evidence backend.
@@ -167,7 +169,8 @@ async function main() {
     return rows;
   };
   const scheduler = new MetricScheduler(new MysqlScheduleStore(pool, registry, 'production'), registry,
-    createAssetCollectorAccess(), Date.now, controlledCollect, undefined, createCollectNowAuthorizer({
+    createAssetCollectorAccess(), Date.now, controlledCollect,
+    process.env.MAX238_UNBIND_FLOW === '1' ? new MetricFormalization(pool, registry) : undefined, createCollectNowAuthorizer({
       loadActor: (userId, sessionVersion) => actorContextService.loadActiveActor(userId, sessionVersion),
       loadActorOn: (executor, userId, sessionVersion) =>
         actorContextService.loadActiveActorOn(executor as never, userId, sessionVersion, undefined, true),
@@ -242,6 +245,7 @@ async function main() {
   await registerMetricTemplateRoutes(app, auth, bindingService, collectService);
 
   await registerTemplateTriggerRoutes(app, auth, () => pool);
+  if (process.env.MAX238_UNBIND_FLOW === '1') await registerMetricConsumerRoutes(app, auth);
   app.get('/__test/episodes', async () => (await pool.query('SELECT event_id,payload FROM metric_trigger_episodes ORDER BY event_id'))[0]);
   app.post('/__test/clock', async () => { await evaluateTemplateClock(pool, Date.now()); return { evaluated: true }; });
   let firstPin = { template_id: template.template_id, version: published.version, content_hash: version!.content_hash };
