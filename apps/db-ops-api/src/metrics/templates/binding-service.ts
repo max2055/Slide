@@ -1097,10 +1097,18 @@ export class TemplateBindingService {
   async operation(actor: ActorContext, ref: Ref, callerKey: string): Promise<TemplateOperationState> {
     await this.assertAccess(actor, ref, false);
     if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(callerKey)) fail('TEMPLATE_BINDING_INPUT_INVALID');
-    if (!await this.ownsOperation(this.pool(), actor, callerKey)) fail('TEMPLATE_BINDING_FORBIDDEN', 403);
     const [rows] = await this.pool().execute<RowDataPacket[]>(
-      `SELECT resource_key, target_revision, candidate_digest, resolution_identity, status
-         FROM metric_policy_operations WHERE caller_key = ? LIMIT 2`, [callerKey]);
+      `SELECT o.resource_key, o.target_revision, o.candidate_digest, o.resolution_identity, o.status,
+          JSON_EXTRACT(a.payload,'$.actor_id') AS operation_actor
+         FROM metric_policy_operations o LEFT JOIN metric_policy_audit a
+         ON a.target=o.resource_key AND JSON_UNQUOTE(JSON_EXTRACT(a.payload,'$.request_id'))=CONVERT(o.caller_key USING utf8mb4)
+         AND JSON_UNQUOTE(JSON_EXTRACT(a.payload,'$.action'))='template_binding.apply'
+         WHERE o.caller_key = ? LIMIT 2`, [callerKey]);
+    // Authorize the very snapshot being returned, including missing/ambiguous audit ownership.
+    // A separate ownership read permits absent → foreign commit between statements.
+    if (rows.length > 0 && (rows.length !== 1 || rows[0].operation_actor == null || Number(rows[0].operation_actor) !== actor.userId)) {
+      fail('TEMPLATE_BINDING_FORBIDDEN', 403);
+    }
     // Decimal keys are binary in DDL; compare their UTF-8 text.
     const row = rows.find(candidate => String(candidate.resource_key) === refKey(ref));
     // A revoke that lands while the row is being read must not return its facts.

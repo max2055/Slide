@@ -927,3 +927,16 @@ it('MAX238 carries last-pin removal into an explicit stopped draft without writi
   expect(element.preview).toBeNull();
   expect(authFetch.mock.calls.some((entry: unknown[]) => String(entry[0]).endsWith('/apply'))).toBe(false);
 });
+
+
+it('MAX238 labels a stopped binding separately from the previous collection generation', async () => {
+  const stopped = binding(); stopped.template_pins = [];
+  stopped.application = { ...stopped.application, status: 'applied', applied_revision: 5 };
+  stopped.pending.plan.settings.enabled = false;
+  authFetch.mockImplementation(routes({ '/template-bindings/instance/1': () => ({ ok: true, json: async () => stopped }) }));
+  const element = await mount(); await element.updateComplete;
+  const text = element.shadowRoot.textContent;
+  expect(text).toContain('采集已停用');
+  expect(text).toContain('历史正式采集');
+  expect(text).toContain('不代表当前配置等待应用或产生了新样本');
+});

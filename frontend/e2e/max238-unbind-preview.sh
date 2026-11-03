@@ -199,6 +199,14 @@ for _ in $(seq 1 120); do
   sleep 1
 done
 if [ "$ready" = 0 ]; then log "$name was not ready within 120s"; exit 1; fi
+# The operation isolation gate uses this same owned lifecycle and real target.
+if [ "${MAX238_OPERATION_MYSQL_TEST:-0}" = 1 ]; then
+  MAX238_COLLECT_NOW=1 MAX238_TEST_MYSQL_PORT="$port" MAX238_TEST_MYSQL_PASSWORD='' \
+    MAX238_TARGET_PASSWORD="operation-test-$nonce" \
+    MAX238_HANDLE_DIR="$(dirname "$handle_file")/schemas" \
+    pnpm --filter slide-api exec vitest run src/metrics/templates/collect-now.mysql.test.ts -t 'operation recovery'
+  exit $?
+fi
 # Reuse the same exact owned lifecycle for the historical-configuration database gate.
 if [ "${MAX238_HISTORY_MYSQL_TEST:-0}" = 1 ]; then
   MAX238_HISTORY_MYSQL_PORT="$port" pnpm --filter slide-api exec vitest run src/metrics/policy/configuration-history.mysql.test.ts

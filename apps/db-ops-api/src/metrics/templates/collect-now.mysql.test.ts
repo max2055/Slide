@@ -16,6 +16,7 @@
  */
 import { createHash, randomBytes } from 'node:crypto';
 import { join } from 'node:path';
+import { writeFileSync } from 'node:fs';
 import Fastify from 'fastify';
 import mysql, { type Pool, type RowDataPacket } from 'mysql2/promise';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
@@ -99,6 +100,7 @@ describe.skipIf(!enabled)('immediate collection on a real platform, queue and re
   };
 
   beforeAll(async () => {
+    if (!Number.isSafeInteger(PORT) || PORT === 3306) throw new Error('owned non3306 required');
     process.env.ENCRYPTION_KEY = randomBytes(32).toString('hex');
     const root = await mysql.createConnection({ host: '127.0.0.1', port: PORT, user: 'root', password: PASSWORD });
     try {
@@ -231,6 +233,104 @@ describe.skipIf(!enabled)('immediate collection on a real platform, queue and re
     } finally { await root.end(); }
     if (errors.length) throw errors[0];
   });
+
+  it.skipIf(process.env.MAX238_OPERATION_MYSQL_TEST !== '1')('operation recovery isolates the same-key interleaving on real MySQL without duplicate publication', async () => {
+    if (!Number.isSafeInteger(PORT) || PORT === 3306) throw new Error('owned non3306 required');
+    const key = `operation-race-${process.pid}`;
+    const url = `/api/metrics/template-bindings/instance/${unboundId}`;
+    const candidate = body();
+    expect((await call('POST', `${url}/probe`, candidate)).status).toBe(200);
+    const receipt = `operation-trial-${process.pid}`;
+    expect((await call('POST', `${url}/trial`, { ...candidate, receipt_id: receipt })).status).toBe(200);
+    const before = await counts();
+    const other = { ...actor, userId: 7007, username: 'operation-reader' };
+    let interleaved = false;
+    let readCount = 0;
+    const execute = pool.execute.bind(pool);
+    // A dedicated reader pool facade controls only the SQL dispatch boundary.
+    // The other principal commits through the public apply handler and host transaction.
+    const reader = new Proxy(pool, { get(target, property) {
+      if (property !== 'execute') return Reflect.get(target, property, target);
+      return async (sql: string, args: unknown[]) => {
+        if (/FROM metric_policy_operations/.test(sql)) {
+          readCount++;
+          if (!interleaved) {
+            interleaved = true;
+            // On the old code the ownership snapshot is absent before A commits.
+            // On the fixed code the single snapshot reads A's commit and refuses it.
+            const oldSnapshot = sql.startsWith('SELECT JSON_EXTRACT') ? await execute(sql, args) : undefined;
+            const applied = await call('POST', `${url}/apply`, { ...candidate, receipt_id: receipt, caller_key: key });
+            expect(applied.status, JSON.stringify(applied.data)).toBe(200);
+            expect(applied.data).toMatchObject({ kind: 'committed', revision: 1 });
+            if (oldSnapshot) return oldSnapshot;
+          }
+        }
+        return execute(sql, args);
+      };
+    } });
+    let live = other;
+    const service = new TemplateBindingService({ pool: () => reader, registry,
+      access: createAssetCollectorAccess(), reload: async () => live });
+    const server = Fastify();
+    await registerMetricTemplateRoutes(server, async request => {
+      (request as unknown as { user: ActorContext }).user = other;
+    }, service);
+    try {
+      const denied = await server.inject({ method: 'GET', url: `${url}/operations/${key}` });
+      expect(denied.statusCode, denied.body).toBe(403);
+      expect(denied.json()).toEqual({ error: 'TEMPLATE_BINDING_FORBIDDEN' });
+      expect(readCount).toBe(1);
+      // A fresh HTTP request recovers A's original key, revision and identities.
+      const recovered = await call('GET', `${url}/operations/${key}`);
+      expect(recovered.status).toBe(200);
+      expect(recovered.data).toMatchObject({ state: 'committed', operation: { target_revision: 1, status: 'committed' } });
+      const original = recovered.data;
+      for (const status of ['unknown', 'pending']) {
+        await pool.execute('UPDATE metric_policy_operations SET status=? WHERE caller_key=?', [status, key]);
+        expect((await call('GET', `${url}/operations/${key}`)).data).toMatchObject({ state: 'pending', operation: { target_revision: 1, status } });
+        expect((await server.inject({ method: 'GET', url: `${url}/operations/${key}` })).statusCode).toBe(403);
+      }
+      await pool.execute("UPDATE metric_policy_operations SET status='committed' WHERE caller_key=?", [key]);
+      expect((await call('GET', `${url}/operations/${key}`)).data).toEqual(original);
+      expect((await call('GET', `/api/metrics/template-bindings/instance/${instanceId}/operations/${key}`)).data)
+        .toEqual({ state: 'absent', operation: null });
+      const replay = await Promise.all([1, 2].map(() => call('POST', `${url}/apply`,
+        { ...candidate, receipt_id: receipt, caller_key: key })));
+      expect(replay.map(r => r.status)).toEqual([200, 200]);
+      expect(replay.map(r => r.data)).toEqual([replay[0].data, replay[0].data]);
+      const after = await counts();
+      expect(after.operations - before.operations).toBe(1);
+      const auditRows = (await pool.query<RowDataPacket[]>(`SELECT payload FROM metric_policy_audit
+        WHERE JSON_UNQUOTE(JSON_EXTRACT(payload,'$.request_id'))=?
+        AND JSON_UNQUOTE(JSON_EXTRACT(payload,'$.action'))='template_binding.apply'`, [key]))[0];
+      expect(auditRows).toHaveLength(1);
+      expect((await pool.query<RowDataPacket[]>('SELECT target_revision FROM metric_policy_operations WHERE caller_key=?', [key]))[0][0].target_revision).toBe(1);
+      live = { ...other, permissions: [], roles: [], instanceScopes: {} };
+      expect((await server.inject({ method: 'GET', url: `${url}/operations/not-present` })).statusCode).toBe(403);
+      const revokedServer = Fastify();
+      await registerMetricTemplateRoutes(revokedServer, async request => {
+        (request as unknown as { user: ActorContext }).user = actor;
+      }, new TemplateBindingService({ pool: () => pool, registry, access: createAssetCollectorAccess(),
+        reload: async current => {
+          await pool.execute('UPDATE users SET session_version=2 WHERE id=?', [actor.userId]);
+          return actorContextService.revalidateActor(current);
+        } }));
+      let revokedStatus: number;
+      try {
+        const response = await revokedServer.inject({ method: 'GET', url: `${url}/operations/${key}` });
+        revokedStatus = response.statusCode;
+        expect(revokedStatus).toBe(401);
+        expect(response.json()).toEqual({ error: 'POLICY_AUTH_REQUIRED' });
+      } finally {
+        await pool.execute('UPDATE users SET session_version=1 WHERE id=?', [actor.userId]);
+        await revokedServer.close();
+      }
+      const evidence = { nonce: NONCE, port: PORT, schema: platform.database,
+        key, foreign: denied.statusCode, sessionRevoked: revokedStatus, recovered: original, operationDelta: after.operations - before.operations,
+        applyAudits: auditRows.length, concurrentReplays: replay.map(r => r.status) };
+      if (process.env.MAX238_OPERATION_EVIDENCE) writeFileSync(process.env.MAX238_OPERATION_EVIDENCE, JSON.stringify(evidence, null, 2));
+    } finally { await server.close(); }
+  }, 60000);
 
   it('admits exactly one queryable task and commits the samples of that task alone', async () => {
     const before = await counts();

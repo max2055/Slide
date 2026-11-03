@@ -166,6 +166,9 @@ function fakeConnection() {
         pending.set(receiptId, payload);
         return [{ affectedRows: 1 }, []];
       }
+      if (key.startsWith('SELECT o.resource_key, o.target_revision')) {
+        return [state.operations.map(row => ({ ...row, operation_actor: state.operationActors.length ? state.operationActors[0].operation_actor : 7 })), []];
+      }
       if (key.startsWith('SELECT resource_key, target_revision, candidate_digest, resolution_identity, status')) {
         // A key is globally unique; the fixture only holds what the test seeded.
         return [state.operations, []];
@@ -911,6 +914,7 @@ describe('MAX238 operation principal isolation', () => {
   it('refuses another principal and an operation with no atomic audit owner', async () => {
     for (const operation_actor of [8, null]) {
       reset(); state.operationActors = [{ operation_actor }];
+      state.operations = [{ resource_key: Buffer.from('instance:1'), status: 'committed' }];
       const { server } = await appWith(admin);
       try {
         const response = await server.inject({ method: 'GET', url: '/api/metrics/template-bindings/instance/1/operations/foreign' });
@@ -918,5 +922,63 @@ describe('MAX238 operation principal isolation', () => {
         expect(response.json()).toEqual({ error: 'TEMPLATE_BINDING_FORBIDDEN' });
       } finally { await server.close(); }
     }
+  });
+});
+
+// Chief independent counterexample: a foreign operation commits between the two reads.
+it('Chief rejects operation committed by another principal after owner lookup', async () => {
+  reset();
+  const execute = pool.execute.bind(pool);
+  pool.execute = (async (sql: string, params: unknown[]) => {
+    if (normalize(sql).startsWith('SELECT JSON_EXTRACT(a.payload') || normalize(sql).startsWith('SELECT o.resource_key')) {
+      state.operations = [{resource_key: Buffer.from('instance:1'), target_revision: 9,
+        candidate_digest: HASH, resolution_identity: HASH, status: 'committed'}];
+      state.operationActors = [{operation_actor: 8}];
+      if (normalize(sql).startsWith('SELECT JSON_EXTRACT(a.payload')) return [[], []]; // owner snapshot preceded actor8's atomic commit
+    }
+    return execute(sql, params);
+  }) as typeof pool.execute;
+  const { server } = await appWith(admin);
+  try {
+    const response = await server.inject({method:'GET',url:'/api/metrics/template-bindings/instance/1/operations/raced-key'});
+
+    expect(response.statusCode).toBe(403);
+  } finally { pool.execute = execute; await server.close(); }
+});
+
+
+describe('MAX238 operation snapshot boundaries', () => {
+  it('rejects foreign pending/unknown results and ambiguous ownership without returning facts', async () => {
+    for (const status of ['pending', 'unknown', 'committed']) {
+      reset();
+      state.operationActors = [{ operation_actor: 8 }];
+      state.operations = [{ resource_key: 'instance:1', status, target_revision: 9 }];
+      const { server } = await appWith(admin);
+      try {
+        const response = await server.inject({ method: 'GET', url: '/api/metrics/template-bindings/instance/1/operations/foreign' });
+        expect(response.statusCode).toBe(403);
+        expect(response.json()).toEqual({ error: 'TEMPLATE_BINDING_FORBIDDEN' });
+      } finally { await server.close(); }
+    }
+    reset(); state.operations = [{ operation_actor: 7 }, { operation_actor: 7 }];
+    const { server } = await appWith(admin);
+    try {
+      expect((await server.inject({ method: 'GET', url: '/api/metrics/template-bindings/instance/1/operations/ambiguous' })).statusCode).toBe(403);
+    } finally { await server.close(); }
+  });
+
+  it('does not turn a failed authoritative read into absent or any successful recovery', async () => {
+    reset(); const execute = pool.execute.bind(pool);
+    pool.execute = (async (sql: string, params: unknown[]) => {
+      if (normalize(sql).startsWith('SELECT o.resource_key')) throw new Error('controlled storage failure');
+      return execute(sql, params);
+    }) as typeof pool.execute;
+    const { server } = await appWith(admin);
+    try {
+      const response = await server.inject({ method: 'GET', url: '/api/metrics/template-bindings/instance/1/operations/read-error' });
+      expect(response.statusCode).toBeGreaterThanOrEqual(500);
+      expect(response.json().state).toBeUndefined();
+      expect(state.statements.some(isWrite)).toBe(false);
+    } finally { pool.execute = execute; await server.close(); }
   });
 });

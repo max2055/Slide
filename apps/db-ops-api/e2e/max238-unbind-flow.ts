@@ -210,6 +210,9 @@ try {
   assert(!Object.values(evidence.recovery.storage).some((v) => String(v).includes('\"pending\":true')));
   assert.equal(evidence.stopped?.application.applied_revision, 3);
   assert.equal(evidence.stopped?.effective?.revision, 3);
+  await host.getByText('历史正式采集', { exact: true }).waitFor();
+  await host.getByText('当前配置已停止采集；历史正式采集保留停止前采集代次的状态，不代表当前配置等待应用或产生了新样本。', { exact: true }).waitFor();
+  evidence.stoppedPresentation = { historicalCollectionExplicit: true, stoppedRevision: 3 };
   evidence.historyAfter = await request('/api/metrics/configuration-history/instance/1/1');
   assert.deepEqual(evidence.historyAfter, evidence.historyBefore);
   evidence.samplesAfter = await request('/api/metrics/observations', historyQuery);

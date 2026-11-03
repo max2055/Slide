@@ -1388,9 +1388,12 @@ export class NativeTemplateConfiguration extends LitElement {
   private renderStatus() {    const status = this.collection;
     const binding = this.binding;
     const application = binding?.application;
+    const stopped = binding?.source === 'template' && binding.template_pins.length === 0
+      && application?.status === 'applied' && application.applied_revision === binding.revision
+      && binding.pending?.plan.settings.enabled === false;
     const pending = application?.status === 'applied' && application.applied_revision === binding?.pending?.target_revision ? null : binding?.pending;
     return html`<app-card class="state-card"><span class="eyebrow">当前权威状态</span>
-      ${status ? html`<app-badge variant=${status.formal_visibility.state === 'available' ? 'ok' : 'muted'}>
+      ${stopped ? html`<app-badge variant="muted">采集已停用</app-badge>` : status ? html`<app-badge variant=${status.formal_visibility.state === 'available' ? 'ok' : 'muted'}>
         ${status.formal_visibility.state === 'pending' ? '等待正式数据' : statusLabel(status.formal_visibility.state)}</app-badge>` : nothing}
       <dl class="facts">
         <div><dt>配置来源</dt><dd>${binding ? (binding.source === 'template' ? '原生固定版本模板' : binding.source === 'package' ? '旧版单包' : '未绑定') : '未知'}</dd></div>
@@ -1398,10 +1401,11 @@ export class NativeTemplateConfiguration extends LitElement {
         <div><dt>发布（已提交）</dt><dd>${binding?.revision ?? '—'}${binding?.published_at ? html` · ${new Date(binding.published_at).toLocaleString('zh-CN')}` : nothing}</dd></div>
         <div><dt>等待应用</dt><dd>${pending ? `目标版本 ${pending.target_revision} · ${new Date(pending.decided_at).toLocaleString('zh-CN')}` : '无待应用版本'}</dd></div>
         <div><dt>调度应用</dt><dd>${application ? `${statusLabel(application.status)} · 已应用 ${application.applied_revision ?? '—'}` : '未知'}</dd></div>
-        <div><dt>首样本</dt><dd>${status?.formal_visibility.last_observed_at ? new Date(status.formal_visibility.last_observed_at).toLocaleString('zh-CN') : '尚未收到正式首样本'}</dd></div>
-        <div><dt>正式采集</dt><dd>${status ? statusLabel(status.formal_visibility.state) : '未知'}${status?.formal_visibility.generation ? ` · 第 ${status.formal_visibility.generation} 代` : ''}</dd></div>
+        <div><dt>${stopped ? '历史首样本' : '首样本'}</dt><dd>${status?.formal_visibility.last_observed_at ? new Date(status.formal_visibility.last_observed_at).toLocaleString('zh-CN') : '尚未收到正式首样本'}</dd></div>
+        <div><dt>${stopped ? '历史正式采集' : '正式采集'}</dt><dd>${status ? statusLabel(status.formal_visibility.state) : '未知'}${status?.formal_visibility.generation ? ` · 第 ${status.formal_visibility.generation} 代` : ''}</dd></div>
       </dl>
       <p class="muted">已发布、等待应用、已应用、等待首样本与正式采集分别确认；配置发布成功或 API 返回 200 不代表健康。</p>
+      ${stopped ? html`<p class="muted" role="status">当前配置已停止采集；历史正式采集保留停止前采集代次的状态，不代表当前配置等待应用或产生了新样本。</p>` : nothing}
       ${status ? renderCollectionStatus(status) : html`<p>采集状态未知</p>`}
       ${this.applyResult ? html`<p role="status">${this.applyResult.replayed ? '已确认上次发布提交' : '配置已提交'}，目标版本 ${this.applyResult.revision}；应用与正式数据状态以左侧事实为准。</p>` : nothing}
       ${this.unresolved.length ? html`<p class="notice" role="status">上次发布结果尚未确认：请求可能仍在处理或结果未知。请查询发布结果，确认前不要重复发布。
