@@ -152,20 +152,42 @@ export class MigrationRunner {
     if (!actor.trim() || !reason.trim()) throw new MigrationError('Baseline requires actor and reason');
     await this.ensureLedger();
     const migrations = await loadMigrations(this.directory);
-    const [existing] = await this.pool.query<MigrationLedgerEntry[]>('SELECT migration_id FROM app_schema_migrations LIMIT 1');
-    if (existing.length) throw new MigrationError('Schema migration ledger is not empty');
-    const [tables] = await this.pool.query<Array<{ name: string }>>(
-      `SELECT TABLE_NAME AS name FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME IN ('users', 'approval_requests', 'operations')`,
-    );
-    if (tables.length < 3) throw new MigrationError('Schema cannot be baselined: required tables are missing');
-    await assertSchemaInvariants(this.pool);
-    for (const migration of migrations) {
-      await this.pool.query(
-        `INSERT INTO app_schema_migrations (migration_id, checksum, status, finished_at, error)
-         VALUES (?, ?, 'baselined', NOW(), ?)`,
-        [migration.id, migration.checksum, `baseline by ${actor}: ${reason}`],
+    const connection = await this.pool.getConnection();
+    let transactionStarted = false;
+    try {
+      const [locks] = await connection.query<Array<{ locked: number }>>('SELECT GET_LOCK(?, 30) AS locked', [lockName]);
+      if (Number(locks[0]?.locked) !== 1) throw new MigrationError('Could not acquire migration lock');
+      const [existing] = await connection.query<MigrationLedgerEntry[]>('SELECT migration_id FROM app_schema_migrations LIMIT 1');
+      if (existing.length) throw new MigrationError('Schema migration ledger is not empty');
+      const [tables] = await connection.query<Array<{ name: string }>>(
+        `SELECT TABLE_NAME AS name FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME IN ('users', 'approval_requests', 'operations')`,
       );
+      if (tables.length < 3) throw new MigrationError('Schema cannot be baselined: required tables are missing');
+      await assertSchemaInvariants(connection);
+      await connection.query('START TRANSACTION');
+      transactionStarted = true;
+      for (const migration of migrations) {
+        await connection.query(
+          `INSERT INTO app_schema_migrations (migration_id, checksum, status, finished_at, error)
+           VALUES (?, ?, 'baselined', NOW(), ?)`,
+          [migration.id, migration.checksum, `baseline by ${actor}: ${reason}`],
+        );
+      }
+      await connection.query('COMMIT');
+      transactionStarted = false;
+      await connection.query('SELECT RELEASE_LOCK(?)', [lockName]);
+    } catch (error) {
+      try {
+        if (transactionStarted) await connection.query('ROLLBACK');
+      } catch (cleanupError) {
+        throw new AggregateError([error, cleanupError], 'Baseline failed and rollback failed');
+      } finally {
+        // Closing the session releases the advisory lock even if rollback fails.
+        connection.destroy();
+      }
+      throw error;
     }
+    connection.release();
   }
 
   /** @deprecated Use acknowledgeExternallyRepairedMigration; identical guarded contract. */
