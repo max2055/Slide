@@ -87,8 +87,9 @@ async function request(
     body: body ? JSON.stringify(body) : undefined,
   });
 
-  let raw: unknown;
-  try { raw = await res.json(); } catch { raw = await res.text(); }
+  const text = await res.text();
+  let raw: unknown = text;
+  try { raw = JSON.parse(text); } catch { /* Preserve non-JSON diagnostics. */ }
   return { res, raw };
 }
 
