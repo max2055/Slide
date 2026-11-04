@@ -10,6 +10,7 @@ export async function registerDeviceAuthRoutes(fastify: FastifyInstance, verifyT
       if (typeof body?.deviceId !== 'string' || typeof body.publicKey !== 'string') return reply.code(400).send({ reasonCode: 'DEVICE_AUTH_INPUT_INVALID' });
       return reply.send(await getDeviceAuthService().register(actor, body.deviceId, body.publicKey));
     } catch (error: any) {
+      if (error?.message === 'DEVICE_AUTH_REVOKED') return reply.code(403).send({ reasonCode: 'DEVICE_AUTH_REVOKED' });
       return reply.code(400).send({ reasonCode: error?.message || 'DEVICE_AUTH_INPUT_INVALID' });
     }
   });

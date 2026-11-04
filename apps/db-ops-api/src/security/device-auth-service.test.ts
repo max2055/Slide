@@ -3,6 +3,15 @@ import { generateKeyPairSync, sign } from 'node:crypto';
 import { deviceSigningPayload, DeviceAuthService } from './device-auth-service.js';
 
 describe('DeviceAuthService', () => {
+  for (const rows of [[{ status: 'revoked' }], [], [{ status: 'unknown' }]]) {
+    it(`does not acknowledge registration without paired readback: ${JSON.stringify(rows)}`, async () => {
+      const publicKey = generateKeyPairSync('ed25519').publicKey.export({ format: 'der', type: 'spki' }).subarray(-32).toString('base64url');
+      const execute = vi.fn().mockResolvedValueOnce([{ affectedRows: 0 }]).mockResolvedValueOnce([rows]);
+      const service = new DeviceAuthService(() => ({ execute }));
+      await expect(service.register({ userId: 7 } as any, 'a'.repeat(64), publicKey)).rejects.toThrow('DEVICE_AUTH_REVOKED');
+    });
+  }
+
   it('reports a device proof database failure as retryable without granting access', async () => {
     const service = new DeviceAuthService(() => ({ execute: async () => { throw new Error('database offline'); } }));
     await expect(service.verify({ userId: 1 } as any, { deviceId: 'a'.repeat(64), publicKey: 'key', signature: 'signature', timestamp: Date.now(), nonce: 'nonce', method: 'GET', path: '/ws/auth', body: '' }))
