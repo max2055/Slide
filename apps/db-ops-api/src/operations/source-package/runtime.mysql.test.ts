@@ -77,11 +77,21 @@ describe.skipIf(!port)('source package production orchestration (synthetic SSH/l
     await rows("INSERT INTO alert_rules(id,name,metric_name,operator,threshold,duration_seconds,severity,target_type,server_id,enabled,notification_channels) VALUES(1,'synthetic filesystem','filesystem_used_bytes','>',1,0,'warning','server',3,1,'[]')");
   }, 120000);
   afterAll(async () => {
+    vi.doUnmock('../../investigations/alert-bridge.js');
     vi.restoreAllMocks(); await pool?.end();
     if (root) { await root.query(`DROP DATABASE ${database}`); await root.end(); }
   });
   it('collects both targets through the production path, then admits one formal alert/event/request without dispatch', async () => {
-    // Warm imports and verify HTTP authority before collecting the 1s alert sample.
+    // Regress slow cold loading without changing the production implementation,
+    // source timestamps or alert window. All exports remain the original ones.
+    vi.doMock('../../investigations/alert-bridge.js', async importOriginal => {
+      await new Promise(resolve => setTimeout(resolve, 1500));
+      return importOriginal();
+    });
+    // MAX-279: finish cold module loading and HTTP authorization checks before
+    // collecting. The instant alert consumes a real 1-second sample window;
+    // stopping collection before unrelated setup can legitimately age it out.
+    await import('../../investigations/alert-bridge.js');
     const { serverAlertEvaluator } = await import('../../server-alert-evaluator.js');
     // MAX-240: the scheduler's internal reader must not disable user revalidation
     // at the HTTP entry. An internal actor is never a valid HTTP principal.
