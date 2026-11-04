@@ -145,4 +145,28 @@ describe('schema-validator CLI (#398)', () => {
     `);
     expect(result.status).toBe(0);
   });
+
+  it.each([
+    '/*! ALTER TABLE reports DROP COLUMN type */;',
+    '/*!80000 ALTER TABLE reports DROP COLUMN type */;',
+    '/*M!100100 ALTER TABLE reports DROP COLUMN type */;',
+    'ALTER TABLE reports /*! DROP COLUMN type */;',
+    'ALTER TABLE `app` . `reports` DROP COLUMN type;',
+    'ALTER TABLE `app name` . `reports` DROP COLUMN type;',
+    'ALTER TABLE app \n . \t reports DROP COLUMN type;',
+  ])('rejects executable comments or qualified target syntax: %s', (migration) => {
+    const result = cli(schema, migration);
+    expect(result.status).toBe(1);
+    expect(result.output).not.toContain('10 passed');
+    expect(result.output).toMatch(/MISSING|UNCOVERED/);
+  });
+
+  it('preserves ordinary comments, quoted comment text and unrelated qualified DDL', () => {
+    const result = cli(schema, `
+      /* ALTER TABLE reports DROP COLUMN type; */
+      ALTER TABLE reports COMMENT = '/*! ALTER TABLE reports DROP COLUMN type */';
+      ALTER TABLE \`app name\` . \`other\` ADD COLUMN extra INT;
+    `);
+    expect(result.status).toBe(0);
+  });
 });
