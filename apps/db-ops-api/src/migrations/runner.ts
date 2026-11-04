@@ -135,13 +135,17 @@ export class MigrationRunner {
     try {
       const [locks] = await connection.query<Array<{ locked: number }>>('SELECT GET_LOCK(?, 30) AS locked', [lockName]);
       if (Number(locks[0]?.locked) !== 1) throw new MigrationError('Could not acquire migration lock');
-      try {
-        await this.runLocked(connection);
-        await assertSchemaInvariants(this.pool);
-        if (process.env.NODE_ENV === 'production') await bootstrapProductionAdmin(connection, process.env);
-      }
-      finally { await connection.query('SELECT RELEASE_LOCK(?)', [lockName]); }
-    } finally { connection.release(); }
+      await this.runLocked(connection);
+      await assertSchemaInvariants(this.pool);
+      if (process.env.NODE_ENV === 'production') await bootstrapProductionAdmin(connection, process.env);
+      await connection.query('SELECT RELEASE_LOCK(?)', [lockName]);
+    } catch (error) {
+      // Closing the session also releases its advisory lock. Never return a
+      // failed session whose transaction/lock cleanup may be incomplete.
+      connection.destroy();
+      throw error;
+    }
+    connection.release();
   }
 
   async baseline(actor: string, reason: string): Promise<void> {
@@ -251,8 +255,19 @@ export class MigrationRunner {
       await connection.query(`UPDATE app_schema_migrations SET status = 'completed', finished_at = NOW(), statement_index = NULL, error = NULL WHERE migration_id = ?`, [migration.id]);
     } catch (error) {
       const message = error instanceof Error ? error.message.slice(0, 4096) : String(error).slice(0, 4096);
-      await connection.query(`UPDATE app_schema_migrations SET status = 'failed', finished_at = NOW(), statement_index = ?, error = ? WHERE migration_id = ?`, [statementIndex, message, migration.id]);
-      throw new MigrationError(`Migration ${migration.id} failed: ${message}`);
+      const failure = new MigrationError(`Migration ${migration.id} failed at statement ${statementIndex}: ${message}`, { cause: error });
+      try {
+        // A statement error need not abort an explicit MySQL transaction.
+        // Roll back before writing the ledger; DDL already committed by MySQL
+        // remains an explicit-repair case and must never be replayed here.
+        await connection.query('ROLLBACK');
+        await connection.query(`UPDATE app_schema_migrations SET status = 'failed', finished_at = NOW(), statement_index = ?, error = ? WHERE migration_id = ?`, [statementIndex, message, migration.id]);
+        // Also persist the ledger when migration SQL disabled autocommit.
+        await connection.query('COMMIT');
+      } catch (cleanupError) {
+        throw new AggregateError([failure, cleanupError], `${failure.message}; migration cleanup failed`, { cause: failure });
+      }
+      throw failure;
     }
   }
 
