@@ -79,6 +79,7 @@ import { installHistoricalMetricRoutes } from './src/metrics/legacy-routes.js';
 import { databaseService } from './src/database-service.js';
 import { llmService } from './src/llm-service.js';
 import { dbConnection } from './src/db-connection.js';
+import { bindApiListener } from './src/config/api-listen.js';
 import { loadSecurityConfig } from './src/config/security-config.js';
 import { publicInstanceDto, publicNotificationDto, publicServerDto } from './src/security/public-dto.js';
 import { isNotificationChannelType, validateNotificationChannelConfig } from './src/notification-channel-config.js';
@@ -5357,9 +5358,8 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
 
   registerCronRoutes(fastify, verifyToken, () => recovery.ready && dispatchAvailable ? cronManager : undefined);
 
-  // 启动 HTTP API 服务器
-  const port = process.env.PORT || process.env.BACKEND_PORT || process.env.API_PORT || 3000;
-  await fastify.listen({ port: Number(port), host: '0.0.0.0' });
+  // 启动 HTTP API 服务器。端口优先级：PORT、BACKEND_PORT、API_PORT，默认 3000。
+  const port = await bindApiListener(fastify);
   try {
     // Acquire and renew the lease while one-time API dependencies initialize.
     await recovery.start(initializeApi, startWorkers);

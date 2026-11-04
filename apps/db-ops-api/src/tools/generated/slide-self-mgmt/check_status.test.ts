@@ -40,14 +40,19 @@ vi.mock('../../../instance-database-service.js', () => ({
 }));
 vi.mock('../../../llm/provider-catalog.js', () => ({ getAllProviders: () => [] }));
 
+import { resetRecordedApiBind } from '../../../config/api-listen.js';
 import { checkStatusTool } from './check_status.js';
 
 describe('slide_check_status frontend health', () => {
   const fetchMock = vi.fn();
   beforeEach(() => {
+    resetRecordedApiBind();
     vi.stubEnv('NODE_ENV', 'production');
     vi.stubEnv('FRONTEND_URL', '');
     vi.stubEnv('SLIDE_PUBLIC_ORIGIN', '');
+    vi.stubEnv('PORT', '');
+    vi.stubEnv('BACKEND_PORT', '');
+    vi.stubEnv('API_PORT', '');
     vi.stubGlobal('fetch', fetchMock);
     fetchMock.mockReset().mockResolvedValue({ ok: true, status: 200 });
   });
@@ -183,9 +188,13 @@ describe('slide_check_status core database failures', () => {
   }
 
   beforeEach(() => {
+    resetRecordedApiBind();
     vi.stubEnv('NODE_ENV', 'production');
     vi.stubEnv('FRONTEND_URL', '');
     vi.stubEnv('SLIDE_PUBLIC_ORIGIN', '');
+    vi.stubEnv('PORT', '');
+    vi.stubEnv('BACKEND_PORT', '');
+    vi.stubEnv('API_PORT', '');
     vi.stubEnv('DB_HOST', '10.1.2.3');
     vi.stubEnv('DB_PORT', '3306');
     vi.stubEnv('DB_NAME', 'slide_platform');
@@ -218,7 +227,8 @@ describe('slide_check_status core database failures', () => {
   it('does not keep a hardcoded database display name as the core-failure key', () => {
     const source = readFileSync(new URL('./check_status.ts', import.meta.url), 'utf8');
     expect(source).not.toContain('系统数据库 (MySQL)');
-    expect(source).toContain('http://localhost:3000/api/health');
+    expect(source).not.toContain('http://localhost:3000/api/health');
+    expect(source).toContain('readApiProbe');
   });
 
   it('treats a disconnected platform database as a core failure under any display name', async () => {
