@@ -29,8 +29,17 @@ export async function runObservation(container, port, command, args) {
     catch { recordingFailed = true; process.stderr.write('RECOVERY_OBSERVATION_WRITE_FAILED\n'); }
   };
   const bounded = async (file, argv, options = {}) => {
-    try { return { ok: true, stdout: (await execute(file, argv, { timeout: 2500, maxBuffer: 128 * 1024, ...options })).stdout.trim() }; }
-    catch (error) { return { ok: false, code: typeof error.code === 'number' ? error.code : 'EXECUTION_FAILED', signal: error.signal }; }
+    const retries = options.retries ?? 0;
+    const execOptions = { timeout: 2500, maxBuffer: 128 * 1024, ...options };
+    delete execOptions.retries;
+    for (let attempt = 0; ; attempt++) {
+      try { return { ok: true, stdout: (await execute(file, argv, execOptions)).stdout.trim() }; }
+      catch (error) {
+        const failure = { ok: false, code: typeof error.code === 'number' ? error.code : 'EXECUTION_FAILED', signal: error.signal ?? null };
+        // `docker stats --no-stream` can be killed by SIGPIPE while the container is still readable.
+        if (error.signal !== 'SIGPIPE' || attempt >= retries) return failure;
+      }
+    }
   };
   const commit = await bounded('git', ['rev-parse', 'HEAD']);
   if (!commit.ok || !/^[a-f0-9]{40}$/.test(commit.stdout)) throw new Error('Missing source identity');
@@ -55,7 +64,7 @@ export async function runObservation(container, port, command, args) {
       // Explicit columns exclude statement text, SQL bindings, connection credentials and business rows.
       const sql = `SELECT PROCESSLIST_ID,PROCESSLIST_DB,PROCESSLIST_COMMAND,PROCESSLIST_TIME,PROCESSLIST_STATE FROM performance_schema.threads WHERE ${predicate} LIMIT 100; SELECT t.PROCESSLIST_ID,w.EVENT_NAME,w.TIMER_WAIT,w.OPERATION FROM performance_schema.events_waits_current w JOIN performance_schema.threads t ON w.THREAD_ID=t.THREAD_ID WHERE ${predicate} LIMIT 100;`;
       const [stats, waits] = await Promise.all([
-        bounded('docker', ['stats', '--no-stream', '--format', '{{.CPUPerc}}|{{.MemUsage}}|{{.BlockIO}}|{{.PIDs}}', container]),
+        bounded('docker', ['stats', '--no-stream', '--format', '{{.CPUPerc}}|{{.MemUsage}}|{{.BlockIO}}|{{.PIDs}}', container], { retries: 2 }),
         bounded('docker', ['exec', '--env', 'MYSQL_PWD=qualification-test-password', container, 'mysql', '-uroot', '--batch', '--skip-column-names', '-e', sql]),
       ]);
       record({ event: final ? 'final-snapshot' : 'sample', databases, connectionIds, pendingSql: pendingSql(hookEvents, process.hrtime.bigint()), stats, waits,

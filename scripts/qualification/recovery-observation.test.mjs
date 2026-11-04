@@ -51,3 +51,69 @@ test('failed child keeps its exit status, pending SQL and pre-cleanup snapshot',
 test('cleanup rejects shared container identities before invoking docker', async () => {
   await assert.rejects(cleanupContainer('shared-mysql'), /Invalid cleanup/);
 });
+
+test('docker stats SIGPIPE is retried and a hard stats failure still fails the run', async () => {
+  const { mkdtempSync, writeFileSync, readFileSync, rmSync, mkdirSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const previous = {
+    PATH: process.env.PATH,
+    RECOVERY_OBSERVATION_DIR: process.env.RECOVERY_OBSERVATION_DIR,
+    RECOVERY_STATS_MODE: process.env.RECOVERY_STATS_MODE,
+  };
+  const directory = mkdtempSync(join(tmpdir(), 'recovery-stats-'));
+  try {
+    const bin = join(directory, 'bin'); mkdirSync(bin);
+    const count = join(directory, 'stats-count');
+    writeFileSync(join(bin, 'docker'), `#!/bin/bash
+case "$1" in
+  inspect) echo "sha256:${'a'.repeat(64)}";;
+  image) echo "sha256:${'a'.repeat(64)} aarch64 linux";;
+  stats)
+    n=0; [ -f ${JSON.stringify(count)} ] && n=$(cat ${JSON.stringify(count)})
+    n=$((n + 1)); echo "$n" > ${JSON.stringify(count)}
+    case "$RECOVERY_STATS_MODE" in
+      pipe) if [ "$n" -le 1 ]; then trap - PIPE; kill -PIPE $$; fi;;
+      always) trap - PIPE; kill -PIPE $$;;
+      exit) exit 2;;
+    esac
+    echo "1%|20MiB|0B|1";;
+  exec|rm) exit 0;;
+  *) exit 90;;
+esac
+`, { mode: 0o755 });
+    const child = join(directory, 'child.mjs');
+    writeFileSync(child, `import {writeFileSync} from 'node:fs'; import {join} from 'node:path';
+      writeFileSync(join(process.env.RECOVERY_OBSERVATION_DIR,'hook-9.jsonl'), JSON.stringify({utc:new Date().toISOString(),monotonicNs:'1',event:'hook-exit',kind:'stage',pid:9,commit:process.env.RECOVERY_OBSERVATION_COMMIT,database:'investigation_test_9_${'a'.repeat(32)}',pending:[]})+'\\n');
+`);
+    process.env.PATH = `${bin}:${previous.PATH}`;
+    const observe = async mode => {
+      writeFileSync(count, '0');
+      process.env.RECOVERY_OBSERVATION_DIR = mkdtempSync(join(directory, 'out-'));
+      process.env.RECOVERY_STATS_MODE = mode;
+      const code = await runObservation('slide-report-recovery-123-456', '12345', process.execPath, [child]);
+      const rows = readFileSync(join(process.env.RECOVERY_OBSERVATION_DIR, 'runner.jsonl'), 'utf8').trim().split('\n').map(JSON.parse);
+      return { code, rows, calls: Number(readFileSync(count, 'utf8')) };
+    };
+    const recovered = await observe('pipe');
+    assert.equal(recovered.code, 0);
+    assert.equal(recovered.calls, 2);
+    assert.equal(recovered.rows.at(-1).recordingFailed, false);
+    assert.equal(recovered.rows.find(row => row.event === 'final-snapshot').stats.ok, true);
+    const persistent = await observe('always');
+    assert.equal(persistent.code, 1);
+    assert.equal(persistent.calls, 3);
+    assert.equal(persistent.rows.at(-1).code, 0);
+    assert.equal(persistent.rows.at(-1).recordingFailed, true);
+    assert.equal(persistent.rows.find(row => row.event === 'final-snapshot').stats.signal, 'SIGPIPE');
+    const hard = await observe('exit');
+    assert.equal(hard.code, 1);
+    assert.equal(hard.calls, 1);
+    assert.equal(hard.rows.find(row => row.event === 'final-snapshot').stats.code, 2);
+  } finally {
+    for (const [key, value] of Object.entries(previous)) {
+      if (value === undefined) delete process.env[key]; else process.env[key] = value;
+    }
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
