@@ -1,3 +1,6 @@
+import { redactSensitiveText as redactText } from './sensitive-text-redaction.js';
+export { redactSensitiveText } from './sensitive-text-redaction.js';
+
 /** Pure browser-safe display contract. Execution facts remain owned by checkpoints. */
 export type ToolPhase = 'planned' | 'queued' | 'running' | 'settled' | 'persisted';
 export type ToolOutcome = 'ok' | 'error' | 'cancelled' | 'unknown';
@@ -87,12 +90,6 @@ export function normalizeToolEvent(value: unknown): NormalizedToolEvent | null {
 }
 
 const sensitiveKey = /password|passwd|pwd|secret|token|api[_-]?key|authorization|cookie|credential|connection[_-]?string|private[_-]?key/i;
-function redactText(text: string): string {
-  return text.replace(/\bBearer\s+[A-Za-z0-9._~+/=-]+/gi, '[REDACTED]')
-    .replace(/\bsk-[A-Za-z0-9_-]{8,}/g, '[REDACTED]')
-    .replace(/((?:password|passwd|secret|token|api[_-]?key|authorization)\s*[=:]\s*)[^\s,;]+/gi, '$1[REDACTED]');
-}
-
 /** Bounds depth, entries and characters before serializing; never forwards raw output. */
 export function boundedToolValue(value: unknown, redact = redactText): unknown {
   let entries = 64;

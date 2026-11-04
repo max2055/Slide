@@ -1,13 +1,9 @@
+import { redactSensitiveText as redactToolText } from '@slide/agent-core/tool-stream';
+
 const SENSITIVE_KEY = /password|passwd|secret|token|authorization|api[_-]?key|credential|private[_-]?key|webhook/i;
-const SENSITIVE_TEXT = [
-  /\bBearer\s+[A-Za-z0-9._~+/=-]+/gi,
-  /\bsk-[A-Za-z0-9_-]{8,}/g,
-  /((?:password|passwd|secret|token|api[_-]?key|authorization)\s*[=:]\s*)[^\s,;]+/gi,
-  /(\/open-apis\/bot\/v2\/hook\/)[^\s/?#]+/gi,
-];
 
 export function redactSensitiveText(value: string): string {
-  return SENSITIVE_TEXT.reduce((text, pattern) => text.replace(pattern, '$1[REDACTED]'), value);
+  return redactToolText(value).replace(/(\/open-apis\/bot\/v2\/hook\/)[^\s/?#]+/gi, '$1[REDACTED]');
 }
 
 export function redactLogValue(value: unknown, seen = new WeakSet<object>()): unknown {

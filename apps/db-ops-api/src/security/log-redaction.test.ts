@@ -10,6 +10,20 @@ describe('log redaction', () => {
     expect(value).not.toContain('tenant-secret');
   });
 
+  it('redacts credentials in JSON-style text while preserving keys and prose', () => {
+    expect(redactSensitiveText('{"token": "value with \\"quotes\\"", "api_key" : "another secret"}'))
+      .toBe('{"token": "[REDACTED]", "api_key" : "[REDACTED]"}');
+    expect(redactSensitiveText('{"TOKEN":"upper","apiKey":"camel","x-api-key":"prefixed","clientSecret":"secret"}'))
+      .toBe('{"TOKEN":"[REDACTED]","apiKey":"[REDACTED]","x-api-key":"[REDACTED]","clientSecret":"[REDACTED]"}');
+    expect(redactSensitiveText('{"message":"the word token is not a credential"}'))
+      .toBe('{"message":"the word token is not a credential"}');
+    expect(redactSensitiveText('{"token": {\n  "nested": ["first", "secret"]\n}, "ok": true}'))
+      .toBe('{"token": "[REDACTED]", "ok": true}');
+    expect(redactSensitiveText('{"token":"truncated secret')).toBe('{"token":"[REDACTED]');
+    expect(redactSensitiveText('{\\"token\\":\\"escaped secret\\"}')).toBe('{\\"token\\":\\"[REDACTED]\\"}');
+    expect(redactSensitiveText('A token is issued after login.')).toBe('A token is issued after login.');
+  });
+
   it('redacts sensitive object keys and removes error stacks', () => {
     const result = redactLogValue({ username: 'admin', password: 'secret', nested: new Error('token=abc') });
     expect(result).toEqual({ username: 'admin', password: '[REDACTED]', nested: { name: 'Error', message: 'token=[REDACTED]' } });
