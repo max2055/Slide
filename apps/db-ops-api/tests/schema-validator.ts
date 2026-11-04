@@ -78,9 +78,16 @@ async function extractEnums(directory: string) {
   };
   for (const migration of await loadMigrations(directory)) {
     for (const raw of splitSqlStatements(migration.sql)) {
-      // Preserve quoted content while removing comments before DDL detection.
+      // Preserve quoted content. MySQL/MariaDB executable comments may alter
+      // schema depending on the server version; they are not verified offline.
       const sql = raw.replace(/('(?:''|\\.|[^'\\])*'|"(?:""|\\.|[^"\\])*"|`[^`]*`)|--[^\n]*|#[^\n]*|\/\*[\s\S]*?\*\//g,
-        (_match, quoted) => quoted ?? " ").trim();
+        (match, quoted) => {
+          if (!quoted && /^\/\*(?:!|M!)/i.test(match)) {
+            variables.clear();
+            markTables(targets, migration.id);
+          }
+          return quoted ?? " ";
+        }).trim();
       // Dynamic dispatch must be inspected before the contiguous DDL filter:
       // CONCAT/unknown expressions may contain no complete DDL keywords at all.
       if (/^CALL\b/i.test(sql)) {
@@ -126,7 +133,7 @@ async function extractEnums(directory: string) {
       }
       if (!/\b(?:CREATE\s+TABLE|ALTER\s+TABLE|DROP\s+TABLE|RENAME\s+TABLE)\b/i.test(sql)) continue;
       const affected = targets.filter((table) => new RegExp(
-        `\\b(?:CREATE\\s+TABLE\\s+(?:IF\\s+NOT\\s+EXISTS\\s+)?|ALTER\\s+TABLE\\s+|DROP\\s+TABLE\\s+(?:IF\\s+EXISTS\\s+)?|RENAME\\s+TABLE\\s+)(?:\x60?\\w+\x60?\\.)?\x60?${table}\\b`, "i",
+        `\\b(?:CREATE\\s+TABLE\\s+(?:IF\\s+NOT\\s+EXISTS\\s+)?|ALTER\\s+TABLE\\s+|DROP\\s+TABLE\\s+(?:IF\\s+EXISTS\\s+)?|RENAME\\s+TABLE\\s+)(?:(?:\x60(?:\x60\x60|[^\x60])+\x60|[^\\s.\x60;(),]+)\\s*\\.\\s*)?\x60?${table}\\b`, "i",
       ).test(sql) || (/\b(?:DROP|RENAME)\s+TABLE\b/i.test(sql) && new RegExp(`\\b${table}\\b`, "i").test(sql)));
       if (!affected.length) continue;
       const markUncovered = () => markTables(affected, migration.id);

@@ -154,6 +154,8 @@ describe('schema-validator CLI (#398)', () => {
     'ALTER TABLE `app` . `reports` DROP COLUMN type;',
     'ALTER TABLE `app name` . `reports` DROP COLUMN type;',
     'ALTER TABLE app \n . \t reports DROP COLUMN type;',
+    'ALTER TABLE 数据库 . reports DROP COLUMN type;',
+    'ALTER TABLE `app``name` . `reports` DROP COLUMN type;',
   ])('rejects executable comments or qualified target syntax: %s', (migration) => {
     const result = cli(schema, migration);
     expect(result.status).toBe(1);
