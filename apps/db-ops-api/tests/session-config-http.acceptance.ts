@@ -40,8 +40,11 @@ async function freePort() {
 async function scenario(name: string, value: string | null, failSelect: boolean) {
   await pool.execute('DELETE FROM refresh_tokens');
   await pool.execute('DELETE FROM system_config WHERE config_key=?', [configKey]);
-  // Seed a real token before enabling the failure/invalid policy.
-  await pool.execute("INSERT INTO system_config (config_key,config_value,value_type) VALUES (?, '5', 'number')", [configKey]);
+  // Seed a real token before enabling the failure/invalid policy. The first-deployment
+  // scenario starts with no policy row and leaves it absent throughout HTTP issuance.
+  if (value !== null) {
+    await pool.execute("INSERT INTO system_config (config_key,config_value,value_type) VALUES (?, '5', 'number')", [configKey]);
+  }
   const port = await freePort();
   const wsPort = await freePort();
   let logs = '';
