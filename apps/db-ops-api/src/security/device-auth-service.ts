@@ -34,12 +34,22 @@ export class DeviceAuthService {
   async register(actor: ActorContext, deviceId: string, publicKey: string): Promise<{ deviceId: string; status: string }> {
     if (!DEVICE_ID_RE.test(deviceId) || decodeBase64Url(publicKey).length !== 32) throw new Error('DEVICE_AUTH_INPUT_INVALID');
     publicKeyObject(publicKey);
-    await this.executor().execute(
+    const executor = this.executor();
+    await executor.execute(
       `INSERT INTO device_registrations (user_id, device_id, public_key, status, paired_by)
        VALUES (?, ?, ?, 'paired', ?)
-       ON DUPLICATE KEY UPDATE public_key = VALUES(public_key), status = IF(status = 'revoked', 'paired', status), paired_by = VALUES(paired_by)`,
+       ON DUPLICATE KEY UPDATE
+         public_key = IF(status = 'paired', VALUES(public_key), public_key),
+         paired_by = IF(status = 'paired', VALUES(paired_by), paired_by)`,
       [actor.userId, deviceId, publicKey, actor.userId],
     );
+    // The unique-key write takes the row lock before inspecting status. A
+    // concurrent revocation cannot be undone, nor can a revoked key be replaced.
+    const [rows] = await executor.execute(
+      `SELECT status FROM device_registrations WHERE user_id = ? AND device_id = ? LIMIT 1`,
+      [actor.userId, deviceId],
+    );
+    if (!Array.isArray(rows) || rows[0]?.status !== 'paired') throw new Error('DEVICE_AUTH_REVOKED');
     return { deviceId, status: 'paired' };
   }
 
