@@ -7,6 +7,7 @@ import { resolve } from 'node:path';
 import assert from 'node:assert/strict';
 import mysql from 'mysql2/promise';
 import jwt from 'jsonwebtoken';
+import { trackBootstrapProcess } from './bootstrap-process.js';
 const port = Number(process.env.BOOTSTRAP_TEST_MYSQL_PORT);
 assert(port, 'Dedicated BOOTSTRAP_TEST_MYSQL_PORT required');
 const root = resolve('../..');
@@ -23,12 +24,14 @@ let sequence = 0;
 let applicationReady = false;
 let processOutput = '';
 let active: ReturnType<typeof spawn> | undefined;
+const processes = new WeakMap<ReturnType<typeof spawn>, ReturnType<typeof trackBootstrapProcess>>();
 const delay = (ms: number) => new Promise(r => setTimeout(r, ms));
 function launch(command: string[], overrides = {}) {
   applicationReady = false;
   processOutput = '';
   const log = createWriteStream(resolve(output, `${++sequence}-process.log`));
   const child = spawn('pnpm', ['--filter', 'slide-api', ...command], { cwd: root, env: { ...env, ...overrides }, detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
+  processes.set(child, trackBootstrapProcess(child));
   child.stdout!.on('data', chunk => { processOutput += String(chunk); if (String(chunk).includes('WORKER_READY')) applicationReady = true; });
   child.stderr!.on('data', chunk => { processOutput += String(chunk); });
   child.stdout!.pipe(log); child.stderr!.pipe(log);
@@ -37,23 +40,26 @@ function launch(command: string[], overrides = {}) {
   active = child; return child;
 }
 async function stop() {
-  if (!active || active.exitCode !== null) { active = undefined; return; }
-  const child = active;
-  // This process group was created exclusively by this harness; never stop by port/name.
-  process.kill(-child.pid!, 'SIGTERM');
-  for (let i = 0; i < 100 && child.exitCode === null; i++) await delay(100);
-  if (child.exitCode === null) { process.kill(-child.pid!, 'SIGKILL'); await new Promise(r => child.once('close', r)); }
+  if (!active) return;
+  await processes.get(active)!.stop();
+  for (const port of [httpPort, wsPort]) {
+    await new Promise<void>((done, reject) => {
+      const probe = createServer();
+      probe.once('error', reject);
+      probe.listen(port, '127.0.0.1', () => probe.close(error => error ? reject(error) : done()));
+    });
+  }
   active = undefined;
 }
 async function completed(child: ReturnType<typeof spawn>) {
-  const code = await new Promise<number | null>(r => child.once('close', r));
-  active = undefined; return code;
+  const result = await processes.get(child)!.closed;
+  await stop(); return result.code;
 }
 const base = `http://127.0.0.1:${httpPort}`;
 async function start(overrides = {}) {
   const child = launch(['start'], overrides);
   for (let i = 0; i < 240; i++) {
-    if (child.exitCode !== null) throw new Error(`start exited ${child.exitCode}; inspect process log`);
+    if (child.exitCode !== null || child.signalCode !== null) throw new Error(`start exited ${child.exitCode ?? child.signalCode}; inspect process log`);
     try { const res = await fetch(`${base}/api/health`); if (res.ok && applicationReady) return; } catch {}
     await delay(250);
   }
@@ -72,6 +78,7 @@ async function permissions(token: string, expected: number) {
 }
 await admin.query(`CREATE DATABASE ${database}`);
 const pool = mysql.createPool({ ...config, database });
+let businessError: unknown;
 try {
   assert.equal(await completed(launch(['init-db'])), 0);
   for (const [name, value] of [
@@ -81,7 +88,7 @@ try {
   ] as const) {
     let listenerSeen = false;
     const invalid = launch(['start'], { JWT_SECRET_KEY: value });
-    for (let attempt = 0; invalid.exitCode === null && attempt < 1200; attempt++) {
+    for (let attempt = 0; invalid.exitCode === null && invalid.signalCode === null && attempt < 1200; attempt++) {
       try { await fetch(`${base}/api/health`); listenerSeen = true; } catch {}
       await delay(50);
     }
@@ -90,7 +97,7 @@ try {
     // The installed fatal handler intentionally suppresses exception details.
     assert.match(processOutput, /FATAL_UNCAUGHT_EXCEPTION/);
     for (const secret of [env.ENCRYPTION_KEY, env.INITIAL_ADMIN_PASSWORD]) assert.equal(processOutput.includes(secret), false, 'startup log must not disclose secrets');
-    active = undefined;
+    await stop();
     console.log(`MAX-266 JWT ${name}: nonzero exit, no HTTP listener, no secret disclosure: PASS`);
   }
   // Startup constructs a provider but this test never invokes it. Keep all endpoints local.
@@ -125,15 +132,22 @@ try {
   console.log('Upgrade: previously working HTTP-issued JWT rejected after production startup: PASS');
   let listenerSeen = false;
   const invalid = launch(['start'], { INITIAL_ADMIN_PASSWORD: '' });
-  for (let attempt = 0; invalid.exitCode === null && attempt < 1200; attempt++) {
+  for (let attempt = 0; invalid.exitCode === null && invalid.signalCode === null && attempt < 1200; attempt++) {
     try { await fetch(`${base}/api/health`); listenerSeen = true; } catch {}
     await delay(50);
   }
   assert.notEqual(invalid.exitCode, null, 'invalid startup must terminate');
   assert.notEqual(invalid.exitCode, 0); assert.equal(listenerSeen, false);
-  active = undefined;
+  await stop();
   console.log('Invalid production bootstrap config: nonzero exit, HTTP listener never available: PASS');
+} catch (error) {
+  businessError = error;
+  throw error;
 } finally {
-  await stop(); await pool.end(); await admin.query(`DROP DATABASE ${database}`); await admin.end();
+  const errors: unknown[] = [];
+  for (const cleanup of [() => stop(), () => pool.end(), () => admin.query(`DROP DATABASE ${database}`), () => admin.end()]) {
+    try { await cleanup(); } catch (error) { errors.push(error); }
+  }
+  if (errors.length) throw new AggregateError([...(businessError ? [businessError] : []), ...errors], 'Bootstrap acceptance cleanup failed; original business failure retained');
 }
 console.log('MAX-267 formal-entry HTTP acceptance PASS; schemas removed; child processes stopped; LLM calls=0');
