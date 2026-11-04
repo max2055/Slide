@@ -339,7 +339,7 @@ async function checkPlatformDatabase(): Promise<ServiceStatus> {
   const pool = dbConnection.isConnected() ? dbConnection.getPool() : null;
   if (!pool) return { ...status, error: '平台数据库未连接' };
   try {
-    const alive = await withTimeout(pingPlatformPool(pool), 5000, false);
+    const alive = await pingPlatformPool(pool);
     return alive ? { ...status, status: 'running' } : { ...status, error: '平台数据库连接已断开' };
   } catch (error: unknown) {
     const errorMessage = error instanceof Error ? error.message : String(error);
@@ -347,13 +347,74 @@ async function checkPlatformDatabase(): Promise<ServiceStatus> {
   }
 }
 
-async function pingPlatformPool(pool: NonNullable<ReturnType<typeof dbConnection.getPool>>): Promise<boolean> {
-  const connection = await pool.getConnection();
+/** 平台库探活上限。到点后 ping 可能仍未结束，连接不能归还复用。 */
+const PLATFORM_DB_PING_TIMEOUT_MS = 5000;
+
+type PlatformPool = NonNullable<ReturnType<typeof dbConnection.getPool>>;
+type PlatformPoolConnection = Awaited<ReturnType<PlatformPool['getConnection']>>;
+
+function releasePlatformConnection(connection: PlatformPoolConnection): void {
   try {
-    await connection.ping();
+    connection.release();
+  } catch {
+    retirePlatformConnection(connection);
+  }
+}
+
+function retirePlatformConnection(connection: PlatformPoolConnection): void {
+  try {
+    connection.destroy();
+  } catch {
+    // 连接已经关闭。不要再 release，避免把未完成探活的连接借给下一次查询。
+  }
+}
+
+async function pingPlatformPool(pool: PlatformPool): Promise<boolean> {
+  let connection: PlatformPoolConnection | undefined;
+  let abandoned = false;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+
+  const acquired = pool.getConnection().then((conn) => {
+    if (abandoned) {
+      retirePlatformConnection(conn);
+      return undefined;
+    }
+    connection = conn;
+    return conn;
+  });
+
+  const timedOut = new Promise<undefined>((resolve) => {
+    timer = setTimeout(() => {
+      abandoned = true;
+      resolve(undefined);
+    }, PLATFORM_DB_PING_TIMEOUT_MS);
+  });
+
+  try {
+    const conn = await Promise.race([acquired, timedOut]);
+    if (!conn || abandoned) return false;
+
+    let failure: unknown;
+    const alive = await Promise.race([
+      conn.ping().then(() => true, (error: unknown) => {
+        failure = error;
+        return false;
+      }),
+      timedOut.then(() => false),
+    ]);
+    if (!alive || abandoned) {
+      if (failure !== undefined && !abandoned) throw failure;
+      return false;
+    }
     return true;
   } finally {
-    connection.release();
+    if (timer) clearTimeout(timer);
+    const current = connection;
+    connection = undefined;
+    const reuse = !abandoned;
+    abandoned = true;
+    if (current && reuse) releasePlatformConnection(current);
+    else if (current) retirePlatformConnection(current);
   }
 }
 

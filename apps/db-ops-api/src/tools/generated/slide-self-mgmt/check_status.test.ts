@@ -1,20 +1,31 @@
 import { readFileSync } from 'node:fs';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const db = vi.hoisted(() => ({
-  getAllInstances: vi.fn(async () => [] as Array<Record<string, unknown>>),
-  getAllConnections: vi.fn(() => [] as Array<{ id: number }>),
-  checkConnectionAlive: vi.fn(async (_id?: number) => true),
-  platformConnected: true,
-  platformPing: vi.fn(async () => {}),
-}));
+const db = vi.hoisted(() => {
+  const state = {
+    getAllInstances: vi.fn(async () => [] as Array<Record<string, unknown>>),
+    getAllConnections: vi.fn(() => [] as Array<{ id: number }>),
+    checkConnectionAlive: vi.fn(async (_id?: number) => true),
+    platformConnected: true,
+    platformPing: vi.fn(async () => {}),
+    platformRelease: vi.fn(),
+    platformDestroy: vi.fn(),
+    platformGetConnection: vi.fn(),
+  };
+  state.platformGetConnection.mockImplementation(async () => ({
+    ping: () => state.platformPing(),
+    release: () => state.platformRelease(),
+    destroy: () => state.platformDestroy(),
+  }));
+  return state;
+});
 
 vi.mock('../../catalog.js', () => ({ toolCatalog: { register: vi.fn() } }));
 vi.mock('../../../db-connection.js', () => ({
   dbConnection: {
     isConnected: () => db.platformConnected,
     getPool: () => (db.platformConnected ? {
-      getConnection: async () => ({ ping: () => db.platformPing(), release: () => {} }),
+      getConnection: () => db.platformGetConnection(),
     } : null),
   },
 }));
@@ -182,11 +193,22 @@ describe('slide_check_status core database failures', () => {
     fetchMock.mockReset().mockResolvedValue({ ok: true, status: 200 });
     db.platformConnected = true;
     db.platformPing.mockReset().mockResolvedValue(undefined);
+    db.platformRelease.mockReset();
+    db.platformDestroy.mockReset();
+    db.platformGetConnection.mockReset().mockImplementation(async () => ({
+      ping: () => db.platformPing(),
+      release: () => db.platformRelease(),
+      destroy: () => db.platformDestroy(),
+    }));
     db.getAllInstances.mockReset().mockResolvedValue([]);
     db.getAllConnections.mockReset().mockReturnValue([]);
     db.checkConnectionAlive.mockReset().mockResolvedValue(true);
   });
-  afterEach(() => { vi.unstubAllEnvs(); vi.unstubAllGlobals(); });
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
+  });
 
   async function statusOf(args: Record<string, unknown> = { test_db_connections: true }) {
     const result = await checkStatusTool.handler(args);
@@ -301,5 +323,104 @@ describe('slide_check_status core database failures', () => {
         { name: '数据库连接检查', status: 'error', error: 'query failed' },
       ]),
     });
+  });
+
+  it('releases the platform connection after a successful ping', async () => {
+    const result = await statusOf();
+    expect(result.data).toMatchObject({
+      overall: 'healthy',
+      services: expect.arrayContaining([
+        { name: '平台数据库', critical: true, status: 'running' },
+      ]),
+    });
+    expect(db.platformRelease).toHaveBeenCalledTimes(1);
+    expect(db.platformDestroy).not.toHaveBeenCalled();
+  });
+
+  it('releases the platform connection when ping rejects', async () => {
+    db.platformPing.mockRejectedValueOnce(new Error('ping refused'));
+    const result = await statusOf();
+    expect(result.data).toMatchObject({
+      overall: 'unhealthy',
+      services: expect.arrayContaining([
+        { name: '平台数据库', critical: true, status: 'error', error: 'ping refused' },
+      ]),
+    });
+    expect(db.platformRelease).toHaveBeenCalledTimes(1);
+    expect(db.platformDestroy).not.toHaveBeenCalled();
+  });
+
+  it('does not keep a connection when borrowing is refused', async () => {
+    db.platformGetConnection.mockRejectedValueOnce(new Error('pool refused'));
+    const result = await statusOf();
+    expect(result.data).toMatchObject({
+      overall: 'unhealthy',
+      services: expect.arrayContaining([
+        { name: '平台数据库', critical: true, status: 'error', error: 'pool refused' },
+      ]),
+    });
+    expect(db.platformRelease).not.toHaveBeenCalled();
+    expect(db.platformDestroy).not.toHaveBeenCalled();
+  });
+
+  it('destroys a stuck platform ping instead of returning it to the pool', async () => {
+    vi.useFakeTimers();
+    let outstanding = 0;
+    let released = 0;
+    let destroyed = 0;
+    db.platformGetConnection.mockImplementation(async () => {
+      outstanding += 1;
+      return {
+        ping: () => new Promise(() => {}),
+        release: () => { outstanding -= 1; released += 1; },
+        destroy: () => { outstanding -= 1; destroyed += 1; },
+      };
+    });
+
+    for (let i = 0; i < 10; i += 1) {
+      const pending = statusOf();
+      await vi.advanceTimersByTimeAsync(5000);
+      const result = await pending;
+      expect(result.data).toMatchObject({
+        overall: 'unhealthy',
+        services: expect.arrayContaining([
+          expect.objectContaining({ name: '平台数据库', critical: true, status: 'error', error: '平台数据库连接已断开' }),
+        ]),
+      });
+    }
+
+    expect({ outstanding, released, destroyed }).toEqual({ outstanding: 0, released: 0, destroyed: 10 });
+  });
+
+  it('destroys a platform connection that arrives after the ping timeout', async () => {
+    vi.useFakeTimers();
+    let grant: (connection: { ping: () => Promise<void>; release: () => void; destroy: () => void }) => void = () => {};
+    const connection = {
+      ping: vi.fn(async () => {}),
+      release: vi.fn(),
+      destroy: vi.fn(),
+    };
+    db.platformGetConnection.mockImplementation(() => new Promise((resolve) => {
+      grant = resolve;
+    }));
+
+    const pending = statusOf();
+    await vi.advanceTimersByTimeAsync(5000);
+    const result = await pending;
+    expect(result.data).toMatchObject({
+      overall: 'unhealthy',
+      services: expect.arrayContaining([
+        expect.objectContaining({ name: '平台数据库', critical: true, status: 'error', error: '平台数据库连接已断开' }),
+      ]),
+    });
+    expect(connection.destroy).not.toHaveBeenCalled();
+
+    grant(connection);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(connection.ping).not.toHaveBeenCalled();
+    expect(connection.release).not.toHaveBeenCalled();
+    expect(connection.destroy).toHaveBeenCalledTimes(1);
   });
 });
