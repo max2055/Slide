@@ -1,9 +1,7 @@
 import { test, expect } from "@playwright/test";
 
-const BASE = "http://localhost:5173";
-
 async function login(page: any) {
-  await page.goto(BASE, { waitUntil: "domcontentloaded" });
+  await page.goto("/", { waitUntil: "domcontentloaded" });
   await page.waitForSelector(".login-gate__connect", { timeout: 10000 });
   await page.fill('input[autocomplete="username"]', "admin");
   await page.fill('input[autocomplete="current-password"]', "Tpam1234");
@@ -15,7 +13,7 @@ async function login(page: any) {
 test.describe("Settings sub-tabs", () => {
   test.beforeEach(async ({ page }) => {
     await login(page);
-    await page.goto(`${BASE}/settings`, { waitUntil: "domcontentloaded" });
+    await page.goto("/settings", { waitUntil: "domcontentloaded" });
     await page.waitForTimeout(2000);
     await page.waitForSelector(".settings-subtab", { timeout: 5000 });
   });
@@ -62,7 +60,7 @@ test.describe("Navigation", () => {
   });
 
   test("sidebar has key tabs", async ({ page }) => {
-    await page.goto(`${BASE}/dashboard`, { waitUntil: "domcontentloaded" });
+    await page.goto("/dashboard", { waitUntil: "domcontentloaded" });
     await page.waitForTimeout(2000);
     const sidebar = await page.locator(".sidebar-nav").innerText();
     expect(sidebar).toContain("Dashboard");
@@ -72,26 +70,26 @@ test.describe("Navigation", () => {
   });
 
   test("alerts page loads with tabs", async ({ page }) => {
-    await page.goto(`${BASE}/alerts`, { waitUntil: "domcontentloaded" });
+    await page.goto("/alerts", { waitUntil: "domcontentloaded" });
     await page.waitForTimeout(2000);
     await expect(page.locator(".tabs").first()).toBeVisible({ timeout: 5000 });
   });
 
   test("reports page loads", async ({ page }) => {
-    await page.goto(`${BASE}/reports`, { waitUntil: "domcontentloaded" });
+    await page.goto("/reports", { waitUntil: "domcontentloaded" });
     await page.waitForTimeout(2000);
     await expect(page.locator("reports-page")).toBeAttached({ timeout: 5000 });
   });
 
   test("metric registry page loads", async ({ page }) => {
-    await page.goto(`${BASE}/metric-registry`, { waitUntil: "domcontentloaded" });
+    await page.goto("/metric-registry", { waitUntil: "domcontentloaded" });
     await page.waitForTimeout(3000);
     // Page should load (may have cards or empty state)
     await expect(page.locator("metric-registry-viewer")).toBeAttached({ timeout: 5000 });
   });
 
   test("cron jobs page loads", async ({ page }) => {
-    await page.goto(`${BASE}/cron-jobs`, { waitUntil: "domcontentloaded" });
+    await page.goto("/cron-jobs", { waitUntil: "domcontentloaded" });
     await page.waitForTimeout(2000);
     await expect(page.locator("cron-jobs-settings")).toBeAttached({ timeout: 5000 });
   });
