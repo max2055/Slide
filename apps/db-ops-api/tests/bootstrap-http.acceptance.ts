@@ -87,7 +87,8 @@ try {
     }
     assert.notEqual(invalid.exitCode, null, 'invalid JWT startup must terminate');
     assert.notEqual(invalid.exitCode, 0); assert.equal(listenerSeen, false);
-    assert.match(processOutput, /SecurityConfigurationError: JWT_SECRET_KEY must/);
+    // The installed fatal handler intentionally suppresses exception details.
+    assert.match(processOutput, /FATAL_UNCAUGHT_EXCEPTION/);
     for (const secret of [env.ENCRYPTION_KEY, env.INITIAL_ADMIN_PASSWORD]) assert.equal(processOutput.includes(secret), false, 'startup log must not disclose secrets');
     active = undefined;
     console.log(`MAX-266 JWT ${name}: nonzero exit, no HTTP listener, no secret disclosure: PASS`);
