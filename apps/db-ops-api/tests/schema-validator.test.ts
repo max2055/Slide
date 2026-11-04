@@ -27,7 +27,7 @@ function cli(base = schema, migration = '') {
   symlinkSync(join(root, 'src'), join(dir, 'src'));
   copyFileSync(join(root, 'tests/schema-validator.ts'), join(dir, 'tests/schema-validator.ts'));
   // A stale legacy schema must never override current migration definitions.
-  writeFileSync(join(dir, 'sql/schema.sql'), schema.replace(/(CREATE TABLE|ENUM)/g, (v) => v));
+  writeFileSync(join(dir, 'sql/schema.sql'), schema);
   writeFileSync(join(dir, 'sql/migrations/000_schema_baseline.sql'), base);
   writeFileSync(join(dir, 'sql/migrations/999_contract.sql'), migration);
   const result = spawnSync(process.execPath, ['--import', 'tsx', 'tests/schema-validator.ts'], {
@@ -59,7 +59,7 @@ describe('schema-validator CLI (#398)', () => {
     const result = cli(schema, migration);
     expect(result.status).toBe(1);
     expect(result.output).not.toContain('10 passed');
-    expect(result.output).toMatch(/reports\.type:[\s\S]*(MISSING|UNCOVERED|NOT IN ENUM)/);
+    expect(result.output).toMatch(/reports\.type:[\s\S]*(MISSING|UNCOVERED|NOT ENUM|NOT IN ENUM)/);
   });
 
   it('reports an absent ENUM separately, without counting it passed', () => {
@@ -83,5 +83,38 @@ describe('schema-validator CLI (#398)', () => {
     const result = cli(schema, 'ALTER TABLE reports SOMETHING_UNSUPPORTED type;');
     expect(result.status).toBe(1);
     expect(result.output).toContain('UNCOVERED');
+  });
+
+  it('does not confuse FK references or conditional unrelated columns with contracts', () => {
+    const result = cli(schema, `
+      CREATE TABLE other (user_id INT, FOREIGN KEY (user_id) REFERENCES users(id));
+      SET @ddl = 'ALTER TABLE reports ADD COLUMN extra INT';
+      PREPARE stmt FROM @ddl; EXECUTE stmt;
+      ALTER TABLE reports COMMENT = 'documentation';
+    `);
+    expect(result.status).toBe(0);
+    expect(result.output).toContain('10 passed, 0 failed, 0 missing, 0 uncovered');
+  });
+
+  it('keeps uncertainty for conditional changes to a checked column', () => {
+    const result = cli(schema, `SET @ddl = "ALTER TABLE reports MODIFY COLUMN type ENUM('health')";`);
+    expect(result.status).toBe(1);
+    expect(result.output).toContain('9 passed, 0 failed, 0 missing, 1 uncovered');
+  });
+
+  it('fails closed on multi-table DDL', () => {
+    expect(cli(schema, 'DROP TABLE reports, users;').status).toBe(1);
+    expect(cli(schema, 'DROP TABLE other, reports;').status).toBe(1);
+  });
+
+  it('handles qualified, quoted and case-varied column changes', () => {
+    const result = cli(schema, 'AlTeR TABLE `app`.`reports` DROP COLUMN `type`;');
+    expect(result.status).toBe(1);
+    expect(result.output).toContain('MISSING');
+  });
+
+  it('does not split ENUM values or SQL comments inside strings', () => {
+    const result = cli(schema, `ALTER TABLE reports MODIFY COLUMN type ENUM('health','performance','slow_query','capacity','a,b','x;--y');`);
+    expect(result.status).toBe(0);
   });
 });
