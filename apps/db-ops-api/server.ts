@@ -83,7 +83,7 @@ import { loadSecurityConfig } from './src/config/security-config.js';
 import { publicInstanceDto, publicNotificationDto, publicServerDto } from './src/security/public-dto.js';
 import { isNotificationChannelType, validateNotificationChannelConfig } from './src/notification-channel-config.js';
 import { requireBrandingWrite } from './src/security/branding-policy.js';
-import { API_BODY_LIMIT, expensiveOperationRateLimitConfig, loginRateLimitConfig, registerHttpSecurity, sensitiveOperationRateLimitConfig } from './src/security/http-security.js';
+import { API_BODY_LIMIT, createLoginIpRateLimit, expensiveOperationRateLimitConfig, loginRateLimitConfig, registerHttpSecurity, sensitiveOperationRateLimitConfig } from './src/security/http-security.js';
 import {
   AdapterCapabilitiesResponseSchema,
   ErrorResponseSchema,
@@ -588,7 +588,7 @@ async function start() {
   });
 
   // 登录接口
-  fastify.post('/api/auth/login', { config: { rateLimit: loginRateLimitConfig } }, async (request, reply) => {
+  fastify.post('/api/auth/login', { onRequest: createLoginIpRateLimit(fastify), config: { rateLimit: loginRateLimitConfig } }, async (request, reply) => {
     const check = strictBody(request.body as Record<string, unknown>,
       ['username', 'password'], 'POST /api/auth/login');
     if (check.error) return reply.code(400).send(check.error);
