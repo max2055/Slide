@@ -11,6 +11,7 @@
 **/coverage
 **/.playwright
 **/test-results
+**/test-results*
 **/*.log
 **/*.test.ts
 **/__tests__
