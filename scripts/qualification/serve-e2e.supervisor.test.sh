@@ -174,7 +174,8 @@ run_scenario() {
       vite_pid="$(cat "$dir/vite.pid")"
       api_child="$(cat "$dir/api.child")"
       vite_child="$(cat "$dir/vite.child")"
-      snapshot="$(ps -o pid=,ppid=,pgid=,command= -p "$script_pid" -p "$api_pid" -p "$vite_pid" -p "$api_child" -p "$vite_child" -p "$bystander" 2>/dev/null || true)"
+      api_parent="$(ps -o ppid= -p "$api_pid" 2>/dev/null | tr -d '[:space:]' || true)"
+      snapshot="$(ps -o pid=,ppid=,pgid=,command= -p "$script_pid" -p "$api_pid" -p "$vite_pid" -p "$api_child" -p "$vite_child" -p "$bystander" ${api_parent:+-p "$api_parent"} 2>/dev/null || true)"
       if [[ "$inject" == orphan ]]; then
         create_unrelated_orphan "$dir/orphan.txt" "$script_pid" || true
       fi
@@ -288,9 +289,17 @@ run_scenario() {
     vite_live_pgid="$(awk -v id="$vite_pid" '$1==id {print $3}' <<<"$snapshot")"
     child_pgid="$(awk -v id="$api_child" '$1==id {print $3}' <<<"$snapshot")"
     bystander_live_pgid="$(awk -v id="$bystander" '$1==id {print $3}' <<<"$snapshot")"
-    if [[ "$api_live_ppid" != "$script_pid" || -z "$script_live_pgid" || "$api_live_pgid" != "$script_live_pgid" || "$api_live_pgid" == "$api_pid" ]]; then
+    if [[ -z "$script_live_pgid" || "$api_live_pgid" != "$script_live_pgid" || "$api_live_pgid" == "$api_pid" ]]; then
       echo "FAIL $name api left the supervisor group ppid=$api_live_ppid pgid=$api_live_pgid script_pgid=$script_live_pgid" | tee -a "$report"
       ok=0
+    elif [[ "$api_live_ppid" != "$script_pid" ]]; then
+      local tracker_ppid tracker_pgid
+      tracker_ppid="$(awk -v id="$api_live_ppid" '$1==id {print $2}' <<<"$snapshot")"
+      tracker_pgid="$(awk -v id="$api_live_ppid" '$1==id {print $3}' <<<"$snapshot")"
+      if [[ "$tracker_ppid" != "$script_pid" || "$tracker_pgid" != "$script_live_pgid" ]]; then
+        echo "FAIL $name api parent is outside the supervisor group ppid=$api_live_ppid parent_ppid=${tracker_ppid:-none} parent_pgid=${tracker_pgid:-none}" | tee -a "$report"
+        ok=0
+      fi
     fi
     if [[ -z "$vite_live_pgid" || "$vite_live_pgid" != "$script_live_pgid" || "$vite_live_pgid" == "$vite_pid" ]]; then
       echo "FAIL $name vite left the supervisor group pgid=$vite_live_pgid script_pgid=$script_live_pgid" | tee -a "$report"
@@ -313,10 +322,69 @@ run_scenario() {
   echo "$api_pid" "$api_child" "$vite_pid" "$vite_child" >>"$work/pids"
 }
 
+run_gap() {
+  local name="$1"
+  local expect="$2"
+  local dir="$work/$name"
+  local report="$dir/report"
+  local code=0
+  mkdir -p "$dir"
+  PATH="$bin:$PATH" \
+  SERVE_E2E_FUNCTION_PROBE="$name" \
+  SERVE_E2E_NODE="$real_node" \
+  SERVE_E2E_DIR="$dir" \
+  QUALIFICATION_ADMIN_PASSWORD="isolated-not-a-secret" \
+  QUALIFICATION_DEEPSEEK_API_KEY="" \
+  QUALIFICATION_CANCELLATION_E2E=0 \
+    bash "$script" >"$dir/stdout" 2>"$dir/stderr" || code=$?
+  {
+    echo "scenario=$name"
+    echo "script_exit=$code"
+    echo "stdout<<EOF"
+    cat "$dir/stdout" 2>/dev/null || true
+    echo "EOF"
+    echo "stderr<<EOF"
+    cat "$dir/stderr" 2>/dev/null || true
+    echo "EOF"
+  } | tee "$report"
+  local ok=1
+  if [[ "$code" != 0 ]]; then
+    echo "FAIL $name exit $code" | tee -a "$report"
+    ok=0
+  fi
+  if ! grep -F "PASS $name" "$dir/stdout" >/dev/null; then
+    echo "FAIL $name missing PASS" | tee -a "$report"
+    ok=0
+  fi
+  if ! grep -F "service_exit=$expect" "$dir/stdout" >/dev/null; then
+    echo "FAIL $name missing service exit $expect" | tee -a "$report"
+    ok=0
+  fi
+  if ! grep -F "orphan_before_owner=tracked" "$dir/stdout" >/dev/null; then
+    echo "FAIL $name child was not a tracked orphan before stop" | tee -a "$report"
+    ok=0
+  fi
+  if [[ "$(uname -s)" == "Darwin" ]] && ! grep -F "orphan_before_ppid=1" "$dir/stdout" >/dev/null; then
+    echo "FAIL $name child was not adopted by init before stop" | tee -a "$report"
+    ok=0
+  fi
+  if ! alive "$bystander"; then
+    echo "FAIL $name bystander killed $bystander" | tee -a "$report"
+    ok=0
+  fi
+  if [[ "$ok" == 1 ]]; then
+    echo "PASS $name" | tee -a "$report"
+  else
+    result=1
+  fi
+}
+
 echo "bash=$(bash --version | head -1)"
 echo "root=$root"
 echo "bystander=$bystander pgid=$bystander_pgid shell_pgid=$shell_pgid"
 
+run_gap fork-gap 7
+run_gap node-gap 3
 run_scenario api-exit exit stay none 1 "E2E服务异常：API退出 code=7"
 run_scenario vite-exit stay exit none 1 "E2E服务异常：Vite退出 code=9"
 run_scenario signal-term stay stay TERM 0 "E2E服务停止：收到信号，清理本次进程"
