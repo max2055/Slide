@@ -4,6 +4,7 @@
 set -u
 
 root="$(cd "$(dirname "$0")/../.." && pwd)"
+real_node="$(command -v node)"
 script="$root/scripts/qualification/serve-e2e.sh"
 work="$(mktemp -d "${TMPDIR:-/tmp}/max288-XXXXXX")"
 bin="$work/bin"
@@ -223,22 +224,23 @@ run_scenario() {
     echo "FAIL $name missing live ownership snapshot" | tee -a "$report"
     ok=0
   else
-    local api_live_pgid vite_live_pgid api_live_ppid child_pgid bystander_live_pgid
+    local api_live_pgid vite_live_pgid api_live_ppid child_pgid bystander_live_pgid script_live_pgid
+    script_live_pgid="$(awk -v id="$script_pid" '$1==id {print $3}' <<<"$snapshot")"
     api_live_pgid="$(awk -v id="$api_pid" '$1==id {print $3}' <<<"$snapshot")"
     api_live_ppid="$(awk -v id="$api_pid" '$1==id {print $2}' <<<"$snapshot")"
     vite_live_pgid="$(awk -v id="$vite_pid" '$1==id {print $3}' <<<"$snapshot")"
     child_pgid="$(awk -v id="$api_child" '$1==id {print $3}' <<<"$snapshot")"
     bystander_live_pgid="$(awk -v id="$bystander" '$1==id {print $3}' <<<"$snapshot")"
-    if [[ "$api_live_ppid" != "$script_pid" || "$api_live_pgid" != "$api_pid" || "$api_live_pgid" == "$shell_pgid" ]]; then
-      echo "FAIL $name api group ownership ppid=$api_live_ppid pgid=$api_live_pgid" | tee -a "$report"
+    if [[ "$api_live_ppid" != "$script_pid" || -z "$script_live_pgid" || "$api_live_pgid" != "$script_live_pgid" || "$api_live_pgid" == "$api_pid" ]]; then
+      echo "FAIL $name api left the supervisor group ppid=$api_live_ppid pgid=$api_live_pgid script_pgid=$script_live_pgid" | tee -a "$report"
       ok=0
     fi
-    if [[ "$vite_live_pgid" != "$vite_pid" || "$vite_live_pgid" == "$shell_pgid" || "$vite_live_pgid" == "$api_live_pgid" ]]; then
-      echo "FAIL $name vite group ownership pgid=$vite_live_pgid" | tee -a "$report"
+    if [[ -z "$vite_live_pgid" || "$vite_live_pgid" != "$script_live_pgid" || "$vite_live_pgid" == "$vite_pid" ]]; then
+      echo "FAIL $name vite left the supervisor group pgid=$vite_live_pgid script_pgid=$script_live_pgid" | tee -a "$report"
       ok=0
     fi
-    if [[ "$child_pgid" != "$api_live_pgid" ]]; then
-      echo "FAIL $name api child left the api group pgid=$child_pgid" | tee -a "$report"
+    if [[ "$child_pgid" != "$script_live_pgid" ]]; then
+      echo "FAIL $name api child left the supervisor group pgid=$child_pgid script_pgid=$script_live_pgid" | tee -a "$report"
       ok=0
     fi
     if [[ "$bystander_live_pgid" != "$shell_pgid" ]]; then
@@ -262,6 +264,135 @@ run_scenario api-exit exit stay none 1 "E2E服务异常：API退出 code=7"
 run_scenario vite-exit stay exit none 1 "E2E服务异常：Vite退出 code=9"
 run_scenario signal-term stay stay TERM 0 "E2E服务停止：收到信号，清理本次进程"
 run_scenario signal-int stay stay INT 0 "E2E服务停止：收到信号，清理本次进程"
+
+# Playwright webServer: shell + detached, stdio pipes, SIGKILL of the launcher
+# process group, then wait for the child 'close' event. A service that left
+# the group keeps those pipes open and this check fails closed=0.
+playwright_sigkill() {
+  local name="playwright-sigkill"
+  local dir="$work/$name"
+  local report="$dir/report"
+  mkdir -p "$dir"
+  : >"$work/pids"
+  cat >"$dir/launch.mjs" <<'EOF'
+import { spawn } from 'node:child_process';
+import { existsSync, readFileSync } from 'node:fs';
+
+const script = process.argv[2];
+const dir = process.argv[3];
+const bin = process.argv[4];
+
+function readPid(name) {
+  const file = `${dir}/${name}`;
+  if (!existsSync(file)) return '';
+  return readFileSync(file, 'utf8').trim();
+}
+
+function alive(pid) {
+  if (!/^[1-9][0-9]*$/.test(pid)) return false;
+  try {
+    process.kill(Number(pid), 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+const child = spawn(`bash ${JSON.stringify(script)}`, {
+  detached: true,
+  shell: true,
+  stdio: ['pipe', 'pipe', 'pipe'],
+  env: {
+    ...process.env,
+    PATH: `${bin}${process.platform === 'win32' ? ';' : ':'}${process.env.PATH ?? ''}`,
+    SERVE_E2E_DIR: dir,
+    SERVE_E2E_READY_FILE: `${dir}/ready`,
+    SERVE_E2E_api_MODE: 'stay',
+    SERVE_E2E_vite_MODE: 'stay',
+    QUALIFICATION_ADMIN_PASSWORD: 'isolated-not-a-secret',
+    QUALIFICATION_API_PORT: '39751',
+    QUALIFICATION_WS_PORT: '39752',
+    QUALIFICATION_FRONTEND_PORT: '39753',
+    QUALIFICATION_DEEPSEEK_API_KEY: '',
+    QUALIFICATION_CANCELLATION_E2E: '0',
+  },
+});
+let closed = false;
+child.on('close', () => {
+  closed = true;
+});
+child.stdout.on('data', () => {});
+child.stderr.on('data', () => {});
+
+const readyDeadline = Date.now() + 8000;
+while (Date.now() < readyDeadline) {
+  if (readPid('api.pid') && readPid('vite.pid') && readPid('api.child') && readPid('vite.child')) break;
+  await new Promise((resolve) => setTimeout(resolve, 100));
+}
+const api = readPid('api.pid');
+const vite = readPid('vite.pid');
+const apiChild = readPid('api.child');
+const viteChild = readPid('vite.child');
+let killError = '';
+try {
+  process.kill(-child.pid, 'SIGKILL');
+} catch (error) {
+  killError = error instanceof Error ? error.message : String(error);
+}
+const closeDeadline = Date.now() + 2000;
+while (!closed && Date.now() < closeDeadline) {
+  await new Promise((resolve) => setTimeout(resolve, 50));
+}
+const survivors = [api, vite, apiChild, viteChild].filter((pid) => alive(pid));
+console.log(`closed=${closed ? 1 : 0}`);
+console.log(`kill_error=${killError}`);
+console.log(`survivors=${survivors.join(',') || 'none'}`);
+console.log(`api=${api} vite=${vite} api_child=${apiChild} vite_child=${viteChild} launcher=${child.pid}`);
+if (!closed || survivors.length > 0 || killError || !api || !vite || !apiChild || !viteChild) {
+  for (const pid of [api, vite, apiChild, viteChild]) {
+    if (!alive(pid)) continue;
+    try { process.kill(Number(pid), 'SIGKILL'); } catch { /* already gone */ }
+  }
+  try { process.kill(-child.pid, 'SIGKILL'); } catch { /* already gone */ }
+  process.exit(1);
+}
+EOF
+  local code=0
+  "$real_node" "$dir/launch.mjs" "$script" "$dir" "$bin" >"$dir/stdout" 2>"$dir/stderr" || code=$?
+  {
+    echo "scenario=$name"
+    echo "script_exit=$code"
+    echo "stdout<<EOF"
+    cat "$dir/stdout" 2>/dev/null || true
+    echo "EOF"
+    echo "stderr<<EOF"
+    cat "$dir/stderr" 2>/dev/null || true
+    echo "EOF"
+  } | tee "$report"
+  local ok=1
+  if [[ "$code" != 0 ]]; then
+    echo "FAIL $name launcher close exit=$code" | tee -a "$report"
+    ok=0
+  fi
+  if ! grep -F "closed=1" "$dir/stdout" >/dev/null; then
+    echo "FAIL $name parent close did not fire" | tee -a "$report"
+    ok=0
+  fi
+  if ! alive "$bystander"; then
+    echo "FAIL $name bystander killed $bystander" | tee -a "$report"
+    ok=0
+  fi
+  if [[ "$ok" == 1 ]]; then
+    echo "PASS $name" | tee -a "$report"
+  else
+    result=1
+  fi
+  if [[ -f "$dir/api.pid" ]]; then
+    cat "$dir/api.pid" "$dir/api.child" "$dir/vite.pid" "$dir/vite.child" 2>/dev/null >>"$work/pids" || true
+  fi
+}
+
+playwright_sigkill
 
 if [[ "$result" == 0 ]]; then
   echo "PASS serve-e2e supervisor"

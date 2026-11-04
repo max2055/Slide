@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
-# macOS /bin/bash is 3.2: no `wait -n`. Each service is its own process group
-# so a stop signal reaches only that group, including children reparented
-# after the leader exits. Do not signal the supervisor group.
+# macOS /bin/bash is 3.2: no `wait -n`. Services stay in this process group.
+# Playwright launches the script detached and tears it down with SIGKILL of
+# that group. A child that leaves the group keeps the inherited stdio pipes
+# open, so the launcher never observes process close. Explicit stops kill only
+# this run's service tree, not the whole group, so a sibling task survives.
 set -euo pipefail
 
 root="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -15,89 +17,38 @@ qualification_encryption_key='qualification-e2e-key-32-bytes!!'
 # REST and WebSocket auth must share an explicit key, including on clean CI hosts.
 qualification_jwt_secret="$(node --input-type=module -e 'import { randomBytes } from "node:crypto"; process.stdout.write(randomBytes(32).toString("hex"))')"
 
-grouped_pid=""
-grouped_pgid=""
+service_pid=""
 api_pid=""
-api_pgid=""
 vite_pid=""
-vite_pgid=""
 llm_pid=""
-llm_pgid=""
+group_pgid=""
+baseline_pids=""
 cleaned_up=0
 
-start_grouped() {
-  grouped_pid=""
-  grouped_pgid=""
-  perl -e 'use POSIX; POSIX::setpgid(0, 0); exec @ARGV or die $!' -- "$@" &
-  grouped_pid=$!
-  local attempt actual shell_pgid
-  shell_pgid="$(ps -o pgid= -p "$$" 2>/dev/null | tr -d '[:space:]' || true)"
-  for attempt in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
-    actual="$(ps -o pgid= -p "$grouped_pid" 2>/dev/null | tr -d '[:space:]' || true)"
-    if [[ -n "$actual" && "$actual" == "$grouped_pid" && "$actual" != "$shell_pgid" ]]; then
-      grouped_pgid="$grouped_pid"
-      return 0
-    fi
-    if [[ -z "$actual" ]] && ! kill -0 "$grouped_pid" 2>/dev/null; then
-      return 0
-    fi
-    sleep 0.05 || true
-  done
-}
-
-sweep_group() {
-  local pgid="$1"
-  local signal="$2"
-  local member member_pgid
-  [[ "$pgid" =~ ^[1-9][0-9]*$ ]] || return 0
-  while read -r member member_pgid; do
-    [[ "$member" =~ ^[1-9][0-9]*$ ]] || continue
-    [[ "$member_pgid" == "$pgid" ]] || continue
-    [[ "$member" == "$$" ]] && continue
-    kill "-$signal" "$member" 2>/dev/null || true
+capture_baseline() {
+  local pid pgid
+  group_pgid="$(ps -o pgid= -p "$$" 2>/dev/null | tr -d '[:space:]' || true)"
+  baseline_pids=" $$ "
+  while read -r pid pgid; do
+    [[ "$pid" =~ ^[1-9][0-9]*$ ]] || continue
+    [[ "$pgid" == "$group_pgid" ]] || continue
+    baseline_pids="${baseline_pids}${pid} "
   done <<EOF
 $(ps -ax -o pid=,pgid= 2>/dev/null || true)
 EOF
 }
 
-stop_group() {
-  local pid="${1:-}"
-  local pgid="${2:-}"
-  [[ "$pid" =~ ^[1-9][0-9]*$ ]] || return 0
-  [[ "$pid" != "$$" ]] || return 0
+known_pid() {
+  case "$baseline_pids" in
+    *" $1 "*) return 0 ;;
+  esac
+  return 1
+}
 
-  local ppid="" state="" attempt
-  ppid="$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d '[:space:]' || true)"
-  if [[ -n "$pgid" && "$pgid" == "$pid" && "$ppid" == "$$" ]]; then
-    kill -TERM "-$pid" 2>/dev/null || true
-  elif [[ "$ppid" == "$$" ]]; then
-    kill -TERM "$pid" 2>/dev/null || true
-  fi
-
-  for attempt in 1 2 3 4 5 6 7 8 9 10; do
-    state="$(ps -o state= -p "$pid" 2>/dev/null | tr -d '[:space:]' || true)"
-    if [[ -z "$state" || "${state#Z}" != "$state" ]]; then
-      break
-    fi
-    sleep 0.1 || true
-  done
-  ppid="$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d '[:space:]' || true)"
-  state="$(ps -o state= -p "$pid" 2>/dev/null | tr -d '[:space:]' || true)"
-  if [[ -n "$state" && "${state#Z}" == "$state" && "$ppid" == "$$" ]]; then
-    if [[ -n "$pgid" && "$pgid" == "$pid" ]]; then
-      kill -KILL "-$pid" 2>/dev/null || true
-    else
-      kill -KILL "$pid" 2>/dev/null || true
-    fi
-  fi
-
-  if [[ -n "$pgid" ]]; then
-    sweep_group "$pgid" TERM
-    sleep 0.2 || true
-    sweep_group "$pgid" KILL
-  fi
-  wait "$pid" 2>/dev/null || true
-  return 0
+start_service() {
+  service_pid=""
+  "$@" &
+  service_pid=$!
 }
 
 # Prints the exit code and returns 0 once the child has gone. Returns 1 while
@@ -117,15 +68,83 @@ child_finished() {
   return 0
 }
 
+stop_our_processes() {
+  local snapshot pid ppid pgid targets=" " queue=" $$" current rest seen=" "
+  snapshot="$(ps -ax -o pid=,ppid=,pgid= 2>/dev/null || true)"
+
+  add_target() {
+    local id="$1"
+    [[ "$id" =~ ^[1-9][0-9]*$ ]] || return 0
+    [[ "$id" == "$$" || "$id" == "1" ]] && return 0
+    if known_pid "$id"; then
+      return 0
+    fi
+    case "$targets" in
+      *" $id "*) return 0 ;;
+    esac
+    targets="${targets}${id} "
+  }
+
+  # Descendants of this shell, including the in-flight poll sleep. A sibling
+  # that merely shares the group is not in this tree and is left alone.
+  while [[ "$queue" =~ [0-9] ]]; do
+    queue="${queue#"${queue%%[![:space:]]*}"}"
+    current="${queue%%[[:space:]]*}"
+    rest="${queue#"$current"}"
+    queue="${rest#"${rest%%[![:space:]]*}"}"
+    [[ "$current" =~ ^[1-9][0-9]*$ ]] || continue
+    case "$seen" in
+      *" $current "*) continue ;;
+    esac
+    seen="${seen}${current} "
+    add_target "$current"
+    while read -r pid ppid pgid; do
+      [[ "$ppid" == "$current" ]] || continue
+      queue="$queue $pid"
+    done <<EOF
+$snapshot
+EOF
+  done
+
+  # After a service exits, its grandchildren are reparented to init and would
+  # otherwise keep the launcher stdio open. They remain in this process group.
+  if [[ "$group_pgid" =~ ^[1-9][0-9]*$ ]]; then
+    while read -r pid ppid pgid; do
+      [[ "$pgid" == "$group_pgid" ]] || continue
+      [[ "$ppid" == "1" ]] || continue
+      add_target "$pid"
+    done <<EOF
+$snapshot
+EOF
+  fi
+
+  local member
+  for member in $targets; do
+    kill -TERM "$member" 2>/dev/null || true
+  done
+  sleep 0.2 || true
+  for member in $targets; do
+    kill -KILL "$member" 2>/dev/null || true
+  done
+  if [[ "$api_pid" =~ ^[1-9][0-9]*$ ]]; then
+    wait "$api_pid" 2>/dev/null || true
+  fi
+  if [[ "$vite_pid" =~ ^[1-9][0-9]*$ ]]; then
+    wait "$vite_pid" 2>/dev/null || true
+  fi
+  if [[ "$llm_pid" =~ ^[1-9][0-9]*$ ]]; then
+    wait "$llm_pid" 2>/dev/null || true
+  fi
+  return 0
+}
+
 cleanup() {
   if [[ "$cleaned_up" == 1 ]]; then
     return 0
   fi
   cleaned_up=1
   trap '' INT TERM
-  stop_group "$vite_pid" "$vite_pgid"
-  stop_group "$api_pid" "$api_pgid"
-  stop_group "$llm_pid" "$llm_pgid"
+  stop_our_processes
   return 0
 }
 
@@ -153,10 +172,11 @@ if [[ -n "${QUALIFICATION_DEEPSEEK_API_KEY:-}" ]]; then
     pnpm --filter slide-api exec tsx ../../scripts/qualification/configure-deepseek.ts
 fi
 
+capture_baseline
+
 if [[ "${QUALIFICATION_CANCELLATION_E2E:-0}" == "1" ]]; then
-  start_grouped node scripts/qualification/cancellable-openai-server.mjs
-  llm_pid="$grouped_pid"
-  llm_pgid="$grouped_pgid"
+  start_service node scripts/qualification/cancellable-openai-server.mjs
+  llm_pid="$service_pid"
   DB_NAME=db_ops_ai_qualification ENCRYPTION_KEY="$qualification_encryption_key" \
     pnpm --filter slide-api exec tsx ../../scripts/qualification/configure-cancellable-provider.ts
 fi
@@ -164,9 +184,8 @@ fi
 PORT="$api_port" AGENT_WS_PORT="$ws_port" DB_NAME=db_ops_ai_qualification \
 JWT_SECRET_KEY="$qualification_jwt_secret" \
 ENCRYPTION_KEY="$qualification_encryption_key" \
-  start_grouped bash -c 'cd apps/db-ops-api && exec node --import tsx server.ts'
-api_pid="$grouped_pid"
-api_pgid="$grouped_pgid"
+  start_service bash -c 'cd apps/db-ops-api && exec node --import tsx server.ts'
+api_pid="$service_pid"
 
 ready=0
 for _ in $(seq 1 45); do
@@ -189,9 +208,8 @@ fi
 VITE_API_PROXY_TARGET="http://127.0.0.1:${api_port}" \
 VITE_AGENT_WS_PROXY_TARGET="http://127.0.0.1:${ws_port}" \
 VITE_AGENT_WS_URL="ws://127.0.0.1:${ws_port}" \
-  start_grouped node frontend/node_modules/vite/bin/vite.js --host 127.0.0.1 --port "$frontend_port" --strictPort frontend
-vite_pid="$grouped_pid"
-vite_pgid="$grouped_pgid"
+  start_service node frontend/node_modules/vite/bin/vite.js --host 127.0.0.1 --port "$frontend_port" --strictPort frontend
+vite_pid="$service_pid"
 
 while true; do
   finished=""
