@@ -385,6 +385,60 @@ echo "bystander=$bystander pgid=$bystander_pgid shell_pgid=$shell_pgid"
 
 run_gap fork-gap 7
 run_gap node-gap 3
+
+# Playwright starts the script as `bash ../scripts/qualification/serve-e2e.sh`
+# with cwd frontend/. The tracker path must still resolve after the script cds
+# to the repository root.
+relative_fork_gap() {
+  local name="relative-fork-gap"
+  local dir="$work/$name"
+  local report="$dir/report"
+  local code=0
+  mkdir -p "$dir"
+  (
+    cd "$root/frontend" || exit 97
+    PATH="$bin:$PATH" \
+    SERVE_E2E_FUNCTION_PROBE=fork-gap \
+    SERVE_E2E_DIR="$dir" \
+    QUALIFICATION_ADMIN_PASSWORD="isolated-not-a-secret" \
+    QUALIFICATION_DEEPSEEK_API_KEY="" \
+    QUALIFICATION_CANCELLATION_E2E=0 \
+      bash ../scripts/qualification/serve-e2e.sh >"$dir/stdout" 2>"$dir/stderr"
+  ) || code=$?
+  {
+    echo "scenario=$name"
+    echo "script_exit=$code"
+    echo "stdout<<EOF"
+    cat "$dir/stdout" 2>/dev/null || true
+    echo "EOF"
+    echo "stderr<<EOF"
+    cat "$dir/stderr" 2>/dev/null || true
+    echo "EOF"
+  } | tee "$report"
+  local ok=1
+  if [[ "$code" != 0 ]] || ! grep -F "PASS fork-gap" "$dir/stdout" >/dev/null; then
+    echo "FAIL $name exit $code" | tee -a "$report"
+    ok=0
+  fi
+  if ! grep -F "orphan_before_owner=tracked" "$dir/stdout" >/dev/null; then
+    echo "FAIL $name child was not a tracked orphan before stop" | tee -a "$report"
+    ok=0
+  fi
+  if [[ "$(uname -s)" == "Darwin" ]] && ! grep -F "orphan_before_ppid=1" "$dir/stdout" >/dev/null; then
+    echo "FAIL $name child was not adopted by init before stop" | tee -a "$report"
+    ok=0
+  fi
+  if ! alive "$bystander"; then
+    echo "FAIL $name bystander killed $bystander" | tee -a "$report"
+    ok=0
+  fi
+  if [[ "$ok" == 1 ]]; then
+    echo "PASS $name" | tee -a "$report"
+  else
+    result=1
+  fi
+}
+relative_fork_gap
 run_scenario api-exit exit stay none 1 "E2E服务异常：API退出 code=7"
 run_scenario vite-exit stay exit none 1 "E2E服务异常：Vite退出 code=9"
 run_scenario signal-term stay stay TERM 0 "E2E服务停止：收到信号，清理本次进程"

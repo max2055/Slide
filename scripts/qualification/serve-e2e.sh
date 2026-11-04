@@ -10,7 +10,8 @@
 # next stop still sees it. Sampling faster is not the mechanism.
 set -euo pipefail
 
-root="$(cd "$(dirname "$0")/../.." && pwd)"
+script_dir="$(cd "$(dirname "$0")" && pwd)"
+root="$(cd "$script_dir/../.." && pwd)"
 cd "$root"
 
 api_port="${QUALIFICATION_API_PORT:-3003}"
@@ -72,7 +73,7 @@ tracker_script() {
     printf '%s' "$tracker_py"
     return 0
   fi
-  printf '%s' "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/serve-e2e-tracker.py"
+  printf '%s' "$script_dir/serve-e2e-tracker.py"
 }
 
 ensure_tracker() {

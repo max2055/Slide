@@ -18,6 +18,7 @@ test('serve-e2e stops its service tree and stays in the launcher group (#460)', 
   assert.match(result.stdout, /PASS signal-int/);
   assert.match(result.stdout, /PASS unrelated-orphan/);
   assert.match(result.stdout, /unrelated_orphan_after=alive/);
+  assert.match(result.stdout, /PASS relative-fork-gap/);
   assert.match(result.stdout, /PASS fork-gap/);
   assert.match(result.stdout, /service_exit=7/);
   assert.match(result.stdout, /orphan_before_owner=tracked/);
