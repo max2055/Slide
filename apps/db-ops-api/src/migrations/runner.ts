@@ -1,3 +1,5 @@
+import { loadSecurityConfig } from '../config/security-config.js';
+import { bootstrapProductionAdmin } from './production-bootstrap.js';
 import { createHash } from 'node:crypto';
 import { readdir, readFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
@@ -127,37 +129,65 @@ export class MigrationRunner {
   }
 
   async run(): Promise<void> {
+    loadSecurityConfig();
     await this.ensureLedger();
     const connection = await this.pool.getConnection();
     try {
       const [locks] = await connection.query<Array<{ locked: number }>>('SELECT GET_LOCK(?, 30) AS locked', [lockName]);
       if (Number(locks[0]?.locked) !== 1) throw new MigrationError('Could not acquire migration lock');
-      try {
-        await this.runLocked(connection);
-        await assertSchemaInvariants(this.pool);
-      }
-      finally { await connection.query('SELECT RELEASE_LOCK(?)', [lockName]); }
-    } finally { connection.release(); }
+      await this.runLocked(connection);
+      await assertSchemaInvariants(this.pool);
+      if (process.env.NODE_ENV === 'production') await bootstrapProductionAdmin(connection, process.env);
+      await connection.query('SELECT RELEASE_LOCK(?)', [lockName]);
+    } catch (error) {
+      // Closing the session also releases its advisory lock. Never return a
+      // failed session whose transaction/lock cleanup may be incomplete.
+      connection.destroy();
+      throw error;
+    }
+    connection.release();
   }
 
   async baseline(actor: string, reason: string): Promise<void> {
     if (!actor.trim() || !reason.trim()) throw new MigrationError('Baseline requires actor and reason');
     await this.ensureLedger();
     const migrations = await loadMigrations(this.directory);
-    const [existing] = await this.pool.query<MigrationLedgerEntry[]>('SELECT migration_id FROM app_schema_migrations LIMIT 1');
-    if (existing.length) throw new MigrationError('Schema migration ledger is not empty');
-    const [tables] = await this.pool.query<Array<{ name: string }>>(
-      `SELECT TABLE_NAME AS name FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME IN ('users', 'approval_requests', 'operations')`,
-    );
-    if (tables.length < 3) throw new MigrationError('Schema cannot be baselined: required tables are missing');
-    await assertSchemaInvariants(this.pool);
-    for (const migration of migrations) {
-      await this.pool.query(
-        `INSERT INTO app_schema_migrations (migration_id, checksum, status, finished_at, error)
-         VALUES (?, ?, 'baselined', NOW(), ?)`,
-        [migration.id, migration.checksum, `baseline by ${actor}: ${reason}`],
+    const connection = await this.pool.getConnection();
+    let transactionStarted = false;
+    try {
+      const [locks] = await connection.query<Array<{ locked: number }>>('SELECT GET_LOCK(?, 30) AS locked', [lockName]);
+      if (Number(locks[0]?.locked) !== 1) throw new MigrationError('Could not acquire migration lock');
+      const [existing] = await connection.query<MigrationLedgerEntry[]>('SELECT migration_id FROM app_schema_migrations LIMIT 1');
+      if (existing.length) throw new MigrationError('Schema migration ledger is not empty');
+      const [tables] = await connection.query<Array<{ name: string }>>(
+        `SELECT TABLE_NAME AS name FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME IN ('users', 'approval_requests', 'operations')`,
       );
+      if (tables.length < 3) throw new MigrationError('Schema cannot be baselined: required tables are missing');
+      await assertSchemaInvariants(connection);
+      await connection.query('START TRANSACTION');
+      transactionStarted = true;
+      for (const migration of migrations) {
+        await connection.query(
+          `INSERT INTO app_schema_migrations (migration_id, checksum, status, finished_at, error)
+           VALUES (?, ?, 'baselined', NOW(), ?)`,
+          [migration.id, migration.checksum, `baseline by ${actor}: ${reason}`],
+        );
+      }
+      await connection.query('COMMIT');
+      transactionStarted = false;
+      await connection.query('SELECT RELEASE_LOCK(?)', [lockName]);
+    } catch (error) {
+      try {
+        if (transactionStarted) await connection.query('ROLLBACK');
+      } catch (cleanupError) {
+        throw new AggregateError([error, cleanupError], 'Baseline failed and rollback failed');
+      } finally {
+        // Closing the session releases the advisory lock even if rollback fails.
+        connection.destroy();
+      }
+      throw error;
     }
+    connection.release();
   }
 
   /** @deprecated Use acknowledgeExternallyRepairedMigration; identical guarded contract. */
@@ -236,15 +266,30 @@ export class MigrationRunner {
 
   private async apply(connection: MigrationConnection, migration: SqlMigration): Promise<void> {
     await connection.query('INSERT INTO app_schema_migrations (migration_id, checksum, status, started_at) VALUES (?, ?, \'running\', NOW())', [migration.id, migration.checksum]);
-    const statements = statementsForExecution(migration);
+    // Preserve historical checksums while isolating development-only account seeds.
+    const statements = statementsForExecution(migration).filter(statement => !(
+      process.env.NODE_ENV === 'production' && migration.id === snapshotId
+      && /INSERT INTO `users`/.test(statement)
+    ));
     let statementIndex = 0;
     try {
       for (; statementIndex < statements.length; statementIndex++) await connection.query(statements[statementIndex]);
       await connection.query(`UPDATE app_schema_migrations SET status = 'completed', finished_at = NOW(), statement_index = NULL, error = NULL WHERE migration_id = ?`, [migration.id]);
     } catch (error) {
       const message = error instanceof Error ? error.message.slice(0, 4096) : String(error).slice(0, 4096);
-      await connection.query(`UPDATE app_schema_migrations SET status = 'failed', finished_at = NOW(), statement_index = ?, error = ? WHERE migration_id = ?`, [statementIndex, message, migration.id]);
-      throw new MigrationError(`Migration ${migration.id} failed: ${message}`);
+      const failure = new MigrationError(`Migration ${migration.id} failed at statement ${statementIndex}: ${message}`, { cause: error });
+      try {
+        // A statement error need not abort an explicit MySQL transaction.
+        // Roll back before writing the ledger; DDL already committed by MySQL
+        // remains an explicit-repair case and must never be replayed here.
+        await connection.query('ROLLBACK');
+        await connection.query(`UPDATE app_schema_migrations SET status = 'failed', finished_at = NOW(), statement_index = ?, error = ? WHERE migration_id = ?`, [statementIndex, message, migration.id]);
+        // Also persist the ledger when migration SQL disabled autocommit.
+        await connection.query('COMMIT');
+      } catch (cleanupError) {
+        throw new AggregateError([failure, cleanupError], `${failure.message}; migration cleanup failed`, { cause: failure });
+      }
+      throw failure;
     }
   }
 
