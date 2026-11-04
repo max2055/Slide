@@ -1,3 +1,5 @@
+import { loadSecurityConfig } from '../config/security-config.js';
+import { bootstrapProductionAdmin } from './production-bootstrap.js';
 import { createHash } from 'node:crypto';
 import { readdir, readFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
@@ -127,6 +129,7 @@ export class MigrationRunner {
   }
 
   async run(): Promise<void> {
+    loadSecurityConfig();
     await this.ensureLedger();
     const connection = await this.pool.getConnection();
     try {
@@ -134,6 +137,7 @@ export class MigrationRunner {
       if (Number(locks[0]?.locked) !== 1) throw new MigrationError('Could not acquire migration lock');
       await this.runLocked(connection);
       await assertSchemaInvariants(this.pool);
+      if (process.env.NODE_ENV === 'production') await bootstrapProductionAdmin(connection, process.env);
       await connection.query('SELECT RELEASE_LOCK(?)', [lockName]);
     } catch (error) {
       // Closing the session also releases its advisory lock. Never return a
@@ -240,7 +244,11 @@ export class MigrationRunner {
 
   private async apply(connection: MigrationConnection, migration: SqlMigration): Promise<void> {
     await connection.query('INSERT INTO app_schema_migrations (migration_id, checksum, status, started_at) VALUES (?, ?, \'running\', NOW())', [migration.id, migration.checksum]);
-    const statements = statementsForExecution(migration);
+    // Preserve historical checksums while isolating development-only account seeds.
+    const statements = statementsForExecution(migration).filter(statement => !(
+      process.env.NODE_ENV === 'production' && migration.id === snapshotId
+      && /INSERT INTO `users`/.test(statement)
+    ));
     let statementIndex = 0;
     try {
       for (; statementIndex < statements.length; statementIndex++) await connection.query(statements[statementIndex]);
