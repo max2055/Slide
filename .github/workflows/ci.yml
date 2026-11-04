@@ -179,6 +179,13 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter slide-frontend exec playwright install --with-deps chromium
+      # node:test stays outside Vitest's src/**/*.test.ts collection.
+      # Run from frontend so Vite's root matches the config directory. Node 24
+      # (.nvmrc) strips the Playwright config TypeScript. Chromium is the install above.
+      - name: Streaming watch isolation
+        if: matrix.shard == 1
+        working-directory: frontend
+        run: node --experimental-strip-types --test vite.streaming.watch-isolation.test.mjs
       - run: pnpm --filter slide-frontend test:browser --shard=${{ matrix.shard }}/2
       - name: Streaming reading and phase regression
         if: matrix.shard == 1
