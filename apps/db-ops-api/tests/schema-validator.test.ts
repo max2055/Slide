@@ -117,4 +117,27 @@ describe('schema-validator CLI (#398)', () => {
     const result = cli(schema, `ALTER TABLE reports MODIFY COLUMN type ENUM('health','performance','slow_query','capacity','a,b','x;--y');`);
     expect(result.status).toBe(0);
   });
+
+  it.each([
+    "SET @ddl = CONCAT('ALTER ', 'TABLE reports DROP COLUMN type'); PREPARE stmt FROM @ddl; EXECUTE stmt;",
+    'SET @ddl = unknown_builder(); PREPARE stmt FROM @ddl; EXECUTE stmt;',
+    'PREPARE stmt FROM @not_set; EXECUTE stmt;',
+    "EXECUTE IMMEDIATE CONCAT('ALTER ', 'TABLE reports DROP COLUMN type');",
+    "SET @ddl = 'SELECT 1'; SET @ddl = CONCAT('ALTER ', 'TABLE reports DROP COLUMN type'); PREPARE stmt FROM @ddl; EXECUTE stmt;",
+    "SET @ddl = 'SELECT 1'; SELECT CONCAT('ALTER ', 'TABLE reports DROP COLUMN type') INTO @ddl; PREPARE stmt FROM @ddl; EXECUTE stmt;",
+  ])('does not count unresolved dynamic SQL as verified: %s', (migration) => {
+    const result = cli(schema, migration);
+    expect(result.status).toBe(1);
+    expect(result.output).toContain('UNCOVERED');
+    expect(result.output).not.toContain('10 passed');
+  });
+
+  it('accepts proven unrelated prepared SQL and unused text expressions', () => {
+    const result = cli(schema, `
+      SET @text = CONCAT('ALTER ', 'TABLE reports DROP COLUMN type');
+      SET @ddl = 'SELECT 1'; PREPARE stmt FROM @ddl; EXECUTE stmt;
+      PREPARE stmt FROM 'ALTER TABLE other ADD COLUMN extra INT'; EXECUTE stmt;
+    `);
+    expect(result.status).toBe(0);
+  });
 });
