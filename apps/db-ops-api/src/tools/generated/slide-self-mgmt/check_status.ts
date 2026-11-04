@@ -10,6 +10,7 @@ import { databaseService } from '../../../database-service.js';
 import { dbConnection } from '../../../db-connection.js';
 import { instanceDatabaseService } from '../../../instance-database-service.js';
 import { getAllProviders } from '../../../llm/provider-catalog.js';
+import { readApiProbe } from '../../../config/api-listen.js';
 
 /**
  * 服务状态检查结果
@@ -36,7 +37,7 @@ interface SlideStatus {
 
 export const checkStatusTool: AnyAgentTool = {
   name: 'slide_check_status',
-  description: '检查 Slide 平台整体状态，包括后端 API 服务（:3000）、前端服务（按部署配置探活，生产探活失败仅作警告，不代表服务停止）、数据库连接、LLM 连接等。用于快速了解系统各个组件是否正常运行。可选参数：include_details（返回详情）、test_db_connections（测试DB连接）、test_llm（测试LLM连接）',
+  description: '检查 Slide 平台整体状态，包括后端 API 服务（按进程实际监听端口探活）、前端服务（按部署配置探活，生产探活失败仅作警告，不代表服务停止）、数据库连接、LLM 连接等。用于快速了解系统各个组件是否正常运行。可选参数：include_details（返回详情）、test_db_connections（测试DB连接）、test_llm（测试LLM连接）',
   parameters: {
     type: 'object',
     properties: {
@@ -127,44 +128,61 @@ export const checkStatusTool: AnyAgentTool = {
 /**
  * 检查后端服务状态
  */
-async function checkBackendService(): Promise<ServiceStatus> {
-  const startTime = Date.now();
+function connectionRefused(error: unknown): boolean {
+  const seen = new Set<unknown>();
+  let current: unknown = error;
+  while (current && typeof current === 'object' && !seen.has(current)) {
+    seen.add(current);
+    if ('code' in current && (current as { code?: unknown }).code === 'ECONNREFUSED') return true;
+    if ('message' in current && String((current as { message?: unknown }).message).includes('ECONNREFUSED')) return true;
+    current = 'cause' in current ? (current as { cause?: unknown }).cause : undefined;
+  }
+  return false;
+}
 
+async function checkBackendService(): Promise<ServiceStatus> {
+  const target = readApiProbe();
+  if (!target.probeUrl || target.port === undefined) {
+    return {
+      name: '后端 API 服务',
+      critical: true,
+      status: 'error',
+      error: target.error ?? '无法确定 API 监听端口',
+    };
+  }
+
+  const startTime = Date.now();
   try {
-    // 尝试访问健康检查端点
-    const response = await fetch('http://localhost:3000/api/health', {
+    const response = await fetch(target.probeUrl, {
       method: 'GET',
       signal: AbortSignal.timeout(5000),
     });
-
     const responseTimeMs = Date.now() - startTime;
-
     if (response.ok) {
       return {
         name: '后端 API 服务',
         critical: true,
         status: 'running',
-        port: 3000,
+        port: target.port,
         responseTimeMs,
-      };
-    } else {
-      return {
-        name: '后端 API 服务',
-        critical: true,
-        status: 'error',
-        port: 3000,
-        responseTimeMs,
-        error: `HTTP ${response.status}`,
       };
     }
+    return {
+      name: '后端 API 服务',
+      critical: true,
+      status: 'error',
+      port: target.port,
+      responseTimeMs,
+      error: `HTTP ${response.status}`,
+    };
   } catch (error: unknown) {
     const errorMessage = error instanceof Error ? error.message : String(error);
     return {
       name: '后端 API 服务',
       critical: true,
       status: 'stopped',
-      port: 3000,
-      error: errorMessage.includes('ECONNREFUSED')
+      port: target.port,
+      error: connectionRefused(error)
         ? '服务未启动或端口不可达'
         : errorMessage,
     };
