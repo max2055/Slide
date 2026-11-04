@@ -1,4 +1,11 @@
-FROM node@sha256:83f487e0a63425e5b4d146fb5e5be574bcbe1b7b843d3ebafdd95eaf7767a7e5 AS dependencies
+FROM node@sha256:83f487e0a63425e5b4d146fb5e5be574bcbe1b7b843d3ebafdd95eaf7767a7e5 AS supported-platform
+
+# The bundled Oracle Instant Client is Linux ARM64 only. Check the actual
+# image architecture (not an overridable build argument) before installing.
+RUN test "$(dpkg --print-architecture)" = arm64 \
+  || { echo 'Slide API supports linux/arm64 only: Oracle Instant Client is ARM64; linux/amd64 is unsupported.' >&2; exit 1; }
+
+FROM supported-platform AS dependencies
 
 RUN corepack enable
 WORKDIR /workspace
@@ -7,7 +14,7 @@ COPY apps/db-ops-api/package.json apps/db-ops-api/package.json
 COPY packages/agent-core/package.json packages/agent-core/package.json
 RUN pnpm install --frozen-lockfile --prod --filter slide-api...
 
-FROM node@sha256:83f487e0a63425e5b4d146fb5e5be574bcbe1b7b843d3ebafdd95eaf7767a7e5 AS oracle-client
+FROM supported-platform AS oracle-client
 
 RUN apt-get update \
   && apt-get install -y --no-install-recommends libaio1 unzip \
@@ -18,7 +25,7 @@ RUN mkdir -p /opt/oracle \
   && mv /opt/oracle/instantclient_19_19 /opt/oracle/instantclient \
   && rm /tmp/oracle-instantclient.zip
 
-FROM node@sha256:83f487e0a63425e5b4d146fb5e5be574bcbe1b7b843d3ebafdd95eaf7767a7e5 AS production
+FROM supported-platform AS production
 
 RUN apt-get update \
   && apt-get install -y --no-install-recommends libaio1 tini git ca-certificates \
@@ -43,6 +50,8 @@ ENV NODE_ORACLEDB_CLIENT_LIB_DIR=/opt/oracle/instantclient
 ENV LD_LIBRARY_PATH=/opt/oracle/instantclient
 WORKDIR /workspace/apps/db-ops-api
 USER 10001:10001
+# Load the real client as the runtime user; no database connection is needed.
+RUN node -e "const o = require('oracledb'); o.initOracleClient({libDir: process.env.NODE_ORACLEDB_CLIENT_LIB_DIR}); if (o.thin) throw new Error('Oracle thick mode required'); console.log('Oracle thick client:', o.oracleClientVersionString, 'arch:', process.arch);"
 EXPOSE 3000 28888
 ENTRYPOINT ["/usr/bin/tini", "--"]
 CMD ["./node_modules/.bin/tsx", "server.ts"]
