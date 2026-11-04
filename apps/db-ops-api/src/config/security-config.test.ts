@@ -29,3 +29,12 @@ describe('security startup configuration', () => {
   });
 
 });
+
+it('MAX-267 rejects blank identities, weak and bcrypt-truncated bootstrap passwords', () => {
+  for (const INITIAL_ADMIN_USERNAME of [' ', 'x'.repeat(51)]) {
+    expect(() => loadSecurityConfig({ ...secure, INITIAL_ADMIN_USERNAME })).toThrow();
+  }
+  for (const INITIAL_ADMIN_PASSWORD of [' ', 'Tpam1234', 'x'.repeat(73)]) {
+    expect(() => loadSecurityConfig({ ...secure, INITIAL_ADMIN_PASSWORD })).toThrow();
+  }
+});
