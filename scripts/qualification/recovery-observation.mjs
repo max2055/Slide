@@ -7,6 +7,35 @@ import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 const execute = promisify(execFile);
 const dbPattern = /^investigation_test_\d+_[a-f0-9]{32}$/;
+const ATTEMPT_TIMEOUT_MS = 2500;
+// recovery-observation.ts beforeCleanup waits 4s, then the worker drops its database.
+// Watch lag, ack write, and the worker's ack poll sit outside the docker calls.
+export const CLEANUP_WINDOW_MS = 4000;
+export const CLEANUP_WATCH_MS = 100;
+export const CLEANUP_ACK_POLL_MS = 20;
+export const CLEANUP_ACK_WRITE_MS = 50;
+export const CLEANUP_MARGIN_MS = 250;
+export const STATS_RETRY_BUDGET_MS = CLEANUP_WINDOW_MS - CLEANUP_WATCH_MS - CLEANUP_ACK_POLL_MS - CLEANUP_ACK_WRITE_MS - CLEANUP_MARGIN_MS;
+export async function boundedCommand(file, argv, options = {}) {
+  const retries = options.retries ?? 0;
+  const deadline = options.deadlineMs ?? Number.POSITIVE_INFINITY;
+  const attemptTimeout = options.timeout ?? ATTEMPT_TIMEOUT_MS;
+  const execOptions = { maxBuffer: 128 * 1024, ...options };
+  delete execOptions.retries;
+  delete execOptions.deadlineMs;
+  delete execOptions.timeout;
+  for (let attempt = 0; ; attempt += 1) {
+    const remaining = deadline - performance.now();
+    if (remaining < 1) return { ok: false, code: 'DEADLINE_EXCEEDED', signal: null };
+    try {
+      return { ok: true, stdout: (await execute(file, argv, { ...execOptions, timeout: Math.max(1, Math.floor(Math.min(attemptTimeout, remaining))) })).stdout.trim() };
+    } catch (error) {
+      const failure = { ok: false, code: typeof error.code === 'number' ? error.code : 'EXECUTION_FAILED', signal: error.signal ?? null };
+      // `docker stats --no-stream` can be killed by SIGPIPE while the container is still readable.
+      if (error.signal !== 'SIGPIPE' || attempt >= retries || deadline - performance.now() < 1) return failure;
+    }
+  }
+}
 export function pendingSql(events, now) {
   const pending = new Map();
   for (const event of events) {
@@ -28,31 +57,20 @@ export async function runObservation(container, port, command, args) {
     try { appendFileSync(join(output, 'runner.jsonl'), JSON.stringify({ utc: new Date().toISOString(), monoMs: performance.now() - origin, ...event }) + '\n'); }
     catch { recordingFailed = true; process.stderr.write('RECOVERY_OBSERVATION_WRITE_FAILED\n'); }
   };
-  const bounded = async (file, argv, options = {}) => {
-    const retries = options.retries ?? 0;
-    const execOptions = { timeout: 2500, maxBuffer: 128 * 1024, ...options };
-    delete execOptions.retries;
-    for (let attempt = 0; ; attempt++) {
-      try { return { ok: true, stdout: (await execute(file, argv, execOptions)).stdout.trim() }; }
-      catch (error) {
-        const failure = { ok: false, code: typeof error.code === 'number' ? error.code : 'EXECUTION_FAILED', signal: error.signal ?? null };
-        // `docker stats --no-stream` can be killed by SIGPIPE while the container is still readable.
-        if (error.signal !== 'SIGPIPE' || attempt >= retries) return failure;
-      }
-    }
-  };
-  const commit = await bounded('git', ['rev-parse', 'HEAD']);
+  const commit = await boundedCommand('git', ['rev-parse', 'HEAD']);
   if (!commit.ok || !/^[a-f0-9]{40}$/.test(commit.stdout)) throw new Error('Missing source identity');
-  const identity = await bounded('docker', ['inspect', '--format', '{{json .Id}} {{json .Image}} {{json .Platform}} {{json .State.Pid}}', container]);
+  const identity = await boundedCommand('docker', ['inspect', '--format', '{{json .Id}} {{json .Image}} {{json .Platform}} {{json .State.Pid}}', container]);
   if (!identity.ok) throw new Error('Missing isolated container identity');
   const imageId = /sha256:[a-f0-9]{64}/.exec(identity.stdout)?.[0];
   if (!imageId) throw new Error('Missing isolated image identity');
-  const image = await bounded('docker', ['image', 'inspect', '--format', '{{.Id}} {{.Architecture}} {{.Os}}', imageId]);
+  const image = await boundedCommand('docker', ['image', 'inspect', '--format', '{{.Id}} {{.Architecture}} {{.Os}}', imageId]);
   if (!image.ok) throw new Error('Missing isolated image architecture');
   record({ event: 'identity', commit: commit.stdout, container, containerIdentity: identity.stdout, imageIdentity: image.stdout,
     runner: { pid: process.pid, arch: arch(), platform: platform(), cpus: cpus().length, memoryBytes: totalmem() } });
   const events = () => readdirSync(output).filter(f => /^hook-\d+\.jsonl$/.test(f)).flatMap(f => readFileSync(join(output, f), 'utf8').trim().split('\n').filter(Boolean).map(line => JSON.parse(line)));
   const sample = async final => {
+    // One budget covers every stats attempt and the parallel process-list read.
+    const sampleDeadline = performance.now() + STATS_RETRY_BUDGET_MS;
     try {
       const hookEvents = events();
       const databases = [...new Set(hookEvents.map(e => e.database))].filter(db => dbPattern.test(db));
@@ -64,8 +82,8 @@ export async function runObservation(container, port, command, args) {
       // Explicit columns exclude statement text, SQL bindings, connection credentials and business rows.
       const sql = `SELECT PROCESSLIST_ID,PROCESSLIST_DB,PROCESSLIST_COMMAND,PROCESSLIST_TIME,PROCESSLIST_STATE FROM performance_schema.threads WHERE ${predicate} LIMIT 100; SELECT t.PROCESSLIST_ID,w.EVENT_NAME,w.TIMER_WAIT,w.OPERATION FROM performance_schema.events_waits_current w JOIN performance_schema.threads t ON w.THREAD_ID=t.THREAD_ID WHERE ${predicate} LIMIT 100;`;
       const [stats, waits] = await Promise.all([
-        bounded('docker', ['stats', '--no-stream', '--format', '{{.CPUPerc}}|{{.MemUsage}}|{{.BlockIO}}|{{.PIDs}}', container], { retries: 2 }),
-        bounded('docker', ['exec', '--env', 'MYSQL_PWD=qualification-test-password', container, 'mysql', '-uroot', '--batch', '--skip-column-names', '-e', sql]),
+        boundedCommand('docker', ['stats', '--no-stream', '--format', '{{.CPUPerc}}|{{.MemUsage}}|{{.BlockIO}}|{{.PIDs}}', container], { retries: 2, deadlineMs: sampleDeadline }),
+        boundedCommand('docker', ['exec', '--env', 'MYSQL_PWD=qualification-test-password', container, 'mysql', '-uroot', '--batch', '--skip-column-names', '-e', sql], { deadlineMs: sampleDeadline }),
       ]);
       record({ event: final ? 'final-snapshot' : 'sample', databases, connectionIds, pendingSql: pendingSql(hookEvents, process.hrtime.bigint()), stats, waits,
         runner: { freeMemoryBytes: freemem(), load: loadavg(), usage: process.resourceUsage() } });
@@ -94,6 +112,7 @@ export async function runObservation(container, port, command, args) {
         if (cleanupRequests.has(file)) continue;
         cleanupRequests.add(file);
         // The worker waits at most 4s before its finally block drops its own DB.
+        // sample() shares STATS_RETRY_BUDGET_MS, then this ack is written.
         cleanupSnapshot = sample(true).then(() => writeFileSync(join(output, `${file}.ack`), 'captured'))
           .catch(() => { recordingFailed = true; record({ event: 'cleanup-snapshot-error' }); });
       }
