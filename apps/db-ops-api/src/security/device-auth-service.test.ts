@@ -21,12 +21,12 @@ describe('DeviceAuthService', () => {
     const signature = sign(null, Buffer.from(payload), privateKey).toString('base64url');
     const execute = vi.fn()
       .mockResolvedValueOnce([[{ id: 1, public_key: publicKeyB64, status: 'paired', challenge_hash: 'x', challenge_expires_at: new Date(Date.now() + 60_000) }]])
-      .mockResolvedValueOnce([{}]);
+      .mockResolvedValueOnce([{ affectedRows: 1 }]);
     const service = new DeviceAuthService(() => ({ execute }));
     const { createHash } = await import('node:crypto');
     execute.mockReset();
     execute.mockResolvedValueOnce([[{ id: 1, public_key: publicKeyB64, status: 'paired', challenge_hash: createHash('sha256').update(nonce).digest('hex'), challenge_expires_at: new Date(Date.now() + 60_000) }]]);
-    execute.mockResolvedValueOnce([{}]);
+    execute.mockResolvedValueOnce([{ affectedRows: 1 }]);
     await expect(service.verify({ userId: 7 } as any, { deviceId, publicKey: publicKeyB64, signature, timestamp, nonce, method: 'GET', path: '/ws/auth', body: '' })).resolves.toBe(true);
   });
 });
