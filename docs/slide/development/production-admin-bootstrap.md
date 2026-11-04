@@ -2,6 +2,8 @@
 
 生产启动和 `pnpm --filter slide-api init-db` 均通过 MigrationRunner 执行初始化；必须设置 `NODE_ENV=production`，以及现有安全配置要求的 JWT、加密密钥和 `INITIAL_ADMIN_USERNAME/PASSWORD`。用户名须非空、不含首尾空白且不超过 50 字符，密码去除首尾空白后至少 12 字符且原值不超过 72 UTF-8 字节。密码原值不做 trim。
 
+JWT 密钥沿用原始字符串至少 32 字符的要求，拒绝纯空白和已知默认值；加密密钥沿用同样的最低字符数及非空白、非默认要求，并须为恰好 32 字节 UTF-8、64 位 hex 或解码为 32 字节的 base64。两种密钥原值必须不同。校验不会 trim 实际签名或加解密使用的密钥：合法值中的首尾换行也保留；hex/base64 外包换行不属于其编码格式。长度和格式检查不能证明任意字符串具有足够熵，两种密钥应分别使用密码学安全随机生成器生成，妥善注入环境，避免记录在日志或版本库中。不要为已有部署自动裁剪或替换密钥，否则旧令牌或密文可能失效。
+
 生产基线执行时跳过历史固定账号 INSERT，SQL 原文和账本 checksum 不变。所有 schema 校验成功后，在迁移命名锁内以事务创建配置管理员，bcrypt cost 12，独立随机盐，并绑定 admin 角色；此步骤在认证监听启动前完成。无效配置或初始化失败拒绝启动。
 
 升级会检查历史 admin/user 的口令是否仍为公开种子口令（包含首次登录迁移后的 bcrypt），将这些账号设为 inactive 并递增 session_version；不删除账号、业务历史和密码记录。已改密账号与其他身份保持原样。此处口令比较不发送至外部服务。
@@ -24,4 +26,4 @@ BOOTSTRAP_TEST_MYSQL_PORT=33367 pnpm --filter slide-api exec vitest run src/conf
 BOOTSTRAP_TEST_MYSQL_PORT=33367 pnpm --filter slide-api exec tsx tests/bootstrap-http.acceptance.ts
 ```
 
-脚本运行正式 `init-db` / `start` 命令，为测试端口配置生产 CORS，验证 HTTP 登录、重启、升级前签发 JWT 在升级后被实时状态检查拒绝，以及无效初始化配置监听前失败。日志保存至工作树 `outputs/max267-http`，不输出口令或令牌；结束时删除随机库并停止自己启动的子进程。
+脚本运行正式 `init-db` / `start` 命令，为测试端口配置生产 CORS，验证 HTTP 登录、重启、升级前签发 JWT 在升级后被实时状态检查拒绝，以及无效初始化配置监听前失败。MAX-266 回归还覆盖 JWT 缺失、空值、空格、制表符/换行、Unicode 空白、31 字符和默认值在生产监听前拒绝，以及合法首尾换行密钥签发的 HTTP 令牌只能用原文验证，日志不泄露配置凭据或令牌。日志保存至工作树 `outputs/max267-http`；结束时删除随机库并停止自己启动的子进程。
