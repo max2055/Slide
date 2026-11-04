@@ -29,7 +29,12 @@ export interface WorkflowStep {
   method: "GET" | "POST" | "PUT" | "DELETE";
   path: string;
   body?: Record<string, unknown>;
-  /** If set, extract this value from the response body for use in later steps as ${{key}} */
+  /**
+   * Copy this response field into later steps as ${{key}}.
+   * Supported substitution: every ${{key}} token in path, and a top-level body
+   * value that is exactly "${{key}}". Nested body templates are rejected
+   * before the request so an unresolved id cannot select another object.
+   */
   extract?: string;
   assert?: (res: Response, body: unknown, vars: Record<string, unknown>) => boolean | string;
 }
@@ -190,22 +195,10 @@ export async function workflow(
   const errors: string[] = [];
 
   for (const step of steps) {
-    // Resolve template variables in body/path
-    let resolvedBody: Record<string, unknown> | undefined;
-    if (step.body) {
-      resolvedBody = {};
-      for (const [k, v] of Object.entries(step.body)) {
-        if (typeof v === "string" && v.startsWith("${{") && v.endsWith("}}")) {
-          const key = v.slice(3, -2);
-          resolvedBody[k] = vars[key];
-        } else {
-          resolvedBody[k] = v;
-        }
-      }
-    }
-
     try {
-      const { res, raw } = await request(step.method, step.path, resolvedBody);
+      const resolvedPath = resolvePathTemplates(step.path, vars);
+      const resolvedBody = resolveBodyTemplates(step.body, vars);
+      const { res, raw } = await request(step.method, resolvedPath, resolvedBody);
 
       if (step.extract && raw && typeof raw === "object") {
         const val = (raw as Record<string, unknown>)[step.extract];
@@ -236,6 +229,61 @@ export async function workflow(
   }
 
   return { passed: errors.length === 0, stepResults, errors };
+}
+
+function templateValue(key: string, vars: Record<string, unknown>, where: string): unknown {
+  if (key.length === 0 || !Object.prototype.hasOwnProperty.call(vars, key) || vars[key] === undefined) {
+    throw new Error(`unresolved ${where} template \${{${key}}}`);
+  }
+  return vars[key];
+}
+
+/** Replace path tokens before the request. Non-scalars cannot be encoded into a URL. */
+function resolvePathTemplates(path: string, vars: Record<string, unknown>): string {
+  const resolved = path.replace(/\$\{\{(.*?)\}\}/g, (_match, key: string) => {
+    const value = templateValue(key, vars, "path");
+    if (typeof value !== "string" && typeof value !== "number" && typeof value !== "boolean") {
+      throw new Error(`path template \${{${key}}} is not a scalar`);
+    }
+    return encodeURIComponent(String(value));
+  });
+  if (resolved.includes("${{")) {
+    throw new Error(`unresolved path template: ${path}`);
+  }
+  return resolved;
+}
+
+function rejectNestedTemplates(value: unknown, at: string): void {
+  if (Array.isArray(value)) {
+    value.forEach((item, index) => rejectNestedTemplates(item, `${at}[${index}]`));
+    return;
+  }
+  if (value && typeof value === "object") {
+    for (const [key, child] of Object.entries(value)) {
+      rejectNestedTemplates(child, `${at}.${key}`);
+    }
+    return;
+  }
+  if (typeof value === "string" && value.includes("${{")) {
+    throw new Error(`nested template is outside the supported contract at ${at}`);
+  }
+}
+
+function resolveBodyTemplates(
+  body: Record<string, unknown> | undefined,
+  vars: Record<string, unknown>,
+): Record<string, unknown> | undefined {
+  if (!body) return undefined;
+  const resolved: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(body)) {
+    if (typeof value === "string" && value.startsWith("${{") && value.endsWith("}}") && value.indexOf("${{", 1) === -1) {
+      resolved[key] = templateValue(value.slice(3, -2), vars, "body");
+      continue;
+    }
+    rejectNestedTemplates(value, key);
+    resolved[key] = value;
+  }
+  return resolved;
 }
 
 // ---------------------------------------------------------------------------
