@@ -157,7 +157,7 @@ import { WorkerStartup } from './src/lifecycle/worker-startup.js';
 import { InfrastructureReadiness } from './src/lifecycle/infrastructure-readiness.js';
 import { WorkerRecovery } from './src/lifecycle/worker-recovery.js';
 import { boundedPoolQuery } from './src/lifecycle/bounded-pool-query.js';
-import { platformUnavailableResponse } from './src/lifecycle/platform-unavailable.js';
+import { PlatformUnavailableError, platformUnavailableResponse } from './src/lifecycle/platform-unavailable.js';
 import { ActorAuthenticationError } from './src/auth/actor-context.js';
 import { startupConfig } from './src/lifecycle/startup-config.js';
 import { registerDeliveryRoutes } from './src/workflows/delivery-routes.js';
@@ -655,6 +655,7 @@ async function start() {
         },
       });
     } catch (error: any) {
+      if (error instanceof PlatformUnavailableError) return reply.code(503).send(platformUnavailableResponse);
       console.error('登录失败:', error);
       reply.code(500).send({ error: '登录失败：' + error.message });
     }
