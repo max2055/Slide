@@ -42,6 +42,7 @@ async function initializeDatabase() {
       getConnection: async () => ({
         query: (sql, values) => connection.query(sql, values as any) as any,
         release: () => {},
+        destroy: () => connection.destroy(),
       }),
     });
     const baseline = process.argv.includes('--baseline');

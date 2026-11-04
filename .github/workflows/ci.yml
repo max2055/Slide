@@ -234,6 +234,14 @@ jobs:
           --grep 'qualification login|qualification security boundary|viewer cannot|Stop cancels'
           --workers=1
 
+      - name: Production administrator bootstrap and upgrade regression
+        env:
+          BOOTSTRAP_TEST_MYSQL_PORT: '3306'
+          BOOTSTRAP_TEST_MYSQL_PASSWORD: qualification-test-password
+        run: |
+          pnpm --filter slide-api exec vitest run src/config/security-config.test.ts src/migrations/production-bootstrap.mysql.test.ts
+          pnpm --filter slide-api exec tsx tests/bootstrap-http.acceptance.ts
+
       - name: Runtime MySQL transaction and WebSocket qualification
         run: bash scripts/qualification/run-agent-runtime.sh --mode mysql --runtime-only
       - name: Cron browser, real authenticated routes and durable completion
