@@ -73,6 +73,8 @@ test('parts output directory keeps failure traces out of the main Playwright run
     assert.ok(partsTrace, `parts config did not retain a failure trace\n${partsRun.output}`);
     assert.equal(await readFile(mainSentinel, 'utf8'), 'main-trace-must-survive-parts\n');
     assert.equal(await sha256(mainTrace), mainTraceHash);
+    const mainFilesAfterParts = (await walk(mainDir)).map((file) => path.relative(root, file));
+    const mainTraceBytes = await readFile(mainTrace);
     const partsSentinel = path.join(partsDir, 'isolation-sentinel.txt');
     await writeFile(partsSentinel, 'parts-trace-must-survive-main\n');
     const partsTraceHash = await sha256(partsTrace);
@@ -94,7 +96,7 @@ test('parts output directory keeps failure traces out of the main Playwright run
 
     if (evidenceDir) {
       await mkdir(evidenceDir, { recursive: true });
-      await writeFile(path.join(evidenceDir, 'main-first-trace.zip'), await readFile(mainTrace));
+      await writeFile(path.join(evidenceDir, 'main-first-trace.zip'), mainTraceBytes);
       await writeFile(path.join(evidenceDir, 'parts-trace.zip'), await readFile(partsTrace));
       await writeFile(path.join(evidenceDir, 'main-second-trace.zip'), await readFile(replacedMainTrace));
       await writeFile(path.join(evidenceDir, 'report.json'), JSON.stringify({
@@ -105,8 +107,9 @@ test('parts output directory keeps failure traces out of the main Playwright run
         replacedMainTraceHash: await sha256(replacedMainTrace),
         runs: runs.map(({ config, code }) => ({ config, code })),
         files: {
-          mainAfterParts: await walk(mainDir),
-          partsAfterSecondMain: await walk(partsDir),
+          mainAfterParts: mainFilesAfterParts,
+          partsAfterSecondMain: (await walk(partsDir)).map((file) => path.relative(root, file)),
+          mainAfterSecondRun: (await walk(mainDir)).map((file) => path.relative(root, file)),
         },
       }, null, 2));
     }
