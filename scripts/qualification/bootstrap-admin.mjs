@@ -7,6 +7,8 @@ import mysql from '../../apps/db-ops-api/node_modules/mysql2/promise.js';
 const DEAD_LETTER_JOB_ID = '00000000-0000-4000-8000-000000000139';
 const RCA_SERVER_HOST = 'qualification-server-rca.invalid';
 const RCA_ALERT_TITLE = 'Qualification server RCA browser alert';
+const RCA_ANALYSIS_SESSION = 'qualification-server-rca-session';
+const RCA_ANALYSIS_LEGACY_CACHE_KEY = 'qualification:server-rca-browser';
 const INJECTABLE_STEPS = new Set(['after-rca', 'before-commit']);
 
 export function assertInjectableStep(step) {
@@ -53,7 +55,16 @@ async function applyQualificationFixtures(db, passwordHash, options) {
      VALUES (?, 'notification.deliver', 1, ?, 'qualification:dead-letter:139', 'dead_letter', 5, 5, 'qualification delivery failure')`,
     [DEAD_LETTER_JOB_ID, JSON.stringify({ alertId: 0, channelId: 0 })],
   );
-  await db.execute('DELETE FROM ai_analysis WHERE cache_key = ?', ['qualification:server-rca-browser']);
+  await db.execute(
+    `DELETE a FROM ai_analysis a
+     LEFT JOIN servers s ON s.id = a.server_id AND s.host = ? AND s.port = 22
+     LEFT JOIN alerts al ON al.id = a.related_id AND al.title = ? AND al.server_id = a.server_id
+     WHERE a.session_key = ?
+        OR a.cache_key = ?
+        OR s.id IS NOT NULL
+        OR al.id IS NOT NULL`,
+    [RCA_SERVER_HOST, RCA_ALERT_TITLE, RCA_ANALYSIS_SESSION, RCA_ANALYSIS_LEGACY_CACHE_KEY],
+  );
   await db.execute('DELETE FROM alerts WHERE title = ?', [RCA_ALERT_TITLE]);
   await db.execute('DELETE FROM servers WHERE host = ? AND port = 22', [RCA_SERVER_HOST]);
   const [serverInsert] = await db.execute(
@@ -71,8 +82,14 @@ async function applyQualificationFixtures(db, passwordHash, options) {
   await db.execute(
     `INSERT INTO ai_analysis
       (analysis_type, target_type, server_id, related_id, status, trigger_type, cache_key, result, completed_at, session_key)
-     VALUES ('alert_rca', 'server', ?, ?, 'completed', 'manual', ?, ?, NOW(), 'qualification-server-rca-session')`,
-    [serverId, alertId, `alert:${alertId}:server:${serverId}`, JSON.stringify({ summary: 'Qualification server RCA completed.' })],
+     VALUES ('alert_rca', 'server', ?, ?, 'completed', 'manual', ?, ?, NOW(), ?)`,
+    [
+      serverId,
+      alertId,
+      `alert:${alertId}:server:${serverId}`,
+      JSON.stringify({ summary: 'Qualification server RCA completed.' }),
+      RCA_ANALYSIS_SESSION,
+    ],
   );
   await markStep('after-rca', options);
   await db.execute(

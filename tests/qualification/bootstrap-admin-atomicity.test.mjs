@@ -121,11 +121,19 @@ test('fixture DML rolls back on real MySQL while DDL stays in its own phase', { 
       evidence.engines = engines;
       assert.equal(engines.every((row) => row.engine === 'InnoDB'), true);
 
-      await reader.query(
+      const [keepInsert] = await reader.query(
         `INSERT INTO servers (host, port, label, os_type, credential_type, credential_encrypted, status, collection_enabled)
          VALUES (?, 22, 'keep', 'linux', 'password', 'not-a-secret', 'online', 0)`,
         [keepHost],
       );
+      const keepServerId = Number(keepInsert.insertId);
+      const [unrelatedInsert] = await reader.query(
+        `INSERT INTO ai_analysis
+          (analysis_type, target_type, server_id, related_id, status, trigger_type, cache_key, result, completed_at, session_key)
+         VALUES ('fault_diagnosis', 'server', ?, NULL, 'completed', 'manual', 'max286-unrelated-analysis', ?, NOW(), 'max286-unrelated-session')`,
+        [keepServerId, JSON.stringify({ summary: 'unrelated to qualification RCA' })],
+      );
+      const unrelatedId = Number(unrelatedInsert.insertId);
 
       async function snapshot() {
         const [servers] = await reader.query(
@@ -137,6 +145,19 @@ test('fixture DML rolls back on real MySQL while DDL stays in its own phase', { 
         );
         const [analysis] = await reader.query(
           "SELECT id, server_id, related_id, cache_key, session_key FROM ai_analysis WHERE session_key = 'qualification-server-rca-session' ORDER BY id",
+        );
+        const [dangling] = await reader.query(
+          `SELECT a.id
+           FROM ai_analysis a
+           LEFT JOIN servers s ON s.id = a.server_id
+           LEFT JOIN alerts al ON al.id = a.related_id
+           WHERE a.session_key = 'qualification-server-rca-session'
+             AND (s.id IS NULL OR al.id IS NULL)
+           ORDER BY a.id`,
+        );
+        const [unrelated] = await reader.query(
+          'SELECT id, server_id, related_id, cache_key, session_key FROM ai_analysis WHERE id = ?',
+          [unrelatedId],
         );
         const [jobs] = await reader.query(
           'SELECT id, state, attempts, idempotency_key, last_error FROM workflow_jobs WHERE id = ?',
@@ -163,7 +184,44 @@ test('fixture DML rolls back on real MySQL while DDL stays in its own phase', { 
         const [messages] = await reader.query(
           "SELECT message_id, content FROM chat_messages WHERE message_id = 'qualification-admin-private-message'",
         );
-        return { servers, alerts, analysis, jobs, counterTable, counter, users, roles, chat, messages };
+        return { servers, alerts, analysis, dangling, unrelated, jobs, counterTable, counter, users, roles, chat, messages };
+      }
+
+      function assertOwnedAnalysis(state) {
+        const rcaServers = state.servers.filter((row) => row.host === rcaHost);
+        assert.equal(rcaServers.length, 1);
+        assert.equal(state.alerts.length, 1);
+        assert.equal(state.analysis.length, 1);
+        assert.equal(state.dangling.length, 0);
+        const serverId = Number(rcaServers[0].id);
+        const alertId = Number(state.alerts[0].id);
+        assert.equal(Number(state.alerts[0].server_id), serverId);
+        assert.equal(Number(state.analysis[0].server_id), serverId);
+        assert.equal(Number(state.analysis[0].related_id), alertId);
+        assert.equal(state.analysis[0].cache_key, `alert:${alertId}:server:${serverId}`);
+        assert.equal(state.analysis[0].session_key, 'qualification-server-rca-session');
+        assert.equal(state.analysis.some((row) => row.cache_key === 'qualification:server-rca-browser'), false);
+        assert.equal(state.unrelated.length, 1);
+        const kept = state.unrelated[0];
+        assert.equal(Number(kept.id), unrelatedId);
+        assert.equal(Number(kept.server_id), keepServerId);
+        assert.equal(kept.related_id, null);
+        assert.equal(kept.cache_key, 'max286-unrelated-analysis');
+        assert.equal(kept.session_key, 'max286-unrelated-session');
+      }
+
+      function assertReplacedFixture(previous, next) {
+        const previousServerId = Number(previous.servers.find((row) => row.host === rcaHost).id);
+        const previousAlertId = Number(previous.alerts[0].id);
+        const previousAnalysisId = Number(previous.analysis[0].id);
+        assert.equal(next.servers.some((row) => Number(row.id) === previousServerId && row.host === rcaHost), false);
+        assert.equal(next.alerts.some((row) => Number(row.id) === previousAlertId), false);
+        assert.equal(next.analysis.some((row) => Number(row.id) === previousAnalysisId), false);
+        assert.equal(next.analysis.some((row) => Number(row.server_id) === previousServerId), false);
+        assert.equal(next.analysis.some((row) => Number(row.related_id) === previousAlertId), false);
+        assert.equal(next.analysis.length, 1);
+        assertOwnedAnalysis(next);
+        assert.equal(next.servers.find((row) => row.host === keepHost).id, previous.servers.find((row) => row.host === keepHost).id);
       }
 
       async function bootstrap(failAfterStep) {
@@ -193,6 +251,8 @@ test('fixture DML rolls back on real MySQL while DDL stays in its own phase', { 
       assert.deepEqual(missingState.servers.map((row) => row.host), [keepHost]);
       assert.equal(missingState.alerts.length, 0);
       assert.equal(missingState.analysis.length, 0);
+      assert.equal(missingState.dangling.length, 0);
+      assert.equal(Number(missingState.unrelated[0]?.id), unrelatedId);
       assert.equal(missingState.jobs.length, 0);
       assert.equal(missingState.counter.length, 0);
       assert.equal(missingState.counterTable[0]?.table_comment, 'Qualification approval execution counter');
@@ -216,12 +276,7 @@ test('fixture DML rolls back on real MySQL while DDL stays in its own phase', { 
       assert.match(success.stderr, /phase=commit/);
       assert.equal(success.stderr.includes('phase=rollback'), false);
       assert.equal(await bcrypt.compare(adminPassword, adminUser.password_hash), true);
-      assert.equal(committed.servers.filter((row) => row.host === rcaHost).length, 1);
-      assert.equal(committed.alerts.length, 1);
-      assert.equal(committed.analysis.length, 1);
-      assert.equal(Number(committed.alerts[0].server_id), Number(committed.servers.find((row) => row.host === rcaHost).id));
-      assert.equal(Number(committed.analysis[0].server_id), Number(committed.alerts[0].server_id));
-      assert.equal(Number(committed.analysis[0].related_id), Number(committed.alerts[0].id));
+      assertOwnedAnalysis(committed);
       assert.deepEqual(committed.jobs, [{
         id: '00000000-0000-4000-8000-000000000139',
         state: 'dead_letter',
@@ -294,25 +349,40 @@ test('fixture DML rolls back on real MySQL while DDL stays in its own phase', { 
       const rerunState = await snapshot();
       const rerunAdmin = rerunState.users.find((row) => row.username === 'admin');
       evidence.cases.push({
-        name: 'rerun-success',
+        name: 'rerun-after-failure',
         code: rerun.code,
         rca_servers: rerunState.servers.filter((row) => row.host === rcaHost).length,
         alerts: rerunState.alerts.length,
         analysis: rerunState.analysis.length,
+        dangling: rerunState.dangling.length,
+        unrelated_id: rerunState.unrelated[0]?.id ?? null,
         keep_server_unchanged: rerunState.servers.some((row) => row.host === keepHost && row.id === committed.servers.find((item) => item.host === keepHost).id),
         state: redact(rerunState),
       });
       assert.equal(rerun.code, 0);
-      assert.equal(rerunState.servers.filter((row) => row.host === rcaHost).length, 1);
-      assert.equal(rerunState.alerts.length, 1);
-      assert.equal(rerunState.analysis.length, committed.analysis.length + 1);
-      assert.deepEqual(rerunState.analysis.slice(0, committed.analysis.length), committed.analysis);
-      assert.equal(Number(rerunState.alerts[0].server_id), Number(rerunState.servers.find((row) => row.host === rcaHost).id));
+      assertReplacedFixture(committed, rerunState);
       assert.equal(rerunState.jobs.length, 1);
       assert.deepEqual(rerunState.counter, [{ id: 1, value: 0 }]);
       assert.equal(rerunState.messages[0].content, 'private qualification message');
       assert.equal(await bcrypt.compare(adminPassword, rerunAdmin.password_hash), true);
-      assert.equal(rerunState.servers.find((row) => row.host === keepHost).id, committed.servers.find((row) => row.host === keepHost).id);
+
+      const again = await bootstrap();
+      const againState = await snapshot();
+      evidence.cases.push({
+        name: 'consecutive-success',
+        code: again.code,
+        rca_servers: againState.servers.filter((row) => row.host === rcaHost).length,
+        alerts: againState.alerts.length,
+        analysis: againState.analysis.length,
+        dangling: againState.dangling.length,
+        unrelated_id: againState.unrelated[0]?.id ?? null,
+        state: redact(againState),
+      });
+      assert.equal(again.code, 0);
+      assertReplacedFixture(rerunState, againState);
+      assert.equal(againState.analysis.length, 1);
+      assert.equal(againState.jobs.length, 1);
+      assert.deepEqual(againState.counter, [{ id: 1, value: 0 }]);
 
       const unknown = await bootstrap('not-a-step');
       const afterUnknown = await snapshot();
@@ -320,12 +390,12 @@ test('fixture DML rolls back on real MySQL while DDL stays in its own phase', { 
         name: 'unknown-injection',
         code: unknown.code,
         touched_database: unknown.stderr.includes('phase=ddl'),
-        unchanged: JSON.stringify(afterUnknown) === JSON.stringify(rerunState),
+        unchanged: JSON.stringify(afterUnknown) === JSON.stringify(againState),
       });
       assert.notEqual(unknown.code, 0);
       assert.match(unknown.stderr, /unknown qualification bootstrap failure injection/);
       assert.equal(unknown.stderr.includes('phase=ddl'), false);
-      assert.deepEqual(afterUnknown, rerunState);
+      assert.deepEqual(afterUnknown, againState);
     } finally {
       await reader.end();
       await admin.end();
