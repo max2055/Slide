@@ -34,12 +34,22 @@ export class DeviceAuthService {
   async register(actor: ActorContext, deviceId: string, publicKey: string): Promise<{ deviceId: string; status: string }> {
     if (!DEVICE_ID_RE.test(deviceId) || decodeBase64Url(publicKey).length !== 32) throw new Error('DEVICE_AUTH_INPUT_INVALID');
     publicKeyObject(publicKey);
-    await this.executor().execute(
+    const executor = this.executor();
+    await executor.execute(
       `INSERT INTO device_registrations (user_id, device_id, public_key, status, paired_by)
        VALUES (?, ?, ?, 'paired', ?)
-       ON DUPLICATE KEY UPDATE public_key = VALUES(public_key), status = IF(status = 'revoked', 'paired', status), paired_by = VALUES(paired_by)`,
+       ON DUPLICATE KEY UPDATE
+         public_key = IF(status = 'paired', VALUES(public_key), public_key),
+         paired_by = IF(status = 'paired', VALUES(paired_by), paired_by)`,
       [actor.userId, deviceId, publicKey, actor.userId],
     );
+    // The unique-key write takes the row lock before inspecting status. A
+    // concurrent revocation cannot be undone, nor can a revoked key be replaced.
+    const [rows] = await executor.execute(
+      `SELECT status FROM device_registrations WHERE user_id = ? AND device_id = ? LIMIT 1`,
+      [actor.userId, deviceId],
+    );
+    if (!Array.isArray(rows) || rows[0]?.status !== 'paired') throw new Error('DEVICE_AUTH_REVOKED');
     return { deviceId, status: 'paired' };
   }
 
@@ -68,8 +78,16 @@ export class DeviceAuthService {
     if (rows[0].challenge_hash !== createHash('sha256').update(params.nonce).digest('hex') || !rows[0].challenge_expires_at || new Date(rows[0].challenge_expires_at).getTime() < Date.now()) return false;
     const payload = deviceSigningPayload(params);
     const valid = verifySignature(null, Buffer.from(payload), publicKeyObject(params.publicKey), decodeBase64Url(params.signature));
-    if (valid) await this.executor().execute(`UPDATE device_registrations SET last_seen_at = NOW(), challenge_hash = NULL, challenge_expires_at = NULL WHERE id = ?`, [rows[0].id]).catch(error => { throw new PlatformUnavailableError(error); });
-    return valid;
+    if (!valid) return false;
+    // Compare-and-consume in storage: the SELECT snapshot cannot authorize a
+    // proof after another consumer, key replacement, revocation or expiry.
+    const [result] = await this.executor().execute(
+      `UPDATE device_registrations SET last_seen_at = NOW(), challenge_hash = NULL, challenge_expires_at = NULL
+       WHERE id = ? AND user_id = ? AND device_id = ? AND BINARY public_key = BINARY ?
+         AND status = 'paired' AND challenge_hash = ? AND challenge_expires_at > NOW()`,
+      [rows[0].id, actor.userId, params.deviceId, params.publicKey, rows[0].challenge_hash],
+    ).catch(error => { throw new PlatformUnavailableError(error); });
+    return result?.affectedRows === 1;
   }
 }
 
