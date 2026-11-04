@@ -29,6 +29,12 @@ finish() {
       kill -TERM "$pid" 2>/dev/null || true
     done <"$work/pids"
   fi
+  if [[ -f "$work/orphan.pid" ]]; then
+    pid="$(tr -d '[:space:]' <"$work/orphan.pid" 2>/dev/null || true)"
+    if [[ "$pid" =~ ^[1-9][0-9]*$ ]]; then
+      kill -TERM "$pid" 2>/dev/null || true
+    fi
+  fi
   rm -rf "$work"
 }
 trap finish EXIT
@@ -99,6 +105,32 @@ alive() {
   kill -0 "$1" 2>/dev/null
 }
 
+# Sibling of the supervisor, same process group, then reparented to init.
+# It never belongs to the supervisor service tree. Same-group + new + orphan
+# must not be treated as ownership.
+create_unrelated_orphan() {
+  local dest="$1"
+  local script_pid="$2"
+  local pid="" ppid="" pgid="" script_pgid=""
+  pid="$(bash -c 'sleep 60 </dev/null >/dev/null 2>&1 & echo $!; exit 0')" || true
+  pid="$(printf '%s' "$pid" | tr -d '[:space:]')"
+  if [[ "$pid" =~ ^[1-9][0-9]*$ ]]; then
+    printf '%s\n' "$pid" >"$work/orphan.pid"
+    ppid="$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d '[:space:]' || true)"
+    pgid="$(ps -o pgid= -p "$pid" 2>/dev/null | tr -d '[:space:]' || true)"
+  fi
+  script_pgid="$(ps -o pgid= -p "$script_pid" 2>/dev/null | tr -d '[:space:]' || true)"
+  {
+    echo "orphan_pid=${pid:-none}"
+    echo "orphan_ppid=${ppid:-none}"
+    echo "orphan_pgid=${pgid:-none}"
+    echo "orphan_script_pgid=${script_pgid:-none}"
+  } >"$dest"
+  [[ "$pid" =~ ^[1-9][0-9]*$ ]] || return 1
+  [[ "$ppid" == "1" && -n "$script_pgid" && "$pgid" == "$script_pgid" ]] || return 1
+  return 0
+}
+
 run_scenario() {
   local name="$1"
   local api_mode="$2"
@@ -106,6 +138,7 @@ run_scenario() {
   local signal="$4"
   local expect_exit="$5"
   local expect_text="$6"
+  local inject="${7:-}"
   local dir="$work/$name"
   local err="$dir/stderr"
   local report="$dir/report"
@@ -142,6 +175,9 @@ run_scenario() {
       api_child="$(cat "$dir/api.child")"
       vite_child="$(cat "$dir/vite.child")"
       snapshot="$(ps -o pid=,ppid=,pgid=,command= -p "$script_pid" -p "$api_pid" -p "$vite_pid" -p "$api_child" -p "$vite_child" -p "$bystander" 2>/dev/null || true)"
+      if [[ "$inject" == orphan ]]; then
+        create_unrelated_orphan "$dir/orphan.txt" "$script_pid" || true
+      fi
     fi
     if [[ "$signal" == none ]]; then
       if ! alive "$script_pid"; then
@@ -177,7 +213,12 @@ run_scenario() {
     echo "api_pid=${api_pid:-none} api_pgid=${api_pgid:-gone} api_child=${api_child:-none}"
     echo "vite_pid=${vite_pid:-none} vite_pgid=${vite_pgid:-gone} vite_child=${vite_child:-none}"
     echo "bystander_pid=$bystander bystander_pgid=$bystander_pgid"
-    echo "script_exit=$code expected=$expect_exit signal=$signal"
+    echo "script_exit=$code expected=$expect_exit signal=$signal inject=${inject:-none}"
+    if [[ "$inject" == orphan ]]; then
+      echo "unrelated_orphan<<"
+      cat "$dir/orphan.txt" 2>/dev/null || echo missing
+      echo ">>"
+    fi
     echo "ownership<<"
     printf '%s\n' "${snapshot:-missing}"
     echo ">>"
@@ -219,6 +260,22 @@ run_scenario() {
   if ! alive "$bystander"; then
     echo "FAIL $name bystander killed $bystander" | tee -a "$report"
     ok=0
+  fi
+  if [[ "$inject" == orphan ]]; then
+    local orphan_pid="" orphan_ppid="" orphan_pgid="" orphan_script_pgid=""
+    orphan_pid="$(sed -n 's/^orphan_pid=//p' "$dir/orphan.txt" 2>/dev/null || true)"
+    orphan_ppid="$(sed -n 's/^orphan_ppid=//p' "$dir/orphan.txt" 2>/dev/null || true)"
+    orphan_pgid="$(sed -n 's/^orphan_pgid=//p' "$dir/orphan.txt" 2>/dev/null || true)"
+    orphan_script_pgid="$(sed -n 's/^orphan_script_pgid=//p' "$dir/orphan.txt" 2>/dev/null || true)"
+    if [[ "$orphan_ppid" != "1" || -z "$orphan_script_pgid" || "$orphan_pgid" != "$orphan_script_pgid" ]]; then
+      echo "FAIL $name orphan is not a same-group init child ppid=${orphan_ppid:-none} pgid=${orphan_pgid:-none} script_pgid=${orphan_script_pgid:-none}" | tee -a "$report"
+      ok=0
+    elif [[ -z "$orphan_pid" ]] || ! alive "$orphan_pid"; then
+      echo "FAIL $name unrelated orphan killed ${orphan_pid:-none}" | tee -a "$report"
+      ok=0
+    else
+      echo "unrelated_orphan_before=[$orphan_pid] unrelated_orphan_after=alive" | tee -a "$report"
+    fi
   fi
   if [[ -z "$snapshot" ]]; then
     echo "FAIL $name missing live ownership snapshot" | tee -a "$report"
@@ -264,6 +321,7 @@ run_scenario api-exit exit stay none 1 "E2E服务异常：API退出 code=7"
 run_scenario vite-exit stay exit none 1 "E2E服务异常：Vite退出 code=9"
 run_scenario signal-term stay stay TERM 0 "E2E服务停止：收到信号，清理本次进程"
 run_scenario signal-int stay stay INT 0 "E2E服务停止：收到信号，清理本次进程"
+run_scenario unrelated-orphan stay stay TERM 0 "E2E服务停止：收到信号，清理本次进程" orphan
 
 # Playwright webServer: shell + detached, stdio pipes, SIGKILL of the launcher
 # process group, then wait for the child 'close' event. A service that left

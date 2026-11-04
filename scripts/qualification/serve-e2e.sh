@@ -3,7 +3,8 @@
 # Playwright launches the script detached and tears it down with SIGKILL of
 # that group. A child that leaves the group keeps the inherited stdio pipes
 # open, so the launcher never observes process close. Explicit stops kill only
-# this run's service tree, not the whole group, so a sibling task survives.
+# processes recorded from this run's service tree. A later same-group orphan
+# adopted by init is not part of that tree and is left alone.
 set -euo pipefail
 
 root="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -23,6 +24,7 @@ vite_pid=""
 llm_pid=""
 group_pgid=""
 baseline_pids=""
+owned_pids=" "
 cleaned_up=0
 
 capture_baseline() {
@@ -45,10 +47,62 @@ known_pid() {
   return 1
 }
 
+remember_owned() {
+  local id="$1"
+  [[ "$id" =~ ^[1-9][0-9]*$ ]] || return 0
+  [[ "$id" == "$$" || "$id" == "1" ]] && return 0
+  if known_pid "$id"; then
+    return 0
+  fi
+  case "$owned_pids" in
+    *" $id "*) return 0 ;;
+  esac
+  owned_pids="${owned_pids}${id} "
+}
+
+# Record pids while they are still descendants of this shell or of a service
+# already identified. Cleanup uses that record. Same-group membership and
+# reparenting to init are not identity.
+record_service_tree() {
+  local snapshot pid ppid queue current rest seen=" "
+  snapshot="$(ps -ax -o pid=,ppid= 2>/dev/null || true)"
+  queue=" $$"
+  if [[ "$api_pid" =~ ^[1-9][0-9]*$ ]]; then
+    queue="$queue $api_pid"
+  fi
+  if [[ "$vite_pid" =~ ^[1-9][0-9]*$ ]]; then
+    queue="$queue $vite_pid"
+  fi
+  if [[ "$llm_pid" =~ ^[1-9][0-9]*$ ]]; then
+    queue="$queue $llm_pid"
+  fi
+  queue="$queue $owned_pids"
+  while [[ "$queue" =~ [0-9] ]]; do
+    queue="${queue#"${queue%%[![:space:]]*}"}"
+    current="${queue%%[[:space:]]*}"
+    rest="${queue#"$current"}"
+    queue="${rest#"${rest%%[![:space:]]*}"}"
+    [[ "$current" =~ ^[1-9][0-9]*$ ]] || continue
+    case "$seen" in
+      *" $current "*) continue ;;
+    esac
+    seen="${seen}${current} "
+    remember_owned "$current"
+    while read -r pid ppid; do
+      [[ "$ppid" == "$current" ]] || continue
+      queue="$queue $pid"
+    done <<EOF
+$snapshot
+EOF
+  done
+  return 0
+}
+
 start_service() {
   service_pid=""
   "$@" &
   service_pid=$!
+  remember_owned "$service_pid"
 }
 
 # Prints the exit code and returns 0 once the child has gone. Returns 1 while
@@ -69,61 +123,14 @@ child_finished() {
 }
 
 stop_our_processes() {
-  local snapshot pid ppid pgid targets=" " queue=" $$" current rest seen=" "
-  snapshot="$(ps -ax -o pid=,ppid=,pgid= 2>/dev/null || true)"
-
-  add_target() {
-    local id="$1"
-    [[ "$id" =~ ^[1-9][0-9]*$ ]] || return 0
-    [[ "$id" == "$$" || "$id" == "1" ]] && return 0
-    if known_pid "$id"; then
-      return 0
-    fi
-    case "$targets" in
-      *" $id "*) return 0 ;;
-    esac
-    targets="${targets}${id} "
-  }
-
-  # Descendants of this shell, including the in-flight poll sleep. A sibling
-  # that merely shares the group is not in this tree and is left alone.
-  while [[ "$queue" =~ [0-9] ]]; do
-    queue="${queue#"${queue%%[![:space:]]*}"}"
-    current="${queue%%[[:space:]]*}"
-    rest="${queue#"$current"}"
-    queue="${rest#"${rest%%[![:space:]]*}"}"
-    [[ "$current" =~ ^[1-9][0-9]*$ ]] || continue
-    case "$seen" in
-      *" $current "*) continue ;;
-    esac
-    seen="${seen}${current} "
-    add_target "$current"
-    while read -r pid ppid pgid; do
-      [[ "$ppid" == "$current" ]] || continue
-      queue="$queue $pid"
-    done <<EOF
-$snapshot
-EOF
-  done
-
-  # After a service exits, its grandchildren are reparented to init and would
-  # otherwise keep the launcher stdio open. They remain in this process group.
-  if [[ "$group_pgid" =~ ^[1-9][0-9]*$ ]]; then
-    while read -r pid ppid pgid; do
-      [[ "$pgid" == "$group_pgid" ]] || continue
-      [[ "$ppid" == "1" ]] || continue
-      add_target "$pid"
-    done <<EOF
-$snapshot
-EOF
-  fi
-
   local member
-  for member in $targets; do
+  record_service_tree
+  for member in $owned_pids; do
     kill -TERM "$member" 2>/dev/null || true
   done
   sleep 0.2 || true
-  for member in $targets; do
+  record_service_tree
+  for member in $owned_pids; do
     kill -KILL "$member" 2>/dev/null || true
   done
   if [[ "$api_pid" =~ ^[1-9][0-9]*$ ]]; then
@@ -177,6 +184,7 @@ capture_baseline
 if [[ "${QUALIFICATION_CANCELLATION_E2E:-0}" == "1" ]]; then
   start_service node scripts/qualification/cancellable-openai-server.mjs
   llm_pid="$service_pid"
+  record_service_tree
   DB_NAME=db_ops_ai_qualification ENCRYPTION_KEY="$qualification_encryption_key" \
     pnpm --filter slide-api exec tsx ../../scripts/qualification/configure-cancellable-provider.ts
 fi
@@ -186,10 +194,12 @@ JWT_SECRET_KEY="$qualification_jwt_secret" \
 ENCRYPTION_KEY="$qualification_encryption_key" \
   start_service bash -c 'cd apps/db-ops-api && exec node --import tsx server.ts'
 api_pid="$service_pid"
+record_service_tree
 
 ready=0
 for _ in $(seq 1 45); do
   finished=""
+  record_service_tree
   if finished="$(child_finished "$api_pid")"; then
     printf 'E2E服务异常：API退出 code=%s pid=%s\n' "$finished" "$api_pid" >&2
     exit 1
@@ -210,9 +220,11 @@ VITE_AGENT_WS_PROXY_TARGET="http://127.0.0.1:${ws_port}" \
 VITE_AGENT_WS_URL="ws://127.0.0.1:${ws_port}" \
   start_service node frontend/node_modules/vite/bin/vite.js --host 127.0.0.1 --port "$frontend_port" --strictPort frontend
 vite_pid="$service_pid"
+record_service_tree
 
 while true; do
   finished=""
+  record_service_tree
   if finished="$(child_finished "$api_pid")"; then
     printf 'E2E服务异常：API退出 code=%s pid=%s\n' "$finished" "$api_pid" >&2
     exit 1
