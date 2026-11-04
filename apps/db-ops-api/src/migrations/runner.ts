@@ -12,30 +12,47 @@ const defaultDirectory = join(here, '../../sql/migrations');
 const lockName = 'slide:db-ops:migrations:v1';
 const snapshotId = '000_schema_baseline.sql';
 
+// Each exception pins a reviewed old-to-current pair, never a moving SQL hash.
+// Targets match main@2a11e456064d91e1699f9d49f2bad56698336531.
 // 067 was already applied on early device-auth deployments without schema
 // comments. The corrected migration is intentionally accepted only for that
 // exact historical checksum; migration 069 repairs the live schema forward.
-export const LEGACY_MIGRATION_CHECKSUMS: Readonly<Record<string, readonly string[]>> = Object.freeze({
+export const LEGACY_MIGRATION_CHECKSUMS: Readonly<Record<string, readonly { recordedChecksum: string; currentChecksum: string }[]>> = Object.freeze({
   // 000 was baselined by deployments running the auth idle-timeout release.
   '000_schema_baseline.sql': Object.freeze([
-    'ba0ea57599e766dc9c9605746cdd9fa221cc05464fe45ed640b33a668fbcbbb8',
+    Object.freeze({
+      recordedChecksum: 'ba0ea57599e766dc9c9605746cdd9fa221cc05464fe45ed640b33a668fbcbbb8',
+      currentChecksum: '729ec2cce91657443417503a6cf0a1852cb6002885fc6f9f9af5755560cdc2b9',
+    }),
   ]),
   // 071_v010 was deployed once with a harmless trailing-whitespace variant.
   // Accept that recorded checksum so later forward migrations can run.
   '071_v010_infrastructure_assistant.sql': Object.freeze([
-    '2a070214f68fbc1fd760d1708b3b39d5376d226495a0df5d77c32fb96fd4763f',
+    Object.freeze({
+      recordedChecksum: '2a070214f68fbc1fd760d1708b3b39d5376d226495a0df5d77c32fb96fd4763f',
+      currentChecksum: 'a5e7b11e17674530e818fb21aa626236153065bf7ce66a4af609314bb7aa923c',
+    }),
   ]),
   '067_device_registrations.sql': Object.freeze([
-    '94403810bcae74f546a719b6d2f062e1699c18440e2ad76a5c787fa3f2c10ebb',
+    Object.freeze({
+      recordedChecksum: '94403810bcae74f546a719b6d2f062e1699c18440e2ad76a5c787fa3f2c10ebb',
+      currentChecksum: 'b53a8b888ad3842cecd10a42df37d579769d615f3894fad107d04a5fec2da84d',
+    }),
   ]),
   // 070 was applied before its network-device contract was narrowed.
   '070_network_device_resource_foundation.sql': Object.freeze([
-    'b8e1da4a29ff2a47b0703ab4d95746e41812b4bf4d5f46ca293292f816c10583',
+    Object.freeze({
+      recordedChecksum: 'b8e1da4a29ff2a47b0703ab4d95746e41812b4bf4d5f46ca293292f816c10583',
+      currentChecksum: '5ca1ec5c8f2c2d40a09cb5e5375eb4ab98851dc7a30eefef077011091ae4cc1b',
+    }),
   ]),
   // 072 only changed its human-readable description after early deployments.
   // Accept the already-applied checksum so forward migrations can continue.
   '072_agent_execution_controls.sql': Object.freeze([
-    'ddedfc2c11ce30af437a40867959a5e3dfc966e04bddae5ea3b4c2eaeab2335c',
+    Object.freeze({
+      recordedChecksum: 'ddedfc2c11ce30af437a40867959a5e3dfc966e04bddae5ea3b4c2eaeab2335c',
+      currentChecksum: '8ff16ebc799d13c22cde6c44a645bbf4702c1af708d66bd1aa37be40f04f517f',
+    }),
   ]),
 });
 
@@ -44,8 +61,10 @@ export function isMigrationChecksumAccepted(
   recordedChecksum: string,
   currentChecksum: string,
 ): boolean {
-  return recordedChecksum === currentChecksum
-    || (LEGACY_MIGRATION_CHECKSUMS[migrationId] ?? []).includes(recordedChecksum);
+  if (recordedChecksum === currentChecksum) return true;
+  if (!Object.hasOwn(LEGACY_MIGRATION_CHECKSUMS, migrationId)) return false;
+  return LEGACY_MIGRATION_CHECKSUMS[migrationId].some(pair =>
+    pair.recordedChecksum === recordedChecksum && pair.currentChecksum === currentChecksum);
 }
 
 export class MigrationError extends Error {}
