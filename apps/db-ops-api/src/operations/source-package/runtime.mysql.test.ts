@@ -81,6 +81,20 @@ describe.skipIf(!port)('source package production orchestration (synthetic SSH/l
     if (root) { await root.query(`DROP DATABASE ${database}`); await root.end(); }
   });
   it('collects both targets through the production path, then admits one formal alert/event/request without dispatch', async () => {
+    // Warm imports and verify HTTP authority before collecting the 1s alert sample.
+    const { serverAlertEvaluator } = await import('../../server-alert-evaluator.js');
+    // MAX-240: the scheduler's internal reader must not disable user revalidation
+    // at the HTTP entry. An internal actor is never a valid HTTP principal.
+    const { registerMetricConsumerRoutes } = await import('../../metrics/consumers/routes.js');
+    const app = Fastify();
+    try {
+      await registerMetricConsumerRoutes(app, async request => {
+        (request as any).user = { ...admin, userId: 0, sessionVersion: 0 };
+      });
+      const denied = await app.inject({ method: 'POST', url: '/api/metrics/query',
+        payload: { resource: { type: 'server', id: 3 }, metric_ids: ['host.filesystem.used_bytes'] } });
+      expect(denied.statusCode).toBe(401);
+    } finally { await app.close(); }
     const c = new SourceControl(pool, config());
     try {
       await c.open(); await assertSourceInventory(pool, c); await sourceHostClock(access);
@@ -92,22 +106,9 @@ describe.skipIf(!port)('source package production orchestration (synthetic SSH/l
     const e = new SourceControl(pool, { ...config(), phase: 'evaluate' });
     try {
       await e.open();
-      const { serverAlertEvaluator } = await import('../../server-alert-evaluator.js');
       // An equally firing metric on a different mount cannot admit an event.
       await serverAlertEvaluator.evaluateServerRules(new Map([[1, { ...config().alertRules[0].dimensions, mount: '/not-the-pilot' }]]));
       expect(await rows('SELECT id FROM alerts')).toHaveLength(0);
-      // MAX-240: the scheduler's internal reader must not disable user revalidation
-      // at the HTTP entry. An internal actor is never a valid HTTP principal.
-      const { registerMetricConsumerRoutes } = await import('../../metrics/consumers/routes.js');
-      const app = Fastify();
-      try {
-        await registerMetricConsumerRoutes(app, async request => {
-          (request as any).user = { ...admin, userId: 0, sessionVersion: 0 };
-        });
-        const denied = await app.inject({ method: 'POST', url: '/api/metrics/query',
-          payload: { resource: { type: 'server', id: 3 }, metric_ids: ['host.filesystem.used_bytes'] } });
-        expect(denied.statusCode).toBe(401);
-      } finally { await app.close(); }
       const result = await evaluateSource(e);
       expect(result.alertId).toBeGreaterThan(0);
       expect(result.eventId).toBeTruthy(); expect(result.investigationId).toBeTruthy(); expect(result.requestId).toBeTruthy();
