@@ -6,13 +6,20 @@ import type { ActorContext } from '../auth/actor-context.js';
 type Executor = { execute(sql: string, values?: unknown[]): Promise<[any, unknown?]> };
 const DEVICE_ID_RE = /^[a-f0-9]{64}$/i;
 
+// Only errors created at explicit business decisions may cross the HTTP boundary.
+export class DeviceAuthBusinessError extends Error {
+  constructor(readonly reasonCode: 'DEVICE_AUTH_INPUT_INVALID' | 'DEVICE_AUTH_PUBLIC_KEY_INVALID' | 'DEVICE_AUTH_REVOKED' | 'PAIRING_REQUIRED') {
+    super(reasonCode);
+  }
+}
+
 function decodeBase64Url(value: string): Buffer {
   return Buffer.from(value.replaceAll('-', '+').replaceAll('_', '/') + '='.repeat((4 - value.length % 4) % 4), 'base64');
 }
 
 function publicKeyObject(publicKey: string) {
   const raw = decodeBase64Url(publicKey);
-  if (raw.length !== 32) throw new Error('DEVICE_AUTH_PUBLIC_KEY_INVALID');
+  if (raw.length !== 32) throw new DeviceAuthBusinessError('DEVICE_AUTH_PUBLIC_KEY_INVALID');
   // RFC 8410 SubjectPublicKeyInfo prefix for an Ed25519 public key.
   return createPublicKey({ key: Buffer.concat([Buffer.from('302a300506032b6570032100', 'hex'), raw]), format: 'der', type: 'spki' });
 }
@@ -32,7 +39,7 @@ export class DeviceAuthService {
   }
 
   async register(actor: ActorContext, deviceId: string, publicKey: string): Promise<{ deviceId: string; status: string }> {
-    if (!DEVICE_ID_RE.test(deviceId) || decodeBase64Url(publicKey).length !== 32) throw new Error('DEVICE_AUTH_INPUT_INVALID');
+    if (!DEVICE_ID_RE.test(deviceId) || decodeBase64Url(publicKey).length !== 32) throw new DeviceAuthBusinessError('DEVICE_AUTH_INPUT_INVALID');
     publicKeyObject(publicKey);
     const executor = this.executor();
     await executor.execute(
@@ -49,7 +56,7 @@ export class DeviceAuthService {
       `SELECT status FROM device_registrations WHERE user_id = ? AND device_id = ? LIMIT 1`,
       [actor.userId, deviceId],
     );
-    if (!Array.isArray(rows) || rows[0]?.status !== 'paired') throw new Error('DEVICE_AUTH_REVOKED');
+    if (!Array.isArray(rows) || rows[0]?.status !== 'paired') throw new DeviceAuthBusinessError('DEVICE_AUTH_REVOKED');
     return { deviceId, status: 'paired' };
   }
 
@@ -58,7 +65,7 @@ export class DeviceAuthService {
       `SELECT id, status FROM device_registrations WHERE user_id = ? AND device_id = ? LIMIT 1`,
       [actor.userId, deviceId],
     );
-    if (!Array.isArray(rows) || !rows[0] || rows[0].status !== 'paired') throw new Error('PAIRING_REQUIRED');
+    if (!Array.isArray(rows) || !rows[0] || rows[0].status !== 'paired') throw new DeviceAuthBusinessError('PAIRING_REQUIRED');
     const nonce = randomBytes(24).toString('base64url');
     const expiresAt = new Date(Date.now() + 5 * 60_000);
     await this.executor().execute(
