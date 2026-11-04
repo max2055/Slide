@@ -179,6 +179,13 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter slide-frontend exec playwright install --with-deps chromium
+      # node:test stays outside Vitest's src/**/*.test.ts collection.
+      # Run from frontend so Vite's root matches the config directory. Node 24
+      # (.nvmrc) strips the Playwright config TypeScript. Chromium is the install above.
+      - name: Streaming watch isolation
+        if: matrix.shard == 1
+        working-directory: frontend
+        run: node --experimental-strip-types --test vite.streaming.watch-isolation.test.mjs
       - run: pnpm --filter slide-frontend test:browser --shard=${{ matrix.shard }}/2
       - name: Streaming reading and phase regression
         if: matrix.shard == 1
@@ -233,6 +240,14 @@ jobs:
           release-critical-paths.spec.ts release-security.spec.ts agent-cancellation.spec.ts
           --grep 'qualification login|qualification security boundary|viewer cannot|Stop cancels'
           --workers=1
+
+      - name: Production administrator bootstrap and upgrade regression
+        env:
+          BOOTSTRAP_TEST_MYSQL_PORT: '3306'
+          BOOTSTRAP_TEST_MYSQL_PASSWORD: qualification-test-password
+        run: |
+          pnpm --filter slide-api exec vitest run src/config/security-config.test.ts src/migrations/production-bootstrap.mysql.test.ts
+          pnpm --filter slide-api exec tsx tests/bootstrap-http.acceptance.ts
 
       - name: Runtime MySQL transaction and WebSocket qualification
         run: bash scripts/qualification/run-agent-runtime.sh --mode mysql --runtime-only

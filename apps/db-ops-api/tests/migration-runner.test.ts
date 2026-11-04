@@ -11,7 +11,8 @@ class FakePool {
   lockAvailable = true;
   schemaValid = true;
   released = 0;
-  async getConnection() { return { query: this.query.bind(this), release: () => { this.released++; } }; }
+  destroyed = 0;
+  async getConnection() { return { query: this.query.bind(this), release: () => { this.released++; }, destroy: () => { this.destroyed++; } }; }
   async query(sql: string, values: any[] = []): Promise<any> {
     this.calls.push(sql);
     if (sql.includes('GET_LOCK')) return [[{ locked: this.lockAvailable ? 1 : 0 }]];
@@ -97,6 +98,97 @@ async function migrationDirectory(files: Record<string, string>) {
 afterEach(async () => { await Promise.all(dirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true }))); });
 
 describe('MigrationRunner', () => {
+  // #337: baseline must share run's session lock and register atomically.
+  it.each(['success', 'insert', 'rollback', 'commit', 'unlock', 'invalid', 'nonempty', 'missing', 'lock'])('baseline session lifecycle: %s', async scenario => {
+    const directory = await migrationDirectory({ '100_a.sql': 'SELECT 1;', '101_b.sql': 'SELECT 2;' });
+    const pool = new FakePool();
+    const query = pool.query.bind(pool);
+    const calls: string[] = [];
+    let inserts = 0;
+    pool.schemaValid = scenario !== 'invalid';
+    pool.lockAvailable = scenario !== 'lock';
+    pool.getConnection = async () => ({
+      query: async (sql: string, values?: any[]) => {
+        calls.push(sql);
+        if (sql.startsWith('SELECT migration_id')) return [scenario === 'nonempty' ? [{ migration_id: 'old' }] : []] as any;
+        if (sql.includes("TABLE_NAME IN ('users'")) return [scenario === 'missing' ? [] : [{}, {}, {}]] as any;
+        if (sql.startsWith('INSERT INTO app_schema_migrations') && ++inserts === 2 && ['insert', 'rollback'].includes(scenario)) throw new Error('insert failure');
+        if ((sql === 'ROLLBACK' && scenario === 'rollback') || (sql === 'COMMIT' && scenario === 'commit') || (sql.includes('RELEASE_LOCK') && scenario === 'unlock')) throw new Error('cleanup failure');
+        return query(sql, values);
+      },
+      release: () => { pool.released++; },
+      destroy: () => { pool.destroyed++; },
+    });
+    const poolQuery = vi.spyOn(pool, 'query');
+    const result = new MigrationRunner(pool, directory).baseline('operator', 'verified');
+    if (scenario === 'success') {
+      await result;
+      expect(pool.released).toBe(1);
+      expect(pool.destroyed).toBe(0);
+      expect(calls.indexOf('START TRANSACTION')).toBeLessThan(calls.findIndex(sql => sql.startsWith('INSERT')));
+      expect(calls.indexOf('COMMIT')).toBeLessThan(calls.findIndex(sql => sql.includes('RELEASE_LOCK')));
+    } else {
+      await expect(result).rejects.toThrow();
+      expect(pool.destroyed).toBe(1);
+      expect(pool.released).toBe(0);
+      if (['insert', 'rollback', 'commit'].includes(scenario)) expect(calls).toContain('ROLLBACK');
+      if (['invalid', 'nonempty', 'missing', 'lock'].includes(scenario)) expect(inserts).toBe(0);
+    }
+    expect(poolQuery.mock.calls.every(([sql]) => sql.startsWith('CREATE TABLE'))).toBe(true);
+    expect(calls[0]).toContain('GET_LOCK');
+  });
+
+
+  // GitHub #474 / OCR-0569: statement errors do not roll back MySQL transactions.
+  it.each(['ROLLBACK', 'failed ledger', 'COMMIT', 'none'])('cleans up a failed migration with %s cleanup failure', async cleanupFailure => {
+    const directory = await migrationDirectory({ '100_failure.sql': 'START TRANSACTION; INSERT INTO probe VALUES (1); INSERT INTO probe VALUES (1); COMMIT;' });
+    const pool = new FakePool();
+    const query = pool.query.bind(pool);
+    let inserts = 0;
+    let failedValues: any[] = [];
+    pool.query = async (sql, values = []) => {
+      if (sql.startsWith('INSERT INTO probe') && ++inserts === 2) {
+        pool.calls.push(sql);
+        throw new Error('duplicate probe');
+      }
+      if (sql === cleanupFailure || (cleanupFailure === 'failed ledger' && sql.includes("status = 'failed'"))) {
+        pool.calls.push(sql);
+        throw new Error(`cleanup ${cleanupFailure}`);
+      }
+      if (sql.includes("status = 'failed'")) failedValues = values;
+      return query(sql, values);
+    };
+    const failure = await new MigrationRunner(pool, directory).run().catch(error => error);
+    expect(String(failure)).toContain('duplicate probe');
+    const rollback = pool.calls.indexOf('ROLLBACK');
+    expect(rollback).toBeGreaterThan(pool.calls.indexOf('START TRANSACTION'));
+    expect(pool.released).toBe(0);
+    expect(pool.destroyed).toBe(1);
+    if (cleanupFailure === 'none') {
+      expect(failedValues).toEqual([2, 'duplicate probe', '100_failure.sql']);
+      expect(pool.calls.findIndex(sql => sql.includes("status = 'failed'"))).toBeGreaterThan(rollback);
+      expect(pool.calls.at(-1)).toBe('COMMIT');
+      await expect(new MigrationRunner(pool, directory).run()).rejects.toThrow('explicit repair');
+      expect(inserts).toBe(2);
+    } else {
+      expect(failure).toBeInstanceOf(AggregateError);
+      expect(failure.errors.map(String).join(' ')).toContain(`cleanup ${cleanupFailure}`);
+    }
+  });
+
+  it('destroys rather than releases a connection when releasing its lock fails', async () => {
+    const directory = await migrationDirectory({});
+    const pool = new FakePool();
+    const query = pool.query.bind(pool);
+    pool.query = async (sql, values) => {
+      if (sql.includes('RELEASE_LOCK')) throw new Error('lock cleanup failed');
+      return query(sql, values);
+    };
+    await expect(new MigrationRunner(pool, directory).run()).rejects.toThrow('lock cleanup failed');
+    expect(pool.destroyed).toBe(1);
+    expect(pool.released).toBe(0);
+  });
+
   it('keeps historical migrations immutable and applies later changes forward', async () => {
     const migrations = await loadMigrations();
     const baseline = migrations.find((migration) => migration.id === '000_schema_baseline.sql');
@@ -118,6 +210,51 @@ describe('MigrationRunner', () => {
     )).toBe(true);
     expect(sessionTimeout?.sql).toContain('auth.session_idle_timeout_minutes');
     expect(sessionTimeout?.sql).toContain('INSERT IGNORE');
+  });
+
+  // #535: expected pairs are independent of the production exception table.
+  const historicalChecksums = [
+    ['000_schema_baseline.sql', 'ba0ea57599e766dc9c9605746cdd9fa221cc05464fe45ed640b33a668fbcbbb8', '729ec2cce91657443417503a6cf0a1852cb6002885fc6f9f9af5755560cdc2b9'],
+    ['067_device_registrations.sql', '94403810bcae74f546a719b6d2f062e1699c18440e2ad76a5c787fa3f2c10ebb', 'b53a8b888ad3842cecd10a42df37d579769d615f3894fad107d04a5fec2da84d'],
+    ['070_network_device_resource_foundation.sql', 'b8e1da4a29ff2a47b0703ab4d95746e41812b4bf4d5f46ca293292f816c10583', '5ca1ec5c8f2c2d40a09cb5e5375eb4ab98851dc7a30eefef077011091ae4cc1b'],
+    ['071_v010_infrastructure_assistant.sql', '2a070214f68fbc1fd760d1708b3b39d5376d226495a0df5d77c32fb96fd4763f', 'a5e7b11e17674530e818fb21aa626236153065bf7ce66a4af609314bb7aa923c'],
+    ['072_agent_execution_controls.sql', 'ddedfc2c11ce30af437a40867959a5e3dfc966e04bddae5ea3b4c2eaeab2335c', '8ff16ebc799d13c22cde6c44a645bbf4702c1af708d66bd1aa37be40f04f517f'],
+  ];
+
+  it.each(historicalChecksums)('pins both sides of the historical exception for %s', (id, old, target) => {
+    expect(isMigrationChecksumAccepted(id, target, target)).toBe(true);
+    expect(isMigrationChecksumAccepted(id, old, old)).toBe(true);
+    expect(isMigrationChecksumAccepted(id, old, target)).toBe(true);
+    expect(isMigrationChecksumAccepted('999_unlisted.sql', old, target)).toBe(false);
+    expect(isMigrationChecksumAccepted('toString', old, target)).toBe(false);
+    expect(isMigrationChecksumAccepted(id, '0'.repeat(64), target)).toBe(false);
+    expect(isMigrationChecksumAccepted(id, old, '0'.repeat(64))).toBe(false);
+    expect(isMigrationChecksumAccepted(id, target, old)).toBe(false);
+    for (const [otherId, otherOld, otherTarget] of historicalChecksums) {
+      if (otherId !== id) {
+        expect(isMigrationChecksumAccepted(otherId, old, target)).toBe(false);
+        expect(isMigrationChecksumAccepted(id, otherOld, target)).toBe(false);
+        expect(isMigrationChecksumAccepted(id, old, otherTarget)).toBe(false);
+      }
+    }
+  });
+
+  describe.each(['completed', 'baselined'])('historical checksum validation for %s entries', status => {
+    it.each(historicalChecksums)('accepts reviewed SQL and rejects subsequent edits for %s', async (id, old, target) => {
+      const migration = (await loadMigrations()).find(item => item.id === id)!;
+      expect(migration.checksum).toBe(target);
+      const directory = await migrationDirectory({ [id]: migration.sql });
+      const pool = new FakePool();
+      const entry = { migration_id: id, checksum: old, status };
+      pool.entries.set(id, entry);
+      await new MigrationRunner(pool, directory).run();
+      expect(pool.released).toBe(1);
+      await writeFile(join(directory, id), migration.sql + '\n-- unreviewed later edit\n');
+      await expect(new MigrationRunner(pool, directory).run()).rejects.toThrow(`Checksum mismatch for ${id}`);
+      expect(pool.destroyed).toBe(1);
+      expect(pool.entries.get(id)).toEqual(entry);
+      expect(pool.calls.some(sql => /^(INSERT|UPDATE|ALTER|START TRANSACTION)/.test(sql))).toBe(false);
+    });
   });
 
   it('preserves semicolons inside quoted migration SQL', () => {
