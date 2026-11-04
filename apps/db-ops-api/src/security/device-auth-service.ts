@@ -68,8 +68,16 @@ export class DeviceAuthService {
     if (rows[0].challenge_hash !== createHash('sha256').update(params.nonce).digest('hex') || !rows[0].challenge_expires_at || new Date(rows[0].challenge_expires_at).getTime() < Date.now()) return false;
     const payload = deviceSigningPayload(params);
     const valid = verifySignature(null, Buffer.from(payload), publicKeyObject(params.publicKey), decodeBase64Url(params.signature));
-    if (valid) await this.executor().execute(`UPDATE device_registrations SET last_seen_at = NOW(), challenge_hash = NULL, challenge_expires_at = NULL WHERE id = ?`, [rows[0].id]).catch(error => { throw new PlatformUnavailableError(error); });
-    return valid;
+    if (!valid) return false;
+    // Compare-and-consume in storage: the SELECT snapshot cannot authorize a
+    // proof after another consumer, key replacement, revocation or expiry.
+    const [result] = await this.executor().execute(
+      `UPDATE device_registrations SET last_seen_at = NOW(), challenge_hash = NULL, challenge_expires_at = NULL
+       WHERE id = ? AND user_id = ? AND device_id = ? AND BINARY public_key = BINARY ?
+         AND status = 'paired' AND challenge_hash = ? AND challenge_expires_at > NOW()`,
+      [rows[0].id, actor.userId, params.deviceId, params.publicKey, rows[0].challenge_hash],
+    ).catch(error => { throw new PlatformUnavailableError(error); });
+    return result?.affectedRows === 1;
   }
 }
 
