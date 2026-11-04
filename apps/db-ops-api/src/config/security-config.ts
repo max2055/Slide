@@ -20,7 +20,7 @@ export interface SecurityConfig {
 }
 
 function validSecret(value: string | undefined): value is string {
-  return typeof value === 'string' && value.length >= 32 && !KNOWN_DEFAULTS.has(value.trim().toLowerCase());
+  return typeof value === 'string' && value.length >= 32 && value.trim().length > 0 && !KNOWN_DEFAULTS.has(value.trim().toLowerCase());
 }
 
 function validEncryptionSecret(value: string | undefined): value is string {
