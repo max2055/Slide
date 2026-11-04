@@ -26,21 +26,110 @@ async function extractEnums(directory: string) {
   const tables = new Set<string>();
   const targets = [...new Set(CHECKS.map((c) => c.enumDef.table))];
   const parser = new sqlParser.Parser();
+  const variables = new Map<string, string[] | undefined>();
+  const prepared = new Set<string>();
+  const markTables = (affected: string[], migration: string) => {
+    for (const c of CHECKS.filter((c) => affected.includes(c.enumDef.table))) {
+      uncovered.set(`${c.enumDef.table}.${c.enumDef.column}`, migration);
+    }
+  };
+  // Resolve only literal results and IF branches, never evaluate SQL/functions.
+  const possibleStrings = (expr: any): string[] | undefined => {
+    if (["single_quote_string", "double_quote_string"].includes(expr?.type)) {
+      const quote = expr.type === "single_quote_string" ? "'" : '"';
+      return [expr.value.replaceAll(quote + quote, quote).replace(/\\(['"\\])/g, "$1")];
+    }
+    if (expr?.type === "var" && expr.prefix === "@") return variables.get(expr.name.toLowerCase());
+    if (expr?.ast?.type === "select" && expr.ast.columns?.length === 1 && !expr.ast._next) {
+      return possibleStrings(expr.ast.columns[0].expr);
+    }
+    if (expr?.type === "function" && expr.name?.name?.[0]?.value?.toUpperCase() === "IF") {
+      const args = expr.args?.value;
+      if (args?.length !== 3) return undefined;
+      const yes = possibleStrings(args[1]), no = possibleStrings(args[2]);
+      if (yes && no) return [...yes, ...no];
+    }
+    return undefined;
+  };
+  const inspectDynamic = (literals: string[] | undefined, migration: string, fallback = targets) => {
+    try {
+      if (!literals?.length) throw new Error("Unresolved SQL source");
+      for (const literal of literals) {
+        const ddl: any = parser.astify(literal, { database: "MySQL" });
+        if (["select", "insert", "update", "delete"].includes(ddl.type)) continue;
+        const names = ddl.table ?? ddl.name;
+        if (names?.length !== 1) throw new Error("Unresolved DDL target");
+        const table = names[0].table.toLowerCase();
+        if (!targets.includes(table)) continue;
+        if (ddl.type !== "alter") { markTables([table], migration); continue; }
+        for (const expr of ddl.expr) {
+          if (expr.resource === "column") {
+            for (const col of [expr.column?.column, expr.old_column?.column].filter(Boolean)) {
+              const key = `${table}.${col.toLowerCase()}`;
+              if (CHECKS.some((c) => `${c.enumDef.table}.${c.enumDef.column}` === key)) uncovered.set(key, migration);
+            }
+          } else if (expr.keyword?.toLowerCase() !== "comment" &&
+            !["index", "constraint", "primary key", "foreign key"].includes(expr.resource)) {
+            throw new Error("Unresolved DDL action");
+          }
+        }
+      }
+    } catch { markTables(fallback, migration); }
+  };
   for (const migration of await loadMigrations(directory)) {
     for (const raw of splitSqlStatements(migration.sql)) {
       // Preserve quoted content while removing comments before DDL detection.
       const sql = raw.replace(/('(?:''|\\.|[^'\\])*'|"(?:""|\\.|[^"\\])*"|`[^`]*`)|--[^\n]*|#[^\n]*|\/\*[\s\S]*?\*\//g,
         (_match, quoted) => quoted ?? " ").trim();
+      // Dynamic dispatch must be inspected before the contiguous DDL filter:
+      // CONCAT/unknown expressions may contain no complete DDL keywords at all.
+      if (/^CALL\b/i.test(sql)) {
+        variables.clear();
+        markTables(targets, migration.id);
+        continue;
+      }
+      if (sql.includes("@")) {
+        for (const m of sql.matchAll(/@(\w+)\s*(?::=|=(?!=))/gi)) variables.set(m[1].toLowerCase(), undefined);
+        const into = sql.match(/\bINTO\s+(@\w+(?:\s*,\s*@\w+)*)/i);
+        if (into) for (const m of into[1].matchAll(/@(\w+)/g)) variables.set(m[1].toLowerCase(), undefined);
+        if (/^(?:SET|SELECT)\b/i.test(sql)) try {
+          const ast: any = parser.astify(sql, { database: "MySQL" });
+          if (ast.type === "set") for (const assignment of ast.expr) {
+            if (assignment.left?.prefix === "@") {
+              variables.set(assignment.left.name.toLowerCase(), possibleStrings(assignment.right));
+            }
+          }
+        } catch { variables.clear(); }
+      }
+      if (/^PREPARE\b/i.test(sql)) {
+        const m = sql.match(/^PREPARE\s+(\w+)\s+FROM\s+([\s\S]+)$/i);
+        let literals: string[] | undefined;
+        if (m) {
+          prepared.add(m[1].toLowerCase());
+          try {
+            const select: any = parser.astify(`SELECT ${m[2]}`, { database: "MySQL" });
+            literals = possibleStrings(select.columns?.[0]?.expr);
+          } catch { /* Unknown source must invalidate verification. */ }
+        }
+        inspectDynamic(literals, migration.id);
+        continue;
+      }
+      if (/^EXECUTE\b/i.test(sql)) {
+        const m = sql.match(/^EXECUTE\s+(\w+)(?:\s+USING\s+[\s\S]+)?$/i);
+        if (!m || !prepared.has(m[1].toLowerCase())) markTables(targets, migration.id);
+        continue;
+      }
+      if (/^DEALLOCATE\s+PREPARE\b/i.test(sql)) {
+        const name = sql.match(/^DEALLOCATE\s+PREPARE\s+(\w+)$/i)?.[1];
+        if (name) prepared.delete(name.toLowerCase());
+        continue;
+      }
       if (!/\b(?:CREATE\s+TABLE|ALTER\s+TABLE|DROP\s+TABLE|RENAME\s+TABLE)\b/i.test(sql)) continue;
       const affected = targets.filter((table) => new RegExp(
         `\\b(?:CREATE\\s+TABLE\\s+(?:IF\\s+NOT\\s+EXISTS\\s+)?|ALTER\\s+TABLE\\s+|DROP\\s+TABLE\\s+(?:IF\\s+EXISTS\\s+)?|RENAME\\s+TABLE\\s+)(?:\x60?\\w+\x60?\\.)?\x60?${table}\\b`, "i",
       ).test(sql) || (/\b(?:DROP|RENAME)\s+TABLE\b/i.test(sql) && new RegExp(`\\b${table}\\b`, "i").test(sql)));
       if (!affected.length) continue;
-      const markUncovered = () => {
-        for (const check of CHECKS.filter((c) => affected.includes(c.enumDef.table))) {
-          uncovered.set(`${check.enumDef.table}.${check.enumDef.column}`, migration.id);
-        }
-      };
+      const markUncovered = () => markTables(affected, migration.id);
       // SQL stored in SET/IF/PREPARE cannot be assumed to have executed.
       if (!/^(?:CREATE|ALTER|DROP|RENAME)\s+TABLE\b/i.test(sql)) {
         // Literal DDL can still prove which columns it can affect. Do not
@@ -48,24 +137,7 @@ async function extractEnums(directory: string) {
         const literals = [...sql.matchAll(/'(?:''|\\.|[^'\\])*'|"(?:""|\\.|[^"\\])*"/g)]
           .map((m) => m[0].slice(1, -1).replace(/''/g, "'").replace(/""/g, '"').replace(/\\(['"\\])/g, "$1"))
           .filter((s) => /^(?:CREATE|ALTER|DROP|RENAME)\s+TABLE\b/i.test(s));
-        try {
-          if (!literals.length) throw new Error("DDL is not a literal");
-          for (const literal of literals) {
-            const ddl: any = parser.astify(literal, { database: "MySQL" });
-            if (ddl.type !== "alter" || ddl.table?.length !== 1) throw new Error("Unresolved DDL");
-            const table = ddl.table[0].table.toLowerCase();
-            for (const expr of ddl.expr) {
-              if (expr.resource === "column") {
-                for (const col of [expr.column?.column, expr.old_column?.column].filter(Boolean)) {
-                  const key = `${table}.${col.toLowerCase()}`;
-                  if (CHECKS.some((c) => `${c.enumDef.table}.${c.enumDef.column}` === key)) uncovered.set(key, migration.id);
-                }
-              } else if (!["index", "constraint", "primary key", "foreign key"].includes(expr.resource)) {
-                throw new Error("Unresolved DDL action");
-              }
-            }
-          }
-        } catch { markUncovered(); }
+        inspectDynamic(literals, migration.id, affected);
         continue;
       }
       try {

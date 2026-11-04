@@ -125,6 +125,9 @@ describe('schema-validator CLI (#398)', () => {
     "EXECUTE IMMEDIATE CONCAT('ALTER ', 'TABLE reports DROP COLUMN type');",
     "SET @ddl = 'SELECT 1'; SET @ddl = CONCAT('ALTER ', 'TABLE reports DROP COLUMN type'); PREPARE stmt FROM @ddl; EXECUTE stmt;",
     "SET @ddl = 'SELECT 1'; SELECT CONCAT('ALTER ', 'TABLE reports DROP COLUMN type') INTO @ddl; PREPARE stmt FROM @ddl; EXECUTE stmt;",
+    "SET @ddl = 'SELECT 1'; SELECT 1, unknown_builder() INTO @unused, @ddl; PREPARE stmt FROM @ddl; EXECUTE stmt;",
+    "SET @ddl = 'SELECT 1'; DO @ddl := unknown_builder(); PREPARE stmt FROM @ddl; EXECUTE stmt;",
+    'CALL unknown_schema_change();',
   ])('does not count unresolved dynamic SQL as verified: %s', (migration) => {
     const result = cli(schema, migration);
     expect(result.status).toBe(1);
@@ -137,6 +140,8 @@ describe('schema-validator CLI (#398)', () => {
       SET @text = CONCAT('ALTER ', 'TABLE reports DROP COLUMN type');
       SET @ddl = 'SELECT 1'; PREPARE stmt FROM @ddl; EXECUTE stmt;
       PREPARE stmt FROM 'ALTER TABLE other ADD COLUMN extra INT'; EXECUTE stmt;
+      SET @ddl = IF(@exists = 0, 'ALTER TABLE other ADD COLUMN note VARCHAR(20) COMMENT ''unrelated''', 'SELECT 1');
+      PREPARE stmt FROM @ddl; EXECUTE stmt;
     `);
     expect(result.status).toBe(0);
   });
