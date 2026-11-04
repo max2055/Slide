@@ -212,6 +212,51 @@ describe('MigrationRunner', () => {
     expect(sessionTimeout?.sql).toContain('INSERT IGNORE');
   });
 
+  // #535: expected pairs are independent of the production exception table.
+  const historicalChecksums = [
+    ['000_schema_baseline.sql', 'ba0ea57599e766dc9c9605746cdd9fa221cc05464fe45ed640b33a668fbcbbb8', '729ec2cce91657443417503a6cf0a1852cb6002885fc6f9f9af5755560cdc2b9'],
+    ['067_device_registrations.sql', '94403810bcae74f546a719b6d2f062e1699c18440e2ad76a5c787fa3f2c10ebb', 'b53a8b888ad3842cecd10a42df37d579769d615f3894fad107d04a5fec2da84d'],
+    ['070_network_device_resource_foundation.sql', 'b8e1da4a29ff2a47b0703ab4d95746e41812b4bf4d5f46ca293292f816c10583', '5ca1ec5c8f2c2d40a09cb5e5375eb4ab98851dc7a30eefef077011091ae4cc1b'],
+    ['071_v010_infrastructure_assistant.sql', '2a070214f68fbc1fd760d1708b3b39d5376d226495a0df5d77c32fb96fd4763f', 'a5e7b11e17674530e818fb21aa626236153065bf7ce66a4af609314bb7aa923c'],
+    ['072_agent_execution_controls.sql', 'ddedfc2c11ce30af437a40867959a5e3dfc966e04bddae5ea3b4c2eaeab2335c', '8ff16ebc799d13c22cde6c44a645bbf4702c1af708d66bd1aa37be40f04f517f'],
+  ];
+
+  it.each(historicalChecksums)('pins both sides of the historical exception for %s', (id, old, target) => {
+    expect(isMigrationChecksumAccepted(id, target, target)).toBe(true);
+    expect(isMigrationChecksumAccepted(id, old, old)).toBe(true);
+    expect(isMigrationChecksumAccepted(id, old, target)).toBe(true);
+    expect(isMigrationChecksumAccepted('999_unlisted.sql', old, target)).toBe(false);
+    expect(isMigrationChecksumAccepted('toString', old, target)).toBe(false);
+    expect(isMigrationChecksumAccepted(id, '0'.repeat(64), target)).toBe(false);
+    expect(isMigrationChecksumAccepted(id, old, '0'.repeat(64))).toBe(false);
+    expect(isMigrationChecksumAccepted(id, target, old)).toBe(false);
+    for (const [otherId, otherOld, otherTarget] of historicalChecksums) {
+      if (otherId !== id) {
+        expect(isMigrationChecksumAccepted(otherId, old, target)).toBe(false);
+        expect(isMigrationChecksumAccepted(id, otherOld, target)).toBe(false);
+        expect(isMigrationChecksumAccepted(id, old, otherTarget)).toBe(false);
+      }
+    }
+  });
+
+  describe.each(['completed', 'baselined'])('historical checksum validation for %s entries', status => {
+    it.each(historicalChecksums)('accepts reviewed SQL and rejects subsequent edits for %s', async (id, old, target) => {
+      const migration = (await loadMigrations()).find(item => item.id === id)!;
+      expect(migration.checksum).toBe(target);
+      const directory = await migrationDirectory({ [id]: migration.sql });
+      const pool = new FakePool();
+      const entry = { migration_id: id, checksum: old, status };
+      pool.entries.set(id, entry);
+      await new MigrationRunner(pool, directory).run();
+      expect(pool.released).toBe(1);
+      await writeFile(join(directory, id), migration.sql + '\n-- unreviewed later edit\n');
+      await expect(new MigrationRunner(pool, directory).run()).rejects.toThrow(`Checksum mismatch for ${id}`);
+      expect(pool.destroyed).toBe(1);
+      expect(pool.entries.get(id)).toEqual(entry);
+      expect(pool.calls.some(sql => /^(INSERT|UPDATE|ALTER|START TRANSACTION)/.test(sql))).toBe(false);
+    });
+  });
+
   it('preserves semicolons inside quoted migration SQL', () => {
     expect(splitSqlStatements("INSERT INTO t VALUES ('a;b'); -- ignored;\nSELECT 1;")).toEqual([
       "INSERT INTO t VALUES ('a;b')",
