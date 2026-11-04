@@ -1,3 +1,5 @@
+import Fastify from 'fastify';
+import { registerDeviceAuthRoutes } from './device-auth-routes.js';
 import { createHash, generateKeyPairSync, sign, randomBytes } from 'node:crypto';
 import { readFileSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -22,6 +24,7 @@ describe.skipIf(!process.env.DEVICE_AUTH_TEST_MYSQL_URL)('MAX-268 real MySQL + E
     url.pathname = `/${schema}`;
     const pool = mysql.createPool(url.toString());
     const workspace = mkdtempSync(join(tmpdir(), 'max268-'));
+    const app = Fastify();
     let adapter: DirectAdapter | undefined;
     const clients: WebSocket[] = [];
     try {
@@ -65,6 +68,22 @@ describe.skipIf(!process.env.DEVICE_AUTH_TEST_MYSQL_URL)('MAX-268 real MySQL + E
       // Actual WebSocket transport and actual DeviceAuthService/SQL; token actor
       // lookup is isolated to avoid unrelated platform schema and LLM calls.
       vi.spyOn(dbConnection, 'getPool').mockReturnValue(pool as any);
+      await registerDeviceAuthRoutes(app, async request => { request.user = actor; });
+      await app.listen({ port: 0, host: '127.0.0.1' });
+      const httpPort = (app.server.address() as { port: number }).port;
+      const post = async (route: string, body: unknown) => {
+        const response = await fetch(`http://127.0.0.1:${httpPort}/api/device/${route}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+        return { status: response.status, body: await response.json() as any };
+      };
+      const challenge = await post('challenge', { deviceId: params.deviceId });
+      expect(challenge.status).toBe(200);
+      const httpProof = { ...params, nonce: challenge.body.nonce, timestamp: Date.now() };
+      httpProof.signature = sign(null, Buffer.from(deviceSigningPayload(httpProof)), keys.privateKey).toString('base64url');
+      expect((await post('session', { ...httpProof, signature: 'invalid' })).status).toBe(401);
+      expect((await post('session', httpProof)).status).toBe(200);
+      expect((await post('session', httpProof)).status).toBe(401);
+      console.log('real HTTP/MySQL: challenge 200, bad signature 401, valid proof 200, replay 401 (identity fixture)');
+      await reset();
       vi.stubEnv('AGENT_WS_PORT', '0');
       vi.stubEnv('JWT_SECRET_KEY', 'max268-isolated-test-secret');
       adapter = new DirectAdapter({ workspace, tools: new ToolRegistry(), llmProvider: {} as any, actorContextService: { authenticateAccessToken: async () => actor, revalidateActor: async a => a } });
@@ -87,8 +106,15 @@ describe.skipIf(!process.env.DEVICE_AUTH_TEST_MYSQL_URL)('MAX-268 real MySQL + E
       expect(await auth()).toBe('4001');
       await pool.end();
       expect(await auth()).toBe('1013');
+      for (const route of ['register', 'challenge', 'session']) {
+        const failure = await post(route, params);
+        expect(failure.status).toBe(503);
+        expect(failure.body.error).toBe('PLATFORM_UNAVAILABLE');
+      }
+      console.log('real HTTP: closed MySQL pool returns fixed 503 for all three endpoints');
       console.log('real WS: one auth_ok, duplicate/replay 4001, storage offline 1013');
     } finally {
+      await app.close();
       for (const client of clients) client.terminate();
       await adapter?.dispose();
       rmSync(workspace, { recursive: true, force: true });
