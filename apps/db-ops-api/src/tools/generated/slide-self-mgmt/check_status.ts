@@ -7,8 +7,10 @@
 import type { AnyAgentTool, ToolResult } from '../../types.js';
 import { toolCatalog } from '../../catalog.js';
 import { databaseService } from '../../../database-service.js';
+import { dbConnection } from '../../../db-connection.js';
 import { instanceDatabaseService } from '../../../instance-database-service.js';
 import { getAllProviders } from '../../../llm/provider-catalog.js';
+import { readApiProbe } from '../../../config/api-listen.js';
 
 /**
  * 服务状态检查结果
@@ -19,6 +21,8 @@ interface ServiceStatus {
   port?: number;
   responseTimeMs?: number;
   error?: string;
+  /** 核心组件。整体故障判定只看这个标记，不看展示名。 */
+  critical?: boolean;
 }
 
 /**
@@ -33,7 +37,7 @@ interface SlideStatus {
 
 export const checkStatusTool: AnyAgentTool = {
   name: 'slide_check_status',
-  description: '检查 Slide 平台整体状态，包括后端 API 服务（:3000）、前端服务（按部署配置探活，生产探活失败仅作警告，不代表服务停止）、数据库连接、LLM 连接等。用于快速了解系统各个组件是否正常运行。可选参数：include_details（返回详情）、test_db_connections（测试DB连接）、test_llm（测试LLM连接）',
+  description: '检查 Slide 平台整体状态，包括后端 API 服务（按进程实际监听端口探活）、前端服务（按部署配置探活，生产探活失败仅作警告，不代表服务停止）、数据库连接、LLM 连接等。用于快速了解系统各个组件是否正常运行。可选参数：include_details（返回详情）、test_db_connections（测试DB连接）、test_llm（测试LLM连接）',
   parameters: {
     type: 'object',
     properties: {
@@ -76,8 +80,8 @@ export const checkStatusTool: AnyAgentTool = {
       status.version = backendStatus.status !== 'unknown' ? getBackendVersion() : undefined;
 
       // 2. 检查前端服务
-      const frontendStatus = await checkFrontendService();
-      status.services.push(frontendStatus);
+      const frontendCheck = await checkFrontendService();
+      status.services.push(frontendCheck.status);
 
       // 3. 检查数据库连接（可选）
       if (testDbConnections) {
@@ -99,7 +103,7 @@ export const checkStatusTool: AnyAgentTool = {
 
       return {
         success: true,
-        status: status.overall === 'healthy' && frontendStatus.status === 'running' ? 'success' : 'warning',
+        status: toolOutcome(status.overall, frontendCheck),
         data: status,
         summary: `Slide 状态：${translateStatus(status.overall)}，${status.services.length} 个服务组件`,
         details: {
@@ -124,60 +128,89 @@ export const checkStatusTool: AnyAgentTool = {
 /**
  * 检查后端服务状态
  */
-async function checkBackendService(): Promise<ServiceStatus> {
-  const startTime = Date.now();
+function connectionRefused(error: unknown): boolean {
+  const seen = new Set<unknown>();
+  let current: unknown = error;
+  while (current && typeof current === 'object' && !seen.has(current)) {
+    seen.add(current);
+    if ('code' in current && (current as { code?: unknown }).code === 'ECONNREFUSED') return true;
+    if ('message' in current && String((current as { message?: unknown }).message).includes('ECONNREFUSED')) return true;
+    current = 'cause' in current ? (current as { cause?: unknown }).cause : undefined;
+  }
+  return false;
+}
 
+async function checkBackendService(): Promise<ServiceStatus> {
+  const target = readApiProbe();
+  if (!target.probeUrl || target.port === undefined) {
+    return {
+      name: '后端 API 服务',
+      critical: true,
+      status: 'error',
+      error: target.error ?? '无法确定 API 监听端口',
+    };
+  }
+
+  const startTime = Date.now();
   try {
-    // 尝试访问健康检查端点
-    const response = await fetch('http://localhost:3000/api/health', {
+    const response = await fetch(target.probeUrl, {
       method: 'GET',
       signal: AbortSignal.timeout(5000),
     });
-
     const responseTimeMs = Date.now() - startTime;
-
     if (response.ok) {
       return {
         name: '后端 API 服务',
+        critical: true,
         status: 'running',
-        port: 3000,
+        port: target.port,
         responseTimeMs,
-      };
-    } else {
-      return {
-        name: '后端 API 服务',
-        status: 'error',
-        port: 3000,
-        responseTimeMs,
-        error: `HTTP ${response.status}`,
       };
     }
+    return {
+      name: '后端 API 服务',
+      critical: true,
+      status: 'error',
+      port: target.port,
+      responseTimeMs,
+      error: `HTTP ${response.status}`,
+    };
   } catch (error: unknown) {
     const errorMessage = error instanceof Error ? error.message : String(error);
     return {
       name: '后端 API 服务',
+      critical: true,
       status: 'stopped',
-      port: 3000,
-      error: errorMessage.includes('ECONNREFUSED')
+      port: target.port,
+      error: connectionRefused(error)
         ? '服务未启动或端口不可达'
         : errorMessage,
     };
   }
 }
 
+interface FrontendCheck {
+  status: ServiceStatus;
+  /** 是否向配置地址发起了探活。未配置或地址无效时为 false。 */
+  probed: boolean;
+}
+
 /**
  * 检查前端服务状态
  */
-async function checkFrontendService(): Promise<ServiceStatus> {
+async function checkFrontendService(): Promise<FrontendCheck> {
   const production = process.env.NODE_ENV === 'production';
   const frontendUrl = process.env.FRONTEND_URL?.trim()
     || process.env.SLIDE_PUBLIC_ORIGIN?.trim()
     || (production ? undefined : 'http://localhost:5173');
   if (!frontendUrl) {
     return {
-      name: '前端服务',
-      status: 'unknown',
-      error: '未配置 FRONTEND_URL 或 SLIDE_PUBLIC_ORIGIN，跳过前端探活；无法确认前端状态',
+      probed: false,
+      status: {
+        name: '前端服务',
+        status: 'unknown',
+        error: '未配置 FRONTEND_URL 或 SLIDE_PUBLIC_ORIGIN，跳过前端探活；无法确认前端状态',
+      },
     };
   }
 
@@ -190,9 +223,12 @@ async function checkFrontendService(): Promise<ServiceStatus> {
     port = Number(url.port || (url.protocol === 'https:' ? 443 : 80));
   } catch {
     return {
-      name: '前端服务',
-      status: 'unknown',
-      error: '前端探活地址配置无效，需使用不含凭证的 HTTP(S) URL；无法确认前端状态',
+      probed: false,
+      status: {
+        name: '前端服务',
+        status: 'unknown',
+        error: '前端探活地址配置无效，需使用不含凭证的 HTTP(S) URL；无法确认前端状态',
+      },
     };
   }
 
@@ -204,30 +240,89 @@ async function checkFrontendService(): Promise<ServiceStatus> {
     });
     const responseTimeMs = Date.now() - startTime;
     if (response.ok || response.status === 304) {
-      return { name: '前端服务', status: 'running', port, responseTimeMs };
+      return { probed: true, status: { name: '前端服务', status: 'running', port, responseTimeMs } };
     }
     return {
-      name: '前端服务',
-      status: production ? 'unknown' : 'error',
-      port,
-      responseTimeMs,
-      error: `前端探活返回 HTTP ${response.status}，无法确认前端状态`,
+      probed: true,
+      status: {
+        name: '前端服务',
+        status: production ? 'unknown' : 'error',
+        port,
+        responseTimeMs,
+        error: `前端探活返回 HTTP ${response.status}，无法确认前端状态`,
+      },
     };
   } catch {
     return {
-      name: '前端服务',
-      status: 'unknown',
-      port,
-      error: '前端探活不可达或超时，无法确认前端状态；请检查部署地址与网络，不能据此认定服务停止',
+      probed: true,
+      status: {
+        name: '前端服务',
+        status: 'unknown',
+        port,
+        error: '前端探活不可达或超时，无法确认前端状态；请检查部署地址与网络，不能据此认定服务停止',
+      },
     };
   }
+}
+
+/**
+ * 平台库身份与 db-connection 的默认配置保持一致。
+ * 比较主机、端口和库名，不比较实例展示名。
+ */
+function platformDatabaseIdentity(): { host: string; port: number; database: string } {
+  const port = Number(process.env.DB_PORT || 3306);
+  return {
+    host: (process.env.DB_HOST || 'localhost').trim(),
+    port: Number.isInteger(port) && port > 0 ? port : 3306,
+    database: (process.env.DB_NAME || 'db_ops_ai').trim(),
+  };
+}
+
+function sameDatabaseHost(left: string, right: string): boolean {
+  const normalize = (value: string) => {
+    const host = value.trim().toLowerCase();
+    return host === 'localhost' || host === '::1' ? '127.0.0.1' : host;
+  };
+  return normalize(left) === normalize(right);
+}
+
+function isPlatformDatabase(inst: {
+  db_type?: string | null;
+  host?: string | null;
+  port?: number | null;
+  database_name?: string | null;
+}): boolean {
+  if ((inst.db_type || '').toLowerCase() !== 'mysql') return false;
+  const platform = platformDatabaseIdentity();
+  return sameDatabaseHost(inst.host || '', platform.host)
+    && Number(inst.port) === platform.port
+    && (inst.database_name || '').trim() === platform.database;
+}
+
+function tagTexts(tags: unknown): string[] {
+  if (typeof tags === 'string') {
+    const trimmed = tags.trim();
+    if (!trimmed) return [];
+    if (trimmed.startsWith('[') || trimmed.startsWith('{')) {
+      try { return tagTexts(JSON.parse(trimmed)); } catch { /* 按普通标签文本处理 */ }
+    }
+    return [trimmed.toLowerCase()];
+  }
+  if (Array.isArray(tags)) return tags.flatMap(tagTexts);
+  if (tags && typeof tags === 'object') return Object.values(tags as Record<string, unknown>).flatMap(tagTexts);
+  return [];
+}
+
+/** 实例标签中的 core / 核心 是稳定标记，展示名不算标记。 */
+function isMarkedCore(tags: unknown): boolean {
+  return tagTexts(tags).some(tag => tag === 'core' || tag === '核心');
 }
 
 /**
  * 检查数据库连接状态
  */
 async function checkDatabaseConnections(): Promise<ServiceStatus[]> {
-  const statuses: ServiceStatus[] = [];
+  const statuses: ServiceStatus[] = [await checkPlatformDatabase()];
 
   try {
     const instances = await instanceDatabaseService.getAllInstances();
@@ -238,6 +333,7 @@ async function checkDatabaseConnections(): Promise<ServiceStatus[]> {
       const alive = conn ? await withTimeout(databaseService.checkConnectionAlive(inst.id), 5000, false) : false;
       return {
         name: `${inst.name} (${inst.db_type?.toUpperCase()})`,
+        critical: isPlatformDatabase(inst) || isMarkedCore(inst.tags),
         status: alive ? 'running' : 'error',
         port: inst.port,
         error: conn && !alive ? '连接已断开' : !conn ? '未建立连接' : undefined,
@@ -254,6 +350,90 @@ async function checkDatabaseConnections(): Promise<ServiceStatus[]> {
   }
 
   return statuses;
+}
+
+async function checkPlatformDatabase(): Promise<ServiceStatus> {
+  const status: ServiceStatus = { name: '平台数据库', critical: true, status: 'error' };
+  const pool = dbConnection.isConnected() ? dbConnection.getPool() : null;
+  if (!pool) return { ...status, error: '平台数据库未连接' };
+  try {
+    const alive = await pingPlatformPool(pool);
+    return alive ? { ...status, status: 'running' } : { ...status, error: '平台数据库连接已断开' };
+  } catch (error: unknown) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    return { ...status, error: errorMessage };
+  }
+}
+
+/** 平台库探活上限。到点后 ping 可能仍未结束，连接不能归还复用。 */
+const PLATFORM_DB_PING_TIMEOUT_MS = 5000;
+
+type PlatformPool = NonNullable<ReturnType<typeof dbConnection.getPool>>;
+type PlatformPoolConnection = Awaited<ReturnType<PlatformPool['getConnection']>>;
+
+function releasePlatformConnection(connection: PlatformPoolConnection): void {
+  try {
+    connection.release();
+  } catch {
+    retirePlatformConnection(connection);
+  }
+}
+
+function retirePlatformConnection(connection: PlatformPoolConnection): void {
+  try {
+    connection.destroy();
+  } catch {
+    // 连接已经关闭。不要再 release，避免把未完成探活的连接借给下一次查询。
+  }
+}
+
+async function pingPlatformPool(pool: PlatformPool): Promise<boolean> {
+  let connection: PlatformPoolConnection | undefined;
+  let abandoned = false;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+
+  const acquired = pool.getConnection().then((conn) => {
+    if (abandoned) {
+      retirePlatformConnection(conn);
+      return undefined;
+    }
+    connection = conn;
+    return conn;
+  });
+
+  const timedOut = new Promise<undefined>((resolve) => {
+    timer = setTimeout(() => {
+      abandoned = true;
+      resolve(undefined);
+    }, PLATFORM_DB_PING_TIMEOUT_MS);
+  });
+
+  try {
+    const conn = await Promise.race([acquired, timedOut]);
+    if (!conn || abandoned) return false;
+
+    let failure: unknown;
+    const alive = await Promise.race([
+      conn.ping().then(() => true, (error: unknown) => {
+        failure = error;
+        return false;
+      }),
+      timedOut.then(() => false),
+    ]);
+    if (!alive || abandoned) {
+      if (failure !== undefined && !abandoned) throw failure;
+      return false;
+    }
+    return true;
+  } finally {
+    if (timer) clearTimeout(timer);
+    const current = connection;
+    connection = undefined;
+    const reuse = !abandoned;
+    abandoned = true;
+    if (current && reuse) releasePlatformConnection(current);
+    else if (current) retirePlatformConnection(current);
+  }
 }
 
 async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, fallback: T): Promise<T> {
@@ -358,6 +538,22 @@ function getBackendVersion(): string | undefined {
 }
 
 /**
+ * 工具 status 与 overall 对齐。
+ * 生产环境跳过前端探活时，前端不计入 overall，健康结果保持 success。
+ * 已发起的生产探活失败仍返回 warning，诊断留在服务条目里。
+ */
+function toolOutcome(
+  overall: SlideStatus['overall'],
+  frontend: FrontendCheck,
+): 'success' | 'warning' {
+  const skippedProductionProbe = process.env.NODE_ENV === 'production' && !frontend.probed;
+  if (overall === 'healthy' && (frontend.status.status === 'running' || skippedProductionProbe)) {
+    return 'success';
+  }
+  return 'warning';
+}
+
+/**
  * 计算整体状态
  */
 function calculateOverallStatus(services: ServiceStatus[]): 'healthy' | 'degraded' | 'unhealthy' | 'unknown' {
@@ -379,18 +575,12 @@ function calculateOverallStatus(services: ServiceStatus[]): 'healthy' | 'degrade
     return 'healthy';
   }
 
-  // 有关键服务停止或错误
+  // 核心故障看组件标记。展示名变化不能把平台库或核心库降成普通故障。
   if (statusCounts.stopped > 0 || statusCounts.error > 0) {
-    // 检查是否是核心服务
-    const coreServices = ['后端 API 服务', '系统数据库 (MySQL)'];
     const coreServiceIssues = services.some(
-      s => coreServices.includes(s.name) && (s.status === 'stopped' || s.status === 'error')
+      s => s.critical === true && (s.status === 'stopped' || s.status === 'error')
     );
-
-    if (coreServiceIssues) {
-      return 'unhealthy';
-    }
-    return 'degraded';
+    return coreServiceIssues ? 'unhealthy' : 'degraded';
   }
 
   // 大部分是 unknown
