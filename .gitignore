@@ -1,7 +1,9 @@
 node_modules
 **/node_modules/
 .env
-.env.local.docker
+.env.*
+!.env.example
+!.env.*.example
 *.log
 dist
 dist-runtime/
