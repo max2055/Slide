@@ -434,3 +434,104 @@ describe('slide_check_status core database failures', () => {
     expect(connection.destroy).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('slide_check_status service status report', () => {
+  const fetchMock = vi.fn();
+
+  beforeEach(() => {
+    resetRecordedApiBind();
+    vi.stubEnv('NODE_ENV', 'development');
+    vi.stubEnv('FRONTEND_URL', '');
+    vi.stubEnv('SLIDE_PUBLIC_ORIGIN', '');
+    vi.stubEnv('PORT', '');
+    vi.stubEnv('BACKEND_PORT', '');
+    vi.stubEnv('API_PORT', '');
+    vi.stubGlobal('fetch', fetchMock);
+    fetchMock.mockReset();
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
+  });
+
+  function reportOf(result: { details?: unknown }): string {
+    const details = result.details;
+    if (!details || typeof details !== 'object' || !('report' in details)) return '';
+    return String(details.report ?? '');
+  }
+
+  it('shows running services and a healthy overall status in Chinese', async () => {
+    fetchMock.mockResolvedValue({ ok: true, status: 200 });
+    const result = await checkStatusTool.handler({});
+    const text = reportOf(result);
+    expect(result.data).toMatchObject({ overall: 'healthy' });
+    expect(result.summary).toContain('健康');
+    expect(text).toContain('整体状态：健康');
+    expect(text).toContain('后端 API 服务: 运行中');
+    expect(text).toContain('前端服务: 运行中');
+    expect(text).not.toMatch(/: (running|stopped|error|unknown)\b/);
+  });
+
+  it('shows a stopped backend as 已停止 and keeps overall 不健康', async () => {
+    fetchMock
+      .mockRejectedValueOnce(new Error('connect ECONNREFUSED 127.0.0.1:3000'))
+      .mockResolvedValueOnce({ ok: true, status: 200 });
+    const result = await checkStatusTool.handler({});
+    const text = reportOf(result);
+    expect(result.data).toMatchObject({ overall: 'unhealthy' });
+    expect(text).toContain('整体状态：不健康');
+    expect(text).toContain('后端 API 服务: 已停止');
+    expect(text).toContain('前端服务: 运行中');
+  });
+
+  it('shows an HTTP failure as 错误 and keeps overall 不健康', async () => {
+    fetchMock
+      .mockResolvedValueOnce({ ok: false, status: 503 })
+      .mockResolvedValueOnce({ ok: true, status: 200 });
+    const result = await checkStatusTool.handler({});
+    const text = reportOf(result);
+    expect(result.data).toMatchObject({ overall: 'unhealthy' });
+    expect(text).toContain('整体状态：不健康');
+    expect(text).toContain('后端 API 服务: 错误');
+    expect(text).toContain('前端服务: 运行中');
+  });
+
+  it('shows an unprobed production frontend as 未知 without changing a healthy overall status', async () => {
+    vi.stubEnv('NODE_ENV', 'production');
+    fetchMock.mockResolvedValue({ ok: true, status: 200 });
+    const result = await checkStatusTool.handler({});
+    const text = reportOf(result);
+    expect(result).toMatchObject({ status: 'success', data: { overall: 'healthy' } });
+    expect(text).toContain('整体状态：健康');
+    expect(text).toContain('后端 API 服务: 运行中');
+    expect(text).toContain('前端服务: 未知');
+  });
+
+  it('shows a degraded overall status when an optional component is stopped', async () => {
+    vi.stubEnv('NODE_ENV', 'production');
+    fetchMock.mockResolvedValue({ ok: true, status: 200 });
+    const result = await checkStatusTool.handler({ test_llm: true });
+    const text = reportOf(result);
+    expect(result.data).toMatchObject({ overall: 'degraded' });
+    expect(text).toContain('整体状态：降级');
+    expect(text).toContain('LLM 服务: 已停止');
+    expect(text).toContain('前端服务: 未知');
+  });
+
+  it('keeps the overall status vocabulary, including 未知', () => {
+    const source = readFileSync(new URL('./check_status.ts', import.meta.url), 'utf8');
+    const overall = source.slice(source.indexOf('function translateStatus'), source.indexOf('function buildStatusReport'));
+    expect(overall).toContain("healthy: '健康'");
+    expect(overall).toContain("degraded: '降级'");
+    expect(overall).toContain("unhealthy: '不健康'");
+    expect(overall).toContain("unknown: '未知'");
+    const services = source.slice(source.indexOf('function translateServiceStatus'));
+    expect(services).toContain("running: '运行中'");
+    expect(services).toContain("stopped: '已停止'");
+    expect(services).toContain("error: '错误'");
+    expect(services).toContain("unknown: '未知'");
+    expect(source).toContain('translateStatus(status.overall)');
+    expect(source).toContain('translateServiceStatus(service.status)');
+  });
+});
