@@ -109,6 +109,7 @@ export const checkStatusTool: AnyAgentTool = {
         details: {
           status,
           includeDetails,
+          report: content,
         },
       };
     } catch (error: unknown) {
@@ -623,7 +624,7 @@ function buildStatusReport(status: SlideStatus, includeDetails: boolean): string
 
   for (const service of status.services) {
     const icon = service.status === 'running' ? '✅' : service.status === 'error' ? '❌' : '⚠️';
-    lines.push(`${icon} ${service.name}: ${translateStatus(service.status)}`);
+    lines.push(`${icon} ${service.name}: ${translateServiceStatus(service.status)}`);
 
     if (includeDetails || service.error) {
       if (service.port) {
