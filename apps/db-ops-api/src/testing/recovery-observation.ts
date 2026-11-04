@@ -1,5 +1,5 @@
 // Qualification-only instrumentation: never imported by the application.
-import { appendFileSync, existsSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 export function safeSqlLabel(value: unknown): string {
@@ -12,8 +12,11 @@ export function safeSqlLabel(value: unknown): string {
 }
 
 export function recoveryObservation(database: string) {
-  const directory = process.env.RECOVERY_OBSERVATION_DIR;
+  // API shards already archive T12_OUTPUT_DIR, but have no cleanup supervisor.
+  const directory = process.env.RECOVERY_OBSERVATION_DIR ??
+    (process.env.T12_OUTPUT_DIR ? join(process.env.T12_OUTPUT_DIR, 'recovery-observation') : undefined);
   if (directory && !/^investigation_test_\d+_[a-f0-9]{32}$/.test(database)) throw new Error('Invalid qualification database identity');
+  if (directory && !process.env.RECOVERY_OBSERVATION_DIR) mkdirSync(directory, { recursive: true });
   const pending = new Map<number, { label: string; started: number }>();
   const proxies = new WeakMap<object, object>();
   const started = performance.now();
@@ -25,7 +28,7 @@ export function recoveryObservation(database: string) {
     try {
       appendFileSync(join(directory!, `hook-${process.pid}.jsonl`), JSON.stringify({
         utc: new Date().toISOString(), monotonicNs: process.hrtime.bigint().toString(), monoMs: performance.now() - started, pid: process.pid,
-        commit: process.env.RECOVERY_OBSERVATION_COMMIT, database, ...event,
+        commit: process.env.RECOVERY_OBSERVATION_COMMIT ?? process.env.GITHUB_SHA, database, ...event,
       }) + '\n');
     } catch {
       if (!failed) process.stderr.write('RECOVERY_OBSERVATION_WRITE_FAILED\n');
@@ -73,7 +76,7 @@ export function recoveryObservation(database: string) {
     wrap,
     stage: <T>(label: string, fn: () => Promise<T>) => operation('stage', label, fn),
     async beforeCleanup() {
-      if (!directory) return;
+      if (!process.env.RECOVERY_OBSERVATION_DIR) return;
       const request = join(directory, `cleanup-${process.pid}`);
       writeFileSync(request, database);
       const deadline = performance.now() + 4000;
