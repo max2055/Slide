@@ -17,3 +17,11 @@ BOOTSTRAP_TEST_MYSQL_PORT=33367 pnpm --filter slide-api exec vitest run src/conf
 ```
 
 有密码的测试实例同时设置 `BOOTSTRAP_TEST_MYSQL_PASSWORD`，不要在日志中打印值。CI 的 MySQL 集成门禁运行相同回归。
+
+正式入口与 HTTP 回归（同样仅使用隔离测试库）：
+
+```bash
+BOOTSTRAP_TEST_MYSQL_PORT=33367 pnpm --filter slide-api exec tsx tests/bootstrap-http.acceptance.ts
+```
+
+脚本运行正式 `init-db` / `start` 命令，为测试端口配置生产 CORS，验证 HTTP 登录、重启、升级前签发 JWT 在升级后被实时状态检查拒绝，以及无效初始化配置监听前失败。日志保存至工作树 `outputs/max267-http`，不输出口令或令牌；结束时删除随机库并停止自己启动的子进程。
