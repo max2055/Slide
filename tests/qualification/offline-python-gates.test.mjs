@@ -3,7 +3,7 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { appendFileSync, cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -26,6 +26,11 @@ function python(cwd, mode, args, extraEnv = {}) {
     cwd, encoding: 'utf8', timeout: 30_000,
     env: { ...process.env, PYTHONOPTIMIZE: mode.optimize, ...extraEnv },
   });
+  if (process.env.OFFLINE_GATE_TRACE) {
+    appendFileSync(process.env.OFFLINE_GATE_TRACE, JSON.stringify({
+      mode: mode.name, args, status: result.status, stdout: result.stdout, stderr: result.stderr,
+    }) + '\n');
+  }
   assert.ifError(result.error);
   assert.equal(result.signal, null, result.stderr);
   return result;
