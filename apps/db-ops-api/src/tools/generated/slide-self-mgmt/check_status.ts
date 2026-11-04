@@ -7,6 +7,7 @@
 import type { AnyAgentTool, ToolResult } from '../../types.js';
 import { toolCatalog } from '../../catalog.js';
 import { databaseService } from '../../../database-service.js';
+import { dbConnection } from '../../../db-connection.js';
 import { instanceDatabaseService } from '../../../instance-database-service.js';
 import { getAllProviders } from '../../../llm/provider-catalog.js';
 
@@ -19,6 +20,8 @@ interface ServiceStatus {
   port?: number;
   responseTimeMs?: number;
   error?: string;
+  /** 核心组件。整体故障判定只看这个标记，不看展示名。 */
+  critical?: boolean;
 }
 
 /**
@@ -139,6 +142,7 @@ async function checkBackendService(): Promise<ServiceStatus> {
     if (response.ok) {
       return {
         name: '后端 API 服务',
+        critical: true,
         status: 'running',
         port: 3000,
         responseTimeMs,
@@ -146,6 +150,7 @@ async function checkBackendService(): Promise<ServiceStatus> {
     } else {
       return {
         name: '后端 API 服务',
+        critical: true,
         status: 'error',
         port: 3000,
         responseTimeMs,
@@ -156,6 +161,7 @@ async function checkBackendService(): Promise<ServiceStatus> {
     const errorMessage = error instanceof Error ? error.message : String(error);
     return {
       name: '后端 API 服务',
+      critical: true,
       status: 'stopped',
       port: 3000,
       error: errorMessage.includes('ECONNREFUSED')
@@ -242,10 +248,63 @@ async function checkFrontendService(): Promise<FrontendCheck> {
 }
 
 /**
+ * 平台库身份与 db-connection 的默认配置保持一致。
+ * 比较主机、端口和库名，不比较实例展示名。
+ */
+function platformDatabaseIdentity(): { host: string; port: number; database: string } {
+  const port = Number(process.env.DB_PORT || 3306);
+  return {
+    host: (process.env.DB_HOST || 'localhost').trim(),
+    port: Number.isInteger(port) && port > 0 ? port : 3306,
+    database: (process.env.DB_NAME || 'db_ops_ai').trim(),
+  };
+}
+
+function sameDatabaseHost(left: string, right: string): boolean {
+  const normalize = (value: string) => {
+    const host = value.trim().toLowerCase();
+    return host === 'localhost' || host === '::1' ? '127.0.0.1' : host;
+  };
+  return normalize(left) === normalize(right);
+}
+
+function isPlatformDatabase(inst: {
+  db_type?: string | null;
+  host?: string | null;
+  port?: number | null;
+  database_name?: string | null;
+}): boolean {
+  if ((inst.db_type || '').toLowerCase() !== 'mysql') return false;
+  const platform = platformDatabaseIdentity();
+  return sameDatabaseHost(inst.host || '', platform.host)
+    && Number(inst.port) === platform.port
+    && (inst.database_name || '').trim() === platform.database;
+}
+
+function tagTexts(tags: unknown): string[] {
+  if (typeof tags === 'string') {
+    const trimmed = tags.trim();
+    if (!trimmed) return [];
+    if (trimmed.startsWith('[') || trimmed.startsWith('{')) {
+      try { return tagTexts(JSON.parse(trimmed)); } catch { /* 按普通标签文本处理 */ }
+    }
+    return [trimmed.toLowerCase()];
+  }
+  if (Array.isArray(tags)) return tags.flatMap(tagTexts);
+  if (tags && typeof tags === 'object') return Object.values(tags as Record<string, unknown>).flatMap(tagTexts);
+  return [];
+}
+
+/** 实例标签中的 core / 核心 是稳定标记，展示名不算标记。 */
+function isMarkedCore(tags: unknown): boolean {
+  return tagTexts(tags).some(tag => tag === 'core' || tag === '核心');
+}
+
+/**
  * 检查数据库连接状态
  */
 async function checkDatabaseConnections(): Promise<ServiceStatus[]> {
-  const statuses: ServiceStatus[] = [];
+  const statuses: ServiceStatus[] = [await checkPlatformDatabase()];
 
   try {
     const instances = await instanceDatabaseService.getAllInstances();
@@ -256,6 +315,7 @@ async function checkDatabaseConnections(): Promise<ServiceStatus[]> {
       const alive = conn ? await withTimeout(databaseService.checkConnectionAlive(inst.id), 5000, false) : false;
       return {
         name: `${inst.name} (${inst.db_type?.toUpperCase()})`,
+        critical: isPlatformDatabase(inst) || isMarkedCore(inst.tags),
         status: alive ? 'running' : 'error',
         port: inst.port,
         error: conn && !alive ? '连接已断开' : !conn ? '未建立连接' : undefined,
@@ -272,6 +332,29 @@ async function checkDatabaseConnections(): Promise<ServiceStatus[]> {
   }
 
   return statuses;
+}
+
+async function checkPlatformDatabase(): Promise<ServiceStatus> {
+  const status: ServiceStatus = { name: '平台数据库', critical: true, status: 'error' };
+  const pool = dbConnection.isConnected() ? dbConnection.getPool() : null;
+  if (!pool) return { ...status, error: '平台数据库未连接' };
+  try {
+    const alive = await withTimeout(pingPlatformPool(pool), 5000, false);
+    return alive ? { ...status, status: 'running' } : { ...status, error: '平台数据库连接已断开' };
+  } catch (error: unknown) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    return { ...status, error: errorMessage };
+  }
+}
+
+async function pingPlatformPool(pool: NonNullable<ReturnType<typeof dbConnection.getPool>>): Promise<boolean> {
+  const connection = await pool.getConnection();
+  try {
+    await connection.ping();
+    return true;
+  } finally {
+    connection.release();
+  }
 }
 
 async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, fallback: T): Promise<T> {
@@ -413,18 +496,12 @@ function calculateOverallStatus(services: ServiceStatus[]): 'healthy' | 'degrade
     return 'healthy';
   }
 
-  // 有关键服务停止或错误
+  // 核心故障看组件标记。展示名变化不能把平台库或核心库降成普通故障。
   if (statusCounts.stopped > 0 || statusCounts.error > 0) {
-    // 检查是否是核心服务
-    const coreServices = ['后端 API 服务', '系统数据库 (MySQL)'];
     const coreServiceIssues = services.some(
-      s => coreServices.includes(s.name) && (s.status === 'stopped' || s.status === 'error')
+      s => s.critical === true && (s.status === 'stopped' || s.status === 'error')
     );
-
-    if (coreServiceIssues) {
-      return 'unhealthy';
-    }
-    return 'degraded';
+    return coreServiceIssues ? 'unhealthy' : 'degraded';
   }
 
   // 大部分是 unknown

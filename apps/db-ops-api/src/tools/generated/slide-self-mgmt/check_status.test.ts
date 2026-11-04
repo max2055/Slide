@@ -1,8 +1,32 @@
+import { readFileSync } from 'node:fs';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+const db = vi.hoisted(() => ({
+  getAllInstances: vi.fn(async () => [] as Array<Record<string, unknown>>),
+  getAllConnections: vi.fn(() => [] as Array<{ id: number }>),
+  checkConnectionAlive: vi.fn(async (_id?: number) => true),
+  platformConnected: true,
+  platformPing: vi.fn(async () => {}),
+}));
+
 vi.mock('../../catalog.js', () => ({ toolCatalog: { register: vi.fn() } }));
-vi.mock('../../../database-service.js', () => ({ databaseService: {} }));
-vi.mock('../../../instance-database-service.js', () => ({ instanceDatabaseService: {} }));
+vi.mock('../../../db-connection.js', () => ({
+  dbConnection: {
+    isConnected: () => db.platformConnected,
+    getPool: () => (db.platformConnected ? {
+      getConnection: async () => ({ ping: () => db.platformPing(), release: () => {} }),
+    } : null),
+  },
+}));
+vi.mock('../../../database-service.js', () => ({
+  databaseService: {
+    getAllConnections: () => db.getAllConnections(),
+    checkConnectionAlive: (id: number) => db.checkConnectionAlive(id),
+  },
+}));
+vi.mock('../../../instance-database-service.js', () => ({
+  instanceDatabaseService: { getAllInstances: () => db.getAllInstances() },
+}));
 vi.mock('../../../llm/provider-catalog.js', () => ({ getAllProviders: () => [] }));
 
 import { checkStatusTool } from './check_status.js';
@@ -127,5 +151,155 @@ describe('slide_check_status frontend health', () => {
 
   it('does not advertise the development port as the frontend topology', () => {
     expect(checkStatusTool.description).not.toContain(':5173');
+  });
+});
+
+describe('slide_check_status core database failures', () => {
+  const fetchMock = vi.fn();
+
+  function instance(overrides: Record<string, unknown> = {}) {
+    return {
+      id: 7,
+      name: '生产库',
+      status: 'active',
+      db_type: 'mysql',
+      host: '10.9.9.9',
+      port: 3306,
+      database_name: 'orders',
+      tags: [],
+      ...overrides,
+    };
+  }
+
+  beforeEach(() => {
+    vi.stubEnv('NODE_ENV', 'production');
+    vi.stubEnv('FRONTEND_URL', '');
+    vi.stubEnv('SLIDE_PUBLIC_ORIGIN', '');
+    vi.stubEnv('DB_HOST', '10.1.2.3');
+    vi.stubEnv('DB_PORT', '3306');
+    vi.stubEnv('DB_NAME', 'slide_platform');
+    vi.stubGlobal('fetch', fetchMock);
+    fetchMock.mockReset().mockResolvedValue({ ok: true, status: 200 });
+    db.platformConnected = true;
+    db.platformPing.mockReset().mockResolvedValue(undefined);
+    db.getAllInstances.mockReset().mockResolvedValue([]);
+    db.getAllConnections.mockReset().mockReturnValue([]);
+    db.checkConnectionAlive.mockReset().mockResolvedValue(true);
+  });
+  afterEach(() => { vi.unstubAllEnvs(); vi.unstubAllGlobals(); });
+
+  async function statusOf(args: Record<string, unknown> = { test_db_connections: true }) {
+    const result = await checkStatusTool.handler(args);
+    return result;
+  }
+
+  it('does not keep a hardcoded database display name as the core-failure key', () => {
+    const source = readFileSync(new URL('./check_status.ts', import.meta.url), 'utf8');
+    expect(source).not.toContain('系统数据库 (MySQL)');
+    expect(source).toContain('http://localhost:3000/api/health');
+  });
+
+  it('treats a disconnected platform database as a core failure under any display name', async () => {
+    db.platformConnected = false;
+    const result = await statusOf();
+    expect(result).toMatchObject({
+      status: 'warning',
+      data: {
+        overall: 'unhealthy',
+        services: expect.arrayContaining([
+          { name: '平台数据库', critical: true, status: 'error', error: '平台数据库未连接' },
+        ]),
+      },
+    });
+    expect(JSON.stringify(result)).not.toContain('系统数据库 (MySQL)');
+  });
+
+  it.each([
+    ['展示名甲', '10.1.2.3'],
+    ['归档库', '127.0.0.1'],
+  ])('treats platform-endpoint instance %s failure as core', async (name, host) => {
+    if (host === '127.0.0.1') vi.stubEnv('DB_HOST', 'localhost');
+    db.getAllInstances.mockResolvedValue([instance({
+      name,
+      host,
+      database_name: 'slide_platform',
+    })]);
+    db.getAllConnections.mockReturnValue([{ id: 7 }]);
+    db.checkConnectionAlive.mockResolvedValue(false);
+    const result = await statusOf();
+    expect(result.data).toMatchObject({
+      overall: 'unhealthy',
+      services: expect.arrayContaining([
+        expect.objectContaining({ name: `${name} (MYSQL)`, critical: true, status: 'error', error: '连接已断开' }),
+      ]),
+    });
+  });
+
+  it.each([
+    ['归档库', ['核心']],
+    ['系统数据库 (MySQL)', '{"role":"core"}'],
+  ])('treats core-tagged instance %s failure as core', async (name, tags) => {
+    db.getAllInstances.mockResolvedValue([instance({ name, tags })]);
+    db.getAllConnections.mockReturnValue([{ id: 7 }]);
+    db.checkConnectionAlive.mockResolvedValue(false);
+    const result = await statusOf();
+    expect(result.data).toMatchObject({
+      overall: 'unhealthy',
+      services: expect.arrayContaining([
+        expect.objectContaining({ name: `${name} (MYSQL)`, critical: true, status: 'error' }),
+      ]),
+    });
+  });
+
+  it('keeps a non-core database failure degraded even when its display name looks core', async () => {
+    db.getAllInstances.mockResolvedValue([instance({ name: '系统数据库 (MySQL)', tags: ['reporting'] })]);
+    db.getAllConnections.mockReturnValue([]);
+    const result = await statusOf();
+    expect(result).toMatchObject({
+      status: 'warning',
+      data: {
+        overall: 'degraded',
+        services: expect.arrayContaining([
+          expect.objectContaining({ name: '平台数据库', critical: true, status: 'running' }),
+          expect.objectContaining({ name: '系统数据库 (MySQL) (MYSQL)', critical: false, status: 'error', error: '未建立连接' }),
+        ]),
+      },
+    });
+  });
+
+  it('stays healthy when the platform database and a non-core database are running', async () => {
+    db.getAllInstances.mockResolvedValue([
+      instance({ name: '订单库' }),
+      instance({ id: 8, name: '展示名乙', host: '10.1.2.3', database_name: 'slide_platform', tags: ['core'] }),
+    ]);
+    db.getAllConnections.mockReturnValue([{ id: 7 }, { id: 8 }]);
+    const result = await statusOf();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(result).toMatchObject({
+      status: 'success',
+      data: {
+        overall: 'healthy',
+        services: expect.arrayContaining([
+          expect.objectContaining({ name: '平台数据库', critical: true, status: 'running' }),
+          expect.objectContaining({ name: '订单库 (MYSQL)', critical: false, status: 'running' }),
+          expect.objectContaining({ name: '展示名乙 (MYSQL)', critical: true, status: 'running' }),
+        ]),
+      },
+    });
+  });
+
+  it('does not treat an inactive core database or a listing error as a platform failure', async () => {
+    db.getAllInstances.mockResolvedValue([instance({ status: 'inactive', tags: ['core'] })]);
+    expect((await statusOf()).data).toMatchObject({ overall: 'healthy' });
+
+    db.getAllInstances.mockRejectedValue(new Error('query failed'));
+    const failed = await statusOf();
+    expect(failed.data).toMatchObject({
+      overall: 'degraded',
+      services: expect.arrayContaining([
+        { name: '平台数据库', critical: true, status: 'running' },
+        { name: '数据库连接检查', status: 'error', error: 'query failed' },
+      ]),
+    });
   });
 });
