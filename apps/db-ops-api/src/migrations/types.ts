@@ -18,6 +18,7 @@ export interface MigrationQuery {
 
 export interface MigrationConnection extends MigrationQuery {
   release(): void;
+  destroy(): void;
 }
 
 export interface MigrationPool extends MigrationQuery {
