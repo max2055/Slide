@@ -76,8 +76,8 @@ export const checkStatusTool: AnyAgentTool = {
       status.version = backendStatus.status !== 'unknown' ? getBackendVersion() : undefined;
 
       // 2. 检查前端服务
-      const frontendStatus = await checkFrontendService();
-      status.services.push(frontendStatus);
+      const frontendCheck = await checkFrontendService();
+      status.services.push(frontendCheck.status);
 
       // 3. 检查数据库连接（可选）
       if (testDbConnections) {
@@ -99,7 +99,7 @@ export const checkStatusTool: AnyAgentTool = {
 
       return {
         success: true,
-        status: status.overall === 'healthy' && frontendStatus.status === 'running' ? 'success' : 'warning',
+        status: toolOutcome(status.overall, frontendCheck),
         data: status,
         summary: `Slide 状态：${translateStatus(status.overall)}，${status.services.length} 个服务组件`,
         details: {
@@ -165,19 +165,28 @@ async function checkBackendService(): Promise<ServiceStatus> {
   }
 }
 
+interface FrontendCheck {
+  status: ServiceStatus;
+  /** 是否向配置地址发起了探活。未配置或地址无效时为 false。 */
+  probed: boolean;
+}
+
 /**
  * 检查前端服务状态
  */
-async function checkFrontendService(): Promise<ServiceStatus> {
+async function checkFrontendService(): Promise<FrontendCheck> {
   const production = process.env.NODE_ENV === 'production';
   const frontendUrl = process.env.FRONTEND_URL?.trim()
     || process.env.SLIDE_PUBLIC_ORIGIN?.trim()
     || (production ? undefined : 'http://localhost:5173');
   if (!frontendUrl) {
     return {
-      name: '前端服务',
-      status: 'unknown',
-      error: '未配置 FRONTEND_URL 或 SLIDE_PUBLIC_ORIGIN，跳过前端探活；无法确认前端状态',
+      probed: false,
+      status: {
+        name: '前端服务',
+        status: 'unknown',
+        error: '未配置 FRONTEND_URL 或 SLIDE_PUBLIC_ORIGIN，跳过前端探活；无法确认前端状态',
+      },
     };
   }
 
@@ -190,9 +199,12 @@ async function checkFrontendService(): Promise<ServiceStatus> {
     port = Number(url.port || (url.protocol === 'https:' ? 443 : 80));
   } catch {
     return {
-      name: '前端服务',
-      status: 'unknown',
-      error: '前端探活地址配置无效，需使用不含凭证的 HTTP(S) URL；无法确认前端状态',
+      probed: false,
+      status: {
+        name: '前端服务',
+        status: 'unknown',
+        error: '前端探活地址配置无效，需使用不含凭证的 HTTP(S) URL；无法确认前端状态',
+      },
     };
   }
 
@@ -204,21 +216,27 @@ async function checkFrontendService(): Promise<ServiceStatus> {
     });
     const responseTimeMs = Date.now() - startTime;
     if (response.ok || response.status === 304) {
-      return { name: '前端服务', status: 'running', port, responseTimeMs };
+      return { probed: true, status: { name: '前端服务', status: 'running', port, responseTimeMs } };
     }
     return {
-      name: '前端服务',
-      status: production ? 'unknown' : 'error',
-      port,
-      responseTimeMs,
-      error: `前端探活返回 HTTP ${response.status}，无法确认前端状态`,
+      probed: true,
+      status: {
+        name: '前端服务',
+        status: production ? 'unknown' : 'error',
+        port,
+        responseTimeMs,
+        error: `前端探活返回 HTTP ${response.status}，无法确认前端状态`,
+      },
     };
   } catch {
     return {
-      name: '前端服务',
-      status: 'unknown',
-      port,
-      error: '前端探活不可达或超时，无法确认前端状态；请检查部署地址与网络，不能据此认定服务停止',
+      probed: true,
+      status: {
+        name: '前端服务',
+        status: 'unknown',
+        port,
+        error: '前端探活不可达或超时，无法确认前端状态；请检查部署地址与网络，不能据此认定服务停止',
+      },
     };
   }
 }
@@ -355,6 +373,22 @@ async function checkLlmConnection(): Promise<ServiceStatus> {
 function getBackendVersion(): string | undefined {
   // 从 package.json 或环境变量读取版本
   return process.env.npm_package_version || 'unknown';
+}
+
+/**
+ * 工具 status 与 overall 对齐。
+ * 生产环境跳过前端探活时，前端不计入 overall，健康结果保持 success。
+ * 已发起的生产探活失败仍返回 warning，诊断留在服务条目里。
+ */
+function toolOutcome(
+  overall: SlideStatus['overall'],
+  frontend: FrontendCheck,
+): 'success' | 'warning' {
+  const skippedProductionProbe = process.env.NODE_ENV === 'production' && !frontend.probed;
+  if (overall === 'healthy' && (frontend.status.status === 'running' || skippedProductionProbe)) {
+    return 'success';
+  }
+  return 'warning';
 }
 
 /**

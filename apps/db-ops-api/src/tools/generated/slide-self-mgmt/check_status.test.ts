@@ -23,7 +23,7 @@ describe('slide_check_status frontend health', () => {
     vi.stubEnv('SLIDE_PUBLIC_ORIGIN', 'https://slide.example.com');
     const result = await checkStatusTool.handler({});
     expect(fetchMock).toHaveBeenLastCalledWith('http://frontend:8080', expect.objectContaining({ method: 'HEAD' }));
-    expect(result.data).toMatchObject({ overall: 'healthy', services: [{}, { status: 'running', port: 8080 }] });
+    expect(result).toMatchObject({ status: 'success', data: { overall: 'healthy', services: [{ status: 'running' }, { status: 'running', port: 8080 }] } });
   });
 
   it('falls back to the public origin and derives the HTTPS port', async () => {
@@ -33,10 +33,35 @@ describe('slide_check_status frontend health', () => {
     expect(result.data).toMatchObject({ services: [{}, { port: 443 }] });
   });
 
-  it('skips unconfigured production probes without claiming the frontend stopped', async () => {
+  it('skips unconfigured production probes without downgrading a healthy result', async () => {
     const result = await checkStatusTool.handler({});
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(result).toMatchObject({ status: 'warning', data: { overall: 'healthy', services: [{}, { status: 'unknown' }] } });
+    expect(result).toMatchObject({
+      status: 'success',
+      data: {
+        overall: 'healthy',
+        services: [
+          { status: 'running' },
+          { status: 'unknown', error: expect.stringContaining('未配置 FRONTEND_URL') },
+        ],
+      },
+    });
+  });
+
+  it('keeps a production backend failure as warning when the frontend address is absent', async () => {
+    fetchMock.mockRejectedValueOnce(new Error('ECONNREFUSED'));
+    const result = await checkStatusTool.handler({});
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(result).toMatchObject({
+      status: 'warning',
+      data: {
+        overall: 'unhealthy',
+        services: [
+          { status: 'stopped', error: '服务未启动或端口不可达' },
+          { status: 'unknown', error: expect.stringContaining('未配置 FRONTEND_URL') },
+        ],
+      },
+    });
   });
 
   it.each(['network', 'timeout', 'http'])('keeps production frontend %s failures advisory', async (failure) => {
@@ -57,19 +82,46 @@ describe('slide_check_status frontend health', () => {
     expect((await checkStatusTool.handler({ test_llm: true })).data).toMatchObject({ overall: 'degraded' });
   });
 
+  it('returns success in development when backend and frontend are running', async () => {
+    vi.stubEnv('NODE_ENV', 'development');
+    fetchMock.mockResolvedValue({ ok: true, status: 200 });
+    const result = await checkStatusTool.handler({});
+    expect(fetchMock).toHaveBeenLastCalledWith('http://localhost:5173', expect.anything());
+    expect(result).toMatchObject({
+      status: 'success',
+      data: { overall: 'healthy', services: [{ status: 'running', port: 3000 }, { status: 'running', port: 5173 }] },
+    });
+  });
+
   it('retains the local development default and degradation behavior', async () => {
     vi.stubEnv('NODE_ENV', 'development');
     fetchMock.mockResolvedValueOnce({ ok: true, status: 200 }).mockRejectedValueOnce(new Error('ECONNREFUSED'));
     const result = await checkStatusTool.handler({});
     expect(fetchMock).toHaveBeenLastCalledWith('http://localhost:5173', expect.anything());
-    expect(result.data).toMatchObject({ overall: 'degraded', services: [{}, { port: 5173 }] });
+    expect(result).toMatchObject({
+      status: 'warning',
+      data: {
+        overall: 'degraded',
+        services: [{ status: 'running' }, { status: 'unknown', port: 5173, error: expect.stringContaining('无法确认') }],
+      },
+    });
+  });
+
+  it('returns warning in development when the backend is down', async () => {
+    vi.stubEnv('NODE_ENV', 'development');
+    fetchMock.mockRejectedValueOnce(new Error('ECONNREFUSED')).mockResolvedValueOnce({ ok: true, status: 200 });
+    const result = await checkStatusTool.handler({});
+    expect(result).toMatchObject({
+      status: 'warning',
+      data: { overall: 'unhealthy', services: [{ status: 'stopped' }, { status: 'running', port: 5173 }] },
+    });
   });
 
   it('rejects invalid configuration without leaking its value or probing localhost', async () => {
     vi.stubEnv('FRONTEND_URL', 'ftp://user:secret@frontend/file');
     const result = await checkStatusTool.handler({});
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(result.data).toMatchObject({ overall: 'healthy', services: [{}, { status: 'unknown' }] });
+    expect(result).toMatchObject({ status: 'success', data: { overall: 'healthy', services: [{ status: 'running' }, { status: 'unknown', error: expect.stringContaining('配置无效') }] } });
     expect(JSON.stringify(result)).not.toContain('secret');
   });
 
