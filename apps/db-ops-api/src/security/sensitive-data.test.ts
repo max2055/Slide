@@ -37,4 +37,34 @@ describe('Agent security data handling', () => {
     expect(redactSensitiveData('request failed: password=hunter2 token=abc123xyz'))
       .toBe('request failed: password=[REDACTED] token=[REDACTED]');
   });
+
+  it('redacts spaced secrets and cookie headers inside ordinary string fields (MAX-315)', () => {
+    expect(redactSensitiveData({
+      host: 'db.internal',
+      detail: 'password=ab cd',
+      challenge: 'Authorization: Digest abc123xyz',
+      header: 'Cookie: session=abc123',
+      response: 'Set-Cookie: sid=abc123; HttpOnly',
+      phrase: 'token: hello world',
+      cookie: 'session=abc123',
+    })).toEqual({
+      host: 'db.internal',
+      detail: 'password=[REDACTED]',
+      challenge: 'Authorization: [REDACTED]',
+      header: 'Cookie: [REDACTED]',
+      response: 'Set-Cookie: [REDACTED]',
+      phrase: 'token: [REDACTED]',
+      cookie: '[REDACTED]',
+    });
+  });
+
+  it.each(['Authorization', 'authorization', 'AUTHORIZATION', 'aUtHoRiZaTiOn'])(
+    'redacts complete %s Digest parameters in ordinary nested string fields (MAX-315 review regression)',
+    (header) => {
+      const detail = `${header}: Digest username="alice", realm="synthetic realm", response=synthetic_digest_secret`;
+      expect(redactSensitiveData({ host: 'db.internal', records: [{ detail }] })).toEqual({
+        host: 'db.internal', records: [{ detail: `${header}: [REDACTED]` }],
+      });
+    },
+  );
 });
