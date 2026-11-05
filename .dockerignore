@@ -11,13 +11,16 @@
 **/coverage
 **/.playwright
 **/test-results
+**/test-results*
 **/*.log
 **/*.test.ts
 **/__tests__
-apps/db-ops-api/.env
-.env
-.env.*
+# Exclude private environment files at every depth, including unknown suffixes.
+**/.env
+**/.env.*
+# Only these known, non-secret examples belong in the build context.
 !.env.example
+!apps/db-ops-api/.env.example
 !deploy/.env.production.example
 docs
 tmp

@@ -16,7 +16,7 @@ import './session-settings.js';
 type Page = HTMLElement & { updateComplete: Promise<unknown> };
 
 async function render(): Promise<Page> {
-  mocks.get.mockResolvedValue({
+  mocks.get.mockResolvedValueOnce({
     idleTimeoutMinutes: 10_080,
     minIdleTimeoutMinutes: 5,
     maxIdleTimeoutMinutes: 43_200,
@@ -45,6 +45,39 @@ describe('session settings', () => {
     expect(mocks.get).toHaveBeenCalledWith('/auth/session-config');
     expect(input?.value).toBe('10080');
     expect(page.shadowRoot?.textContent).toContain('下一次成功续期后使用新设置');
+  });
+
+  it('keeps a failed load visible and retries with the server policy', async () => {
+    mocks.get.mockRejectedValueOnce(new Error('unavailable'));
+    const page = await render();
+    expect(page.shadowRoot?.querySelector('[role="alert"]')?.textContent)
+      .toContain('加载登录安全设置失败');
+    const retry = page.shadowRoot!.querySelector<HTMLButtonElement>('button')!;
+    retry.click();
+    retry.click();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await page.updateComplete;
+    expect(mocks.get).toHaveBeenCalledTimes(2);
+    expect(page.shadowRoot?.querySelector<HTMLInputElement>('input')?.value).toBe('10080');
+  });
+
+  it('preserves loaded limits and edits after a failed save', async () => {
+    mocks.put.mockRejectedValue(new Error('unavailable'));
+    const page = await render();
+    const input = page.shadowRoot!.querySelector<HTMLInputElement>('input')!;
+    input.value = '120';
+    input.dispatchEvent(new Event('input'));
+    const save = page.shadowRoot!.querySelector<HTMLButtonElement>('button')!;
+    save.click();
+    save.click();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await page.updateComplete;
+    expect(mocks.put).toHaveBeenCalledTimes(1);
+    expect(input.value).toBe('120');
+    expect(input.min).toBe('5');
+    expect(input.max).toBe('43200');
+    expect(input.disabled).toBe(false);
+    expect(mocks.toast).toHaveBeenCalledWith('保存登录安全设置失败', 'error');
   });
 
   it('validates the server-provided range before saving', async () => {
