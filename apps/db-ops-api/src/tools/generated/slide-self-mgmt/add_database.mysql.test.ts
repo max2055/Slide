@@ -163,7 +163,7 @@ describe.skipIf(!process.env.ADD_DATABASE_TEST_MYSQL_URL || !process.env.ADD_DAT
       let committedInserts = 0;
       vi.spyOn(pool, 'execute').mockImplementation((async (sql: string, values?: any) => {
         const result = await execute(sql, values);
-        if (/^INSERT INTO database_instances/.test(sql.trim())) {
+        if (sql.trim().startsWith('INSERT INTO database_instances')) {
           committedInserts++;
           throw new Error('MAX311_INSERT_ACKNOWLEDGEMENT_LOST');
         }
