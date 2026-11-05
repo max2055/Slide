@@ -25,6 +25,7 @@ describe('MAX-309 / #379 actual ssh2 connection completion', () => {
     await Promise.all(servers.splice(0).map(async (server) => {
       await new Promise<void>((resolve) => server.close(() => resolve()));
       expect(server.listening).toBe(false);
+      process.stdout.write(JSON.stringify({ pid: process.pid, fixture: 'MAX-309 cleanup', listening: server.listening, openSockets: sockets.size }) + '\n');
     }));
     expect(sockets.size).toBe(0);
     vi.restoreAllMocks();
@@ -44,7 +45,7 @@ describe('MAX-309 / #379 actual ssh2 connection completion', () => {
     return address.port;
   }
 
-  async function connect(port: number, fingerprint?: string) {
+  async function connect(port: number, fingerprint?: string, deadlineMs = 1500) {
     const original = Client.prototype.connect;
     vi.spyOn(Client.prototype, 'connect').mockImplementation(function (config) {
       clients.push(this);
@@ -56,11 +57,11 @@ describe('MAX-309 / #379 actual ssh2 connection completion', () => {
     try {
       const result = await Promise.race([
         serverDatabaseService.testConnection('max309.local.test', port, 'password', 'synthetic', 'max309', fingerprint),
-        new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error('testConnection still pending')), 12000); }),
+        new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error('testConnection still pending')), deadlineMs); }),
       ]);
       await expect.poll(() => closedClients, { timeout: 1000 }).toBe(1);
       await expect.poll(() => sockets.size, { timeout: 1000 }).toBe(0);
-      console.info(JSON.stringify({ fixture: 'MAX-309', port, success: result.success, elapsedMs: Math.round(performance.now() - start), closedClients, openSockets: sockets.size }));
+      process.stdout.write(JSON.stringify({ pid: process.pid, fixture: 'MAX-309', port, success: result.success, elapsedMs: Math.round(performance.now() - start), closedClients, openSockets: sockets.size }) + '\n');
       return result;
     } finally { clearTimeout(timer); }
   }
@@ -77,7 +78,7 @@ describe('MAX-309 / #379 actual ssh2 connection completion', () => {
 
   it('times out a silent real TCP peer and releases the socket', async () => {
     const port = await listen(createServer((socket) => socket.resume()));
-    const result = await connect(port);
+    const result = await connect(port, undefined, 12000);
     expect(result.success).toBe(false);
     expect(result.error).toContain('超时');
   }, 15000);
