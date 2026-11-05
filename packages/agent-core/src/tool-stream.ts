@@ -87,10 +87,48 @@ export function normalizeToolEvent(value: unknown): NormalizedToolEvent | null {
 }
 
 const sensitiveKey = /password|passwd|pwd|secret|token|api[_-]?key|authorization|cookie|credential|connection[_-]?string|private[_-]?key/i;
-// Consume JSON escapes as pairs so an escaped quote cannot expose the value's tail.
-const quotedSecret = new RegExp(String.raw`("[^"\\]*(?:${sensitiveKey.source})[^"\\]*"\s*:\s*)"(?:\\[\s\S]|[^"\\])*"`, 'gi');
+/** Shared with API logging; preserve surrounding text while replacing a whole JSON value. */
+export function redactJsonSensitiveValues(text: string, keys = sensitiveKey): string {
+  const strings = /"(?:\\[\s\S]|[^"\\])*"/g;
+  let output = '';
+  let cursor = 0;
+  let match: RegExpExecArray | null;
+  while ((match = strings.exec(text))) {
+    const separator = /^\s*:\s*/.exec(text.slice(strings.lastIndex));
+    if (!separator) continue;
+    let key: string;
+    try { key = JSON.parse(match[0]) as string; } catch { continue; }
+    if (!keys.test(key)) continue;
+    const start = strings.lastIndex + separator[0].length;
+    let end = start;
+    let depth = 0;
+    let quoted = false;
+    // Iterative scanning handles arrays/objects without a nesting limit or recursion.
+    for (; end < text.length; end++) {
+      const char = text[end];
+      if (quoted) {
+        if (char === '\\') { end++; continue; }
+        if (char === '"') {
+          quoted = false;
+          if (depth === 0) { end++; break; }
+        }
+      } else if (char === '"') quoted = true;
+      else if (char === '[' || char === '{') depth++;
+      else if (char === ']' || char === '}') {
+        if (depth === 0) break;
+        if (--depth === 0) { end++; break; }
+      } else if (depth === 0 && /[\s,]/.test(char)) break;
+    }
+    // Validate the slice; malformed text remains subject to the existing text rules.
+    try { JSON.parse(text.slice(start, end)); } catch { continue; }
+    output += text.slice(cursor, start) + '"[REDACTED]"';
+    cursor = end;
+    strings.lastIndex = end;
+  }
+  return output + text.slice(cursor);
+}
 function redactText(text: string): string {
-  return text.replace(quotedSecret, '$1"[REDACTED]"')
+  return redactJsonSensitiveValues(text)
     .replace(/\bBearer\s+[A-Za-z0-9._~+/=-]+/gi, '[REDACTED]')
     .replace(/\bsk-[A-Za-z0-9_-]{8,}/g, '[REDACTED]')
     .replace(/((?:password|passwd|secret|token|api[_-]?key|authorization)\s*[=:]\s*)[^\s,;]+/gi, '$1[REDACTED]');
