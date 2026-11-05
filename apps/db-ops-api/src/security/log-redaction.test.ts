@@ -3,6 +3,27 @@ import { installConsoleRedaction, redactLogValue, redactSensitiveText } from './
 import { boundedToolValue, buildToolPreview } from '@slide/agent-core/tool-stream';
 
 describe('JSON string redaction (MAX-321 / #693)', () => {
+  it.each([739182641, -73.918, true, false, null, ['SYNTHETIC_7f3a'], { value: 'SYNTHETIC_7f3a' }, [{ value: ['quote"tail', 'brace} ]tail'] }], [], {}])('redacts non-string sensitive values at all five boundaries after Chief review: %j', (secret) => {
+    const input = JSON.stringify({ token: secret, status: 'ok', ordinary: [1, { value: 'visible' }] });
+    const expected = JSON.stringify({ token: '[REDACTED]', status: 'ok', ordinary: [1, { value: 'visible' }] });
+    expect(redactSensitiveText(input)).toBe(expected);
+    expect(boundedToolValue(input)).toBe(expected);
+    expect(redactLogValue({ detail: input })).toEqual({ detail: expected });
+    const target = { warn: vi.fn(), error: vi.fn() };
+    const warn = target.warn;
+    installConsoleRedaction(target);
+    target.warn(input);
+    expect(warn).toHaveBeenCalledWith(expected);
+    expect(buildToolPreview(input, 'review-json', redactSensitiveText).text).toBe(expected);
+    expect(redactLogValue({ token: secret, status: 'ok' })).toEqual({ token: '[REDACTED]', status: 'ok' });
+  });
+
+  it.each(['\n', '\r\n'])('preserves pretty JSON and ordinary non-string fields: %j', (newline) => {
+    const input = `{${newline}  "token": [1, {"value":"synthetic"}],${newline}  "nested": {"api_key": {"value": [2,3]}, "count": 4},${newline}  "status": true${newline}}`;
+    const expected = `{${newline}  "token": "[REDACTED]",${newline}  "nested": {"api_key": "[REDACTED]", "count": 4},${newline}  "status": true${newline}}`;
+    expect(redactSensitiveText(input)).toBe(expected);
+  });
+
   it.each(['password', 'passwd', 'pwd', 'secret', 'token', 'api_key', 'API-KEY', 'authorization', 'cookie', 'accessToken', 'private_key', 'connection_string', 'credential'])('redacts quoted %s at log and preview boundaries', (key) => {
     const input = JSON.stringify({ [key]: 'synthetic secret, with; delimiters', status: 'ok' });
     const expected = JSON.stringify({ [key]: '[REDACTED]', status: 'ok' });
