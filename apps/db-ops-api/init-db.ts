@@ -42,6 +42,7 @@ async function initializeDatabase() {
       getConnection: async () => ({
         query: (sql, values) => connection.query(sql, values as any) as any,
         release: () => {},
+        destroy: () => connection.destroy(),
       }),
     });
     const baseline = process.argv.includes('--baseline');
@@ -74,10 +75,15 @@ async function initializeDatabase() {
     } else if (error.code === 'ECONNREFUSED') {
       console.error('   无法连接到 MySQL 服务器，请确保 MySQL 服务已启动');
     }
-    process.exit(1);
+    process.exitCode = 1;
   } finally {
     if (connection) {
-      await connection.end();
+      try {
+        await connection.end();
+      } catch (error: any) {
+        console.error('❌ 数据库连接关闭失败:', error.message);
+        process.exitCode = 1;
+      }
     }
   }
 }

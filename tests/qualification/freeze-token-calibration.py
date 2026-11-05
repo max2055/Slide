@@ -8,7 +8,9 @@ import json
 from pathlib import Path
 import tiktoken
 
-assert tiktoken.__version__ == "0.12.0"
+version = getattr(tiktoken, "__version__", None)
+if version != "0.12.0":
+    raise RuntimeError(f"tiktoken==0.12.0 required; found {version!r}")
 samples = []
 for category in ["english", "chinese", "sql", "json", "schemas", "unknown", "image"]:
     for i in range(20):
