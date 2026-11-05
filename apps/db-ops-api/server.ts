@@ -1842,7 +1842,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
   // SQL 审批
   fastify.post('/api/approval/submit', {
     config: { rateLimit: sensitiveOperationRateLimitConfig },
-    preHandler: [verifyToken, requirePermission('approval:approve')],
+    preHandler: [verifyToken, requirePermission('instance:query')],
   }, async (request, reply) => {
     try {
       const check = strictBody(request.body as Record<string, unknown>,

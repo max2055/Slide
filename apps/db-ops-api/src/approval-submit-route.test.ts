@@ -19,7 +19,7 @@ describe('MAX-332 production SQL submit route', () => {
     const create = vi.fn(async () => ({ id: 'operation', state: 'queued' }));
     const dependencies = {
       fastify: app, sensitiveOperationRateLimitConfig: {},
-      verifyToken: async (request: any) => { request.user = { userId: 7, username: 'operator', permissions, roles: [], instancePermissions: access ? [{ instanceId: 1, accessLevel: access }] : [] }; },
+      verifyToken: async (request: any) => { request.user = { userId: 7, username: 'operator', permissions, roles: [], instanceScopes: access ? { 1: access } : {} }; },
       requirePermission, hasInstanceAccess, strictBody, classifySql,
       instanceDatabaseService: { getInstanceById: async () => ({ id: 1, db_type: 'mysql' }) },
       operationService: { create, setApproval: vi.fn(), transition: vi.fn() },
