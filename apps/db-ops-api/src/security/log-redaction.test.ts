@@ -1,5 +1,40 @@
 import { describe, expect, it, vi } from 'vitest';
 import { installConsoleRedaction, redactLogValue, redactSensitiveText } from './log-redaction.js';
+import { boundedToolValue, buildToolPreview } from '@slide/agent-core/tool-stream';
+
+describe('JSON string redaction (MAX-321 / #693)', () => {
+  it.each(['password', 'passwd', 'pwd', 'secret', 'token', 'api_key', 'API-KEY', 'authorization', 'cookie', 'accessToken', 'private_key', 'connection_string', 'credential'])('redacts quoted %s at log and preview boundaries', (key) => {
+    const input = JSON.stringify({ [key]: 'synthetic secret, with; delimiters', status: 'ok' });
+    const expected = JSON.stringify({ [key]: '[REDACTED]', status: 'ok' });
+    expect(redactSensitiveText(input)).toBe(expected);
+    expect(redactLogValue({ detail: input })).toEqual({ detail: expected });
+    expect(boundedToolValue(input, redactSensitiveText)).toBe(expected);
+    expect(buildToolPreview(input, 'call-json', redactSensitiveText).text).toBe(expected);
+  });
+
+  it.each(['quote"secret', 'slash\\secret', 'line\nsecret', 'tab\tsecret', '', 'literal\\"tail'])('redacts complete escaped JSON values: %j', (secret) => {
+    const input = `prefix ${JSON.stringify({ token: secret, visible: 'kept' })} suffix`;
+    expect(redactSensitiveText(input)).toBe('prefix {"token":"[REDACTED]","visible":"kept"} suffix');
+  });
+
+  it('preserves ordinary token words, formatting, and multiple JSON fields', () => {
+    const ordinary = 'The token is expired. {"message":"token expired", "status":"ok"}';
+    expect(redactSensitiveText(ordinary)).toBe(ordinary);
+    expect(redactSensitiveText('{ "token" : "first", "api_key": "second", "status": "ok" }'))
+      .toBe('{ "token" : "[REDACTED]", "api_key": "[REDACTED]", "status": "ok" }');
+  });
+
+  it('redacts before console emission and preview truncation', () => {
+    const target = { error: vi.fn(), warn: vi.fn() };
+    const warn = target.warn;
+    installConsoleRedaction(target);
+    target.warn(new Error('{"password":"synthetic\\\"tail"}'));
+    expect(warn).toHaveBeenCalledWith({ name: 'Error', message: '{"password":"[REDACTED]"}' });
+    const preview = buildToolPreview(JSON.stringify({ token: 'synthetic'.repeat(2000) }), 'long-json', redactSensitiveText);
+    expect(preview.text).toBe('{"token":"[REDACTED]"}');
+    expect(preview.truncated).toBe(false);
+  });
+});
 
 describe('log redaction', () => {
   it('redacts common credentials and webhook secrets from text', () => {
