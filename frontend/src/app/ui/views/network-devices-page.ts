@@ -75,6 +75,7 @@ export class NetworkDevicesPage extends LitElement {
   @state() private deleting = false;
   @state() private form: DeviceForm = { ...EMPTY_FORM };
   @state() private formError: string | null = null;
+  @state() private showSshPrivateKey = false;
 
   @state() private editorTab = "basic";
   @state() private connectionPending = false;
@@ -155,6 +156,7 @@ export class NetworkDevicesPage extends LitElement {
   }
 
   private openCreate() {
+    this.showSshPrivateKey = false;
     this.editorTab = "basic"; this.connectionPending = true;
     this.editingId = null;
     this.form = { ...EMPTY_FORM };
@@ -163,6 +165,7 @@ export class NetworkDevicesPage extends LitElement {
   }
 
   private async openEdit(device: NetworkDevice) {
+    this.showSshPrivateKey = false;
     this.editorTab = "basic";
     this.editingId = device.id;
     this.form = {
@@ -194,6 +197,7 @@ export class NetworkDevicesPage extends LitElement {
     if (section) { this.editorTab = 'collection'; section.confirmDiscard(action); } else action();
   }
   private async finishCloseDialog() {
+    this.showSshPrivateKey = false;
     const id = this.editingId;
     this.showDialog = false;
     await this.updateComplete;
@@ -454,9 +458,17 @@ export class NetworkDevicesPage extends LitElement {
             <h3>SSH 凭据</h3>
             <span>监控可选；加密配置备份需要填写</span>
           </div>
-          <div class="device-form-row"><app-form-field label="SSH 认证方式" .inline=${true}><app-ssh-auth-selector .value=${this.form.sshCredentialType} @ssh-auth-change=${(event: CustomEvent<{ value: DeviceForm["sshCredentialType"] }>) => this.updateForm("sshCredentialType", event.detail.value)}></app-ssh-auth-selector></app-form-field>
+          <div class="device-form-row"><app-form-field label="SSH 认证方式" .inline=${true}><app-ssh-auth-selector .value=${this.form.sshCredentialType} @ssh-auth-change=${(event: CustomEvent<{ value: DeviceForm["sshCredentialType"] }>) => { this.showSshPrivateKey = false; this.updateForm("sshCredentialType", event.detail.value); }}></app-ssh-auth-selector></app-form-field>
           <app-form-field label="SSH 用户名" .inline=${true}><input class="field" autocomplete="off" .value=${this.form.sshUsername} @input=${(e: Event) => this.updateForm("sshUsername", (e.target as HTMLInputElement).value)}></app-form-field></div>
-          <div class="device-form-row"><app-form-field label=${this.form.sshCredentialType === "key" ? "SSH 私钥" : "SSH 密码"} .inline=${true}><input class="field" type=${this.form.sshCredentialType === "key" ? "text" : "password"} autocomplete="new-password" .value=${this.form.sshCredentialValue} @input=${(e: Event) => this.updateForm("sshCredentialValue", (e.target as HTMLInputElement).value)}></app-form-field></div>
+          <div class="device-form-row"><app-form-field label=${this.form.sshCredentialType === "key" ? "SSH 私钥" : "SSH 密码"} .inline=${true}>${this.form.sshCredentialType === "key" ? html`
+            <textarea id="network-device-ssh-private-key" class="field ssh-private-key" rows="5" wrap="off"
+              style=${this.showSshPrivateKey ? "-webkit-text-security:none" : "-webkit-text-security:disc"}
+              autocomplete="off" autocapitalize="off" spellcheck="false"
+              .value=${this.form.sshCredentialValue}
+              @input=${(e: Event) => this.updateForm("sshCredentialValue", (e.target as HTMLTextAreaElement).value)}></textarea>
+            <button class="btn btn-ghost" type="button" aria-controls="network-device-ssh-private-key" aria-pressed=${String(this.showSshPrivateKey)}
+              @click=${() => { this.showSshPrivateKey = !this.showSshPrivateKey; }}>${this.showSshPrivateKey ? "隐藏私钥" : "显示私钥"}</button>
+          ` : html`<input class="field" type="password" autocomplete="new-password" .value=${this.form.sshCredentialValue} @input=${(e: Event) => this.updateForm("sshCredentialValue", (e.target as HTMLInputElement).value)}>`}</app-form-field></div>
         </section>
         ${this.formError ? html`<div class="form-error" role="alert">${this.formError}</div>` : nothing}
       </div>
@@ -499,6 +511,7 @@ export class NetworkDevicesPage extends LitElement {
       .device-form-row { display:contents; }
       .device-form-row app-form-field { min-width:0; margin-bottom:0; }
       .device-form-row .field { width:100%; min-width:0; }
+      network-devices-page .ssh-private-key { resize:vertical; font-family:monospace; }
       .dialog-actions { display:flex; align-items:center; justify-content:flex-end; gap:var(--space-sm); }
       .dialog-test-actions { display:flex; align-items:center; gap:var(--space-sm); }
       .dialog-actions > .dialog-spacer { flex:1; }
