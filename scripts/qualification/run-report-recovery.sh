@@ -2,7 +2,7 @@
 set -euo pipefail
 root="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "$root"
-node --test scripts/qualification/recovery-observation.test.mjs
+node --test --test-concurrency=1 scripts/qualification/recovery-observation.test.mjs
 container="slide-report-recovery-$$-$RANDOM"
 cleanup() {
   result=$?

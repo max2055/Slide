@@ -1,4 +1,5 @@
 import { dbConnection } from '../db-connection.js';
+import { PlatformUnavailableError } from '../lifecycle/platform-unavailable.js';
 
 export const SESSION_IDLE_TIMEOUT_CONFIG_KEY = 'auth.session_idle_timeout_minutes';
 export const DEFAULT_SESSION_IDLE_TIMEOUT_MINUTES = 7 * 24 * 60;
@@ -31,25 +32,30 @@ export class AuthSessionConfigService {
   ) {}
 
   async get(): Promise<AuthSessionConfig> {
-    const executor = this.executorProvider();
-    if (!executor) return configResponse(DEFAULT_SESSION_IDLE_TIMEOUT_MINUTES);
-
+    let rows: unknown;
     try {
-      const [rows] = await executor.execute(
+      const executor = this.executorProvider();
+      if (!executor) throw new Error('POOL_UNAVAILABLE');
+      [rows] = await executor.execute(
         'SELECT config_value FROM system_config WHERE config_key = ? LIMIT 1',
         [SESSION_IDLE_TIMEOUT_CONFIG_KEY],
       );
-      const row = Array.isArray(rows) ? rows[0] : undefined;
-      const value = Number(row?.config_value);
-      if (!Number.isSafeInteger(value)
-        || value < MIN_SESSION_IDLE_TIMEOUT_MINUTES
-        || value > MAX_SESSION_IDLE_TIMEOUT_MINUTES) {
-        return configResponse(DEFAULT_SESSION_IDLE_TIMEOUT_MINUTES);
-      }
-      return configResponse(value);
     } catch {
-      return configResponse(DEFAULT_SESSION_IDLE_TIMEOUT_MINUTES);
+      // Do not log the driver error: it may contain SQL, config values or credentials.
+      console.warn('SESSION_CONFIG_READ_FAILED');
+      throw new PlatformUnavailableError();
     }
+    if (Array.isArray(rows) && rows.length === 0) return configResponse(DEFAULT_SESSION_IDLE_TIMEOUT_MINUTES);
+    const raw = Array.isArray(rows) ? rows[0]?.config_value : undefined;
+    const value = typeof raw === 'number' || (typeof raw === 'string' && /^\d+$/.test(raw))
+      ? Number(raw) : Number.NaN;
+    if (!Number.isSafeInteger(value)
+      || value < MIN_SESSION_IDLE_TIMEOUT_MINUTES
+      || value > MAX_SESSION_IDLE_TIMEOUT_MINUTES) {
+      console.warn('SESSION_CONFIG_INVALID');
+      throw new PlatformUnavailableError();
+    }
+    return configResponse(value);
   }
 
   async set(idleTimeoutMinutes: number, actorId: number): Promise<AuthSessionConfig> {

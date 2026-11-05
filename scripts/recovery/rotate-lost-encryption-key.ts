@@ -4,25 +4,75 @@
  * old credentials unusable, disables dependent automation, and writes a
  * mode-0600 audit containing only SHA-256 fingerprints of prior ciphertext.
  *
- * Required environment:
+ * The confirmation and the new key are taken only from this process, before
+ * the project env file is read. The same names in that file are ignored, so a
+ * value left in the file cannot authorize a later run.
+ *
+ * Required in the invoking process (a shell prefix counts; the env file does not):
  *   ENCRYPTION_KEY=<new non-default key>
  *   SLIDE_ROTATE_LOST_ENCRYPTION_KEY=CONFIRM_LOST_KEY_ROTATION
+ *
+ * Optional argument, applied only after that check:
+ *   --env-file <path>   database settings file (default apps/db-ops-api/.env)
+ *
+ * Exit 1 when the invocation check, arguments, or rotation fails.
+ * Refusal output names neither the key nor the confirmation value.
+ * The recovery account needs SELECT and UPDATE on existing credential tables,
+ * including the historical provider backup; missing privileges abort recovery.
  */
 import { createHash } from 'node:crypto';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
-import mysql from '../../apps/db-ops-api/node_modules/mysql2/promise.js';
-import { encryptData } from '../../apps/db-ops-api/src/db-connection.js';
+import { fileURLToPath } from 'node:url';
+import { requireEncryptionKey } from '../../apps/db-ops-api/src/config/security-config.js';
 import { LOST_KEY_ROTATION_SENTINEL } from '../../apps/db-ops-api/src/credential-rotation.js';
 
-const confirmation = 'CONFIRM_LOST_KEY_ROTATION';
+const CONFIRMATION = 'CONFIRM_LOST_KEY_ROTATION';
+const INVOCATION_ONLY_KEYS = new Set(['SLIDE_ROTATE_LOST_ENCRYPTION_KEY', 'ENCRYPTION_KEY']);
 
-async function loadProjectEnv(): Promise<void> {
-  const envText = await readFile(resolve(import.meta.dirname, '../../apps/db-ops-api/.env'), 'utf8');
-  for (const line of envText.split(/\r?\n/)) {
-    const match = line.match(/^([A-Z0-9_]+)=(.*)$/);
-    if (match && process.env[match[1]] === undefined) process.env[match[1]] = match[2];
+export const REFUSAL_MESSAGE = 'Refusing lost-key rotation: this invocation must set SLIDE_ROTATE_LOST_ENCRYPTION_KEY and ENCRYPTION_KEY before the project env file is loaded.';
+export const USAGE = 'Usage: rotate-lost-encryption-key.ts [--env-file <path>]';
+
+export interface InvocationSecrets {
+  confirmation: string | undefined;
+  encryptionKey: string | undefined;
+}
+
+export function captureInvocationSecrets(env: Record<string, string | undefined>): InvocationSecrets {
+  return {
+    confirmation: env.SLIDE_ROTATE_LOST_ENCRYPTION_KEY,
+    encryptionKey: env.ENCRYPTION_KEY,
+  };
+}
+
+export function invocationIsAuthorized(secrets: InvocationSecrets): secrets is { confirmation: string; encryptionKey: string } {
+  return secrets.confirmation === CONFIRMATION && typeof secrets.encryptionKey === 'string' && secrets.encryptionKey.length > 0;
+}
+
+export function defaultProjectEnvFile(scriptDir = import.meta.dirname): string {
+  return resolve(scriptDir, '../../apps/db-ops-api/.env');
+}
+
+export function parseRecoveryArgs(argv: readonly string[], scriptDir = import.meta.dirname): { envFile: string } {
+  const args = argv.slice(2);
+  if (args.length === 0) return { envFile: defaultProjectEnvFile(scriptDir) };
+  if (args.length === 2 && args[0] === '--env-file' && args[1] !== undefined && args[1] !== '' && !args[1].startsWith('-')) {
+    return { envFile: resolve(args[1]) };
   }
+  throw new Error(USAGE);
+}
+
+/** First value wins. Invocation-only keys are never taken from the file. */
+export function projectEnvAssignments(text: string, current: Record<string, string | undefined>): Record<string, string> {
+  const assigned: Record<string, string> = {};
+  for (const line of text.split(/\r?\n/)) {
+    const match = line.match(/^([A-Z0-9_]+)=(.*)$/);
+    if (!match) continue;
+    const key = match[1];
+    if (!key || INVOCATION_ONLY_KEYS.has(key) || current[key] !== undefined || assigned[key] !== undefined) continue;
+    assigned[key] = match[2] ?? '';
+  }
+  return assigned;
 }
 
 function fingerprint(value: unknown): string {
@@ -34,22 +84,41 @@ function auditPath(): string {
   return resolve(configured || `${process.env.HOME}/.config/slide/recovery/lost-encryption-key-rotation.json`);
 }
 
-async function main() {
-  await loadProjectEnv();
-  if (process.env.SLIDE_ROTATE_LOST_ENCRYPTION_KEY !== confirmation) {
-    throw new Error('Refusing credential rotation without SLIDE_ROTATE_LOST_ENCRYPTION_KEY=CONFIRM_LOST_KEY_ROTATION');
-  }
+function pinInvocationSecrets(secrets: { confirmation: string; encryptionKey: string }): void {
+  process.env.SLIDE_ROTATE_LOST_ENCRYPTION_KEY = secrets.confirmation;
+  process.env.ENCRYPTION_KEY = secrets.encryptionKey;
+}
 
-  // encryptData validates that the new key is non-default before any database write.
-  const instanceSentinel = encryptData(LOST_KEY_ROTATION_SENTINEL);
-  const serverSentinel = encryptData(LOST_KEY_ROTATION_SENTINEL);
-  const db = await mysql.createConnection({
+async function main(): Promise<void> {
+  const invocation = captureInvocationSecrets(process.env);
+  const { envFile } = parseRecoveryArgs(process.argv);
+  if (!invocationIsAuthorized(invocation)) throw new Error(REFUSAL_MESSAGE);
+  requireEncryptionKey(invocation.encryptionKey);
+
+  const envText = await readFile(envFile, 'utf8');
+  for (const [key, value] of Object.entries(projectEnvAssignments(envText, process.env))) process.env[key] = value;
+  pinInvocationSecrets(invocation);
+  // Capture the target before dependency loaders can mutate process.env,
+  // including when dotenv's override option is enabled in the invocation.
+  const dbConfig = {
     host: process.env.DB_HOST || 'localhost',
     port: Number(process.env.DB_PORT || '3306'),
     user: process.env.DB_USER || 'root',
     password: process.env.DB_PASSWORD || '',
     database: process.env.DB_NAME || 'db_ops_ai',
-  });
+  };
+
+  // db-connection imports dotenv/config. Keep that loader on the selected file
+  // too, so cwd/.env cannot fill in settings omitted by the selected file.
+  process.env.DOTENV_CONFIG_PATH = envFile;
+  const dbConnection = await import('../../apps/db-ops-api/src/db-connection.js');
+  const mysql = await import('../../apps/db-ops-api/node_modules/mysql2/promise.js');
+  pinInvocationSecrets(invocation);
+
+  const createConnection = mysql.createConnection;
+  const instanceSentinel = dbConnection.encryptData(LOST_KEY_ROTATION_SENTINEL, invocation.encryptionKey);
+  const serverSentinel = dbConnection.encryptData(LOST_KEY_ROTATION_SENTINEL, invocation.encryptionKey);
+  const db = await createConnection(dbConfig);
   try {
     const [instanceRows] = await db.query<Array<{ id: number; password_encrypted: string; connection_string: string | null }>>(
       'SELECT id, password_encrypted, connection_string FROM database_instances ORDER BY id',
@@ -63,11 +132,22 @@ async function main() {
     const [channelRows] = await db.query<Array<{ id: number; config: unknown; enabled: number }>>(
       'SELECT id, config, enabled FROM notification_channels ORDER BY id',
     );
+    const [deviceRows] = await db.query<Array<{ id: number; collection_enabled: number }>>('SELECT id, collection_enabled FROM network_devices ORDER BY id');
+    const [networkRows] = await db.query<Array<{ device_id: number; protocol: string; credential_encrypted: string | null; auth_secret_encrypted: string | null; privacy_secret_encrypted: string | null; community_encrypted: string | null }>>(
+      'SELECT device_id, protocol, credential_encrypted, auth_secret_encrypted, privacy_secret_encrypted, community_encrypted FROM network_device_credentials ORDER BY device_id, protocol',
+    );
+    const [referenceRows] = await db.query<Array<{ ref_id: string; status: string; secret_encrypted: string }>>(
+      'SELECT ref_id, status, secret_encrypted FROM agent_credential_references ORDER BY ref_id',
+    );
     const audit = {
       kind: 'lost-encryption-key-rotation',
       createdAt: new Date().toISOString(),
       irreversible: true,
       entries: {
+        networkDevices: deviceRows.map((row) => ({ id: row.id, collectionEnabled: Boolean(row.collection_enabled) })),
+        networkCredentials: networkRows.map((row) => ({ deviceId: row.device_id, protocol: row.protocol,
+          ciphertextFingerprints: [row.credential_encrypted, row.auth_secret_encrypted, row.privacy_secret_encrypted, row.community_encrypted].map(fingerprint) })),
+        agentReferences: referenceRows.map((row) => ({ referenceFingerprint: fingerprint(row.ref_id), status: row.status, ciphertextFingerprint: fingerprint(row.secret_encrypted) })),
         instances: instanceRows.map((row) => ({ id: row.id, ciphertextFingerprint: fingerprint(row.password_encrypted), connectionStringFingerprint: fingerprint(row.connection_string) })),
         servers: serverRows.map((row) => ({ id: row.id, ciphertextFingerprint: fingerprint(row.credential_encrypted) })),
         providers: providerRows.map((row) => ({ id: row.id, ciphertextFingerprint: fingerprint(row.api_key_encrypted) })),
@@ -89,10 +169,26 @@ async function main() {
         [serverSentinel],
       );
       await db.execute("UPDATE llm_providers SET api_key_encrypted = NULL, enabled = CASE WHEN deployment_type = 'local' THEN enabled ELSE 0 END, is_default = CASE WHEN deployment_type = 'local' THEN is_default ELSE 0 END");
-      await db.execute('UPDATE llm_providers_backup SET api_key_encrypted = NULL');
+      // Metadata can hide tables from restricted accounts. Probe directly so
+      // permission errors fail closed; this SELECT cannot execute UPDATE triggers.
+      let backupExists = true;
+      try {
+        await db.query('SELECT 1 FROM llm_providers_backup LIMIT 0');
+      } catch (error) {
+        if ((error as { code?: string })?.code !== 'ER_NO_SUCH_TABLE') throw error;
+        backupExists = false;
+      }
+      if (backupExists) {
+        await db.execute('UPDATE llm_providers_backup SET api_key_encrypted = NULL');
+      }
       await db.execute(`UPDATE notification_channels
         SET enabled = CASE WHEN JSON_CONTAINS_PATH(config, 'one', '$.secret', '$.secret_encrypted', '$.password', '$.password_encrypted', '$.oauth2_refresh_token', '$.oauth2_refresh_token_encrypted', '$.token', '$.apiKey') THEN 0 ELSE enabled END,
             config = JSON_REMOVE(config, '$.secret', '$.secret_encrypted', '$.password', '$.password_encrypted', '$.oauth2_refresh_token', '$.oauth2_refresh_token_encrypted', '$.token', '$.apiKey')`);
+      // Retain resource rows; the encrypted marker is never a usable credential.
+      await db.execute("UPDATE network_devices SET collection_enabled = 0, status = 'unknown'");
+      await db.execute('UPDATE network_device_credentials SET credential_encrypted = ?, auth_secret_encrypted = NULL, privacy_secret_encrypted = NULL, community_encrypted = NULL', [instanceSentinel]);
+      // Revoke only active one-shot references; historical states remain intact.
+      await db.execute("UPDATE agent_credential_references SET status = 'revoked' WHERE status = 'active'");
       await db.commit();
     } catch (error) {
       await db.rollback();
@@ -101,14 +197,22 @@ async function main() {
     console.log(JSON.stringify({
       rotated: true,
       auditPath: path,
-      invalidated: { instances: instanceRows.length, servers: serverRows.length, providers: providerRows.length, channels: channelRows.length },
+      invalidated: { networkDevices: deviceRows.length, networkCredentials: networkRows.length, agentReferences: referenceRows.filter((row) => row.status === 'active').length, instances: instanceRows.length, servers: serverRows.length, providers: providerRows.length, channels: channelRows.length },
     }));
   } finally {
     await db.end();
   }
 }
 
-main().catch((error) => {
-  console.error(error instanceof Error ? error.message : String(error));
-  process.exit(1);
-});
+function isDirectRun(): boolean {
+  const entry = process.argv[1];
+  if (!entry) return false;
+  return resolve(entry) === fileURLToPath(import.meta.url);
+}
+
+if (isDirectRun()) {
+  main().catch((error) => {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exit(1);
+  });
+}
