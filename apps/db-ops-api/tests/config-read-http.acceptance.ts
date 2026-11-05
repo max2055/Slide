@@ -9,6 +9,7 @@ import { once } from 'node:events';
 import { createServer } from 'node:net';
 import mysql from 'mysql2/promise';
 import bcrypt from 'bcrypt';
+import { llmDatabaseService } from '../src/llm-database-service.js';
 import { MigrationRunner } from '../src/migrations/runner.js';
 
 assert(process.env.CONFIG_READ_TEST_MYSQL_URL, 'CONFIG_READ_TEST_MYSQL_URL required');
@@ -113,6 +114,51 @@ try {
       }
     }
   }
+  // Review blockers: public URL values and typed metadata, through the real HTTP/JWT boundary.
+  const reviewCases = [
+    ['URL userinfo', `https://user:${secret}@example.invalid/v1`, { id: 'm' }],
+    ['URL x-api-key', `https://example.invalid/v1?x-api-key=${secret}`, { id: 'm' }],
+    ['URL clientSecret', `https://example.invalid/v1?clientSecret=${secret}`, { id: 'm' }],
+    ['model name object', 'https://example.invalid/v1', { id: 'm', name: { clientSecret: secret } }],
+    ['model desc object', 'https://example.invalid/v1', { id: 'm', desc: { API_KEY: secret } }],
+    ['cost input object', 'https://example.invalid/v1', { id: 'm', cost: { input: { 'subscription-key': secret } } }],
+    ['unknown URL query and fragment', `https://example.invalid/v1?unknown-new-field=${secret}&client%53ecret=${secret}&api-version=2024-06-01-preview#${secret}`, { id: 'm' }],
+    ['ordinary legacy metadata', 'https://example.invalid/v1?api-version=2024-06-01', {
+      id: 'm', name: 'Model', desc: 'Legacy', contextWindow: 32000, maxTokens: 1024,
+      recommended: true, supportsFunctionCall: false, supportsVision: true,
+      parameterProvider: 'legacy', parameterSource: 'manual', cost: { input: 0, output: 2.5 },
+    }],
+  ] as const;
+  const storedConfig = async () => (await pool.query<any[]>(
+    'SELECT api_base_url, models_supported, api_key_encrypted FROM llm_providers WHERE id=?', [id]))[0][0];
+  const originalConfig = await storedConfig();
+  for (const [name, baseURL, model] of reviewCases) {
+    await pool.execute('UPDATE llm_providers SET api_base_url=?, models_supported=? WHERE id=?', [baseURL, JSON.stringify([model]), id]);
+    const before = await storedConfig();
+    for (const path of paths.slice(0, 2)) {
+      assert.equal((await request(path, tokens.none)).status, 403); checks++;
+      const result = await request(path, tokens.llm);
+      assert.equal(result.status, 200); checks++;
+      assert(!JSON.stringify(result.body).includes(secret), `${name}: public payload has no sentinel`);
+      const config = Array.isArray(result.body) ? result.body.find((p: any) => p.id === id) : result.body;
+      assert.equal(config.hasApiKey, true);
+      assert.equal(config.models_supported[0].id, 'm');
+      const expectedURL = name === 'unknown URL query and fragment'
+        ? 'https://example.invalid/v1?api-version=2024-06-01-preview'
+        : name === 'ordinary legacy metadata' ? baseURL : 'https://example.invalid/v1';
+      assert.equal(config.api_base_url, expectedURL);
+      if (name === 'ordinary legacy metadata') assert.deepEqual(config.models_supported, [model]);
+    }
+    assert.deepEqual(await storedConfig(), before, `${name}: HTTP reads leave stored URL/JSON/key unchanged`); checks++;
+    const internal = (await llmDatabaseService.getAllProviders(pool)).find(provider => provider.id === id)!;
+    assert.equal(internal.api_base_url, baseURL, `${name}: runtime URL remains intact`);
+    assert.deepEqual(internal.models_supported, [model], `${name}: runtime JSON remains intact`);
+    assert.equal(internal.api_key_encrypted, secret); checks++;
+    console.log(`PASS review regression: ${name}; HTTP 403/200; public metadata filtered; DB/runtime originals preserved`);
+  }
+  await pool.execute('UPDATE llm_providers SET api_base_url=?, models_supported=? WHERE id=?',
+    [originalConfig.api_base_url, typeof originalConfig.models_supported === 'string'
+      ? originalConfig.models_supported : JSON.stringify(originalConfig.models_supported), id]);
   assert.equal((await request('/api/llm/configs/2147483647', tokens.llm)).status, 404); checks++;
   // Same signed JWT must observe a permission revocation on its next request.
   await pool.execute('DELETE rp FROM role_permissions rp JOIN user_roles ur ON ur.role_id=rp.role_id WHERE ur.user_id=?', [actors.both]);
