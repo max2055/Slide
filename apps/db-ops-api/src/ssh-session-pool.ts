@@ -29,6 +29,33 @@ interface SshSession {
   lastUsed: number;
   inUse: boolean;
   identity: SshIdentity;
+  ticket: number;
+}
+
+/** One getConnection call from before authorization until it is pooled or dropped. */
+interface InflightAcquisition {
+  ticket: number;
+  host: string;
+  port: number;
+  username: string;
+  credentialType: string;
+  hostKeyFingerprint?: string;
+  hostKeyComparable: boolean;
+  credentialFingerprint: string;
+  cancelled: boolean;
+  client?: Client;
+}
+
+interface RevocationScope {
+  host: string;
+  port: number;
+  hasUsername: boolean;
+  username?: string;
+  hasType: boolean;
+  credentialType?: string;
+  hasHostKey: boolean;
+  hostKeyFingerprint?: string;
+  credentialFingerprint?: string;
 }
 
 /** Filters for immediate pool cleanup. Omitted fields match every session on the host. */
@@ -100,6 +127,8 @@ function sameFingerprint(left: string, right: string): boolean {
 
 class SshSessionPool {
   private sessions: SshSession[] = [];
+  private inflight: InflightAcquisition[] = [];
+  private nextTicket = 0;
   private config: SshPoolConfig;
 
   constructor(config?: Partial<SshPoolConfig>) {
@@ -111,6 +140,8 @@ class SshSessionPool {
    * Reuse requires the same authorized host, port, username, credential type,
    * host-key fingerprint, and credential fingerprint. After a new login succeeds,
    * a changed secret, credential type, or host key ends that account's older sessions.
+   * An acquisition revoked while authorization or authentication is still in flight
+   * is not returned and is not pooled. A later call with the same secret is allowed.
    */
   async getConnection(
     host: string,
@@ -120,61 +151,89 @@ class SshSessionPool {
     credentialValue: string,
     hostKeyFingerprint?: string | null
   ): Promise<Client> {
-    const target = await authorizeServerTarget({ host, port });
-    const identity = this._identity(
-      target.hostname,
-      target.port,
+    const acquisition = this._trackInflight(
+      host,
+      port,
       username,
       credentialType,
       credentialValue,
       hostKeyFingerprint,
     );
-    const existing = this._findIdle(identity);
-    if (existing) {
-      existing.inUse = true;
-      existing.lastUsed = Date.now();
-      return existing.client;
-    }
+    try {
+      const target = await authorizeServerTarget({ host, port });
+      this._rejectIfRevoked(acquisition);
+      const identity = this._identity(
+        target.hostname,
+        target.port,
+        username,
+        credentialType,
+        credentialValue,
+        hostKeyFingerprint,
+      );
+      acquisition.host = identity.host;
+      acquisition.port = identity.port;
+      acquisition.username = identity.username;
+      acquisition.credentialType = identity.credentialType;
+      acquisition.hostKeyFingerprint = identity.hostKeyFingerprint;
+      acquisition.hostKeyComparable = true;
+      acquisition.credentialFingerprint = identity.credentialFingerprint;
+      this._rejectIfRevoked(acquisition);
 
-    // Check per-server session limit
-    const serverSessions = this.sessions.filter(
-      (s) => s.identity.host === target.hostname && s.identity.port === target.port
-    );
-    if (serverSessions.length >= this.config.maxSessionsPerServer) {
-      // Try to close the oldest idle session to make room
-      const oldestIdle = serverSessions
-        .filter((s) => !s.inUse)
-        .sort((a, b) => a.lastUsed - b.lastUsed)[0];
-      if (oldestIdle) {
-        this._remove(oldestIdle);
-      } else {
-        throw new Error(
-          `Max SSH sessions (${this.config.maxSessionsPerServer}) reached for ${host}:${port}`
-        );
+      const existing = this._findIdle(identity);
+      if (existing) {
+        existing.inUse = true;
+        existing.lastUsed = Date.now();
+        return existing.client;
       }
+
+      // Check per-server session limit
+      const serverSessions = this.sessions.filter(
+        (s) => s.identity.host === target.hostname && s.identity.port === target.port
+      );
+      if (serverSessions.length >= this.config.maxSessionsPerServer) {
+        // Try to close the oldest idle session to make room
+        const oldestIdle = serverSessions
+          .filter((s) => !s.inUse)
+          .sort((a, b) => a.lastUsed - b.lastUsed)[0];
+        if (oldestIdle) {
+          this._remove(oldestIdle);
+        } else {
+          throw new Error(
+            `Max SSH sessions (${this.config.maxSessionsPerServer}) reached for ${host}:${port}`
+          );
+        }
+      }
+
+      // Create new connection
+      const client = await this._connect(
+        target.address,
+        target.port,
+        username,
+        credentialType,
+        credentialValue,
+        identity.hostKeyFingerprint,
+        acquisition,
+      );
+      this._rejectIfRevoked(acquisition, client);
+      // A newer, different identity that already authenticated wins. This older
+      // socket is closed and does not evict that newer session.
+      this._abandonIfSuperseded(acquisition.ticket, identity, client);
+      // Drop the account's previous sessions only after the new identity authenticates.
+      this._evictSuperseded(identity);
+
+      const session: SshSession = {
+        client,
+        lastUsed: Date.now(),
+        inUse: true,
+        identity,
+        ticket: acquisition.ticket,
+      };
+
+      this.sessions.push(session);
+      return client;
+    } finally {
+      this.inflight = this.inflight.filter((item) => item !== acquisition);
     }
-
-    // Create new connection
-    const client = await this._connect(
-      target.address,
-      target.port,
-      username,
-      credentialType,
-      credentialValue,
-      identity.hostKeyFingerprint,
-    );
-    // Drop the account's previous sessions only after the new identity authenticates.
-    this._evictSuperseded(identity);
-
-    const session: SshSession = {
-      client,
-      lastUsed: Date.now(),
-      inUse: true,
-      identity,
-    };
-
-    this.sessions.push(session);
-    return client;
   }
 
   /**
@@ -202,6 +261,10 @@ class SshSessionPool {
    * End all connections and clear the pool.
    */
   closeAll(): void {
+    for (const acquisition of this.inflight) {
+      acquisition.cancelled = true;
+      this._endClient(acquisition.client);
+    }
     for (const session of this.sessions) {
       try {
         session.client.end();
@@ -213,46 +276,24 @@ class SshSessionPool {
   }
 
   /**
-   * End pooled sessions for a host. Optional fields narrow the match.
-   * credentialValue is hashed for comparison and is not retained or logged.
-   * Returns the number of sessions ended.
+   * End pooled sessions for a host and cancel matching acquisitions that have
+   * not pooled yet. Optional fields narrow the match. credentialValue is hashed
+   * for comparison and is not retained or logged. This does not ban a later
+   * getConnection that presents the same secret. Returns the number of pooled
+   * sessions ended plus in-flight acquisitions cancelled.
    */
   revokeSessions(criteria: SshSessionRevocation): number {
-    if (!criteria || typeof criteria.host !== 'string' || criteria.host.trim() === '') {
-      throw new Error('SSH_REVOCATION_TARGET_INVALID');
+    const scope = this._revocationScope(criteria);
+    let cancelled = 0;
+    for (const acquisition of this.inflight) {
+      if (!this._inflightMatches(acquisition, scope)) continue;
+      acquisition.cancelled = true;
+      this._endClient(acquisition.client);
+      cancelled += 1;
     }
-    const port = Number(criteria.port);
-    if (!Number.isInteger(port) || port <= 0 || port > 65535) {
-      throw new Error('SSH_REVOCATION_TARGET_INVALID');
-    }
-    const hasUsername = Object.prototype.hasOwnProperty.call(criteria, 'username');
-    const hasType = Object.prototype.hasOwnProperty.call(criteria, 'credentialType');
-    const hasHostKey = Object.prototype.hasOwnProperty.call(criteria, 'hostKeyFingerprint');
-    const hasSecret = Object.prototype.hasOwnProperty.call(criteria, 'credentialValue');
-    if (hasUsername && typeof criteria.username !== 'string') throw new Error('SSH_REVOCATION_TARGET_INVALID');
-    if (hasType && typeof criteria.credentialType !== 'string') throw new Error('SSH_REVOCATION_TARGET_INVALID');
-    if (hasSecret && typeof criteria.credentialValue !== 'string') throw new Error('SSH_REVOCATION_TARGET_INVALID');
-    if (hasSecret && !hasType) throw new Error('SSH_REVOCATION_CREDENTIAL_TYPE_REQUIRED');
-
-    const host = criteria.host.trim().toLowerCase();
-    const hostKeyFingerprint = hasHostKey
-      ? normalizeOptionalSshHostKeyFingerprint(criteria.hostKeyFingerprint)
-      : undefined;
-    const credentialFingerprint = hasSecret
-      ? fingerprintCredential(criteria.credentialType as string, criteria.credentialValue as string)
-      : undefined;
-    const matched = this.sessions.filter((session) => {
-      if (session.identity.host !== host || session.identity.port !== port) return false;
-      if (hasUsername && session.identity.username !== criteria.username) return false;
-      if (hasType && session.identity.credentialType !== criteria.credentialType) return false;
-      if (hasHostKey && session.identity.hostKeyFingerprint !== hostKeyFingerprint) return false;
-      if (credentialFingerprint && !sameFingerprint(session.identity.credentialFingerprint, credentialFingerprint)) {
-        return false;
-      }
-      return true;
-    });
+    const matched = this.sessions.filter((session) => this._identityMatches(session.identity, scope));
     for (const session of matched) this._remove(session);
-    return matched.length;
+    return cancelled + matched.length;
   }
 
   /**
@@ -331,6 +372,131 @@ class SshSessionPool {
     for (const session of stale) this._remove(session);
   }
 
+  private _trackInflight(
+    host: string,
+    port: number,
+    username: string,
+    credentialType: string,
+    credentialValue: string,
+    hostKeyFingerprint?: string | null,
+  ): InflightAcquisition {
+    let normalizedHostKey: string | undefined;
+    let hostKeyComparable = false;
+    try {
+      normalizedHostKey = normalizeOptionalSshHostKeyFingerprint(hostKeyFingerprint);
+      hostKeyComparable = true;
+    } catch {
+      hostKeyComparable = false;
+    }
+    const acquisition: InflightAcquisition = {
+      ticket: ++this.nextTicket,
+      host: typeof host === 'string' ? host.trim().toLowerCase() : '',
+      port: Number(port),
+      username,
+      credentialType,
+      hostKeyFingerprint: normalizedHostKey,
+      hostKeyComparable,
+      credentialFingerprint: typeof credentialType === 'string' && typeof credentialValue === 'string'
+        ? fingerprintCredential(credentialType, credentialValue)
+        : '',
+      cancelled: false,
+    };
+    this.inflight.push(acquisition);
+    return acquisition;
+  }
+
+  private _revocationScope(criteria: SshSessionRevocation): RevocationScope {
+    if (!criteria || typeof criteria.host !== 'string' || criteria.host.trim() === '') {
+      throw new Error('SSH_REVOCATION_TARGET_INVALID');
+    }
+    const port = Number(criteria.port);
+    if (!Number.isInteger(port) || port <= 0 || port > 65535) {
+      throw new Error('SSH_REVOCATION_TARGET_INVALID');
+    }
+    const hasUsername = Object.prototype.hasOwnProperty.call(criteria, 'username');
+    const hasType = Object.prototype.hasOwnProperty.call(criteria, 'credentialType');
+    const hasHostKey = Object.prototype.hasOwnProperty.call(criteria, 'hostKeyFingerprint');
+    const hasSecret = Object.prototype.hasOwnProperty.call(criteria, 'credentialValue');
+    if (hasUsername && typeof criteria.username !== 'string') throw new Error('SSH_REVOCATION_TARGET_INVALID');
+    if (hasType && typeof criteria.credentialType !== 'string') throw new Error('SSH_REVOCATION_TARGET_INVALID');
+    if (hasSecret && typeof criteria.credentialValue !== 'string') throw new Error('SSH_REVOCATION_TARGET_INVALID');
+    if (hasSecret && !hasType) throw new Error('SSH_REVOCATION_CREDENTIAL_TYPE_REQUIRED');
+
+    return {
+      host: criteria.host.trim().toLowerCase(),
+      port,
+      hasUsername,
+      username: criteria.username,
+      hasType,
+      credentialType: criteria.credentialType,
+      hasHostKey,
+      hostKeyFingerprint: hasHostKey
+        ? normalizeOptionalSshHostKeyFingerprint(criteria.hostKeyFingerprint)
+        : undefined,
+      credentialFingerprint: hasSecret
+        ? fingerprintCredential(criteria.credentialType as string, criteria.credentialValue as string)
+        : undefined,
+    };
+  }
+
+  private _identityMatches(identity: SshIdentity, scope: RevocationScope): boolean {
+    if (identity.host !== scope.host || identity.port !== scope.port) return false;
+    if (scope.hasUsername && identity.username !== scope.username) return false;
+    if (scope.hasType && identity.credentialType !== scope.credentialType) return false;
+    if (scope.hasHostKey && identity.hostKeyFingerprint !== scope.hostKeyFingerprint) return false;
+    if (scope.credentialFingerprint && !sameFingerprint(identity.credentialFingerprint, scope.credentialFingerprint)) {
+      return false;
+    }
+    return true;
+  }
+
+  private _inflightMatches(acquisition: InflightAcquisition, scope: RevocationScope): boolean {
+    if (acquisition.cancelled) return false;
+    if (acquisition.host !== scope.host || acquisition.port !== scope.port) return false;
+    if (scope.hasUsername && acquisition.username !== scope.username) return false;
+    if (scope.hasType && acquisition.credentialType !== scope.credentialType) return false;
+    if (scope.hasHostKey) {
+      if (!acquisition.hostKeyComparable || acquisition.hostKeyFingerprint !== scope.hostKeyFingerprint) return false;
+    }
+    if (scope.credentialFingerprint && !sameFingerprint(acquisition.credentialFingerprint, scope.credentialFingerprint)) {
+      return false;
+    }
+    return true;
+  }
+
+  private _rejectIfRevoked(acquisition: InflightAcquisition, client?: Client): void {
+    if (!acquisition.cancelled) return;
+    this._endClient(client ?? acquisition.client);
+    throw new Error('SSH_SESSION_REVOKED');
+  }
+
+  /**
+   * The completing request is older than a pooled session for the same account
+   * with a different identity. Close it and leave the newer session in place.
+   * A request that starts later still authenticates and then replaces older sessions.
+   */
+  private _abandonIfSuperseded(ticket: number, identity: SshIdentity, client: Client): void {
+    const lost = this.sessions.some((session) => (
+      session.ticket > ticket
+      && session.identity.host === identity.host
+      && session.identity.port === identity.port
+      && session.identity.username === identity.username
+      && !this._sameIdentity(session, identity)
+    ));
+    if (!lost) return;
+    this._endClient(client);
+    throw new Error('SSH_SESSION_SUPERSEDED');
+  }
+
+  private _endClient(client: Client | undefined): void {
+    if (!client) return;
+    try {
+      client.end();
+    } catch {
+      // Ignore
+    }
+  }
+
   private _remove(session: SshSession): void {
     if (!this.sessions.includes(session)) return;
     this.sessions = this.sessions.filter((s) => s !== session);
@@ -347,10 +513,18 @@ class SshSessionPool {
     username: string,
     credentialType: string,
     credentialValue: string,
-    hostKeyFingerprint?: string,
+    hostKeyFingerprint: string | undefined,
+    acquisition: InflightAcquisition,
   ): Promise<Client> {
     return new Promise((resolve, reject) => {
       const client = new Client();
+      acquisition.client = client;
+      let settled = false;
+      const finish = (action: () => void) => {
+        if (settled) return;
+        settled = true;
+        action();
+      };
 
       const hostVerifier = createOptionalSshHostVerifier(hostKeyFingerprint);
       const connectConfig: ConnectConfig = {
@@ -371,11 +545,20 @@ class SshSessionPool {
       }
 
       client.on('ready', () => {
-        resolve(client);
+        if (acquisition.cancelled) {
+          this._endClient(client);
+          finish(() => reject(new Error('SSH_SESSION_REVOKED')));
+          return;
+        }
+        finish(() => resolve(client));
       });
 
       client.on('error', (err: Error) => {
-        reject(err);
+        if (acquisition.cancelled) {
+          finish(() => reject(new Error('SSH_SESSION_REVOKED')));
+          return;
+        }
+        finish(() => reject(err));
       });
 
       client.on('close', () => {

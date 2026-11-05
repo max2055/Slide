@@ -4,6 +4,9 @@ import { fingerprintSshHostKey } from './security/ssh-host-key.js';
 const mocks = vi.hoisted(() => ({
   authorizeTarget: vi.fn(),
   connectConfigs: [] as any[],
+  clients: [] as any[],
+  holdReady: false,
+  held: [] as Array<{ fire: () => void }>,
 }));
 
 vi.mock('./security/server-target-policy', () => ({
@@ -20,13 +23,19 @@ vi.mock('ssh2', () => ({
     }
     connect(config: any) {
       mocks.connectConfigs.push(config);
-      queueMicrotask(() => {
+      mocks.clients.push(this);
+      const fire = () => {
         if (config.password === 'reject-auth' || config.privateKey === 'reject-auth') {
           this.handlers.error?.(new Error('SSH_AUTH_FAILED'));
           return;
         }
         this.handlers.ready?.();
-      });
+      };
+      if (mocks.holdReady) {
+        mocks.held.push({ fire });
+        return;
+      }
+      queueMicrotask(fire);
     }
     exec() {}
   },
@@ -37,6 +46,9 @@ import sshSessionPool from './ssh-session-pool.js';
 describe('SSH session pool target and identity controls', () => {
   beforeEach(() => {
     mocks.connectConfigs.length = 0;
+    mocks.clients.length = 0;
+    mocks.held.length = 0;
+    mocks.holdReady = false;
     mocks.authorizeTarget.mockReset().mockResolvedValue({
       hostname: 'ssh.internal.example',
       address: '10.20.30.40',
@@ -183,5 +195,120 @@ describe('SSH session pool target and identity controls', () => {
     const observed = `${lines.join('\n')}\n${JSON.stringify(mocks.connectConfigs.map((config) => Object.keys(config)))}`;
     expect(observed).not.toContain(secret);
     expect(mocks.connectConfigs.some((config) => config.privateKey === secret)).toBe(true);
+  });
+
+  it('cancels an acquisition revoked during authorization before it connects', async () => {
+    const secret = 'authorize-window-secret';
+    const pooled = await sshSessionPool.getConnection(
+      'ssh.internal.example', 22, 'operator', 'password', secret, null,
+    );
+    sshSessionPool.releaseConnection(pooled);
+    const pending = sshSessionPool.getConnection(
+      ' SSH.internal.example ', 22, 'operator', 'password', secret, null,
+    );
+    const otherAccount = sshSessionPool.getConnection(
+      'ssh.internal.example', 22, 'root', 'password', 'other-account-secret', null,
+    );
+
+    expect(sshSessionPool.revokeSessions({
+      host: 'ssh.internal.example',
+      port: 22,
+      username: 'operator',
+      credentialType: 'password',
+      credentialValue: secret,
+    })).toBe(2);
+    await expect(pending).rejects.toThrow('SSH_SESSION_REVOKED');
+    await expect(pending).rejects.not.toThrow(secret);
+    const kept = await otherAccount;
+    expect((kept as any).end).not.toHaveBeenCalled();
+    expect(mocks.connectConfigs).toHaveLength(2);
+    expect((pooled as any).end).toHaveBeenCalledOnce();
+    expect(sshSessionPool.getPoolStats()).toMatchObject({ total: 1, idle: 0, active: 1 });
+
+    const replacement = await sshSessionPool.getConnection(
+      'ssh.internal.example', 22, 'operator', 'password', secret, null,
+    );
+    expect(replacement).not.toBe(pooled);
+    expect((kept as any).end).not.toHaveBeenCalled();
+    expect(sshSessionPool.getPoolStats()).toMatchObject({ total: 2, active: 2 });
+  });
+
+  it('drops a ready login that was already connecting when its identity was revoked', async () => {
+    const fingerprint = fingerprintSshHostKey(Buffer.from('known-host-key'));
+    const otherFingerprint = fingerprintSshHostKey(Buffer.from('other-host-key'));
+    const oldSecret = 'connecting-old-secret';
+    const otherSecret = 'connecting-other-secret';
+    const revoked = sshSessionPool.getConnection(
+      'ssh.internal.example', 22, 'operator', 'password', oldSecret, fingerprint,
+    );
+    const otherAccount = sshSessionPool.getConnection(
+      'ssh.internal.example', 22, 'root', 'password', otherSecret, fingerprint,
+    );
+    const otherKey = sshSessionPool.getConnection(
+      'ssh.internal.example', 22, 'operator', 'key', oldSecret, otherFingerprint,
+    );
+    await Promise.resolve();
+    expect(mocks.connectConfigs).toHaveLength(3);
+
+    expect(sshSessionPool.revokeSessions({
+      host: 'ssh.internal.example',
+      port: 22,
+      username: 'operator',
+      credentialType: 'password',
+      credentialValue: oldSecret,
+      hostKeyFingerprint: fingerprint,
+    })).toBe(1);
+    await expect(revoked).rejects.toThrow('SSH_SESSION_REVOKED');
+    await expect(revoked).rejects.not.toThrow(oldSecret);
+    expect((mocks.clients[0] as any).end).toHaveBeenCalled();
+
+    const keptAccount = await otherAccount;
+    const keptKey = await otherKey;
+    expect((keptAccount as any).end).not.toHaveBeenCalled();
+    expect((keptKey as any).end).not.toHaveBeenCalled();
+    expect(sshSessionPool.getPoolStats()).toMatchObject({ total: 2, active: 2 });
+    sshSessionPool.releaseConnection(keptAccount);
+
+    const reused = await sshSessionPool.getConnection(
+      'ssh.internal.example', 22, 'root', 'password', otherSecret, fingerprint,
+    );
+    expect(reused).toBe(keptAccount);
+    expect(mocks.connectConfigs).toHaveLength(3);
+  });
+
+  it('discards an older login that finishes after a newer identity is pooled', async () => {
+    const fingerprint = fingerprintSshHostKey(Buffer.from('known-host-key'));
+    mocks.holdReady = true;
+    const oldPending = sshSessionPool.getConnection(
+      'ssh.internal.example', 22, 'root', 'password', 'old-password', fingerprint,
+    );
+    const newPending = sshSessionPool.getConnection(
+      'ssh.internal.example', 22, 'root', 'password', 'new-password', fingerprint,
+    );
+    await Promise.resolve();
+    expect(mocks.held).toHaveLength(2);
+
+    mocks.held[1].fire();
+    const newer = await newPending;
+    mocks.held[0].fire();
+    await expect(oldPending).rejects.toThrow('SSH_SESSION_SUPERSEDED');
+    await expect(oldPending).rejects.not.toThrow('old-password');
+    expect((mocks.clients[0] as any).end).toHaveBeenCalled();
+    expect((newer as any).end).not.toHaveBeenCalled();
+    expect(sshSessionPool.getPoolStats()).toMatchObject({ total: 1, active: 1 });
+
+    sshSessionPool.releaseConnection(newer);
+    mocks.holdReady = false;
+    const reused = await sshSessionPool.getConnection(
+      'ssh.internal.example', 22, 'root', 'password', 'new-password', fingerprint,
+    );
+    expect(reused).toBe(newer);
+
+    const laterOld = await sshSessionPool.getConnection(
+      'ssh.internal.example', 22, 'root', 'password', 'old-password', fingerprint,
+    );
+    expect(laterOld).not.toBe(newer);
+    expect((newer as any).end).toHaveBeenCalledOnce();
+    expect(sshSessionPool.getPoolStats()).toMatchObject({ total: 1, active: 1 });
   });
 });
