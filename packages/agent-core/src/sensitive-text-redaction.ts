@@ -1,5 +1,9 @@
 const sensitiveTextKey =
   /(?:^|[^a-z0-9])(?:password|passwd|pwd|secret|token|api[_-]?key|subscription[_-]?key|authorization|cookie|credential|connection[_-]?string|private[_-]?key)(?:$|[^a-z0-9])/;
+const assignmentKey = 'password|passwd|pwd|secret|token|api[_-]?key|subscription[_-]?key|authorization|cookie|credential|connection[_-]?string|private[_-]?key';
+const spacedAssignmentValue = `[^\\s,;\\r\\n{}\\[\\]"']+(?:[^\\S\\r\\n]+(?!(?:${assignmentKey})[^\\S\\r\\n]*[=:])[^\\s,;\\r\\n{}\\[\\]"']+)*`;
+const assignmentPattern = new RegExp(`((?:${assignmentKey})[^\\S\\r\\n]*[=:][^\\S\\r\\n]*)${spacedAssignmentValue}`, 'gi');
+const escapedJsonPattern = new RegExp(`(\\\\?"(?:${assignmentKey})\\\\?"\\s*:\\s*\\\\?")[^"\\\\]*`, 'gi');
 
 interface QuotedText {
   end: number;
@@ -122,5 +126,7 @@ export function redactSensitiveText(text: string): string {
   const standardSecrets = text
     .replace(/\bBearer\s+[A-Za-z0-9._~+/=-]+/gi, "[REDACTED]")
     .replace(/\bsk-[A-Za-z0-9_-]{8,}/g, "[REDACTED]");
-  return redactSensitiveTextProperties(standardSecrets);
+  return redactSensitiveTextProperties(standardSecrets)
+    .replace(escapedJsonPattern, '$1[REDACTED]')
+    .replace(assignmentPattern, '$1[REDACTED]');
 }

@@ -81,6 +81,8 @@ describe('log redaction', () => {
     expect(redactSensitiveText('{"token":"truncated secret')).toBe('{"token":"[REDACTED]');
     expect(redactSensitiveText('{\\"token\\":\\"escaped secret\\"}')).toBe('{\\"token\\":\\"[REDACTED]\\"}');
     expect(redactSensitiveText('A token is issued after login.')).toBe('A token is issued after login.');
+    expect(redactSensitiveText('Connection failed: "token=demo-token"')).toBe('Connection failed: "token=[REDACTED]"');
+    expect(redactLogValue({ detail: "diagnostic: 'api_key=single-secret'" })).toEqual({ detail: "diagnostic: 'api_key=[REDACTED]'" });
   });
 
   it('redacts sensitive object keys and removes error stacks', () => {

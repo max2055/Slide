@@ -43,3 +43,13 @@ it("handles escaped JSON delimiters and preserves existing secret patterns", () 
     "token=[REDACTED] [REDACTED] [REDACTED]",
   );
 });
+it("redacts assignments inside quoted diagnostics and nested serialized text", () => {
+  const cases = [
+    ['{"message":"password=demo-secret"}', '{"message":"password=[REDACTED]"}'],
+    ['Connection failed: "token=demo-token"', 'Connection failed: "token=[REDACTED]"'],
+    ["diagnostic: 'api_key=single-secret'", "diagnostic: 'api_key=[REDACTED]'"],
+    ['{"message":"{\\"token\\":\\"nested-secret\\"}"}', '{"message":"{\\"token\\":\\"[REDACTED]\\"}"}'],
+    ['Connection failed: "token=truncated-secret', 'Connection failed: "token=[REDACTED]'],
+  ] as const;
+  for (const [input, expected] of cases) expect(redactSensitiveText(input)).toBe(expected);
+});
