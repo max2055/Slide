@@ -519,15 +519,34 @@ class LLMDatabaseService {
       return { success: false, error: '数据库未连接' };
     }
 
+    let connection: mysql.PoolConnection | undefined;
     try {
-      // 先取消所有默认
-      await pool.execute('UPDATE llm_providers SET is_default = FALSE');
-      // 设置新的默认
-      await pool.execute('UPDATE llm_providers SET is_default = TRUE WHERE name = ?', [name]);
+      connection = await pool.getConnection();
+      await connection.beginTransaction();
+      await connection.execute('UPDATE llm_providers SET is_default = FALSE');
+      const [result] = await connection.execute<mysql.ResultSetHeader>(
+        'UPDATE llm_providers SET is_default = TRUE WHERE name = ?', [name]
+      );
+      if (result.affectedRows === 0) {
+        await connection.rollback();
+        return { success: false, error: '提供商不存在' };
+      }
+      await connection.commit();
       return { success: true };
     } catch (error: any) {
+      if (connection) {
+        try {
+          await connection.rollback();
+        } catch (rollbackError) {
+          console.error('回滚默认提供商失败:', rollbackError);
+          connection.destroy();
+          connection = undefined;
+        }
+      }
       console.error('设置默认提供商失败:', error);
       return { success: false, error: error.message };
+    } finally {
+      connection?.release();
     }
   }
 
