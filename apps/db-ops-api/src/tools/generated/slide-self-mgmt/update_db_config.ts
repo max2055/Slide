@@ -4,6 +4,8 @@
  * 更新已纳管数据库实例的配置信息
  */
 
+import { encryptData } from '../../../db-connection.js';
+import { authorizeDatabaseTarget } from '../../../security/database-target-policy.js';
 import type { AnyAgentTool } from '../../types.js';
 import { toolCatalog } from '../../catalog.js';
 import { instanceDatabaseService } from '../../../instance-database-service.js';
@@ -131,6 +133,8 @@ export const updateDbConfigTool: AnyAgentTool = {
       };
     }
 
+    let updateSubmitted = false;
+    let configCommitted = false;
     try {
       // 1. 查找实例
       const instanceId = typedArgs.instance_id ?? await findInstanceIdByName(typedArgs.instance_name!);
@@ -145,50 +149,68 @@ export const updateDbConfigTool: AnyAgentTool = {
         };
       }
 
-      let password: string | undefined;
-      if (typedArgs.credential_ref) {
-        if (!context?.actor) {
-          return { success: false, status: 'error', error: '缺少认证执行上下文', errorCode: 'MISSING_ACTOR' };
-        }
-        password = await credentialReferenceService.consume(
-          typedArgs.credential_ref,
-          context.actor.userId,
-          updateDbConfigTool.name,
-        ) ?? undefined;
-        if (!password) {
-          return { success: false, status: 'error', error: '凭据引用无效、已过期或已消费', errorCode: 'INVALID_CREDENTIAL_REF', next_actions: ['重新申请一次性 credential_ref；不要重复使用该引用'] };
-        }
-      }
-
       // 2. 构建更新数据
       const updateData: Record<string, unknown> = {};
       if (typedArgs.name !== undefined) updateData.name = typedArgs.name;
       if (typedArgs.host !== undefined) updateData.host = typedArgs.host;
       if (typedArgs.port !== undefined) updateData.port = typedArgs.port;
       if (typedArgs.username !== undefined) updateData.username = typedArgs.username;
-      if (password !== undefined) updateData.password = password;
       if (typedArgs.environment !== undefined) updateData.environment = typedArgs.environment;
       if (typedArgs.description !== undefined) updateData.description = typedArgs.description;
 
-      // 3. 执行更新
-      const result = await instanceDatabaseService.updateInstance(instanceId, updateData);
-
-      if (!result.success) {
-        return {
-          success: false,
-          status: 'error',
-          error: `更新失败：${result.error}`,
-          errorCode: 'UPDATE_FAILED',
-          details: { credentialConsumed: Boolean(password), retryable: !password },
-          next_actions: [password ? '凭据引用已消费，请重新申请后重试' : '确认实例状态和参数后重试'],
-        };
+      // 3. 引用消费与配置写入必须原子提交，不能通过恢复已消费引用补偿。
+      if (typedArgs.credential_ref) {
+        if (!context?.actor) {
+          return { success: false, status: 'error', error: '缺少认证执行上下文', errorCode: 'MISSING_ACTOR' };
+        }
+        const outcome = await credentialReferenceService.consumeInTransaction(
+          typedArgs.credential_ref, context.actor.userId, updateDbConfigTool.name,
+          async (executor, password) => {
+            if (!password.trim()) throw new Error('EMPTY_PASSWORD');
+            const [rows] = await executor.execute(
+              "SELECT host, port, db_type FROM database_instances WHERE id = ? AND lifecycle_state = 'available' FOR UPDATE",
+              [instanceId],
+            );
+            if (!rows[0]) throw new Error('INSTANCE_NOT_AVAILABLE');
+            await authorizeDatabaseTarget({
+              host: typedArgs.host ?? rows[0].host,
+              port: typedArgs.port ?? Number(rows[0].port),
+              dbType: rows[0].db_type,
+            });
+            // Keys come only from the explicit field list above, never from caller SQL.
+            const fields = Object.keys(updateData);
+            const [result] = await executor.execute(
+              `UPDATE database_instances SET ${fields.map(field => `${field} = ?`).concat('password_encrypted = ?').join(', ')} WHERE id = ? AND lifecycle_state = 'available'`,
+              [...Object.values(updateData), encryptData(password), instanceId],
+            );
+            if (Number(result.affectedRows) !== 1) throw new Error('UPDATE_NOT_APPLIED');
+          },
+        );
+        if (outcome.status !== 'committed') {
+          const retryable = outcome.status === 'rolled_back';
+          return {
+            success: false, status: 'error',
+            error: outcome.status === 'unknown' ? '更新提交结果未知，必须先对账，不要重放写请求' : retryable ? '更新未提交，事务已回滚，凭据引用未消费' : '凭据引用无效、已过期或已消费',
+            errorCode: outcome.status === 'invalid' ? 'INVALID_CREDENTIAL_REF' : outcome.status === 'unknown' ? 'UPDATE_OUTCOME_UNKNOWN' : 'UPDATE_FAILED',
+            details: { instanceId, retryable, credentialConsumed: retryable ? false : 'unknown' },
+            next_actions: [outcome.status === 'unknown' ? '先对账核对实例配置及凭据引用状态；未确认结果前不要重试或申请新引用重放更新' : retryable ? '修复失败原因后可使用原 credential_ref 重试；引用仍受有效期和单次使用约束' : '不要复用该引用；先核对实例状态'],
+          };
+        }
+        updateData.password = true; // Response field name only; never retain the secret here.
+      } else {
+        updateSubmitted = true;
+        const result = await instanceDatabaseService.updateInstance(instanceId, updateData);
+        if (!result.success) {
+          return { success: false, status: 'error', error: '更新结果未确认，请先核对实例配置', errorCode: 'UPDATE_FAILED', details: { instanceId, retryable: false }, next_actions: ['先对账确认更新结果，再决定后续操作；不要盲目重试'] };
+        }
       }
+      configCommitted = true;
 
       // 4. 如果需要，测试新连接的连通性
       let connectionTested = false;
       let connectionSuccess = false;
 
-      if (typedArgs.host !== undefined || typedArgs.port !== undefined || typedArgs.username !== undefined || password !== undefined) {
+      if (typedArgs.host !== undefined || typedArgs.port !== undefined || typedArgs.username !== undefined || typedArgs.credential_ref !== undefined) {
         connectionTested = true;
         // 获取更新后的实例信息进行连接测试
         const decrypted = await instanceDatabaseService.getInstanceWithDecryptedPassword(instanceId);
@@ -198,7 +220,7 @@ export const updateDbConfigTool: AnyAgentTool = {
             host: typedArgs.host ?? decrypted.host,
             port: typedArgs.port ?? decrypted.port,
             username: typedArgs.username ?? decrypted.username,
-            password: password ?? decrypted.password,
+            password: decrypted.password,
             database: decrypted.database_name || undefined,
           });
           connectionSuccess = testResult.success;
@@ -229,14 +251,14 @@ export const updateDbConfigTool: AnyAgentTool = {
           connectionSuccess,
         },
       };
-    } catch (error: unknown) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
+    } catch {
       return {
-        success: false,
-        status: 'error',
-        error: `更新失败：${errorMessage}`,
-        errorCode: 'UPDATE_CONFIG_FAILED',
-        next_actions: ['确认实例状态和参数后重试；若使用 credential_ref，请重新申请引用'],
+        success: configCommitted,
+        status: configCommitted ? 'warning' : 'error',
+        error: configCommitted ? '配置已提交，连接测试未完成' : updateSubmitted ? '更新结果未知，必须先对账' : '更新失败，尚未提交配置',
+        errorCode: configCommitted ? 'CONNECTION_TEST_FAILED' : updateSubmitted ? 'UPDATE_OUTCOME_UNKNOWN' : 'UPDATE_CONFIG_FAILED',
+        details: { configCommitted, retryable: false },
+        next_actions: [configCommitted ? '配置已保存，不要重放更新；调用 slide_test_connection 验证' : '先核对实例配置及引用状态，确认结果前不要重放写请求'],
       };
     }
   },
