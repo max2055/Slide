@@ -15,8 +15,11 @@ const require = createRequire(import.meta.url);
 async function runRotation(backupExists: boolean, failure?: { at: string; error: object }) {
   const db = {
     query: vi.fn(async (sql: string) => {
-      if (failure?.at === 'metadata' && sql.includes('information_schema')) throw failure.error;
-      return [sql.includes('information_schema') && backupExists ? [{ TABLE_NAME: 'llm_providers_backup' }] : [], []];
+      if (sql === 'SELECT 1 FROM llm_providers_backup LIMIT 0') {
+        if (failure?.at === 'probe') throw failure.error;
+        if (!backupExists) throw { code: 'ER_NO_SUCH_TABLE' };
+      }
+      return [[], []];
     }),
     execute: vi.fn(async (sql: string) => {
       if (failure && sql.includes(failure.at)) throw failure.error;
@@ -75,12 +78,20 @@ describe('GitHub #463 / MAX-316 optional historical provider backup', () => {
     expect(db.end).toHaveBeenCalledOnce();
   });
 
-  it.each(['metadata', 'UPDATE notification_channels', 'UPDATE network_devices'])('rolls back other SQL failures at %s', async (at) => {
+  it.each(['probe', 'UPDATE notification_channels', 'UPDATE network_devices'])('rolls back other SQL failures at %s', async (at) => {
     const failure = { code: 'ER_TABLEACCESS_DENIED_ERROR' };
     const { db, error } = await runRotation(false, { at, error: failure });
     expect(error).toBe(failure);
     expect(db.rollback).toHaveBeenCalledOnce();
     expect(db.commit).not.toHaveBeenCalled();
     expect(db.end).toHaveBeenCalledOnce();
+  });
+
+  it.each(['ER_BAD_FIELD_ERROR', 'ER_PARSE_ERROR', 'UNKNOWN', undefined])('fails closed for unexpected probe errors: %s', async (code) => {
+    const failure = { code };
+    const { db, error } = await runRotation(true, { at: 'probe', error: failure });
+    expect(error).toBe(failure);
+    expect(db.rollback).toHaveBeenCalledOnce();
+    expect(db.commit).not.toHaveBeenCalled();
   });
 });

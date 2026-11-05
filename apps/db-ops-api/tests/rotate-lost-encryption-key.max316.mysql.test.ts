@@ -91,7 +91,7 @@ describe.skipIf(!envFile)('MAX-316 real MySQL CLI recovery / GitHub #463', () =>
 
   // Chief review: information_schema hides an existing table when this real
   // account has no privilege on it. That must never authorize skipping cleanup.
-  it('refuses a real account with core permissions but no historical-table privileges', async () => {
+  it.each(['none', 'SELECT', 'UPDATE', 'SELECT, UPDATE'])('enforces historical-table privileges for a real account: %s', async (privilege) => {
     await fixture(true, async (db, run) => {
       const user = `m316_${randomBytes(6).toString('hex')}`;
       const password = randomBytes(24).toString('hex');
@@ -101,18 +101,25 @@ describe.skipIf(!envFile)('MAX-316 real MySQL CLI recovery / GitHub #463', () =>
       await db.query("CREATE USER ?@'%' IDENTIFIED BY ?", [user, password]);
       try {
         for (const table of tables) await db.query(`GRANT SELECT, UPDATE ON \`${schema}\`.\`${table}\` TO ?@'%'`, [user]);
+        if (privilege !== 'none') await db.query(`GRANT ${privilege} ON \`${schema}\`.llm_providers_backup TO ?@'%'`, [user]);
         const restricted = await mysql.createConnection({ host: config.DB_HOST, port: Number(config.DB_PORT), user, password, database: schema });
         try {
           const [visible] = await restricted.query<RowDataPacket[]>("SELECT TABLE_NAME FROM information_schema.tables WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'llm_providers_backup'");
-          expect(visible).toHaveLength(0);
-          console.log(JSON.stringify({ restrictedAccount: user, metadataVisible: visible.length, historicalTableExists: true }));
+          expect(visible).toHaveLength(privilege === 'none' ? 0 : 1);
+          console.log(JSON.stringify({ restrictedAccount: user, privilege, metadataVisible: visible.length, historicalTableExists: true }));
         } finally { await restricted.end(); }
         const before = await snapshot(db, true);
         const result = run({ user, password });
-        expect(result.status, result.output).toBe(1);
-        expect(result.output).toContain('denied');
-        expect(result.output).not.toContain('"rotated":true');
-        expect(await snapshot(db, true)).toBe(before);
+        if (privilege === 'SELECT, UPDATE') {
+          expect(result.status, result.output).toBe(0);
+          const [backups] = await db.query<RowDataPacket[]>('SELECT api_key_encrypted FROM llm_providers_backup');
+          expect(backups.every(row => row.api_key_encrypted === null)).toBe(true);
+        } else {
+          expect(result.status, result.output).toBe(1);
+          expect(result.output).toContain('denied');
+          expect(result.output).not.toContain('"rotated":true');
+          expect(await snapshot(db, true)).toBe(before);
+        }
       } finally {
         await db.query("DROP USER ?@'%'", [user]);
       }

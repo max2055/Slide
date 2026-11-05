@@ -17,6 +17,8 @@
  *
  * Exit 1 when the invocation check, arguments, or rotation fails.
  * Refusal output names neither the key nor the confirmation value.
+ * The recovery account needs SELECT and UPDATE on existing credential tables,
+ * including the historical provider backup; missing privileges abort recovery.
  */
 import { createHash } from 'node:crypto';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
@@ -167,12 +169,16 @@ async function main(): Promise<void> {
         [serverSentinel],
       );
       await db.execute("UPDATE llm_providers SET api_key_encrypted = NULL, enabled = CASE WHEN deployment_type = 'local' THEN enabled ELSE 0 END, is_default = CASE WHEN deployment_type = 'local' THEN is_default ELSE 0 END");
-      // Only the one-time historical LLM migration creates this backup table.
-      // Check existence rather than swallowing SQL errors from its UPDATE.
-      const [backupTables] = await db.query<Array<{ TABLE_NAME: string }>>(
-        "SELECT TABLE_NAME FROM information_schema.tables WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'llm_providers_backup'",
-      );
-      if (backupTables.length > 0) {
+      // Metadata can hide tables from restricted accounts. Probe directly so
+      // permission errors fail closed; this SELECT cannot execute UPDATE triggers.
+      let backupExists = true;
+      try {
+        await db.query('SELECT 1 FROM llm_providers_backup LIMIT 0');
+      } catch (error) {
+        if ((error as { code?: string })?.code !== 'ER_NO_SUCH_TABLE') throw error;
+        backupExists = false;
+      }
+      if (backupExists) {
         await db.execute('UPDATE llm_providers_backup SET api_key_encrypted = NULL');
       }
       await db.execute(`UPDATE notification_channels
