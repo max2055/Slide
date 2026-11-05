@@ -21,6 +21,7 @@ const { dbConnection } = await import('../../src/db-connection.js');
 const { executeToolWithPolicy } = await import('../../src/tools/policy.js');
 const { agentCodeExecutionService } = await import('../../src/security/agent-code-execution-service.js');
 const { getAgentToolApprovalService } = await import('../../src/security/agent-tool-approval-service.js');
+const { redactSensitiveData } = await import('../../src/security/sensitive-data.js');
 const { sandboxClient } = await import('../../src/security/sandbox-client.js');
 const options = { host: '127.0.0.1', port: Number(process.env.SANDBOX_NONCE_DB_PORT), user: 'root', password: '' };
 const database = `max328_${randomUUID().replaceAll('-', '')}`;
@@ -29,6 +30,9 @@ const app = Fastify();
 const observations: unknown[] = [];
 let created = false;
 let dispatches = 0;
+let passed = false;
+let databaseDropped = false;
+let failure: string | undefined;
 const workspace = () => readdir(process.env.SANDBOX_WORKSPACE_ROOT!);
 async function assertWorkspaceClean(): Promise<void> {
   // The HTTP response can arrive before the controller's finally cleanup ends.
@@ -104,7 +108,9 @@ try {
   // examples above stay pending and are never executed.
   for (const input of [
     { code: 'pwd\nprintf approved > marker\ncat marker' },
-    { code: 'find . -maxdepth 0 -fprint output\ncat output' },
+    // BusyBox find (the pinned Alpine image) has no -fprint. Exercise its
+    // supported write-capable -exec action; keep -fprint in denial cases above.
+    { code: "find . -maxdepth 0 -exec sh -c 'printf approved-find > output' \\;\ncat output" },
     { code: 'cat fixture.txt', files: [{ path: 'fixture.txt', content: 'approved-support' }] },
   ]) {
     const before = dispatches;
@@ -115,11 +121,12 @@ try {
     const id = String(pending.decision.approvalId);
     assert.equal(await getAgentToolApprovalService().review(id, 7, 'approve'), true);
     const executed = await call({ ...input, approvalId: id });
+    observations.push({ phase: 'approved-execution', input, approvalId: id, result: redactSensitiveData(executed) });
     assert.equal(executed.result.success, true);
     assert.equal(executed.result.data.exitCode, 0);
     assert.equal(executed.result.data.timedOut, false);
     assert.equal(dispatches, before + 1);
-    assert.match(executed.result.data.stdout, input.files ? /approved-support/ : input.code.startsWith('find') ? /\./ : /approved/);
+    assert.match(executed.result.data.stdout, input.files ? /approved-support/ : input.code.startsWith('find') ? /approved-find/ : /approved/);
     await assertWorkspaceClean();
     const [rows] = await pool.query<any[]>('SELECT status FROM agent_tool_approvals WHERE id=?', [id]);
     assert.equal(rows[0].status, 'consumed');
@@ -127,14 +134,24 @@ try {
   }
   const [audit] = await pool.query<any[]>('SELECT phase, allowed, reason_code, approval_id FROM agent_tool_audit ORDER BY id');
   observations.push({ audit, originalPendingIds: pendingIds });
+  passed = true;
+} catch (error) {
+  failure = error instanceof Error ? error.message : String(error);
+  throw error;
 } finally {
-  await app.close();
-  await dbConnection.close();
-  if (created) await admin.query(`DROP DATABASE ${database}`);
-  await admin.end();
+  try {
+    await app.close();
+    await dbConnection.close();
+    if (created) {
+      await admin.query(`DROP DATABASE ${database}`);
+      databaseDropped = true;
+    }
+    await admin.end();
+  } finally {
+    await writeFile(process.env.SANDBOX_APPROVAL_QUALIFICATION_OUTPUT!, JSON.stringify({
+      sourceCommit: execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(),
+      passed: passed && databaseDropped, failure, trustedActorFixture: true, mocks: false, databaseDropped, observations,
+    }, null, 2));
+  }
 }
-await writeFile(process.env.SANDBOX_APPROVAL_QUALIFICATION_OUTPUT!, JSON.stringify({
-  sourceCommit: execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(),
-  passed: true, trustedActorFixture: true, mocks: false, databaseDropped: true, observations,
-}, null, 2));
 console.log('MAX-328 real HTTP/MySQL/rootless approval qualification passed');
