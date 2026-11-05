@@ -22,6 +22,7 @@
  */
 import { createHash } from 'node:crypto';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { homedir, userInfo } from 'node:os';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { requireEncryptionKey } from '../../apps/db-ops-api/src/config/security-config.js';
@@ -75,13 +76,38 @@ export function projectEnvAssignments(text: string, current: Record<string, stri
   return assigned;
 }
 
-function fingerprint(value: unknown): string {
-  return createHash('sha256').update(String(value ?? '')).digest('hex');
+function stableJsonValue(value: unknown): unknown {
+  if (Buffer.isBuffer(value)) return value.toString('hex');
+  if (Array.isArray(value)) return value.map(stableJsonValue);
+  if (value !== null && typeof value === 'object') {
+    return Object.fromEntries(Object.entries(value).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0)
+      .map(([key, entry]) => [key, stableJsonValue(entry)]));
+  }
+  return value;
+}
+
+export function fingerprint(value: unknown): string {
+  const content = Buffer.isBuffer(value) ? value.toString('hex')
+    : value !== null && typeof value === 'object' ? JSON.stringify(stableJsonValue(value))
+      : String(value ?? '');
+  return createHash('sha256').update(content).digest('hex');
 }
 
 function auditPath(): string {
   const configured = process.env.SLIDE_CREDENTIAL_ROTATION_AUDIT_PATH;
-  return resolve(configured || `${process.env.HOME}/.config/slide/recovery/lost-encryption-key-rotation.json`);
+  if (configured) return resolve(configured);
+  let home: string;
+  try {
+    // homedir uses the OS account when HOME is absent. An empty HOME can
+    // produce an empty homedir, so ask the OS account directly in that case.
+    home = homedir() || userInfo().homedir;
+  } catch {
+    throw new Error('Cannot determine the recovery audit directory: OS user home is unavailable; set SLIDE_CREDENTIAL_ROTATION_AUDIT_PATH explicitly.');
+  }
+  if (!home.trim()) {
+    throw new Error('Cannot determine the recovery audit directory: OS user home is empty; set SLIDE_CREDENTIAL_ROTATION_AUDIT_PATH explicitly.');
+  }
+  return resolve(home, '.config/slide/recovery/lost-encryption-key-rotation.json');
 }
 
 function pinInvocationSecrets(secrets: { confirmation: string; encryptionKey: string }): void {
@@ -98,6 +124,7 @@ async function main(): Promise<void> {
   const envText = await readFile(envFile, 'utf8');
   for (const [key, value] of Object.entries(projectEnvAssignments(envText, process.env))) process.env[key] = value;
   pinInvocationSecrets(invocation);
+  const path = auditPath();
   // Capture the target before dependency loaders can mutate process.env,
   // including when dotenv's override option is enabled in the invocation.
   const dbConfig = {
@@ -154,7 +181,6 @@ async function main(): Promise<void> {
         channels: channelRows.map((row) => ({ id: row.id, configFingerprint: fingerprint(row.config), enabled: Boolean(row.enabled) })),
       },
     };
-    const path = auditPath();
     await mkdir(dirname(path), { recursive: true, mode: 0o700 });
     await writeFile(path, `${JSON.stringify(audit, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
 
