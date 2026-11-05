@@ -112,7 +112,8 @@ def verify(data):
     old_ids = '\n'.join(line.split('|')[1] for line in mapping.splitlines() if line.startswith('|'))
     ids = {r['id'] for rows in [data['registry'], data['provider_cases'], data['realtime_fields']] for r in rows}
     missing = sorted(i for i in ids if not re.search(rf'(?<![\w]){re.escape(i)}(?![\w])', old_ids))
-    assert not missing, f'unmapped legacy IDs: {missing}'
+    if missing:
+        raise ValueError(f'unmapped legacy IDs: {missing}')
     sections = {
         'instance': mapping.split('## 数据库：公共')[1].split('## Server')[0],
         'server': mapping.split('## Server')[1].split('## 网络设备')[0],
@@ -120,57 +121,87 @@ def verify(data):
     }
     for row in data['registry']:
         old_column = '\n'.join(line.split('|')[1] for line in sections[row['target_type']].splitlines() if line.startswith('|'))
-        assert re.search(rf"(?<![\w]){re.escape(row['id'])}(?![\w])", old_column), row
+        if not re.search(rf"(?<![\w]){re.escape(row['id'])}(?![\w])", old_column):
+            raise ValueError(row)
     keys = [(r['target_type'], r['id']) for r in data['registry']]
-    assert len(keys) == len(set(keys)), 'duplicate registry identity'
-    assert {r['target_type'] for r in data['registry']} == {'instance', 'server', 'network_device'}
+    if len(keys) != len(set(keys)):
+        raise ValueError('duplicate registry identity')
+    if {r['target_type'] for r in data['registry']} != {'instance', 'server', 'network_device'}:
+        raise ValueError('registry must cover instance, server and network_device')
     for rows in [data['registry'], data['provider_cases'], data['realtime_fields'], data['references']]:
         for row in rows:
-            assert (ROOT / row['path']).is_file(), row['path']
+            if not (ROOT / row['path']).is_file():
+                raise ValueError(row['path'])
     # Check every exact full source path mentioned in the consumer table.
     for path in re.findall(r'`((?:apps/db-ops-api|frontend)/[^`]+\.ts)`', text(HERE / 'consumers.md')):
-        assert (ROOT / path).is_file(), f'bad consumer path: {path}'
+        if not (ROOT / path).is_file():
+            raise ValueError(f'bad consumer path: {path}')
     fixtures = json.loads(text(HERE / 'fixtures.json'))
-    assert fixtures['synthetic'] is True
-    assert {f['resource_type'] for f in fixtures['resources']} == {'instance', 'server', 'network_device'}
+    if fixtures['synthetic'] is not True:
+        raise ValueError('fixtures must be synthetic')
+    if {f['resource_type'] for f in fixtures['resources']} != {'instance', 'server', 'network_device'}:
+        raise ValueError('fixtures must cover instance, server and network_device')
     for resource in fixtures['resources']:
-        assert resource['semantic_version'] == data['version']
-        assert resource['legacy_ids'] and resource['source'] and resource['candidate_ids']
+        if resource['semantic_version'] != data['version']:
+            raise ValueError('fixture semantic version mismatch')
+        if not (resource['legacy_ids'] and resource['source'] and resource['candidate_ids']):
+            raise ValueError('fixture requires legacy IDs, source and candidate IDs')
         for old in resource['legacy_ids']:
-            assert old in ids, old
+            if old not in ids:
+                raise ValueError(old)
     db, host, network = fixtures['resources']
-    assert db['raw']['Uptime'] == db['expected']['db.uptime_seconds']
-    assert round(db['raw']['pool_used'] / db['raw']['pool_total'] * 100, 2) == db['expected']['dameng.memory.pool_used_percent']
-    assert host['raw']['filesystem']['used'] == host['expected']['host.filesystem.used_bytes']
-    assert host['raw']['filesystem']['size'] != host['raw']['filesystem']['used'] + host['raw']['filesystem']['available']
+    if db['raw']['Uptime'] != db['expected']['db.uptime_seconds']:
+        raise ValueError('database uptime mismatch')
+    if round(db['raw']['pool_used'] / db['raw']['pool_total'] * 100, 2) != db['expected']['dameng.memory.pool_used_percent']:
+        raise ValueError('database pool usage mismatch')
+    if host['raw']['filesystem']['used'] != host['expected']['host.filesystem.used_bytes']:
+        raise ValueError('filesystem used bytes mismatch')
+    if host['raw']['filesystem']['size'] == host['raw']['filesystem']['used'] + host['raw']['filesystem']['available']:
+        raise ValueError('filesystem fixture must include reserved space')
     host_net = host['raw']['network']
-    assert (int(host_net['current']) - int(host_net['previous'])) * 8 / host_net['elapsed_seconds'] == host['expected']['comparable_traffic_bps']
+    if (int(host_net['current']) - int(host_net['previous'])) * 8 / host_net['elapsed_seconds'] != host['expected']['comparable_traffic_bps']:
+        raise ValueError('host traffic rate mismatch')
     for case in network['counter_cases']:
         current, previous = int(case['current']), int(case['previous'])
         if case['reason'] == 'valid':
-            assert current >= previous
+            if current < previous:
+                raise ValueError('valid counter must not decrease')
             rate = (current - previous) * 8 / case['elapsed_seconds']
-            assert rate == case['expected_bps']
+            if rate != case['expected_bps']:
+                raise ValueError('network counter rate mismatch')
         else:
-            assert case['expected_bps'] is None
-    assert network['counter_cases'][0]['expected_bps'] == network['counter_cases'][1]['expected_bps']
-    assert network['counter_cases'][0]['expected_bps'] == host['expected']['comparable_traffic_bps']
-    assert any(int(c['current']) > 2**53 for c in network['counter_cases']), 'missing precise Counter64 sample'
+            if case['expected_bps'] is not None:
+                raise ValueError('invalid counter must have no expected rate')
+    if network['counter_cases'][0]['expected_bps'] != network['counter_cases'][1]['expected_bps']:
+        raise ValueError('Counter32 and Counter64 rates must match')
+    if network['counter_cases'][0]['expected_bps'] != host['expected']['comparable_traffic_bps']:
+        raise ValueError('network and host comparable rates must match')
+    if not any(int(c['current']) > 2**53 for c in network['counter_cases']):
+        raise ValueError('missing precise Counter64 sample')
     for case in network['utilization_cases']:
         if case['speed_bps'] and not case.get('invalid_denominator'):
-            assert case['expected_percent'] == case['bps'] / case['speed_bps'] * 100
+            if case['expected_percent'] != case['bps'] / case['speed_bps'] * 100:
+                raise ValueError('network utilization mismatch')
         else:
-            assert case['expected_percent'] is None
-    assert network['dimensions']['direction'] == 'in'
+            if case['expected_percent'] is not None:
+                raise ValueError('invalid denominator must have no expected utilization')
+    if network['dimensions']['direction'] != 'in':
+        raise ValueError('network fixture direction must be in')
     for case in network['status_cases']:
-        assert case['expected'] == {1: 1, 2: 0}.get(case['raw'])
-    assert network['vendor_extension']['expected_value'] is None
-    assert host['dimensions']['mount'] == '/data'
-    assert len(fixtures['non_mappable']) >= 2
+        if case['expected'] != {1: 1, 2: 0}.get(case['raw']):
+            raise ValueError('network status mapping mismatch')
+    if network['vendor_extension']['expected_value'] is not None:
+        raise ValueError('unknown vendor extension must have no expected value')
+    if host['dimensions']['mount'] != '/data':
+        raise ValueError('host fixture mount must be /data')
+    if len(fixtures['non_mappable']) < 2:
+        raise ValueError('at least two non-mappable cases are required')
     for case in fixtures['non_mappable']:
-        assert case['left_semantics'] != case['right_semantics'] and case['mapping_allowed'] is False
+        if not (case['left_semantics'] != case['right_semantics'] and case['mapping_allowed'] is False):
+            raise ValueError('non-mappable semantics must differ and mapping must be forbidden')
     serialized = json.dumps(fixtures).lower()
-    assert not re.search(r'password|secret|token|username|community|sql_text|host_address', serialized), 'sensitive fixture field'
+    if re.search(r'password|secret|token|username|community|sql_text|host_address', serialized):
+        raise ValueError('sensitive fixture field')
     print(f"PASS: {len(keys)} registry identities; {len(data['provider_cases'])} provider cases; "
           f"{len(data['realtime_fields'])} realtime fields; {len(data['references'])} referenced files; "
           '3 resource fixtures; mapping coverage, source paths, arithmetic and negative cases')
@@ -181,8 +212,8 @@ if __name__ == '__main__':
     parser.add_argument('--refresh', action='store_true')
     args = parser.parse_args()
     current = snapshot()
+    if not args.refresh and current != json.loads(text(HERE / 'inventory.json')):
+        raise ValueError('source snapshot drift: review before --refresh')
+    verify(current)
     if args.refresh:
         (HERE / 'inventory.json').write_text(json.dumps(current, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
-    else:
-        assert current == json.loads(text(HERE / 'inventory.json')), 'source snapshot drift: review before --refresh'
-    verify(current)
