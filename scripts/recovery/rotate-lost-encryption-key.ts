@@ -173,7 +173,7 @@ async function main(): Promise<void> {
             config = JSON_REMOVE(config, '$.secret', '$.secret_encrypted', '$.password', '$.password_encrypted', '$.oauth2_refresh_token', '$.oauth2_refresh_token_encrypted', '$.token', '$.apiKey')`);
       // Retain resource rows; the encrypted marker is never a usable credential.
       await db.execute("UPDATE network_devices SET collection_enabled = 0, status = 'unknown'");
-      await db.execute('UPDATE network_device_credentials SET credential_encrypted = ?, auth_secret_encrypted = NULL, privacy_secret_encrypted = NULL, community_encrypted = NULL, host_key_fingerprint = NULL', [instanceSentinel]);
+      await db.execute('UPDATE network_device_credentials SET credential_encrypted = ?, auth_secret_encrypted = NULL, privacy_secret_encrypted = NULL, community_encrypted = NULL', [instanceSentinel]);
       // Revoke only active one-shot references; historical states remain intact.
       await db.execute("UPDATE agent_credential_references SET status = 'revoked' WHERE status = 'active'");
       await db.commit();

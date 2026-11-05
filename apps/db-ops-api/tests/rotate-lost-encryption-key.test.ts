@@ -334,6 +334,11 @@ describe.skipIf(!port)('lost-key rotation writes nothing without this invocation
     for (const protocol of ['snmpv2c', 'snmpv3', 'ssh']) {
       await admin.execute('INSERT INTO network_device_credentials (device_id,protocol,username,credential_encrypted,community_encrypted,auth_secret_encrypted,privacy_secret_encrypted) VALUES (7,?,?,?,?,?,?)', [protocol, 'synthetic', 'old-cipher', 'old-community', 'old-auth', 'old-privacy']);
     }
+    // MAX-314 review: host trust is independent of the lost encryption key.
+    const { fingerprintSshHostKey, createOptionalSshHostVerifier } = await import('../src/security/ssh-host-key.js');
+    const trustedKey = Buffer.from('max314-synthetic-trusted-host-key');
+    const hostFingerprint = fingerprintSshHostKey(trustedKey);
+    await admin.execute("UPDATE network_device_credentials SET host_key_fingerprint = ? WHERE protocol = 'ssh'", [hostFingerprint]);
     await admin.query("INSERT INTO agent_credential_references VALUES ('active-ref','active','old-secret',NULL),('used-ref','consumed','old-secret',NULL)");
     const result = spawnSync(tsxPath, [scriptPath, '--env-file', join(directory, '.env')], {
       cwd: directory, env: { PATH: process.env.PATH ?? '', HOME: directory, ENCRYPTION_KEY: EXPLICIT_KEY, SLIDE_ROTATE_LOST_ENCRYPTION_KEY: PHRASE }, encoding: 'utf8', timeout: 30000,
@@ -343,6 +348,7 @@ describe.skipIf(!port)('lost-key rotation writes nothing without this invocation
     expect(devices).toMatchObject([{ collection_enabled: 0, status: 'unknown' }]);
     const [credentials] = await admin.query<any[]>('SELECT * FROM network_device_credentials');
     expect(credentials).toHaveLength(3);
+    expect(credentials.find((row) => row.protocol === 'ssh').host_key_fingerprint).toBe(hostFingerprint);
     for (const row of credentials) {
       expect(row.credential_encrypted).toMatch(/^v2:/);
       expect(row.community_encrypted).toBeNull();
@@ -357,12 +363,18 @@ describe.skipIf(!port)('lost-key rotation writes nothing without this invocation
     for (const protocol of ['snmpv2c', 'snmpv3', 'ssh'] as const) await expect(service.getCredentials(7, protocol)).resolves.toBeNull();
     await expect(service.updateDevice(7, {
       snmpv2c: { community: 'new-community' },
-      ssh: { username: 'ops', credentialType: 'password', credentialValue: 'new-password' },
+      ssh: { username: 'ops', credentialType: 'password', credentialValue: 'new-password', hostKeyFingerprint: credentials.find((row) => row.protocol === 'ssh').host_key_fingerprint },
     })).resolves.toEqual({ success: true });
     await expect(service.getCredentials(7, 'snmpv2c')).resolves.toMatchObject({ community: 'new-community' });
     await expect(service.updateDevice(7, { snmpv3: { username: 'monitor', securityLevel: 'noAuthNoPriv' } })).resolves.toEqual({ success: true });
     await expect(service.getCredentials(7, 'snmpv3')).resolves.toMatchObject({ securityLevel: 'noAuthNoPriv' });
-    await expect(service.getCredentials(7, 'ssh')).resolves.toMatchObject({ credentialValue: 'new-password' });
+    const restoredSsh = await service.getCredentials(7, 'ssh');
+    expect(restoredSsh).toMatchObject({ credentialValue: 'new-password', hostKeyFingerprint: hostFingerprint });
+    // This is the same verifier factory used by the default SSH transport.
+    const verifier = createOptionalSshHostVerifier(restoredSsh?.hostKeyFingerprint);
+    expect(verifier).toBeTypeOf('function');
+    expect(verifier!(trustedKey)).toBe(true);
+    expect(verifier!(Buffer.from('max314-synthetic-other-host-key'))).toBe(false);
     const [stillDisabled] = await admin.query<any[]>('SELECT collection_enabled FROM network_devices');
     expect(stillDisabled[0].collection_enabled).toBe(0);
     await expect(service.updateDevice(7, { collectionEnabled: true })).resolves.toEqual({ success: true });
