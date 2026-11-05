@@ -44,6 +44,8 @@ interface InflightAcquisition {
   credentialFingerprint: string;
   cancelled: boolean;
   client?: Client;
+  /** Rejects the in-flight connect promise at most once. */
+  fail?: (error: Error) => void;
 }
 
 interface RevocationScope {
@@ -141,7 +143,8 @@ class SshSessionPool {
    * host-key fingerprint, and credential fingerprint. After a new login succeeds,
    * a changed secret, credential type, or host key ends that account's older sessions.
    * An acquisition revoked while authorization or authentication is still in flight
-   * is not returned and is not pooled. A later call with the same secret is allowed.
+   * is not returned and is not pooled. Cancellation settles that waiter itself;
+   * it does not wait for a later ready or error event. A later call with the same secret is allowed.
    */
   async getConnection(
     host: string,
@@ -289,6 +292,7 @@ class SshSessionPool {
       if (!this._inflightMatches(acquisition, scope)) continue;
       acquisition.cancelled = true;
       this._endClient(acquisition.client);
+      this._failAcquisition(acquisition, new Error('SSH_SESSION_REVOKED'));
       cancelled += 1;
     }
     const matched = this.sessions.filter((session) => this._identityMatches(session.identity, scope));
@@ -470,6 +474,13 @@ class SshSessionPool {
     throw new Error('SSH_SESSION_REVOKED');
   }
 
+  /** Settle a connect waiter once. Later ready, error, or close events do not settle it again. */
+  private _failAcquisition(acquisition: InflightAcquisition, error: Error): void {
+    const fail = acquisition.fail;
+    acquisition.fail = undefined;
+    fail?.(error);
+  }
+
   /**
    * The completing request is older than a pooled session for the same account
    * with a different identity. Close it and leave the newer session in place.
@@ -544,10 +555,13 @@ class SshSessionPool {
         connectConfig.privateKey = credentialValue;
       }
 
+      const fail = (error: Error) => finish(() => reject(error));
+      acquisition.fail = fail;
+
       client.on('ready', () => {
         if (acquisition.cancelled) {
           this._endClient(client);
-          finish(() => reject(new Error('SSH_SESSION_REVOKED')));
+          fail(new Error('SSH_SESSION_REVOKED'));
           return;
         }
         finish(() => resolve(client));
@@ -555,14 +569,18 @@ class SshSessionPool {
 
       client.on('error', (err: Error) => {
         if (acquisition.cancelled) {
-          finish(() => reject(new Error('SSH_SESSION_REVOKED')));
+          fail(new Error('SSH_SESSION_REVOKED'));
           return;
         }
         finish(() => reject(err));
       });
 
       client.on('close', () => {
-        // Connection closed — remove from pool if tracked
+        // A revoked handshake may emit only close. That has to settle the waiter;
+        // an ordinary disconnect still waits for ssh2's error event.
+        if (acquisition.cancelled) {
+          fail(new Error('SSH_SESSION_REVOKED'));
+        }
         const session = this.sessions.find((s) => s.client === client);
         if (session) {
           this._remove(session);

@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
   clients: [] as any[],
   holdReady: false,
   held: [] as Array<{ fire: () => void }>,
+  endMode: 'silent' as 'silent' | 'close' | 'close-and-error',
 }));
 
 vi.mock('./security/server-target-policy', () => ({
@@ -16,7 +17,13 @@ vi.mock('./security/server-target-policy', () => ({
 vi.mock('ssh2', () => ({
   Client: class {
     private handlers: Record<string, (...args: any[]) => void> = {};
-    end = vi.fn();
+    end = vi.fn(() => {
+      if (mocks.endMode === 'silent') return;
+      this.handlers.close?.();
+      if (mocks.endMode === 'close-and-error') {
+        this.handlers.error?.(new Error('SSH_SOCKET_CLOSED'));
+      }
+    });
     on(event: string, handler: (...args: any[]) => void) {
       this.handlers[event] = handler;
       return this;
@@ -49,6 +56,7 @@ describe('SSH session pool target and identity controls', () => {
     mocks.clients.length = 0;
     mocks.held.length = 0;
     mocks.holdReady = false;
+    mocks.endMode = 'silent';
     mocks.authorizeTarget.mockReset().mockResolvedValue({
       hostname: 'ssh.internal.example',
       address: '10.20.30.40',
@@ -310,5 +318,89 @@ describe('SSH session pool target and identity controls', () => {
     expect(laterOld).not.toBe(newer);
     expect((newer as any).end).toHaveBeenCalledOnce();
     expect(sshSessionPool.getPoolStats()).toMatchObject({ total: 1, active: 1 });
+  });
+
+  it('settles a revoked handshake when the socket closes without ready or error', async () => {
+    const secret = 'close-only-secret';
+    mocks.holdReady = true;
+    mocks.endMode = 'close';
+    const revoked = sshSessionPool.getConnection(
+      'ssh.internal.example', 22, 'operator', 'password', secret, null,
+    );
+    const otherAccount = sshSessionPool.getConnection(
+      'ssh.internal.example', 22, 'root', 'password', 'kept-secret', null,
+    );
+    await Promise.resolve();
+    expect(mocks.connectConfigs).toHaveLength(2);
+
+    expect(sshSessionPool.revokeSessions({
+      host: 'ssh.internal.example',
+      port: 22,
+      username: 'operator',
+      credentialType: 'password',
+      credentialValue: secret,
+    })).toBe(1);
+    await expect(revoked).rejects.toThrow('SSH_SESSION_REVOKED');
+    await expect(revoked).rejects.not.toThrow(secret);
+    expect((sshSessionPool as any).inflight).toHaveLength(1);
+    expect((mocks.clients[0] as any).end).toHaveBeenCalledOnce();
+    expect(sshSessionPool.getPoolStats()).toMatchObject({ total: 0 });
+
+    mocks.held[1].fire();
+    const kept = await otherAccount;
+    expect((kept as any).end).not.toHaveBeenCalled();
+    expect(sshSessionPool.getPoolStats()).toMatchObject({ total: 1, active: 1 });
+    expect((sshSessionPool as any).inflight).toHaveLength(0);
+  });
+
+  it('settles a revoked handshake when the transport emits no further event', async () => {
+    mocks.holdReady = true;
+    mocks.endMode = 'silent';
+    const revoked = sshSessionPool.getConnection(
+      'ssh.internal.example', 22, 'operator', 'password', 'silent-secret', null,
+    );
+    await Promise.resolve();
+    expect(mocks.held).toHaveLength(1);
+
+    expect(sshSessionPool.revokeSessions({
+      host: 'ssh.internal.example',
+      port: 22,
+      username: 'operator',
+    })).toBe(1);
+    await expect(revoked).rejects.toThrow('SSH_SESSION_REVOKED');
+    expect((sshSessionPool as any).inflight).toHaveLength(0);
+    expect(sshSessionPool.getPoolStats()).toMatchObject({ total: 0 });
+
+    mocks.held[0].fire();
+    expect(sshSessionPool.getPoolStats()).toMatchObject({ total: 0 });
+    expect((sshSessionPool as any).inflight).toHaveLength(0);
+  });
+
+  it('settles a revoked handshake once when close, error, and ready all arrive', async () => {
+    mocks.holdReady = true;
+    mocks.endMode = 'close-and-error';
+    const secret = 'duplicate-event-secret';
+    let settlements = 0;
+    const revoked = sshSessionPool.getConnection(
+      'ssh.internal.example', 22, 'operator', 'password', secret, null,
+    ).then(
+      () => { settlements += 1; return 'resolved'; },
+      (error: Error) => { settlements += 1; return error.message; },
+    );
+    await Promise.resolve();
+
+    expect(sshSessionPool.revokeSessions({
+      host: 'ssh.internal.example',
+      port: 22,
+      username: 'operator',
+      credentialType: 'password',
+      credentialValue: secret,
+    })).toBe(1);
+    mocks.held[0].fire();
+    (mocks.clients[0] as any).end();
+    await expect(revoked).resolves.toBe('SSH_SESSION_REVOKED');
+    expect(settlements).toBe(1);
+    expect(sshSessionPool.getPoolStats()).toMatchObject({ total: 0 });
+    expect((sshSessionPool as any).inflight).toHaveLength(0);
   });
 });
