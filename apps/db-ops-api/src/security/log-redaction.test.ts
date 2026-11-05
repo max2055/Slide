@@ -2,6 +2,76 @@ import { describe, expect, it, vi } from 'vitest';
 import { installConsoleRedaction, redactLogValue, redactSensitiveText } from './log-redaction.js';
 import { boundedToolValue, buildToolPreview } from '@slide/agent-core/tool-stream';
 
+describe('shared references and cycles (MAX-324 / #584)', () => {
+  const sharedValue = () => ({
+    host: 'db.invalid',
+    API_KEY: 'synthetic-key',
+    detail: 'token=synthetic spaced value',
+    json: '{"password":["synthetic-json"],"status":"ok"}',
+  });
+  const redactedValue = {
+    host: 'db.invalid',
+    API_KEY: '[REDACTED]',
+    detail: 'token=[REDACTED]',
+    json: '{"password":"[REDACTED]","status":"ok"}',
+  };
+
+  it('preserves shared objects in sibling fields, nested fields and arrays without mutating input', () => {
+    const shared = Object.freeze(sharedValue());
+    const input = { left: shared, right: shared, nested: { value: shared }, items: [shared, shared] };
+    expect(redactLogValue(input)).toEqual({
+      left: redactedValue, right: redactedValue, nested: { value: redactedValue }, items: [redactedValue, redactedValue],
+    });
+    expect(shared).toEqual(sharedValue());
+    expect(input.left).toBe(input.right);
+  });
+
+  it('preserves a shared array on every acyclic path', () => {
+    const shared = Object.freeze([sharedValue(), 'status=ok']);
+    expect(redactLogValue({ left: shared, right: shared, items: [shared, shared] })).toEqual({
+      left: [redactedValue, 'status=ok'], right: [redactedValue, 'status=ok'],
+      items: [[redactedValue, 'status=ok'], [redactedValue, 'status=ok']],
+    });
+  });
+
+  it('marks self and mutual object cycles while preserving repeated cyclic branches', () => {
+    const self: Record<string, unknown> = { status: 'ok' };
+    self.self = self;
+    expect(redactLogValue(self)).toEqual({ status: 'ok', self: '[CIRCULAR]' });
+    const left: Record<string, unknown> = { password: 'synthetic' };
+    const right = { left, status: 'ok' };
+    left.right = right;
+    const expected = { password: '[REDACTED]', right: { left: '[CIRCULAR]', status: 'ok' } };
+    expect(redactLogValue({ first: left, second: left })).toEqual({ first: expected, second: expected });
+  });
+
+  it('terminates array self-cycles and mixed object/array cycles', () => {
+    const array: unknown[] = [];
+    array.push(array);
+    expect(redactLogValue(array)).toEqual(['[CIRCULAR]']);
+    const root = { items: [] as unknown[], private_key: 'synthetic' };
+    root.items.push(root, root.items);
+    expect(redactLogValue(root)).toEqual({ items: ['[CIRCULAR]', '[CIRCULAR]'], private_key: '[REDACTED]' });
+  });
+
+  it.each(['error', 'warn'] as const)('preserves shared content and redacts each argument at console.%s', (level) => {
+    const target = { error: vi.fn(), warn: vi.fn() };
+    const sink = target[level];
+    installConsoleRedaction(target);
+    const shared = sharedValue();
+    const cycle: Record<string, unknown> = { status: 'ok' };
+    cycle.self = cycle;
+    const input = { left: shared, right: shared, items: [shared, shared], cycle };
+    target[level](input, input, new Error('password=synthetic error value'));
+    const expected = {
+      left: redactedValue, right: redactedValue, items: [redactedValue, redactedValue],
+      cycle: { status: 'ok', self: '[CIRCULAR]' },
+    };
+    expect(sink).toHaveBeenCalledExactlyOnceWith(expected, expected, { name: 'Error', message: 'password=[REDACTED]' });
+    expect(JSON.stringify(sink.mock.calls)).not.toContain('synthetic');
+  });
+});
+
 describe('JSON string redaction (MAX-321 / #693)', () => {
   it.each([739182641, -73.918, true, false, null, ['SYNTHETIC_7f3a'], { value: 'SYNTHETIC_7f3a' }, [{ value: ['quote"tail', 'brace} ]tail'] }], [], {}])('redacts non-string sensitive values at all five boundaries after Chief review: %j', (secret) => {
     const input = JSON.stringify({ token: secret, status: 'ok', ordinary: [1, { value: 'visible' }] });
