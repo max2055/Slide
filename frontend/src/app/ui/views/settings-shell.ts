@@ -13,35 +13,31 @@ import {
   type SettingsPageId,
 } from "../settings-navigation.ts";
 import "../components/app-empty-state.js";
+import { loadPermissions, type PermissionsState } from "../permissions.ts";
 import "./source-settings.js";
 import "./metric-settings.js";
 import "./investigation-profiles.ts";
 import "./investigation-governance.ts";
 
-function readPermissions(): Set<string> | null {
-  try {
-    const raw = localStorage.getItem("permissions");
-    if (!raw) return null;
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? new Set(parsed) : null;
-  } catch {
-    return null;
-  }
-}
-
 @customElement("settings-shell")
 export class SettingsShell extends LitElement {
   @state() private activePage: SettingsPageId = "branding";
   @state() private activeView = "";
-  @state() private permissions: Set<string> | null = readPermissions();
+  @state() private permissions: Set<string> | null = null;
   @state() private accessDenied = false;
+
+  private permissionState: PermissionsState = {};
+  private readonly sessionExpiredHandler = () => {
+    this.permissions = null;
+    this.syncFromLocation();
+  };
 
   private readonly popStateHandler = () => this.syncFromLocation();
   private readonly permissionsHandler = (event: Event) => {
     const detail = (event as CustomEvent<{ permissions?: string[] }>).detail;
-    this.permissions = Array.isArray(detail?.permissions)
+    this.permissions = Array.isArray(detail?.permissions) && detail.permissions.every(entry => typeof entry === "string")
       ? new Set(detail.permissions)
-      : readPermissions();
+      : null;
     this.syncFromLocation();
   };
 
@@ -49,10 +45,15 @@ export class SettingsShell extends LitElement {
     super.connectedCallback();
     window.addEventListener("popstate", this.popStateHandler);
     window.addEventListener("slide-permissions-loaded", this.permissionsHandler);
+    window.addEventListener("slide-session-expired", this.sessionExpiredHandler);
+    this.permissions = null;
+    this.permissionState = {};
     this.syncFromLocation();
+    void loadPermissions(this.permissionState).finally(() => this.requestUpdate());
   }
 
   override disconnectedCallback() {
+    window.removeEventListener("slide-session-expired", this.sessionExpiredHandler);
     window.removeEventListener("popstate", this.popStateHandler);
     window.removeEventListener("slide-permissions-loaded", this.permissionsHandler);
     super.disconnectedCallback();
@@ -312,7 +313,7 @@ export class SettingsShell extends LitElement {
       this.activeView = "";
     }
     this.activePage = item.id;
-    this.accessDenied = false;
+    this.accessDenied = !canAccessSettingsItem(item, this.permissions);
     window.history[replace ? "replaceState" : "pushState"]({}, "", url);
   }
 
@@ -398,7 +399,9 @@ export class SettingsShell extends LitElement {
         ${this.renderMobileNavigation()}
       </nav>
       <main class="settings-main ${this.activePage === "models" ? "settings-main--models" : ""}">
-        ${this.accessDenied
+        ${this.accessDenied && this.permissions === null
+          ? html`<app-empty-state icon="lock" title=${this.permissionState.permissionsLoading ? "权限加载中" : "权限不可用"} description="正在确认当前账号权限；权限加载失败时请重试加载权限。"></app-empty-state>`
+          : this.accessDenied
           ? html`<app-empty-state icon="lock" title="无权访问" description="当前账号无权访问此设置页面。"></app-empty-state>`
           : html`${this.renderContentTabs(item)}${this.renderPage()}`}
       </main>

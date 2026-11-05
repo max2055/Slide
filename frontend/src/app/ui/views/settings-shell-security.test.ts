@@ -1,8 +1,11 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import './settings-shell.js';
+import { apiClient } from '../../../api/index.ts';
+import { permissionMatches } from '../settings-navigation.ts';
 
 describe('settings navigation and routing', () => {
   afterEach(() => {
+    vi.restoreAllMocks();
     localStorage.clear();
     document.body.replaceChildren();
     window.history.replaceState({}, '', '/');
@@ -12,10 +15,71 @@ describe('settings navigation and routing', () => {
     window.history.replaceState({}, '', path);
     localStorage.setItem('permissions', JSON.stringify(permissions));
     const element = document.createElement('settings-shell') as HTMLElement & { updateComplete: Promise<unknown> };
+    vi.spyOn(apiClient, 'getToken').mockReturnValue('test-token');
+    vi.spyOn(apiClient, 'fetchResponseWithAuth').mockResolvedValue(new Response(JSON.stringify(permissions)));
     document.body.append(element);
+    await new Promise(resolve => setTimeout(resolve, 0));
     await element.updateComplete;
     return element;
   }
+
+  it('denies unknown permissions but preserves public and wildcard access', () => {
+    expect(permissionMatches(null, 'admin:*')).toBe(false);
+    expect(permissionMatches(null)).toBe(true);
+    expect(permissionMatches(new Set(['*']), 'admin:*')).toBe(true);
+    expect(permissionMatches(new Set(['ai:*']), 'ai:view')).toBe(true);
+  });
+
+  it.each([null, '{', '{}', '[1]', '["*"]'])('does not mount restricted views from cache %s before a real response', async cache => {
+    window.history.replaceState({}, '', '/settings/access/users?view=accounts');
+    if (cache !== null) localStorage.setItem('permissions', cache);
+    vi.spyOn(apiClient, 'getToken').mockReturnValue('test-token');
+    let resolve!: (response: Response) => void;
+    vi.spyOn(apiClient, 'fetchResponseWithAuth').mockReturnValue(new Promise(done => { resolve = done; }));
+    const element = document.createElement('settings-shell') as HTMLElement & { updateComplete: Promise<unknown> };
+    document.body.append(element);
+    await element.updateComplete;
+    expect(element.shadowRoot!.querySelector('users-management')).toBeNull();
+    expect(element.shadowRoot!.querySelector('app-empty-state')?.getAttribute('title')).toBe('权限加载中');
+    resolve(new Response(JSON.stringify(['admin:*'])));
+    await new Promise(done => setTimeout(done, 0));
+    await element.updateComplete;
+    expect(element.shadowRoot!.querySelector('users-management')).not.toBeNull();
+    window.dispatchEvent(new CustomEvent('slide-permissions-loaded', { detail: { permissions: [] } }));
+    await element.updateComplete;
+    expect(element.shadowRoot!.querySelector('users-management')).toBeNull();
+    expect(element.shadowRoot!.querySelector('rbac-admin-page')).toBeNull();
+  });
+
+  it('keeps failed permission loads closed despite a cached admin grant', async () => {
+    window.history.replaceState({}, '', '/settings/access/users');
+    localStorage.setItem('permissions', '["*"]');
+    vi.spyOn(apiClient, 'getToken').mockReturnValue('test-token');
+    vi.spyOn(apiClient, 'fetchResponseWithAuth').mockRejectedValue(new Error('offline'));
+    const element = document.createElement('settings-shell') as HTMLElement & { updateComplete: Promise<unknown> };
+    document.body.append(element);
+    await new Promise(done => setTimeout(done, 0));
+    await element.updateComplete;
+    expect(element.shadowRoot!.querySelector('users-management')).toBeNull();
+    expect(element.shadowRoot!.querySelector('app-empty-state')?.getAttribute('title')).toBe('权限不可用');
+  });
+
+  it('removes revoked tabs and clears pages on malformed updates and session expiry', async () => {
+    const element = await renderAt('/settings/ai/security?view=sandbox', ['audit:view', 'ai:view']);
+    expect(element.shadowRoot!.querySelector('agent-sandbox-status-page')).not.toBeNull();
+    window.dispatchEvent(new CustomEvent('slide-permissions-loaded', { detail: { permissions: ['ai:view'] } }));
+    await element.updateComplete;
+    expect(element.shadowRoot!.querySelector('agent-sandbox-status-page')).toBeNull();
+    expect(element.shadowRoot!.querySelector('agent-security-policy-page')).not.toBeNull();
+    window.dispatchEvent(new CustomEvent('slide-permissions-loaded', { detail: { permissions: ['*', 1] } }));
+    await element.updateComplete;
+    expect(element.shadowRoot!.querySelector('agent-security-policy-page')).toBeNull();
+    window.dispatchEvent(new CustomEvent('slide-permissions-loaded', { detail: { permissions: ['ai:view'] } }));
+    await element.updateComplete;
+    window.dispatchEvent(new Event('slide-session-expired'));
+    await element.updateComplete;
+    expect(element.shadowRoot!.querySelector('agent-security-policy-page')).toBeNull();
+  });
 
   it('shows four non-clickable groups and redirects the settings root to the first accessible page', async () => {
     const element = await renderAt('/settings?source=menu', ['*']);

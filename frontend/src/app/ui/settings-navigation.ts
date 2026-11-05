@@ -170,7 +170,7 @@ export function settingsItemById(id: SettingsPageId): SettingsItem | undefined {
 
 export function permissionMatches(permissions: Set<string> | null, required?: string): boolean {
   if (!required) return true;
-  if (!permissions) return true;
+  if (!permissions) return false;
   if (permissions.has("*") || permissions.has(required)) return true;
   const separator = required.indexOf(":");
   return separator > 0 && permissions.has(`${required.slice(0, separator)}:*`);
