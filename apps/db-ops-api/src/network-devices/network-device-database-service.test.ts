@@ -77,7 +77,7 @@ describe('NetworkDeviceDatabaseService', () => {
     })).resolves.toEqual({ success: true, deviceId: 7 });
 
     const sshInsert = execute.mock.calls.find(([sql]) => String(sql).includes("VALUES (?, 'ssh'"));
-    expect(sshInsert?.[1]).toEqual([7, 'password', 'ops', expect.any(String), null]);
+    expect(sshInsert?.[1]).toEqual([7, 'password', 'ops', expect.any(String), null, null]);
   });
 
   it('allows inventory enrollment before SNMP credentials are available', async () => {

@@ -23,17 +23,18 @@ import { assertAssetCollectionEnabled } from './effective-state.js';
 
 type ServerCredentialSnapshot = {
   host: string; port: number; username: string; credentialType: string;
+  sshTrustMode?: string | null;
   hostKeyFingerprint: string | null; credentialValue: string;
   secret: { username: string; password?: string; privateKey?: string };
 };
 
 function serverIdentityPayload(snapshot: ServerCredentialSnapshot): unknown[] {
-  return [snapshot.host, snapshot.port, snapshot.credentialType, snapshot.hostKeyFingerprint, snapshot.secret];
+  return [snapshot.host, snapshot.port, snapshot.credentialType, snapshot.hostKeyFingerprint, snapshot.sshTrustMode, snapshot.secret];
 }
 
 function sameServerSnapshot(left: ServerCredentialSnapshot, right: ServerCredentialSnapshot): boolean {
   return left.host === right.host && left.port === right.port && left.username === right.username
-    && left.credentialType === right.credentialType && left.hostKeyFingerprint === right.hostKeyFingerprint
+    && left.sshTrustMode === right.sshTrustMode && left.credentialType === right.credentialType && left.hostKeyFingerprint === right.hostKeyFingerprint
     && left.credentialValue === right.credentialValue && JSON.stringify(left.secret) === JSON.stringify(right.secret);
 }
 
@@ -43,7 +44,7 @@ async function readServerSnapshot(id: number): Promise<ServerCredentialSnapshot>
   const fetched = await serverDatabaseService.getDecryptedCredentials(id);
   const confirmed = asset && fetched ? await serverDatabaseService.getServerById(id) : null;
   if (!asset || !fetched || !confirmed || asset.host !== confirmed.host || asset.port !== confirmed.port
-    || asset.credential_type !== confirmed.credential_type || asset.host_key_fingerprint !== confirmed.host_key_fingerprint) {
+    || asset.ssh_trust_mode !== confirmed.ssh_trust_mode || asset.credential_type !== confirmed.credential_type || asset.host_key_fingerprint !== confirmed.host_key_fingerprint) {
     throw new AdapterError('permission_denied');
   }
   let secret = fetched;
@@ -60,7 +61,7 @@ async function readServerSnapshot(id: number): Promise<ServerCredentialSnapshot>
   if (!secret.username || !credentialValue) throw new AdapterError('permission_denied');
   return {
     host: confirmed.host, port: confirmed.port, username: secret.username, credentialType: confirmed.credential_type,
-    hostKeyFingerprint: confirmed.host_key_fingerprint ?? null, credentialValue, secret,
+    sshTrustMode: confirmed.ssh_trust_mode, hostKeyFingerprint: confirmed.host_key_fingerprint ?? null, credentialValue, secret,
   };
 }
 
@@ -150,7 +151,7 @@ export function createAssetCollectorAccess(preserveDiscovery = false): Collector
               throw new AdapterError('permission_denied');
             }
             const client = await sshSessionPool.getConnection(approved.host, approved.port, approved.username,
-              approved.credentialType, approved.credentialValue, approved.hostKeyFingerprint);
+              approved.credentialType, approved.credentialValue, approved.hostKeyFingerprint, approved.sshTrustMode);
             let onClose!: () => void;
             const closed = new Promise<void>(resolve => { onClose = resolve; client.once('close', onClose); });
             try { return await sshSessionPool.execCommands(client, commands, options); }

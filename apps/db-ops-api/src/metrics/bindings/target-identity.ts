@@ -50,14 +50,14 @@ async function targetFields(
   }
   if (ref.type === 'server') {
     const [rows] = await executor.execute(
-      `SELECT host, port, credential_type, host_key_fingerprint, credential_encrypted
+      `SELECT host, port, credential_type, ssh_trust_mode, host_key_fingerprint, credential_encrypted
          FROM servers WHERE id = ?`, [ref.id],
     ) as unknown as [Array<Record<string, unknown>>, unknown];
     const row = rows?.[0];
     if (!row) return null;
     return {
       host: text(row.host), port: text(row.port), credential_type: text(row.credential_type),
-      host_key_fingerprint: text(row.host_key_fingerprint), credential: text(row.credential_encrypted),
+      ...(row.credential_type === 'key' && row.ssh_trust_mode != null ? { ssh_trust_mode: text(row.ssh_trust_mode) } : {}), host_key_fingerprint: text(row.host_key_fingerprint), credential: text(row.credential_encrypted),
     };
   }
   const [devices] = await executor.execute(
@@ -66,7 +66,7 @@ async function targetFields(
   const device = devices?.[0];
   if (!device) return null;
   const [credentials] = await executor.execute(
-    `SELECT protocol, username, auth_protocol, privacy_protocol, credential_type, host_key_fingerprint,
+    `SELECT protocol, username, auth_protocol, privacy_protocol, credential_type, ssh_trust_mode, host_key_fingerprint,
             auth_secret_encrypted, privacy_secret_encrypted, credential_encrypted
        FROM network_device_credentials WHERE device_id = ? ORDER BY protocol`, [ref.id],
   ) as unknown as [Array<Record<string, unknown>>, unknown];
@@ -75,7 +75,7 @@ async function targetFields(
     credentials: (credentials ?? []).map(row => ({
       protocol: text(row.protocol), username: text(row.username), auth_protocol: text(row.auth_protocol),
       privacy_protocol: text(row.privacy_protocol), credential_type: text(row.credential_type),
-      host_key_fingerprint: text(row.host_key_fingerprint), auth_secret: text(row.auth_secret_encrypted),
+      ...(row.credential_type === 'key' && row.ssh_trust_mode != null ? { ssh_trust_mode: text(row.ssh_trust_mode) } : {}), host_key_fingerprint: text(row.host_key_fingerprint), auth_secret: text(row.auth_secret_encrypted),
       privacy_secret: text(row.privacy_secret_encrypted), credential: text(row.credential_encrypted),
     })),
   };

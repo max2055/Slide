@@ -86,6 +86,7 @@ interface SshPoolDependency {
     credentialType: string,
     credentialValue: string,
     hostKeyFingerprint?: string | null,
+    sshTrustMode?: string | null,
   ): Promise<Client>;
   execCommands(client: Client, commands: string[], options?: ExecCommandOptions): Promise<ExecCommandResult[]>;
   releaseConnection(client: Client): void;
@@ -482,7 +483,7 @@ export class LinuxHostEvidenceService {
       credentials.username,
       server.credential_type,
       credentialValue,
-      server.host_key_fingerprint,
+      server.host_key_fingerprint, server.ssh_trust_mode,
     );
     let connectionFatal = false;
     try {

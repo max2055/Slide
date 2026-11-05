@@ -11,11 +11,12 @@
 import { createHash, timingSafeEqual } from 'node:crypto';
 import { Client, ClientChannel, ConnectConfig } from 'ssh2';
 import { authorizeServerTarget } from './security/server-target-policy.js';
-import { createOptionalSshHostVerifier, normalizeOptionalSshHostKeyFingerprint } from './security/ssh-host-key.js';
+import { createCredentialSshHostVerifier, normalizeOptionalSshHostKeyFingerprint } from './security/ssh-host-key.js';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
 interface SshIdentity {
+  sshTrustMode?: string | null;
   host: string;
   port: number;
   username: string;
@@ -156,8 +157,10 @@ class SshSessionPool {
     username: string,
     credentialType: string,
     credentialValue: string,
-    hostKeyFingerprint?: string | null
+    hostKeyFingerprint?: string | null,
+    sshTrustMode?: string | null
   ): Promise<Client> {
+    const verifier = createCredentialSshHostVerifier(credentialType, hostKeyFingerprint, sshTrustMode);
     const acquisition = this._trackInflight(
       host,
       port,
@@ -177,6 +180,7 @@ class SshSessionPool {
         credentialValue,
         hostKeyFingerprint,
       );
+      identity.sshTrustMode = credentialType === 'key' ? sshTrustMode : undefined;
       acquisition.host = identity.host;
       acquisition.port = identity.port;
       acquisition.username = identity.username;
@@ -224,6 +228,7 @@ class SshSessionPool {
         credentialValue,
         identity.hostKeyFingerprint,
         acquisition,
+        verifier,
       );
       this._rejectIfRevoked(acquisition, client);
       // A newer, different identity that already authenticated wins. This older
@@ -367,6 +372,7 @@ class SshSessionPool {
     return session.identity.host === identity.host
       && session.identity.port === identity.port
       && session.identity.username === identity.username
+      && session.identity.sshTrustMode === identity.sshTrustMode
       && session.identity.credentialType === identity.credentialType
       && session.identity.hostKeyFingerprint === identity.hostKeyFingerprint
       && sameFingerprint(session.identity.credentialFingerprint, identity.credentialFingerprint);
@@ -537,6 +543,7 @@ class SshSessionPool {
     credentialValue: string,
     hostKeyFingerprint: string | undefined,
     acquisition: InflightAcquisition,
+    hostVerifier: ReturnType<typeof createCredentialSshHostVerifier>,
   ): Promise<Client> {
     return new Promise((resolve, reject) => {
       const client = new Client();
@@ -548,7 +555,6 @@ class SshSessionPool {
         action();
       };
 
-      const hostVerifier = createOptionalSshHostVerifier(hostKeyFingerprint);
       const connectConfig: ConnectConfig = {
         host: address,
         port,

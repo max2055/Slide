@@ -485,12 +485,12 @@ function buildLegacyClientTypes(): string {
 
 const NETWORK_CLIENT_TYPES = `export type NetworkDeviceStatus = 'unknown' | 'online' | 'offline' | 'error' | 'unreachable';
 export type NetworkDeviceVendor = 'huawei' | 'cisco';
-export interface NetworkDevice { id: number; name: string; label: string | null; host: string; site: string | null; vendor: NetworkDeviceVendor; model: string | null; os_version: string | null; serial_number: string | null; snmp_port: number; ssh_port: number; status: NetworkDeviceStatus; last_check_at: string | null; collection_enabled: boolean; created_at: string; updated_at: string; hasSnmpCredential: boolean; hasSshCredential: boolean; }
+export interface NetworkDevice { id: number; name: string; label: string | null; host: string; site: string | null; vendor: NetworkDeviceVendor; model: string | null; os_version: string | null; serial_number: string | null; snmp_port: number; ssh_port: number; status: NetworkDeviceStatus; last_check_at: string | null; collection_enabled: boolean; created_at: string; updated_at: string; hasSnmpCredential: boolean; hasSshCredential: boolean; sshCredentialType?: string | null; sshTrustMode?: string | null; hostKeyFingerprint?: string | null; }
 export type NetworkDevicesResponse = NetworkDevice[];
 export type NetworkDeviceSnmpSecurityLevel = 'noAuthNoPriv' | 'authNoPriv' | 'authPriv';
 export interface NetworkDeviceSnmpCredential { username: string; securityLevel: NetworkDeviceSnmpSecurityLevel; authProtocol?: 'MD5' | 'SHA'; authSecret?: string; privacyProtocol?: 'DES' | 'AES'; privacySecret?: string; }
 export interface NetworkDeviceSnmpV2Credential { version?: 2; community: string; }
-export interface NetworkDeviceSshCredential { credentialType: 'password' | 'key'; username: string; credentialValue: string; hostKeyFingerprint?: string; }
+export interface NetworkDeviceSshCredential { credentialType: 'password' | 'key'; username: string; credentialValue: string; sshTrustMode?: 'pinned' | 'insecure' | 'pending'; hostKeyFingerprint?: string; }
 export interface NetworkDeviceTestConnectionRequest { host: string; mode?: 'snmp' | 'ssh'; version?: 2 | 3; snmpPort?: number; snmp_port?: number; sshPort?: number; ssh_port?: number; snmpv3?: NetworkDeviceSnmpCredential; snmpv2c?: NetworkDeviceSnmpV2Credential; snmpv2?: NetworkDeviceSnmpV2Credential; snmp?: NetworkDeviceSnmpCredential | NetworkDeviceSnmpV2Credential; ssh?: NetworkDeviceSshCredential; vendor?: NetworkDeviceVendor; }
 export interface NetworkDeviceProbeResult { reachable: boolean; quality: string; reason?: string | null; observedAt: string; sysName?: string | null; uptimeSeconds?: number; }
 export interface NetworkDeviceTestConnectionResponse { success: boolean; probe?: NetworkDeviceProbeResult; ssh?: { verified: boolean }; error?: string; }
