@@ -7,18 +7,18 @@ const JSON_SENSITIVE_KEY = /password|passwd|pwd|secret|token|api[_-]?key|authori
 // assignment. Authorization and Cookie headers consume the rest of the line because their
 // authentication parameters and cookies can contain commas and semicolons.
 const SPACED_VALUE = `[^\\s,;\\r\\n]+(?:[^\\S\\r\\n]+(?!(?:${ASSIGNMENT_KEY})[^\\S\\r\\n]*[=:])[^\\s,;\\r\\n]+)*`;
-const SENSITIVE_TEXT = [
-  /\bBearer\s+[A-Za-z0-9._~+/=-]+/gi,
-  /\bsk-[A-Za-z0-9_-]{8,}/g,
-  /(\bauthorization[ \t]*:[ \t]*)[^\r\n]+/gi,
-  /(\b(?:set-)?cookie\s*:\s*)[^\r\n]+/gi,
-  new RegExp(`(\\b(?:cookie|authorization)[^\\S\\r\\n]*=[^\\S\\r\\n]*)${SPACED_VALUE}`, 'gi'),
-  new RegExp(`((?:password|passwd|secret|token|api[_-]?key)[^\\S\\r\\n]*[=:][^\\S\\r\\n]*)${SPACED_VALUE}`, 'gi'),
-  /(\/open-apis\/bot\/v2\/hook\/)[^\s/?#]+/gi,
+const SENSITIVE_TEXT: [RegExp, string][] = [
+  [/\bBearer\s+[A-Za-z0-9._~+/=-]+/gi, '[REDACTED]'],
+  [/\bsk-[A-Za-z0-9_-]{8,}/g, '[REDACTED]'],
+  [/(\bauthorization[ \t]*:[ \t]*)[^\r\n]+/gi, '$1[REDACTED]'],
+  [/(\b(?:set-)?cookie\s*:\s*)[^\r\n]+/gi, '$1[REDACTED]'],
+  [new RegExp(`(\\b(?:cookie|authorization)[^\\S\\r\\n]*=[^\\S\\r\\n]*)${SPACED_VALUE}`, 'gi'), '$1[REDACTED]'],
+  [new RegExp(`((?:password|passwd|secret|token|api[_-]?key)[^\\S\\r\\n]*[=:][^\\S\\r\\n]*)${SPACED_VALUE}`, 'gi'), '$1[REDACTED]'],
+  [/(\/open-apis\/bot\/v2\/hook\/)[^\s/?#]+/gi, '$1[REDACTED]'],
 ];
 
 export function redactSensitiveText(value: string): string {
-  return SENSITIVE_TEXT.reduce((text, pattern) => text.replace(pattern, '$1[REDACTED]'), redactJsonSensitiveValues(value, JSON_SENSITIVE_KEY));
+  return SENSITIVE_TEXT.reduce((text, [pattern, replacement]) => text.replace(pattern, replacement), redactJsonSensitiveValues(value, JSON_SENSITIVE_KEY));
 }
 
 export function redactLogValue(value: unknown, seen = new WeakSet<object>()): unknown {
