@@ -87,8 +87,11 @@ export function normalizeToolEvent(value: unknown): NormalizedToolEvent | null {
 }
 
 const sensitiveKey = /password|passwd|pwd|secret|token|api[_-]?key|authorization|cookie|credential|connection[_-]?string|private[_-]?key/i;
+// Consume JSON escapes as pairs so an escaped quote cannot expose the value's tail.
+const quotedSecret = new RegExp(String.raw`("[^"\\]*(?:${sensitiveKey.source})[^"\\]*"\s*:\s*)"(?:\\[\s\S]|[^"\\])*"`, 'gi');
 function redactText(text: string): string {
-  return text.replace(/\bBearer\s+[A-Za-z0-9._~+/=-]+/gi, '[REDACTED]')
+  return text.replace(quotedSecret, '$1"[REDACTED]"')
+    .replace(/\bBearer\s+[A-Za-z0-9._~+/=-]+/gi, '[REDACTED]')
     .replace(/\bsk-[A-Za-z0-9_-]{8,}/g, '[REDACTED]')
     .replace(/((?:password|passwd|secret|token|api[_-]?key|authorization)\s*[=:]\s*)[^\s,;]+/gi, '$1[REDACTED]');
 }
