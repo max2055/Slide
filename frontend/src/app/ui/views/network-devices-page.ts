@@ -465,7 +465,7 @@ export class NetworkDevicesPage extends LitElement {
             <span>监控可选；加密配置备份需要填写</span>
           </div>
           ${this.form.sshCredentialType === "key" ? html`
-            <app-form-field label="SSH 主机身份策略"><select aria-label="SSH 主机身份策略" .value=${this.form.sshTrustMode || "pending"} @change=${(e: Event) => this.updateForm("sshTrustMode", (e.target as HTMLSelectElement).value)}>
+            <app-form-field label="SSH 主机身份策略"><select class="field" aria-label="SSH 主机身份策略" .value=${this.form.sshTrustMode || "pending"} @change=${(e: Event) => this.updateForm("sshTrustMode", (e.target as HTMLSelectElement).value)}>
               <option value="pending" disabled>待确认（暂停 SSH）</option><option value="pinned">固定指纹</option><option value="insecure">不验证（风险兼容）</option>
             </select></app-form-field>
             <app-form-field label="SSH 主机密钥指纹"><input class="field" aria-label="SSH 主机密钥指纹" .value=${this.form.hostKeyFingerprint || ""} @input=${(e: Event) => this.updateForm("hostKeyFingerprint", (e.target as HTMLInputElement).value)} placeholder="SHA256:…"></app-form-field>

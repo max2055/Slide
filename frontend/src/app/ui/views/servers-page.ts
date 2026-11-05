@@ -752,7 +752,7 @@ export class ServersPage extends LitElement {
 
           ${this._form.credential_type === "key" ? html`
             <app-form-field label="SSH 主机身份策略" .inline=${true}>
-              <select aria-label="SSH 主机身份策略" .value=${this._form.ssh_trust_mode || "pending"}
+              <select class="form-select" aria-label="SSH 主机身份策略" .value=${this._form.ssh_trust_mode || "pending"}
                 @change=${(e: any) => this._updateForm("ssh_trust_mode", e.target.value)}>
                 <option value="pending" disabled>待确认（暂停 SSH）</option><option value="pinned">固定指纹</option><option value="insecure">不验证（风险兼容）</option>
               </select>
