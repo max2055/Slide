@@ -1,7 +1,7 @@
 import cors from '@fastify/cors';
 import helmet from '@fastify/helmet';
 import rateLimit from '@fastify/rate-limit';
-import type { FastifyInstance, FastifyRequest } from 'fastify';
+import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { securityEventService } from './security-event-service.js';
 
 export const API_BODY_LIMIT = 1_048_576;
@@ -16,10 +16,12 @@ export function resolveCorsOrigins(env: NodeJS.ProcessEnv = process.env): string
 export function loginRateLimitKey(request: FastifyRequest): string {
   const body = request.body as { username?: unknown } | undefined;
   const username = typeof body?.username === 'string' ? body.username.trim().toLowerCase().slice(0, 128) : 'unknown';
-  return `${request.ip}:${username}`;
+  return `account:${username || 'unknown'}`;
 }
 
+// Account budget is shared across IPs; read the body only after parsing.
 export const loginRateLimitConfig = {
+  hook: 'preValidation',
   max: 5,
   timeWindow: '1 minute',
   keyGenerator: loginRateLimitKey,
@@ -32,6 +34,21 @@ export const loginRateLimitConfig = {
     }).catch(() => undefined);
   },
 } as const;
+
+// Separate pre-parse IP budget also covers invalid JSON and missing usernames.
+// createRateLimit avoids the plugin's per-request guard skipping a second limiter.
+export function createLoginIpRateLimit(fastify: FastifyInstance) {
+  const check = fastify.createRateLimit({ max: 30, timeWindow: '1 minute', keyGenerator: request => `ip:${request.ip}` });
+  return async (request: FastifyRequest, reply: FastifyReply) => {
+    const result = await check(request);
+    if (result.isAllowed === false && result.isExceeded) {
+      loginRateLimitConfig.onExceeded(request);
+      return reply.header('retry-after', result.ttlInSeconds).code(429).send({
+        statusCode: 429, error: 'Too Many Requests', message: 'Too many login attempts',
+      });
+    }
+  };
+}
 
 export const sensitiveOperationRateLimitConfig = {
   max: 30,

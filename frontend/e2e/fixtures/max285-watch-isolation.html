@@ -1,0 +1,13 @@
+<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><title>streaming watch isolation</title></head>
+<body>
+<p id="marker">isolation</p>
+<script type="module" src="./max285-watch-isolation.js"></script>
+<script>
+  const n = Number(sessionStorage.getItem('slide-max285-loads') || '0') + 1;
+  sessionStorage.setItem('slide-max285-loads', String(n));
+  document.documentElement.dataset.loads = String(n);
+</script>
+</body>
+</html>
