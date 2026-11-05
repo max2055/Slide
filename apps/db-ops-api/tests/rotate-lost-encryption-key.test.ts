@@ -172,6 +172,7 @@ describe('lost-key rotation target selection', () => {
         if (mode === 'process override') {
           env.DB_HOST = '127.0.0.1';
           env.DB_PORT = String(ports[2]);
+          env.DOTENV_CONFIG_OVERRIDE = 'true';
         }
         const args = mode === 'default file' ? [] : ['--env-file', 'selected.env'];
         const child = spawn(tsxPath, [join(directory, 'scripts/recovery/rotate-lost-encryption-key.ts'), ...args], { cwd, env });
@@ -318,6 +319,7 @@ describe.skipIf(!port)('lost-key rotation writes nothing without this invocation
       expect(output.includes(database), item.name).toBe(false);
       const digest = createHash('sha256').update(await snapshot()).digest('hex');
       expect(digest, item.name).toBe(initialDigest);
+      expect(existsSync(auditPath), item.name).toBe(false);
     }
   });
 });
