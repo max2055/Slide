@@ -8,9 +8,10 @@
  */
 import mysql from 'mysql2/promise';
 import { dbConnection, encryptData, decryptData, needsEncryptionMigration } from './db-connection';
+import { assertCredentialUsable, CredentialRotationRequiredError } from './credential-rotation.js';
 import { Client } from 'ssh2';
 import { authorizeServerTarget } from './security/server-target-policy.js';
-import { createOptionalSshHostVerifier, normalizeOptionalSshHostKeyFingerprint } from './security/ssh-host-key.js';
+import { createCredentialSshHostVerifier, normalizeOptionalSshHostKeyFingerprint } from './security/ssh-host-key.js';
 import { normalizeServerOs } from './server-os-profile.js';
 
 export interface ServerRow {
@@ -22,6 +23,7 @@ export interface ServerRow {
   credential_type: 'password' | 'key';
   credential_encrypted: string;
   host_key_fingerprint: string | null;
+  ssh_trust_mode?: string | null;
   status: 'online' | 'offline' | 'error' | 'unreachable';
   last_check_at: Date | null;
   collection_enabled: number;
@@ -82,7 +84,7 @@ class ServerDatabaseService {
     try {
       const [rows] = await pool.execute(
         `SELECT id, host, port, label, os_type, credential_type,
-                credential_encrypted, host_key_fingerprint, status,
+                credential_encrypted, host_key_fingerprint, ssh_trust_mode, status,
                 last_check_at, collection_enabled, created_at, updated_at
          FROM servers
          ORDER BY host`
@@ -108,7 +110,7 @@ class ServerDatabaseService {
     try {
       const [rows] = await pool.execute(
         `SELECT id, host, port, label, os_type, credential_type,
-                credential_encrypted, host_key_fingerprint, status,
+                credential_encrypted, host_key_fingerprint, ssh_trust_mode, status,
                 last_check_at, collection_enabled, created_at, updated_at
          FROM servers
          WHERE id = ?`,
@@ -137,7 +139,7 @@ class ServerDatabaseService {
     try {
       const [rows] = await pool.execute(
         `SELECT id, host, port, label, os_type, credential_type,
-                credential_encrypted, host_key_fingerprint, status,
+                credential_encrypted, host_key_fingerprint, ssh_trust_mode, status,
                 last_check_at, collection_enabled, created_at, updated_at
          FROM servers
          WHERE collection_enabled = 1
@@ -190,6 +192,7 @@ class ServerDatabaseService {
     credential_type: 'password' | 'key';
     credential_username: string;
     credential_value: string;
+    ssh_trust_mode?: string | null;
     host_key_fingerprint?: string | null;
     created_by?: number;
   }): Promise<{ success: boolean; serverId?: number; error?: string }> {
@@ -202,6 +205,7 @@ class ServerDatabaseService {
       const canonicalOs = normalizeServerOs(data.os_type);
       if (!canonicalOs) return { success: false, error: 'HOST_OS_UNSUPPORTED' };
       const target = await authorizeServerTarget({ host: data.host, port: data.port || 22 });
+      createCredentialSshHostVerifier(data.credential_type, data.host_key_fingerprint, data.ssh_trust_mode);
       const hostKeyFingerprint = normalizeOptionalSshHostKeyFingerprint(data.host_key_fingerprint) ?? null;
       // Check for duplicate host+port
       const [existing] = await pool.execute(
@@ -230,8 +234,8 @@ class ServerDatabaseService {
 
       const [result] = await pool.execute(
         `INSERT INTO servers
-         (host, port, label, os_type, credential_type, credential_encrypted, host_key_fingerprint, collection_enabled)
-         VALUES (?, ?, ?, ?, ?, ?, ?, 1)`,
+         (host, port, label, os_type, credential_type, credential_encrypted, host_key_fingerprint, ssh_trust_mode, collection_enabled)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)`,
         [
           target.hostname,
           target.port,
@@ -240,6 +244,7 @@ class ServerDatabaseService {
           data.credential_type,
           encrypted,
           hostKeyFingerprint,
+          data.credential_type === 'key' ? data.ssh_trust_mode ?? null : null,
         ]
       ) as any;
 
@@ -268,6 +273,7 @@ class ServerDatabaseService {
       credential_username?: string;
       credential_value?: string;
       collection_enabled?: number;
+      ssh_trust_mode?: string | null;
       host_key_fingerprint?: string | null;
     }
   ): Promise<{ success: boolean; error?: string }> {
@@ -351,6 +357,22 @@ class ServerDatabaseService {
         updates.push('collection_enabled = ?');
         values.push(data.collection_enabled);
       }
+      const effectiveType = data.credential_type ?? existingServer.credential_type;
+      const changesTarget = target.hostname !== existingServer.host || target.port !== existingServer.port;
+      const changesToKey = effectiveType === 'key' && existingServer.credential_type !== 'key';
+      if ((changesTarget || changesToKey) && effectiveType === 'key' && data.ssh_trust_mode === undefined) {
+        updates.push('ssh_trust_mode = ?');
+        values.push('pending');
+      }
+      if (data.ssh_trust_mode !== undefined || data.host_key_fingerprint !== undefined || data.credential_type !== undefined) {
+        createCredentialSshHostVerifier(data.credential_type ?? existingServer.credential_type,
+          data.host_key_fingerprint === undefined ? existingServer.host_key_fingerprint : data.host_key_fingerprint,
+          data.ssh_trust_mode === undefined ? (changesToKey || changesTarget ? 'pending' : existingServer.ssh_trust_mode) : data.ssh_trust_mode);
+      }
+      if (data.ssh_trust_mode !== undefined) {
+        updates.push('ssh_trust_mode = ?');
+        values.push(data.ssh_trust_mode);
+      }
       if (data.host_key_fingerprint !== undefined) {
         updates.push('host_key_fingerprint = ?');
         values.push(normalizeOptionalSshHostKeyFingerprint(data.host_key_fingerprint) ?? null);
@@ -432,22 +454,38 @@ class ServerDatabaseService {
     credentialValue: string,
     username: string,
     hostKeyFingerprint?: string | null,
+    sshTrustMode?: string | null,
   ): Promise<{ success: boolean; error?: string; message?: string }> {
     try {
+      assertCredentialUsable(credentialValue);
+      assertCredentialUsable(username);
       const target = await authorizeServerTarget({ host, port });
-      const hostVerifier = createOptionalSshHostVerifier(hostKeyFingerprint);
+      const hostVerifier = createCredentialSshHostVerifier(credentialType, hostKeyFingerprint, sshTrustMode);
       return new Promise((resolve) => {
         const client = new Client();
+        let settled = false;
+        const finish = (result: { success: boolean; error?: string; message?: string }) => {
+          if (settled) return;
+          // Mark completion before cleanup: end/destroy may emit more events.
+          settled = true;
+          if (result.success) client.end();
+          else client.destroy();
+          resolve(result);
+        };
 
         client.on('ready', () => {
-          client.end();
-          resolve({ success: true, message: `连接成功：${host}:${port}` });
+          finish({ success: true, message: `连接成功：${host}:${port}` });
         });
 
         client.on('error', (err: Error) => {
-          client.end();
-          resolve({ success: false, error: translateSshError(err.message, host, port) });
+          finish({ success: false, error: translateSshError(err.message, host, port) });
         });
+        const disconnected = () => finish({
+          success: false,
+          error: translateSshError('Connection lost before handshake', host, port),
+        });
+        client.on('end', disconnected);
+        client.on('close', disconnected);
 
         const connectConfig: any = {
           host: target.address,
@@ -463,7 +501,11 @@ class ServerDatabaseService {
           connectConfig.privateKey = credentialValue;
         }
 
-        client.connect(connectConfig);
+        try {
+          client.connect(connectConfig);
+        } catch (error: any) {
+          finish({ success: false, error: translateSshError(error.message, host, port) });
+        }
       });
     } catch (error: any) {
       return { success: false, error: translateSshError(error.message, host, port) };
@@ -517,8 +559,20 @@ class ServerDatabaseService {
    * Decrypt stored credentials JSON
    */
   decryptCredentials(encryptedData: string): DecryptedCredentials {
-    const decrypted = decryptData(encryptedData);
-    return JSON.parse(decrypted) as DecryptedCredentials;
+    try {
+      const decrypted = decryptData(encryptedData);
+      assertCredentialUsable(decrypted);
+      const credentials = JSON.parse(decrypted) as DecryptedCredentials;
+      assertCredentialUsable(credentials.username);
+      assertCredentialUsable(credentials.password);
+      assertCredentialUsable(credentials.privateKey);
+      return credentials;
+    } catch (error) {
+      if (error instanceof CredentialRotationRequiredError) throw error;
+      // Parser/crypto errors can contain credential fragments. Do not retain
+      // their message or cause: callers may return or log this error.
+      throw new Error('SERVER_CREDENTIALS_INVALID');
+    }
   }
 
   /**
@@ -533,13 +587,19 @@ class ServerDatabaseService {
     try {
       const credentials = this.decryptCredentials(server.credential_encrypted);
       if (needsEncryptionMigration(server.credential_encrypted)) {
-        await this.getPool()?.execute(
-          'UPDATE servers SET credential_encrypted = ? WHERE id = ? AND credential_encrypted = ?',
-          [encryptData(JSON.stringify(credentials)), serverId, server.credential_encrypted],
-        );
+        try {
+          await this.getPool()?.execute(
+            'UPDATE servers SET credential_encrypted = ? WHERE id = ? AND credential_encrypted = ?',
+            [encryptData(JSON.stringify(credentials)), serverId, server.credential_encrypted],
+          );
+        } catch {
+          // Migration is best-effort; driver errors may contain credentials or SQL.
+          console.error('服务器凭据迁移失败', { serverId, code: 'SERVER_CREDENTIAL_MIGRATION_FAILED' });
+        }
       }
       return credentials;
     } catch (error) {
+      if (error instanceof CredentialRotationRequiredError) throw error;
       console.error('解密凭据失败:', error);
       return null;
     }

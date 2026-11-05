@@ -1,3 +1,4 @@
+import { recordSshTrustRequest } from '../security/ssh-trust-audit.js';
 import {canReadIdentity, revalidateIdentityRead} from '../resources/identity-read-access.js';
 import { ActorAuthenticationError } from '../auth/actor-context.js';
 import { PolicyError } from '../metrics/policy/model.js';
@@ -118,15 +119,16 @@ export async function registerNetworkDeviceRoutes(
         const host = validateNetworkHost(body.host);
         const port = validatePort(body.sshPort ?? body.ssh_port, 'ssh_port', 22);
         const ssh = validateSshCredential(body.ssh);
+        if (ssh.credentialType === 'key') await recordSshTrustRequest(Number((request as any).user?.userId), 'network_probe', host, ssh.sshTrustMode);
         await sshProbe({
           host,
           port,
           username: ssh.username,
           credentialType: ssh.credentialType,
           credentialValue: ssh.credentialValue,
-          hostKeyFingerprint: ssh.hostKeyFingerprint,
+          sshTrustMode: ssh.sshTrustMode, hostKeyFingerprint: ssh.hostKeyFingerprint,
         });
-        return reply.send({ success: true, ssh: { verified: true } });
+        return reply.send({ success: true, ssh: { verified: ssh.credentialType === 'password' || Boolean(ssh.hostKeyFingerprint) } });
       }
       if (body.vendor !== undefined && body.vendor !== 'huawei' && body.vendor !== 'cisco') return reply.code(400).send({ success: false, error: 'NETWORK_DEVICE_VENDOR_UNSUPPORTED' });
       if (body.version !== undefined && body.version !== 2 && body.version !== 3) return reply.code(400).send({ success: false, error: 'SNMP_UNSUPPORTED_SECURITY' });
@@ -142,15 +144,16 @@ export async function registerNetworkDeviceRoutes(
       if (body.ssh !== undefined) {
         const ssh = validateSshCredential(body.ssh);
         const sshPort = validatePort(body.sshPort ?? body.ssh_port, 'ssh_port', 22);
+        if (ssh.credentialType === 'key') await recordSshTrustRequest(Number((request as any).user?.userId), 'network_probe', host, ssh.sshTrustMode);
         await sshProbe({
           host,
           port: sshPort,
           username: ssh.username,
           credentialType: ssh.credentialType,
           credentialValue: ssh.credentialValue,
-          hostKeyFingerprint: ssh.hostKeyFingerprint,
+          sshTrustMode: ssh.sshTrustMode, hostKeyFingerprint: ssh.hostKeyFingerprint,
         });
-        sshVerified = true;
+        sshVerified = ssh.credentialType === 'password' || Boolean(ssh.hostKeyFingerprint);
       }
       return reply.send({ success: Boolean(probe.reachable), probe: { reachable: Boolean(probe.reachable), quality: probe.quality, reason: probe.reason, observedAt: probe.observedAt.toISOString(), sysName: probe.sysName, uptimeSeconds: probe.uptimeSeconds }, ...(body.ssh !== undefined ? { ssh: { verified: sshVerified } } : {}) });
     } catch (error) {
@@ -210,6 +213,7 @@ export async function registerNetworkDeviceRoutes(
     try {
       const check = strictBody(request.body as Record<string, unknown>, ['name', 'label', 'host', 'site', 'vendor', 'model', 'osVersion', 'os_version', 'serialNumber', 'serial_number', 'snmpPort', 'snmp_port', 'sshPort', 'ssh_port', 'collectionEnabled', 'snmpv3', 'snmpv2c', 'snmpv2', 'snmp', 'ssh'], 'POST /api/network-devices');
       if (check.error) return reply.code(400).send(check.error);
+      await recordSshTrustRequest(Number((request as any).user?.userId), 'network_device', String((check.body as any).host), (check.body as any).ssh?.credentialType === 'key' ? (check.body as any).ssh?.sshTrustMode : undefined);
       const result = await networkDeviceDatabaseService.createDevice(check.body);
       if (!result.success) return reply.code(result.error?.includes('已被纳管') ? 409 : 400).send({ error: result.error });
       const created = await networkDeviceDatabaseService.getDeviceById(result.deviceId!);
@@ -221,8 +225,9 @@ export async function registerNetworkDeviceRoutes(
     const id = routeId(request);
     if (id === null) return reply.code(400).send({ error: '资源 ID 无效' });
     try {
-      const check = strictBody(request.body as Record<string, unknown>, ['name', 'label', 'host', 'site', 'vendor', 'model', 'osVersion', 'os_version', 'serialNumber', 'serial_number', 'snmpPort', 'snmp_port', 'sshPort', 'ssh_port', 'collectionEnabled', 'snmpv3', 'snmpv2c', 'snmpv2', 'snmp', 'ssh'], 'PUT /api/network-devices/:id');
+      const check = strictBody(request.body as Record<string, unknown>, ['name', 'label', 'host', 'site', 'vendor', 'model', 'osVersion', 'os_version', 'serialNumber', 'serial_number', 'snmpPort', 'snmp_port', 'sshPort', 'ssh_port', 'collectionEnabled', 'snmpv3', 'snmpv2c', 'snmpv2', 'snmp', 'ssh', 'sshTrust'], 'PUT /api/network-devices/:id');
       if (check.error) return reply.code(400).send(check.error);
+      await recordSshTrustRequest(Number((request as any).user?.userId), 'network_device', String(id), (check.body as any).sshTrust?.mode ?? ((check.body as any).ssh?.credentialType === 'key' ? (check.body as any).ssh?.sshTrustMode : undefined));
       const result = await networkDeviceDatabaseService.updateDevice(id, check.body);
       if (!result.success) return reply.code(result.error === '网络设备不存在' ? 404 : 400).send({ error: result.error });
       const updated = await networkDeviceDatabaseService.getDeviceById(id);

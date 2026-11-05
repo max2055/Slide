@@ -3,7 +3,20 @@ import { dbConnection, decryptData, encryptData } from '../db-connection.js';
 
 interface CredentialExecutor {
   execute(sql: string, values?: unknown[]): Promise<[any, unknown?]>;
+  getConnection?(): Promise<CredentialTransaction>;
 }
+
+interface CredentialTransaction extends CredentialExecutor {
+  beginTransaction(): Promise<void>;
+  commit(): Promise<void>;
+  rollback(): Promise<void>;
+  release(): void;
+  destroy(): void;
+}
+
+type CredentialTransactionResult<T> =
+  | { status: 'committed'; value: T }
+  | { status: 'invalid' | 'rolled_back' | 'unknown' };
 
 export class CredentialReferenceService {
   constructor(
@@ -47,6 +60,60 @@ export class CredentialReferenceService {
     );
     if (Number(claim?.affectedRows) !== 1) return null;
     return this.decrypt(String(row.secret_encrypted));
+  }
+
+  /** Consumption and the business write must use this same connection. Never restore a committed ref. */
+  async consumeInTransaction<T>(
+    ref: string, ownerId: number, toolName: string,
+    update: (executor: CredentialExecutor, secret: string) => Promise<T>,
+  ): Promise<CredentialTransactionResult<T>> {
+    if (!ref || ref.length > 128 || !Number.isSafeInteger(ownerId) || ownerId <= 0 || !toolName) return { status: 'invalid' };
+    let connection: CredentialTransaction | undefined;
+    let committing = false;
+    let discard = false;
+    try {
+      const pool = this.executor();
+      if (!pool.getConnection) return { status: 'rolled_back' };
+      connection = await pool.getConnection();
+      await connection.beginTransaction();
+      const [rows] = await connection.execute(
+        `SELECT secret_encrypted FROM agent_credential_references
+         WHERE ref_id = ? AND owner_id = ? AND tool_name = ?
+           AND status = 'active' AND expires_at > NOW() LIMIT 1 FOR UPDATE`,
+        [ref, ownerId, toolName],
+      );
+      if (!rows[0]?.secret_encrypted) {
+        await connection.rollback();
+        return { status: 'invalid' };
+      }
+      const secret = this.decrypt(String(rows[0].secret_encrypted));
+      const [claim] = await connection.execute(
+        `UPDATE agent_credential_references SET status = 'consumed', consumed_at = NOW()
+         WHERE ref_id = ? AND owner_id = ? AND tool_name = ?
+           AND status = 'active' AND expires_at > NOW()`,
+        [ref, ownerId, toolName],
+      );
+      if (Number(claim?.affectedRows) !== 1) throw new Error('CREDENTIAL_REFERENCE_CLAIM_FAILED');
+      const value = await update(connection, secret);
+      committing = true;
+      await connection.commit();
+      return { status: 'committed', value };
+    } catch {
+      if (committing) {
+        discard = true;
+        return { status: 'unknown' };
+      }
+      try {
+        await connection?.rollback();
+        return { status: 'rolled_back' };
+      } catch {
+        discard = true;
+        return { status: 'unknown' };
+      }
+    } finally {
+      if (discard) connection?.destroy();
+      else connection?.release();
+    }
   }
 
   private executor(): CredentialExecutor {

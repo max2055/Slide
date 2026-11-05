@@ -101,7 +101,7 @@ if [[ "$scenario" == "failover" ]]; then
 fi
 
 if [[ "$scenario" == "backup-restore" ]]; then
-  backup="$(mktemp "${TMPDIR:-/tmp}/slide-qualification-backup.XXXXXX.sql")"
+  backup="$(mktemp "${TMPDIR:-/tmp}/slide-qualification-backup.XXXXXX")"
   run_assertion ../../tests/qualification/assert-backup-restore.ts "$database" seed
   docker exec -e "MYSQL_PWD=$password" "$container" mysqldump --single-transaction --set-gtid-purged=OFF -u"$user" "$database" > "$backup"
   mysql_exec -e "CREATE DATABASE \`$restore_database\` DEFAULT CHARACTER SET utf8mb4"

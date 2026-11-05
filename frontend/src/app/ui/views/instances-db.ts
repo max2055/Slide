@@ -953,36 +953,9 @@ export class InstancesPage extends LitElement {
       const result = await res.json();
       this.listTestStatus = res.ok && result.success ? "success" : "error";
       this.listTestMessage = normalizeConnectionTestMessage(result.message || result.error);
-
-      // 测试成功后自动保存密码并重载连接
-      if (res.ok && result.success) {
-        await this._savePasswordAndReload();
-      }
     } catch (err: any) {
       this.listTestStatus = "error";
       this.listTestMessage = normalizeConnectionTestMessage(err?.message);
-    }
-  }
-
-  private async _savePasswordAndReload() {
-    if (!this.testingInstance) return;
-    try {
-      const saved = await authFetch(`/api/database/instances/${this.testingInstance.id}`, {
-        method: "PUT",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ password: this.testPassword }),
-      });
-      if (!saved.ok) throw new Error("保存凭据失败");
-      const reloaded = await authFetch(`/api/database/instances/${this.testingInstance.id}/reload`, {
-        method: "POST",
-      });
-      if (!reloaded.ok) throw new Error("重载连接失败");
-      await this.loadInstances();
-    } catch (err: any) {
-      this.listTestStatus = "error";
-      this.listTestMessage = err.message;
     }
   }
 
@@ -1399,7 +1372,7 @@ export class InstancesPage extends LitElement {
         </app-form-field>
         ${isConnected
           ? html`<div style="display:flex;align-items:center;gap:8px;padding:12px;background:var(--ok-subtle);border-radius:var(--radius-sm);margin-top:16px;color:var(--ok);font-size:var(--text-sm);font-weight:500;">
-              ${icons['check-circle']} 实例已连接，无需重新输入密码
+              ${icons['check-circle']} 连接测试成功
             </div>`
           : html`
             <app-form-field label="密码" required>

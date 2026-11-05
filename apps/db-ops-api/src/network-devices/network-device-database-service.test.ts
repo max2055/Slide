@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { LOST_KEY_ROTATION_SENTINEL } from '../credential-rotation.js';
 import { NetworkDeviceDatabaseService } from './network-device-database-service.js';
 
 const { encryptData, decryptData } = vi.hoisted(() => ({
@@ -17,6 +18,12 @@ function poolFor(execute: ReturnType<typeof vi.fn>, getConnection?: () => any) {
 }
 
 describe('NetworkDeviceDatabaseService', () => {
+  it.each(['snmpv2c', 'snmpv3', 'ssh'])('MAX-314 refuses a recovered %s credential before protocol use', async (protocol) => {
+    const execute = vi.fn().mockResolvedValue([[{ protocol, credential_encrypted: encryptData(LOST_KEY_ROTATION_SENTINEL) }]]);
+    const service = new NetworkDeviceDatabaseService(() => poolFor(execute));
+    await expect(service.getCredentials(7)).resolves.toBeNull();
+  });
+
   it('uses valid qualified columns for inventory reads', async () => {
     const execute = vi.fn().mockResolvedValueOnce([[
       {
@@ -70,7 +77,7 @@ describe('NetworkDeviceDatabaseService', () => {
     })).resolves.toEqual({ success: true, deviceId: 7 });
 
     const sshInsert = execute.mock.calls.find(([sql]) => String(sql).includes("VALUES (?, 'ssh'"));
-    expect(sshInsert?.[1]).toEqual([7, 'password', 'ops', expect.any(String), null]);
+    expect(sshInsert?.[1]).toEqual([7, 'password', 'ops', expect.any(String), null, null]);
   });
 
   it('allows inventory enrollment before SNMP credentials are available', async () => {

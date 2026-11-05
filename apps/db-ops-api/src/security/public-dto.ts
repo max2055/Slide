@@ -99,6 +99,7 @@ export function publicNetworkDeviceDto(device: Record<string, unknown>) {
   // backup tables, and a blacklist is easy to bypass with a new/camelCase
   // secret column. Only inventory metadata is part of the public contract.
   const aliases: Record<string, string[]> = {
+    sshCredentialType: ['sshCredentialType'], sshTrustMode: ['sshTrustMode'], hostKeyFingerprint: ['hostKeyFingerprint'],
     id: ['id'], name: ['name'], label: ['label'], host: ['host'], site: ['site'],
     vendor: ['vendor'], model: ['model'], os_version: ['os_version', 'osVersion'],
     serial_number: ['serial_number', 'serialNumber'], snmp_port: ['snmp_port', 'snmpPort'],

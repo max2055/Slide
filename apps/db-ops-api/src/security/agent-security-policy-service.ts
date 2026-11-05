@@ -31,7 +31,7 @@ interface PolicyRow {
 export interface AgentResourceScope {
   instanceIds: number[] | null;
   serverIds: number[] | null;
-  /** Optional on input for compatibility with pre-v0.10 policy clients. */
+  /** Omission preserves the stored scope for pre-v0.10 clients; explicit null clears it. */
   networkDeviceIds?: number[] | null;
 }
 
@@ -133,7 +133,9 @@ export function validateAgentSecurityPolicyUpdate(input: AgentSecurityPolicyUpda
     resourceScope: {
       instanceIds: validateIds(input.resourceScope?.instanceIds, 'AGENT_INSTANCE_SCOPE'),
       serverIds: validateIds(input.resourceScope?.serverIds, 'AGENT_SERVER_SCOPE'),
-      networkDeviceIds: validateIds(input.resourceScope?.networkDeviceIds ?? null, 'AGENT_NETWORK_DEVICE_SCOPE'),
+      ...(Object.hasOwn(input.resourceScope, 'networkDeviceIds')
+        ? { networkDeviceIds: validateIds(input.resourceScope.networkDeviceIds, 'AGENT_NETWORK_DEVICE_SCOPE') }
+        : {}),
     },
     changeNote,
   };
@@ -224,13 +226,22 @@ export class AgentSecurityPolicyService {
     const connection = await executor.getConnection();
     try {
       await connection.beginTransaction();
-      const [rows] = await connection.execute('SELECT version FROM agent_security_policies WHERE agent_id = ? FOR UPDATE', [agentId]);
-      const version = Number((rows as Array<{ version: number }>)[0]?.version ?? 0) + 1;
+      const [rows] = await connection.execute('SELECT version, resource_scope FROM agent_security_policies WHERE agent_id = ? FOR UPDATE', [agentId]);
+      const current = (rows as Array<Pick<PolicyRow, 'version' | 'resource_scope'>>)[0];
+      const version = Number(current?.version ?? 0) + 1;
+      // Preserve omitted legacy input from the locked row, not a potentially stale cache.
+      const storedScope = parseJson(current?.resource_scope) as Record<string, unknown> | undefined;
+      const resourceScope = {
+        ...input.resourceScope,
+        networkDeviceIds: Object.hasOwn(input.resourceScope, 'networkDeviceIds')
+          ? input.resourceScope.networkDeviceIds
+          : idList(storedScope?.networkDeviceIds),
+      };
       const policyJson = {
         toolAllowlist: input.toolAllowlist,
         skillAllowlist: input.skillAllowlist,
         allowedEffects: input.allowedEffects,
-        resourceScope: input.resourceScope,
+        resourceScope,
       };
       await connection.execute(
         `INSERT INTO agent_security_policies
@@ -241,7 +252,7 @@ export class AgentSecurityPolicyService {
            version = VALUES(version), updated_by = VALUES(updated_by)`,
         [agentId, input.toolAllowlist === null ? null : JSON.stringify(input.toolAllowlist),
           input.skillAllowlist === null ? null : JSON.stringify(input.skillAllowlist),
-          JSON.stringify(input.allowedEffects), JSON.stringify(input.resourceScope), version, actorId],
+          JSON.stringify(input.allowedEffects), JSON.stringify(resourceScope), version, actorId],
       );
       await connection.execute(
         `INSERT INTO agent_security_policy_history (agent_id, version, policy_json, change_note, changed_by)

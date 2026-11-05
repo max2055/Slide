@@ -42,6 +42,8 @@ type DeviceForm = {
   sshCredentialType: "password" | "key";
   sshUsername: string;
   sshCredentialValue: string;
+  sshTrustMode?: string;
+  hostKeyFingerprint?: string;
 };
 
 const EMPTY_FORM: DeviceForm = {
@@ -75,6 +77,7 @@ export class NetworkDevicesPage extends LitElement {
   @state() private deleting = false;
   @state() private form: DeviceForm = { ...EMPTY_FORM };
   @state() private formError: string | null = null;
+  @state() private showSshPrivateKey = false;
 
   @state() private editorTab = "basic";
   @state() private connectionPending = false;
@@ -155,6 +158,7 @@ export class NetworkDevicesPage extends LitElement {
   }
 
   private openCreate() {
+    this.showSshPrivateKey = false;
     this.editorTab = "basic"; this.connectionPending = true;
     this.editingId = null;
     this.form = { ...EMPTY_FORM };
@@ -163,6 +167,7 @@ export class NetworkDevicesPage extends LitElement {
   }
 
   private async openEdit(device: NetworkDevice) {
+    this.showSshPrivateKey = false;
     this.editorTab = "basic";
     this.editingId = device.id;
     this.form = {
@@ -176,6 +181,9 @@ export class NetworkDevicesPage extends LitElement {
       serialNumber: device.serial_number ?? "",
       snmpPort: device.snmp_port,
       sshPort: device.ssh_port,
+      sshCredentialType: device.sshCredentialType === "key" ? "key" : "password",
+      sshTrustMode: device.sshTrustMode || (device.hostKeyFingerprint ? "pinned" : "pending"),
+      hostKeyFingerprint: device.hostKeyFingerprint || undefined,
       collectionEnabled: device.collection_enabled,
       vendor: device.vendor === "cisco" ? "cisco" : "huawei",
     };
@@ -194,6 +202,7 @@ export class NetworkDevicesPage extends LitElement {
     if (section) { this.editorTab = 'collection'; section.confirmDiscard(action); } else action();
   }
   private async finishCloseDialog() {
+    this.showSshPrivateKey = false;
     const id = this.editingId;
     this.showDialog = false;
     await this.updateComplete;
@@ -234,6 +243,7 @@ export class NetworkDevicesPage extends LitElement {
       credentialType: this.form.sshCredentialType,
       username: this.form.sshUsername.trim(),
       credentialValue: this.form.sshCredentialValue,
+      ...(this.form.sshCredentialType === "key" ? { sshTrustMode: this.form.sshTrustMode, hostKeyFingerprint: this.form.hostKeyFingerprint } : {}),
     };
   }
 
@@ -245,7 +255,7 @@ export class NetworkDevicesPage extends LitElement {
       site: this.form.site.trim() || null, vendor: this.form.vendor, model: this.form.model.trim() || null,
       osVersion: this.form.osVersion.trim() || null, serialNumber: this.form.serialNumber.trim() || null,
       snmpPort: Number(this.form.snmpPort), sshPort: Number(this.form.sshPort),
-      collectionEnabled: this.form.collectionEnabled, ...(credential ? (this.form.snmpVersion === 2 ? { snmpv2c: credential } : { snmpv3: credential }) : {}), ...(ssh ? { ssh } : {}),
+      collectionEnabled: this.form.collectionEnabled, ...(credential ? (this.form.snmpVersion === 2 ? { snmpv2c: credential } : { snmpv3: credential }) : {}), ...(ssh ? { ssh } : this.editingId && this.form.sshCredentialType === "key" && this.form.sshTrustMode !== "pending" ? { sshTrust: { mode: this.form.sshTrustMode, fingerprint: this.form.hostKeyFingerprint } } : {}),
     };
   }
 
@@ -403,7 +413,7 @@ export class NetworkDevicesPage extends LitElement {
     return this.filteredDevices().map((device) => ({
       id: device.id, type: null, model: device.model, version: device.os_version,
       searchValues: [device.name, device.label, device.host, device.site, device.status, this.statusLabel(device.status)],
-      device: html`<span class="resource-name"><button class="btn-ghost" type="button" title=${device.label || device.name} @click=${() => this.navigate(device.id)}>${device.label || device.name}</button><span class="full-value" aria-hidden="true">${device.label || device.name}</span></span>`,
+      device: html`<span class="resource-name"><button class="btn-ghost" type="button" title=${device.label || device.name} @click=${() => this.navigate(device.id)}>${device.label || device.name}</button><span class="full-value" aria-hidden="true">${device.label || device.name}</span></span>${device.sshCredentialType === "key" ? html`<app-badge variant=${device.hostKeyFingerprint ? "ok" : "warn"}>${device.hostKeyFingerprint ? "SSH 指纹校验" : device.sshTrustMode === "insecure" ? "SSH 未验证身份（风险）" : "SSH 待确认（暂停）"}</app-badge>` : nothing}`,
       address: device.host,
       site: device.site || "--",
       status: html`<app-badge variant=${this.statusVariant(device.status)}>${this.statusLabel(device.status)}</app-badge>`,
@@ -454,9 +464,24 @@ export class NetworkDevicesPage extends LitElement {
             <h3>SSH 凭据</h3>
             <span>监控可选；加密配置备份需要填写</span>
           </div>
-          <div class="device-form-row"><app-form-field label="SSH 认证方式" .inline=${true}><app-ssh-auth-selector .value=${this.form.sshCredentialType} @ssh-auth-change=${(event: CustomEvent<{ value: DeviceForm["sshCredentialType"] }>) => this.updateForm("sshCredentialType", event.detail.value)}></app-ssh-auth-selector></app-form-field>
+          ${this.form.sshCredentialType === "key" ? html`
+            <app-form-field label="SSH 主机身份策略"><select class="field" aria-label="SSH 主机身份策略" .value=${this.form.sshTrustMode || "pending"} @change=${(e: Event) => this.updateForm("sshTrustMode", (e.target as HTMLSelectElement).value)}>
+              <option value="pending" disabled>待确认（暂停 SSH）</option><option value="pinned">固定指纹</option><option value="insecure">不验证（风险兼容）</option>
+            </select></app-form-field>
+            <app-form-field label="SSH 主机密钥指纹"><input class="field" aria-label="SSH 主机密钥指纹" .value=${this.form.hostKeyFingerprint || ""} @input=${(e: Event) => this.updateForm("hostKeyFingerprint", (e.target as HTMLInputElement).value)} placeholder="SHA256:…"></app-form-field>
+            <p>通过受信任渠道核验指纹。选择不验证会记录审计；可能连接冒充者并取得伪造结果，已有指纹仍验证。</p>
+          ` : nothing}
+          <div class="device-form-row"><app-form-field label="SSH 认证方式" .inline=${true}><app-ssh-auth-selector .value=${this.form.sshCredentialType} @ssh-auth-change=${(event: CustomEvent<{ value: DeviceForm["sshCredentialType"] }>) => { this.showSshPrivateKey = false; this.updateForm("sshCredentialType", event.detail.value); }}></app-ssh-auth-selector></app-form-field>
           <app-form-field label="SSH 用户名" .inline=${true}><input class="field" autocomplete="off" .value=${this.form.sshUsername} @input=${(e: Event) => this.updateForm("sshUsername", (e.target as HTMLInputElement).value)}></app-form-field></div>
-          <div class="device-form-row"><app-form-field label=${this.form.sshCredentialType === "key" ? "SSH 私钥" : "SSH 密码"} .inline=${true}><input class="field" type=${this.form.sshCredentialType === "key" ? "text" : "password"} autocomplete="new-password" .value=${this.form.sshCredentialValue} @input=${(e: Event) => this.updateForm("sshCredentialValue", (e.target as HTMLInputElement).value)}></app-form-field></div>
+          <div class="device-form-row"><app-form-field label=${this.form.sshCredentialType === "key" ? "SSH 私钥" : "SSH 密码"} .inline=${true}>${this.form.sshCredentialType === "key" ? html`
+            <textarea id="network-device-ssh-private-key" class="field ssh-private-key" rows="5" wrap="off"
+              style=${this.showSshPrivateKey ? "-webkit-text-security:none" : "-webkit-text-security:disc"}
+              autocomplete="off" autocapitalize="off" spellcheck="false"
+              .value=${this.form.sshCredentialValue}
+              @input=${(e: Event) => this.updateForm("sshCredentialValue", (e.target as HTMLTextAreaElement).value)}></textarea>
+            <button class="btn btn-ghost" type="button" aria-controls="network-device-ssh-private-key" aria-pressed=${String(this.showSshPrivateKey)}
+              @click=${() => { this.showSshPrivateKey = !this.showSshPrivateKey; }}>${this.showSshPrivateKey ? "隐藏私钥" : "显示私钥"}</button>
+          ` : html`<input class="field" type="password" autocomplete="new-password" .value=${this.form.sshCredentialValue} @input=${(e: Event) => this.updateForm("sshCredentialValue", (e.target as HTMLInputElement).value)}>`}</app-form-field></div>
         </section>
         ${this.formError ? html`<div class="form-error" role="alert">${this.formError}</div>` : nothing}
       </div>
@@ -499,6 +524,7 @@ export class NetworkDevicesPage extends LitElement {
       .device-form-row { display:contents; }
       .device-form-row app-form-field { min-width:0; margin-bottom:0; }
       .device-form-row .field { width:100%; min-width:0; }
+      network-devices-page .ssh-private-key { resize:vertical; font-family:monospace; }
       .dialog-actions { display:flex; align-items:center; justify-content:flex-end; gap:var(--space-sm); }
       .dialog-test-actions { display:flex; align-items:center; gap:var(--space-sm); }
       .dialog-actions > .dialog-spacer { flex:1; }

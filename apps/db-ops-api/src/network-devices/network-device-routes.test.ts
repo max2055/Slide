@@ -49,6 +49,46 @@ beforeEach(() => {
   mocks.getDeviceById.mockResolvedValue({ id: 7, name: 'edge-1', host: '192.0.2.10', snmp_port: 161, ssh_port: 22, vendor: 'huawei', status: 'online', collection_enabled: true });
 });
 
+describe('MAX-308 explicit key compatibility audit', () => {
+  it.each(['reader', 'manager'] as const)('checks permission before auditing or probing for %s', async token => {
+    const sshProbe = vi.fn(async () => {});
+    const app = await appWith({ sshProbe });
+    try {
+      const response = await app.inject({ method: 'POST', url: '/api/network-devices/test-connection',
+        headers: { authorization: `Bearer ${token}` },
+        payload: { mode: 'ssh', host: '192.0.2.10', sshPort: 22,
+          ssh: { username: 'fixture', credentialType: 'key', credentialValue: 'synthetic-key', sshTrustMode: 'insecure' } } });
+      if (token === 'reader') {
+        expect(response.statusCode).toBe(403);
+        expect(mocks.execute).not.toHaveBeenCalled();
+        expect(sshProbe).not.toHaveBeenCalled();
+      } else {
+        expect(response.statusCode).toBe(200);
+        expect(response.json().ssh.verified).toBe(false);
+        expect(mocks.execute).toHaveBeenCalledWith(expect.stringContaining('INSERT INTO ssh_trust_decisions'), [2, 'network_probe', '192.0.2.10', 'insecure']);
+        expect(sshProbe).toHaveBeenCalledTimes(1);
+      }
+    } finally { await app.close(); }
+  });
+  it('refuses key probes when audit fails while password probes keep their behavior', async () => {
+    const sshProbe = vi.fn(async () => {});
+    const app = await appWith({ sshProbe });
+    mocks.execute.mockRejectedValueOnce(new Error('SSH_TRUST_AUDIT_UNAVAILABLE'));
+    const send = (credentialType: string) => app.inject({ method: 'POST', url: '/api/network-devices/test-connection',
+      headers: { authorization: 'Bearer manager' }, payload: { mode: 'ssh', host: '192.0.2.10', sshPort: 22,
+        ssh: { username: 'fixture', credentialType, credentialValue: 'synthetic-secret', sshTrustMode: 'insecure' } } });
+    try {
+      expect((await send('key')).statusCode).toBe(400);
+      expect(sshProbe).not.toHaveBeenCalled();
+      const password = await send('password');
+      expect(password.statusCode).toBe(200);
+      expect(password.json().ssh.verified).toBe(true);
+      expect(mocks.execute).toHaveBeenCalledTimes(1);
+      expect(sshProbe).toHaveBeenCalledTimes(1);
+    } finally { await app.close(); }
+  });
+});
+
 describe('network-device routes', () => {
   it('reads defaults, saves schedules with backup permission, and rejects unauthorized writes', async () => {
     let schedule = { enabled: true, dailyTime: '00:00', timeZone: 'Asia/Shanghai', lastRun: null };
