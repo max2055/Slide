@@ -105,6 +105,8 @@ export interface ConfigBackupSummary {
 
 const MAX_TEXT = 255;
 const MAX_SECRET = 512;
+// Fits RSA-4096 PEM and remains below TEXT storage after UTF-8 + hex encryption.
+const MAX_SSH_PRIVATE_KEY = 8192;
 
 function text(value: unknown, field: string, required = false): string | undefined {
   if (value == null || value === '') {
@@ -184,7 +186,8 @@ export function validateSshCredential(input: unknown): SshCredentialInput {
   const value = input as Record<string, unknown>;
   if (value.credentialType !== 'password' && value.credentialType !== 'key') throw new Error('SSH_CREDENTIAL_TYPE_INVALID');
   const username = text(value.username, 'ssh_username', true)!;
-  if (typeof value.credentialValue !== 'string' || value.credentialValue.length === 0 || value.credentialValue.length > MAX_SECRET) throw new Error('SSH_CREDENTIAL_VALUE_INVALID');
+  const maxLength = value.credentialType === 'key' ? MAX_SSH_PRIVATE_KEY : MAX_SECRET;
+  if (typeof value.credentialValue !== 'string' || value.credentialValue.length === 0 || value.credentialValue.length > maxLength) throw new Error('SSH_CREDENTIAL_VALUE_INVALID');
   const rawFingerprint = typeof value.hostKeyFingerprint === 'string' && !value.hostKeyFingerprint.trim()
     ? undefined
     : value.hostKeyFingerprint;
