@@ -1,19 +1,21 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-const mock = vi.hoisted(() => ({ exists: vi.fn(), inventory: vi.fn(), connection: vi.fn(), instance: vi.fn(), password: vi.fn(), transport: vi.fn(), assetEnabled: vi.fn(), server: vi.fn(), credentials: vi.fn() }));
+const mock = vi.hoisted(() => ({ exists: vi.fn(), inventory: vi.fn(), connection: vi.fn(), instance: vi.fn(), password: vi.fn(), transport: vi.fn(), assetEnabled: vi.fn(), server: vi.fn(), credentials: vi.fn(), sshConnect: vi.fn(), sshExec: vi.fn(), sshRelease: vi.fn(), sshClose: vi.fn(), decrypt: vi.fn() }));
 vi.mock('../../db-connection.js', () => ({ dbConnection: { getPool: () => ({execute: mock.assetEnabled}) } }));
 vi.mock('../../database-service.js', () => ({ databaseService: { getConnection: mock.connection } }));
 vi.mock('../../instance-database-service.js', () => ({ instanceDatabaseService: { getInstanceById: mock.instance, getInstancePassword: mock.password } }));
-vi.mock('../../server-database-service.js', () => ({ serverDatabaseService: { getServerById: mock.server, getDecryptedCredentials: mock.credentials } }));
-vi.mock('../../ssh-session-pool.js', () => ({ default: {} }));
+vi.mock('../../server-database-service.js', () => ({ serverDatabaseService: { getServerById: mock.server, getDecryptedCredentials: mock.credentials, decryptCredentials: mock.decrypt } }));
+vi.mock('../../ssh-session-pool.js', () => ({ default: { getConnection: mock.sshConnect, execCommands: mock.sshExec, releaseConnection: mock.sshRelease, closeConnection: mock.sshClose } }));
 vi.mock('../../network-devices/network-device-collector.js', () => ({ MysqlNetworkDeviceCollectionStore: class {}, toSnmpConfig: vi.fn() }));
 vi.mock('../../resources/resource-service.js', () => ({ MysqlResourceRelationStore: class { exists = mock.exists; } }));
 vi.mock('./inventory.js', () => ({ configurationInventory: mock.inventory }));
 vi.mock('./database-transport.js', () => ({ trialDatabaseTransport: mock.transport }));
 import { createAssetCollectorAccess } from './access.js';
+import type { Transport } from '../packages/adapters.js';
 
 const ref = { type: 'instance' as const, id: 1 };
 beforeEach(() => {
   vi.clearAllMocks();
+  mock.decrypt.mockReset();
   mock.assetEnabled.mockResolvedValue([[{enabled:1}],[]]);
   mock.exists.mockResolvedValue(true);
   mock.inventory.mockResolvedValue({ type: 'instance', id: '1', attributes: {} });
@@ -85,4 +87,114 @@ describe('trial host discovery ownership', () => {
     expect(first.evidence.host_interfaces).not.toBe(collected.evidence.host_interfaces);
     expect(mock.assetEnabled).toHaveBeenCalledTimes(1);
   });
+});
+
+describe('SSH collector identity snapshot', () => {
+  const serverRef = { type: 'server' as const, id: 1 };
+  type FixtureServer = { host: string; port: number; credential_type: string; host_key_fingerprint: string; credential_encrypted: string };
+  type FixtureSecret = { username: string; password?: string; privateKey?: string };
+  const approvedServer: FixtureServer = { host: '192.0.2.1', port: 22, credential_type: 'password', host_key_fingerprint: 'SHA256:approved', credential_encrypted: 'blob-approved' };
+  const approvedSecret: FixtureSecret = { username: 'reader', password: 'fixture-only' };
+  const client = () => ({ once: vi.fn(), removeListener: vi.fn(), destroy: vi.fn() });
+  function stage(server: FixtureServer, secret: FixtureSecret) {
+    mock.inventory.mockResolvedValue({ type: 'server', id: '1', attributes: {} });
+    mock.server.mockResolvedValue(server);
+    mock.credentials.mockResolvedValue(secret);
+    mock.decrypt.mockReturnValue(secret);
+    mock.sshConnect.mockResolvedValue(client());
+    mock.sshExec.mockResolvedValue([{ stdout: '', stderr: '', exitCode: 0, truncated: false }]);
+  }
+  function sshTransport(transport: Transport): Extract<Transport, { method: 'ssh' }> {
+    if (transport.method !== 'ssh') throw new Error('expected ssh transport');
+    return transport;
+  }
+  async function run(transport: Transport) {
+    const ssh = sshTransport(transport);
+    return ssh.pool.execCommands(ssh.client, ['true'], { timeoutMs: 1000 });
+  }
+  async function open(server: FixtureServer = approvedServer, secret: FixtureSecret = approvedSecret) {
+    stage(server, secret);
+    const factory = createAssetCollectorAccess(true);
+    const access = await factory.resolve(serverRef);
+    const transport = sshTransport(await access.resolve(access.credential_ref, access.resource, 'ssh'));
+    return { factory, access, transport };
+  }
+  it('connects with the validated host, port, account, credential type, fingerprint, and credential', async () => {
+    const { access, transport } = await open();
+    await run(transport);
+    expect(mock.sshConnect).toHaveBeenCalledTimes(1);
+    expect(mock.sshConnect).toHaveBeenCalledWith('192.0.2.1', 22, 'reader', 'password', 'fixture-only', 'SHA256:approved');
+    expect(mock.sshRelease).toHaveBeenCalledTimes(1);
+    expect(access.evidence.host_blocks).toBeDefined();
+  });
+  it('uses the private key from the same snapshot when the credential type is key', async () => {
+    const { transport } = await open(
+      { host: '192.0.2.1', port: 22, credential_type: 'key', host_key_fingerprint: 'SHA256:approved', credential_encrypted: 'blob-key' },
+      { username: 'reader', privateKey: 'fixture-key' },
+    );
+    await run(transport);
+    expect(mock.sshConnect).toHaveBeenCalledWith('192.0.2.1', 22, 'reader', 'key', 'fixture-key', 'SHA256:approved');
+  });
+  const changes: Array<[string, FixtureServer, FixtureSecret]> = [
+    ['target', { host: '192.0.2.2', port: 2222, credential_type: 'password', host_key_fingerprint: 'SHA256:approved', credential_encrypted: 'blob-next' }, approvedSecret],
+    ['port', { ...approvedServer, port: 2222 }, approvedSecret],
+    ['fingerprint', { ...approvedServer, host_key_fingerprint: 'SHA256:replaced', credential_encrypted: 'blob-next' }, approvedSecret],
+    ['credential', approvedServer, { username: 'reader', password: 'rotated-fixture' }],
+    ['account', { ...approvedServer, credential_encrypted: 'blob-next' }, { username: 'other', password: 'fixture-only' }],
+    ['credential type', { ...approvedServer, credential_type: 'key', credential_encrypted: 'blob-next' }, { username: 'reader', privateKey: 'fixture-key' }],
+  ];
+  it.each(changes)('rejects a %s change after validation and does not connect', async (_label, server, secret) => {
+    const { factory, access, transport } = await open();
+    const baseline = access.evidence.host_blocks;
+    mock.server.mockResolvedValue(server);
+    mock.credentials.mockResolvedValue(secret);
+    mock.decrypt.mockReturnValue(secret);
+    await expect(run(transport)).rejects.toThrow('permission_denied');
+    expect(mock.sshConnect).not.toHaveBeenCalled();
+    const fresh = await factory.resolve(serverRef);
+    expect(fresh.evidence.host_blocks).not.toBe(baseline);
+    await run(await fresh.resolve(fresh.credential_ref, fresh.resource, 'ssh'));
+    expect(mock.sshConnect).toHaveBeenCalledTimes(1);
+    expect(mock.sshConnect).toHaveBeenCalledWith(server.host, server.port, secret.username, server.credential_type, secret.password ?? secret.privateKey, server.host_key_fingerprint);
+  });
+  it('rejects a reproducible race that changes the target between the two reads used to connect', async () => {
+    const { factory, access, transport } = await open();
+    const baseline = access.evidence.host_blocks;
+    let serverReads = 0;
+    mock.server.mockImplementation(async () => {
+      serverReads += 1;
+      return serverReads === 1 ? approvedServer : { host: '192.0.2.2', port: 2222, credential_type: 'password', host_key_fingerprint: 'SHA256:approved', credential_encrypted: 'blob-next' };
+    });
+    mock.credentials.mockResolvedValue({ username: 'reader', password: 'other-fixture' });
+    mock.decrypt.mockReturnValue({ username: 'reader', password: 'other-fixture' });
+    await expect(run(transport)).rejects.toThrow('permission_denied');
+    expect(mock.sshConnect).not.toHaveBeenCalled();
+    expect(serverReads).toBeGreaterThanOrEqual(2);
+    mock.server.mockResolvedValue({ host: '192.0.2.2', port: 2222, credential_type: 'password', host_key_fingerprint: 'SHA256:approved', credential_encrypted: 'blob-next' });
+    const fresh = await factory.resolve(serverRef);
+    expect(fresh.evidence.host_blocks).not.toBe(baseline);
+    await run(await fresh.resolve(fresh.credential_ref, fresh.resource, 'ssh'));
+    expect(mock.sshConnect).toHaveBeenCalledWith('192.0.2.2', 2222, 'reader', 'password', 'other-fixture', 'SHA256:approved');
+  });
+  it('rejects ciphertext rotation between row and credential reads (#528)', async () => {
+    const { transport } = await open();
+    mock.server.mockResolvedValueOnce(approvedServer).mockResolvedValue({ ...approvedServer, credential_encrypted: 'blob-rotated' });
+    mock.decrypt.mockReturnValue({ username: 'reader', password: 'rotated-fixture' });
+    await expect(run(transport)).rejects.toThrow('permission_denied');
+    expect(mock.sshConnect).not.toHaveBeenCalled();
+  });
+  it('accepts ciphertext rewrapping of the same plaintext (#528)', async () => {
+    const { transport } = await open();
+    mock.server.mockResolvedValueOnce(approvedServer).mockResolvedValue({ ...approvedServer, credential_encrypted: 'blob-rewrapped' });
+    await run(transport);
+    expect(mock.decrypt).toHaveBeenLastCalledWith('blob-rewrapped');
+    expect(mock.sshConnect).toHaveBeenCalledWith('192.0.2.1', 22, 'reader', 'password', 'fixture-only', 'SHA256:approved');
+  });
+  it('rejects unreadable credentials before acquiring SSH (#528)', async () => {
+    const { transport } = await open();
+    mock.decrypt.mockImplementation(() => { throw new Error('fixture decryption failure'); });
+    await expect(run(transport)).rejects.toThrow('permission_denied');
+    expect(mock.sshConnect).not.toHaveBeenCalled();
+  });
+
 });
