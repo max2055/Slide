@@ -62,7 +62,7 @@ export const addDatabaseTool: AnyAgentTool = {
       },
       credential_ref: {
         type: 'string',
-        description: '可选：通过凭据 API 创建的短期单次引用；未提供时先创建实例，密码可后续补充',
+        description: '可选：通过凭据 API 创建的短期单次引用，消费后不可复用；失败后按恢复说明先核实创建结果，再申请新引用。未提供时先创建实例，密码可后续补充',
       },
       database_name: {
         type: 'string',
@@ -99,6 +99,18 @@ export const addDatabaseTool: AnyAgentTool = {
       };
     }
 
+    let creationSubmitted = false;
+    let credentialConsumptionAttempted = false;
+    const creationRecovery = [
+      '先按主机、端口、数据库名及实例名称对账，核实原请求是否已创建；不要直接重试或重复提交',
+      '若已存在，复用已有实例 ID，不要重复纳管',
+      typedArgs.credential_ref
+        ? '仅在确认未创建且修复原因后，通过凭据 API 申请新的 credential_ref 再发起创建；旧引用不可复用，不要向模型提供明文凭据'
+        : '仅在确认未创建且修复原因后，再发起创建',
+    ];
+    // The service does not distinguish pre-write rejection from a lost INSERT acknowledgement.
+    const unknownCreationError = `创建结果未知：先对账，确认未创建且修复原因后${typedArgs.credential_ref ? '申请新的 credential_ref ' : ''}再发起创建，不要直接重试`;
+
     try {
       // 1. 生成实例名称（如果未提供）
       const instanceName = typedArgs.name || generateInstanceName(typedArgs);
@@ -130,6 +142,7 @@ export const addDatabaseTool: AnyAgentTool = {
       }
       let password = '';
       if (typedArgs.credential_ref) {
+        credentialConsumptionAttempted = true;
         password = await credentialReferenceService.consume(
           typedArgs.credential_ref,
           context.actor.userId,
@@ -154,7 +167,7 @@ export const addDatabaseTool: AnyAgentTool = {
         return {
           success: false,
           status: 'error',
-          error: `连接测试失败：${connectionTest.error}`,
+          error: '连接测试失败，尚未提交创建；凭据引用已消费，修复连接后申请新的 credential_ref 再重试',
           errorCode: 'CONNECTION_FAILED',
           details: { terminal: true, retryable: false },
           next_actions: ['该条目已终止且凭据已消费；修复连接后申请新的 credential_ref 再重试'],
@@ -162,6 +175,7 @@ export const addDatabaseTool: AnyAgentTool = {
       }
 
       // 4. 保存到数据库
+      creationSubmitted = true;
       const createResult = await instanceDatabaseService.createInstance({
         name: instanceName,
         environment: typedArgs.environment || 'development',
@@ -194,9 +208,10 @@ export const addDatabaseTool: AnyAgentTool = {
         return {
           success: false,
           status: 'error',
-          error: `创建实例失败：${createResult.error}`,
+          error: unknownCreationError,
           errorCode: 'CREATE_INSTANCE_FAILED',
-          details: { terminal: false, retryable: true },
+          details: { terminal: true, retryable: false },
+          next_actions: creationRecovery,
         };
       }
 
@@ -233,14 +248,18 @@ export const addDatabaseTool: AnyAgentTool = {
           retryable: false,
         },
       };
-    } catch (error: unknown) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
+    } catch {
       return {
         success: false,
         status: 'error',
-        error: `纳管失败：${errorMessage}`,
+        error: creationSubmitted ? unknownCreationError : '纳管失败，尚未提交创建',
         errorCode: 'ADD_DATABASE_FAILED',
-        next_actions: ['检查实例数据库状态和后端日志；仅在原因已改变后重试'],
+        details: { terminal: true, retryable: false },
+        next_actions: creationSubmitted ? creationRecovery : [
+          credentialConsumptionAttempted
+            ? '凭据引用可能已消费，不要复用旧引用；修复原因后通过凭据 API 申请新的 credential_ref 再重试，不要向模型提供明文凭据'
+            : '尚未消费凭据引用；检查实例数据库状态，仅在修复原因后重试',
+        ],
       };
     }
   },

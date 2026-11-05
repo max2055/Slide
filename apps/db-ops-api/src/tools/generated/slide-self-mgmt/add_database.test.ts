@@ -103,6 +103,11 @@ describe('slide_add_database single-use credential recovery', () => {
     expect(JSON.stringify(result)).not.toContain(secret);
     expect(writes).toBe(1);
     expect(instanceDatabaseService.getAllInstances).toHaveBeenCalledTimes(1);
+    // Reconciliation finds the row whose acknowledgement was lost; reuse it.
+    vi.mocked(instanceDatabaseService.getAllInstances).mockResolvedValue([{ id: 41, name: 'mysql_db_internal_3306' } as any]);
+    expect(await addDatabaseTool.handler(args, context)).toMatchObject({ errorCode: 'INSTANCE_EXISTS', data: { instanceId: 41 } });
+    expect(writes).toBe(1);
+    expect(credentialReferenceService.consume).toHaveBeenCalledTimes(1);
   });
 
   it('reuses an already managed address without suggesting another create', async () => {
@@ -147,6 +152,27 @@ describe('slide_add_database single-use credential recovery', () => {
     const result = await addDatabaseBatchTool.handler({ databases: [args] }, context);
     expect(result).toMatchObject({ success: true, details: { terminal: true, retryable: false }, data: { results: [{ retryable: false }] } });
     expect((result.data as any).results[0].reason).toMatch(/对账.*确认未创建.*新的 credential_ref/);
+    expect(JSON.stringify(result)).not.toContain(secret);
+  });
+
+  it('can create with a fresh reference after confirming the prior attempt did not create an instance', async () => {
+    vi.mocked(instanceDatabaseService.createInstance).mockResolvedValueOnce({ success: false, error: '数据库未连接' });
+    expect(await addDatabaseTool.handler(args, context)).toMatchObject({ errorCode: 'CREATE_INSTANCE_FAILED' });
+    expect(await instanceDatabaseService.getAllInstances()).toEqual([]);
+    vi.mocked(credentialReferenceService.consume).mockResolvedValueOnce(secret);
+    const recovered = await addDatabaseTool.handler({ ...args, credential_ref: 'fresh-reference' }, context);
+    expect(recovered).toMatchObject({ success: true, data: { instanceId: 41, connectionStatus: 'connected' } });
+    expect(credentialReferenceService.consume).toHaveBeenLastCalledWith('fresh-reference', 7, addDatabaseTool.name);
+    expect(JSON.stringify(recovered)).not.toContain(secret);
+  });
+
+  it('does not consume a reference when instance enumeration fails before any creation attempt', async () => {
+    vi.mocked(instanceDatabaseService.getAllInstances).mockRejectedValue(new Error(secret));
+    const result = await addDatabaseTool.handler(args, context);
+    expect(result).toMatchObject({ errorCode: 'ADD_DATABASE_FAILED', details: { terminal: true, retryable: false } });
+    expect(result.next_actions?.join(' ')).toContain('尚未消费');
+    expect(credentialReferenceService.consume).not.toHaveBeenCalled();
+    expect(instanceDatabaseService.createInstance).not.toHaveBeenCalled();
     expect(JSON.stringify(result)).not.toContain(secret);
   });
 });
