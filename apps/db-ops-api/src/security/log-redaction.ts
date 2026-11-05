@@ -1,5 +1,8 @@
+import { redactJsonSensitiveValues } from '@slide/agent-core/tool-stream';
+
 const SENSITIVE_KEY = /password|passwd|secret|token|authorization|api[_-]?key|credential|private[_-]?key|webhook/i;
 const ASSIGNMENT_KEY = 'password|passwd|secret|token|api[_-]?key|authorization|cookie';
+const JSON_SENSITIVE_KEY = /password|passwd|pwd|secret|token|api[_-]?key|authorization|cookie|credential|connection[_-]?string|private[_-]?key|webhook/i;
 // Spaces stay inside a value. Comma, semicolon, and newline still end it, as does the next
 // assignment. Authorization and Cookie headers consume the rest of the line because their
 // authentication parameters and cookies can contain commas and semicolons.
@@ -15,7 +18,7 @@ const SENSITIVE_TEXT = [
 ];
 
 export function redactSensitiveText(value: string): string {
-  return SENSITIVE_TEXT.reduce((text, pattern) => text.replace(pattern, '$1[REDACTED]'), value);
+  return SENSITIVE_TEXT.reduce((text, pattern) => text.replace(pattern, '$1[REDACTED]'), redactJsonSensitiveValues(value, JSON_SENSITIVE_KEY));
 }
 
 export function redactLogValue(value: unknown, seen = new WeakSet<object>()): unknown {
