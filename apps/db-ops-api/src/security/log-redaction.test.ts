@@ -82,4 +82,22 @@ describe('log redaction', () => {
     expect(redactSensitiveText(input)).toBe(expected);
     expect(redactLogValue({ detail: input })).toEqual({ detail: expected });
   });
+
+  it.each(['\n', '\r\n'])(
+    'preserves following lines after ordinary assignments (MAX-315 CI regression): %j',
+    (newline) => {
+      for (const key of ['password', 'passwd', 'secret', 'token', 'api_key', 'api-key', 'cookie', 'authorization']) {
+        const input = `${key}=synthetic spaced value${newline}mysql://db.invalid/db`;
+        const expected = `${key}=[REDACTED]${newline}mysql://db.invalid/db`;
+        expect(redactSensitiveText(input)).toBe(expected);
+        expect(redactLogValue({ detail: input })).toEqual({ detail: expected });
+        expect(redactSensitiveText(`${key}=synthetic \t${newline}status=ok`))
+          .toBe(`${key}=[REDACTED] \t${newline}status=ok`);
+        expect(redactSensitiveText(`${key}=${newline}mysql://db.invalid/db`))
+          .toBe(`${key}=${newline}mysql://db.invalid/db`);
+      }
+      expect(redactSensitiveText(`api_key=synthetic${newline}token=hello world${newline}status=ok`))
+        .toBe(`api_key=[REDACTED]${newline}token=[REDACTED]${newline}status=ok`);
+    },
+  );
 });
