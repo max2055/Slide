@@ -61,10 +61,19 @@ export class RbacService {
     pool: mysql.Pool,
     roleId: number,
     mutation: (connection: mysql.PoolConnection) => Promise<boolean>,
+    permissionId?: number,
   ): Promise<void> {
     const connection = await this.requireTransaction(pool);
     try {
       await connection.beginTransaction();
+      if (permissionId !== undefined) {
+        // Match deletePermission: lock the parent before any grant/session rows.
+        const [permissions] = await connection.execute(
+          'SELECT id FROM permissions WHERE id = ? FOR UPDATE',
+          [permissionId],
+        ) as any;
+        if (permissions.length === 0) throw new Error('权限不存在');
+      }
       const userIds = await this.getActiveRoleUserIds(connection, roleId);
       if (await mutation(connection)) {
         await this.bumpAndRevokeUsers(connection, userIds);
@@ -393,22 +402,35 @@ export class RbacService {
       return { success: false, error: '数据库未连接' };
     }
 
+    let connection: mysql.PoolConnection | undefined;
     try {
-      // Check if any role references this permission
-      const [refs] = await pool.execute(
-        'SELECT COUNT(*) as cnt FROM role_permissions WHERE permission_id = ?',
+      connection = await this.requireTransaction(pool);
+      await connection.beginTransaction();
+      await connection.execute('SELECT id FROM permissions WHERE id = ? FOR UPDATE', [permissionId]);
+      // Current read after the parent lock sees grants committed while we waited.
+      const [refs] = await connection.execute(
+        'SELECT role_id FROM role_permissions WHERE permission_id = ? FOR UPDATE',
         [permissionId]
       ) as any;
 
-      if (refs[0].cnt > 0) {
-        return { success: false, error: `权限被 ${refs[0].cnt} 个角色引用，无法删除` };
+      if (refs.length > 0) {
+        await connection.rollback();
+        return { success: false, error: `权限被 ${refs.length} 个角色引用，无法删除` };
       }
 
-      await pool.execute('DELETE FROM permissions WHERE id = ?', [permissionId]);
+      await connection.execute('DELETE FROM permissions WHERE id = ?', [permissionId]);
+      await connection.commit();
       return { success: true };
     } catch (error: any) {
+      try {
+        await connection?.rollback();
+      } catch {
+        // Preserve the deletion failure.
+      }
       console.error('删除权限失败:', error);
       return { success: false, error: error.message };
+    } finally {
+      connection?.release();
     }
   }
 
@@ -433,6 +455,7 @@ export class RbacService {
           ) as any;
           return Number(result.affectedRows) > 0;
         },
+        permissionId,
       );
       return { success: true };
     } catch (error: any) {
