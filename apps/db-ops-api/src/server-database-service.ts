@@ -520,13 +520,20 @@ class ServerDatabaseService {
    * Decrypt stored credentials JSON
    */
   decryptCredentials(encryptedData: string): DecryptedCredentials {
-    const decrypted = decryptData(encryptedData);
-    assertCredentialUsable(decrypted);
-    const credentials = JSON.parse(decrypted) as DecryptedCredentials;
-    assertCredentialUsable(credentials.username);
-    assertCredentialUsable(credentials.password);
-    assertCredentialUsable(credentials.privateKey);
-    return credentials;
+    try {
+      const decrypted = decryptData(encryptedData);
+      assertCredentialUsable(decrypted);
+      const credentials = JSON.parse(decrypted) as DecryptedCredentials;
+      assertCredentialUsable(credentials.username);
+      assertCredentialUsable(credentials.password);
+      assertCredentialUsable(credentials.privateKey);
+      return credentials;
+    } catch (error) {
+      if (error instanceof CredentialRotationRequiredError) throw error;
+      // Parser/crypto errors can contain credential fragments. Do not retain
+      // their message or cause: callers may return or log this error.
+      throw new Error('SERVER_CREDENTIALS_INVALID');
+    }
   }
 
   /**
