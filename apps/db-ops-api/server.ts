@@ -68,6 +68,7 @@ import { authSessionConfigService } from './src/auth/session-config.js';
 import { strictBody, warnUnknown } from './src/utils/strict-body.js';
 import { instanceDatabaseService } from './src/instance-database-service.js';
 import { llmDatabaseService } from './src/llm-database-service.js';
+import { publicLLMProvider } from './src/llm/public-provider.js';
 import { resolveProviderFromBaseUrl, getProvider } from './src/llm/provider-catalog.js';
 import { alertDatabaseService } from './src/alert-database-service.js';
 import { alertRuleTemplateService } from './src/alert-rule-template-service.js';
@@ -858,22 +859,22 @@ async function start() {
   }
 
   // 列表
-  fastify.get('/api/llm/configs', { preHandler: [verifyToken] }, async (request, reply) => {
+  fastify.get('/api/llm/configs', { preHandler: [verifyToken, requirePermission('llm:view')] }, async (request, reply) => {
     try {
       const configs = await llmDatabaseService.getAllProviders();
-      reply.send(configs);
+      reply.send(configs.map(publicLLMProvider));
     } catch (error: any) {
       reply.code(500).send({ error: '获取 LLM 配置失败：' + error.message });
     }
   });
 
   // 单个
-  fastify.get('/api/llm/configs/:id', { preHandler: [verifyToken] }, async (request, reply) => {
+  fastify.get('/api/llm/configs/:id', { preHandler: [verifyToken, requirePermission('llm:view')] }, async (request, reply) => {
     try {
       const { id } = request.params as any;
       const config = await llmDatabaseService.getProviderById(Number(id));
       if (!config) return reply.code(404).send({ error: '提供商不存在' });
-      reply.send(config);
+      reply.send(publicLLMProvider(config));
     } catch (error: any) {
       reply.code(500).send({ error: '获取 LLM 配置失败：' + error.message });
     }
@@ -4932,7 +4933,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
   });
 
   // --- 升级规则 (5 条) ---
-  fastify.get('/api/alerts/escalation/rules', { preHandler: [verifyToken] }, async (request, reply) => {
+  fastify.get('/api/alerts/escalation/rules', { preHandler: [verifyToken, requirePermission('alert:view')] }, async (request, reply) => {
     try {
       const rules = await alertEscalationService.getEscalationRules();
       reply.send(rules);
