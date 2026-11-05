@@ -833,6 +833,7 @@ describe('actor session revocation', () => {
     const connection = {
       beginTransaction: vi.fn(),
       execute: vi.fn(async (sql: string) => {
+        if (sql.startsWith('SELECT id FROM permissions')) return [[{ id: 3 }]];
         if (sql.includes('SELECT DISTINCT user_id')) return [[{ user_id: 7 }]];
         if (sql.startsWith(mutationSql)) operations.push('permission');
         if (sql.startsWith('UPDATE users')) operations.push('bump');
@@ -862,6 +863,7 @@ describe('actor session revocation', () => {
     const connection = {
       beginTransaction: vi.fn(async () => { transactionalPermission = committedPermission; }),
       execute: vi.fn(async (sql: string) => {
+        if (sql.startsWith('SELECT id FROM permissions')) return [[{ id: 3 }]];
         if (sql.includes('SELECT DISTINCT user_id')) return [[{ user_id: 7 }]];
         if (sql.startsWith('INSERT IGNORE INTO role_permissions')) {
           transactionalPermission = true;

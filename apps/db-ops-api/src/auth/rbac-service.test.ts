@@ -164,17 +164,26 @@ describe('RbacService - Permissions', () => {
   });
 
   it('should delete a permission', async () => {
-    mockExecute.mockResolvedValueOnce([[{ cnt: 0 }]]);
-    mockExecute.mockResolvedValueOnce([{ affectedRows: 1 }]);
+    const connection = useTransaction(mockExecute);
+    mockExecute.mockResolvedValueOnce([[{ id: 5 }]])
+      .mockResolvedValueOnce([[]])
+      .mockResolvedValueOnce([{ affectedRows: 1 }]);
     const result = await service.deletePermission(5);
     expect(result.success).toBe(true);
+    expect(connection.commit).toHaveBeenCalledOnce();
+    expect(connection.release).toHaveBeenCalledOnce();
   });
 
   it('should reject delete for referenced permission', async () => {
-    mockExecute.mockResolvedValueOnce([[{ cnt: 2 }]]);
+    const connection = useTransaction(mockExecute);
+    mockExecute.mockResolvedValueOnce([[{ id: 5 }]])
+      .mockResolvedValueOnce([[{ role_id: 1 }, { role_id: 2 }]]);
     const result = await service.deletePermission(5);
     expect(result.success).toBe(false);
     expect(result.error).toContain('2 个角色引用');
+    expect(connection.rollback).toHaveBeenCalledOnce();
+    expect(connection.commit).not.toHaveBeenCalled();
+    expect(connection.release).toHaveBeenCalledOnce();
   });
 });
 
@@ -190,6 +199,7 @@ describe('RbacService - Role-Permission assignments', () => {
 
   it('should assign a permission to a role', async () => {
     const transactionExecute = vi.fn()
+      .mockResolvedValueOnce([[{ id: 2 }]])
       .mockResolvedValueOnce([[]])
       .mockResolvedValueOnce([{ affectedRows: 1 }]);
     useTransaction(transactionExecute);
