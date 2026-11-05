@@ -4,25 +4,73 @@
  * old credentials unusable, disables dependent automation, and writes a
  * mode-0600 audit containing only SHA-256 fingerprints of prior ciphertext.
  *
- * Required environment:
+ * The confirmation and the new key are taken only from this process, before
+ * the project env file is read. The same names in that file are ignored, so a
+ * value left in the file cannot authorize a later run.
+ *
+ * Required in the invoking process (a shell prefix counts; the env file does not):
  *   ENCRYPTION_KEY=<new non-default key>
  *   SLIDE_ROTATE_LOST_ENCRYPTION_KEY=CONFIRM_LOST_KEY_ROTATION
+ *
+ * Optional argument, applied only after that check:
+ *   --env-file <path>   database settings file (default apps/db-ops-api/.env)
+ *
+ * Exit 1 when the invocation check, arguments, or rotation fails.
+ * Refusal output names neither the key nor the confirmation value.
  */
 import { createHash } from 'node:crypto';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
-import mysql from '../../apps/db-ops-api/node_modules/mysql2/promise.js';
-import { encryptData } from '../../apps/db-ops-api/src/db-connection.js';
+import { fileURLToPath } from 'node:url';
+import { requireEncryptionKey } from '../../apps/db-ops-api/src/config/security-config.js';
 import { LOST_KEY_ROTATION_SENTINEL } from '../../apps/db-ops-api/src/credential-rotation.js';
 
-const confirmation = 'CONFIRM_LOST_KEY_ROTATION';
+const CONFIRMATION = 'CONFIRM_LOST_KEY_ROTATION';
+const INVOCATION_ONLY_KEYS = new Set(['SLIDE_ROTATE_LOST_ENCRYPTION_KEY', 'ENCRYPTION_KEY']);
 
-async function loadProjectEnv(): Promise<void> {
-  const envText = await readFile(resolve(import.meta.dirname, '../../apps/db-ops-api/.env'), 'utf8');
-  for (const line of envText.split(/\r?\n/)) {
-    const match = line.match(/^([A-Z0-9_]+)=(.*)$/);
-    if (match && process.env[match[1]] === undefined) process.env[match[1]] = match[2];
+export const REFUSAL_MESSAGE = 'Refusing lost-key rotation: this invocation must set SLIDE_ROTATE_LOST_ENCRYPTION_KEY and ENCRYPTION_KEY before the project env file is loaded.';
+export const USAGE = 'Usage: rotate-lost-encryption-key.ts [--env-file <path>]';
+
+export interface InvocationSecrets {
+  confirmation: string | undefined;
+  encryptionKey: string | undefined;
+}
+
+export function captureInvocationSecrets(env: Record<string, string | undefined>): InvocationSecrets {
+  return {
+    confirmation: env.SLIDE_ROTATE_LOST_ENCRYPTION_KEY,
+    encryptionKey: env.ENCRYPTION_KEY,
+  };
+}
+
+export function invocationIsAuthorized(secrets: InvocationSecrets): secrets is { confirmation: string; encryptionKey: string } {
+  return secrets.confirmation === CONFIRMATION && typeof secrets.encryptionKey === 'string' && secrets.encryptionKey.length > 0;
+}
+
+export function defaultProjectEnvFile(scriptDir = import.meta.dirname): string {
+  return resolve(scriptDir, '../../apps/db-ops-api/.env');
+}
+
+export function parseRecoveryArgs(argv: readonly string[], scriptDir = import.meta.dirname): { envFile: string } {
+  const args = argv.slice(2);
+  if (args.length === 0) return { envFile: defaultProjectEnvFile(scriptDir) };
+  if (args.length === 2 && args[0] === '--env-file' && args[1] !== undefined && args[1] !== '' && !args[1].startsWith('-')) {
+    return { envFile: resolve(args[1]) };
   }
+  throw new Error(USAGE);
+}
+
+/** First value wins. Invocation-only keys are never taken from the file. */
+export function projectEnvAssignments(text: string, current: Record<string, string | undefined>): Record<string, string> {
+  const assigned: Record<string, string> = {};
+  for (const line of text.split(/\r?\n/)) {
+    const match = line.match(/^([A-Z0-9_]+)=(.*)$/);
+    if (!match) continue;
+    const key = match[1];
+    if (!key || INVOCATION_ONLY_KEYS.has(key) || current[key] !== undefined || assigned[key] !== undefined) continue;
+    assigned[key] = match[2] ?? '';
+  }
+  return assigned;
 }
 
 function fingerprint(value: unknown): string {
@@ -34,16 +82,28 @@ function auditPath(): string {
   return resolve(configured || `${process.env.HOME}/.config/slide/recovery/lost-encryption-key-rotation.json`);
 }
 
-async function main() {
-  await loadProjectEnv();
-  if (process.env.SLIDE_ROTATE_LOST_ENCRYPTION_KEY !== confirmation) {
-    throw new Error('Refusing credential rotation without SLIDE_ROTATE_LOST_ENCRYPTION_KEY=CONFIRM_LOST_KEY_ROTATION');
-  }
+function pinInvocationSecrets(secrets: { confirmation: string; encryptionKey: string }): void {
+  process.env.SLIDE_ROTATE_LOST_ENCRYPTION_KEY = secrets.confirmation;
+  process.env.ENCRYPTION_KEY = secrets.encryptionKey;
+}
 
-  // encryptData validates that the new key is non-default before any database write.
-  const instanceSentinel = encryptData(LOST_KEY_ROTATION_SENTINEL);
-  const serverSentinel = encryptData(LOST_KEY_ROTATION_SENTINEL);
-  const db = await mysql.createConnection({
+async function main(): Promise<void> {
+  const invocation = captureInvocationSecrets(process.env);
+  const { envFile } = parseRecoveryArgs(process.argv);
+  if (!invocationIsAuthorized(invocation)) throw new Error(REFUSAL_MESSAGE);
+  requireEncryptionKey(invocation.encryptionKey);
+
+  const dbConnection = await import('../../apps/db-ops-api/src/db-connection.js');
+  const mysql = await import('../../apps/db-ops-api/node_modules/mysql2/promise.js');
+  pinInvocationSecrets(invocation);
+  const envText = await readFile(envFile, 'utf8');
+  for (const [key, value] of Object.entries(projectEnvAssignments(envText, process.env))) process.env[key] = value;
+  pinInvocationSecrets(invocation);
+
+  const createConnection = mysql.createConnection;
+  const instanceSentinel = dbConnection.encryptData(LOST_KEY_ROTATION_SENTINEL, invocation.encryptionKey);
+  const serverSentinel = dbConnection.encryptData(LOST_KEY_ROTATION_SENTINEL, invocation.encryptionKey);
+  const db = await createConnection({
     host: process.env.DB_HOST || 'localhost',
     port: Number(process.env.DB_PORT || '3306'),
     user: process.env.DB_USER || 'root',
@@ -108,7 +168,15 @@ async function main() {
   }
 }
 
-main().catch((error) => {
-  console.error(error instanceof Error ? error.message : String(error));
-  process.exit(1);
-});
+function isDirectRun(): boolean {
+  const entry = process.argv[1];
+  if (!entry) return false;
+  return resolve(entry) === fileURLToPath(import.meta.url);
+}
+
+if (isDirectRun()) {
+  main().catch((error) => {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exit(1);
+  });
+}
