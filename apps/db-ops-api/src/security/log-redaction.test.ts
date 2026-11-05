@@ -69,4 +69,17 @@ describe('log redaction', () => {
       password: '[REDACTED]',
     });
   });
+
+  it.each([
+    ['Authorization: Digest username=alice, response=synthetic_digest_secret', 'Authorization: [REDACTED]'],
+    ['authorization: digest username=alice,response=synthetic_digest_secret', 'authorization: [REDACTED]'],
+    ['AUTHORIZATION: DIGEST username="alice", realm="synthetic realm", response="synthetic_digest_secret", qop=auth', 'AUTHORIZATION: [REDACTED]'],
+    ['aUtHoRiZaTiOn\t:\tDigest username=alice, nonce=synthetic_nonce; response=synthetic_digest_secret', 'aUtHoRiZaTiOn\t:\t[REDACTED]'],
+    ['request failed: Authorization: Digest username=alice, response=synthetic_digest_secret\r\nhost=db.internal', 'request failed: Authorization: [REDACTED]\r\nhost=db.internal'],
+    ['Authorization: Basic synthetic_basic_secret\nstatus=ok', 'Authorization: [REDACTED]\nstatus=ok'],
+    ['Authorization: Bearer synthetic.bearer.secret', 'Authorization: [REDACTED]'],
+  ])('redacts complete Authorization header values after Digest comma regression (MAX-315): %s', (input, expected) => {
+    expect(redactSensitiveText(input)).toBe(expected);
+    expect(redactLogValue({ detail: input })).toEqual({ detail: expected });
+  });
 });

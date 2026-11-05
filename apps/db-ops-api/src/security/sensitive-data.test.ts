@@ -57,4 +57,14 @@ describe('Agent security data handling', () => {
       cookie: '[REDACTED]',
     });
   });
+
+  it.each(['Authorization', 'authorization', 'AUTHORIZATION', 'aUtHoRiZaTiOn'])(
+    'redacts complete %s Digest parameters in ordinary nested string fields (MAX-315 review regression)',
+    (header) => {
+      const detail = `${header}: Digest username="alice", realm="synthetic realm", response=synthetic_digest_secret`;
+      expect(redactSensitiveData({ host: 'db.internal', records: [{ detail }] })).toEqual({
+        host: 'db.internal', records: [{ detail: `${header}: [REDACTED]` }],
+      });
+    },
+  );
 });
