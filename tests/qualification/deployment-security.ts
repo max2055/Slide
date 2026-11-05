@@ -1,7 +1,48 @@
 import { promises as fs } from 'node:fs';
 import { createRequire } from 'node:module';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 
+const DIAGNOSTIC_BIND = 'SLIDE_HTTP_BIND:-127.0.0.1';
+const TLS_HTTPS = 'SLIDE_HTTPS_PORT:-443';
+const TLS_REDIRECT = 'SLIDE_HTTP_REDIRECT_PORT:-80';
+
+function list(value: unknown): string[] {
+  return Array.isArray(value) ? value.map(String) : [];
+}
+
+// GitHub #466 / OCR-0479: Boolean([]) is true and [].every(...) is vacuously true.
+export function diagnosticListenerFailures(ports: unknown): string[] {
+  const entries = list(ports);
+  if (entries.length === 0) {
+    return ['frontend must retain a loopback-only diagnostic listener'];
+  }
+  if (!entries.every((entry) => entry.includes(DIAGNOSTIC_BIND))) {
+    return ['frontend port 8080 must default to loopback'];
+  }
+  return [];
+}
+
+export function retainedPortConstraintFailures(apiPorts: unknown, frontendPorts: unknown, tlsPorts: unknown): string[] {
+  const failures: string[] = [];
+  if (apiPorts) failures.push('api and raw Agent WebSocket ports must remain internal');
+  failures.push(...diagnosticListenerFailures(frontendPorts));
+  const tlsEntries = list(tlsPorts);
+  if (!tlsPorts) failures.push('TLS edge must publish HTTPS and the HTTP redirect');
+  if (!tlsEntries.some((entry) => entry.includes(TLS_HTTPS))) failures.push('TLS edge must publish HTTPS');
+  if (!tlsEntries.some((entry) => entry.includes(TLS_REDIRECT))) failures.push('TLS edge must publish the HTTP redirect');
+  return failures;
+}
+
+function isDirectRun(): boolean {
+  return Boolean(process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href);
+}
+
+if (isDirectRun()) {
+  await runDeploymentSecurityGate();
+}
+
+async function runDeploymentSecurityGate(): Promise<void> {
 const root = path.resolve(import.meta.dirname, '..', '..');
 const requireFromApi = createRequire(path.join(root, 'apps/db-ops-api/package.json'));
 const YAML = requireFromApi('yaml') as { parse(input: string): Record<string, any> };
@@ -12,10 +53,6 @@ const failures: string[] = [];
 
 function requireInvariant(condition: unknown, message: string): void {
   if (!condition) failures.push(message);
-}
-
-function list(value: unknown): string[] {
-  return Array.isArray(value) ? value.map(String) : [];
 }
 
 function environment(service: Record<string, any>): Record<string, string> {
@@ -56,12 +93,9 @@ for (const [name, service] of [['api', api], ['sandbox-controller', controller],
   requireInvariant(service.privileged !== true, `${name} must not be privileged`);
 }
 requireInvariant(!controller.ports, 'sandbox-controller must not publish a host port');
-requireInvariant(!api.ports, 'api and raw Agent WebSocket ports must remain internal');
-requireInvariant(Boolean(frontend.ports), 'frontend must retain a loopback-only diagnostic listener');
-requireInvariant(list(frontend.ports).every((entry) => entry.includes('SLIDE_HTTP_BIND:-127.0.0.1')), 'frontend port 8080 must default to loopback');
-requireInvariant(Boolean(tlsEdge.ports), 'TLS edge must publish HTTPS and the HTTP redirect');
-requireInvariant(list(tlsEdge.ports).some((entry) => entry.includes('SLIDE_HTTPS_PORT:-443')), 'TLS edge must publish HTTPS');
-requireInvariant(list(tlsEdge.ports).some((entry) => entry.includes('SLIDE_HTTP_REDIRECT_PORT:-80')), 'TLS edge must publish the HTTP redirect');
+for (const message of retainedPortConstraintFailures(api.ports, frontend.ports, tlsEdge.ports)) {
+  failures.push(message);
+}
 requireInvariant(list(tlsEdge.volumes).some((entry) => entry.includes('SLIDE_TLS_CERT') && entry.endsWith(':ro')), 'TLS certificate must be an operator-managed read-only mount');
 requireInvariant(list(tlsEdge.volumes).some((entry) => entry.includes('SLIDE_TLS_KEY') && entry.endsWith(':ro')), 'TLS private key must be an operator-managed read-only mount');
 requireInvariant(String(api.user) === '10001:10001', 'api must run as the dedicated non-root UID');
@@ -161,3 +195,4 @@ if (failures.length) {
   throw new Error(`deployment security invariants failed:\n- ${failures.join('\n- ')}`);
 }
 console.log('deployment security invariants passed');
+}

@@ -4,7 +4,9 @@
  * Usage:
  *   npx tsx tests/deep-smoke.ts
  */
-import { multiTest, assertShape, workflow, getToken, setToken, getBaseUrl, setBaseUrl } from "./test-kit.js";
+import path from "node:path";
+import { pathToFileURL } from "node:url";
+import { multiTest, assertShape, workflow, getToken, setToken, getBaseUrl, setBaseUrl, type WorkflowStep } from "./test-kit.js";
 
 // Reuse basic auth
 async function login() {
@@ -67,46 +69,7 @@ async function main() {
   console.log("🔄 Workflow: Report generate → list → verify");
   console.log("─".repeat(55));
 
-  const wfResult = await workflow("report-lifecycle", [
-    {
-      name: "1. Generate health report",
-      method: "POST",
-      path: "/api/reports/generate",
-      body: { type: "health", instanceId: 1 },
-      extract: "id",
-      assert: (res, body) => {
-        const b = body as Record<string, unknown>;
-        return typeof b.id === "number" && b.status === "completed";
-      },
-    },
-    {
-      name: "2. GET reports list",
-      method: "GET",
-      path: "/api/reports",
-      assert: (res, body) => {
-        return Array.isArray(body) && body.length > 0;
-      },
-    },
-    {
-      name: "3. New report appears in list",
-      method: "GET",
-      path: "/api/reports",
-      assert: (res, body, vars) => {
-        const list = body as Array<Record<string, unknown>>;
-        return list.some((r) => r.id === vars.id);
-      },
-    },
-    {
-      name: "4. GET report detail",
-      method: "GET",
-      path: `/api/reports/${1}`, // use last id from step 1
-      assert: (res, body) => {
-        const b = body as Record<string, unknown>;
-        // Report detail from GET /api/reports/:id
-        return b !== null && (typeof b.id === "number" || typeof b.name === "string");
-      },
-    },
-  ]);
+  const wfResult = await workflow("report-lifecycle", reportLifecycleSteps());
   totalPassed += wfResult.stepResults.filter((s) => s.passed).length;
   totalFailed += wfResult.stepResults.filter((s) => !s.passed).length;
 
@@ -228,4 +191,55 @@ async function safeGet(path: string): Promise<{ res: Response; raw: unknown }> {
   return { res, raw };
 }
 
-main();
+/** Report workflow used by `pnpm smoke:deep`. Detail uses the id captured in step 1. */
+export function reportLifecycleSteps(): WorkflowStep[] {
+  return [
+    {
+      name: "1. Generate health report",
+      method: "POST",
+      path: "/api/reports/generate",
+      body: { type: "health", instanceId: 1 },
+      extract: "id",
+      assert: (_res, body) => {
+        const b = body as Record<string, unknown>;
+        return typeof b.id === "number" && b.status === "completed";
+      },
+    },
+    {
+      name: "2. GET reports list",
+      method: "GET",
+      path: "/api/reports",
+      assert: (_res, body) => {
+        return Array.isArray(body) && body.length > 0;
+      },
+    },
+    {
+      name: "3. New report appears in list",
+      method: "GET",
+      path: "/api/reports",
+      assert: (_res, body, vars) => {
+        const list = body as Array<Record<string, unknown>>;
+        return list.some((r) => r.id === vars.id);
+      },
+    },
+    {
+      name: "4. GET report detail",
+      method: "GET",
+      path: "/api/reports/${{id}}",
+      assert: (res, body, vars) => {
+        if (!res.ok || !body || typeof body !== "object" || Array.isArray(body)) return false;
+        return (body as Record<string, unknown>).id === vars.id;
+      },
+    },
+  ];
+}
+
+function isDirectRun(): boolean {
+  const entry = process.argv[1];
+  if (!entry) return false;
+  return import.meta.url === pathToFileURL(path.resolve(entry)).href;
+}
+
+if (isDirectRun()) {
+  main();
+}

@@ -132,12 +132,17 @@ export const NetworkDeviceSnmpV2CredentialSchema = Type.Object({
   community: Type.String({ minLength: 1, maxLength: 512 }),
 }, { $id: 'NetworkDeviceSnmpV2Credential', additionalProperties: false });
 export const NetworkDeviceSnmpCredentialUnionSchema = Type.Union([NetworkDeviceSnmpCredentialSchema, NetworkDeviceSnmpV2CredentialSchema], { $id: 'NetworkDeviceSnmpCredentialUnion' });
-export const NetworkDeviceSshCredentialSchema = Type.Object({
-  credentialType: Type.Union([Type.Literal('password'), Type.Literal('key')]),
+export const NetworkDeviceSshCredentialSchema = Type.Union([Type.Object({
+  credentialType: Type.Literal('password'),
   username: Type.String({ minLength: 1, maxLength: 255 }),
   credentialValue: Type.String({ minLength: 1, maxLength: 512 }),
   hostKeyFingerprint: Type.Optional(Type.String({ pattern: '^SHA256:[A-Za-z0-9+/]{43}$' })),
-}, { $id: 'NetworkDeviceSshCredential', additionalProperties: false });
+}, { additionalProperties: false }), Type.Object({
+  credentialType: Type.Literal('key'),
+  username: Type.String({ minLength: 1, maxLength: 255 }),
+  credentialValue: Type.String({ minLength: 1, maxLength: 8192 }),
+  hostKeyFingerprint: Type.Optional(Type.String({ pattern: '^SHA256:[A-Za-z0-9+/]{43}$' })),
+}, { additionalProperties: false })], { $id: 'NetworkDeviceSshCredential' });
 export const NetworkDeviceTestConnectionRequestSchema = Type.Object({
   host: Type.String({ minLength: 1 }),
   mode: Type.Optional(Type.Union([Type.Literal('snmp'), Type.Literal('ssh')])),

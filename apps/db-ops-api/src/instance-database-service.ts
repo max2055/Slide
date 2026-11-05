@@ -5,6 +5,7 @@ import { instanceAccessLifecycle } from './resources/instance-access-lifecycle.j
  */
 import mysql from 'mysql2/promise';
 import { dbConnection, encryptData, decryptData, needsEncryptionMigration } from './db-connection';
+import { assertCredentialUsable, CredentialRotationRequiredError } from './credential-rotation.js';
 import { assertCreatableDatabaseType } from './adapters/capability-matrix.js';
 import { authorizeDatabaseTarget } from './security/database-target-policy.js';
 import { ensureOracleClientReady, formatOracleConnectionError, initializeOracleClient } from './oracle-client.js';
@@ -286,6 +287,7 @@ class InstanceDatabaseService {
     }
     try {
       const password = decryptData(instance.password_encrypted);
+      assertCredentialUsable(password);
       if (needsEncryptionMigration(instance.password_encrypted)) {
         await this.getPool()?.execute(
           'UPDATE database_instances SET password_encrypted = ? WHERE id = ? AND password_encrypted = ?',
@@ -294,6 +296,7 @@ class InstanceDatabaseService {
       }
       return password;
     } catch (error) {
+      if (error instanceof CredentialRotationRequiredError) throw error;
       console.error('解密密码失败:', error);
       return null;
     }
@@ -317,6 +320,7 @@ class InstanceDatabaseService {
 
     try {
       const password = decryptData(encryptedPassword);
+      assertCredentialUsable(password);
       if (needsEncryptionMigration(instance.password_encrypted)) {
         await this.getPool()?.execute(
           'UPDATE database_instances SET password_encrypted = ? WHERE id = ? AND password_encrypted = ?',
@@ -326,6 +330,7 @@ class InstanceDatabaseService {
       const { password_encrypted: _ignored, ...rest } = instance;
       return { ...rest, password } as DecryptedInstance;
     } catch (error) {
+      if (error instanceof CredentialRotationRequiredError) throw error;
       console.error('解密密码失败:', error);
       return null;
     }
@@ -534,6 +539,7 @@ class InstanceDatabaseService {
 
   async markInstanceActive(id: number): Promise<void> {
     await instanceAccessLifecycle.assertAvailable(id);
+    await this.getInstancePassword(id);
     const pool = this.getPool();
     if (!pool) return;
 
@@ -560,6 +566,13 @@ class InstanceDatabaseService {
 
   private async performConnectionTest(config: DatabaseConnectionTestConfig, instanceId?: number): Promise<{ success: boolean; message: string }> {
     assertCreatableDatabaseType(config.db_type);
+
+    try {
+      assertCredentialUsable(config.password);
+    } catch (error) {
+      if (error instanceof CredentialRotationRequiredError) return { success: false, message: error.message };
+      throw error;
+    }
 
     if (typeof config.username !== 'string' || config.username.trim().length === 0) {
       return { success: false, message: '请输入用户名' };

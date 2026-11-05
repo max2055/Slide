@@ -3,6 +3,15 @@ import { generateKeyPairSync, sign } from 'node:crypto';
 import { deviceSigningPayload, DeviceAuthService } from './device-auth-service.js';
 
 describe('DeviceAuthService', () => {
+  for (const rows of [[{ status: 'revoked' }], [], [{ status: 'unknown' }]]) {
+    it(`does not acknowledge registration without paired readback: ${JSON.stringify(rows)}`, async () => {
+      const publicKey = generateKeyPairSync('ed25519').publicKey.export({ format: 'der', type: 'spki' }).subarray(-32).toString('base64url');
+      const execute = vi.fn().mockResolvedValueOnce([{ affectedRows: 0 }]).mockResolvedValueOnce([rows]);
+      const service = new DeviceAuthService(() => ({ execute }));
+      await expect(service.register({ userId: 7 } as any, 'a'.repeat(64), publicKey)).rejects.toThrow('DEVICE_AUTH_REVOKED');
+    });
+  }
+
   it('reports a device proof database failure as retryable without granting access', async () => {
     const service = new DeviceAuthService(() => ({ execute: async () => { throw new Error('database offline'); } }));
     await expect(service.verify({ userId: 1 } as any, { deviceId: 'a'.repeat(64), publicKey: 'key', signature: 'signature', timestamp: Date.now(), nonce: 'nonce', method: 'GET', path: '/ws/auth', body: '' }))
@@ -21,12 +30,12 @@ describe('DeviceAuthService', () => {
     const signature = sign(null, Buffer.from(payload), privateKey).toString('base64url');
     const execute = vi.fn()
       .mockResolvedValueOnce([[{ id: 1, public_key: publicKeyB64, status: 'paired', challenge_hash: 'x', challenge_expires_at: new Date(Date.now() + 60_000) }]])
-      .mockResolvedValueOnce([{}]);
+      .mockResolvedValueOnce([{ affectedRows: 1 }]);
     const service = new DeviceAuthService(() => ({ execute }));
     const { createHash } = await import('node:crypto');
     execute.mockReset();
     execute.mockResolvedValueOnce([[{ id: 1, public_key: publicKeyB64, status: 'paired', challenge_hash: createHash('sha256').update(nonce).digest('hex'), challenge_expires_at: new Date(Date.now() + 60_000) }]]);
-    execute.mockResolvedValueOnce([{}]);
+    execute.mockResolvedValueOnce([{ affectedRows: 1 }]);
     await expect(service.verify({ userId: 7 } as any, { deviceId, publicKey: publicKeyB64, signature, timestamp, nonce, method: 'GET', path: '/ws/auth', body: '' })).resolves.toBe(true);
   });
 });
