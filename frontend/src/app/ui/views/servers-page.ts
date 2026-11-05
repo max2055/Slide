@@ -568,8 +568,8 @@ export class ServersPage extends LitElement {
       return {
         id: srv.id, type: canonicalOsLabel(srv.os_type), version: srv.os_version,
         searchValues: [srv.label, srv.host, srv.os_type, srv.status, this._statusLabel(srv.status)],
-        host: html`<span class="resource-name"><button class="btn-ghost" title=${srv.label?.trim() || srv.host} @click=${() => this._navigateToDetail(srv.id)}>${srv.label?.trim() || srv.host}</button><span class="full-value" aria-hidden="true">${srv.label?.trim() || srv.host}</span></span>`,
-        address: html`${srv.host}:${srv.port ?? 22} ${srv.credential_type === "key" ? html`<app-badge variant=${srv.host_key_fingerprint ? "ok" : "warn"}>${srv.host_key_fingerprint ? "SSH 指纹校验" : srv.ssh_trust_mode === "insecure" ? "SSH 未验证身份（风险）" : "SSH 待确认（暂停）"}</app-badge>` : nothing}`,
+        host: html`<span class="resource-name"><button class="btn-ghost" title=${srv.label?.trim() || srv.host} @click=${() => this._navigateToDetail(srv.id)}>${srv.label?.trim() || srv.host}</button><span class="full-value" aria-hidden="true">${srv.label?.trim() || srv.host}</span></span>${srv.credential_type === "key" ? html`<app-badge variant=${srv.host_key_fingerprint ? "ok" : "warn"}>${srv.host_key_fingerprint ? "SSH 指纹校验" : srv.ssh_trust_mode === "insecure" ? "SSH 未验证身份（风险）" : "SSH 待确认（暂停）"}</app-badge>` : nothing}`,
+        address: `${srv.host}:${srv.port ?? 22}`,
         label: srv.label || html`<span style="color:var(--muted);">—</span>`,
         os_type: html`<app-badge variant="muted">${canonicalOsLabel(srv.os_type)}</app-badge>`,
         status: html`<app-badge variant="${this._statusBadgeVariant(srv.status)}">${this._statusLabel(srv.status)}</app-badge>`,

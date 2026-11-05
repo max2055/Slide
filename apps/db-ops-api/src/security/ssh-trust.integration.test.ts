@@ -21,7 +21,7 @@ describe.skipIf(!host)('MAX-308 real SSH trust across production entry points', 
     if (service) await new Promise<void>(resolve => service.close(() => resolve()));
     clients.clear();
   });
-  it('rejects unconfirmed and mismatched key hosts before authentication; preserves password behavior', async () => {
+  it.each(['pool', 'server probe', 'network probe', 'diagnostics', 'backup', 'host evidence'])('%s rejects unconfirmed/mismatched keys and preserves password behavior', async name => {
     vi.stubEnv('ENCRYPTION_KEY', randomBytes(32).toString('hex'));
     const pem = generateKeyPairSync('rsa', { modulusLength: 2048 }).privateKey.export({ type: 'pkcs1', format: 'pem' }).toString();
     const parsed = utils.parseKey(pem);
@@ -91,7 +91,8 @@ describe.skipIf(!host)('MAX-308 real SSH trust across production entry points', 
         await service.collectHostEvidence(1, { databaseType: 'mysql', services: [], paths: [] });
       },
     ];
-    for (const call of calls) {
+    const index = ['pool', 'server probe', 'network probe', 'diagnostics', 'backup', 'host evidence'].indexOf(name);
+    for (const call of [calls[index]]) {
       const before = authentications;
       await expect(call('key')).rejects.toThrow();
       await expect(call('key', '   ')).rejects.toThrow();
@@ -106,6 +107,6 @@ describe.skipIf(!host)('MAX-308 real SSH trust across production entry points', 
       await call('password', pin);
       await expect(call('password', fingerprintSshHostKey(Buffer.from('wrong')))).rejects.toThrow();
     }
-    expect(authentications).toBeGreaterThanOrEqual(12);
-  }, 20000);
+    expect(authentications).toBeGreaterThanOrEqual(4);
+  }, 30000);
 });

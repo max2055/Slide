@@ -413,8 +413,8 @@ export class NetworkDevicesPage extends LitElement {
     return this.filteredDevices().map((device) => ({
       id: device.id, type: null, model: device.model, version: device.os_version,
       searchValues: [device.name, device.label, device.host, device.site, device.status, this.statusLabel(device.status)],
-      device: html`<span class="resource-name"><button class="btn-ghost" type="button" title=${device.label || device.name} @click=${() => this.navigate(device.id)}>${device.label || device.name}</button><span class="full-value" aria-hidden="true">${device.label || device.name}</span></span>`,
-      address: html`${device.host} ${device.sshCredentialType === "key" ? html`<app-badge variant=${device.hostKeyFingerprint ? "ok" : "warn"}>${device.hostKeyFingerprint ? "SSH 指纹校验" : device.sshTrustMode === "insecure" ? "SSH 未验证身份（风险）" : "SSH 待确认（暂停）"}</app-badge>` : nothing}`,
+      device: html`<span class="resource-name"><button class="btn-ghost" type="button" title=${device.label || device.name} @click=${() => this.navigate(device.id)}>${device.label || device.name}</button><span class="full-value" aria-hidden="true">${device.label || device.name}</span></span>${device.sshCredentialType === "key" ? html`<app-badge variant=${device.hostKeyFingerprint ? "ok" : "warn"}>${device.hostKeyFingerprint ? "SSH 指纹校验" : device.sshTrustMode === "insecure" ? "SSH 未验证身份（风险）" : "SSH 待确认（暂停）"}</app-badge>` : nothing}`,
+      address: device.host,
       site: device.site || "--",
       status: html`<app-badge variant=${this.statusVariant(device.status)}>${this.statusLabel(device.status)}</app-badge>`,
       collection: html`<app-badge variant=${device.collection_enabled ? "ok" : "muted"}>${device.collection_enabled ? "已启用" : "已停用"}</app-badge>`,
