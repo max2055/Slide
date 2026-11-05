@@ -9,14 +9,14 @@ const script = resolve(import.meta.dirname, '../../../scripts/recovery/rotate-lo
 const require = createRequire(import.meta.url);
 
 // Execute the unchanged CLI orchestration; only OS/filesystem/SQL I/O is simulated.
-async function run(env: Record<string, string | undefined>, home: () => string) {
+async function run(env: Record<string, string | undefined>, home: () => string, accountHome = '') {
   const homedir = vi.fn(home);
   const db = { query: vi.fn(async () => [[], []]), execute: vi.fn(), beginTransaction: vi.fn(), commit: vi.fn(), rollback: vi.fn(), end: vi.fn() };
   const createConnection = vi.fn(async () => db);
   const mkdir = vi.fn();
   const writeFile = vi.fn();
   const dependencies: Record<string, object> = {
-    'node:os': { homedir },
+    'node:os': { homedir, userInfo: () => ({ homedir: accountHome }) },
     'node:fs/promises': { readFile: async () => '', mkdir, writeFile },
     '../../apps/db-ops-api/src/config/security-config.js': { requireEncryptionKey: () => {} },
     '../../apps/db-ops-api/src/credential-rotation.js': { LOST_KEY_ROTATION_SENTINEL: 'marker' },
@@ -59,6 +59,12 @@ describe('MAX-326 / #695 recovery audit directory', () => {
     const result = await run({ SLIDE_CREDENTIAL_ROTATION_AUDIT_PATH: '', HOME: '/os-user' }, () => '/os-user');
     expect(result.error).toBeUndefined();
     expect(result.writeFile.mock.calls[0]?.[0]).toBe('/os-user/.config/slide/recovery/lost-encryption-key-rotation.json');
+  });
+
+  it('falls back to the OS account when an empty HOME yields an empty homedir', async () => {
+    const result = await run({ HOME: '' }, () => '', '/account-home');
+    expect(result.error).toBeUndefined();
+    expect(result.writeFile.mock.calls[0]?.[0]).toBe('/account-home/.config/slide/recovery/lost-encryption-key-rotation.json');
   });
 
   it.each(['empty', 'blank', 'throws'])('refuses before connecting or writing when OS home %s', async (mode) => {
