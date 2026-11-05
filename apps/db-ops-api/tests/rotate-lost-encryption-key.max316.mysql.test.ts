@@ -16,7 +16,7 @@ const tables = ['database_instances', 'servers', 'llm_providers', 'notification_
 // Opt in explicitly. Read credentials only from the authorized local file;
 // create and drop only this test's randomly named databases, never DB_NAME.
 describe.skipIf(!envFile)('MAX-316 real MySQL CLI recovery / GitHub #463', () => {
-  async function fixture(backup: boolean, check: (db: mysql.Connection, run: () => { status: number | null; output: string; audit: string }) => Promise<void>) {
+  async function fixture(backup: boolean, check: (db: mysql.Connection, run: (credentials?: { user: string; password: string }) => { status: number | null; output: string; audit: string }) => Promise<void>) {
     const config = parse(readFileSync(envFile!, 'utf8'));
     if (!config.DB_HOST || !config.DB_PORT || !config.DB_USER) throw new Error('Explicit MySQL endpoint required');
     const connection = { host: config.DB_HOST, port: Number(config.DB_PORT), user: config.DB_USER, password: config.DB_PASSWORD ?? '' };
@@ -27,6 +27,7 @@ describe.skipIf(!envFile)('MAX-316 real MySQL CLI recovery / GitHub #463', () =>
     let pool: mysql.Pool | undefined;
     try {
       await admin.query(`CREATE DATABASE \`${name}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`);
+      console.log(JSON.stringify({ fixtureCreated: name }));
       pool = mysql.createPool({ ...connection, database: name });
       await new MigrationRunner(pool as any).run();
       db = await mysql.createConnection({ ...connection, database: name });
@@ -56,16 +57,17 @@ describe.skipIf(!envFile)('MAX-316 real MySQL CLI recovery / GitHub #463', () =>
       writeFileSync(selectedEnv, '', { mode: 0o600 });
       const audit = join(directory, 'audit.json');
       const key = randomBytes(32).toString('hex');
-      const run = () => {
+      const run = (credentials = { user: connection.user, password: connection.password }) => {
         const result = spawnSync(resolve(root, 'apps/db-ops-api/node_modules/.bin/tsx'), [resolve(root, 'scripts/recovery/rotate-lost-encryption-key.ts'), '--env-file', selectedEnv], {
           cwd: directory, encoding: 'utf8', timeout: 30000,
-          env: { PATH: process.env.PATH ?? '', HOME: directory, DB_HOST: connection.host, DB_PORT: String(connection.port), DB_USER: connection.user,
-            DB_PASSWORD: connection.password, DB_NAME: name, ENCRYPTION_KEY: key,
+          env: { PATH: process.env.PATH ?? '', HOME: directory, DB_HOST: connection.host, DB_PORT: String(connection.port), DB_USER: credentials.user,
+            DB_PASSWORD: credentials.password, DB_NAME: name, ENCRYPTION_KEY: key,
             SLIDE_ROTATE_LOST_ENCRYPTION_KEY: 'CONFIRM_LOST_KEY_ROTATION', SLIDE_CREDENTIAL_ROTATION_AUDIT_PATH: audit },
         });
         const output = `${result.stdout}\n${result.stderr}`;
         expect(output.includes(key)).toBe(false);
         if (connection.password) expect(output.includes(connection.password)).toBe(false);
+        if (credentials.password) expect(output.includes(credentials.password)).toBe(false);
         return { status: result.status, output, audit };
       };
       await check(db, run);
@@ -86,6 +88,36 @@ describe.skipIf(!envFile)('MAX-316 real MySQL CLI recovery / GitHub #463', () =>
       rmSync(directory, { recursive: true, force: true });
     }
   }
+
+  // Chief review: information_schema hides an existing table when this real
+  // account has no privilege on it. That must never authorize skipping cleanup.
+  it('refuses a real account with core permissions but no historical-table privileges', async () => {
+    await fixture(true, async (db, run) => {
+      const user = `m316_${randomBytes(6).toString('hex')}`;
+      const password = randomBytes(24).toString('hex');
+      const [database] = await db.query<RowDataPacket[]>('SELECT DATABASE() name');
+      const schema = database[0].name;
+      const config = parse(readFileSync(envFile!, 'utf8'));
+      await db.query("CREATE USER ?@'%' IDENTIFIED BY ?", [user, password]);
+      try {
+        for (const table of tables) await db.query(`GRANT SELECT, UPDATE ON \`${schema}\`.\`${table}\` TO ?@'%'`, [user]);
+        const restricted = await mysql.createConnection({ host: config.DB_HOST, port: Number(config.DB_PORT), user, password, database: schema });
+        try {
+          const [visible] = await restricted.query<RowDataPacket[]>("SELECT TABLE_NAME FROM information_schema.tables WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'llm_providers_backup'");
+          expect(visible).toHaveLength(0);
+          console.log(JSON.stringify({ restrictedAccount: user, metadataVisible: visible.length, historicalTableExists: true }));
+        } finally { await restricted.end(); }
+        const before = await snapshot(db, true);
+        const result = run({ user, password });
+        expect(result.status, result.output).toBe(1);
+        expect(result.output).toContain('denied');
+        expect(result.output).not.toContain('"rotated":true');
+        expect(await snapshot(db, true)).toBe(before);
+      } finally {
+        await db.query("DROP USER ?@'%'", [user]);
+      }
+    });
+  }, 60000);
 
   async function snapshot(db: mysql.Connection, backup: boolean) {
     const rows = [];
