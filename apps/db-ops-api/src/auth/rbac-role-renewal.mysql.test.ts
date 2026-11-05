@@ -25,14 +25,14 @@ describe.skipIf(!port)('user role renewal with isolated MySQL and real JWT', () 
   let failAt = '';
   let headers: { authorization: string };
   const store = {
-    execute: (sql: string, values?: unknown[]) => pool.execute(sql, values),
+    execute: (sql: string, values?: unknown[]) => pool.execute(sql, values as any[]),
     getConnection: async () => {
       const connection = await pool.getConnection();
       return {
         beginTransaction: () => connection.beginTransaction(),
         execute: async (sql: string, values?: unknown[]) => {
           if (failAt && sql.startsWith(failAt)) throw new Error('injected renewal transaction failure');
-          return connection.execute(sql, values);
+          return connection.execute(sql, values as any[]);
         },
         commit: () => connection.commit(), rollback: () => connection.rollback(),
         release: () => connection.release(),
@@ -68,7 +68,7 @@ describe.skipIf(!port)('user role renewal with isolated MySQL and real JWT', () 
     } finally { connection.release(); }
     await applyActorSecuritySchema(pool);
     vi.spyOn(dbConnection, 'getPool').mockReturnValue(store as unknown as Pool);
-    contexts = new ActorContextService(() => pool);
+    contexts = new ActorContextService(() => store);
     app = Fastify();
     app.decorate('verifyToken', createVerifyToken(secret, contexts));
     await app.register(rbacApiRoutes);
