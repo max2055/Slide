@@ -1,6 +1,58 @@
 import { describe, expect, it, vi } from 'vitest';
+import { spawnSync } from 'node:child_process';
 import { installConsoleRedaction, redactLogValue, redactSensitiveText } from './log-redaction.js';
 import { boundedToolValue, buildToolPreview } from '@slide/agent-core/tool-stream';
+
+describe('exact replacement output (MAX-323 / #376)', () => {
+  const cases = [
+    ['Bearer synthetic.bearer.secret', '[REDACTED]'],
+    ['bEaReR synthetic_bearer-secret==', '[REDACTED]'],
+    ['sk-synthetic_api_secret', '[REDACTED]'],
+    ['Bearer synthetic.first.secret; sk-synthetic_second_secret', '[REDACTED]; [REDACTED]'],
+    ['password=synthetic password value', 'password=[REDACTED]'],
+    ['API-KEY : synthetic key value', 'API-KEY : [REDACTED]'],
+    ['Authorization: Bearer synthetic.header.secret', 'Authorization: [REDACTED]'],
+    ['https://example.invalid/open-apis/bot/v2/hook/synthetic-webhook?status=ok', 'https://example.invalid/open-apis/bot/v2/hook/[REDACTED]?status=ok'],
+  ] as const;
+
+  it.each(cases)('preserves only the intended prefix: %s', (input, expected) => {
+    expect(redactSensitiveText(input)).toBe(expected);
+    expect(redactSensitiveText(input)).not.toContain('$1');
+    expect(redactSensitiveText(input)).not.toContain('synthetic');
+    expect(redactLogValue({ detail: input, error: new Error(input) })).toEqual({
+      detail: expected, error: { name: 'Error', message: expected },
+    });
+  });
+
+  it.each(['error', 'warn'] as const)('emits exact sanitized values through console.%s', (level) => {
+    const target = { error: vi.fn(), warn: vi.fn() };
+    const sink = target[level];
+    installConsoleRedaction(target);
+    for (const [input, expected] of cases) {
+      target[level](input, new Error(input));
+      expect(sink).toHaveBeenLastCalledWith(expected, { name: 'Error', message: expected });
+    }
+    expect(JSON.stringify(sink.mock.calls)).not.toContain('$1');
+    expect(JSON.stringify(sink.mock.calls)).not.toContain('synthetic');
+  });
+
+  it('redacts actual process stderr without replacing the console sink', () => {
+    const moduleUrl = new URL('./log-redaction.ts', import.meta.url).href;
+    const child = spawnSync(process.execPath, ['--import', 'tsx', '--input-type=module', '-e', `
+      import { installConsoleRedaction } from ${JSON.stringify(moduleUrl)};
+      installConsoleRedaction();
+      for (const level of ['warn', 'error']) {
+        for (const [input] of ${JSON.stringify(cases)}) console[level](input);
+      }
+    `], { encoding: 'utf8' });
+    expect(child.error).toBeUndefined();
+    expect(child.status).toBe(0);
+    expect(child.stdout).toBe('');
+    expect(child.stderr).toBe([...cases, ...cases].map(([, expected]) => `${expected}\n`).join(''));
+    expect(child.stderr).not.toContain('$1');
+    expect(child.stderr).not.toContain('synthetic');
+  });
+});
 
 describe('shared references and cycles (MAX-324 / #584)', () => {
   const sharedValue = () => ({
