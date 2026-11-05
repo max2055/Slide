@@ -1,8 +1,9 @@
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import mysql from 'mysql2/promise';
 import { afterAll, describe, expect, it } from 'vitest';
 import {
@@ -112,6 +113,93 @@ describe('lost-key rotation invocation gate', () => {
     expect(beforeMain.includes('mysql2')).toBe(false);
     expect(beforeMain.includes('dotenv')).toBe(false);
   });
+});
+
+// MAX-313 independent review: exercise the real entry point beyond the gate.
+// The listeners never send a MySQL handshake, so no SQL can be executed.
+describe('lost-key rotation target selection', () => {
+  it.each(['selected file', 'default file', 'process override', 'no confirmation', 'invalid key'])(
+    'uses only the intended target: %s', async (mode) => {
+      const directory = realpathSync(mkdtempSync(join(tmpdir(), 'max313-target-')));
+      const connections = [0, 0, 0];
+      const received = [0, 0, 0];
+      const listeners = connections.map((_, index) => createServer((socket) => {
+        connections[index]! += 1;
+        socket.on('data', (data) => { received[index]! += data.length; });
+        socket.on('error', () => {});
+        socket.end();
+      }));
+      try {
+        const ports = await Promise.all(listeners.map((server) => new Promise<number>((resolvePort, reject) => {
+          server.once('error', reject);
+          server.listen(0, '127.0.0.1', () => {
+            const address = server.address();
+            if (!address || typeof address === 'string') return reject(new Error('TCP address missing'));
+            resolvePort(address.port);
+          });
+        })));
+        // Copy the actual source into an isolated project so the default-file
+        // test cannot read or modify a developer's platform configuration.
+        for (const path of [
+          'scripts/recovery/rotate-lost-encryption-key.ts',
+          'apps/db-ops-api/src/db-connection.ts',
+          'apps/db-ops-api/src/config/security-config.ts',
+          'apps/db-ops-api/src/credential-rotation.ts',
+        ]) {
+          const destination = join(directory, path);
+          mkdirSync(dirname(destination), { recursive: true });
+          copyFileSync(join(repoRoot, path), destination);
+        }
+        writeFileSync(join(directory, 'package.json'), '{"type":"module"}');
+        symlinkSync(join(repoRoot, 'apps/db-ops-api/node_modules'), join(directory, 'apps/db-ops-api/node_modules'));
+        const cwd = join(directory, 'cwd');
+        mkdirSync(cwd);
+        const settings = (target: number) => [
+          'DB_HOST=127.0.0.1', `DB_PORT=${ports[target]}`, 'DB_USER=synthetic',
+          'DB_PASSWORD=synthetic', 'DB_NAME=synthetic',
+          `SLIDE_ROTATE_LOST_ENCRYPTION_KEY=${PHRASE}`, `ENCRYPTION_KEY=${FILE_KEY}`,
+        ].join('\n');
+        writeFileSync(join(cwd, '.env'), settings(0));
+        writeFileSync(join(cwd, 'selected.env'), settings(1));
+        writeFileSync(join(directory, 'apps/db-ops-api/.env'), settings(1));
+        const audit = join(directory, 'audit.json');
+        const env: Record<string, string> = {
+          PATH: process.env.PATH ?? '', HOME: directory,
+          ENCRYPTION_KEY: mode === 'invalid key' ? 'short-key' : EXPLICIT_KEY,
+          SLIDE_CREDENTIAL_ROTATION_AUDIT_PATH: audit,
+        };
+        if (mode !== 'no confirmation') env.SLIDE_ROTATE_LOST_ENCRYPTION_KEY = PHRASE;
+        if (mode === 'process override') {
+          env.DB_HOST = '127.0.0.1';
+          env.DB_PORT = String(ports[2]);
+        }
+        const args = mode === 'default file' ? [] : ['--env-file', 'selected.env'];
+        const child = spawn(tsxPath, [join(directory, 'scripts/recovery/rotate-lost-encryption-key.ts'), ...args], { cwd, env });
+        let output = '';
+        child.stdout.on('data', (data) => { output += data; });
+        child.stderr.on('data', (data) => { output += data; });
+        const code = await new Promise<number | null>((resolveCode, reject) => {
+          const timer = setTimeout(() => { child.kill('SIGTERM'); }, 10000);
+          child.once('error', (error) => { clearTimeout(timer); reject(error); });
+          child.once('close', (status) => { clearTimeout(timer); resolveCode(status); });
+        });
+        const safeOutput = redact(output);
+        expect(code, safeOutput).toBe(1);
+        expect(connections, safeOutput).toEqual(
+          mode === 'no confirmation' || mode === 'invalid key' ? [0, 0, 0]
+            : mode === 'process override' ? [0, 0, 1] : [0, 1, 0],
+        );
+        expect(received).toEqual([0, 0, 0]);
+        expect(existsSync(audit)).toBe(false);
+        expect(safeOutput).not.toContain('[redacted]');
+        if (mode === 'no confirmation') expect(safeOutput).toContain(REFUSAL_MESSAGE);
+        if (mode === 'invalid key') expect(safeOutput).toContain('ENCRYPTION_KEY must encode exactly 32 bytes');
+      } finally {
+        await Promise.all(listeners.map((server) => new Promise<void>((done) => server.close(() => done()))));
+        rmSync(directory, { recursive: true, force: true });
+      }
+    }, 20000,
+  );
 });
 
 describe.skipIf(!port)('lost-key rotation writes nothing without this invocation', () => {
