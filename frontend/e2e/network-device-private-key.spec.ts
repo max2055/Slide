@@ -9,13 +9,13 @@ import {
 
 const { utils: { parseKey } } = createRequire(import.meta.url)('ssh2');
 // Generated for this isolated test run only. Never log or attach the key.
-const { privateKey: pem } = generateKeyPairSync('ec', {
-  namedCurve: 'prime256v1', privateKeyEncoding: { type: 'sec1', format: 'pem' },
+const keys = [2048, 4096].map(bits => ({ bits, pem: generateKeyPairSync('rsa', {
+  modulusLength: bits, privateKeyEncoding: { type: 'pkcs1', format: 'pem' },
   publicKeyEncoding: { type: 'spki', format: 'pem' },
-});
+}).privateKey }));
 
-for (const [width, height] of [[1440, 900], [1366, 768], [1920, 1080]]) {
-  test(`MAX-312: masked PEM, keyboard and parsed HTTP payload at ${width}x${height}`, async ({ page }, testInfo) => {
+for (const [width, height] of [[1440, 900], [1366, 768], [1920, 1080]]) for (const { bits, pem } of keys) {
+  test(`MAX-312: RSA-${bits}, masked PEM, keyboard and parsed HTTP payload at ${width}x${height}`, async ({ page }, testInfo) => {
     const writes: { method: string; path: string; value: string; type: string }[] = [];
     let failNext = false;
     const device = { id: 7, name: '合成交换机', host: '192.0.2.7', vendor: 'huawei', snmp_port: 161, ssh_port: 22, collection_enabled: false };
@@ -136,7 +136,7 @@ for (const [width, height] of [[1440, 900], [1366, 768], [1920, 1080]]) {
       await page.getByRole('button', { name: '取消', exact: true }).click();
       await expect(add).toBeFocused();
       await testInfo.attach('parsed-payload-summary', { contentType: 'application/json', body: JSON.stringify({
-        viewport: { width, height }, browser: await page.context().browser()!.version(),
+        viewport: { width, height }, key: `RSA-${bits}`, browser: await page.context().browser()!.version(),
         requests: writes.map(({ method, path, type, value }) => ({ method, path, type, bytes: Buffer.byteLength(value), sha256: createHash('sha256').update(value).digest('hex') })),
         pemExact: true, ssh2ParseKey: true, storage: 'isolated receiver; no database or SSH transport',
       }, null, 2) });
