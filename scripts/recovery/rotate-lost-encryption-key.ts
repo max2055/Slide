@@ -93,11 +93,15 @@ async function main(): Promise<void> {
   if (!invocationIsAuthorized(invocation)) throw new Error(REFUSAL_MESSAGE);
   requireEncryptionKey(invocation.encryptionKey);
 
-  const dbConnection = await import('../../apps/db-ops-api/src/db-connection.js');
-  const mysql = await import('../../apps/db-ops-api/node_modules/mysql2/promise.js');
-  pinInvocationSecrets(invocation);
   const envText = await readFile(envFile, 'utf8');
   for (const [key, value] of Object.entries(projectEnvAssignments(envText, process.env))) process.env[key] = value;
+  pinInvocationSecrets(invocation);
+
+  // db-connection imports dotenv/config. Keep that loader on the selected file
+  // too, so cwd/.env cannot fill in settings omitted by the selected file.
+  process.env.DOTENV_CONFIG_PATH = envFile;
+  const dbConnection = await import('../../apps/db-ops-api/src/db-connection.js');
+  const mysql = await import('../../apps/db-ops-api/node_modules/mysql2/promise.js');
   pinInvocationSecrets(invocation);
 
   const createConnection = mysql.createConnection;
