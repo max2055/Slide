@@ -3,14 +3,14 @@ const ASSIGNMENT_KEY = 'password|passwd|secret|token|api[_-]?key|authorization|c
 // Spaces stay inside a value. Comma, semicolon, and newline still end it, as does the next
 // assignment. Authorization and Cookie headers consume the rest of the line because their
 // authentication parameters and cookies can contain commas and semicolons.
-const SPACED_VALUE = `[^\\s,;\\r\\n]+(?:\\s+(?!(?:${ASSIGNMENT_KEY})\\s*[=:])[^\\s,;\\r\\n]+)*`;
+const SPACED_VALUE = `[^\\s,;\\r\\n]+(?:[^\\S\\r\\n]+(?!(?:${ASSIGNMENT_KEY})[^\\S\\r\\n]*[=:])[^\\s,;\\r\\n]+)*`;
 const SENSITIVE_TEXT = [
   /\bBearer\s+[A-Za-z0-9._~+/=-]+/gi,
   /\bsk-[A-Za-z0-9_-]{8,}/g,
   /(\bauthorization[ \t]*:[ \t]*)[^\r\n]+/gi,
   /(\b(?:set-)?cookie\s*:\s*)[^\r\n]+/gi,
-  new RegExp(`(\\b(?:cookie|authorization)\\s*=\\s*)${SPACED_VALUE}`, 'gi'),
-  new RegExp(`((?:password|passwd|secret|token|api[_-]?key)\\s*[=:]\\s*)${SPACED_VALUE}`, 'gi'),
+  new RegExp(`(\\b(?:cookie|authorization)[^\\S\\r\\n]*=[^\\S\\r\\n]*)${SPACED_VALUE}`, 'gi'),
+  new RegExp(`((?:password|passwd|secret|token|api[_-]?key)[^\\S\\r\\n]*[=:][^\\S\\r\\n]*)${SPACED_VALUE}`, 'gi'),
   /(\/open-apis\/bot\/v2\/hook\/)[^\s/?#]+/gi,
 ];
 
