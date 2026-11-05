@@ -1,4 +1,6 @@
-import { readFile } from 'node:fs/promises';
+import { readFile, readdir, mkdtemp, copyFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import mysql, { type Pool } from 'mysql2/promise';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -8,6 +10,8 @@ vi.mock('./sql-executor', () => ({ sqlExecutor: { executeSql } }));
 vi.mock('./llm-service', () => ({ llmService: {} }));
 import { dbConnection } from './db-connection.js';
 import { approvalService } from './approval-service.js';
+import { MigrationRunner } from './migrations/runner.js';
+import { assertSchemaInvariants } from './migrations/invariants.js';
 
 // Real approval storage and target writes; the executor boundary is injected to
 // simulate a lost driver response. This is not a full application/driver E2E.
@@ -28,22 +32,12 @@ describe.skipIf(!port)('SQL approval settlement: isolated MySQL', () => {
     created = true;
     await pool.end();
     pool = mysql.createPool({ ...options, database });
-    const schema = await readFile(new URL('../sql/schema.sql', import.meta.url), 'utf8');
-    for (const table of ['approval_requests', 'approval_events']) {
-      const ddl = schema.match(new RegExp('CREATE TABLE IF NOT EXISTS `' + table + '` \\([\\s\\S]*?;'))?.[0];
-      if (!ddl) throw new Error(`Missing schema for ${table}`);
-      await pool.query(ddl);
-    }
-    await pool.query('ALTER TABLE approval_requests ADD operation_id CHAR(36) NULL');
-    // Upgrade a pre-fix event enum, then verify migration is repeatable.
-    await pool.query("ALTER TABLE approval_events MODIFY event_type ENUM('submitted','ai_reviewed','claimed','approved','rejected','executed','execution_failed','notified') NOT NULL");
-    const migration = await readFile(new URL('../sql/migrations/151_approval_reconciliation_event.sql', import.meta.url), 'utf8');
-    await pool.query(migration);
-    await pool.query(migration);
+    await new MigrationRunner(pool).run();
+    await new MigrationRunner(pool).run();
     await pool.query('CREATE TABLE target_counter (n INT NOT NULL)');
     await pool.query('INSERT INTO target_counter VALUES (0)');
     vi.spyOn(dbConnection, 'getPool').mockReturnValue(pool);
-  });
+  }, 120_000);
   afterAll(async () => {
     vi.restoreAllMocks();
     if (created) await pool.query(`DROP DATABASE ${database}`);
@@ -69,6 +63,33 @@ describe.skipIf(!port)('SQL approval settlement: isolated MySQL', () => {
     const [target] = await pool.query<any[]>('SELECT n FROM target_counter');
     return { ...rows[0], writes: target[0].n };
   };
+
+  it('upgrades the complete pre-151 schema, preserves comments and supports replay', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'max334-migrations-'));
+    try {
+      const source = new URL('../sql/migrations/', import.meta.url);
+      for (const name of await readdir(source)) {
+        if (name.endsWith('.sql') && name < '151_') await copyFile(new URL(name, source), join(directory, name));
+      }
+      // Rebuild this disposable database at the previously released schema.
+      await pool.query('SET FOREIGN_KEY_CHECKS=0');
+      const [tables] = await pool.query<any[]>('SHOW TABLES');
+      for (const table of tables) await pool.query('DROP TABLE `' + Object.values(table)[0] + '`');
+      await pool.query('SET FOREIGN_KEY_CHECKS=1');
+      await new MigrationRunner(pool, directory).run();
+      await new MigrationRunner(pool).run();
+      const migration = await readFile(new URL('../sql/migrations/151_approval_reconciliation_event.sql', import.meta.url), 'utf8');
+      await pool.query(migration);
+      await assertSchemaInvariants(pool);
+      await pool.query("INSERT INTO approval_events (request_id,event_type) VALUES (1,'reconciliation_required')");
+      const [columns] = await pool.query<any[]>("SHOW FULL COLUMNS FROM approval_events LIKE 'event_type'");
+      expect(columns[0]).toMatchObject({ Comment: '事件类型', Collation: 'utf8mb4_unicode_ci', Null: 'NO' });
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+      await pool.query('CREATE TABLE IF NOT EXISTS target_counter (n INT NOT NULL)');
+      await pool.query('INSERT INTO target_counter VALUES (0)');
+    }
+  }, 120_000);
 
   it.each(['onClaimed', 'onExecutionStarted'])('terminates %s failure without target writes', async hook => {
     expect((await review({ [hook]: async () => { throw new Error('hook failed'); } })).success).toBe(false);
