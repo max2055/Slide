@@ -8,7 +8,7 @@ import { RbacService } from './rbac-service.js';
 import { applyActorSecuritySchema } from './actor-context.js';
 
 // #316 / MAX-336: opt-in real InnoDB tests, never use the application schema.
-const port = Number(process.env.RBAC_TEST_MYSQL_PORT);
+const port = Number(process.env.RBAC_TEST_MYSQL_PORT ?? process.env.AUTH_TEST_MYSQL_PORT);
 describe.skipIf(!port)('permission deletion with isolated MySQL', () => {
   const database = `rbac_delete_${randomUUID().replaceAll('-', '')}`;
   let admin: Pool;
@@ -21,7 +21,7 @@ describe.skipIf(!port)('permission deletion with isolated MySQL', () => {
   // Only scheduling/failure injection is intercepted; all SQL uses real connections.
   const execute = async (connection: Pool | PoolConnection, sql: string, values?: unknown[]) => {
     beforeExecute(sql);
-    const result = await connection.execute(sql, values);
+    const result = await connection.execute(sql, values as any[]);
     await afterExecute(sql);
     return result;
   };
@@ -67,7 +67,8 @@ describe.skipIf(!port)('permission deletion with isolated MySQL', () => {
 
   beforeAll(async () => {
     const options = { host: process.env.RBAC_TEST_MYSQL_HOST ?? '127.0.0.1', port,
-      user: process.env.RBAC_TEST_MYSQL_USER ?? 'root', password: process.env.RBAC_TEST_MYSQL_PASSWORD ?? '',
+      user: process.env.RBAC_TEST_MYSQL_USER ?? 'root',
+      password: process.env.RBAC_TEST_MYSQL_PASSWORD ?? process.env.AUTH_TEST_MYSQL_PASSWORD ?? '',
       connectionLimit: 8 };
     admin = mysql.createPool(options);
     await admin.query(`CREATE DATABASE ${database}`);
