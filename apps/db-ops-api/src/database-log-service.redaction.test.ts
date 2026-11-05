@@ -101,14 +101,20 @@ describe('database log analysis redaction', () => {
 
   it('redacts credentials, connection strings, quoted values, and SQL literals before the provider call', async () => {
     await databaseLogService.triggerLogAnalysis([log({
-      message: `Error 1062: duplicate entry 'person@example.invalid' for key 'users.email'; password="hunter two"; mysql://reader:uri-secret@db.internal:3306/app. Could not select a replica for this failover.`,
+      message: `Error 1062: duplicate entry 'person@example.invalid' for key 'users.email'; password="hunter two"; mysql://reader:uri-secret@db.internal:3306/app. Could not select a replica for this failover. Query: SELECT note FROM audit WHERE note = 'left;quoted-secret' /* ; comment-secret */`,
       raw_content: JSON.stringify({
         error_code: 1062,
         diagnostic_code: 'ER_DUP_ENTRY 1062',
         password: 'raw password',
         token: 'raw-token',
+        clientSecret: 'camel-secret',
+        accessToken: 'camel-access',
+        Client_Secret: 'underscore-secret',
+        'ACCESS-TOKEN': 'hyphen-access',
+        nested: [{ client_secret: 'nested-secret', access_token: 'nested-access' }],
         connection: 'mongodb://raw-user:raw-uri-secret@db.internal/app',
         sql: "INSERT INTO users(email, token, retry_count) VALUES ('person@example.invalid', 'sql-secret-987', 3419)",
+        statement: 'SET @customer_id = 123456789',
       }),
       detected_patterns: [{ pattern: 'password=pattern-secret', severity: 'error', message: 'not sent to the provider' }],
     })], 7, 91);
@@ -118,6 +124,12 @@ describe('database log analysis redaction', () => {
     expect(prompt).toContain('"error_code":1062');
     expect(prompt).toContain('"password":"[REDACTED]"');
     expect(prompt).toContain('"token":"[REDACTED]"');
+    expect(prompt).toContain('"clientSecret":"[REDACTED]"');
+    expect(prompt).toContain('"accessToken":"[REDACTED]"');
+    expect(prompt).toContain('"Client_Secret":"[REDACTED]"');
+    expect(prompt).toContain('"ACCESS-TOKEN":"[REDACTED]"');
+    expect(prompt).toContain('"client_secret":"[REDACTED]"');
+    expect(prompt).toContain('"access_token":"[REDACTED]"');
     expect(prompt).toContain('"connection":"mongodb://[REDACTED]@db.internal/app"');
     expect(prompt).toContain(`"sql":"INSERT INTO users(email, token, retry_count) VALUES ('[REDACTED]', '[REDACTED]', NULL)"`);
     expect(prompt).toContain('INSERT INTO users(email, token, retry_count)');
@@ -125,7 +137,7 @@ describe('database log analysis redaction', () => {
     expect(prompt).toContain('password=[REDACTED](error)');
     expect(prompt).toContain('db.internal:3306/app');
     expect(prompt).toContain('Could not select a replica for this failover.');
-    for (const secret of ['person@example.invalid', 'hunter two', 'reader', 'uri-secret', 'raw password', 'raw-token', 'raw-user', 'raw-uri-secret', 'sql-secret-987', 'pattern-secret', '3419']) {
+    for (const secret of ['person@example.invalid', 'hunter two', 'reader', 'uri-secret', 'raw password', 'raw-token', 'camel-secret', 'camel-access', 'underscore-secret', 'hyphen-access', 'nested-secret', 'nested-access', 'raw-user', 'raw-uri-secret', 'sql-secret-987', 'quoted-secret', 'comment-secret', 'pattern-secret', '3419', '123456789']) {
       expect(prompt).not.toContain(secret);
     }
   });
@@ -134,16 +146,19 @@ describe('database log analysis redaction', () => {
     await databaseLogService.triggerLogAnalysis([log({
       source: 'other',
       message: `Error code 1205: query SELECT * FROM accounts WHERE email = 'message-private'`,
-      raw_content: `Error 1205; SELECT * FROM accounts WHERE note = 'before;after-private'`,
+      raw_content: JSON.stringify({
+        error_code: 1205,
+        sql: 'MAINTAIN SESSION SECRET = 987654321',
+      }),
     })], 7, 92);
 
     const prompt = services.chatWithTracking.mock.calls[0][0][0].content as string;
     expect(prompt).toContain('Error code 1205');
-    expect(prompt).toContain('Error 1205;');
     expect(prompt).toContain('SQL 已省略');
     expect(prompt).toContain('SQL_REDACTION_UNAVAILABLE');
+    expect(prompt).toContain('"error_code":1205');
     expect(prompt).not.toContain('message-private');
-    expect(prompt).not.toContain('after-private');
+    expect(prompt).not.toContain('987654321');
     expect(services.completeAnalysis).toHaveBeenCalledWith(92, expect.objectContaining({
       result: expect.objectContaining({ redaction_gaps: ['SQL_REDACTION_UNAVAILABLE'] }),
     }));
