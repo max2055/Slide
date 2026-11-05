@@ -1,3 +1,5 @@
+import { loadSecurityConfig } from '../config/security-config.js';
+import { bootstrapProductionAdmin } from './production-bootstrap.js';
 import { createHash } from 'node:crypto';
 import { readdir, readFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
@@ -10,30 +12,47 @@ const defaultDirectory = join(here, '../../sql/migrations');
 const lockName = 'slide:db-ops:migrations:v1';
 const snapshotId = '000_schema_baseline.sql';
 
+// Each exception pins a reviewed old-to-current pair, never a moving SQL hash.
+// Targets match main@2a11e456064d91e1699f9d49f2bad56698336531.
 // 067 was already applied on early device-auth deployments without schema
 // comments. The corrected migration is intentionally accepted only for that
 // exact historical checksum; migration 069 repairs the live schema forward.
-export const LEGACY_MIGRATION_CHECKSUMS: Readonly<Record<string, readonly string[]>> = Object.freeze({
+export const LEGACY_MIGRATION_CHECKSUMS: Readonly<Record<string, readonly { recordedChecksum: string; currentChecksum: string }[]>> = Object.freeze({
   // 000 was baselined by deployments running the auth idle-timeout release.
   '000_schema_baseline.sql': Object.freeze([
-    'ba0ea57599e766dc9c9605746cdd9fa221cc05464fe45ed640b33a668fbcbbb8',
+    Object.freeze({
+      recordedChecksum: 'ba0ea57599e766dc9c9605746cdd9fa221cc05464fe45ed640b33a668fbcbbb8',
+      currentChecksum: '729ec2cce91657443417503a6cf0a1852cb6002885fc6f9f9af5755560cdc2b9',
+    }),
   ]),
   // 071_v010 was deployed once with a harmless trailing-whitespace variant.
   // Accept that recorded checksum so later forward migrations can run.
   '071_v010_infrastructure_assistant.sql': Object.freeze([
-    '2a070214f68fbc1fd760d1708b3b39d5376d226495a0df5d77c32fb96fd4763f',
+    Object.freeze({
+      recordedChecksum: '2a070214f68fbc1fd760d1708b3b39d5376d226495a0df5d77c32fb96fd4763f',
+      currentChecksum: 'a5e7b11e17674530e818fb21aa626236153065bf7ce66a4af609314bb7aa923c',
+    }),
   ]),
   '067_device_registrations.sql': Object.freeze([
-    '94403810bcae74f546a719b6d2f062e1699c18440e2ad76a5c787fa3f2c10ebb',
+    Object.freeze({
+      recordedChecksum: '94403810bcae74f546a719b6d2f062e1699c18440e2ad76a5c787fa3f2c10ebb',
+      currentChecksum: 'b53a8b888ad3842cecd10a42df37d579769d615f3894fad107d04a5fec2da84d',
+    }),
   ]),
   // 070 was applied before its network-device contract was narrowed.
   '070_network_device_resource_foundation.sql': Object.freeze([
-    'b8e1da4a29ff2a47b0703ab4d95746e41812b4bf4d5f46ca293292f816c10583',
+    Object.freeze({
+      recordedChecksum: 'b8e1da4a29ff2a47b0703ab4d95746e41812b4bf4d5f46ca293292f816c10583',
+      currentChecksum: '5ca1ec5c8f2c2d40a09cb5e5375eb4ab98851dc7a30eefef077011091ae4cc1b',
+    }),
   ]),
   // 072 only changed its human-readable description after early deployments.
   // Accept the already-applied checksum so forward migrations can continue.
   '072_agent_execution_controls.sql': Object.freeze([
-    'ddedfc2c11ce30af437a40867959a5e3dfc966e04bddae5ea3b4c2eaeab2335c',
+    Object.freeze({
+      recordedChecksum: 'ddedfc2c11ce30af437a40867959a5e3dfc966e04bddae5ea3b4c2eaeab2335c',
+      currentChecksum: '8ff16ebc799d13c22cde6c44a645bbf4702c1af708d66bd1aa37be40f04f517f',
+    }),
   ]),
 });
 
@@ -42,8 +61,10 @@ export function isMigrationChecksumAccepted(
   recordedChecksum: string,
   currentChecksum: string,
 ): boolean {
-  return recordedChecksum === currentChecksum
-    || (LEGACY_MIGRATION_CHECKSUMS[migrationId] ?? []).includes(recordedChecksum);
+  if (recordedChecksum === currentChecksum) return true;
+  if (!Object.hasOwn(LEGACY_MIGRATION_CHECKSUMS, migrationId)) return false;
+  return LEGACY_MIGRATION_CHECKSUMS[migrationId].some(pair =>
+    pair.recordedChecksum === recordedChecksum && pair.currentChecksum === currentChecksum);
 }
 
 export class MigrationError extends Error {}
@@ -127,37 +148,65 @@ export class MigrationRunner {
   }
 
   async run(): Promise<void> {
+    loadSecurityConfig();
     await this.ensureLedger();
     const connection = await this.pool.getConnection();
     try {
       const [locks] = await connection.query<Array<{ locked: number }>>('SELECT GET_LOCK(?, 30) AS locked', [lockName]);
       if (Number(locks[0]?.locked) !== 1) throw new MigrationError('Could not acquire migration lock');
-      try {
-        await this.runLocked(connection);
-        await assertSchemaInvariants(this.pool);
-      }
-      finally { await connection.query('SELECT RELEASE_LOCK(?)', [lockName]); }
-    } finally { connection.release(); }
+      await this.runLocked(connection);
+      await assertSchemaInvariants(this.pool);
+      if (process.env.NODE_ENV === 'production') await bootstrapProductionAdmin(connection, process.env);
+      await connection.query('SELECT RELEASE_LOCK(?)', [lockName]);
+    } catch (error) {
+      // Closing the session also releases its advisory lock. Never return a
+      // failed session whose transaction/lock cleanup may be incomplete.
+      connection.destroy();
+      throw error;
+    }
+    connection.release();
   }
 
   async baseline(actor: string, reason: string): Promise<void> {
     if (!actor.trim() || !reason.trim()) throw new MigrationError('Baseline requires actor and reason');
     await this.ensureLedger();
     const migrations = await loadMigrations(this.directory);
-    const [existing] = await this.pool.query<MigrationLedgerEntry[]>('SELECT migration_id FROM app_schema_migrations LIMIT 1');
-    if (existing.length) throw new MigrationError('Schema migration ledger is not empty');
-    const [tables] = await this.pool.query<Array<{ name: string }>>(
-      `SELECT TABLE_NAME AS name FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME IN ('users', 'approval_requests', 'operations')`,
-    );
-    if (tables.length < 3) throw new MigrationError('Schema cannot be baselined: required tables are missing');
-    await assertSchemaInvariants(this.pool);
-    for (const migration of migrations) {
-      await this.pool.query(
-        `INSERT INTO app_schema_migrations (migration_id, checksum, status, finished_at, error)
-         VALUES (?, ?, 'baselined', NOW(), ?)`,
-        [migration.id, migration.checksum, `baseline by ${actor}: ${reason}`],
+    const connection = await this.pool.getConnection();
+    let transactionStarted = false;
+    try {
+      const [locks] = await connection.query<Array<{ locked: number }>>('SELECT GET_LOCK(?, 30) AS locked', [lockName]);
+      if (Number(locks[0]?.locked) !== 1) throw new MigrationError('Could not acquire migration lock');
+      const [existing] = await connection.query<MigrationLedgerEntry[]>('SELECT migration_id FROM app_schema_migrations LIMIT 1');
+      if (existing.length) throw new MigrationError('Schema migration ledger is not empty');
+      const [tables] = await connection.query<Array<{ name: string }>>(
+        `SELECT TABLE_NAME AS name FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME IN ('users', 'approval_requests', 'operations')`,
       );
+      if (tables.length < 3) throw new MigrationError('Schema cannot be baselined: required tables are missing');
+      await assertSchemaInvariants(connection);
+      await connection.query('START TRANSACTION');
+      transactionStarted = true;
+      for (const migration of migrations) {
+        await connection.query(
+          `INSERT INTO app_schema_migrations (migration_id, checksum, status, finished_at, error)
+           VALUES (?, ?, 'baselined', NOW(), ?)`,
+          [migration.id, migration.checksum, `baseline by ${actor}: ${reason}`],
+        );
+      }
+      await connection.query('COMMIT');
+      transactionStarted = false;
+      await connection.query('SELECT RELEASE_LOCK(?)', [lockName]);
+    } catch (error) {
+      try {
+        if (transactionStarted) await connection.query('ROLLBACK');
+      } catch (cleanupError) {
+        throw new AggregateError([error, cleanupError], 'Baseline failed and rollback failed');
+      } finally {
+        // Closing the session releases the advisory lock even if rollback fails.
+        connection.destroy();
+      }
+      throw error;
     }
+    connection.release();
   }
 
   /** @deprecated Use acknowledgeExternallyRepairedMigration; identical guarded contract. */
@@ -236,15 +285,30 @@ export class MigrationRunner {
 
   private async apply(connection: MigrationConnection, migration: SqlMigration): Promise<void> {
     await connection.query('INSERT INTO app_schema_migrations (migration_id, checksum, status, started_at) VALUES (?, ?, \'running\', NOW())', [migration.id, migration.checksum]);
-    const statements = statementsForExecution(migration);
+    // Preserve historical checksums while isolating development-only account seeds.
+    const statements = statementsForExecution(migration).filter(statement => !(
+      process.env.NODE_ENV === 'production' && migration.id === snapshotId
+      && /INSERT INTO `users`/.test(statement)
+    ));
     let statementIndex = 0;
     try {
       for (; statementIndex < statements.length; statementIndex++) await connection.query(statements[statementIndex]);
       await connection.query(`UPDATE app_schema_migrations SET status = 'completed', finished_at = NOW(), statement_index = NULL, error = NULL WHERE migration_id = ?`, [migration.id]);
     } catch (error) {
       const message = error instanceof Error ? error.message.slice(0, 4096) : String(error).slice(0, 4096);
-      await connection.query(`UPDATE app_schema_migrations SET status = 'failed', finished_at = NOW(), statement_index = ?, error = ? WHERE migration_id = ?`, [statementIndex, message, migration.id]);
-      throw new MigrationError(`Migration ${migration.id} failed: ${message}`);
+      const failure = new MigrationError(`Migration ${migration.id} failed at statement ${statementIndex}: ${message}`, { cause: error });
+      try {
+        // A statement error need not abort an explicit MySQL transaction.
+        // Roll back before writing the ledger; DDL already committed by MySQL
+        // remains an explicit-repair case and must never be replayed here.
+        await connection.query('ROLLBACK');
+        await connection.query(`UPDATE app_schema_migrations SET status = 'failed', finished_at = NOW(), statement_index = ?, error = ? WHERE migration_id = ?`, [statementIndex, message, migration.id]);
+        // Also persist the ledger when migration SQL disabled autocommit.
+        await connection.query('COMMIT');
+      } catch (cleanupError) {
+        throw new AggregateError([failure, cleanupError], `${failure.message}; migration cleanup failed`, { cause: failure });
+      }
+      throw failure;
     }
   }
 
