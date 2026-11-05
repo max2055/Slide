@@ -253,6 +253,28 @@ describe('RbacService - User-Role assignments', () => {
     expect(result.success).toBe(true);
   });
 
+  it('#496 renews an expired duplicate and invalidates sessions in the same transaction', async () => {
+    const execute = vi.fn()
+      .mockResolvedValueOnce([{ affectedRows: 0 }])
+      .mockResolvedValueOnce([{ affectedRows: 1 }])
+      .mockResolvedValue([{ affectedRows: 1 }]);
+    const connection = useTransaction(execute);
+    expect(await service.assignRoleToUser(1, 2)).toEqual({ success: true });
+    expect(execute).toHaveBeenNthCalledWith(2, expect.stringMatching(/UPDATE user_roles SET grant_expiry = NULL[\s\S]*grant_expiry <= NOW\(\)/), [1, 2]);
+    expect(execute).toHaveBeenNthCalledWith(3, expect.stringContaining('UPDATE users SET session_version'), [1]);
+    expect(execute).toHaveBeenNthCalledWith(4, expect.stringContaining('UPDATE refresh_tokens SET revoked'), [1]);
+    expect(connection.commit).toHaveBeenCalledOnce();
+    expect(connection.release).toHaveBeenCalledOnce();
+  });
+
+  it('#496 leaves an active duplicate and its sessions unchanged', async () => {
+    const execute = vi.fn().mockResolvedValue([{ affectedRows: 0 }]);
+    const connection = useTransaction(execute);
+    expect(await service.assignRoleToUser(1, 2)).toEqual({ success: true });
+    expect(execute).toHaveBeenCalledTimes(2);
+    expect(connection.commit).toHaveBeenCalledOnce();
+  });
+
   it('should revoke a role from a user', async () => {
     useTransaction(vi.fn().mockResolvedValue([{ affectedRows: 1 }]));
     const result = await service.revokeRoleFromUser(1, 2);
