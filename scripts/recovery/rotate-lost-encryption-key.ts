@@ -75,8 +75,21 @@ export function projectEnvAssignments(text: string, current: Record<string, stri
   return assigned;
 }
 
-function fingerprint(value: unknown): string {
-  return createHash('sha256').update(String(value ?? '')).digest('hex');
+function stableJsonValue(value: unknown): unknown {
+  if (Buffer.isBuffer(value)) return value.toString('hex');
+  if (Array.isArray(value)) return value.map(stableJsonValue);
+  if (value !== null && typeof value === 'object') {
+    return Object.fromEntries(Object.entries(value).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0)
+      .map(([key, entry]) => [key, stableJsonValue(entry)]));
+  }
+  return value;
+}
+
+export function fingerprint(value: unknown): string {
+  const content = Buffer.isBuffer(value) ? value.toString('hex')
+    : value !== null && typeof value === 'object' ? JSON.stringify(stableJsonValue(value))
+      : String(value ?? '');
+  return createHash('sha256').update(content).digest('hex');
 }
 
 function auditPath(): string {
