@@ -4,7 +4,7 @@ import { Client, type ClientChannel, type ConnectConfig } from 'ssh2';
 import { decryptData, dbConnection, encryptData } from '../db-connection.js';
 import { auditLogManager } from '../audit/audit-log.js';
 import { authorizeNetworkDeviceTarget, type AuthorizedNetworkDeviceTarget } from '../security/network-device-target-policy.js';
-import { createOptionalSshHostVerifier, normalizeOptionalSshHostKeyFingerprint } from '../security/ssh-host-key.js';
+import { createCredentialSshHostVerifier, normalizeOptionalSshHostKeyFingerprint } from '../security/ssh-host-key.js';
 import type { ConfigBackupSummary } from '../resources/network-device-types.js';
 import { networkDeviceDatabaseService, type NetworkDeviceCredentials, type NetworkDeviceDatabaseService } from './network-device-database-service.js';
 
@@ -68,6 +68,7 @@ export interface ConfigBackupSshTransport {
     username: string;
     credentialType: 'password' | 'key';
     credentialValue: string;
+    sshTrustMode?: string | null;
     hostKeyFingerprint?: string;
     readyTimeoutMs: number;
   }): Promise<ConfigBackupConnection>;
@@ -79,6 +80,7 @@ export interface SshHostKeyProbeInput {
   username: string;
   credentialType: 'password' | 'key';
   credentialValue: string;
+  sshTrustMode?: string | null;
   hostKeyFingerprint?: string;
 }
 
@@ -120,6 +122,7 @@ export interface ConfigBackupTransport {
     username: string;
     credentialType: 'password' | 'key';
     credentialValue: string;
+    sshTrustMode?: string | null;
     hostKeyFingerprint?: string;
     commands: readonly string[];
     timeoutMs: number;
@@ -323,7 +326,7 @@ class DefaultSshTransport implements ConfigBackupSshTransport {
         resolve({ exec: (command) => execOnClient(client, command), end: () => { client.end(); } });
       });
       client.once('error', rejectOnce);
-      const hostVerifier = createOptionalSshHostVerifier(input.hostKeyFingerprint);
+      const hostVerifier = createCredentialSshHostVerifier(input.credentialType, input.hostKeyFingerprint, input.sshTrustMode);
       const connectConfig: ConnectConfig = {
         host: input.target.address, port: input.target.port, username: input.username,
         readyTimeout: input.readyTimeoutMs, ...(hostVerifier ? { hostVerifier } : {}),
@@ -352,6 +355,7 @@ export async function verifySshHostKey(
       production: options.targetPolicy?.production,
     },
   );
+  createCredentialSshHostVerifier(input.credentialType, input.hostKeyFingerprint, input.sshTrustMode);
   const fingerprint = normalizeOptionalSshHostKeyFingerprint(input.hostKeyFingerprint);
   const transport = options.transport ?? new DefaultSshTransport();
   let connection: ConfigBackupConnection | null = null;
@@ -361,7 +365,7 @@ export async function verifySshHostKey(
       username: input.username,
       credentialType: input.credentialType,
       credentialValue: input.credentialValue,
-      hostKeyFingerprint: fingerprint,
+      sshTrustMode: input.sshTrustMode, hostKeyFingerprint: fingerprint,
       readyTimeoutMs: options.readyTimeoutMs ?? 30_000,
     });
   } catch (error) {
@@ -499,12 +503,12 @@ export class ConfigBackupService {
         return { success: false, error: 'SSH_CREDENTIAL_REQUIRED' };
       }
       let fingerprint: string | undefined;
-      try { fingerprint = normalizeOptionalSshHostKeyFingerprint(credentials.hostKeyFingerprint); }
-      catch { return { success: false, error: 'SSH_HOST_KEY_FINGERPRINT_REQUIRED' }; }
+      try { createCredentialSshHostVerifier(credentials.credentialType, credentials.hostKeyFingerprint, credentials.sshTrustMode); fingerprint = normalizeOptionalSshHostKeyFingerprint(credentials.hostKeyFingerprint); }
+      catch (error) { return { success: false, error: error instanceof Error ? error.message : 'SSH_HOST_KEY_FINGERPRINT_REQUIRED' }; }
       const request = {
         host: authorizedTarget.address, port: authorizedTarget.port, username: credentials.username,
         credentialType: credentials.credentialType, credentialValue: credentials.credentialValue,
-        hostKeyFingerprint: fingerprint, commands: backupCommands(target.vendor),
+        sshTrustMode: credentials.sshTrustMode, hostKeyFingerprint: fingerprint, commands: backupCommands(target.vendor),
         timeoutMs: this.commandTimeoutMs, maxOutputBytes: this.maxOutputBytes,
       };
       const result = await (this.transport as ConfigBackupTransport).collect(request);
@@ -555,10 +559,10 @@ export class ConfigBackupService {
         throw new ConfigBackupError('SSH_CREDENTIAL_REQUIRED');
       }
       let fingerprint: string | undefined;
-      try { fingerprint = normalizeOptionalSshHostKeyFingerprint(credentials.hostKeyFingerprint); }
+      try { createCredentialSshHostVerifier(credentials.credentialType, credentials.hostKeyFingerprint, credentials.sshTrustMode); fingerprint = normalizeOptionalSshHostKeyFingerprint(credentials.hostKeyFingerprint); }
       catch { throw new ConfigBackupError('SSH_HOST_KEY_FINGERPRINT_REQUIRED'); }
       failureStage = 'SSH_CONNECT_FAILED';
-      connection = await (this.transport as ConfigBackupSshTransport).connect({ target, username: credentials.username, credentialType: credentials.credentialType, credentialValue: credentials.credentialValue, hostKeyFingerprint: fingerprint, readyTimeoutMs: this.commandTimeoutMs });
+      connection = await (this.transport as ConfigBackupSshTransport).connect({ target, username: credentials.username, credentialType: credentials.credentialType, credentialValue: credentials.credentialValue, sshTrustMode: credentials.sshTrustMode, hostKeyFingerprint: fingerprint, readyTimeoutMs: this.commandTimeoutMs });
       failureStage = 'SSH_COMMAND_FAILED';
       const output = await this.runFixedCommands(connection, commands);
       const content = output;

@@ -1,3 +1,4 @@
+import { recordSshTrustRequest } from './src/security/ssh-trust-audit.js';
 import { SystemEventWorkflow } from './src/investigations/system-event-workflow.js';
 import { registerResourceIdentityRoutes } from './src/resources/resource-identity-routes.js';
 import { registerResourceTriggerRead } from './src/metrics/triggers/resource-detail-routes.js';
@@ -79,11 +80,12 @@ import { installHistoricalMetricRoutes } from './src/metrics/legacy-routes.js';
 import { databaseService } from './src/database-service.js';
 import { llmService } from './src/llm-service.js';
 import { dbConnection } from './src/db-connection.js';
+import { bindApiListener } from './src/config/api-listen.js';
 import { loadSecurityConfig } from './src/config/security-config.js';
 import { publicInstanceDto, publicNotificationDto, publicServerDto } from './src/security/public-dto.js';
 import { isNotificationChannelType, validateNotificationChannelConfig } from './src/notification-channel-config.js';
 import { requireBrandingWrite } from './src/security/branding-policy.js';
-import { API_BODY_LIMIT, expensiveOperationRateLimitConfig, loginRateLimitConfig, registerHttpSecurity, sensitiveOperationRateLimitConfig } from './src/security/http-security.js';
+import { API_BODY_LIMIT, createLoginIpRateLimit, expensiveOperationRateLimitConfig, loginRateLimitConfig, registerHttpSecurity, sensitiveOperationRateLimitConfig } from './src/security/http-security.js';
 import {
   AdapterCapabilitiesResponseSchema,
   ErrorResponseSchema,
@@ -157,7 +159,7 @@ import { WorkerStartup } from './src/lifecycle/worker-startup.js';
 import { InfrastructureReadiness } from './src/lifecycle/infrastructure-readiness.js';
 import { WorkerRecovery } from './src/lifecycle/worker-recovery.js';
 import { boundedPoolQuery } from './src/lifecycle/bounded-pool-query.js';
-import { platformUnavailableResponse } from './src/lifecycle/platform-unavailable.js';
+import { PlatformUnavailableError, platformUnavailableResponse } from './src/lifecycle/platform-unavailable.js';
 import { ActorAuthenticationError } from './src/auth/actor-context.js';
 import { startupConfig } from './src/lifecycle/startup-config.js';
 import { registerDeliveryRoutes } from './src/workflows/delivery-routes.js';
@@ -588,7 +590,7 @@ async function start() {
   });
 
   // 登录接口
-  fastify.post('/api/auth/login', { config: { rateLimit: loginRateLimitConfig } }, async (request, reply) => {
+  fastify.post('/api/auth/login', { onRequest: createLoginIpRateLimit(fastify), config: { rateLimit: loginRateLimitConfig } }, async (request, reply) => {
     const check = strictBody(request.body as Record<string, unknown>,
       ['username', 'password'], 'POST /api/auth/login');
     if (check.error) return reply.code(400).send(check.error);
@@ -655,6 +657,7 @@ async function start() {
         },
       });
     } catch (error: any) {
+      if (error instanceof PlatformUnavailableError) return reply.code(503).send(platformUnavailableResponse);
       console.error('登录失败:', error);
       reply.code(500).send({ error: '登录失败：' + error.message });
     }
@@ -1539,12 +1542,13 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
   fastify.post('/api/servers', { preHandler: [verifyToken, requirePermission('servers:manage')] }, async (request, reply) => {
     try {
       const data = request.body as any;
-      warnUnknown(data, ['host','port','label','os_type','credential_type','credential_username','credential_value','host_key_fingerprint','created_by'], 'POST /api/servers');
+      warnUnknown(data, ['host','port','label','os_type','credential_type','credential_username','credential_value','host_key_fingerprint','ssh_trust_mode','created_by'], 'POST /api/servers');
       if (!data.host) return reply.code(400).send({ error: '缺少必填字段：host' });
       if (!data.os_type) return reply.code(400).send({ error: '缺少必填字段：os_type' });
       if (!data.credential_type) return reply.code(400).send({ error: '缺少必填字段：credential_type' });
       if (!data.credential_username) return reply.code(400).send({ error: '缺少必填字段：credential_username' });
       if (!data.credential_value) return reply.code(400).send({ error: '缺少必填字段：credential_value' });
+      if (data.credential_type === 'key') await recordSshTrustRequest(Number((request as any).user?.userId), 'server', String(data.host), data.ssh_trust_mode);
       const result = await serverDatabaseService.createServer(data);
       if (result.success) {
         reply.send({ id: result.serverId, message: '创建成功' });
@@ -1561,7 +1565,10 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
     try {
       const { id } = request.params as any;
       const data = request.body as any;
-      warnUnknown(data, ['host','port','label','os_type','credential_type','credential_username','credential_value','host_key_fingerprint','collection_enabled'], 'PUT /api/servers/:id');
+      warnUnknown(data, ['host','port','label','os_type','credential_type','credential_username','credential_value','host_key_fingerprint','ssh_trust_mode','collection_enabled'], 'PUT /api/servers/:id');
+      if (data.ssh_trust_mode === 'insecure' && (data.credential_type ?? (await serverDatabaseService.getServerById(Number(id)))?.credential_type) === 'key') {
+        await recordSshTrustRequest(Number((request as any).user?.userId), 'server', String(id), data.ssh_trust_mode);
+      }
       const result = await serverDatabaseService.updateServer(Number(id), data);
       if (result.success) {
         reply.send({ message: '更新成功' });
@@ -1598,10 +1605,11 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
   }, async (request, reply) => {
     try {
       const check = strictBody(request.body as Record<string, unknown>,
-        ['host', 'port', 'credential_type', 'credential_username', 'credential_value', 'host_key_fingerprint'], 'POST /api/servers/test-connection');
+        ['host', 'port', 'credential_type', 'credential_username', 'credential_value', 'host_key_fingerprint','ssh_trust_mode'], 'POST /api/servers/test-connection');
       if (check.error) return reply.code(400).send(check.error);
-      const { host, port, credential_type, credential_username, credential_value, host_key_fingerprint } = check.body as { host: string; port: number; credential_type: string; credential_username: string; credential_value: string; host_key_fingerprint?: string };
-      const result = await serverDatabaseService.testConnection(String(host), Number(port), String(credential_type), String(credential_value), String(credential_username), host_key_fingerprint);
+      const { host, port, credential_type, credential_username, credential_value, host_key_fingerprint, ssh_trust_mode } = check.body as { host: string; port: number; credential_type: string; credential_username: string; credential_value: string; host_key_fingerprint?: string; ssh_trust_mode?: string };
+      if (credential_type === 'key') await recordSshTrustRequest(Number((request as any).user?.userId), 'server_probe', String(host), ssh_trust_mode);
+      const result = await serverDatabaseService.testConnection(String(host), Number(port), String(credential_type), String(credential_value), String(credential_username), host_key_fingerprint, ssh_trust_mode);
       reply.send(result);
     } catch (error: any) {
       reply.code(500).send({ error: '测试连接失败：' + error.message });
@@ -5356,9 +5364,8 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
 
   registerCronRoutes(fastify, verifyToken, () => recovery.ready && dispatchAvailable ? cronManager : undefined);
 
-  // 启动 HTTP API 服务器
-  const port = process.env.PORT || process.env.BACKEND_PORT || process.env.API_PORT || 3000;
-  await fastify.listen({ port: Number(port), host: '0.0.0.0' });
+  // 启动 HTTP API 服务器。端口优先级：PORT、BACKEND_PORT、API_PORT，默认 3000。
+  const port = await bindApiListener(fastify);
   try {
     // Acquire and renew the lease while one-time API dependencies initialize.
     await recovery.start(initializeApi, startWorkers);

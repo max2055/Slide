@@ -1,12 +1,12 @@
 import Fastify from 'fastify';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { API_BODY_LIMIT, loginRateLimitConfig, registerHttpSecurity, resolveCorsOrigins } from './http-security.js';
+import { API_BODY_LIMIT, createLoginIpRateLimit, loginRateLimitConfig, registerHttpSecurity, resolveCorsOrigins } from './http-security.js';
 import { securityEventService } from './security-event-service.js';
 
 async function app() {
   const fastify = Fastify({ bodyLimit: API_BODY_LIMIT });
   await registerHttpSecurity(fastify, { NODE_ENV: 'test', CORS_ORIGINS: 'https://slide.example.com' } as NodeJS.ProcessEnv);
-  fastify.post('/login', { config: { rateLimit: loginRateLimitConfig } }, async () => ({ ok: true }));
+  fastify.post('/login', { onRequest: createLoginIpRateLimit(fastify), config: { rateLimit: loginRateLimitConfig } }, async () => ({ ok: true }));
   fastify.post('/echo', async () => ({ ok: true }));
   fastify.get('/failure', async (_request, reply) => reply.code(500).send({ error: 'password=secret', stack: 'internal' }));
   fastify.get('/sandbox-failure', async (_request, reply) => reply.code(503).send({ reasonCode: 'SANDBOX_NOT_READY', detail: 'hidden' }));
@@ -77,7 +77,7 @@ describe('HTTP security boundary', () => {
     await fastify.close();
   });
 
-  it('rate limits login attempts by IP and normalized username', async () => {
+  it('rate limits login attempts by normalized account', async () => {
     const record = vi.spyOn(securityEventService, 'record').mockResolvedValue();
     const fastify = await app();
     const statuses = [];
@@ -90,4 +90,65 @@ describe('HTTP security boundary', () => {
     }));
     await fastify.close();
   });
+  it('allows different accounts on one IP but caps an account across IPs (#375)', async () => {
+    vi.spyOn(securityEventService, 'record').mockResolvedValue();
+    const fastify = await app();
+    try {
+      for (let i = 0; i < 6; i++) {
+        expect((await fastify.inject({ method: 'POST', url: '/login', payload: { username: `user${i}` } })).statusCode).toBe(200);
+      }
+      for (let i = 0; i < 6; i++) {
+        expect((await fastify.inject({ method: 'POST', url: '/login', remoteAddress: `192.0.2.${i + 1}`,
+          payload: { username: i % 2 ? ' ADMIN ' : 'admin' } })).statusCode).toBe(i < 5 ? 200 : 429);
+      }
+    } finally { await fastify.close(); }
+  });
+
+  it('caps independent IP abuse including malformed JSON and forged forwarding headers', async () => {
+    vi.spyOn(securityEventService, 'record').mockResolvedValue();
+    const fastify = await app();
+    try {
+      for (let i = 0; i < 31; i++) {
+        const response = await fastify.inject({ method: 'POST', url: '/login',
+          headers: { 'content-type': 'application/json', 'x-forwarded-for': `192.0.2.${i + 1}`, forwarded: `for=192.0.2.${i + 1}` },
+          payload: i < 10 ? '{' : JSON.stringify({ username: `user${i}` }) });
+        expect(response.statusCode).toBe(i === 30 ? 429 : i < 10 ? 400 : 200);
+        if (i === 30) expect(Number(response.headers['retry-after'])).toBeGreaterThan(0);
+      }
+    } finally { await fastify.close(); }
+  });
+
+  it('bounds missing/malformed usernames and restores both budgets after the window', async () => {
+    vi.spyOn(securityEventService, 'record').mockResolvedValue();
+    const fastify = await app();
+    try {
+      const bodies = [{}, { username: null }, { username: [] }, { username: {} }, { username: '' }, { username: 1 }];
+      for (const [i, payload] of bodies.entries()) {
+        expect((await fastify.inject({ method: 'POST', url: '/login', payload })).statusCode).toBe(i < 5 ? 200 : 429);
+      }
+      for (let i = 0; i < 25; i++) await fastify.inject({ method: 'POST', url: '/login', payload: { username: `u${i}` } });
+      const now = Date.now();
+      vi.spyOn(Date, 'now').mockImplementation(() => now + 61_000);
+      expect((await fastify.inject({ method: 'POST', url: '/login', payload: {} })).statusCode).toBe(200);
+    } finally { await fastify.close(); }
+  });
+
+  it('uses forwarded IPs only behind an explicitly trusted proxy', async () => {
+    vi.spyOn(securityEventService, 'record').mockResolvedValue();
+    const fastify = Fastify({ trustProxy: ['127.0.0.1'] });
+    await registerHttpSecurity(fastify, { NODE_ENV: 'test' });
+    fastify.post('/login', { onRequest: createLoginIpRateLimit(fastify), config: { rateLimit: loginRateLimitConfig } }, async request => ({ ip: request.ip }));
+    try {
+      for (let i = 0; i < 6; i++) {
+        const response = await fastify.inject({ method: 'POST', url: '/login', remoteAddress: '127.0.0.1',
+          headers: { 'x-forwarded-for': `192.0.2.${i + 1}` }, payload: { username: 'same' } });
+        expect(response.statusCode).toBe(i < 5 ? 200 : 429);
+        if (i === 0) expect(response.json().ip).toBe('192.0.2.1');
+      }
+      const untrusted = await fastify.inject({ method: 'POST', url: '/login', remoteAddress: '198.51.100.1',
+        headers: { 'x-forwarded-for': '192.0.2.55' }, payload: { username: 'other' } });
+      expect(untrusted.json().ip).toBe('198.51.100.1');
+    } finally { await fastify.close(); }
+  });
+
 });

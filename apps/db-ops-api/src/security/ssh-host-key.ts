@@ -39,3 +39,20 @@ export function createOptionalSshHostVerifier(expectedFingerprint: unknown) {
   const normalized = normalizeOptionalSshHostKeyFingerprint(expectedFingerprint);
   return normalized ? createSshHostVerifier(normalized) : undefined;
 }
+
+/** Host identity and login authentication are independent. Password compatibility
+ * is intentional; only private-key logins require the new explicit decision. */
+export function createCredentialSshHostVerifier(credentialType: string, expectedFingerprint: unknown, mode?: unknown) {
+  if (credentialType === 'password') return createOptionalSshHostVerifier(expectedFingerprint);
+  if (credentialType !== 'key') throw new Error('SSH_CREDENTIAL_TYPE_INVALID');
+  if (mode != null && mode !== 'pinned' && mode !== 'insecure' && mode !== 'pending') {
+    throw new Error('SSH_TRUST_MODE_INVALID');
+  }
+  if (typeof expectedFingerprint === 'string' && !expectedFingerprint.trim()) {
+    throw new Error('SSH_HOST_KEY_FINGERPRINT_REQUIRED');
+  }
+  // Even explicit compatibility must not override a supplied fingerprint.
+  if (expectedFingerprint != null) return createSshHostVerifier(expectedFingerprint);
+  if (mode === 'insecure') return undefined;
+  throw new Error('SSH_TRUST_CONFIRMATION_REQUIRED');
+}

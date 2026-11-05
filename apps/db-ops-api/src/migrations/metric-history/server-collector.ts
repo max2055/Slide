@@ -305,7 +305,7 @@ class ServerCollector {
         credentials.username,
         server.credential_type,
         credentialValue,
-        server.host_key_fingerprint,
+        server.host_key_fingerprint, server.ssh_trust_mode,
       );
 
       this.protocolOnline.add(server.id);

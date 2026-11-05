@@ -1,3 +1,4 @@
+import { createCredentialSshHostVerifier } from '../security/ssh-host-key.js';
 import { isIP } from 'node:net';
 import { SNMP_AUTH_PROTOCOLS, SNMP_PRIVACY_PROTOCOLS } from '../network-devices/snmp-types.js';
 
@@ -29,6 +30,7 @@ export interface SshCredentialInput {
   credentialType: 'password' | 'key';
   username: string;
   credentialValue: string;
+  sshTrustMode?: string | null;
   hostKeyFingerprint?: string;
 }
 
@@ -51,6 +53,7 @@ export interface NetworkDeviceCreateInput {
 }
 
 export interface NetworkDeviceUpdateInput {
+  sshTrust?: { mode: string; fingerprint?: string };
   name?: string;
   label?: string | null;
   host?: string;
@@ -90,6 +93,9 @@ export interface NetworkDevicePublicDto extends Omit<NetworkDeviceRow, 'collecti
   collection_enabled: boolean;
   hasSnmpCredential: boolean;
   hasSshCredential: boolean;
+  sshCredentialType?: string | null;
+  sshTrustMode?: string | null;
+  hostKeyFingerprint?: string | null;
 }
 
 export interface ConfigBackupSummary {
@@ -105,6 +111,8 @@ export interface ConfigBackupSummary {
 
 const MAX_TEXT = 255;
 const MAX_SECRET = 512;
+// Fits RSA-4096 PEM and remains below TEXT storage after UTF-8 + hex encryption.
+const MAX_SSH_PRIVATE_KEY = 8192;
 
 function text(value: unknown, field: string, required = false): string | undefined {
   if (value == null || value === '') {
@@ -184,13 +192,15 @@ export function validateSshCredential(input: unknown): SshCredentialInput {
   const value = input as Record<string, unknown>;
   if (value.credentialType !== 'password' && value.credentialType !== 'key') throw new Error('SSH_CREDENTIAL_TYPE_INVALID');
   const username = text(value.username, 'ssh_username', true)!;
-  if (typeof value.credentialValue !== 'string' || value.credentialValue.length === 0 || value.credentialValue.length > MAX_SECRET) throw new Error('SSH_CREDENTIAL_VALUE_INVALID');
+  const maxLength = value.credentialType === 'key' ? MAX_SSH_PRIVATE_KEY : MAX_SECRET;
+  if (typeof value.credentialValue !== 'string' || value.credentialValue.length === 0 || value.credentialValue.length > maxLength) throw new Error('SSH_CREDENTIAL_VALUE_INVALID');
+  if (value.credentialType === 'key' && (value.hostKeyFingerprint != null || value.sshTrustMode != null && value.sshTrustMode !== 'pending')) createCredentialSshHostVerifier('key', value.hostKeyFingerprint, value.sshTrustMode);
   const rawFingerprint = typeof value.hostKeyFingerprint === 'string' && !value.hostKeyFingerprint.trim()
     ? undefined
     : value.hostKeyFingerprint;
   const fingerprint = text(rawFingerprint, 'ssh_host_key_fingerprint');
   if (fingerprint !== undefined && !/^SHA256:[A-Za-z0-9+/]{43}$/.test(fingerprint.replace(/=+$/, ''))) throw new Error('SSH_HOST_KEY_FINGERPRINT_REQUIRED');
-  return { protocol: 'ssh', credentialType: value.credentialType, username, credentialValue: value.credentialValue, hostKeyFingerprint: fingerprint };
+  return { protocol: 'ssh', credentialType: value.credentialType, username, credentialValue: value.credentialValue, sshTrustMode: value.sshTrustMode as string | undefined, hostKeyFingerprint: fingerprint };
 }
 
 export function parseNetworkDeviceCreateInput(input: unknown): NetworkDeviceCreateInput {
@@ -221,6 +231,12 @@ export function parseNetworkDeviceUpdateInput(input: unknown): NetworkDeviceUpda
   if (!input || typeof input !== 'object') throw new Error('NETWORK_DEVICE_INPUT_INVALID');
   const value = input as Record<string, unknown>;
   const result: NetworkDeviceUpdateInput = {};
+  if (value.sshTrust !== undefined) {
+    const trust = value.sshTrust as Record<string, unknown>;
+    if (!trust || typeof trust !== 'object' || trust.mode !== 'pinned' && trust.mode !== 'insecure') throw new Error('SSH_TRUST_MODE_INVALID');
+    createCredentialSshHostVerifier('key', trust.fingerprint, trust.mode);
+    result.sshTrust = { mode: trust.mode as string, fingerprint: trust.fingerprint as string | undefined };
+  }
   if (value.name !== undefined) result.name = text(value.name, 'name', true)!;
   for (const [key, field] of [['label', 'label'], ['site', 'site'], ['model', 'model'], ['osVersion', 'os_version'], ['serialNumber', 'serial_number']] as const) {
     if (value[key] !== undefined || value[field] !== undefined) (result as any)[key] = nullableText(value[key] ?? value[field], field);

@@ -17,9 +17,10 @@ interface SessionConfig {
 export class SessionSettingsPage extends LitElement {
   @state() private config: SessionConfig | null = null;
   @state() private idleTimeoutMinutes = '';
-  @state() private loading = true;
+  @state() private loading = false;
   @state() private saving = false;
   @state() private fieldError = '';
+  @state() private loadError = false;
 
   static styles = [sharedFieldStyles, sharedBtnStyles, css`
     :host { display: block; width: min(100%, 48rem); color: var(--text); }
@@ -48,12 +49,14 @@ export class SessionSettingsPage extends LitElement {
   }
 
   private async load(): Promise<void> {
+    if (this.loading) return;
     this.loading = true;
+    this.loadError = false;
     try {
       this.config = await apiClient.get<SessionConfig>('/auth/session-config');
       this.idleTimeoutMinutes = String(this.config.idleTimeoutMinutes);
     } catch {
-      this.config = null;
+      this.loadError = true;
       showToast('加载登录安全设置失败', 'error');
     } finally {
       this.loading = false;
@@ -73,6 +76,7 @@ export class SessionSettingsPage extends LitElement {
   }
 
   private async save(): Promise<void> {
+    if (this.saving || this.loading || !this.config) return;
     const idleTimeoutMinutes = this.validate();
     if (idleTimeoutMinutes === null) return;
     this.saving = true;
@@ -93,7 +97,13 @@ export class SessionSettingsPage extends LitElement {
         <h1>登录安全</h1>
         <p>管理用户登录会话的有效期限</p>
       </div>
-      ${this.loading ? html`<div class="skeleton"></div>` : this.config ? html`
+      ${this.loading ? html`<div class="skeleton" role="status" aria-label="正在加载登录安全设置"></div>` : this.loadError ? html`
+        <app-card>
+          <span slot="header">会话超时</span>
+          <p role="alert">加载登录安全设置失败，请稍后重试。</p>
+          <button slot="footer" class="btn btn-refresh" @click=${this.load}>重试</button>
+        </app-card>
+      ` : this.config ? html`
         <app-card>
           <span slot="header">会话超时</span>
           <app-form-field
