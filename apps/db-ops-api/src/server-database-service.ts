@@ -441,16 +441,29 @@ class ServerDatabaseService {
       const hostVerifier = createOptionalSshHostVerifier(hostKeyFingerprint);
       return new Promise((resolve) => {
         const client = new Client();
+        let settled = false;
+        const finish = (result: { success: boolean; error?: string; message?: string }) => {
+          if (settled) return;
+          // Mark completion before cleanup: end/destroy may emit more events.
+          settled = true;
+          if (result.success) client.end();
+          else client.destroy();
+          resolve(result);
+        };
 
         client.on('ready', () => {
-          client.end();
-          resolve({ success: true, message: `连接成功：${host}:${port}` });
+          finish({ success: true, message: `连接成功：${host}:${port}` });
         });
 
         client.on('error', (err: Error) => {
-          client.end();
-          resolve({ success: false, error: translateSshError(err.message, host, port) });
+          finish({ success: false, error: translateSshError(err.message, host, port) });
         });
+        const disconnected = () => finish({
+          success: false,
+          error: translateSshError('Connection lost before handshake', host, port),
+        });
+        client.on('end', disconnected);
+        client.on('close', disconnected);
 
         const connectConfig: any = {
           host: target.address,
@@ -466,7 +479,11 @@ class ServerDatabaseService {
           connectConfig.privateKey = credentialValue;
         }
 
-        client.connect(connectConfig);
+        try {
+          client.connect(connectConfig);
+        } catch (error: any) {
+          finish({ success: false, error: translateSshError(error.message, host, port) });
+        }
       });
     } catch (error: any) {
       return { success: false, error: translateSshError(error.message, host, port) };
