@@ -12,13 +12,15 @@ export class AgentRuntime {
   ) {}
 
   async run(spec: AgentRunSpec): Promise<AgentRunResult> {
+    let provider: LLMProvider;
     try {
-      const context = resolveContextConfig(spec, this.getProvider());
+      provider = this.getProvider();
+      const context = resolveContextConfig(spec, provider);
       spec = { ...spec, maxTokens: context.maxTokens };
     } catch { throw new RuntimeError('INVALID_POLICY', 'Invalid model context configuration'); }
     // A frozen summary allocation the model cannot emit must fail here, before
     // any ordinary or summary request, even when compaction is not due.
-    summaryOutputAllocation(spec, this.getProvider());
+    summaryOutputAllocation(spec, provider);
     if (spec.budgetLimits) {
       for (const value of [spec.maxIterations, spec.maxTokens!, spec.budgetLimits.maxToolCalls, spec.budgetLimits.maxProviderAttempts, spec.budgetLimits.maxTotalTokens, spec.budgetLimits.maxNoProgressSteps]) {
         if (!Number.isSafeInteger(value) || value < 1) throw new RuntimeError('INVALID_POLICY', 'Runtime budgets must be finite positive integers');
@@ -26,7 +28,8 @@ export class AgentRuntime {
     }
     const restored = spec.resumeCheckpoint?.runtime_state_v1;
     const previousDeadline = restored ? validateRecoverySnapshot(restored).deadlineAt : undefined;
-    if (spec.runTimeoutMs === undefined && previousDeadline === undefined) return new TurnLoop(this.getProvider, this.executor).run(spec);
+    const getRunProvider = () => provider;
+    if (spec.runTimeoutMs === undefined && previousDeadline === undefined) return new TurnLoop(getRunProvider, this.executor).run(spec);
     if (spec.runTimeoutMs !== undefined && (!Number.isSafeInteger(spec.runTimeoutMs) || spec.runTimeoutMs <= 0)) throw new RuntimeError('INVALID_POLICY', 'Run timeout must be a positive integer');
     const deadline = Math.min(previousDeadline ?? Infinity, spec.runTimeoutMs === undefined ? Infinity : Date.now() + spec.runTimeoutMs);
     const controller = new AbortController();
@@ -37,7 +40,7 @@ export class AgentRuntime {
     if (deadline <= Date.now()) expire();
     const timer = setTimeout(expire, Math.max(0, deadline - Date.now()));
     try {
-      return await new TurnLoop(this.getProvider, this.executor).run({ ...spec, signal: controller.signal,
+      return await new TurnLoop(getRunProvider, this.executor).run({ ...spec, signal: controller.signal,
         runTimeoutMs: Math.max(1, deadline - Date.now()),
         resumeCheckpoint: { ...spec.resumeCheckpoint, runtime_deadline_at: deadline } });
     } finally { clearTimeout(timer); spec.signal?.removeEventListener('abort', cancel); }
