@@ -1,14 +1,10 @@
 import assert from 'node:assert/strict';
-import { once } from 'node:events';
-import { createRequire } from 'node:module';
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { setTimeout as delay } from 'node:timers/promises';
 import { StreamingCoordinator } from '../../packages/agent-core/src/runtime/streaming-coordinator.js';
-import { BoundedSocketWriter } from '../../apps/db-ops-api/src/adapter/bounded-socket-writer.js';
+import { runWsSendBenchmark } from './streaming-ws-bench.ts';
 
-const require = createRequire(new URL('../../apps/db-ops-api/package.json', import.meta.url));
-const { WebSocket, WebSocketServer } = require('ws');
 type Event = { type: 'text' | 'reasoning'; delta: string };
 const samples = 1000;
 const limits = { maxPendingEvents: 32, maxPendingBytes: 4096, consumerTimeoutMs: 1000 };
@@ -47,27 +43,8 @@ for (const mode of ['direct-await', 'queued', 'queued-text-merge']) {
     peakPendingEvents: queue?.metrics.peakEvents ?? 1, heapStart, heapPeak, heapGrowthBytes: heapPeak - heapStart });
 }
 
-for (const mode of ['legacy-ws-send', 'bounded-ws-send']) {
-  const server = new WebSocketServer({ host: '127.0.0.1', port: 0 }); await once(server, 'listening');
-  const connected = once(server, 'connection'); const client = new WebSocket(`ws://127.0.0.1:${server.address().port}`);
-  await once(client, 'open'); const [peer] = await connected;
-  const writer = new BoundedSocketWriter(); const started = performance.now();
-  let firstToken = 0; let received = 0; let peakBufferedBytes = 0;
-  let complete!: () => void; const consumed = new Promise<void>(r => { complete = r; });
-  client.on('message', () => { if (!firstToken) firstToken = performance.now() - started; if (++received === samples) complete(); });
-  try {
-    for (let i = 0; i < samples; i++) {
-      const event = JSON.stringify({ type: 'text_delta', delta: 'x'.repeat(64), sequence: i });
-      if (mode === 'legacy-ws-send') peer.send(event); else assert(writer.send(peer, event));
-      peakBufferedBytes = Math.max(peakBufferedBytes, peer.bufferedAmount);
-      if (i % 16 === 0) await new Promise<void>(r => setImmediate(r));
-    }
-    const readerMs = performance.now() - started;
-    await consumed; const totalMs = performance.now() - started;
-    results.push({ mode, sourceEvents: samples, readerMs: round(readerMs), totalMs: round(totalMs),
-      firstTokenMs: round(firstToken), drainMs: round(totalMs - readerMs), peakBufferedBytes,
-      throughputEventsPerS: round(samples / totalMs * 1000), heapUsed: process.memoryUsage().heapUsed });
-  } finally { client.terminate(); peer.terminate(); await new Promise<void>(r => server.close(() => r())); }
+for (const mode of ['legacy-ws-send', 'bounded-ws-send'] as const) {
+  results.push(await runWsSendBenchmark({ mode, samples }));
 }
 const sources = ['packages/agent-core/src/runtime/streaming-coordinator.ts', 'packages/agent-core/src/runtime/model-step.ts',
   'packages/agent-core/src/openai-provider.ts', 'apps/db-ops-api/src/adapter/chat-event-consumer.ts',

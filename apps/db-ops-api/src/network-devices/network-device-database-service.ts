@@ -1,3 +1,4 @@
+import { isCredentialRotationRequired } from '../credential-rotation.js';
 import { dbConnection, decryptData, encryptData, needsEncryptionMigration } from '../db-connection.js';
 import { normalizeSshHostKeyFingerprint } from '../security/ssh-host-key.js';
 import {
@@ -83,6 +84,7 @@ export class NetworkDeviceDatabaseService {
     );
     const row = rows[0];
     if (!row) return null;
+    if (row.credential_encrypted && isCredentialRotationRequired(this.decryptSecret(row.credential_encrypted))) return null;
     if (row.protocol === 'snmpv3') {
       return {
         protocol: 'snmpv3', username: row.username, securityLevel: row.security_level,
@@ -209,7 +211,7 @@ export class NetworkDeviceDatabaseService {
       `INSERT INTO network_device_credentials
        (device_id, protocol, security_level, username, auth_protocol, privacy_protocol, auth_secret_encrypted, privacy_secret_encrypted)
        VALUES (?, 'snmpv3', ?, ?, ?, ?, ?, ?)
-       ON DUPLICATE KEY UPDATE security_level = VALUES(security_level), username = VALUES(username), auth_protocol = VALUES(auth_protocol),
+       ON DUPLICATE KEY UPDATE credential_encrypted = NULL, security_level = VALUES(security_level), username = VALUES(username), auth_protocol = VALUES(auth_protocol),
          privacy_protocol = VALUES(privacy_protocol), auth_secret_encrypted = VALUES(auth_secret_encrypted), privacy_secret_encrypted = VALUES(privacy_secret_encrypted)`,
       [id, input.securityLevel, input.username, input.authProtocol ?? null, input.privacyProtocol ?? null,
         input.authSecret ? encryptData(input.authSecret) : null, input.privacySecret ? encryptData(input.privacySecret) : null],
@@ -221,7 +223,7 @@ export class NetworkDeviceDatabaseService {
       `INSERT INTO network_device_credentials
        (device_id, protocol, username, community_encrypted)
        VALUES (?, 'snmpv2c', '', ?)
-       ON DUPLICATE KEY UPDATE username = VALUES(username), community_encrypted = VALUES(community_encrypted),
+       ON DUPLICATE KEY UPDATE credential_encrypted = NULL, username = VALUES(username), community_encrypted = VALUES(community_encrypted),
          security_level = NULL, auth_protocol = NULL, privacy_protocol = NULL, auth_secret_encrypted = NULL, privacy_secret_encrypted = NULL`,
       [id, encryptData(input.community)],
     );

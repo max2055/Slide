@@ -81,11 +81,38 @@
     <tr><td>启动前端</td><td><code>cd frontend &amp;&amp; npm run dev</code></td></tr>
     <tr><td>构建前端</td><td><code>pnpm build</code></td></tr>
     <tr><td>检查 API 契约</td><td><code>pnpm contracts:check</code></td></tr>
-    <tr><td>停止 API</td><td><code>lsof -ti:3000 | xargs kill -9 2&gt;/dev/null</code></td></tr>
-    <tr><td>停止前端</td><td><code>lsof -ti:5173 | xargs kill -9 2&gt;/dev/null</code></td></tr>
+    <tr><td>停止 API</td><td>按下方“核对归属后停止”流程处理 API PID（默认端口 3000）</td></tr>
+    <tr><td>停止前端</td><td>按下方“核对归属后停止”流程处理前端 PID（默认端口 5173）</td></tr>
     <tr><td>检查 Agent 端口</td><td><code>lsof -i :28888</code></td></tr>
   </tbody>
 </table>
+
+<h3>核对归属后停止（macOS / Linux）</h3>
+<p>端口只用于定位候选进程，不能作为停止授权。先按 PID → 端口 → cwd → 启动命令 → 分支/Commit → 日志文件核对归属；只处理已确认属于当前任务的服务。信息缺失、属于其他工作树或无法确认时停止操作，联系服务负责人。以下变量需逐项填写，不要整段盲目执行。</p>
+<pre><code># 只读定位；按实际配置替换端口（API 默认 3000，前端默认 5173）
+lsof -nP -iTCP:3000 -sTCP:LISTEN
+# 从结果人工选择一个已确认的正整数 PID，禁止把端口查询结果直接传给 kill
+service_pid=12345
+ps -p "$service_pid" -o pid=,ppid=,lstart=,command=
+lsof -a -p "$service_pid" -iTCP -sTCP:LISTEN
+lsof -a -p "$service_pid" -d cwd
+# 将下列路径替换为上一步得到的实际 cwd，核对对应工作树
+service_cwd=/absolute/path/to/service/cwd
+git -C "$service_cwd" branch --show-current
+git -C "$service_cwd" rev-parse HEAD
+# 核对 stdout/stderr 的日志文件；若指向终端/管道，追溯启动终端、父进程或服务管理器日志
+lsof -a -p "$service_pid" -d 1,2</code></pre>
+<p>将以上输出与本任务的启动记录、预期端口、工作树、启动命令、分支/Commit 和日志位置逐项比对，记录 PID 与启动时间。分支/Commit 输出反映磁盘当前版本，须结合启动记录确认实际运行版本。使用 pnpm、watcher 或服务管理器时，还需核对父子进程及其日志；使用原启动终端或管理器正常停止，避免只杀子进程后被自动拉起。</p>
+<p>确认归属后，对该服务 PID 发送 SIGTERM，并等待最多 10 秒。先再次运行上面的只读核对命令，确认 PID 与启动时间未变，再执行：</p>
+<pre><code>kill -TERM "$service_pid"
+for attempt in 1 2 3 4 5 6 7 8 9 10; do
+  if ! kill -0 "$service_pid" 2&gt;/dev/null; then break; fi
+  sleep 1
+done
+ps -p "$service_pid" -o pid=,ppid=,lstart=,command=</code></pre>
+<p>进程已退出则结束。若仍存在，不要直接强杀：重新执行整套归属核对，比较最初记录的 PID、启动时间、端口、cwd、命令、分支/Commit、日志；任一项不一致或查询失败即停止操作（PID 可能已复用）。只有确认仍为同一服务进程、优雅关闭超时且确需强制结束时，才单独执行下列 SIGKILL。强杀会跳过清理处理，不得自动回退或按端口批量强杀。</p>
+<pre><code>kill -KILL "$service_pid"</code></pre>
+<p>最后重新检查目标 PID 与监听端口，结合日志确认退出；若出现新 PID，重新核对归属，不继续追杀。</p>
 
 <h2>健康检查</h2>
 <pre><code>curl http://localhost:3000/api/health
