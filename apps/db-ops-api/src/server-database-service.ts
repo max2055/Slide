@@ -565,10 +565,15 @@ class ServerDatabaseService {
     try {
       const credentials = this.decryptCredentials(server.credential_encrypted);
       if (needsEncryptionMigration(server.credential_encrypted)) {
-        await this.getPool()?.execute(
-          'UPDATE servers SET credential_encrypted = ? WHERE id = ? AND credential_encrypted = ?',
-          [encryptData(JSON.stringify(credentials)), serverId, server.credential_encrypted],
-        );
+        try {
+          await this.getPool()?.execute(
+            'UPDATE servers SET credential_encrypted = ? WHERE id = ? AND credential_encrypted = ?',
+            [encryptData(JSON.stringify(credentials)), serverId, server.credential_encrypted],
+          );
+        } catch {
+          // Migration is best-effort; driver errors may contain credentials or SQL.
+          console.error('服务器凭据迁移失败', { serverId, code: 'SERVER_CREDENTIAL_MIGRATION_FAILED' });
+        }
       }
       return credentials;
     } catch (error) {
