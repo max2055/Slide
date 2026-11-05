@@ -17,6 +17,8 @@
  *
  * Exit 1 when the invocation check, arguments, or rotation fails.
  * Refusal output names neither the key nor the confirmation value.
+ * The recovery account needs SELECT and UPDATE on existing credential tables,
+ * including the historical provider backup; missing privileges abort recovery.
  */
 import { createHash } from 'node:crypto';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
@@ -167,7 +169,18 @@ async function main(): Promise<void> {
         [serverSentinel],
       );
       await db.execute("UPDATE llm_providers SET api_key_encrypted = NULL, enabled = CASE WHEN deployment_type = 'local' THEN enabled ELSE 0 END, is_default = CASE WHEN deployment_type = 'local' THEN is_default ELSE 0 END");
-      await db.execute('UPDATE llm_providers_backup SET api_key_encrypted = NULL');
+      // Metadata can hide tables from restricted accounts. Probe directly so
+      // permission errors fail closed; this SELECT cannot execute UPDATE triggers.
+      let backupExists = true;
+      try {
+        await db.query('SELECT 1 FROM llm_providers_backup LIMIT 0');
+      } catch (error) {
+        if ((error as { code?: string })?.code !== 'ER_NO_SUCH_TABLE') throw error;
+        backupExists = false;
+      }
+      if (backupExists) {
+        await db.execute('UPDATE llm_providers_backup SET api_key_encrypted = NULL');
+      }
       await db.execute(`UPDATE notification_channels
         SET enabled = CASE WHEN JSON_CONTAINS_PATH(config, 'one', '$.secret', '$.secret_encrypted', '$.password', '$.password_encrypted', '$.oauth2_refresh_token', '$.oauth2_refresh_token_encrypted', '$.token', '$.apiKey') THEN 0 ELSE enabled END,
             config = JSON_REMOVE(config, '$.secret', '$.secret_encrypted', '$.password', '$.password_encrypted', '$.oauth2_refresh_token', '$.oauth2_refresh_token_encrypted', '$.token', '$.apiKey')`);
