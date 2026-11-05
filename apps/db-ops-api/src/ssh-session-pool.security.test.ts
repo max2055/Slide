@@ -28,9 +28,13 @@ vi.mock('ssh2', () => ({
       this.handlers[event] = handler;
       return this;
     }
+    emit(event: string, ...args: any[]) {
+      this.handlers[event]?.(...args);
+    }
     connect(config: any) {
       mocks.connectConfigs.push(config);
       mocks.clients.push(this);
+      if (config.password === 'throw-connect') throw new Error('SSH_CONNECT_THROW');
       const fire = () => {
         if (config.password === 'reject-auth' || config.privateKey === 'reject-auth') {
           this.handlers.error?.(new Error('SSH_AUTH_FAILED'));
@@ -48,9 +52,16 @@ vi.mock('ssh2', () => ({
   },
 }));
 
-import sshSessionPool from './ssh-session-pool.js';
+import sshSessionPool, { SshSessionPool } from './ssh-session-pool.js';
 
 describe('SSH session pool target and identity controls', () => {
+  const pools: SshSessionPool[] = [];
+  const limitedPool = (limit = 1) => {
+    const pool = new SshSessionPool({ maxSessionsPerServer: limit });
+    pools.push(pool);
+    return pool;
+  };
+
   beforeEach(() => {
     mocks.connectConfigs.length = 0;
     mocks.clients.length = 0;
@@ -64,7 +75,109 @@ describe('SSH session pool target and identity controls', () => {
     });
   });
 
-  afterEach(() => sshSessionPool.closeAll());
+  afterEach(() => {
+    sshSessionPool.closeAll();
+    for (const pool of pools.splice(0)) pool.closeAll();
+  });
+
+  it('MAX-310 reserves pending capacity and transfers it to a reusable session', async () => {
+    const pool = limitedPool();
+    mocks.holdReady = true;
+    const pending = pool.getConnection('ssh.internal.example', 22, 'root', 'password', 'secret');
+    const competing = pool.getConnection(' SSH.internal.example ', 22, 'other', 'key', 'other-key')
+      .then(() => 'unexpected success', (error: Error) => error.message);
+    await Promise.resolve();
+    // Release the barrier even on the buggy implementation so no waiter is orphaned.
+    const started = mocks.held.length;
+    mocks.held.forEach(({ fire }) => fire());
+    const client = await pending;
+    expect(await competing).toContain('Max SSH sessions (1) reached');
+    expect(started).toBe(1);
+    expect(pool.getPoolStats()).toEqual({ total: 1, idle: 0, active: 1 });
+    await expect(pool.getConnection('ssh.internal.example', 22, 'root', 'password', 'secret'))
+      .rejects.toThrow('Max SSH sessions (1) reached');
+    pool.releaseConnection(client);
+    expect(await pool.getConnection('ssh.internal.example', 22, 'root', 'password', 'secret')).toBe(client);
+    expect(mocks.connectConfigs).toHaveLength(1);
+  });
+
+  it('MAX-310 bounds 100 simultaneous handshakes and keeps another host and port independent', async () => {
+    const pool = limitedPool(3);
+    mocks.authorizeTarget.mockImplementation(async ({ host, port }) => ({
+      hostname: host.trim().toLowerCase(), address: '10.20.30.40', port,
+    }));
+    mocks.holdReady = true;
+    const requests = Array.from({ length: 100 }, () => pool.getConnection(
+      'ssh.internal.example', 22, 'root', 'password', 'secret',
+    ).then((client) => ({ client }), (error: Error) => ({ error: error.message })));
+    const otherHost = pool.getConnection('other.internal.example', 22, 'root', 'password', 'secret');
+    const otherPort = pool.getConnection('ssh.internal.example', 2222, 'root', 'password', 'secret');
+    await Promise.resolve();
+    const started = mocks.held.length;
+    mocks.held.forEach(({ fire }) => fire());
+    const results = await Promise.all(requests);
+    await Promise.all([otherHost, otherPort]);
+    expect(started).toBe(5);
+    expect(results.filter((result) => 'client' in result)).toHaveLength(3);
+    expect(results.filter((result) => 'error' in result && result.error.includes('Max SSH sessions (3) reached')))
+      .toHaveLength(97);
+    expect(pool.getPoolStats()).toEqual({ total: 5, idle: 0, active: 5 });
+  });
+
+  it.each(['reject-auth', 'throw-connect'])('MAX-310 releases capacity after %s', async (secret) => {
+    const pool = limitedPool();
+    await expect(pool.getConnection('ssh.internal.example', 22, 'root', 'password', secret)).rejects.toThrow();
+    const client = await pool.getConnection('ssh.internal.example', 22, 'root', 'password', 'valid');
+    expect(client).toBe(mocks.clients[1]);
+    expect(pool.getPoolStats()).toEqual({ total: 1, idle: 0, active: 1 });
+  });
+
+  it.each(['revoke', 'closeAll'])('MAX-310 releases a silent pending socket on %s and ignores late ready', async (action) => {
+    const pool = limitedPool();
+    mocks.holdReady = true;
+    const pending = pool.getConnection('ssh.internal.example', 22, 'root', 'password', 'secret')
+      .then(() => 'unexpected success', (error: Error) => error.message);
+    await Promise.resolve();
+    if (action === 'revoke') pool.revokeSessions({ host: 'ssh.internal.example', port: 22 });
+    else pool.closeAll();
+    mocks.holdReady = false;
+    const replacement = await pool.getConnection('ssh.internal.example', 22, 'root', 'password', 'secret');
+    // The silent transport must settle before any late event arrives.
+    expect(await pending).toBe('SSH_SESSION_REVOKED');
+    mocks.held[0].fire();
+    expect(replacement).toBe(mocks.clients[1]);
+    expect(pool.getPoolStats()).toEqual({ total: 1, idle: 0, active: 1 });
+  });
+
+  it('MAX-310 releases a handshake that closes without error or ready', async () => {
+    const pool = limitedPool();
+    mocks.holdReady = true;
+    const pending = pool.getConnection('ssh.internal.example', 22, 'root', 'password', 'secret')
+      .then(() => 'unexpected success', (error: Error) => error.message);
+    await Promise.resolve();
+    mocks.clients[0].emit('close');
+    expect(await pending).toBe('SSH_CONNECTION_CLOSED');
+    mocks.holdReady = false;
+    await pool.getConnection('ssh.internal.example', 22, 'root', 'password', 'secret');
+    expect(pool.getPoolStats()).toEqual({ total: 1, idle: 0, active: 1 });
+  });
+
+  it('MAX-310 replaces the oldest idle different identity while pending capacity is occupied', async () => {
+    const pool = limitedPool(2);
+    const old = await pool.getConnection('ssh.internal.example', 22, 'old-user', 'password', 'old');
+    pool.releaseConnection(old);
+    mocks.holdReady = true;
+    const first = pool.getConnection('ssh.internal.example', 22, 'user-1', 'password', 'secret');
+    const second = pool.getConnection('ssh.internal.example', 22, 'user-2', 'password', 'secret');
+    const third = pool.getConnection('ssh.internal.example', 22, 'user-3', 'password', 'secret')
+      .then(() => 'unexpected success', (error: Error) => error.message);
+    await Promise.resolve();
+    mocks.held.forEach(({ fire }) => fire());
+    await Promise.all([first, second]);
+    expect(await third).toContain('Max SSH sessions (2) reached');
+    expect((old as any).end).toHaveBeenCalledOnce();
+    expect(pool.getPoolStats()).toEqual({ total: 2, idle: 0, active: 2 });
+  });
 
   it('authorizes every acquisition, pins the socket address, and verifies a stored host key', async () => {
     const key = Buffer.from('known-host-key');

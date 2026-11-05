@@ -43,6 +43,8 @@ interface InflightAcquisition {
   hostKeyComparable: boolean;
   credentialFingerprint: string;
   cancelled: boolean;
+  /** Capacity is reserved only after target authorization, before connecting. */
+  capacityReserved: boolean;
   client?: Client;
   /** Rejects the in-flight connect promise at most once. */
   fail?: (error: Error) => void;
@@ -145,6 +147,8 @@ class SshSessionPool {
    * An acquisition revoked while authorization or authentication is still in flight
    * is not returned and is not pooled. Cancellation settles that waiter itself;
    * it does not wait for a later ready or error event. A later call with the same secret is allowed.
+   * Pending handshakes count toward the host:port limit across all identities.
+   * At capacity, evict the oldest idle session or reject immediately; no queue.
    */
   async getConnection(
     host: string,
@@ -189,11 +193,14 @@ class SshSessionPool {
         return existing.client;
       }
 
-      // Check per-server session limit
+      // Check and reserve capacity without yielding between the two operations.
       const serverSessions = this.sessions.filter(
         (s) => s.identity.host === target.hostname && s.identity.port === target.port
       );
-      if (serverSessions.length >= this.config.maxSessionsPerServer) {
+      const pendingCount = this.inflight.filter((item) => (
+        item.capacityReserved && item.host === target.hostname && item.port === target.port
+      )).length;
+      if (serverSessions.length + pendingCount >= this.config.maxSessionsPerServer) {
         // Try to close the oldest idle session to make room
         const oldestIdle = serverSessions
           .filter((s) => !s.inUse)
@@ -207,6 +214,7 @@ class SshSessionPool {
         }
       }
 
+      acquisition.capacityReserved = true;
       // Create new connection
       const client = await this._connect(
         target.address,
@@ -233,6 +241,7 @@ class SshSessionPool {
       };
 
       this.sessions.push(session);
+      acquisition.capacityReserved = false;
       return client;
     } finally {
       this.inflight = this.inflight.filter((item) => item !== acquisition);
@@ -267,6 +276,7 @@ class SshSessionPool {
     for (const acquisition of this.inflight) {
       acquisition.cancelled = true;
       this._endClient(acquisition.client);
+      this._failAcquisition(acquisition, new Error('SSH_SESSION_REVOKED'));
     }
     for (const session of this.sessions) {
       try {
@@ -404,6 +414,7 @@ class SshSessionPool {
         ? fingerprintCredential(credentialType, credentialValue)
         : '',
       cancelled: false,
+      capacityReserved: false,
     };
     this.inflight.push(acquisition);
     return acquisition;
@@ -576,11 +587,8 @@ class SshSessionPool {
       });
 
       client.on('close', () => {
-        // A revoked handshake may emit only close. That has to settle the waiter;
-        // an ordinary disconnect still waits for ssh2's error event.
-        if (acquisition.cancelled) {
-          fail(new Error('SSH_SESSION_REVOKED'));
-        }
+        // A close-only handshake must release its pending capacity as well.
+        fail(new Error(acquisition.cancelled ? 'SSH_SESSION_REVOKED' : 'SSH_CONNECTION_CLOSED'));
         const session = this.sessions.find((s) => s.client === client);
         if (session) {
           this._remove(session);
