@@ -130,11 +130,22 @@ async function main(): Promise<void> {
     const [channelRows] = await db.query<Array<{ id: number; config: unknown; enabled: number }>>(
       'SELECT id, config, enabled FROM notification_channels ORDER BY id',
     );
+    const [deviceRows] = await db.query<Array<{ id: number; collection_enabled: number }>>('SELECT id, collection_enabled FROM network_devices ORDER BY id');
+    const [networkRows] = await db.query<Array<{ device_id: number; protocol: string; credential_encrypted: string | null; auth_secret_encrypted: string | null; privacy_secret_encrypted: string | null; community_encrypted: string | null }>>(
+      'SELECT device_id, protocol, credential_encrypted, auth_secret_encrypted, privacy_secret_encrypted, community_encrypted FROM network_device_credentials ORDER BY device_id, protocol',
+    );
+    const [referenceRows] = await db.query<Array<{ ref_id: string; status: string; secret_encrypted: string }>>(
+      'SELECT ref_id, status, secret_encrypted FROM agent_credential_references ORDER BY ref_id',
+    );
     const audit = {
       kind: 'lost-encryption-key-rotation',
       createdAt: new Date().toISOString(),
       irreversible: true,
       entries: {
+        networkDevices: deviceRows.map((row) => ({ id: row.id, collectionEnabled: Boolean(row.collection_enabled) })),
+        networkCredentials: networkRows.map((row) => ({ deviceId: row.device_id, protocol: row.protocol,
+          ciphertextFingerprints: [row.credential_encrypted, row.auth_secret_encrypted, row.privacy_secret_encrypted, row.community_encrypted].map(fingerprint) })),
+        agentReferences: referenceRows.map((row) => ({ referenceFingerprint: fingerprint(row.ref_id), status: row.status, ciphertextFingerprint: fingerprint(row.secret_encrypted) })),
         instances: instanceRows.map((row) => ({ id: row.id, ciphertextFingerprint: fingerprint(row.password_encrypted), connectionStringFingerprint: fingerprint(row.connection_string) })),
         servers: serverRows.map((row) => ({ id: row.id, ciphertextFingerprint: fingerprint(row.credential_encrypted) })),
         providers: providerRows.map((row) => ({ id: row.id, ciphertextFingerprint: fingerprint(row.api_key_encrypted) })),
@@ -160,6 +171,11 @@ async function main(): Promise<void> {
       await db.execute(`UPDATE notification_channels
         SET enabled = CASE WHEN JSON_CONTAINS_PATH(config, 'one', '$.secret', '$.secret_encrypted', '$.password', '$.password_encrypted', '$.oauth2_refresh_token', '$.oauth2_refresh_token_encrypted', '$.token', '$.apiKey') THEN 0 ELSE enabled END,
             config = JSON_REMOVE(config, '$.secret', '$.secret_encrypted', '$.password', '$.password_encrypted', '$.oauth2_refresh_token', '$.oauth2_refresh_token_encrypted', '$.token', '$.apiKey')`);
+      // Retain resource rows; the encrypted marker is never a usable credential.
+      await db.execute("UPDATE network_devices SET collection_enabled = 0, status = 'unknown'");
+      await db.execute('UPDATE network_device_credentials SET credential_encrypted = ?, auth_secret_encrypted = NULL, privacy_secret_encrypted = NULL, community_encrypted = NULL', [instanceSentinel]);
+      // Revoke only active one-shot references; historical states remain intact.
+      await db.execute("UPDATE agent_credential_references SET status = 'revoked' WHERE status = 'active'");
       await db.commit();
     } catch (error) {
       await db.rollback();
@@ -168,7 +184,7 @@ async function main(): Promise<void> {
     console.log(JSON.stringify({
       rotated: true,
       auditPath: path,
-      invalidated: { instances: instanceRows.length, servers: serverRows.length, providers: providerRows.length, channels: channelRows.length },
+      invalidated: { networkDevices: deviceRows.length, networkCredentials: networkRows.length, agentReferences: referenceRows.filter((row) => row.status === 'active').length, instances: instanceRows.length, servers: serverRows.length, providers: providerRows.length, channels: channelRows.length },
     }));
   } finally {
     await db.end();
