@@ -1,5 +1,7 @@
 import { generateKeyPairSync } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
+import { Value } from '@sinclair/typebox/value';
+import { NetworkDeviceSshCredentialSchema } from '../contracts/public-api.js';
 import {
   parseNetworkDeviceCreateInput, parseNetworkDeviceUpdateInput,
   validateSnmpV2Credential, validateSnmpV3Credential, validateSshCredential,
@@ -21,26 +23,32 @@ describe('MAX-312 / #433 bounded multiline SSH private keys', () => {
       const payload = { name: 'synthetic-switch', host: '192.0.2.7', ssh: ssh(raw) };
       expect(parseNetworkDeviceCreateInput(payload).ssh?.credentialValue === raw).toBe(true);
       expect(parseNetworkDeviceUpdateInput(payload).ssh?.credentialValue === raw).toBe(true);
+      expect(Value.Check(NetworkDeviceSshCredentialSchema, ssh(raw))).toBe(true);
     });
   }
 
   it.each([1, 512, 513, 8191, 8192])('accepts a key of %i code units without trimming', length => {
     const raw = length === 1 ? '\n' : `\n${'x'.repeat(length - 2)} `;
     expect(validateSshCredential(ssh(raw)).credentialValue === raw).toBe(true);
+    expect(Value.Check(NetworkDeviceSshCredentialSchema, ssh(raw))).toBe(true);
   });
 
   it.each(['', 'x'.repeat(8193), null, 7, {}, undefined])('rejects an empty, oversized or non-string key (%#)', raw => {
     expect(() => validateSshCredential(ssh(raw))).toThrow('SSH_CREDENTIAL_VALUE_INVALID');
+    expect(Value.Check(NetworkDeviceSshCredentialSchema, ssh(raw))).toBe(false);
   });
 
   it('rejects unknown authentication types without applying the key allowance', () => {
     expect(() => validateSshCredential(ssh('x', 'KEY'))).toThrow('SSH_CREDENTIAL_TYPE_INVALID');
+    expect(Value.Check(NetworkDeviceSshCredentialSchema, ssh('x', 'KEY'))).toBe(false);
   });
 
   it('keeps the 512 password boundary and its leading/trailing whitespace', () => {
     const raw = ` ${'p'.repeat(510)} `;
     expect(validateSshCredential(ssh(raw, 'password')).credentialValue === raw).toBe(true);
+    expect(Value.Check(NetworkDeviceSshCredentialSchema, ssh(raw, 'password'))).toBe(true);
     expect(() => validateSshCredential(ssh('p'.repeat(513), 'password'))).toThrow('SSH_CREDENTIAL_VALUE_INVALID');
+    expect(Value.Check(NetworkDeviceSshCredentialSchema, ssh('p'.repeat(513), 'password'))).toBe(false);
     expect(() => validateSshCredential(ssh('', 'password'))).toThrow('SSH_CREDENTIAL_VALUE_INVALID');
   });
 
