@@ -35,7 +35,7 @@ describe('AgentSecurityPolicyService', () => {
       beginTransaction: async () => { calls.push('begin'); },
       execute: async (sql: string) => {
         calls.push(sql);
-        return sql.startsWith('SELECT version') ? [[{ version: 3 }]] : [{ affectedRows: 1 }];
+        return sql.startsWith('SELECT version') ? [[row()]] : [{ affectedRows: 1 }];
       },
       commit: async () => { calls.push('commit'); },
       rollback: async () => { calls.push('rollback'); },
@@ -74,4 +74,59 @@ describe('AgentSecurityPolicyService', () => {
     })).toThrow('AGENT_RESOURCE_SCOPE_INVALID');
     expect(() => validateAgentSecurityPolicyUpdate(null as any)).toThrow('AGENT_RESOURCE_SCOPE_INVALID');
   });
+
+  // GitHub #561 / OCR-1208: omission must not broaden an existing device scope.
+  it.each([
+    { stored: [1], submitted: {}, expected: [1], allowed: false },
+    { stored: [], submitted: {}, expected: [], allowed: false },
+    { stored: [1], submitted: { networkDeviceIds: null }, expected: null, allowed: true },
+    { stored: [1], submitted: { networkDeviceIds: [] }, expected: [], allowed: false },
+    { stored: [1], submitted: { networkDeviceIds: [2, 2] }, expected: [2], allowed: true },
+    { stored: undefined, submitted: {}, expected: null, allowed: true },
+    { stored: null, submitted: {}, expected: null, allowed: true },
+  ])('preserves or explicitly replaces network scope: %j', async ({ stored, submitted, expected, allowed }) => {
+    const storedRow = row({ resource_scope: JSON.stringify({ instanceIds: null, serverIds: null, networkDeviceIds: stored }) });
+    const writes = new Map<string, unknown[]>();
+    const connection = {
+      beginTransaction: async () => {},
+      execute: async (sql: string, values: unknown[]) => {
+        if (sql.startsWith('SELECT version')) return [[storedRow]];
+        writes.set(sql.includes('agent_security_policy_history') ? 'history' : 'current', values);
+        return [{ affectedRows: 1 }];
+      },
+      commit: async () => {}, rollback: async () => {}, release: () => {},
+    };
+    const service = new AgentSecurityPolicyService(() => ({
+      // Deliberately stale cache: preservation must use the locked database row.
+      execute: async () => [[row()]], getConnection: async () => connection,
+    } as any));
+    await service.initialize();
+    const updated = await service.update('slide-db-ops', {
+      toolAllowlist: null, skillAllowlist: null, allowedEffects: ['read'],
+      resourceScope: { instanceIds: null, serverIds: null, ...submitted }, changeNote: 'update other fields',
+    }, 7);
+    expect(updated.resourceScope.networkDeviceIds).toEqual(expected);
+    expect(JSON.parse(writes.get('current')![4] as string).networkDeviceIds).toEqual(expected);
+    expect(JSON.parse(writes.get('history')![2] as string).resourceScope.networkDeviceIds).toEqual(expected);
+    expect(service.evaluateTool('slide-db-ops', 'query_metrics', 'read', { type: 'network_device', networkDeviceId: 2 }))
+      .toEqual(allowed ? { allowed: true } : { allowed: false, reasonCode: 'AGENT_RESOURCE_DENIED' });
+  });
+
+  it('preserves omission through repeated validation for legacy clients', () => {
+    const input = validateAgentSecurityPolicyUpdate({
+      toolAllowlist: null, skillAllowlist: null, allowedEffects: ['read'],
+      resourceScope: { instanceIds: null, serverIds: null }, changeNote: 'legacy client',
+    });
+    expect(Object.hasOwn(input.resourceScope, 'networkDeviceIds')).toBe(false);
+    expect(Object.hasOwn(validateAgentSecurityPolicyUpdate(input).resourceScope, 'networkDeviceIds')).toBe(false);
+  });
+
+  it.each([undefined, '1', [0], [-1], [1.5], [Number.MAX_SAFE_INTEGER + 1], [1, '2'], {}])(
+    'rejects explicitly invalid network scope %j', (networkDeviceIds) => {
+      expect(() => validateAgentSecurityPolicyUpdate({
+        toolAllowlist: null, skillAllowlist: null, allowedEffects: ['read'],
+        resourceScope: { instanceIds: null, serverIds: null, networkDeviceIds } as any, changeNote: 'invalid',
+      })).toThrow('AGENT_NETWORK_DEVICE_SCOPE_INVALID');
+    },
+  );
 });
