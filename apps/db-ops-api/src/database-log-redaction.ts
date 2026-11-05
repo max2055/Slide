@@ -9,12 +9,22 @@ export function databaseLogDialect(source: string): DatabaseLogDialect | undefin
   return undefined;
 }
 
-const SQL_START = /\b(?:SELECT|WITH|INSERT|UPDATE|DELETE|REPLACE|MERGE|CREATE|ALTER|DROP|TRUNCATE|CALL|EXEC(?:UTE)?)\b/ig;
+const SQL_START = /\b(?:SELECT|WITH|INSERT|UPDATE|DELETE|REPLACE|MERGE|CREATE|ALTER|DROP|TRUNCATE|CALL|EXEC(?:UTE)?|SET)\b/ig;
 const CREDENTIAL_ASSIGNMENT = /\b((?:password|passwd|pwd|secret|token|api[_-]?key|authorization|user(?:name)?|uid|user\s+id)\s*[=:]\s*)("[^"]*"|'[^']*'|[^\s,;&]+)/gi;
 const CONNECTION_URI = /\b([a-z][a-z\d+.-]*:\/\/)[^\s/@]+@/gi;
 const SINGLE_QUOTED_VALUE = /'(?:''|\\.|[^'\\])*'/g;
 const DOUBLE_QUOTED_VALUE = /"(?:""|\\.|[^"\\])*"/g;
-const SENSITIVE_FIELD = /(?:^|[_-])(?:password|passwd|pwd|secret|token|authorization|api[_-]?key|credential|private[_-]?key|connection[_-]?(?:string|url|uri)|dsn|username|user|uid)(?:$|[_-])/i;
+const SENSITIVE_FIELD = /password|passwd|pwd|secret|token|authorization|api[_-]?key|credential|private[_-]?key|connection[_-]?(?:string|url|uri)|dsn|username|(?:^|[_-])(?:user|uid)(?:$|[_-])/i;
+const SQL_FIELD = /^(?:sql|query|statement|stmt|command)$/i;
+const SQL_LABEL = /\b(?:sql|query|statement|stmt|command)\s*[:=]\s*/i;
+const SQL_OMITTED = '[SQL 已省略：无法安全脱敏]';
+
+function redactExplicitSql(value: string, dialect?: DatabaseLogDialect): { text: string; gaps: string[] } {
+  const redacted = dialect ? redactSqlEvidence(value, dialect) : null;
+  return redacted === null
+    ? { text: SQL_OMITTED, gaps: ['SQL_REDACTION_UNAVAILABLE'] }
+    : { text: redacted, gaps: [] };
+}
 
 function hasSqlContext(value: string, start: number): boolean {
   const prefix = value.slice(0, start);
@@ -67,17 +77,18 @@ function redactCredentialAssignments(value: string): string {
 }
 
 function redactSqlStatements(value: string, dialect?: DatabaseLogDialect): { text: string; gaps: string[] } {
+  const label = SQL_LABEL.exec(value);
   const gaps = new Set<string>();
   const output: string[] = [];
   let cursor = 0;
   SQL_START.lastIndex = 0;
 
   for (let match = SQL_START.exec(value); match; match = SQL_START.exec(value)) {
+    if (label && label.index < match.index) break;
     const start = match.index;
     if (start < cursor) continue;
 
-    const delimiter = value.indexOf(';', start);
-    const end = delimiter < 0 ? value.length : delimiter;
+    const end = value.length;
     const sql = value.slice(start, end).trimEnd();
     const redacted = dialect ? redactSqlEvidence(sql, dialect) : null;
     if (redacted === null && !hasSqlContext(value, start) && !hasSqlShape(match[0], value.slice(start + match[0].length))) {
@@ -85,7 +96,7 @@ function redactSqlStatements(value: string, dialect?: DatabaseLogDialect): { tex
     }
     output.push(value.slice(cursor, start));
     if (redacted === null) {
-      output.push('[SQL 已省略：无法安全脱敏]');
+      output.push(SQL_OMITTED);
       gaps.add('SQL_REDACTION_UNAVAILABLE');
       cursor = value.length;
       break;
@@ -93,9 +104,14 @@ function redactSqlStatements(value: string, dialect?: DatabaseLogDialect): { tex
       output.push(redacted);
     }
     cursor = end;
-    SQL_START.lastIndex = delimiter < 0 ? value.length : delimiter + 1;
+    SQL_START.lastIndex = value.length;
   }
 
+  if (label && cursor === 0) {
+    const start = label.index + label[0].length;
+    const sql = redactExplicitSql(value.slice(start), dialect);
+    return { text: value.slice(0, start) + sql.text, gaps: sql.gaps };
+  }
   output.push(value.slice(cursor));
   return { text: output.join(''), gaps: [...gaps] };
 }
@@ -119,10 +135,15 @@ function redactStructuredValue(value: unknown, dialect: DatabaseLogDialect | und
   if (Array.isArray(value)) return value.map((entry) => redactStructuredValue(entry, dialect, gaps));
   if (!value || typeof value !== 'object') return value;
 
-  return Object.fromEntries(Object.entries(value).map(([key, entry]) => [
-    key,
-    SENSITIVE_FIELD.test(key) ? '[REDACTED]' : redactStructuredValue(entry, dialect, gaps),
-  ]));
+  return Object.fromEntries(Object.entries(value).map(([key, entry]) => {
+    if (SENSITIVE_FIELD.test(key) || SENSITIVE_FIELD.test(key.replace(/[_-]/g, ''))) return [key, '[REDACTED]'];
+    if (SQL_FIELD.test(key) && typeof entry === 'string') {
+      const sql = redactExplicitSql(entry, dialect);
+      sql.gaps.forEach((gap) => gaps.add(gap));
+      return [key, sql.text];
+    }
+    return [key, redactStructuredValue(entry, dialect, gaps)];
+  }));
 }
 
 export function redactDatabaseLogText(value: string, dialect?: DatabaseLogDialect): { text: string; gaps: string[] } {
