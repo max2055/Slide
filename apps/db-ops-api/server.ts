@@ -134,6 +134,7 @@ import { alertEventService } from './src/alert-event-service.js';
 import { eventAggregator } from './src/event-aggregator.js';
 import { capacityPredictor } from './src/capacity-predictor.js';
 import { aiAnalysisDatabaseService } from './src/ai-analysis-database-service.js';
+import { analysisAccessSql, canReadAnalysis } from './src/analysis/analysis-access.js';
 import { aiAnalysisConfigService } from './src/ai-analysis-config-service.js';
 import { getAgentGreeting } from './src/agent-service.js';
 import { scoringConfigService } from './src/scoring-config-service.js';
@@ -2588,12 +2589,8 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
       const pool = dbConnection.getPool();
       if (!pool) return reply.code(500).send({ error: '数据库未连接' });
 
-      const allowedInstanceIds = getAccessibleInstanceIds((request as any).user);
-      const scopeSql = allowedInstanceIds === null
-        ? ''
-        : allowedInstanceIds.length > 0
-          ? ` AND instance_id IN (${allowedInstanceIds.map(() => '?').join(', ')})`
-          : ' AND 1 = 0';
+      const access = analysisAccessSql((request as any).user);
+      const scopeSql = ` AND ${access.sql}`;
 
       const [rows] = await pool.execute(
         `SELECT COUNT(*) as cnt, analysis_type
@@ -2606,7 +2603,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
          FROM ai_analysis
          WHERE created_at >= CURDATE()
          ${scopeSql}`,
-        [...(allowedInstanceIds ?? []), ...(allowedInstanceIds ?? [])],
+        [...access.params, ...access.params],
       ) as any;
 
       let today_total = 0;
@@ -3800,7 +3797,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
         if (!record) {
           return reply.code(404).send({ ok: false, error: '分析记录不存在' });
         }
-        if (record.instance_id && !hasInstanceAccess((request as any).user, Number(record.instance_id), 'read-only')) {
+        if (!canReadAnalysis((request as any).user, record)) {
           return reply.code(404).send({ ok: false, error: '分析记录不存在' });
         }
         reply.send({
@@ -3828,17 +3825,23 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
     preHandler: [verifyToken, requirePermission('ai:view')],
     handler: async (request, reply) => {
       try {
-        const { instance_id, analysis_type, limit } = request.query as {
+        const { instance_id, analysis_type, target_type, server_id, network_device_id, limit } = request.query as {
           instance_id?: string;
           analysis_type?: string;
+          target_type?: string;
+          server_id?: string;
+          network_device_id?: string;
           limit?: string;
         };
         const filters: Record<string, any> = {};
         if (instance_id) filters.instance_id = parseInt(instance_id);
         if (analysis_type) filters.analysis_type = analysis_type;
+        if (target_type) filters.target_type = target_type;
+        if (server_id) filters.server_id = Number(server_id);
+        if (network_device_id) filters.network_device_id = Number(network_device_id);
         if (limit) filters.limit = parseInt(limit);
-        const records = await aiAnalysisDatabaseService.getAnalysisList(filters);
-        return { ok: true, records: filterByInstanceAccess((request as any).user, records, (record: any) => record.instance_id) };
+        const records = await aiAnalysisDatabaseService.getAnalysisList(filters, (request as any).user);
+        return { ok: true, records };
       } catch (error: any) {
         reply.code(500).send({ error: error.message });
       }
@@ -3855,7 +3858,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
         if (!analysis) {
           return reply.code(404).send({ error: '分析记录不存在' });
         }
-        if (analysis.instance_id && !hasInstanceAccess((request as any).user, Number(analysis.instance_id), 'read-only')) {
+        if (!canReadAnalysis((request as any).user, analysis)) {
           return reply.code(404).send({ error: '分析记录不存在' });
         }
         reply.send({
@@ -3890,7 +3893,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
           analysis_type,
           status: 'completed',
           limit: Number(limit),
-        });
+        }, (request as any).user);
         reply.send(analyses);
       } catch (error: any) {
         reply.code(500).send({ error: error.message });
@@ -3918,7 +3921,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
         if (!analysis) {
           return reply.code(404).send({ error: '分析记录不存在' });
         }
-        if (analysis.instance_id && !hasInstanceAccess((request as any).user, Number(analysis.instance_id), 'read-only')) {
+        if (!canReadAnalysis((request as any).user, analysis)) {
           return reply.code(404).send({ error: '分析记录不存在' });
         }
         reply.send(analysis);
@@ -3933,16 +3936,19 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
     preHandler: [verifyToken, requirePermission('ai:view')],
     handler: async (request, reply) => {
       try {
-        const { analysis_type, instance_id, status, related_id, page = '1', limit = '20' } = request.query as any;
+        const { analysis_type, target_type, instance_id, server_id, network_device_id, status, related_id, page = '1', limit = '20' } = request.query as any;
         const analyses = await aiAnalysisDatabaseService.getAnalysisList({
           analysis_type: analysis_type || undefined,
+          target_type: target_type || undefined,
           instance_id: instance_id ? Number(instance_id) : undefined,
+          server_id: server_id ? Number(server_id) : undefined,
+          network_device_id: network_device_id ? Number(network_device_id) : undefined,
           status: status || undefined,
           related_id: related_id ? Number(related_id) : undefined,
           limit: Number(limit),
           offset: (Number(page) - 1) * Number(limit),
-        });
-        reply.send(filterByInstanceAccess((request as any).user, analyses, (analysis: any) => analysis.instance_id));
+        }, (request as any).user);
+        reply.send(analyses);
       } catch (error: any) {
         reply.code(500).send({ error: error.message });
       }
