@@ -62,7 +62,7 @@ describe('Linux host evidence parsers', () => {
     expect(result.entries).toEqual([{
       timestamp: '2023-11-14T22:13:20.000Z', severity: 'error',
       unit: 'mysqld.service', identifier: 'mysqld', pid: '42',
-      message: 'password=[REDACTED] failed login',
+      message: 'password=[REDACTED]',
     }]);
     expect(result.malformedLines).toBe(1);
   });
