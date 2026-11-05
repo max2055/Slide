@@ -8,6 +8,7 @@
  */
 import mysql from 'mysql2/promise';
 import { dbConnection, encryptData, decryptData, needsEncryptionMigration } from './db-connection';
+import { assertCredentialUsable, CredentialRotationRequiredError } from './credential-rotation.js';
 import { Client } from 'ssh2';
 import { authorizeServerTarget } from './security/server-target-policy.js';
 import { createOptionalSshHostVerifier, normalizeOptionalSshHostKeyFingerprint } from './security/ssh-host-key.js';
@@ -434,6 +435,8 @@ class ServerDatabaseService {
     hostKeyFingerprint?: string | null,
   ): Promise<{ success: boolean; error?: string; message?: string }> {
     try {
+      assertCredentialUsable(credentialValue);
+      assertCredentialUsable(username);
       const target = await authorizeServerTarget({ host, port });
       const hostVerifier = createOptionalSshHostVerifier(hostKeyFingerprint);
       return new Promise((resolve) => {
@@ -518,7 +521,12 @@ class ServerDatabaseService {
    */
   decryptCredentials(encryptedData: string): DecryptedCredentials {
     const decrypted = decryptData(encryptedData);
-    return JSON.parse(decrypted) as DecryptedCredentials;
+    assertCredentialUsable(decrypted);
+    const credentials = JSON.parse(decrypted) as DecryptedCredentials;
+    assertCredentialUsable(credentials.username);
+    assertCredentialUsable(credentials.password);
+    assertCredentialUsable(credentials.privateKey);
+    return credentials;
   }
 
   /**
@@ -540,6 +548,7 @@ class ServerDatabaseService {
       }
       return credentials;
     } catch (error) {
+      if (error instanceof CredentialRotationRequiredError) throw error;
       console.error('解密凭据失败:', error);
       return null;
     }
