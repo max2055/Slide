@@ -1,6 +1,6 @@
 # MAX-308 SSH 主机身份策略与升级决策草案
 
-状态：整体迁移方案已于 2026-11-05 获 Max 接受；范围收窄如下。仍是设计文档，不是已实施能力。
+状态：整体迁移方案已于 2026-11-05 获 Max 接受；Chief 已明确 key 实施映射，见下文。实际验证证据以当前候选报告为准。
 
 ## 2026-11-05 用户限定（优先于下方历史草案）
 
@@ -8,27 +8,27 @@ Max 评论 `01a1aa1a-3fb1-783b-b5bd-198cb2818cbc`：接受，但仅影响通过�
 
 已确认的排除规则：`credential_type='password'` / `credentialType='password'` 保持现有行为；缺省、空串、纯空白指纹的旧语义也不因本次迁移被全局收紧。密码对象已提供的合法指纹仍严格验证，错误指纹仍拒绝。密码存储在凭据表、密文或 credential_ref 中均不改变这一排除规则。
 
-### 实际字段映射与剩余具体歧义
+### 已接受的实施映射（覆盖历史待确认表述）
 
 当前代码只有以下两种登录认证，没有第三个“凭据认证”模式：
 
 | 字段值 | 实际传给 ssh2 | UI 名称 | 新迁移范围 |
 | --- | --- | --- | --- |
 | password | username + password | 密码 | 明确排除；含已配指纹的混合对象 |
-| key | username + privateKey | SSH 密钥 | 待确认“凭据认证”是否就是此模式，特别是无指纹的 key 对象 |
+| key | username + privateKey | SSH 密钥 | 纳入，包括无指纹 key 对象 |
 
 依据：`server-database-service.ts` 的 testConnection、`ssh-session-pool.ts` 的 _connect 和 `network-devices/config-backup-service.ts` 的 transport 均按 password 分支设置 password，否则设置 privateKey；`resources/network-device-types.ts` 与公开契约只接受 password/key；`app-ssh-auth-selector.ts` 明确显示密码/SSH 密钥。主机指纹独立传给 hostVerifier，不能作为登录方式判断依据。
 
-建议具体映射：key 私钥认证属于本次范围（不论是否已有 pin）；password 一律排除新迁移。需要仅确认这个字段映射，不能仅从“凭据”一词自行断定。没有该确认时，不写入数据库迁移或在 key 无指纹连接前新增拒绝逻辑。
+Chief 在评论 `01a1aa42-7ad9-7b1c-a475-9b42ef7d9b25` 采用上述 key 映射作为协调实施决定，要求继续实现；不将 Max 原话改写为逐字段确认。该决定解除历史字段术语疑问。key 私钥认证属于本次范围（不论是否已有 pin）；password 一律排除新迁移。hostVerifier 是独立维度。
 
 ### 收窄后的实现与回归要求
 
-- 若确认 key 映射，新增策略字段只对 key 生效；现有有效 key pin 继续验证，无 pin key 进入已接受方案中的迁移确认流程。
+- 按已接受的 key 映射，新增策略字段只对 key 生效；现有有效 key pin 继续验证，无 pin key 进入已接受方案中的迁移确认流程。
 - helper 必须接收实际登录模式或由调用方明确分流，不能全局改变 optional helper 从而误伤 password。
 - password → key 时执行范围内策略要求；key → password 时恢复既有密码行为，但保留显式提供的 pin 校验。模式切换不能静默删除原 pin。
 - 会话身份、metrics 快照、备份 transport 传播相同模式与策略，保留凭据身份、CAS、池容量修复。
 - 验收矩阵增加 password × 无 pin/空串/空白/匹配 pin/错配 pin，覆盖连接测试、采集、诊断、网络设备测试与备份。升级前后行为一致；真实握手、实库迁移和浏览器证据分别记账。
-- 运行时尚无变更，不将本节落盘视为范围内迁移、策略或完整 gate 已通过。
+- 验收分别记录运行时、MySQL 升级、真实 SSH、UI 与完整 gate；不将方案落盘视为验证通过。
 
 关联：GitHub #378；父 MAX-249；实现负责人 15coder1；独立复核 Chief。
 

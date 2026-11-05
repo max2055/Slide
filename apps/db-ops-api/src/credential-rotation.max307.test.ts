@@ -89,7 +89,7 @@ describe('MAX-307 lost-key markers never reach authentication', () => {
 
   it.each(['password', 'key'] as const)('accepts a replacement server %s without decrypting the marker or enabling collection', async (type) => {
     const secret = randomBytes(18).toString('hex');
-    expect(await servers.updateServer(307, { credential_type: type, credential_username: 'fixture', credential_value: secret })).toEqual({ success: true });
+    expect(await servers.updateServer(307, { credential_type: type, credential_username: 'fixture', credential_value: secret, ...(type === 'key' ? { host_key_fingerprint: 'SHA256:' + 'A'.repeat(43) } : {}) })).toEqual({ success: true });
     const read = await servers.getDecryptedCredentials(307);
     expect(read?.[type === 'password' ? 'password' : 'privateKey'] === secret).toBe(true);
     expect(row.collection_enabled).toBe(0);

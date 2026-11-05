@@ -84,7 +84,7 @@ describe('SSH session pool target and identity controls', () => {
     const pool = limitedPool();
     mocks.holdReady = true;
     const pending = pool.getConnection('ssh.internal.example', 22, 'root', 'password', 'secret');
-    const competing = pool.getConnection(' SSH.internal.example ', 22, 'other', 'key', 'other-key')
+    const competing = pool.getConnection(' SSH.internal.example ', 22, 'other', 'key', 'other-key', fingerprintSshHostKey(Buffer.from('capacity')))
       .then(() => 'unexpected success', (error: Error) => error.message);
     await Promise.resolve();
     // Release the barrier even on the buggy implementation so no waiter is orphaned.
@@ -273,10 +273,10 @@ describe('SSH session pool target and identity controls', () => {
     ));
     try {
       const root = await sshSessionPool.getConnection(
-        'ssh.internal.example', 22, 'root', 'key', secret, null,
+        'ssh.internal.example', 22, 'root', 'key', secret, fingerprintSshHostKey(Buffer.from('identity')),
       );
       const operator = await sshSessionPool.getConnection(
-        'ssh.internal.example', 22, 'operator', 'key', 'operator-key', null,
+        'ssh.internal.example', 22, 'operator', 'key', 'operator-key', fingerprintSshHostKey(Buffer.from('identity')),
       );
       sshSessionPool.releaseConnection(root);
       sshSessionPool.releaseConnection(operator);
@@ -293,7 +293,7 @@ describe('SSH session pool target and identity controls', () => {
       expect(sshSessionPool.getPoolStats()).toMatchObject({ total: 1, idle: 1, active: 0 });
 
       const again = await sshSessionPool.getConnection(
-        'ssh.internal.example', 22, 'root', 'key', secret, null,
+        'ssh.internal.example', 22, 'root', 'key', secret, fingerprintSshHostKey(Buffer.from('identity')),
       );
       expect(again).not.toBe(root);
       expect(sshSessionPool.revokeSessions({ host: 'ssh.internal.example', port: 22 })).toBe(2);

@@ -7,6 +7,7 @@ import ts from 'typescript';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbConnection, decryptData, encryptData } from './db-connection.js';
 import { LOST_KEY_ROTATION_SENTINEL as marker } from './credential-rotation.js';
+import { recordSshTrustRequest } from './security/ssh-trust-audit.js';
 import { MigrationRunner } from './migrations/runner.js';
 import type { MigrationPool } from './migrations/types.js';
 import { serverDatabaseService as servers } from './server-database-service.js';
@@ -24,8 +25,8 @@ const route = ts.transpileModule(source.slice(start, end), {
 async function put(id: number, payload: Record<string, unknown>) {
   const logs: string[] = [];
   const app = Fastify({ logger: { stream: { write: (line: string) => { logs.push(line); } } } });
-  new Function('fastify', 'verifyToken', 'requirePermission', 'warnUnknown', 'serverDatabaseService', route)(
-    app, async () => {}, () => async () => {}, () => {}, servers,
+  new Function('fastify', 'verifyToken', 'requirePermission', 'warnUnknown', 'serverDatabaseService', 'recordSshTrustRequest', route)(
+    app, async () => {}, () => async () => {}, () => {}, servers, recordSshTrustRequest,
   );
   try {
     const response = await app.inject({ method: 'PUT', url: `/api/servers/${id}`, payload });
@@ -141,7 +142,7 @@ describe.each(['memory', ...(port ? ['mysql'] : [])])('MAX-317 server credential
   it.each(['non-json', 'wrong-key', 'rotation-marker'])('allows complete replacement of %s credentials', async (kind) => {
     await store(kind === 'wrong-key' ? encryptData(secret, randomBytes(32).toString('base64'))
       : encryptData(kind === 'rotation-marker' ? marker : secret));
-    expect((await put(id, { credential_type: 'key', credential_username: 'replacement-user', credential_value: secret })).status).toBe(200);
+    expect((await put(id, { credential_type: 'key', credential_username: 'replacement-user', credential_value: secret, host_key_fingerprint: 'SHA256:' + 'A'.repeat(43) })).status).toBe(200);
     const saved = await stored();
     expect(saved.credential_type).toBe('key');
     expect(saved.collection_enabled).toBe(0);

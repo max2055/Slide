@@ -25200,6 +25200,16 @@
             "minLength": 1,
             "type": "string"
           },
+          "hostKeyFingerprint": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "id": {
             "minimum": 1,
             "type": "integer"
@@ -25278,6 +25288,26 @@
             "maximum": 65535,
             "minimum": 1,
             "type": "integer"
+          },
+          "sshCredentialType": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "sshTrustMode": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "status": {
             "$id": "NetworkDeviceStatus",
@@ -26590,6 +26620,16 @@
               "minLength": 1,
               "type": "string"
             },
+            "hostKeyFingerprint": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
             "id": {
               "minimum": 1,
               "type": "integer"
@@ -26668,6 +26708,26 @@
               "maximum": 65535,
               "minimum": 1,
               "type": "integer"
+            },
+            "sshCredentialType": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "sshTrustMode": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
             },
             "status": {
               "$id": "NetworkDeviceStatus",
@@ -26753,6 +26813,22 @@
                 "pattern": "^SHA256:[A-Za-z0-9+/]{43}$",
                 "type": "string"
               },
+              "sshTrustMode": {
+                "anyOf": [
+                  {
+                    "const": "pinned",
+                    "type": "string"
+                  },
+                  {
+                    "const": "insecure",
+                    "type": "string"
+                  },
+                  {
+                    "const": "pending",
+                    "type": "string"
+                  }
+                ]
+              },
               "username": {
                 "maxLength": 255,
                 "minLength": 1,
@@ -26781,6 +26857,22 @@
               "hostKeyFingerprint": {
                 "pattern": "^SHA256:[A-Za-z0-9+/]{43}$",
                 "type": "string"
+              },
+              "sshTrustMode": {
+                "anyOf": [
+                  {
+                    "const": "pinned",
+                    "type": "string"
+                  },
+                  {
+                    "const": "insecure",
+                    "type": "string"
+                  },
+                  {
+                    "const": "pending",
+                    "type": "string"
+                  }
+                ]
               },
               "username": {
                 "maxLength": 255,
@@ -27063,6 +27155,22 @@
                     "pattern": "^SHA256:[A-Za-z0-9+/]{43}$",
                     "type": "string"
                   },
+                  "sshTrustMode": {
+                    "anyOf": [
+                      {
+                        "const": "pinned",
+                        "type": "string"
+                      },
+                      {
+                        "const": "insecure",
+                        "type": "string"
+                      },
+                      {
+                        "const": "pending",
+                        "type": "string"
+                      }
+                    ]
+                  },
                   "username": {
                     "maxLength": 255,
                     "minLength": 1,
@@ -27091,6 +27199,22 @@
                   "hostKeyFingerprint": {
                     "pattern": "^SHA256:[A-Za-z0-9+/]{43}$",
                     "type": "string"
+                  },
+                  "sshTrustMode": {
+                    "anyOf": [
+                      {
+                        "const": "pinned",
+                        "type": "string"
+                      },
+                      {
+                        "const": "insecure",
+                        "type": "string"
+                      },
+                      {
+                        "const": "pending",
+                        "type": "string"
+                      }
+                    ]
                   },
                   "username": {
                     "maxLength": 255,

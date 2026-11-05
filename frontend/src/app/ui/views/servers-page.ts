@@ -34,11 +34,14 @@ interface ServerRow {
   created_at: string;
   updated_at: string;
   host_key_fingerprint: string;
+  ssh_trust_mode?: string | null;
   environment?: string | null;
   related_instance_count?: number;
 }
 
 interface ServerFormData {
+  host_key_fingerprint?: string;
+  ssh_trust_mode?: string;
   host: string;
   port: number;
   label: string;
@@ -322,6 +325,8 @@ export class ServersPage extends LitElement {
       port: server.port,
       label: server.label || "",
       os_type: canonicalOsKey(server.os_type) === "unknown" ? "centos" : canonicalOsKey(server.os_type),
+      host_key_fingerprint: server.host_key_fingerprint || undefined,
+      ssh_trust_mode: server.ssh_trust_mode || (server.host_key_fingerprint ? "pinned" : "pending"),
       credential_type: server.credential_type,
       credential_username: credentialUsername,
       credential_value: "",
@@ -376,6 +381,7 @@ export class ServersPage extends LitElement {
       const isEdit = this._editingId !== null;
       const url = isEdit ? `/api/servers/${this._editingId}` : "/api/servers";
       const body: Record<string, unknown> = { ...this._form };
+      if (this._form.credential_type === "password") delete body.ssh_trust_mode;
       if (isEdit) {
         if (!body.credential_value) delete body.credential_value;
         if (!body.credential_username) delete body.credential_username;
@@ -474,6 +480,8 @@ export class ServersPage extends LitElement {
           credential_type: this._form.credential_type,
           credential_username: this._form.credential_username,
           credential_value: this._form.credential_value,
+          host_key_fingerprint: this._form.host_key_fingerprint,
+          ssh_trust_mode: this._form.credential_type === "key" ? this._form.ssh_trust_mode : undefined,
         }),
       });
       const result = await res.json();
@@ -561,7 +569,7 @@ export class ServersPage extends LitElement {
         id: srv.id, type: canonicalOsLabel(srv.os_type), version: srv.os_version,
         searchValues: [srv.label, srv.host, srv.os_type, srv.status, this._statusLabel(srv.status)],
         host: html`<span class="resource-name"><button class="btn-ghost" title=${srv.label?.trim() || srv.host} @click=${() => this._navigateToDetail(srv.id)}>${srv.label?.trim() || srv.host}</button><span class="full-value" aria-hidden="true">${srv.label?.trim() || srv.host}</span></span>`,
-        address: `${srv.host}:${srv.port ?? 22}`,
+        address: html`${srv.host}:${srv.port ?? 22} ${srv.credential_type === "key" ? html`<app-badge variant=${srv.host_key_fingerprint ? "ok" : "warn"}>${srv.host_key_fingerprint ? "SSH 指纹校验" : srv.ssh_trust_mode === "insecure" ? "SSH 未验证身份（风险）" : "SSH 待确认（暂停）"}</app-badge>` : nothing}`,
         label: srv.label || html`<span style="color:var(--muted);">—</span>`,
         os_type: html`<app-badge variant="muted">${canonicalOsLabel(srv.os_type)}</app-badge>`,
         status: html`<app-badge variant="${this._statusBadgeVariant(srv.status)}">${this._statusLabel(srv.status)}</app-badge>`,
@@ -742,6 +750,19 @@ export class ServersPage extends LitElement {
             </app-form-field>
           </div>
 
+          ${this._form.credential_type === "key" ? html`
+            <app-form-field label="SSH 主机身份策略" .inline=${true}>
+              <select aria-label="SSH 主机身份策略" .value=${this._form.ssh_trust_mode || "pending"}
+                @change=${(e: any) => this._updateForm("ssh_trust_mode", e.target.value)}>
+                <option value="pending" disabled>待确认（暂停 SSH）</option><option value="pinned">固定指纹</option><option value="insecure">不验证（风险兼容）</option>
+              </select>
+            </app-form-field>
+            <app-form-field label="SSH 主机密钥指纹" .inline=${true}>
+              <input aria-label="SSH 主机密钥指纹" class="form-input" .value=${this._form.host_key_fingerprint || ""}
+                @input=${(e: any) => this._updateForm("host_key_fingerprint", e.target.value)} placeholder="SHA256:…" />
+            </app-form-field>
+            ${this._form.ssh_trust_mode === "insecure" ? html`<p role="status">未验证服务器身份，可能连接冒充者并取得伪造结果。选择将记录审计；已有指纹仍验证。</p>` : html`<p>请通过受信任渠道核验指纹后填写；未确认的私钥连接暂停。</p>`}
+          ` : nothing}
           <app-form-field label="SSH 用户名" required .inline=${true}>
             <input class="form-input" type="text" .value=${this._form.credential_username}
               @input=${(e: any) => this._updateForm("credential_username", e.target.value)}

@@ -91,7 +91,7 @@ describe('trial host discovery ownership', () => {
 
 describe('SSH collector identity snapshot', () => {
   const serverRef = { type: 'server' as const, id: 1 };
-  type FixtureServer = { host: string; port: number; credential_type: string; host_key_fingerprint: string; credential_encrypted: string };
+  type FixtureServer = { host: string; port: number; credential_type: string; host_key_fingerprint: string; credential_encrypted: string; ssh_trust_mode?: string };
   type FixtureSecret = { username: string; password?: string; privateKey?: string };
   const approvedServer: FixtureServer = { host: '192.0.2.1', port: 22, credential_type: 'password', host_key_fingerprint: 'SHA256:approved', credential_encrypted: 'blob-approved' };
   const approvedSecret: FixtureSecret = { username: 'reader', password: 'fixture-only' };
@@ -123,7 +123,7 @@ describe('SSH collector identity snapshot', () => {
     const { access, transport } = await open();
     await run(transport);
     expect(mock.sshConnect).toHaveBeenCalledTimes(1);
-    expect(mock.sshConnect).toHaveBeenCalledWith('192.0.2.1', 22, 'reader', 'password', 'fixture-only', 'SHA256:approved');
+    expect(mock.sshConnect).toHaveBeenCalledWith('192.0.2.1', 22, 'reader', 'password', 'fixture-only', 'SHA256:approved', undefined);
     expect(mock.sshRelease).toHaveBeenCalledTimes(1);
     expect(access.evidence.host_blocks).toBeDefined();
   });
@@ -133,11 +133,12 @@ describe('SSH collector identity snapshot', () => {
       { username: 'reader', privateKey: 'fixture-key' },
     );
     await run(transport);
-    expect(mock.sshConnect).toHaveBeenCalledWith('192.0.2.1', 22, 'reader', 'key', 'fixture-key', 'SHA256:approved');
+    expect(mock.sshConnect).toHaveBeenCalledWith('192.0.2.1', 22, 'reader', 'key', 'fixture-key', 'SHA256:approved', undefined);
   });
   const changes: Array<[string, FixtureServer, FixtureSecret]> = [
     ['target', { host: '192.0.2.2', port: 2222, credential_type: 'password', host_key_fingerprint: 'SHA256:approved', credential_encrypted: 'blob-next' }, approvedSecret],
     ['port', { ...approvedServer, port: 2222 }, approvedSecret],
+    ['trust decision', { ...approvedServer, ssh_trust_mode: 'insecure' }, approvedSecret],
     ['fingerprint', { ...approvedServer, host_key_fingerprint: 'SHA256:replaced', credential_encrypted: 'blob-next' }, approvedSecret],
     ['credential', approvedServer, { username: 'reader', password: 'rotated-fixture' }],
     ['account', { ...approvedServer, credential_encrypted: 'blob-next' }, { username: 'other', password: 'fixture-only' }],
@@ -155,7 +156,7 @@ describe('SSH collector identity snapshot', () => {
     expect(fresh.evidence.host_blocks).not.toBe(baseline);
     await run(await fresh.resolve(fresh.credential_ref, fresh.resource, 'ssh'));
     expect(mock.sshConnect).toHaveBeenCalledTimes(1);
-    expect(mock.sshConnect).toHaveBeenCalledWith(server.host, server.port, secret.username, server.credential_type, secret.password ?? secret.privateKey, server.host_key_fingerprint);
+    expect(mock.sshConnect).toHaveBeenCalledWith(server.host, server.port, secret.username, server.credential_type, secret.password ?? secret.privateKey, server.host_key_fingerprint, server.ssh_trust_mode);
   });
   it('rejects a reproducible race that changes the target between the two reads used to connect', async () => {
     const { factory, access, transport } = await open();
@@ -174,7 +175,7 @@ describe('SSH collector identity snapshot', () => {
     const fresh = await factory.resolve(serverRef);
     expect(fresh.evidence.host_blocks).not.toBe(baseline);
     await run(await fresh.resolve(fresh.credential_ref, fresh.resource, 'ssh'));
-    expect(mock.sshConnect).toHaveBeenCalledWith('192.0.2.2', 2222, 'reader', 'password', 'other-fixture', 'SHA256:approved');
+    expect(mock.sshConnect).toHaveBeenCalledWith('192.0.2.2', 2222, 'reader', 'password', 'other-fixture', 'SHA256:approved', undefined);
   });
   it('rejects ciphertext rotation between row and credential reads (#528)', async () => {
     const { transport } = await open();
@@ -188,7 +189,7 @@ describe('SSH collector identity snapshot', () => {
     mock.server.mockResolvedValueOnce(approvedServer).mockResolvedValue({ ...approvedServer, credential_encrypted: 'blob-rewrapped' });
     await run(transport);
     expect(mock.decrypt).toHaveBeenLastCalledWith('blob-rewrapped');
-    expect(mock.sshConnect).toHaveBeenCalledWith('192.0.2.1', 22, 'reader', 'password', 'fixture-only', 'SHA256:approved');
+    expect(mock.sshConnect).toHaveBeenCalledWith('192.0.2.1', 22, 'reader', 'password', 'fixture-only', 'SHA256:approved', undefined);
   });
   it('rejects unreadable credentials before acquiring SSH (#528)', async () => {
     const { transport } = await open();

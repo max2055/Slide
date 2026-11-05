@@ -90,7 +90,7 @@ describe('ServerDatabaseService SSH security', () => {
 
     expect(result).toEqual({ success: true, serverId: 9 });
     expect(execute.mock.calls[1][1]).toEqual([
-      'ssh.internal.example', 22, null, 'centos', 'password', expect.any(String), null,
+      'ssh.internal.example', 22, null, 'centos', 'password', expect.any(String), null, null,
     ]);
   });
 });

@@ -38,6 +38,7 @@ export interface NetworkDeviceCredentials {
   privacySecret?: string;
   credentialType?: SshCredentialInput['credentialType'];
   credentialValue?: string;
+  sshTrustMode?: string | null;
   hostKeyFingerprint?: string;
   community?: string;
 }
@@ -53,7 +54,10 @@ export class NetworkDeviceDatabaseService {
     const [rows] = await pool.execute<Array<any>>(
       `SELECT ${DEVICE_COLUMNS},
               EXISTS (SELECT 1 FROM network_device_credentials c WHERE c.device_id = d.id AND c.protocol IN ('snmpv2c','snmpv3')) AS has_snmp_credential,
-              EXISTS (SELECT 1 FROM network_device_credentials c WHERE c.device_id = d.id AND c.protocol = 'ssh') AS has_ssh_credential
+              EXISTS (SELECT 1 FROM network_device_credentials c WHERE c.device_id = d.id AND c.protocol = 'ssh') AS has_ssh_credential,
+              (SELECT c.credential_type FROM network_device_credentials c WHERE c.device_id=d.id AND c.protocol='ssh') AS ssh_credential_type,
+              (SELECT c.ssh_trust_mode FROM network_device_credentials c WHERE c.device_id=d.id AND c.protocol='ssh') AS ssh_trust_mode,
+              (SELECT c.host_key_fingerprint FROM network_device_credentials c WHERE c.device_id=d.id AND c.protocol='ssh') AS ssh_host_key_fingerprint
        FROM network_devices d ORDER BY d.host, d.id`,
     );
     return rows.map((row) => this.publicDto(row));
@@ -64,7 +68,10 @@ export class NetworkDeviceDatabaseService {
     const [rows] = await pool.execute<Array<any>>(
       `SELECT ${DEVICE_COLUMNS},
               EXISTS (SELECT 1 FROM network_device_credentials c WHERE c.device_id = d.id AND c.protocol IN ('snmpv2c','snmpv3')) AS has_snmp_credential,
-              EXISTS (SELECT 1 FROM network_device_credentials c WHERE c.device_id = d.id AND c.protocol = 'ssh') AS has_ssh_credential
+              EXISTS (SELECT 1 FROM network_device_credentials c WHERE c.device_id = d.id AND c.protocol = 'ssh') AS has_ssh_credential,
+              (SELECT c.credential_type FROM network_device_credentials c WHERE c.device_id=d.id AND c.protocol='ssh') AS ssh_credential_type,
+              (SELECT c.ssh_trust_mode FROM network_device_credentials c WHERE c.device_id=d.id AND c.protocol='ssh') AS ssh_trust_mode,
+              (SELECT c.host_key_fingerprint FROM network_device_credentials c WHERE c.device_id=d.id AND c.protocol='ssh') AS ssh_host_key_fingerprint
        FROM network_devices d WHERE d.id = ? LIMIT 1`, [id],
     );
     return rows[0] ? this.publicDto(rows[0]) : null;
@@ -79,7 +86,7 @@ export class NetworkDeviceDatabaseService {
     const [rows] = await pool.execute<Array<any>>(
       `SELECT protocol, username, security_level, auth_protocol, privacy_protocol,
               auth_secret_encrypted, privacy_secret_encrypted, community_encrypted, credential_type,
-              credential_encrypted, host_key_fingerprint
+              credential_encrypted, host_key_fingerprint, ssh_trust_mode
        FROM network_device_credentials WHERE device_id = ?${where} ORDER BY protocol`, values,
     );
     const row = rows[0];
@@ -100,7 +107,7 @@ export class NetworkDeviceDatabaseService {
     const value = encrypted ? this.decryptSecret(encrypted) : undefined;
     return {
       protocol: 'ssh', username: row.username, credentialType: row.credential_type,
-      credentialValue: value, hostKeyFingerprint: row.host_key_fingerprint ?? undefined,
+      credentialValue: value, sshTrustMode: row.ssh_trust_mode, hostKeyFingerprint: row.host_key_fingerprint ?? undefined,
     };
   }
 
@@ -164,6 +171,14 @@ export class NetworkDeviceDatabaseService {
       }
       if (input.snmpv3) await this.saveSnmpCredentials(executor, id, input.snmpv3);
       if (input.snmpv2c) await this.saveSnmpV2Credentials(executor, id, input.snmpv2c);
+      if (input.sshTrust) {
+        const [rows] = await executor.execute<any[]>('SELECT credential_type FROM network_device_credentials WHERE device_id=? AND protocol=\'ssh\' FOR UPDATE', [id]);
+        if (rows[0]?.credential_type !== 'key' || input.ssh) throw new Error('SSH_TRUST_TARGET_INVALID');
+        await executor.execute("UPDATE network_device_credentials SET ssh_trust_mode=?,host_key_fingerprint=? WHERE device_id=? AND protocol='ssh'", [input.sshTrust.mode, input.sshTrust.fingerprint ?? null, id]);
+      }
+      if ((input.host !== undefined || input.sshPort !== undefined) && !input.ssh && !input.sshTrust) {
+        await executor.execute("UPDATE network_device_credentials SET ssh_trust_mode='pending' WHERE device_id=? AND protocol='ssh' AND credential_type='key' AND ssh_trust_mode='insecure'", [id]);
+      }
       if (input.ssh) await this.saveSshCredentials(executor, id, input.ssh);
       if (connection) await connection.commit();
       return { success: true };
@@ -235,10 +250,10 @@ export class NetworkDeviceDatabaseService {
       : null;
     await pool.execute(
       `INSERT INTO network_device_credentials
-       (device_id, protocol, credential_type, username, credential_encrypted, host_key_fingerprint)
-       VALUES (?, 'ssh', ?, ?, ?, ?)
-       ON DUPLICATE KEY UPDATE credential_type = VALUES(credential_type), username = VALUES(username), credential_encrypted = VALUES(credential_encrypted), host_key_fingerprint = VALUES(host_key_fingerprint)`,
-      [id, input.credentialType, input.username, encryptData(input.credentialValue), fingerprint],
+       (device_id, protocol, credential_type, username, credential_encrypted, host_key_fingerprint, ssh_trust_mode)
+       VALUES (?, 'ssh', ?, ?, ?, ?, ?)
+       ON DUPLICATE KEY UPDATE credential_type = VALUES(credential_type), username = VALUES(username), credential_encrypted = VALUES(credential_encrypted), host_key_fingerprint = COALESCE(VALUES(host_key_fingerprint), host_key_fingerprint), ssh_trust_mode = VALUES(ssh_trust_mode)`,
+      [id, input.credentialType, input.username, encryptData(input.credentialValue), fingerprint, input.credentialType === 'key' ? input.sshTrustMode ?? null : null],
     );
   }
 
@@ -258,6 +273,7 @@ export class NetworkDeviceDatabaseService {
       snmp_port: Number(row.snmp_port), ssh_port: Number(row.ssh_port), status: row.status,
       last_check_at: row.last_check_at ?? null, collection_enabled: Boolean(row.collection_enabled),
       created_at: row.created_at, updated_at: row.updated_at,
+      sshCredentialType: row.ssh_credential_type ?? null, sshTrustMode: row.ssh_trust_mode ?? null, hostKeyFingerprint: row.ssh_host_key_fingerprint ?? null,
       hasSnmpCredential: Boolean(row.has_snmp_credential), hasSshCredential: Boolean(row.has_ssh_credential),
     };
   }

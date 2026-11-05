@@ -286,7 +286,7 @@ class ServerDiagnosticService {
     try {
       client = await this.dependencies.sshSessionPool.getConnection(
         server.host, server.port, credentials.username, server.credential_type,
-        value, server.host_key_fingerprint,
+        value, server.host_key_fingerprint, server.ssh_trust_mode,
       );
       const execute = async (command: string, maxOutputBytes = MAX_SECTION_OUTPUT_BYTES): Promise<ExecCommandResult | undefined> => {
         const remaining = SERVER_DIAGNOSTIC_MAX_OUTPUT_BYTES - outputBytes;
