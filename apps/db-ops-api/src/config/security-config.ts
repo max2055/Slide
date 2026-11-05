@@ -20,7 +20,7 @@ export interface SecurityConfig {
 }
 
 function validSecret(value: string | undefined): value is string {
-  return typeof value === 'string' && value.length >= 32 && !KNOWN_DEFAULTS.has(value.trim().toLowerCase());
+  return typeof value === 'string' && value.length >= 32 && value.trim().length > 0 && !KNOWN_DEFAULTS.has(value.trim().toLowerCase());
 }
 
 function validEncryptionSecret(value: string | undefined): value is string {
@@ -36,13 +36,18 @@ export function loadSecurityConfig(env: NodeJS.ProcessEnv = process.env): Securi
     production,
     jwtSecret: env.JWT_SECRET_KEY,
     encryptionKey: env.ENCRYPTION_KEY,
-    initialAdminConfigured: Boolean(env.INITIAL_ADMIN_USERNAME && env.INITIAL_ADMIN_PASSWORD),
+    initialAdminConfigured: Boolean(
+      env.INITIAL_ADMIN_USERNAME?.trim() && env.INITIAL_ADMIN_USERNAME.length <= 50
+      && env.INITIAL_ADMIN_USERNAME === env.INITIAL_ADMIN_USERNAME.trim()
+      && env.INITIAL_ADMIN_PASSWORD && env.INITIAL_ADMIN_PASSWORD.trim().length >= 12
+      && Buffer.byteLength(env.INITIAL_ADMIN_PASSWORD, 'utf8') <= 72
+    ),
   };
   if (!production) return config;
   if (!validSecret(config.jwtSecret)) throw new SecurityConfigurationError('JWT_SECRET_KEY must be a non-default secret of at least 32 characters');
   if (!validEncryptionSecret(config.encryptionKey)) throw new SecurityConfigurationError('ENCRYPTION_KEY must encode exactly 32 bytes as UTF-8, hex, or base64');
   if (config.jwtSecret === config.encryptionKey) throw new SecurityConfigurationError('JWT_SECRET_KEY and ENCRYPTION_KEY must be different');
-  if (!config.initialAdminConfigured) throw new SecurityConfigurationError('INITIAL_ADMIN_USERNAME and INITIAL_ADMIN_PASSWORD are required in production');
+  if (!config.initialAdminConfigured) throw new SecurityConfigurationError('INITIAL_ADMIN_USERNAME and INITIAL_ADMIN_PASSWORD are required in production (username: 1-50 characters without surrounding whitespace; password: at least 12 non-blank characters, at most 72 UTF-8 bytes)');
   return config;
 }
 
