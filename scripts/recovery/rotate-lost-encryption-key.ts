@@ -96,6 +96,15 @@ async function main(): Promise<void> {
   const envText = await readFile(envFile, 'utf8');
   for (const [key, value] of Object.entries(projectEnvAssignments(envText, process.env))) process.env[key] = value;
   pinInvocationSecrets(invocation);
+  // Capture the target before dependency loaders can mutate process.env,
+  // including when dotenv's override option is enabled in the invocation.
+  const dbConfig = {
+    host: process.env.DB_HOST || 'localhost',
+    port: Number(process.env.DB_PORT || '3306'),
+    user: process.env.DB_USER || 'root',
+    password: process.env.DB_PASSWORD || '',
+    database: process.env.DB_NAME || 'db_ops_ai',
+  };
 
   // db-connection imports dotenv/config. Keep that loader on the selected file
   // too, so cwd/.env cannot fill in settings omitted by the selected file.
@@ -107,13 +116,7 @@ async function main(): Promise<void> {
   const createConnection = mysql.createConnection;
   const instanceSentinel = dbConnection.encryptData(LOST_KEY_ROTATION_SENTINEL, invocation.encryptionKey);
   const serverSentinel = dbConnection.encryptData(LOST_KEY_ROTATION_SENTINEL, invocation.encryptionKey);
-  const db = await createConnection({
-    host: process.env.DB_HOST || 'localhost',
-    port: Number(process.env.DB_PORT || '3306'),
-    user: process.env.DB_USER || 'root',
-    password: process.env.DB_PASSWORD || '',
-    database: process.env.DB_NAME || 'db_ops_ai',
-  });
+  const db = await createConnection(dbConfig);
   try {
     const [instanceRows] = await db.query<Array<{ id: number; password_encrypted: string; connection_string: string | null }>>(
       'SELECT id, password_encrypted, connection_string FROM database_instances ORDER BY id',
