@@ -75,4 +75,33 @@ describe('qualification SQL observation', () => {
     expect(recoveryObservation('anything').wrap(raw)).toBe(raw);
     setup(); expect(() => recoveryObservation('production')).toThrow('identity');
   });
+  it('records API shard stages and unfinished SQL without waiting for an absent cleanup supervisor (#468)', async () => {
+    directory = mkdtempSync(join(tmpdir(), 'api-hook-observer-'));
+    vi.stubEnv('RECOVERY_OBSERVATION_DIR', undefined);
+    vi.stubEnv('RECOVERY_OBSERVATION_COMMIT', undefined);
+    vi.stubEnv('T12_OUTPUT_DIR', directory);
+    vi.stubEnv('GITHUB_SHA', 'c'.repeat(40));
+    const observer = recoveryObservation(database);
+    let complete!: (value: number) => void;
+    const raw = { query: vi.fn(() => new Promise<number>(resolve => { complete = resolve; })) };
+    const pending = observer.stage('migration-1', () => observer.wrap(raw).query());
+    observer.finish();
+    const file = join(directory, 'recovery-observation', `hook-${process.pid}.jsonl`);
+    const recorded = readFileSync(file, 'utf8').trim().split('\n').map(line => JSON.parse(line));
+    expect(recorded[0]).toMatchObject({ event: 'begin', kind: 'stage', label: 'migration-1', commit: 'c'.repeat(40) });
+    expect(recorded.at(-1).pending).toMatchObject([{ label: 'migration-1' }, { label: 'other' }]);
+    await observer.beforeCleanup();
+    expect(readdirSync(join(directory, 'recovery-observation'))).toEqual([`hook-${process.pid}.jsonl`]);
+    complete(7);
+    expect(await pending).toBe(7);
+  });
+  it('keeps API observation disabled when its output directory is absent', async () => {
+    vi.stubEnv('RECOVERY_OBSERVATION_DIR', undefined);
+    vi.stubEnv('T12_OUTPUT_DIR', undefined);
+    const raw = { query: vi.fn() };
+    const observer = recoveryObservation('not-a-qualification-database');
+    expect(observer.wrap(raw)).toBe(raw);
+    await observer.beforeCleanup();
+    observer.finish();
+  });
 });
