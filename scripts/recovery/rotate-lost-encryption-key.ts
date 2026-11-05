@@ -167,7 +167,14 @@ async function main(): Promise<void> {
         [serverSentinel],
       );
       await db.execute("UPDATE llm_providers SET api_key_encrypted = NULL, enabled = CASE WHEN deployment_type = 'local' THEN enabled ELSE 0 END, is_default = CASE WHEN deployment_type = 'local' THEN is_default ELSE 0 END");
-      await db.execute('UPDATE llm_providers_backup SET api_key_encrypted = NULL');
+      // Only the one-time historical LLM migration creates this backup table.
+      // Check existence rather than swallowing SQL errors from its UPDATE.
+      const [backupTables] = await db.query<Array<{ TABLE_NAME: string }>>(
+        "SELECT TABLE_NAME FROM information_schema.tables WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'llm_providers_backup'",
+      );
+      if (backupTables.length > 0) {
+        await db.execute('UPDATE llm_providers_backup SET api_key_encrypted = NULL');
+      }
       await db.execute(`UPDATE notification_channels
         SET enabled = CASE WHEN JSON_CONTAINS_PATH(config, 'one', '$.secret', '$.secret_encrypted', '$.password', '$.password_encrypted', '$.oauth2_refresh_token', '$.oauth2_refresh_token_encrypted', '$.token', '$.apiKey') THEN 0 ELSE enabled END,
             config = JSON_REMOVE(config, '$.secret', '$.secret_encrypted', '$.password', '$.password_encrypted', '$.oauth2_refresh_token', '$.oauth2_refresh_token_encrypted', '$.token', '$.apiKey')`);
