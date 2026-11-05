@@ -81,6 +81,38 @@ describe('settings navigation and routing', () => {
     expect(element.shadowRoot!.querySelector('agent-security-policy-page')).toBeNull();
   });
 
+  it.each(['revoke', 'disconnect', 'session'])('discards late permission responses after %s', async change => {
+    window.history.replaceState({}, '', '/settings/access/users');
+    vi.spyOn(apiClient, 'getToken').mockReturnValue('test-token');
+    let resolve!: (response: Response) => void;
+    vi.spyOn(apiClient, 'fetchResponseWithAuth').mockReturnValue(new Promise(done => { resolve = done; }));
+    const element = document.createElement('settings-shell') as HTMLElement & { updateComplete: Promise<unknown> };
+    document.body.append(element);
+    await element.updateComplete;
+    if (change === 'revoke') window.dispatchEvent(new CustomEvent('slide-permissions-loaded', { detail: { permissions: [] } }));
+    if (change === 'disconnect') element.remove();
+    if (change === 'session') window.dispatchEvent(new Event('slide-session-expired'));
+    resolve(new Response(JSON.stringify(['admin:*'])));
+    await new Promise(done => setTimeout(done, 0));
+    await element.updateComplete;
+    expect(element.shadowRoot!.querySelector('users-management')).toBeNull();
+  });
+
+  it('allows retry after a failed permission load', async () => {
+    window.history.replaceState({}, '', '/settings/access/users');
+    vi.spyOn(apiClient, 'getToken').mockReturnValue('test-token');
+    vi.spyOn(apiClient, 'fetchResponseWithAuth').mockRejectedValueOnce(new Error('offline'))
+      .mockResolvedValueOnce(new Response(JSON.stringify(['admin:*'])));
+    const element = document.createElement('settings-shell') as HTMLElement & { updateComplete: Promise<unknown> };
+    document.body.append(element);
+    await new Promise(done => setTimeout(done, 0));
+    await element.updateComplete;
+    element.shadowRoot!.querySelector<HTMLButtonElement>('main button')!.click();
+    await new Promise(done => setTimeout(done, 0));
+    await element.updateComplete;
+    expect(element.shadowRoot!.querySelector('users-management')).not.toBeNull();
+  });
+
   it('shows four non-clickable groups and redirects the settings root to the first accessible page', async () => {
     const element = await renderAt('/settings?source=menu', ['*']);
     const root = element.shadowRoot!;
