@@ -322,4 +322,68 @@ describe.skipIf(!port)('lost-key rotation writes nothing without this invocation
       expect(existsSync(auditPath), item.name).toBe(false);
     }
   });
+  it('MAX-314 invalidates all network protocols and revokes only active references in real MySQL', async () => {
+    if (!admin) throw new Error('isolated fixture missing');
+    const schema = readFileSync(resolve(repoRoot, 'apps/db-ops-api/sql/schema.sql'), 'utf8');
+    for (const table of ['network_devices', 'network_device_credentials']) {
+      const start = schema.indexOf('CREATE TABLE IF NOT EXISTS `' + table + '`');
+      await admin.query(schema.slice(start, schema.indexOf(';', start) + 1));
+    }
+    await admin.query(`CREATE TABLE agent_credential_references (ref_id VARCHAR(36) PRIMARY KEY, status ENUM('active','consumed','expired','revoked'), secret_encrypted TEXT, consumed_at DATETIME NULL)`);
+    await admin.query("INSERT INTO network_devices (id,name,host) VALUES (7,'synthetic','192.0.2.7')");
+    for (const protocol of ['snmpv2c', 'snmpv3', 'ssh']) {
+      await admin.execute('INSERT INTO network_device_credentials (device_id,protocol,username,credential_encrypted,community_encrypted,auth_secret_encrypted,privacy_secret_encrypted) VALUES (7,?,?,?,?,?,?)', [protocol, 'synthetic', 'old-cipher', 'old-community', 'old-auth', 'old-privacy']);
+    }
+    // MAX-314 review: host trust is independent of the lost encryption key.
+    const { fingerprintSshHostKey, createOptionalSshHostVerifier } = await import('../src/security/ssh-host-key.js');
+    const trustedKey = Buffer.from('max314-synthetic-trusted-host-key');
+    const hostFingerprint = fingerprintSshHostKey(trustedKey);
+    await admin.execute("UPDATE network_device_credentials SET host_key_fingerprint = ? WHERE protocol = 'ssh'", [hostFingerprint]);
+    await admin.query("INSERT INTO agent_credential_references VALUES ('active-ref','active','old-secret',NULL),('used-ref','consumed','old-secret',NULL)");
+    const result = spawnSync(tsxPath, [scriptPath, '--env-file', join(directory, '.env')], {
+      cwd: directory, env: { PATH: process.env.PATH ?? '', HOME: directory, ENCRYPTION_KEY: EXPLICIT_KEY, SLIDE_ROTATE_LOST_ENCRYPTION_KEY: PHRASE }, encoding: 'utf8', timeout: 30000,
+    });
+    expect(result.status, redact(result.stderr)).toBe(0);
+    const [devices] = await admin.query<any[]>('SELECT collection_enabled,status FROM network_devices');
+    expect(devices).toMatchObject([{ collection_enabled: 0, status: 'unknown' }]);
+    const [credentials] = await admin.query<any[]>('SELECT * FROM network_device_credentials');
+    expect(credentials).toHaveLength(3);
+    expect(credentials.find((row) => row.protocol === 'ssh').host_key_fingerprint).toBe(hostFingerprint);
+    for (const row of credentials) {
+      expect(row.credential_encrypted).toMatch(/^v2:/);
+      expect(row.community_encrypted).toBeNull();
+      expect(row.auth_secret_encrypted).toBeNull();
+      expect(row.privacy_secret_encrypted).toBeNull();
+    }
+    const [refs] = await admin.query<any[]>('SELECT ref_id,status FROM agent_credential_references ORDER BY ref_id');
+    expect(refs).toEqual([{ ref_id: 'active-ref', status: 'revoked' }, { ref_id: 'used-ref', status: 'consumed' }]);
+    process.env.ENCRYPTION_KEY = EXPLICIT_KEY;
+    const { NetworkDeviceDatabaseService } = await import('../src/network-devices/network-device-database-service.js');
+    const service = new NetworkDeviceDatabaseService(() => admin as any);
+    for (const protocol of ['snmpv2c', 'snmpv3', 'ssh'] as const) await expect(service.getCredentials(7, protocol)).resolves.toBeNull();
+    await expect(service.updateDevice(7, {
+      snmpv2c: { community: 'new-community' },
+      ssh: { username: 'ops', credentialType: 'password', credentialValue: 'new-password', hostKeyFingerprint: credentials.find((row) => row.protocol === 'ssh').host_key_fingerprint },
+    })).resolves.toEqual({ success: true });
+    await expect(service.getCredentials(7, 'snmpv2c')).resolves.toMatchObject({ community: 'new-community' });
+    await expect(service.updateDevice(7, { snmpv3: { username: 'monitor', securityLevel: 'noAuthNoPriv' } })).resolves.toEqual({ success: true });
+    await expect(service.getCredentials(7, 'snmpv3')).resolves.toMatchObject({ securityLevel: 'noAuthNoPriv' });
+    const restoredSsh = await service.getCredentials(7, 'ssh');
+    expect(restoredSsh).toMatchObject({ credentialValue: 'new-password', hostKeyFingerprint: hostFingerprint });
+    // This is the same verifier factory used by the default SSH transport.
+    const verifier = createOptionalSshHostVerifier(restoredSsh?.hostKeyFingerprint);
+    expect(verifier).toBeTypeOf('function');
+    expect(verifier!(trustedKey)).toBe(true);
+    expect(verifier!(Buffer.from('max314-synthetic-other-host-key'))).toBe(false);
+    const [stillDisabled] = await admin.query<any[]>('SELECT collection_enabled FROM network_devices');
+    expect(stillDisabled[0].collection_enabled).toBe(0);
+    await expect(service.updateDevice(7, { collectionEnabled: true })).resolves.toEqual({ success: true });
+    const [enabled] = await admin.query<any[]>('SELECT collection_enabled FROM network_devices');
+    expect(enabled[0].collection_enabled).toBe(1);
+    const audit = readFileSync(auditPath, 'utf8');
+    for (const secret of ['old-cipher', 'old-community', 'old-auth', 'old-privacy', 'old-secret', EXPLICIT_KEY, 'active-ref']) expect(audit).not.toContain(secret);
+    expect(JSON.parse(audit).entries.networkCredentials).toHaveLength(3);
+
+  });
+
 });

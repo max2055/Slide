@@ -29,11 +29,16 @@ export function redactLogValue(value: unknown, seen = new WeakSet<object>()): un
   if (!value || typeof value !== 'object') return value;
   if (seen.has(value)) return '[CIRCULAR]';
   seen.add(value);
-  if (Array.isArray(value)) return value.map((entry) => redactLogValue(entry, seen));
-  return Object.fromEntries(Object.entries(value as Record<string, unknown>).map(([key, entry]) => [
-    key,
-    SENSITIVE_KEY.test(key) ? '[REDACTED]' : redactLogValue(entry, seen),
-  ]));
+  try {
+    if (Array.isArray(value)) return value.map((entry) => redactLogValue(entry, seen));
+    return Object.fromEntries(Object.entries(value as Record<string, unknown>).map(([key, entry]) => [
+      key,
+      SENSITIVE_KEY.test(key) ? '[REDACTED]' : redactLogValue(entry, seen),
+    ]));
+  } finally {
+    // Only ancestors on the current path are circular; sibling references are safe.
+    seen.delete(value);
+  }
 }
 
 export function installConsoleRedaction(target: Pick<Console, 'error' | 'warn'> = console): void {

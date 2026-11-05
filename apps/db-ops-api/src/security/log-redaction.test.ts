@@ -1,6 +1,128 @@
 import { describe, expect, it, vi } from 'vitest';
+import { spawnSync } from 'node:child_process';
 import { installConsoleRedaction, redactLogValue, redactSensitiveText } from './log-redaction.js';
 import { boundedToolValue, buildToolPreview } from '@slide/agent-core/tool-stream';
+
+describe('exact replacement output (MAX-323 / #376)', () => {
+  const cases = [
+    ['Bearer synthetic.bearer.secret', '[REDACTED]'],
+    ['bEaReR synthetic_bearer-secret==', '[REDACTED]'],
+    ['sk-synthetic_api_secret', '[REDACTED]'],
+    ['Bearer synthetic.first.secret; sk-synthetic_second_secret', '[REDACTED]; [REDACTED]'],
+    ['password=synthetic password value', 'password=[REDACTED]'],
+    ['API-KEY : synthetic key value', 'API-KEY : [REDACTED]'],
+    ['Authorization: Bearer synthetic.header.secret', 'Authorization: [REDACTED]'],
+    ['https://example.invalid/open-apis/bot/v2/hook/synthetic-webhook?status=ok', 'https://example.invalid/open-apis/bot/v2/hook/[REDACTED]?status=ok'],
+  ] as const;
+
+  it.each(cases)('preserves only the intended prefix: %s', (input, expected) => {
+    expect(redactSensitiveText(input)).toBe(expected);
+    expect(redactSensitiveText(input)).not.toContain('$1');
+    expect(redactSensitiveText(input)).not.toContain('synthetic');
+    expect(redactLogValue({ detail: input, error: new Error(input) })).toEqual({
+      detail: expected, error: { name: 'Error', message: expected },
+    });
+  });
+
+  it.each(['error', 'warn'] as const)('emits exact sanitized values through console.%s', (level) => {
+    const target = { error: vi.fn(), warn: vi.fn() };
+    const sink = target[level];
+    installConsoleRedaction(target);
+    for (const [input, expected] of cases) {
+      target[level](input, new Error(input));
+      expect(sink).toHaveBeenLastCalledWith(expected, { name: 'Error', message: expected });
+    }
+    expect(JSON.stringify(sink.mock.calls)).not.toContain('$1');
+    expect(JSON.stringify(sink.mock.calls)).not.toContain('synthetic');
+  });
+
+  it('redacts actual process stderr without replacing the console sink', () => {
+    const moduleUrl = new URL('./log-redaction.ts', import.meta.url).href;
+    const child = spawnSync(process.execPath, ['--import', 'tsx', '--input-type=module', '-e', `
+      import { installConsoleRedaction } from ${JSON.stringify(moduleUrl)};
+      installConsoleRedaction();
+      for (const level of ['warn', 'error']) {
+        for (const [input] of ${JSON.stringify(cases)}) console[level](input);
+      }
+    `], { encoding: 'utf8' });
+    expect(child.error).toBeUndefined();
+    expect(child.status).toBe(0);
+    expect(child.stdout).toBe('');
+    expect(child.stderr).toBe([...cases, ...cases].map(([, expected]) => `${expected}\n`).join(''));
+    expect(child.stderr).not.toContain('$1');
+    expect(child.stderr).not.toContain('synthetic');
+  });
+});
+
+describe('shared references and cycles (MAX-324 / #584)', () => {
+  const sharedValue = () => ({
+    host: 'db.invalid',
+    API_KEY: 'synthetic-key',
+    detail: 'token=synthetic spaced value',
+    json: '{"password":["synthetic-json"],"status":"ok"}',
+  });
+  const redactedValue = {
+    host: 'db.invalid',
+    API_KEY: '[REDACTED]',
+    detail: 'token=[REDACTED]',
+    json: '{"password":"[REDACTED]","status":"ok"}',
+  };
+
+  it('preserves shared objects in sibling fields, nested fields and arrays without mutating input', () => {
+    const shared = Object.freeze(sharedValue());
+    const input = { left: shared, right: shared, nested: { value: shared }, items: [shared, shared] };
+    expect(redactLogValue(input)).toEqual({
+      left: redactedValue, right: redactedValue, nested: { value: redactedValue }, items: [redactedValue, redactedValue],
+    });
+    expect(shared).toEqual(sharedValue());
+    expect(input.left).toBe(input.right);
+  });
+
+  it('preserves a shared array on every acyclic path', () => {
+    const shared = Object.freeze([sharedValue(), 'status=ok']);
+    expect(redactLogValue({ left: shared, right: shared, items: [shared, shared] })).toEqual({
+      left: [redactedValue, 'status=ok'], right: [redactedValue, 'status=ok'],
+      items: [[redactedValue, 'status=ok'], [redactedValue, 'status=ok']],
+    });
+  });
+
+  it('marks self and mutual object cycles while preserving repeated cyclic branches', () => {
+    const self: Record<string, unknown> = { status: 'ok' };
+    self.self = self;
+    expect(redactLogValue(self)).toEqual({ status: 'ok', self: '[CIRCULAR]' });
+    const left: Record<string, unknown> = { password: 'synthetic' };
+    const right = { left, status: 'ok' };
+    left.right = right;
+    const expected = { password: '[REDACTED]', right: { left: '[CIRCULAR]', status: 'ok' } };
+    expect(redactLogValue({ first: left, second: left })).toEqual({ first: expected, second: expected });
+  });
+
+  it('terminates array self-cycles and mixed object/array cycles', () => {
+    const array: unknown[] = [];
+    array.push(array);
+    expect(redactLogValue(array)).toEqual(['[CIRCULAR]']);
+    const root = { items: [] as unknown[], private_key: 'synthetic' };
+    root.items.push(root, root.items);
+    expect(redactLogValue(root)).toEqual({ items: ['[CIRCULAR]', '[CIRCULAR]'], private_key: '[REDACTED]' });
+  });
+
+  it.each(['error', 'warn'] as const)('preserves shared content and redacts each argument at console.%s', (level) => {
+    const target = { error: vi.fn(), warn: vi.fn() };
+    const sink = target[level];
+    installConsoleRedaction(target);
+    const shared = sharedValue();
+    const cycle: Record<string, unknown> = { status: 'ok' };
+    cycle.self = cycle;
+    const input = { left: shared, right: shared, items: [shared, shared], cycle };
+    target[level](input, input, new Error('password=synthetic error value'));
+    const expected = {
+      left: redactedValue, right: redactedValue, items: [redactedValue, redactedValue],
+      cycle: { status: 'ok', self: '[CIRCULAR]' },
+    };
+    expect(sink).toHaveBeenCalledExactlyOnceWith(expected, expected, { name: 'Error', message: 'password=[REDACTED]' });
+    expect(JSON.stringify(sink.mock.calls)).not.toContain('synthetic');
+  });
+});
 
 describe('JSON string redaction (MAX-321 / #693)', () => {
   it.each([739182641, -73.918, true, false, null, ['SYNTHETIC_7f3a'], { value: 'SYNTHETIC_7f3a' }, [{ value: ['quote"tail', 'brace} ]tail'] }], [], {}])('redacts non-string sensitive values at all five boundaries after Chief review: %j', (secret) => {

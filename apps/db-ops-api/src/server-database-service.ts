@@ -441,16 +441,29 @@ class ServerDatabaseService {
       const hostVerifier = createOptionalSshHostVerifier(hostKeyFingerprint);
       return new Promise((resolve) => {
         const client = new Client();
+        let settled = false;
+        const finish = (result: { success: boolean; error?: string; message?: string }) => {
+          if (settled) return;
+          // Mark completion before cleanup: end/destroy may emit more events.
+          settled = true;
+          if (result.success) client.end();
+          else client.destroy();
+          resolve(result);
+        };
 
         client.on('ready', () => {
-          client.end();
-          resolve({ success: true, message: `连接成功：${host}:${port}` });
+          finish({ success: true, message: `连接成功：${host}:${port}` });
         });
 
         client.on('error', (err: Error) => {
-          client.end();
-          resolve({ success: false, error: translateSshError(err.message, host, port) });
+          finish({ success: false, error: translateSshError(err.message, host, port) });
         });
+        const disconnected = () => finish({
+          success: false,
+          error: translateSshError('Connection lost before handshake', host, port),
+        });
+        client.on('end', disconnected);
+        client.on('close', disconnected);
 
         const connectConfig: any = {
           host: target.address,
@@ -466,7 +479,11 @@ class ServerDatabaseService {
           connectConfig.privateKey = credentialValue;
         }
 
-        client.connect(connectConfig);
+        try {
+          client.connect(connectConfig);
+        } catch (error: any) {
+          finish({ success: false, error: translateSshError(error.message, host, port) });
+        }
       });
     } catch (error: any) {
       return { success: false, error: translateSshError(error.message, host, port) };
@@ -520,13 +537,20 @@ class ServerDatabaseService {
    * Decrypt stored credentials JSON
    */
   decryptCredentials(encryptedData: string): DecryptedCredentials {
-    const decrypted = decryptData(encryptedData);
-    assertCredentialUsable(decrypted);
-    const credentials = JSON.parse(decrypted) as DecryptedCredentials;
-    assertCredentialUsable(credentials.username);
-    assertCredentialUsable(credentials.password);
-    assertCredentialUsable(credentials.privateKey);
-    return credentials;
+    try {
+      const decrypted = decryptData(encryptedData);
+      assertCredentialUsable(decrypted);
+      const credentials = JSON.parse(decrypted) as DecryptedCredentials;
+      assertCredentialUsable(credentials.username);
+      assertCredentialUsable(credentials.password);
+      assertCredentialUsable(credentials.privateKey);
+      return credentials;
+    } catch (error) {
+      if (error instanceof CredentialRotationRequiredError) throw error;
+      // Parser/crypto errors can contain credential fragments. Do not retain
+      // their message or cause: callers may return or log this error.
+      throw new Error('SERVER_CREDENTIALS_INVALID');
+    }
   }
 
   /**
@@ -541,10 +565,15 @@ class ServerDatabaseService {
     try {
       const credentials = this.decryptCredentials(server.credential_encrypted);
       if (needsEncryptionMigration(server.credential_encrypted)) {
-        await this.getPool()?.execute(
-          'UPDATE servers SET credential_encrypted = ? WHERE id = ? AND credential_encrypted = ?',
-          [encryptData(JSON.stringify(credentials)), serverId, server.credential_encrypted],
-        );
+        try {
+          await this.getPool()?.execute(
+            'UPDATE servers SET credential_encrypted = ? WHERE id = ? AND credential_encrypted = ?',
+            [encryptData(JSON.stringify(credentials)), serverId, server.credential_encrypted],
+          );
+        } catch {
+          // Migration is best-effort; driver errors may contain credentials or SQL.
+          console.error('服务器凭据迁移失败', { serverId, code: 'SERVER_CREDENTIAL_MIGRATION_FAILED' });
+        }
       }
       return credentials;
     } catch (error) {
