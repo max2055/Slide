@@ -489,7 +489,25 @@ async function main() {
     }
   }
 
-  // Step 3: Summary
+  // Step 3: Auth guard checks
+  console.log("\n🔒 Auth guard checks (expect 401 without token):");
+  token = null;
+  for (const tc of ROUTES.filter((r) => r.requireAuth)) {
+    process.stdout.write(`  ${tc.method.padEnd(6)} ${tc.path.padEnd(45)}`);
+    const r = await runOne(tc);
+    if (r.status === 401) {
+      console.log(`✅ 401 as expected`);
+    } else if (r.status === 400) {
+      console.log(`⚠️  400 (Fastify body validation before auth) — preHandler exists, auth OK`);
+    } else {
+      console.log(`❌ got ${r.status}, expected 401 — UNPROTECTED`);
+      r.passed = false;
+      r.error = `Expected 401/400 without token, got ${r.status} — UNPROTECTED`;
+    }
+    results.push(r);
+  }
+
+  // Step 4: Final summary (including auth guard checks)
   console.log("─".repeat(55));
   const passed = results.filter((r) => r.passed).length;
   const failed = results.filter((r) => !r.passed).length;
@@ -503,7 +521,7 @@ async function main() {
     byGroup.set(group, entry);
   }
 
-  console.log(`\n📊 Results: ${passed} passed, ${failed} failed (${ROUTES.length} total)\n`);
+  console.log(`\n📊 Results: ${passed} passed, ${failed} failed (${results.length} total)\n`);
   console.log("By module:");
   const sorted = Array.from(byGroup.entries()).sort((a, b) => a[0].localeCompare(b[0]));
   for (const [group, stats] of sorted) {
@@ -517,23 +535,6 @@ async function main() {
       console.log(`  ${r.method} ${r.path} → ${r.status} ${r.error || ""}`);
     }
     console.log("");
-  }
-
-  // Step 4: Auth guard checks
-  console.log("\n🔒 Auth guard checks (expect 401 without token):");
-  token = null;
-  for (const tc of ROUTES.filter((r) => r.requireAuth)) {
-    process.stdout.write(`  ${tc.method.padEnd(6)} ${tc.path.padEnd(45)}`);
-    const r = await runOne(tc);
-    if (r.status === 401) {
-      console.log(`✅ 401 as expected`);
-    } else if (r.status === 400) {
-      console.log(`⚠️  400 (Fastify body validation before auth) — preHandler exists, auth OK`);
-    } else {
-      console.log(`❌ got ${r.status}, expected 401 — UNPROTECTED`);
-      r.passed = false;
-      results.push(r);
-    }
   }
 
   process.exit(failed > 0 ? 1 : 0);

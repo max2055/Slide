@@ -79,11 +79,12 @@ import { installHistoricalMetricRoutes } from './src/metrics/legacy-routes.js';
 import { databaseService } from './src/database-service.js';
 import { llmService } from './src/llm-service.js';
 import { dbConnection } from './src/db-connection.js';
+import { bindApiListener } from './src/config/api-listen.js';
 import { loadSecurityConfig } from './src/config/security-config.js';
 import { publicInstanceDto, publicNotificationDto, publicServerDto } from './src/security/public-dto.js';
 import { isNotificationChannelType, validateNotificationChannelConfig } from './src/notification-channel-config.js';
 import { requireBrandingWrite } from './src/security/branding-policy.js';
-import { API_BODY_LIMIT, expensiveOperationRateLimitConfig, loginRateLimitConfig, registerHttpSecurity, sensitiveOperationRateLimitConfig } from './src/security/http-security.js';
+import { API_BODY_LIMIT, createLoginIpRateLimit, expensiveOperationRateLimitConfig, loginRateLimitConfig, registerHttpSecurity, sensitiveOperationRateLimitConfig } from './src/security/http-security.js';
 import {
   AdapterCapabilitiesResponseSchema,
   ErrorResponseSchema,
@@ -157,7 +158,7 @@ import { WorkerStartup } from './src/lifecycle/worker-startup.js';
 import { InfrastructureReadiness } from './src/lifecycle/infrastructure-readiness.js';
 import { WorkerRecovery } from './src/lifecycle/worker-recovery.js';
 import { boundedPoolQuery } from './src/lifecycle/bounded-pool-query.js';
-import { platformUnavailableResponse } from './src/lifecycle/platform-unavailable.js';
+import { PlatformUnavailableError, platformUnavailableResponse } from './src/lifecycle/platform-unavailable.js';
 import { ActorAuthenticationError } from './src/auth/actor-context.js';
 import { startupConfig } from './src/lifecycle/startup-config.js';
 import { registerDeliveryRoutes } from './src/workflows/delivery-routes.js';
@@ -588,7 +589,7 @@ async function start() {
   });
 
   // 登录接口
-  fastify.post('/api/auth/login', { config: { rateLimit: loginRateLimitConfig } }, async (request, reply) => {
+  fastify.post('/api/auth/login', { onRequest: createLoginIpRateLimit(fastify), config: { rateLimit: loginRateLimitConfig } }, async (request, reply) => {
     const check = strictBody(request.body as Record<string, unknown>,
       ['username', 'password'], 'POST /api/auth/login');
     if (check.error) return reply.code(400).send(check.error);
@@ -655,6 +656,7 @@ async function start() {
         },
       });
     } catch (error: any) {
+      if (error instanceof PlatformUnavailableError) return reply.code(503).send(platformUnavailableResponse);
       console.error('登录失败:', error);
       reply.code(500).send({ error: '登录失败：' + error.message });
     }
@@ -5356,9 +5358,8 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
 
   registerCronRoutes(fastify, verifyToken, () => recovery.ready && dispatchAvailable ? cronManager : undefined);
 
-  // 启动 HTTP API 服务器
-  const port = process.env.PORT || process.env.BACKEND_PORT || process.env.API_PORT || 3000;
-  await fastify.listen({ port: Number(port), host: '0.0.0.0' });
+  // 启动 HTTP API 服务器。端口优先级：PORT、BACKEND_PORT、API_PORT，默认 3000。
+  const port = await bindApiListener(fastify);
   try {
     // Acquire and renew the lease while one-time API dependencies initialize.
     await recovery.start(initializeApi, startWorkers);

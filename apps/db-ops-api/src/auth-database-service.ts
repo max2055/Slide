@@ -169,8 +169,9 @@ export class AuthDatabaseService {
           // SHA-256 格式（向后兼容），验证后迁移到 bcrypt
           const sha256Hash = this.hashPasswordSha256(password);
           if (passwordHash === sha256Hash) {
-            // 密码正确，异步迁移到 bcrypt（不阻塞登录）
-            this.migratePasswordToBcrypt(userId, password).catch(console.error);
+            // 密码正确，异步迁移到 bcrypt（不阻塞登录）。
+            // 迁移必须带上本次读到的旧哈希，避免覆盖期间发生的改密或重置。
+            this.migratePasswordToBcrypt(userId, passwordHash, password).catch(console.error);
             return true;
           }
           return false;
@@ -191,14 +192,20 @@ export class AuthDatabaseService {
   }
 
   /**
-   * 迁移密码到 bcrypt（用户登录时无缝升级）
+   * 迁移密码到 bcrypt（用户登录时无缝升级）。
+   * 只更新仍等于登录时读到的旧哈希的行，且不改 session_version、不撤销会话。
    */
-  private async migratePasswordToBcrypt(userId: number, password: string): Promise<void> {
+  private async migratePasswordToBcrypt(userId: number, legacyHash: string, password: string): Promise<void> {
     try {
       const bcryptHash = await this.hashPassword(password);
       const pool = this.getPool();
-      if (pool) {
-        await pool.execute('UPDATE users SET password_hash = ? WHERE id = ?', [bcryptHash, userId]);
+      if (!pool) return;
+      // password_hash 使用不区分大小写的排序规则，等号会把仅大小写不同的哈希当成同一凭据。
+      const [result] = await pool.execute(
+        'UPDATE users SET password_hash = ? WHERE id = ? AND CAST(password_hash AS BINARY) = ?',
+        [bcryptHash, userId, legacyHash],
+      ) as any;
+      if (Number(result?.affectedRows) === 1) {
         console.log(`[密码迁移] 用户 ${userId} 已迁移到 bcrypt`);
       }
     } catch (error) {

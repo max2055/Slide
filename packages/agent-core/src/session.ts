@@ -438,7 +438,8 @@ export class SessionManager {
 
   /** Save session to JSONL disk file. Atomic write with fsync. */
   async save(session: Session, opts?: { fsync?: boolean }): Promise<void> {
-    await fsp.mkdir(this.sessionsDir, { recursive: true });
+    await fsp.mkdir(this.sessionsDir, { recursive: true, mode: 0o700 });
+    await fsp.chmod(this.sessionsDir, 0o700);
 
     session.ensureFactIds();
 
@@ -480,7 +481,7 @@ export class SessionManager {
       throw new Error('CANONICAL_CAPACITY_EXCEEDED');
     }
     const tmpPath = filePath + '.' + crypto.randomUUID() + '.tmp';
-    await fsp.writeFile(tmpPath, content, 'utf-8');
+    await fsp.writeFile(tmpPath, content, { encoding: 'utf-8', mode: 0o600 });
 
     if (opts?.fsync) {
       const fd = await fsp.open(tmpPath, 'r+');
@@ -567,7 +568,8 @@ export class SessionManager {
       const repaired = lines.join('\n') + '\n';
       if (session.messages.length > this.maxCanonicalMessages || Buffer.byteLength(repaired) > this.maxCanonicalBytes) throw new Error('CANONICAL_CAPACITY_EXCEEDED');
       const tmp = filePath + '.' + crypto.randomUUID() + '.tmp';
-      const fd = fs.openSync(tmp, 'w');
+      fs.chmodSync(this.sessionsDir, 0o700);
+      const fd = fs.openSync(tmp, 'w', 0o600);
       try { fs.writeFileSync(fd, repaired, 'utf-8'); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
       fs.renameSync(tmp, filePath);
       const directory = fs.openSync(this.sessionsDir, 'r');
@@ -610,7 +612,8 @@ export class SessionManager {
    */
   async listSessions(): Promise<Array<{ key: string; createdAt: number; updatedAt: number; messageCount: number }>> {
     try {
-      await fsp.mkdir(this.sessionsDir, { recursive: true });
+      await fsp.mkdir(this.sessionsDir, { recursive: true, mode: 0o700 });
+      await fsp.chmod(this.sessionsDir, 0o700);
       const files = await fsp.readdir(this.sessionsDir);
       const jsonlFiles = files.filter((f: string) => f.endsWith('.jsonl'));
       const results: Array<{ key: string; createdAt: number; updatedAt: number; messageCount: number }> = [];
