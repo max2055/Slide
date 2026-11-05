@@ -22,7 +22,7 @@ describe('device registration migration comments', () => {
     expect(isMigrationChecksumAccepted(
       '067_device_registrations.sql',
       '94403810bcae74f546a719b6d2f062e1699c18440e2ad76a5c787fa3f2c10ebb',
-      'new-checksum',
+      'b53a8b888ad3842cecd10a42df37d579769d615f3894fad107d04a5fec2da84d',
     )).toBe(true);
     expect(isMigrationChecksumAccepted('067_device_registrations.sql', 'unexpected', 'new-checksum')).toBe(false);
   });
@@ -31,7 +31,7 @@ describe('device registration migration comments', () => {
     expect(isMigrationChecksumAccepted(
       '072_agent_execution_controls.sql',
       'ddedfc2c11ce30af437a40867959a5e3dfc966e04bddae5ea3b4c2eaeab2335c',
-      'new-checksum',
+      '8ff16ebc799d13c22cde6c44a645bbf4702c1af708d66bd1aa37be40f04f517f',
     )).toBe(true);
     expect(isMigrationChecksumAccepted('072_agent_execution_controls.sql', 'unexpected', 'new-checksum')).toBe(false);
   });
