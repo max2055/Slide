@@ -35,9 +35,15 @@ describe('MAX-319 / #662: list connection test has no credential write side effe
   });
 
   it('allows a failed test to be retried with another password and closed without writes', async () => {
-    authFetch.mockResolvedValueOnce(response({ success: false, message: 'ER_ACCESS_DENIED_ERROR' }))
-      .mockResolvedValueOnce(response({ success: true, message: '连接成功' }));
+    authFetch.mockResolvedValue(response([]));
     const page = createPage();
+    document.body.append(page);
+    await page.updateComplete;
+    authFetch.mockClear();
+    authFetch.mockImplementation(async (url, options) => url.endsWith('/test-connection')
+      ? response(JSON.parse(options.body).password === 'invalid'
+        ? { success: false, message: 'ER_ACCESS_DENIED_ERROR' } : { success: true, message: '连接成功' })
+      : response([]));
     page.testPassword = 'invalid';
     await page._handleListTestConnection();
     expect(page.listTestStatus).toBe('error');
@@ -50,7 +56,8 @@ describe('MAX-319 / #662: list connection test has no credential write side effe
     page._testConnection(instance);
     expect(page.testPassword).toBe('');
     expect(page.listTestStatus).toBe('idle');
-    expect(authFetch.mock.calls.map(([url]) => url)).toEqual(Array(2).fill('/api/database/instances/test-connection'));
+    expect(authFetch.mock.calls.filter(([, options]) => options?.method).map(([url]) => url))
+      .toEqual(Array(2).fill('/api/database/instances/test-connection'));
   });
 
   it('rejects an empty password and reports transport failures without a write', async () => {
