@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { createRequire } from 'node:module';
 import { spawnSync } from 'node:child_process';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
-import { tmpdir, cpus, platform, release, totalmem } from 'node:os';
+import { tmpdir, cpus, platform, release, totalmem, loadavg } from 'node:os';
 import { join } from 'node:path';
 import { once } from 'node:events';
 import { ToolRegistry, type LLMProvider } from '../../packages/agent-core/src/index';
@@ -20,6 +20,28 @@ test('MAX-129 real MySQL → Adapter → WS → Gateway → reducer → UI, refr
   const workspace = await mkdtemp(join(tmpdir(), 'slide-stream-live-'));
   let adapter: DirectAdapter | undefined; let legacy: any; let rest: any; let releaseTool: (() => void) | undefined;
   const raw: Record<string, object[]> = { legacy: [], parts: [] };
+  // MAX-279: numeric metadata only; no SQL, arguments, messages or credentials.
+  const serverTimings: object[] = [];
+  const stages: Array<{ stage: string; start: number; end?: number }> = [];
+  const cleanup: Array<{ stage: string; at: number }> = [];
+  const environment = { load: loadavg(), cores: cpus().length, platform: platform(), release: release() };
+  let startupStart: number | undefined; let startupEnd: number | undefined;
+  let startupCpu: NodeJS.CpuUsage | undefined;
+  let startupLoop: ReturnType<typeof performance.eventLoopUtilization> | undefined;
+  let startupUsage: object | undefined;
+  let failure: unknown; let cleanupFailure: unknown;
+  const service = chatDatabaseService as any;
+  const originals = new Map<string, any>();
+  for (const method of ['addMessage', 'getMessages']) {
+    const original = service[method]; originals.set(method, original);
+    service[method] = async function (...args: any[]) {
+      const span = startupStart !== undefined && startupEnd === undefined
+        ? { stage: method, start: performance.now(), end: undefined as number | undefined } : undefined;
+      if (span) stages.push(span);
+      try { return await original.apply(this, args); }
+      finally { if (span) span.end = performance.now(); }
+    };
+  }
   try {
     await connection.query(`CREATE DATABASE \`${schema}\``);
     Object.assign(process.env, { DB_NAME: schema, AGENT_WS_PORT: '0', AGENT_WS_HOST: '127.0.0.1',
@@ -72,13 +94,19 @@ test('MAX-129 real MySQL → Adapter → WS → Gateway → reducer → UI, refr
     await adapter.start(); const server = (adapter as any).wsServer;
     if (!server.address()) await once(server, 'listening'); const port = server.address().port;
     // Observe both modes on the same run, including actual server writer bytes.
-    const serverTimings: object[] = [];
     server.on('connection', (socket: any) => {
       const send = socket.send.bind(socket);
       socket.send = (data: string, callback: (error?: Error) => void) => {
         const event = JSON.parse(data); const at = performance.now();
         if (event.type === 'stream.delta' || event.type === 'stream.snapshot') raw.parts.push(event);
         const phase = event.snapshot?.phase ?? event.projection?.operations?.find((op: any) => op.type === 'run.status')?.phase;
+        if (event.type === 'run.started' && startupStart === undefined) {
+          startupStart = at; startupCpu = process.cpuUsage(); startupLoop = performance.eventLoopUtilization();
+        }
+        if (phase === 'waiting_model' && startupStart !== undefined && startupEnd === undefined) {
+          startupEnd = at;
+          startupUsage = { cpuMicros: process.cpuUsage(startupCpu), eventLoop: performance.eventLoopUtilization(startupLoop) };
+        }
         send(data, (error?: Error) => { serverTimings.push({ type: event.type, phase, at, sendCallbackMs: performance.now() - at }); callback?.(error); });
       };
     });
@@ -187,6 +215,7 @@ test('MAX-129 real MySQL → Adapter → WS → Gateway → reducer → UI, refr
     await cdp.send('IO.close', { handle: stream }); await writeFile(test.info().outputPath('MAX-129-live-trace.json'), Buffer.concat(trace));
     await page.evaluate(() => (window as any).live.gateway.disconnect());
   } catch (error) {
+    failure = error; cleanup.push({ stage: 'assertion-or-test-failed', at: performance.now() });
     await writeFile(test.info().outputPath('MAX-129-failure-wire.json'), JSON.stringify(raw));
     console.log('MAX-129 failure boundary', await page.evaluate(() => {
       const live = (window as any).live;
@@ -197,7 +226,31 @@ test('MAX-129 real MySQL → Adapter → WS → Gateway → reducer → UI, refr
     console.log('MAX-129 server terminal', raw.legacy.filter((e: any) => ['complete','error','cancelled','run.snapshot'].includes(e.type)).map((e: any) => ({ type: e.type, state: e.run?.state, error: e.error, operations: e.projection?.operations.map((op: any) => op.type) })));
     throw error;
   } finally {
-    releaseTool?.(); legacy?.close(); await adapter?.dispose(); await rest?.close(); await dbConnection.close();
-    await connection.query(`DROP DATABASE IF EXISTS \`${schema}\``); await connection.end(); await rm(workspace, { recursive: true, force: true });
+    try {
+      cleanup.push({ stage: 'cleanup-start', at: performance.now() });
+      releaseTool?.(); legacy?.close(); await adapter?.dispose();
+      cleanup.push({ stage: 'rest-close-start', at: performance.now() });
+      await rest?.close();
+      cleanup.push({ stage: 'rest-close-end', at: performance.now() });
+      await dbConnection.close();
+      await connection.query(`DROP DATABASE IF EXISTS \`${schema}\``); await connection.end(); await rm(workspace, { recursive: true, force: true });
+      cleanup.push({ stage: 'cleanup-end', at: performance.now() });
+    } catch (error) {
+      cleanupFailure = error;
+      throw error;
+    } finally {
+      for (const [method, original] of originals) service[method] = original;
+      // Persist even when an assertion, browser evaluation or cleanup fails.
+      try {
+        await writeFile(test.info().outputPath('MAX-279-startup-diagnostics.json'), JSON.stringify({
+          environment, loadAfter: loadavg(), startupStart, startupEnd,
+          startupMs: startupStart !== undefined && startupEnd !== undefined ? startupEnd - startupStart : null,
+          startupUsage, stages, cleanup, serverFrames: serverTimings.filter((s: any) => s.type === 'run.started' || s.phase === 'waiting_model'),
+          failed: failure !== undefined, cleanupFailed: cleanupFailure !== undefined,
+        }, null, 2));
+      } catch (error) {
+        throw new AggregateError([failure, cleanupFailure, error].filter(value => value !== undefined), 'Could not persist startup diagnostics');
+      }
+    }
   }
 });

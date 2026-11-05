@@ -39,7 +39,7 @@ export async function withMemoryLock<T>(key: string, action: () => Promise<T>): 
 }
 
 /** Publish only after both file contents and directory rename are synced. */
-export async function writeMemoryFile(file: string, content: string, mode?: number): Promise<void> {
+export async function writeMemoryFile(file: string, content: string, mode = 0o600): Promise<void> {
   await fsp.mkdir(path.dirname(file), { recursive: true });
   const temporary = `${file}.${crypto.randomUUID()}.tmp`;
   try {
@@ -123,8 +123,10 @@ export class MemoryHistory {
       const { entries, legacy } = await this.read();
       if (legacy) await this.write(entries);
       await fsp.mkdir(this.directory, { recursive: true });
-      const handle = await fsp.open(this.file, 'a');
+      const handle = await fsp.open(this.file, 'a', 0o600);
       try {
+        // Creation mode does not tighten an existing file. Do so before append.
+        await handle.chmod(0o600);
         await handle.writeFile(JSON.stringify(envelope) + '\n', 'utf8');
         await handle.sync();
       } finally { await handle.close(); }
@@ -178,6 +180,7 @@ export class MemoryHistory {
           new Set(batch.entries.map(e => e.id)).size !== batch.entries.length || batch.id !== hash(batch.entries)) {
         throw new Error('Invalid memory consolidation journal');
       }
+      await fsp.chmod(journal, 0o600);
     } else {
       const entries = await withMemoryLock(this.file, async () => {
         const snapshot = await this.read();
@@ -194,6 +197,7 @@ export class MemoryHistory {
     const existing = await readOptional(archive);
     if (existing !== null && existing !== serialized) throw new Error('Memory archive content mismatch');
     if (existing === null) await writeMemoryFile(archive, serialized);
+    else await fsp.chmod(archive, 0o600);
     await publish(batch.id, batch.entries);
     await writeMemoryFile(path.join(this.directory, 'consolidation-cursor.json'), JSON.stringify({
       version: 1, batchId: batch.id, lastSourceId: batch.entries[batch.entries.length - 1].id,
