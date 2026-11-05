@@ -8,19 +8,37 @@
  *               COL-08 (batch commands on single connection)
  */
 
+import { createHash, timingSafeEqual } from 'node:crypto';
 import { Client, ClientChannel, ConnectConfig } from 'ssh2';
 import { authorizeServerTarget } from './security/server-target-policy.js';
 import { createOptionalSshHostVerifier, normalizeOptionalSshHostKeyFingerprint } from './security/ssh-host-key.js';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
-interface SshSession {
-  client: Client;
+interface SshIdentity {
   host: string;
   port: number;
+  username: string;
+  credentialType: string;
+  hostKeyFingerprint?: string;
+  credentialFingerprint: string;
+}
+
+interface SshSession {
+  client: Client;
   lastUsed: number;
   inUse: boolean;
-  hostKeyFingerprint?: string;
+  identity: SshIdentity;
+}
+
+/** Filters for immediate pool cleanup. Omitted fields match every session on the host. */
+interface SshSessionRevocation {
+  host: string;
+  port: number;
+  username?: string;
+  credentialType?: string;
+  hostKeyFingerprint?: string | null;
+  credentialValue?: string;
 }
 
 interface PoolStats {
@@ -64,6 +82,22 @@ const DEFAULT_CONFIG: SshPoolConfig = {
   commandTimeoutMs: 15000,
 };
 
+function fingerprintCredential(credentialType: string, credentialValue: string): string {
+  return createHash('sha256')
+    .update('slide-ssh-session-credential-v1')
+    .update('\0')
+    .update(credentialType)
+    .update('\0')
+    .update(credentialValue)
+    .digest('hex');
+}
+
+function sameFingerprint(left: string, right: string): boolean {
+  const a = Buffer.from(left);
+  const b = Buffer.from(right);
+  return a.length === b.length && timingSafeEqual(a, b);
+}
+
 class SshSessionPool {
   private sessions: SshSession[] = [];
   private config: SshPoolConfig;
@@ -73,9 +107,10 @@ class SshSessionPool {
   }
 
   /**
-   * Get an SSH connection for the given host:port.
-   * Reuses idle connections if available; creates new ones up to maxSessionsPerServer.
-   * Stale/disconnected connections are removed and replaced.
+   * Get an SSH connection for one authenticated identity.
+   * Reuse requires the same authorized host, port, username, credential type,
+   * host-key fingerprint, and credential fingerprint. After a new login succeeds,
+   * a changed secret, credential type, or host key ends that account's older sessions.
    */
   async getConnection(
     host: string,
@@ -86,9 +121,15 @@ class SshSessionPool {
     hostKeyFingerprint?: string | null
   ): Promise<Client> {
     const target = await authorizeServerTarget({ host, port });
-    const normalizedFingerprint = normalizeOptionalSshHostKeyFingerprint(hostKeyFingerprint);
-    // Look for an existing idle connection to this host
-    const existing = this._findIdle(target.hostname, target.port, normalizedFingerprint);
+    const identity = this._identity(
+      target.hostname,
+      target.port,
+      username,
+      credentialType,
+      credentialValue,
+      hostKeyFingerprint,
+    );
+    const existing = this._findIdle(identity);
     if (existing) {
       existing.inUse = true;
       existing.lastUsed = Date.now();
@@ -97,7 +138,7 @@ class SshSessionPool {
 
     // Check per-server session limit
     const serverSessions = this.sessions.filter(
-      (s) => s.host === target.hostname && s.port === target.port
+      (s) => s.identity.host === target.hostname && s.identity.port === target.port
     );
     if (serverSessions.length >= this.config.maxSessionsPerServer) {
       // Try to close the oldest idle session to make room
@@ -120,16 +161,16 @@ class SshSessionPool {
       username,
       credentialType,
       credentialValue,
-      normalizedFingerprint,
+      identity.hostKeyFingerprint,
     );
+    // Drop the account's previous sessions only after the new identity authenticates.
+    this._evictSuperseded(identity);
 
     const session: SshSession = {
       client,
-      host: target.hostname,
-      port: target.port,
       lastUsed: Date.now(),
       inUse: true,
-      hostKeyFingerprint: normalizedFingerprint,
+      identity,
     };
 
     this.sessions.push(session);
@@ -172,6 +213,49 @@ class SshSessionPool {
   }
 
   /**
+   * End pooled sessions for a host. Optional fields narrow the match.
+   * credentialValue is hashed for comparison and is not retained or logged.
+   * Returns the number of sessions ended.
+   */
+  revokeSessions(criteria: SshSessionRevocation): number {
+    if (!criteria || typeof criteria.host !== 'string' || criteria.host.trim() === '') {
+      throw new Error('SSH_REVOCATION_TARGET_INVALID');
+    }
+    const port = Number(criteria.port);
+    if (!Number.isInteger(port) || port <= 0 || port > 65535) {
+      throw new Error('SSH_REVOCATION_TARGET_INVALID');
+    }
+    const hasUsername = Object.prototype.hasOwnProperty.call(criteria, 'username');
+    const hasType = Object.prototype.hasOwnProperty.call(criteria, 'credentialType');
+    const hasHostKey = Object.prototype.hasOwnProperty.call(criteria, 'hostKeyFingerprint');
+    const hasSecret = Object.prototype.hasOwnProperty.call(criteria, 'credentialValue');
+    if (hasUsername && typeof criteria.username !== 'string') throw new Error('SSH_REVOCATION_TARGET_INVALID');
+    if (hasType && typeof criteria.credentialType !== 'string') throw new Error('SSH_REVOCATION_TARGET_INVALID');
+    if (hasSecret && typeof criteria.credentialValue !== 'string') throw new Error('SSH_REVOCATION_TARGET_INVALID');
+    if (hasSecret && !hasType) throw new Error('SSH_REVOCATION_CREDENTIAL_TYPE_REQUIRED');
+
+    const host = criteria.host.trim().toLowerCase();
+    const hostKeyFingerprint = hasHostKey
+      ? normalizeOptionalSshHostKeyFingerprint(criteria.hostKeyFingerprint)
+      : undefined;
+    const credentialFingerprint = hasSecret
+      ? fingerprintCredential(criteria.credentialType as string, criteria.credentialValue as string)
+      : undefined;
+    const matched = this.sessions.filter((session) => {
+      if (session.identity.host !== host || session.identity.port !== port) return false;
+      if (hasUsername && session.identity.username !== criteria.username) return false;
+      if (hasType && session.identity.credentialType !== criteria.credentialType) return false;
+      if (hasHostKey && session.identity.hostKeyFingerprint !== hostKeyFingerprint) return false;
+      if (credentialFingerprint && !sameFingerprint(session.identity.credentialFingerprint, credentialFingerprint)) {
+        return false;
+      }
+      return true;
+    });
+    for (const session of matched) this._remove(session);
+    return matched.length;
+  }
+
+  /**
    * Execute multiple commands sequentially on a single connection.
    * Returns array of { stdout, stderr } results.
    */
@@ -203,19 +287,58 @@ class SshSessionPool {
 
   // ── Private helpers ──────────────────────────────────────────────────────────
 
-  private _findIdle(host: string, port: number, hostKeyFingerprint?: string): SshSession | undefined {
-    return this.sessions.find(
-      (s) => s.host === host && s.port === port && s.hostKeyFingerprint === hostKeyFingerprint && !s.inUse
-    );
+  private _identity(
+    host: string,
+    port: number,
+    username: string,
+    credentialType: string,
+    credentialValue: string,
+    hostKeyFingerprint?: string | null,
+  ): SshIdentity {
+    if (typeof username !== 'string' || typeof credentialType !== 'string' || typeof credentialValue !== 'string') {
+      throw new Error('SSH_CREDENTIAL_IDENTITY_INVALID');
+    }
+    return {
+      host,
+      port,
+      username,
+      credentialType,
+      hostKeyFingerprint: normalizeOptionalSshHostKeyFingerprint(hostKeyFingerprint),
+      credentialFingerprint: fingerprintCredential(credentialType, credentialValue),
+    };
+  }
+
+  private _sameIdentity(session: SshSession, identity: SshIdentity): boolean {
+    return session.identity.host === identity.host
+      && session.identity.port === identity.port
+      && session.identity.username === identity.username
+      && session.identity.credentialType === identity.credentialType
+      && session.identity.hostKeyFingerprint === identity.hostKeyFingerprint
+      && sameFingerprint(session.identity.credentialFingerprint, identity.credentialFingerprint);
+  }
+
+  private _findIdle(identity: SshIdentity): SshSession | undefined {
+    return this.sessions.find((session) => this._sameIdentity(session, identity) && !session.inUse);
+  }
+
+  private _evictSuperseded(identity: SshIdentity): void {
+    const stale = this.sessions.filter((session) => (
+      session.identity.host === identity.host
+      && session.identity.port === identity.port
+      && session.identity.username === identity.username
+      && !this._sameIdentity(session, identity)
+    ));
+    for (const session of stale) this._remove(session);
   }
 
   private _remove(session: SshSession): void {
+    if (!this.sessions.includes(session)) return;
+    this.sessions = this.sessions.filter((s) => s !== session);
     try {
       session.client.end();
     } catch {
       // Ignore
     }
-    this.sessions = this.sessions.filter((s) => s !== session);
   }
 
   private _connect(
@@ -360,4 +483,4 @@ class SshSessionPool {
 // Singleton instance
 const sshSessionPool = new SshSessionPool();
 export default sshSessionPool;
-export { SshSessionPool, SshPoolConfig, ExecCommandOptions, ExecCommandResult };
+export { SshSessionPool, SshPoolConfig, ExecCommandOptions, ExecCommandResult, SshSessionRevocation };
