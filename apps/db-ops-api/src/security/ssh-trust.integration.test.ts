@@ -5,6 +5,7 @@ import { Server, utils, type Connection } from 'ssh2';
 import { SshSessionPool } from '../ssh-session-pool.js';
 import { serverDatabaseService, type ServerRow } from '../server-database-service.js';
 import { ServerDiagnosticService } from '../server-diagnostic-service.js';
+import { LinuxHostEvidenceService } from '../linux-host-evidence-service.js';
 import { ConfigBackupService, verifySshHostKey } from '../network-devices/config-backup-service.js';
 import { fingerprintSshHostKey } from './ssh-host-key.js';
 
@@ -78,6 +79,16 @@ describe.skipIf(!host)('MAX-308 real SSH trust across production entry points', 
           audit: () => {},
         });
         await service.collect(1);
+      },
+      async (type: string, fingerprint?: string, mode?: string) => {
+        const service = new LinuxHostEvidenceService({
+          serverDatabaseService: {
+            getServerById: async () => ({ id: 1, host: host!, port, os_type: 'centos', credential_type: type,
+              host_key_fingerprint: fingerprint, ssh_trust_mode: mode } as ServerRow),
+            getDecryptedCredentials: async () => ({ username: 'fixture', password: 'synthetic-secret', privateKey: pem }),
+          }, sshSessionPool: pool,
+        });
+        await service.collectHostEvidence(1, { databaseType: 'mysql', services: [], paths: [] });
       },
     ];
     for (const call of calls) {
