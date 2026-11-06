@@ -178,4 +178,91 @@ for (const kind of ['role', 'instance'] as const) test(`MAX-354/MAX-356 real ${k
   await page.keyboard.press('Escape'); await expect(page.getByRole('dialog')).toHaveCount(0);
   await expect(open).toBeFocused();
   report.checks.push({ kind, scenario: 'failed reread blocked save, reopen and keyboard focus recovery', sqlIds: await selected() });
+  // A disposable view raises a real MySQL error only for the managed subject.
+  // The admin's own grants remain readable by real-time JWT authorization.
+  const backingTable = `${table}_backing`;
+  let readUnavailable = false;
+  const readFault = async (enabled: boolean) => {
+    if (enabled) {
+      const [columns] = await db.query(`SHOW COLUMNS FROM ${table}`);
+      await db.query(`CREATE FUNCTION max354_read_failure() RETURNS INT DETERMINISTIC NO SQL BEGIN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='max354-storage-sensitive-query'; RETURN 0; END`);
+      await db.query(`RENAME TABLE ${table} TO ${backingTable}`);
+      const fields = columns.map((c: any) => c.Field === key
+        ? `IF(${ownerKey}=${owner},max354_read_failure(),${key}) AS ${key}` : c.Field).join(',');
+      await db.query(`CREATE ALGORITHM=MERGE VIEW ${table} AS SELECT ${fields} FROM ${backingTable}`);
+      readUnavailable = true;
+    } else {
+      await db.query(`DROP VIEW ${table}`);
+      await db.query(`RENAME TABLE ${backingTable} TO ${table}`);
+      await db.query('DROP FUNCTION max354_read_failure');
+      readUnavailable = false;
+    }
+  };
+  const readResponse = () => page.waitForResponse(r => new URL(r.url()).pathname === endpoint && r.request().method() === 'GET');
+  const assertUnavailable = async (response: any) => {
+    expect(response.status()).toBe(503);
+    const body = await response.json();
+    // The real server's existing 5xx serializer further masks route text.
+    expect(body).toEqual({ error: 'INTERNAL_ERROR' });
+    expect(JSON.stringify(body)).not.toMatch(/SELECT|Unknown column|permission_id|instance_id|sensitive|unavailable/);
+  };
+  try {
+    await seed();
+    await readFault(true);
+    const firstRead = readResponse();
+    await open.click();
+    await assertUnavailable(await firstRead);
+    await expect(page.locator('.save-error')).toContainText(role ? '加载权限失败' : '加载实例数据失败');
+    await expect(page.getByRole('button', { name: '保存权限', exact: true })).toBeDisabled();
+    await close();
+    await readFault(false);
+    expect(await selected()).toEqual(ids.slice(0, 2));
+    await reopen(); await expect(checkbox(1)).toBeChecked(); await expect(checkbox(2)).toBeChecked(); await close();
+    report.checks.push({ kind, scenario: 'real database read failure on first open: sanitized 503, blocked save, recovery', sqlIds: await selected() });
+
+    // Let the first write commit, then break the database column before the
+    // next write and recovery GET. Existing and committed grants must survive.
+    let firstGrant = true;
+    await page.route(`**${endpoint}`, async route => {
+      if (route.request().method() === 'POST' && firstGrant) {
+        firstGrant = false;
+        const response = await route.fetch(); expect(response.status()).toBe(201);
+        await readFault(true);
+        await route.fulfill({ response });
+      } else await route.continue();
+    });
+    await reopen(); await checkbox(3).check(); await checkbox(4).check();
+    const failedRead = readResponse();
+    await save();
+    await assertUnavailable(await failedRead);
+    await expect(page.locator('.save-error')).toContainText('重新加载失败');
+    await expect(page.locator('.save-error')).not.toContainText('已重新加载服务端权限');
+    await expect(page.locator('.save-error')).toContainText(`新增授权：${prefix}3`);
+    await expect(page.getByRole('button', { name: '保存权限', exact: true })).toBeDisabled();
+    await expect(checkbox(1)).toBeChecked(); await expect(checkbox(2)).toBeChecked();
+    await page.locator('.save-error').scrollIntoViewIfNeeded();
+    await page.screenshot({ path: info.outputPath(`${kind}-database-read-failure.png`) });
+    const preserved = (await db.query(`SELECT ${key} AS id FROM ${backingTable} WHERE ${ownerKey}=? ORDER BY ${key}`, [owner]))[0].map((r: any) => r.id);
+    expect(preserved).toEqual(ids.slice(0, 3));
+    await close(); await page.unroute(`**${endpoint}`); await readFault(false);
+    await reopen(); await expect(checkbox(1)).toBeChecked(); await expect(checkbox(2)).toBeChecked(); await expect(checkbox(3)).toBeChecked(); await expect(checkbox(4)).not.toBeChecked();
+    await expect(page.getByRole('button', { name: '保存权限', exact: true })).toBeEnabled(); await close();
+    report.checks.push({ kind, scenario: 'real database read failure after partial write: sanitized 503, preserved grants, blocked save, recovery', sqlIds: preserved });
+
+    // Empty is a real successful result, not the fallback for a storage error.
+    await db.query(`DELETE FROM ${table} WHERE ${ownerKey}=?`, [owner]);
+    const emptyRead = readResponse();
+    await open.click(); if (role) await expand();
+    const empty = await emptyRead;
+    expect(empty.status()).toBe(200); expect(await empty.json()).toEqual([]);
+    await expect(page.getByRole('button', { name: '保存权限', exact: true })).toBeEnabled();
+    await expect(page.getByRole('checkbox', { checked: true })).toHaveCount(0);
+    await save(); await expect(page.getByRole('dialog')).toHaveCount(0);
+    expect(await selected()).toEqual([]);
+    report.checks.push({ kind, scenario: 'real empty grants are 200 and remain editable', sqlIds: [] });
+  } finally {
+    await page.unroute(`**${endpoint}`);
+    if (readUnavailable) await readFault(false);
+  }
+
 });
