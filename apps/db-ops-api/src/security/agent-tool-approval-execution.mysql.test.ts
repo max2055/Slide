@@ -124,8 +124,8 @@ describe.skipIf(!port)('approval dispatch: real MySQL transactions', () => {
       'SELECT phase, request_id, approval_id FROM agent_tool_audit WHERE approval_id = ? ORDER BY id', [approvalId],
     );
     expect(audits).toMatchObject([
-      { phase: 'decision', request_id: actor.requestId, approval_id: approvalId },
-      { phase: 'result', request_id: actor.requestId, approval_id: approvalId },
+      { phase: 'decision', request_id: actor.requestId, approval_id: Number(approvalId) },
+      { phase: 'result', request_id: actor.requestId, approval_id: Number(approvalId) },
     ]);
   });
 
