@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { ActorContext } from '../auth/actor-context.js';
 import type { AnyAgentTool, ToolPolicyResource } from '../tools/types.js';
 import { AgentToolApprovalService, buildApprovalBinding } from './agent-tool-approval-service.js';
@@ -27,6 +27,18 @@ const checkStatusTool: AnyAgentTool = {
   parameters: { type: 'object', properties: {} },
   handler: async () => ({ success: true }),
 };
+
+function submitStore(executor: { execute(sql: string, values?: unknown[]): Promise<any> }) {
+  const connection = {
+    execute: vi.fn(async (sql: string, values?: unknown[]) => {
+      if (sql.includes('GET_LOCK')) return [[{ acquired: 1 }]];
+      if (sql.includes('RELEASE_LOCK')) return [[{ released: 1 }]];
+      return executor.execute(sql, values);
+    }),
+    release: vi.fn(), destroy: vi.fn(),
+  };
+  return { ...executor, getConnection: async () => connection, connection };
+}
 
 describe('persistent Agent tool approvals', () => {
   it('binds approval to canonical args, resource, actor snapshot, and operator policy', () => {
@@ -93,10 +105,12 @@ describe('persistent Agent tool approvals', () => {
         throw new Error('INSERT should not run when a pending request exists');
       },
     };
-    const service = new AgentToolApprovalService(() => executor as any, 'test-hmac-key');
+    const store = submitStore(executor);
+    const service = new AgentToolApprovalService(() => store, 'test-hmac-key');
 
     await expect(service.submit(actor, tool, { instance_id: 12 }, resource, { riskLevel: 'medium', scope: 'window', sessionKey: 'session-1' })).resolves.toMatchObject({ id: '42' });
     expect(calls).toHaveLength(1);
+    expect(store.connection.release).toHaveBeenCalledOnce();
   });
 
   it('loads pending approvals with a MySQL-compatible literal limit', async () => {
@@ -183,7 +197,7 @@ describe('persistent Agent tool approvals', () => {
         return [{ insertId: 43 }] as [unknown];
       },
     };
-    const service = new AgentToolApprovalService(() => executor as any, 'test-hmac-key');
+    const service = new AgentToolApprovalService(() => submitStore(executor), 'test-hmac-key');
 
     await service.submit(actor, tool, { instance_id: 12 }, resource, {
       scope: 'window', sessionKey: 'session-1', riskLevel: 'high',
@@ -191,6 +205,57 @@ describe('persistent Agent tool approvals', () => {
 
     expect(insertValues).toContain('once');
     expect(insertValues).toContain('high');
+  });
+
+  it.each([0, null, 'error'])('fails closed when lock acquisition returns %s', async acquired => {
+    const execute = vi.fn(async () => [{ insertId: 99 }]);
+    const store = submitStore({ execute });
+    store.connection.execute.mockImplementationOnce(async () => {
+      if (acquired === 'error') throw new Error('connection lost');
+      return [[{ acquired }]];
+    });
+    const service = new AgentToolApprovalService(() => store, 'test-hmac-key');
+    await expect(service.submit(actor, tool, {}, resource)).rejects.toThrow();
+    expect(execute).not.toHaveBeenCalled();
+    expect(store.connection.destroy).toHaveBeenCalledOnce();
+    expect(store.connection.release).not.toHaveBeenCalled();
+  });
+
+  it('refuses submit on an executor that cannot pin a connection', async () => {
+    const execute = vi.fn();
+    const service = new AgentToolApprovalService(() => ({ execute }), 'test-hmac-key');
+    await expect(service.submit(actor, tool, {}, resource)).rejects.toThrow('AGENT_APPROVAL_STORE_UNAVAILABLE');
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  it('releases the lock when the pending read or insert fails', async () => {
+    for (const failingStatement of ['SELECT id, expires_at', 'INSERT INTO']) {
+      const store = submitStore({ execute: async sql => {
+        if (sql.includes(failingStatement)) throw new Error('storage unavailable');
+        return [[]];
+      } });
+      const service = new AgentToolApprovalService(() => store, 'test-hmac-key');
+      await expect(service.submit(actor, tool, {}, resource)).rejects.toThrow('storage unavailable');
+      expect(store.connection.release).toHaveBeenCalledOnce();
+      expect(store.connection.destroy).not.toHaveBeenCalled();
+      expect(store.connection.execute.mock.calls.at(-1)?.[0]).toContain('RELEASE_LOCK');
+    }
+  });
+
+  it.each([0, null, 'error'])('discards the connection when lock release returns %s', async released => {
+    const store = submitStore({ execute: async () => [[{ id: 42, expires_at: new Date() }]] });
+    store.connection.execute.mockImplementation(async sql => {
+      if (sql.includes('GET_LOCK')) return [[{ acquired: 1 }]];
+      if (sql.includes('RELEASE_LOCK')) {
+        if (released === 'error') throw new Error('connection lost');
+        return [[{ released }]];
+      }
+      return [[{ id: 42, expires_at: new Date() }]];
+    });
+    const service = new AgentToolApprovalService(() => store, 'test-hmac-key');
+    await expect(service.submit(actor, tool, {}, resource)).resolves.toMatchObject({ id: '42' });
+    expect(store.connection.destroy).toHaveBeenCalledOnce();
+    expect(store.connection.release).not.toHaveBeenCalled();
   });
 
   it('keeps high-risk review one-time regardless of a requested reusable scope', async () => {
