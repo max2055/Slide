@@ -92,7 +92,7 @@ describe('MAX-350 real write routes and services, failing SQL executor', () => {
       sql: 'INSERT synthetic-secret', sqlMessage: detail, code: detail, cause: new Error(detail),
     }));
     vi.spyOn(dbConnection, 'getPool').mockReturnValue({
-      execute, getConnection: async () => ({ execute, release: vi.fn(), destroy: vi.fn() }),
+      execute, getConnection: async () => ({ execute, beginTransaction: execute, commit: execute, rollback: execute, release: vi.fn(), destroy: vi.fn() }),
     } as any);
     const logs: string[] = [];
     vi.spyOn(console, 'error').mockImplementation((_message, diagnostic) => { logs.push(JSON.stringify(diagnostic)); });

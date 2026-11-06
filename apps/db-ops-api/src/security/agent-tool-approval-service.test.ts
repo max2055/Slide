@@ -315,6 +315,7 @@ describe('persistent Agent tool approvals', () => {
         return [[]] as [unknown];
       },
     };
+    Object.assign(executor, { getConnection: async () => ({ ...executor, release() {}, destroy() {}, async beginTransaction() {}, async commit() {}, async rollback() {} }) });
     const service = new AgentToolApprovalService(() => executor as any, 'test-hmac-key');
 
     await expect(service.reviewPendingByTool('slide_check_status', 9, 'approve', undefined, 'once'))
