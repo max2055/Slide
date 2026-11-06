@@ -9,6 +9,8 @@ describe('execute_code risk policy', () => {
     'ls ./..', 'stat foo/..', 'du -s foo//..//../etc',
     'cat ../etc/passwd', 'cat /etc/passwd', 'cat ~/report.txt',
     'grep -f=./../pattern report.txt', 'ls --ignore=/etc/passwd',
+    'grep -f../etc/passwd report.txt', 'grep -f/etc/passwd report.txt',
+    'grep -f.. report.txt', 'grep --file=../etc/passwd report.txt',
   ])('requires approval for unproven workspace paths: %j', (code) => {
     expect(classifyExecuteCodeRisk({ runtime: 'shell', code })).toEqual({
       level: 'medium', scope: 'window', requiresApproval: true,
