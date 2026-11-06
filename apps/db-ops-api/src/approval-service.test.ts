@@ -265,6 +265,49 @@ describe('ApprovalService', () => {
     });
   });
 
+  describe('submitForApproval - risk level validation (MAX-341 / #489)', () => {
+    const cases: Array<[unknown, string]> = [
+      ['low', 'low'], ['medium', 'medium'], ['high', 'high'], ['critical', 'critical'],
+      ['LOW', 'low'], ['Medium', 'medium'], ['HiGh', 'high'], ['CRITICAL', 'critical'],
+      ['  high\n', 'high'], ['', 'high'], ['   ', 'high'],
+      [null, 'high'], [undefined, 'high'], [[], 'high'], [['low'], 'high'],
+      [{ risk_level: 'low' }, 'high'], [{}, 'high'], [true, 'high'], [false, 'high'],
+      [0, 'high'], [1, 'high'], ['unexpected_fixture', 'high'], ['toString', 'high'],
+    ];
+
+    it.each(cases)('persists risk %j as %s and keeps the request pending', async (input, expected) => {
+      const recommendation = { risk_level: input, recommendation: 'reject', reasoning: 'fixture' };
+      vi.mocked(llmService.chatWithTracking).mockResolvedValue({ content: JSON.stringify(recommendation) } as any);
+      mockPool.execute.mockResolvedValueOnce([{ insertId: 5 }, null]);
+
+      const result = await approvalService.submitForApproval({ instance_id: 1, sql_text: 'DROP TABLE users', submitted_by: 2 });
+
+      expect(result).toMatchObject({ request_id: 5, requires_approval: true, risk_level: expected });
+      expect(mockPool.execute).toHaveBeenCalledWith(
+        expect.stringContaining("VALUES (?, ?, ?, ?, ?, 'pending'"),
+        [1, 'DROP TABLE users', expect.any(String), expected, JSON.stringify(recommendation), 2, null, null],
+      );
+      expect(mockPool.execute).toHaveBeenCalledWith(expect.stringContaining('INSERT INTO approval_events'), [5, 'submitted', '{}', 2]);
+      expect(mockPool.execute).toHaveBeenCalledWith(expect.stringContaining('INSERT INTO approval_events'),
+        [5, 'ai_reviewed', JSON.stringify({ risk_level: expected, recommendation: 'reject', reasoning: 'fixture' }), 2]);
+      expect(sqlExecutor.executeSql).not.toHaveBeenCalled();
+    });
+
+    it('retains the existing pattern fallback for a non-read SQL outside high-risk patterns', async () => {
+      vi.mocked(llmService.chatWithTracking).mockResolvedValue({ content: '{"risk_level":{"value":"critical"}}' } as any);
+      mockPool.execute.mockResolvedValueOnce([{ insertId: 5 }, null]);
+      expect(await approvalService.submitForApproval({ instance_id: 1, sql_text: 'VACUUM' }))
+        .toMatchObject({ request_id: 5, requires_approval: true, risk_level: 'low' });
+    });
+
+    it('keeps plain reads automatically approved without calling the model or database', async () => {
+      expect(await approvalService.submitForApproval({ instance_id: 1, sql_text: 'SELECT 1' }))
+        .toEqual({ requires_approval: false, auto_approved: true, risk_level: 'low' });
+      expect(llmService.chatWithTracking).not.toHaveBeenCalled();
+      expect(mockPool.execute).not.toHaveBeenCalled();
+    });
+  });
+
   describe('submitForApproval - event writing', () => {
     beforeEach(() => {
       // Mock crypto for deterministic hash
