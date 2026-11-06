@@ -164,17 +164,26 @@ describe('RbacService - Permissions', () => {
   });
 
   it('should delete a permission', async () => {
-    mockExecute.mockResolvedValueOnce([[{ cnt: 0 }]]);
-    mockExecute.mockResolvedValueOnce([{ affectedRows: 1 }]);
+    const connection = useTransaction(mockExecute);
+    mockExecute.mockResolvedValueOnce([[{ id: 5 }]])
+      .mockResolvedValueOnce([[]])
+      .mockResolvedValueOnce([{ affectedRows: 1 }]);
     const result = await service.deletePermission(5);
     expect(result.success).toBe(true);
+    expect(connection.commit).toHaveBeenCalledOnce();
+    expect(connection.release).toHaveBeenCalledOnce();
   });
 
   it('should reject delete for referenced permission', async () => {
-    mockExecute.mockResolvedValueOnce([[{ cnt: 2 }]]);
+    const connection = useTransaction(mockExecute);
+    mockExecute.mockResolvedValueOnce([[{ id: 5 }]])
+      .mockResolvedValueOnce([[{ role_id: 1 }, { role_id: 2 }]]);
     const result = await service.deletePermission(5);
     expect(result.success).toBe(false);
     expect(result.error).toContain('2 个角色引用');
+    expect(connection.rollback).toHaveBeenCalledOnce();
+    expect(connection.commit).not.toHaveBeenCalled();
+    expect(connection.release).toHaveBeenCalledOnce();
   });
 });
 
@@ -190,6 +199,7 @@ describe('RbacService - Role-Permission assignments', () => {
 
   it('should assign a permission to a role', async () => {
     const transactionExecute = vi.fn()
+      .mockResolvedValueOnce([[{ id: 2 }]])
       .mockResolvedValueOnce([[]])
       .mockResolvedValueOnce([{ affectedRows: 1 }]);
     useTransaction(transactionExecute);
@@ -241,6 +251,28 @@ describe('RbacService - User-Role assignments', () => {
     useTransaction(vi.fn().mockResolvedValue([{ affectedRows: 1 }]));
     const result = await service.assignRoleToUser(1, 2);
     expect(result.success).toBe(true);
+  });
+
+  it('#496 renews an expired duplicate and invalidates sessions in the same transaction', async () => {
+    const execute = vi.fn()
+      .mockResolvedValueOnce([{ affectedRows: 0 }])
+      .mockResolvedValueOnce([{ affectedRows: 1 }])
+      .mockResolvedValue([{ affectedRows: 1 }]);
+    const connection = useTransaction(execute);
+    expect(await service.assignRoleToUser(1, 2)).toEqual({ success: true });
+    expect(execute).toHaveBeenNthCalledWith(2, expect.stringMatching(/UPDATE user_roles SET grant_expiry = NULL[\s\S]*grant_expiry <= NOW\(\)/), [1, 2]);
+    expect(execute).toHaveBeenNthCalledWith(3, expect.stringContaining('UPDATE users SET session_version'), [1]);
+    expect(execute).toHaveBeenNthCalledWith(4, expect.stringContaining('UPDATE refresh_tokens SET revoked'), [1]);
+    expect(connection.commit).toHaveBeenCalledOnce();
+    expect(connection.release).toHaveBeenCalledOnce();
+  });
+
+  it('#496 leaves an active duplicate and its sessions unchanged', async () => {
+    const execute = vi.fn().mockResolvedValue([{ affectedRows: 0 }]);
+    const connection = useTransaction(execute);
+    expect(await service.assignRoleToUser(1, 2)).toEqual({ success: true });
+    expect(execute).toHaveBeenCalledTimes(2);
+    expect(connection.commit).toHaveBeenCalledOnce();
   });
 
   it('should revoke a role from a user', async () => {
