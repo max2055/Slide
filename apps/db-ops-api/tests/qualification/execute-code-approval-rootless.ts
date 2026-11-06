@@ -83,6 +83,8 @@ try {
     { code: 'cat foo/../../etc/passwd' }, { code: 'ls ./..' },
     { code: 'cat ../etc/passwd' }, { code: 'cat /etc/passwd' },
     { code: 'cat ~/report.txt' },
+    { code: 'grep -f../etc/passwd report.txt' },
+    { code: 'grep -f/etc/passwd report.txt' },
     { code: 'pwd\nmv secret back' }, { code: 'ls\ncp a b' },
     { code: 'find . -delete' }, { code: 'find . -fprint output' },
     { code: 'cat foo > bar' }, { code: 'pwd', files: [{ path: 'input.txt', content: 'fixture' }] },
