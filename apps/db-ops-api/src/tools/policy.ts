@@ -409,7 +409,7 @@ export async function executeToolWithPolicy(
       status: result.success ? 'warning' : 'error',
       summary: `${result.summary ?? (result.success ? '工具执行完成' : '工具执行失败')}；${resultAuditFailed ? '结果审计未持久化' : '结果审计已持久化'}${finishFailed ? '；审批执行收尾失败' : ''}`,
       details: { ...result.details, ...details },
-      next_actions: [...next_actions, ...(result.next_actions ?? [])],
+      next_actions,
     });
   }
   return policyResult(decision, result);

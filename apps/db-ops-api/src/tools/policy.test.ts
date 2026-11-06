@@ -76,7 +76,7 @@ describe('actor tool policy', () => {
     const releaseBeforeHandler = vi.fn();
     const handler = vi.fn(async () => {
       if (handlerFails) throw new Error('private handler failure');
-      return { success: true, data: { output: 'tool output' }, details: { original: true } };
+      return { success: true, data: { output: 'tool output' }, details: { original: true }, next_actions: ['retry-handler'] };
     });
     const record = vi.fn(async (entry: { phase: string }) => {
       if (entry.phase === 'result' && auditFails) throw new Error('private audit failure');
@@ -100,6 +100,7 @@ describe('actor tool policy', () => {
         executionId: 'execution-42', approvalId: '42', requestId: 'policy-test',
       });
       expect(outcome.result.next_actions?.join(' ')).toContain('不要重放');
+      expect(outcome.result.next_actions).not.toContain('retry-handler');
       if (name === 'execute_code') {
         expect(outcome.result.success).toBe(false);
         expect(outcome.result.errorCode).toBe('AUDIT_UNAVAILABLE');
