@@ -61,10 +61,19 @@ export class RbacService {
     pool: mysql.Pool,
     roleId: number,
     mutation: (connection: mysql.PoolConnection) => Promise<boolean>,
+    permissionId?: number,
   ): Promise<void> {
     const connection = await this.requireTransaction(pool);
     try {
       await connection.beginTransaction();
+      if (permissionId !== undefined) {
+        // Match deletePermission: lock the parent before any grant/session rows.
+        const [permissions] = await connection.execute(
+          'SELECT id FROM permissions WHERE id = ? FOR UPDATE',
+          [permissionId],
+        ) as any;
+        if (permissions.length === 0) throw new Error('权限不存在');
+      }
       const userIds = await this.getActiveRoleUserIds(connection, roleId);
       if (await mutation(connection)) {
         await this.bumpAndRevokeUsers(connection, userIds);
@@ -85,14 +94,12 @@ export class RbacService {
   private async mutateUserRoleAndRevokeSessions(
     pool: mysql.Pool,
     userId: number,
-    sql: string,
-    values: number[],
+    mutation: (connection: mysql.PoolConnection) => Promise<boolean>,
   ): Promise<void> {
     const connection = await this.requireTransaction(pool);
     try {
       await connection.beginTransaction();
-      const [result] = await connection.execute(sql, values) as any;
-      if (Number(result.affectedRows) > 0) {
+      if (await mutation(connection)) {
         await connection.execute(
           'UPDATE users SET session_version = session_version + 1 WHERE id = ?',
           [userId],
@@ -393,22 +400,35 @@ export class RbacService {
       return { success: false, error: '数据库未连接' };
     }
 
+    let connection: mysql.PoolConnection | undefined;
     try {
-      // Check if any role references this permission
-      const [refs] = await pool.execute(
-        'SELECT COUNT(*) as cnt FROM role_permissions WHERE permission_id = ?',
+      connection = await this.requireTransaction(pool);
+      await connection.beginTransaction();
+      await connection.execute('SELECT id FROM permissions WHERE id = ? FOR UPDATE', [permissionId]);
+      // Current read after the parent lock sees grants committed while we waited.
+      const [refs] = await connection.execute(
+        'SELECT role_id FROM role_permissions WHERE permission_id = ? FOR UPDATE',
         [permissionId]
       ) as any;
 
-      if (refs[0].cnt > 0) {
-        return { success: false, error: `权限被 ${refs[0].cnt} 个角色引用，无法删除` };
+      if (refs.length > 0) {
+        await connection.rollback();
+        return { success: false, error: `权限被 ${refs.length} 个角色引用，无法删除` };
       }
 
-      await pool.execute('DELETE FROM permissions WHERE id = ?', [permissionId]);
+      await connection.execute('DELETE FROM permissions WHERE id = ?', [permissionId]);
+      await connection.commit();
       return { success: true };
     } catch (error: any) {
+      try {
+        await connection?.rollback();
+      } catch {
+        // Preserve the deletion failure.
+      }
       console.error('删除权限失败:', error);
       return { success: false, error: error.message };
+    } finally {
+      connection?.release();
     }
   }
 
@@ -433,6 +453,7 @@ export class RbacService {
           ) as any;
           return Number(result.affectedRows) > 0;
         },
+        permissionId,
       );
       return { success: true };
     } catch (error: any) {
@@ -523,8 +544,21 @@ export class RbacService {
       await this.mutateUserRoleAndRevokeSessions(
         pool,
         userId,
-        'INSERT IGNORE INTO user_roles (user_id, role_id) VALUES (?, ?)',
-        [userId, roleId],
+        async (connection) => {
+          const [inserted] = await connection.execute(
+            'INSERT IGNORE INTO user_roles (user_id, role_id) VALUES (?, ?)',
+            [userId, roleId],
+          ) as any;
+          if (Number(inserted.affectedRows) > 0) return true;
+          // This API grants without an expiry. Renew expired rows only, preserving
+          // active temporary grants and avoiding needless session invalidation.
+          const [renewed] = await connection.execute(
+            `UPDATE user_roles SET grant_expiry = NULL
+             WHERE user_id = ? AND role_id = ? AND grant_expiry <= NOW()`,
+            [userId, roleId],
+          ) as any;
+          return Number(renewed.affectedRows) > 0;
+        },
       );
       return { success: true };
     } catch (error: any) {
@@ -543,8 +577,13 @@ export class RbacService {
       await this.mutateUserRoleAndRevokeSessions(
         pool,
         userId,
-        'DELETE FROM user_roles WHERE user_id = ? AND role_id = ?',
-        [userId, roleId],
+        async (connection) => {
+          const [result] = await connection.execute(
+            'DELETE FROM user_roles WHERE user_id = ? AND role_id = ?',
+            [userId, roleId],
+          ) as any;
+          return Number(result.affectedRows) > 0;
+        },
       );
       return { success: true };
     } catch (error: any) {
