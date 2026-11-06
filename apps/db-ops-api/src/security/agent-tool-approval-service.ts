@@ -279,7 +279,8 @@ export class AgentToolApprovalService {
     note?: string,
     scope?: Exclude<ExecuteCodeApprovalScope, 'none'>,
   ): Promise<string[]> {
-    if (!toolName || toolName.length > 128 || !Number.isSafeInteger(reviewerId) || reviewerId <= 0) return [];
+    if (!toolName || toolName === ACTION_APPROVAL_TOOL || toolName.length > 128
+      || !Number.isSafeInteger(reviewerId) || reviewerId <= 0) return [];
     const executor = this.executor();
     if (!executor.getConnection) throw new Error('AGENT_APPROVAL_STORE_UNAVAILABLE');
     const connection = await executor.getConnection();
