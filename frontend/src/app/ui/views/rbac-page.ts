@@ -34,6 +34,12 @@ interface UserInfo {
   email: string | null;
 }
 
+// Summarize the observed changes, using IDs when a catalogue entry is unavailable.
+function permissionChanges(granted: number[], revoked: number[], items: { id: number; name: string }[]): string {
+  const names = (ids: number[]) => ids.map(id => items.find(item => item.id === id)?.name || `ID ${id}`).join("、");
+  return [granted.length ? `新增授权：${names(granted)}` : "", revoked.length ? `撤销授权：${names(revoked)}` : ""].filter(Boolean).join("；") || "无已确认生效的变更";
+}
+
 type RbacSubTab = "roles" | "permissions";
 
 /* ───────── Parent: RbacAdminPage ───────── */
@@ -229,6 +235,7 @@ export class RoleManagementTab extends LitElement {
   @state() private savedPermIds: Set<number> = new Set();
   @state() private permLoading = false;
   @state() private permSaving = false;
+  @state() private permReady = false;
   @state() private permError: string | null = null;
 
   static styles = RbacAdminPage.styles;
@@ -324,6 +331,7 @@ export class RoleManagementTab extends LitElement {
     this.permRoleName = role.name;
     this.permError = null;
     this.permLoading = true;
+    this.permReady = false;
     this.showPermModal = true;
     try {
       const [allPerms, rolePerms] = await Promise.all([
@@ -334,6 +342,7 @@ export class RoleManagementTab extends LitElement {
       const granted = new Set(rolePerms.map((p) => p.id));
       this.checkedPermIds = new Set(granted);
       this.savedPermIds = new Set(granted);
+      this.permReady = true;
     } catch (e: any) {
       this.permError = `加载权限失败：${e.message}`;
     } finally {
@@ -342,6 +351,8 @@ export class RoleManagementTab extends LitElement {
   }
 
   private _closePermModal() {
+    if (this.permSaving) return;
+    this.permReady = false;
     this.showPermModal = false;
     this.permRoleId = null;
     this.allPermissions = [];
@@ -361,10 +372,13 @@ export class RoleManagementTab extends LitElement {
   }
 
   private async _savePermissions() {
-    if (this.permRoleId === null) return;
+    if (this.permRoleId === null || this.permSaving || !this.permReady) return;
     this.permSaving = true;
     this.permError = null;
     const roleId = this.permRoleId;
+    const before = new Set(this.savedPermIds);
+    const granted: number[] = [];
+    const revoked: number[] = [];
     try {
       const toGrant = [...this.checkedPermIds].filter(
         (id) => !this.savedPermIds.has(id)
@@ -374,14 +388,27 @@ export class RoleManagementTab extends LitElement {
       );
       for (const permId of toGrant) {
         await apiClient.post(`/v1/rbac/roles/${roleId}/permissions`, { permissionId: permId });
+        granted.push(permId);
       }
       for (const permId of toRevoke) {
         await apiClient.delete(`/v1/rbac/roles/${roleId}/permissions/${permId}`);
+        revoked.push(permId);
       }
+      this.permSaving = false;
       this._closePermModal();
       await this._loadRoles();
     } catch (e: any) {
-      this.permError = `保存权限失败：${e.message}`;
+      this.permReady = false;
+      try {
+        const current = await apiClient.get<Permission[]>(`/v1/rbac/roles/${roleId}/permissions`);
+        const ids = new Set(current.map(p => p.id));
+        this.checkedPermIds = new Set(ids);
+        this.savedPermIds = new Set(ids);
+        this.permReady = true;
+        this.permError = `保存权限未全部完成：${e.message}。已重新加载服务端权限，勾选为当前状态。已生效：${permissionChanges([...ids].filter(id => !before.has(id)), [...before].filter(id => !ids.has(id)), this.allPermissions)}。其余变更请重新选择后保存。`;
+      } catch (readError: any) {
+        this.permError = `保存权限失败：${e.message}。已确认生效：${permissionChanges(granted, revoked, this.allPermissions)}。重新加载失败：${readError.message}。当前勾选未核实，失败请求也可能已生效；请关闭后重新打开核对，暂不可保存。`;
+      }
     } finally {
       this.permSaving = false;
     }
@@ -483,7 +510,7 @@ export class RoleManagementTab extends LitElement {
   private _renderPermModal() {
     if (!this.showPermModal) return nothing;
     return html`
-      <app-dialog .open=${true} size="lg" .closeOnOverlay=${false} title="编辑权限 - ${this.permRoleName}" @app-dialog-close=${this._closePermModal}>
+      <app-dialog .open=${true} size="lg" .closeOnOverlay=${false} .closable=${!this.permSaving} title="编辑权限 - ${this.permRoleName}" @app-dialog-close=${this._closePermModal}>
         ${this.permError
           ? html`<div class="save-error">${this.permError}</div>`
           : ""}
@@ -508,6 +535,7 @@ export class RoleManagementTab extends LitElement {
                               <input
                                 type="checkbox"
                                 .checked=${this.checkedPermIds.has(p.id)}
+                                ?disabled=${this.permSaving || !this.permReady}
                                 @change=${() => this._togglePerm(p.id)}
                                 id="perm-${p.id}"
                               />
@@ -524,11 +552,11 @@ export class RoleManagementTab extends LitElement {
                 )}
               `}
         <div slot="footer">
-          <button class="btn" @click=${this._closePermModal}>取消</button>
+          <button class="btn" ?disabled=${this.permSaving} @click=${this._closePermModal}>取消</button>
           <button
             class="btn-primary"
             @click=${this._savePermissions}
-            ?disabled=${this.permSaving || this.permLoading}
+            ?disabled=${this.permSaving || this.permLoading || !this.permReady}
           >
             ${this.permSaving ? "保存中..." : "保存权限"}
           </button>
@@ -765,6 +793,8 @@ export class PermissionManagementTab extends LitElement {
 
 /* ───────── InstancePermissionsTab ───────── */
 
+type InstanceGrant = number | { id: number } | { instance_id: number; access_level: string };
+
 interface DbInstance {
   id: number;
   name: string;
@@ -785,6 +815,7 @@ export class InstancePermissionsTab extends LitElement {
   @state() private savedGrantedIds: Set<number> = new Set();
   @state() private instanceFilter = "";
   @state() private loadingInstances = false;
+  @state() private instancesReady = false;
   @state() private saving = false;
   @state() private saveError: string | null = null;
 
@@ -864,11 +895,12 @@ export class InstancePermissionsTab extends LitElement {
     this.saveError = null;
     this.instanceFilter = "";
     this.loadingInstances = true;
+    this.instancesReady = false;
     this.showModal = true;
     try {
       const [instances, granted] = await Promise.all([
         apiClient.get<DbInstance[]>("/database/instances"),
-        apiClient.get<number[] | DbInstance[]>(
+        apiClient.get<InstanceGrant[]>(
           `/v1/rbac/users/${user.id}/instances`
         ),
       ]);
@@ -877,12 +909,13 @@ export class InstancePermissionsTab extends LitElement {
         : (instances as any).instances || [];
       // Sort instances by name
       this.allInstances.sort((a, b) => a.name.localeCompare(b.name));
-      // granted can be array of IDs or array of objects with id field
+      // Support the API instance_id records and legacy ID/id responses.
       const grantedIds: number[] = Array.isArray(granted)
-        ? granted.map((g: any) => (typeof g === "number" ? g : g.id))
+        ? granted.map((g: any) => (typeof g === "number" ? g : "instance_id" in g ? g.instance_id : g.id))
         : [];
       this.grantedInstanceIds = new Set(grantedIds);
       this.savedGrantedIds = new Set(grantedIds);
+      this.instancesReady = true;
     } catch (e: any) {
       this.saveError = `加载实例数据失败：${e.message}`;
     } finally {
@@ -891,6 +924,8 @@ export class InstancePermissionsTab extends LitElement {
   }
 
   private _closeModal() {
+    if (this.saving) return;
+    this.instancesReady = false;
     this.showModal = false;
     this.modalUserId = null;
     this.modalUserName = "";
@@ -920,10 +955,13 @@ export class InstancePermissionsTab extends LitElement {
   }
 
   private async _saveInstancePerms() {
-    if (this.modalUserId === null) return;
+    if (this.modalUserId === null || this.saving || !this.instancesReady) return;
     this.saving = true;
     this.saveError = null;
     const userId = this.modalUserId;
+    const before = new Set(this.savedGrantedIds);
+    const granted: number[] = [];
+    const revoked: number[] = [];
     try {
       const toGrant = [...this.grantedInstanceIds].filter(
         (id) => !this.savedGrantedIds.has(id)
@@ -933,14 +971,27 @@ export class InstancePermissionsTab extends LitElement {
       );
       for (const instanceId of toGrant) {
         await apiClient.post(`/v1/rbac/users/${userId}/instances`, { instanceId });
+        granted.push(instanceId);
       }
       for (const instanceId of toRevoke) {
         await apiClient.delete(`/v1/rbac/users/${userId}/instances/${instanceId}`);
+        revoked.push(instanceId);
       }
+      this.saving = false;
       this._closeModal();
       await this._loadUsers();
     } catch (e: any) {
-      this.saveError = `保存失败：${e.message}`;
+      this.instancesReady = false;
+      try {
+        const current = await apiClient.get<InstanceGrant[]>(`/v1/rbac/users/${userId}/instances`);
+        const ids = new Set(current.map(item => typeof item === "number" ? item : "instance_id" in item ? item.instance_id : item.id));
+        this.grantedInstanceIds = new Set(ids);
+        this.savedGrantedIds = new Set(ids);
+        this.instancesReady = true;
+        this.saveError = `保存未全部完成：${e.message}。已重新加载服务端权限，勾选为当前状态。已生效：${permissionChanges([...ids].filter(id => !before.has(id)), [...before].filter(id => !ids.has(id)), this.allInstances)}。其余变更请重新选择后保存。`;
+      } catch (readError: any) {
+        this.saveError = `保存失败：${e.message}。已确认生效：${permissionChanges(granted, revoked, this.allInstances)}。重新加载失败：${readError.message}。当前勾选未核实，失败请求也可能已生效；请关闭后重新打开核对，暂不可保存。`;
+      }
     } finally {
       this.saving = false;
     }
@@ -995,7 +1046,7 @@ export class InstancePermissionsTab extends LitElement {
     if (!this.showModal) return nothing;
     const title = `实例权限 - ${this.modalUserName}`;
     return html`
-      <app-dialog .open=${true} size="lg" title=${title} @app-dialog-close=${this._closeModal}>
+      <app-dialog .open=${true} size="lg" .closable=${!this.saving} title=${title} @app-dialog-close=${this._closeModal}>
         ${this.saveError
           ? html`<div class="save-error">${this.saveError}</div>`
           : ""}
@@ -1022,6 +1073,7 @@ export class InstancePermissionsTab extends LitElement {
                             <input
                               type="checkbox"
                               .checked=${this.grantedInstanceIds.has(inst.id)}
+                              ?disabled=${this.saving || !this.instancesReady}
                               @change=${() => this._toggleInstance(inst.id)}
                               id="inst-${inst.id}"
                             />
@@ -1032,8 +1084,8 @@ export class InstancePermissionsTab extends LitElement {
                 </div>
               `}
         <div slot="footer" style="display:flex;justify-content:flex-end;gap:var(--space-md)">
-          <button class="btn" @click=${this._closeModal}>取消</button>
-          <button class="btn-primary" @click=${this._saveInstancePerms} ?disabled=${this.saving || this.loadingInstances}>
+          <button class="btn" ?disabled=${this.saving} @click=${this._closeModal}>取消</button>
+          <button class="btn-primary" @click=${this._saveInstancePerms} ?disabled=${this.saving || this.loadingInstances || !this.instancesReady}>
             ${this.saving ? "保存中..." : "保存权限"}
           </button>
         </div>
