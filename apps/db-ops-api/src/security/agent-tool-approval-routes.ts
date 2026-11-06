@@ -1,4 +1,4 @@
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type { ActorContext } from '../auth/actor-context.js';
 import { requirePermission } from '../auth/require-permission.js';
 import { getPlatformTool } from '../adapter/get-agent-engine.js';
@@ -9,6 +9,13 @@ import { credentialReferenceService } from './credential-reference-service.js';
 import { getToolSecurityDefinition } from '../tools/security-catalog.js';
 import { classifyExecuteCodeRisk } from './execute-code-risk.js';
 import { agentExecutionConfigService } from './agent-execution-config-service.js';
+
+// Allowlisted diagnostics only: driver messages, SQL and request payloads may contain secrets.
+function writeUnavailable(request: FastifyRequest, reply: FastifyReply, operation: string, reasonCode: string) {
+  // The production Fastify instance disables its logger; use the redacted console sink.
+  console.error('[AgentToolApproval] Write failed', { operation, reasonCode, reqId: request.id });
+  return reply.code(503).send({ reasonCode });
+}
 
 export async function registerAgentToolApprovalRoutes(
   fastify: FastifyInstance,
@@ -41,7 +48,7 @@ export async function registerAgentToolApprovalRoutes(
         expiresAt: credential.expiresAt.toISOString(),
       });
     } catch {
-      return reply.code(503).send({ reasonCode: 'CREDENTIAL_REFERENCE_CREATE_FAILED' });
+      return writeUnavailable(request, reply, 'credentials', 'CREDENTIAL_REFERENCE_CREATE_FAILED');
     }
   });
 
@@ -58,50 +65,54 @@ export async function registerAgentToolApprovalRoutes(
       return reply.code(400).send({ reasonCode: 'AGENT_APPROVAL_INPUT_INVALID' });
     }
 
-    const tool = await getPlatformTool(body.toolName);
-    if (!tool || !canActorDiscoverTool(actor, tool)) {
-      return reply.code(403).send({ reasonCode: 'TOOL_NOT_AVAILABLE' });
-    }
-    const security = getToolSecurityDefinition(tool.name);
-    const resource = await resolveToolResource(tool.name, args);
-    const risk = tool.name === 'execute_code'
-      ? classifyExecuteCodeRisk({
-        runtime: String(args.runtime ?? ''),
-        code: String(args.code ?? ''),
-        files: Array.isArray(args.files) ? args.files : undefined,
-      })
-      : undefined;
-    const approvalConfigEnabled = (await agentExecutionConfigService.get()).approvalEnabled;
-    const approvalBaseRequired = risk?.requiresApproval
-      ?? Boolean(tool.requiresApproval || (security && security.approval !== 'never'));
-    const decision = decideToolPolicy(
-      actor,
-      tool,
-      args,
-      resource,
-      false,
-      Boolean(approvalConfigEnabled && approvalBaseRequired),
-    );
-    if (decision.reasonCode !== 'APPROVAL_REQUIRED') {
-      const status = decision.allow ? 409 : 403;
-      return reply.code(status).send({
-        reasonCode: decision.allow ? 'APPROVAL_NOT_REQUIRED' : decision.reasonCode,
-      });
-    }
+    try {
+      const tool = await getPlatformTool(body.toolName);
+      if (!tool || !canActorDiscoverTool(actor, tool)) {
+        return reply.code(403).send({ reasonCode: 'TOOL_NOT_AVAILABLE' });
+      }
+      const security = getToolSecurityDefinition(tool.name);
+      const resource = await resolveToolResource(tool.name, args);
+      const risk = tool.name === 'execute_code'
+        ? classifyExecuteCodeRisk({
+          runtime: String(args.runtime ?? ''),
+          code: String(args.code ?? ''),
+          files: Array.isArray(args.files) ? args.files : undefined,
+        })
+        : undefined;
+      const approvalConfigEnabled = (await agentExecutionConfigService.get()).approvalEnabled;
+      const approvalBaseRequired = risk?.requiresApproval
+        ?? Boolean(tool.requiresApproval || (security && security.approval !== 'never'));
+      const decision = decideToolPolicy(
+        actor,
+        tool,
+        args,
+        resource,
+        false,
+        Boolean(approvalConfigEnabled && approvalBaseRequired),
+      );
+      if (decision.reasonCode !== 'APPROVAL_REQUIRED') {
+        const status = decision.allow ? 409 : 403;
+        return reply.code(status).send({
+          reasonCode: decision.allow ? 'APPROVAL_NOT_REQUIRED' : decision.reasonCode,
+        });
+      }
 
-    const expiresInMs = Number.isSafeInteger(body.expiresInMs) ? Number(body.expiresInMs) : undefined;
-    const approval = await getAgentToolApprovalService().submit(actor, tool, args, resource, {
-      expiresInMs,
-      scope: risk?.scope,
-      riskLevel: risk?.level,
-    });
-    return reply.code(201).send({
-      approvalId: approval.id,
-      toolName: tool.name,
-      resource,
-      ...(risk ? { riskLevel: risk.level, approvalScope: risk.scope } : {}),
-      expiresAt: approval.expiresAt.toISOString(),
-    });
+      const expiresInMs = Number.isSafeInteger(body.expiresInMs) ? Number(body.expiresInMs) : undefined;
+      const approval = await getAgentToolApprovalService().submit(actor, tool, args, resource, {
+        expiresInMs,
+        scope: risk?.scope,
+        riskLevel: risk?.level,
+      });
+      return reply.code(201).send({
+        approvalId: approval.id,
+        toolName: tool.name,
+        resource,
+        ...(risk ? { riskLevel: risk.level, approvalScope: risk.scope } : {}),
+        expiresAt: approval.expiresAt.toISOString(),
+      });
+    } catch {
+      return writeUnavailable(request, reply, 'submit', 'AGENT_APPROVAL_SUBMIT_FAILED');
+    }
   });
 
   fastify.get('/api/agent/approvals/pending', {
@@ -124,16 +135,20 @@ export async function registerAgentToolApprovalRoutes(
     if (body?.action !== 'approve' && body?.action !== 'reject') {
       return reply.code(400).send({ reasonCode: 'AGENT_APPROVAL_REVIEW_INVALID' });
     }
-    const reviewed = await getAgentToolApprovalService().review(
-      id,
-      actor.userId,
-      body.action,
-      typeof body.note === 'string' ? body.note : undefined,
-      body.scope === 'once' || body.scope === 'window' || body.scope === 'session' ? body.scope : undefined,
-    );
-    return reviewed
-      ? reply.send({ success: true, approvalId: id, status: body.action === 'approve' ? 'approved' : 'rejected' })
-      : reply.code(409).send({ reasonCode: 'AGENT_APPROVAL_NOT_PENDING' });
+    try {
+      const reviewed = await getAgentToolApprovalService().review(
+        id,
+        actor.userId,
+        body.action,
+        typeof body.note === 'string' ? body.note : undefined,
+        body.scope === 'once' || body.scope === 'window' || body.scope === 'session' ? body.scope : undefined,
+      );
+      return reviewed
+        ? reply.send({ success: true, approvalId: id, status: body.action === 'approve' ? 'approved' : 'rejected' })
+        : reply.code(409).send({ reasonCode: 'AGENT_APPROVAL_NOT_PENDING' });
+    } catch {
+      return writeUnavailable(request, reply, 'review', 'AGENT_APPROVAL_REVIEW_FAILED');
+    }
   });
 
   fastify.post('/api/agent/approvals/batch-review', {
@@ -145,21 +160,25 @@ export async function registerAgentToolApprovalRoutes(
       || (body.action !== 'approve' && body.action !== 'reject')) {
       return reply.code(400).send({ reasonCode: 'AGENT_APPROVAL_BATCH_REVIEW_INVALID' });
     }
-    const approvalIds = await getAgentToolApprovalService().reviewPendingByTool(
-      body.toolName,
-      actor.userId,
-      body.action,
-      typeof body.note === 'string' ? body.note : undefined,
-      body.scope === 'once' || body.scope === 'window' || body.scope === 'session' ? body.scope : undefined,
-    );
-    return approvalIds.length > 0
-      ? reply.send({
-        success: true,
-        toolName: body.toolName,
-        status: body.action === 'approve' ? 'approved' : 'rejected',
-        approvalIds,
-        count: approvalIds.length,
-      })
-      : reply.code(409).send({ reasonCode: 'AGENT_APPROVAL_NOT_PENDING' });
+    try {
+      const approvalIds = await getAgentToolApprovalService().reviewPendingByTool(
+        body.toolName,
+        actor.userId,
+        body.action,
+        typeof body.note === 'string' ? body.note : undefined,
+        body.scope === 'once' || body.scope === 'window' || body.scope === 'session' ? body.scope : undefined,
+      );
+      return approvalIds.length > 0
+        ? reply.send({
+          success: true,
+          toolName: body.toolName,
+          status: body.action === 'approve' ? 'approved' : 'rejected',
+          approvalIds,
+          count: approvalIds.length,
+        })
+        : reply.code(409).send({ reasonCode: 'AGENT_APPROVAL_NOT_PENDING' });
+    } catch {
+      return writeUnavailable(request, reply, 'batch-review', 'AGENT_APPROVAL_BATCH_REVIEW_FAILED');
+    }
   });
 }
