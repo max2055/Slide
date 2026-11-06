@@ -45,6 +45,23 @@ describe('actor tool policy', () => {
     expect(consume).not.toHaveBeenCalled();
   });
 
+  it('reports a result-audit gap without an approval receipt and preserves tool data', async () => {
+    vi.spyOn(agentExecutionConfigService, 'get').mockResolvedValue({
+      approvalEnabled: false, restrictedNetworkEnabled: false, reasonCode: 'EXECUTION_CONFIG_READY',
+    });
+    const data = { instances: [1] };
+    const outcome = await executeToolWithPolicy(
+      actor(['admin']), tool({ handler: async () => ({ success: true, data, details: { original: true } }) }), {},
+      async () => ({ type: 'none' }), { consume: vi.fn() },
+      { record: async entry => { if (entry.phase === 'result') throw new Error('audit offline'); } },
+    );
+    expect(outcome.result).toMatchObject({
+      success: true, status: 'warning', data,
+      details: { original: true, resultAudit: 'unavailable', approvalExecution: 'not_applicable' },
+    });
+    expect(outcome.result.summary).toContain('结果审计未持久化');
+  });
+
   // MAX-353 / #622: result audit and approval completion are independent.
   it.each(
     ['execute_code', 'list_database_instances'].flatMap(name =>

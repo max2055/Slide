@@ -196,9 +196,61 @@ describe.skipIf(!port)('approval dispatch: real MySQL transactions', () => {
       await audit.record(record, connection);
     });
     expect((await execute(failingAudit)).result.errorCode).toBe('AUDIT_UNAVAILABLE');
-    expect(await state()).toEqual({ status: 'consumed', used_count: 0, intents: ['dispatching'] });
+    expect(await state()).toEqual({ status: 'consumed', used_count: 0, intents: ['finished'] });
     expect((await execute()).result.errorCode).toBe('APPROVAL_CONSUMED');
     expect(handler).toHaveBeenCalledTimes(1);
+  });
+
+  // MAX-353: real INSERT/UPDATE failures, real approval consumption and intent.
+  it.each(
+    ['execute_code', 'list_database_instances'].flatMap(name =>
+      [false, true].flatMap(handlerFails =>
+        [false, true].flatMap(auditFails =>
+          [false, true].map(finishFails => ({ name, handlerFails, auditFails, finishFails }))))),
+  )('result settlement in MySQL: $name handler=$handlerFails audit=$auditFails finish=$finishFails', async ({ name, handlerFails, auditFails, finishFails }) => {
+    tool = { ...tool, name, requiresApproval: true };
+    args = { runtime: 'shell', code: 'curl https://example.com' };
+    const request = await service.submit(actor, tool, args, resource);
+    await service.review(request.id, 7, 'approve');
+    args.approvalId = request.id;
+    handler.mockImplementation(async () => {
+      if (handlerFails) throw new Error('handler after side effect');
+      return { success: true, data: { output: 'execution output' } };
+    });
+    if (finishFails) {
+      await pool.query(`CREATE TRIGGER max353_finish_failure BEFORE UPDATE ON agent_tool_execution_intents
+        FOR EACH ROW BEGIN IF NEW.state = 'finished' THEN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'injected finish failure'; END IF; END`);
+    }
+    const recorder = new AgentToolAuditService(() => store);
+    // A nonexistent actor causes a real FK violation only for the result INSERT.
+    vi.spyOn(recorder, 'record').mockImplementation((record, connection) => audit.record(
+      record.phase === 'result' && auditFails ? { ...record, actor: { ...actor, userId: 99999 } } : record, connection,
+    ));
+    try {
+      const outcome = await execute(recorder);
+      expect(await state()).toEqual({ status: 'consumed', used_count: 0, intents: [finishFails ? 'dispatching' : 'finished'] });
+      const [rows] = await pool.query<any[]>('SELECT phase, request_id, approval_id FROM agent_tool_audit WHERE approval_id = ? ORDER BY id', [args.approvalId]);
+      expect(rows.map(row => row.phase)).toEqual(auditFails ? ['decision'] : ['decision', 'result']);
+      expect(rows.every(row => row.request_id === actor.requestId && String(row.approval_id) === String(args.approvalId))).toBe(true);
+      expect(outcome.decision.requestId).toBe(actor.requestId);
+      if (auditFails || finishFails) {
+        expect(outcome.result.details).toMatchObject({
+          resultAudit: auditFails ? 'unavailable' : 'persisted',
+          approvalExecution: finishFails ? 'unavailable' : 'finished',
+        });
+        if (name === 'execute_code') {
+          expect(outcome.result.errorCode).toBe('AUDIT_UNAVAILABLE');
+          expect(JSON.stringify(outcome.result)).not.toContain('execution output');
+        } else {
+          expect(outcome.result.success).toBe(!handlerFails);
+          expect(outcome.result.status).toBe(handlerFails ? 'error' : 'warning');
+        }
+      } else expect(outcome.result.success).toBe(!handlerFails);
+      expect((await execute()).result.errorCode).toBe('APPROVAL_CONSUMED');
+      expect(handler).toHaveBeenCalledTimes(1);
+    } finally {
+      if (finishFails) await pool.query('DROP TRIGGER max353_finish_failure');
+    }
   });
 
   it('an ambiguous commit keeps the intent and forbids replay without running the handler', async () => {
