@@ -1,4 +1,4 @@
-import Fastify, { type FastifyInstance, type HTTPMethods } from 'fastify';
+import Fastify, { type FastifyInstance } from 'fastify';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { rbacApiRoutes } from './rbac-api.js';
 import { dbConnection } from '../db-connection.js';
@@ -6,6 +6,8 @@ import { dbConnection } from '../db-connection.js';
 vi.mock('../db-connection.js', () => ({
   dbConnection: { getPool: vi.fn(), isConnected: vi.fn(() => true) },
 }));
+
+type Method = 'GET' | 'POST' | 'PUT' | 'DELETE';
 
 const writes = [
   ['POST', '/roles', { name: 'operator' }],
@@ -17,7 +19,7 @@ const writes = [
 ] as const;
 
 // Every path parameter position is exercised, including the second ID in deletes.
-const idRoutes: Array<[HTTPMethods, string, unknown?]> = [
+const idRoutes: Array<[Method, string, unknown?]> = [
   ['GET', '/roles/BAD'], ['PUT', '/roles/BAD', { description: 'updated' }],
   ['DELETE', '/roles/BAD'], ['DELETE', '/permissions/BAD'],
   ['POST', '/roles/BAD/permissions', { permissionId: 2 }],
@@ -47,7 +49,7 @@ describe('RBAC route input boundaries (#493 / #494 / #495)', () => {
   });
   afterEach(async () => { await app.close(); });
 
-  async function send(method: HTTPMethods, path: string, body?: unknown, authorization: string | undefined = 'admin') {
+  async function send(method: Method, path: string, body?: unknown, authorization: string | undefined = 'admin') {
     return app.inject({ method, url: `/api/v1/rbac${path}`,
       headers: { ...(authorization ? { authorization } : {}), ...(body !== undefined ? { 'content-type': 'application/json' } : {}) },
       ...(body !== undefined ? { payload: JSON.stringify(body) } : {}),
