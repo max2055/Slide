@@ -182,68 +182,105 @@ class ApprovalService {
       ['executing', review.reviewed_by || null, review.notes || null, requestId, 'pending'],
     ) as any;
     if (claim.affectedRows === 0) return { success: false, error: '审批请求不存在或已被认领' };
-    await this.writeEvent(requestId, 'claimed', { execute_after_approve: review.execute_after_approve !== false }, review.reviewed_by);
+    let stage = 'operation_claim';
+    let executorEntered = false;
+    let terminalPersisted = false;
+    let execResult: Awaited<ReturnType<typeof sqlExecutor.executeSql>> | null = null;
     try {
+      await this.writeEvent(requestId, 'claimed', { execute_after_approve: review.execute_after_approve !== false }, review.reviewed_by);
       await lifecycle?.onClaimed?.(req);
-    } catch (error: any) {
-      const message = error instanceof Error ? error.message : 'Operation lifecycle claim failed';
-      await pool.execute(
-        'UPDATE approval_requests SET status = ?, execution_result = ? WHERE id = ? AND status = ?',
-        ['execution_failed', JSON.stringify({ error: message }), requestId, 'executing'],
-      );
-      await this.writeEvent(requestId, 'execution_failed', { error: message, stage: 'operation_claim' }, review.reviewed_by);
-      return { success: false, error: message };
-    }
-
-    let execResult = null;
-    if (review.execute_after_approve !== false) {
-      await lifecycle?.onExecutionStarted?.(req);
-      execResult = await sqlExecutor.executeSql(req.instance_id, req.sql_text, {
-        userId: String(review.reviewed_by || ''),
-        username: 'dba-approver',
-        database: req.target_database || undefined,
-        approvalGrant: {
-          approvalRequestId: requestId,
-          operationId: req.operation_id || '',
-          reviewerId: Number(review.reviewed_by || 0),
-        },
-      });
-      if (execResult.executionState === 'unknown') {
-        // Keep approval and operation claimed. A failed audit is not a rollback.
-        await pool.execute('UPDATE approval_requests SET execution_result = ? WHERE id = ?',
-          [JSON.stringify(execResult), requestId]);
-        await this.writeEvent(requestId, 'reconciliation_required', execResult, review.reviewed_by);
-        return { success: false, error: execResult.error, execution_result: execResult };
-      }
-      const status = execResult.success ? 'executed' : 'execution_failed';
-      const rollbackInfo = {
-        available: false,
-        executed_at: new Date().toISOString(),
-        reason: 'ROLLBACK_SQL_NOT_PROVIDED',
-      };
-      await pool.execute(
-        'UPDATE approval_requests SET status = ?, reviewed_by = ?, review_notes = ?, execution_result = ?, rollback_info = ? WHERE id = ?',
-        [status, review.reviewed_by || null, review.notes || null,
-         JSON.stringify(execResult), JSON.stringify(rollbackInfo), requestId]
-      );
-      await this.writeEvent(requestId, 'approved', { execute_after_approve: true }, review.reviewed_by);
-      if (execResult.success) {
-        await this.writeEvent(requestId, 'executed', { rows: execResult.rowsAffected, duration: execResult.duration }, review.reviewed_by);
+      if (review.execute_after_approve !== false) {
+        stage = 'operation_start';
+        await lifecycle?.onExecutionStarted?.(req);
+        stage = 'sql_execution';
+        executorEntered = true;
+        execResult = await sqlExecutor.executeSql(req.instance_id, req.sql_text, {
+          userId: String(review.reviewed_by || ''),
+          username: 'dba-approver',
+          database: req.target_database || undefined,
+          approvalGrant: {
+            approvalRequestId: requestId,
+            operationId: req.operation_id || '',
+            reviewerId: Number(review.reviewed_by || 0),
+          },
+        });
+        stage = 'outcome_persistence';
+        if (execResult.executionState === 'unknown') {
+          // Keep approval and operation claimed. A failed audit is not a rollback.
+          await pool.execute('UPDATE approval_requests SET execution_result = ? WHERE id = ?',
+            [JSON.stringify(execResult), requestId]);
+          await this.writeEvent(requestId, 'reconciliation_required', execResult, review.reviewed_by);
+          return { success: false, error: execResult.error, execution_result: execResult };
+        }
+        const status = execResult.success ? 'executed' : 'execution_failed';
+        const rollbackInfo = {
+          available: false,
+          executed_at: new Date().toISOString(),
+          reason: 'ROLLBACK_SQL_NOT_PROVIDED',
+        };
+        await pool.execute(
+          'UPDATE approval_requests SET status = ?, reviewed_by = ?, review_notes = ?, execution_result = ?, rollback_info = ? WHERE id = ?',
+          [status, review.reviewed_by || null, review.notes || null,
+           JSON.stringify(execResult), JSON.stringify(rollbackInfo), requestId]
+        );
+        terminalPersisted = true;
+        await this.writeEvent(requestId, 'approved', { execute_after_approve: true }, review.reviewed_by);
+        if (execResult.success) {
+          await this.writeEvent(requestId, 'executed', { rows: execResult.rowCount, duration: execResult.duration_ms }, review.reviewed_by);
+        } else {
+          await this.writeEvent(requestId, 'execution_failed', { error: execResult.error }, review.reviewed_by);
+        }
       } else {
-        await this.writeEvent(requestId, 'execution_failed', { error: execResult.error }, review.reviewed_by);
+        stage = 'outcome_persistence';
+        // 纯审批，不自动执行
+        await pool.execute(
+          'UPDATE approval_requests SET status = ?, reviewed_by = ?, review_notes = ? WHERE id = ?',
+          ['approved', review.reviewed_by || null, review.notes || null, requestId]
+        );
+        terminalPersisted = true;
+        await this.writeEvent(requestId, 'approved', { execute_after_approve: false }, review.reviewed_by);
       }
-    } else {
-      // 纯审批，不自动执行
-      await pool.execute(
-        'UPDATE approval_requests SET status = ?, reviewed_by = ?, review_notes = ? WHERE id = ?',
-        ['approved', review.reviewed_by || null, review.notes || null, requestId]
-      );
-      await this.writeEvent(requestId, 'approved', { execute_after_approve: false }, review.reviewed_by);
-    }
 
-    const success = execResult ? execResult.success : true;
-    await lifecycle?.onCompleted?.(req, { success, error: execResult?.error }, review.execute_after_approve !== false);
-    return { success, execution_result: execResult };
+      const success = execResult ? execResult.success : true;
+      stage = 'operation_completion';
+      await lifecycle?.onCompleted?.(req, { success, error: execResult?.error }, review.execute_after_approve !== false);
+      return { success, execution_result: execResult };
+    } catch (error) {
+      // Once the executor was entered, a thrown error is not proof that SQL was
+      // never sent. Even a successful driver result needs reconciliation if its
+      // terminal write failed. Never reopen the CAS gate or automatically retry.
+      const message = error instanceof Error ? error.message : 'Approval lifecycle failed';
+      const executionResult = {
+        success: false,
+        executionState: terminalPersisted
+          ? execResult?.executionState ?? (execResult?.success ? 'succeeded' : 'not_started')
+          : executorEntered ? 'unknown' : 'not_started',
+        retryable: false,
+        operationId: req.operation_id,
+        error: message,
+        stage,
+        observedResult: execResult,
+        ...(executorEntered || terminalPersisted ? { reconciliationRequired: true } : {}),
+        persistenceError: undefined as string | undefined,
+      };
+      try {
+        if (!executorEntered && !terminalPersisted) {
+          await pool.execute(
+            'UPDATE approval_requests SET status = ?, execution_result = ? WHERE id = ? AND status = ?',
+            ['execution_failed', JSON.stringify(executionResult), requestId, 'executing'],
+          );
+        } else {
+          // Preserve any committed terminal state when a completion hook fails.
+          await pool.execute('UPDATE approval_requests SET execution_result = ? WHERE id = ?',
+            [JSON.stringify(executionResult), requestId]);
+        }
+      } catch (persistenceError) {
+        executionResult.persistenceError = persistenceError instanceof Error ? persistenceError.message : 'Outcome persistence failed';
+      }
+      await this.writeEvent(requestId, executorEntered || terminalPersisted || executionResult.persistenceError
+        ? 'reconciliation_required' : 'execution_failed', executionResult, review.reviewed_by);
+      return { success: false, error: message, execution_result: executionResult };
+    }
   }
 
   /**
@@ -277,7 +314,7 @@ class ApprovalService {
         ? ` AND instance_id IN (${allowedInstanceIds.map(() => '?').join(', ')})`
         : ' AND 1 = 0';
     const [rows] = await pool.query(
-      `SELECT * FROM approval_requests WHERE status IN ('approved','rejected','executed','execution_failed')${scopeSql} ORDER BY updated_at DESC LIMIT ?`,
+      `SELECT * FROM approval_requests WHERE status IN ('executing','approved','rejected','executed','execution_failed')${scopeSql} ORDER BY updated_at DESC LIMIT ?`,
       [...(allowedInstanceIds ?? []), safeLimit]
     ) as any;
     return rows;

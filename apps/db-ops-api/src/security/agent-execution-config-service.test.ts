@@ -32,4 +32,25 @@ describe('AgentExecutionConfigService', () => {
       'agent_sandbox_network_enabled', 'true', 7,
     ]));
   });
+
+  it('OCR-0237: submits both controls in one atomic statement', async () => {
+    const execute = vi.fn().mockResolvedValue([[]]);
+    const service = new AgentExecutionConfigService(() => ({ execute }));
+    await expect(service.set({ approvalEnabled: false, restrictedNetworkEnabled: true }, 7))
+      .resolves.toEqual({ approvalEnabled: false, restrictedNetworkEnabled: true, reasonCode: 'EXECUTION_CONFIG_UPDATED' });
+    const writes = execute.mock.calls.filter(([sql]) => sql.includes('INSERT'));
+    expect(writes).toHaveLength(1);
+    expect(writes[0][1]).toEqual([
+      'agent_tool_approval_enabled', 'false', expect.any(String), 7,
+      'agent_sandbox_network_enabled', 'true', expect.any(String), 7,
+    ]);
+  });
+
+  it('returns the stable error code when the atomic write fails', async () => {
+    const execute = vi.fn().mockResolvedValueOnce([[]]).mockRejectedValueOnce(new Error('storage detail'));
+    await expect(new AgentExecutionConfigService(() => ({ execute }))
+      .set({ approvalEnabled: false, restrictedNetworkEnabled: true }, 7))
+      .rejects.toThrow('EXECUTION_CONFIG_UPDATE_FAILED');
+  });
+
 });
