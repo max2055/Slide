@@ -39,6 +39,11 @@ function store(failAt?: number, commitUnknown = false, rollbackFails = false) {
 }
 
 describe('atomic batch reviews', () => {
+  it('preserves action-plan isolation for a legacy connection adapter', async () => {
+    const connection = { execute: async () => [[]] as [any], release() {}, destroy() {} };
+    const service = new AgentToolApprovalService(() => ({ ...connection, getConnection: async () => connection }), 'test-hmac-key');
+    await expect(service.reviewPendingByTool('operations_action_plan', 9, 'approve')).resolves.toEqual([]);
+  });
   it.each([1, 2, 3])('rolls back all reviews on write failure at %i', async position => {
     const test = store(position);
     await expect(test.service.reviewPendingByTool('execute_code', 9, 'approve')).rejects.toThrow();
