@@ -84,4 +84,4 @@ it.skipIf(!process.env.MAX349_MYSQL_PORT)('MAX-349 real MySQL boundary and encry
   } finally {
     await pool.end();
   }
-});
+}, 30_000);
