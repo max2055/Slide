@@ -14,7 +14,7 @@ const cases = [
 
 beforeEach(() => {
   vi.stubEnv('ENCRYPTION_KEY', '0123456789abcdef0123456789abcdef');
-  vi.stubEnv('AGENT_APPROVAL_HMAC_KEY', 'max350-synthetic-hmac-key');
+  vi.stubEnv('AGENT_APPROVAL_HMAC_KEY', 'max350-synthetic-hmac-key-32-characters');
   vi.spyOn(agentExecutionConfigService, 'get').mockResolvedValue({
     approvalEnabled: true, restrictedNetworkEnabled: false, reasonCode: 'EXECUTION_CONFIG_READY',
   });
