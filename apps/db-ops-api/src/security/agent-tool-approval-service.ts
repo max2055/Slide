@@ -16,6 +16,9 @@ interface ApprovalExecutor {
 }
 
 interface ApprovalConnection extends ApprovalExecutor {
+  beginTransaction?(): Promise<void>;
+  commit?(): Promise<void>;
+  rollback?(): Promise<void>;
   release(): void;
   destroy(): void;
 }
@@ -228,8 +231,19 @@ export class AgentToolApprovalService {
     scope?: Exclude<ExecuteCodeApprovalScope, 'none'>,
   ): Promise<boolean> {
     if (!/^\d+$/.test(id) || !Number.isSafeInteger(reviewerId) || reviewerId <= 0) return false;
+    return this.reviewWithExecutor(this.executor(), id, reviewerId, action, note, scope);
+  }
+
+  private async reviewWithExecutor(
+    executor: ApprovalExecutor,
+    id: string,
+    reviewerId: number,
+    action: 'approve' | 'reject',
+    note?: string,
+    scope?: Exclude<ExecuteCodeApprovalScope, 'none'>,
+  ): Promise<boolean> {
     if (action === 'reject') {
-      const [result] = await this.executor().execute(
+      const [result] = await executor.execute(
         `UPDATE agent_tool_approvals
          SET status = 'rejected', reviewer_id = ?, review_note = ?, reviewed_at = NOW()
          WHERE id = ? AND status = 'pending' AND expires_at > NOW() AND tool_name <> 'operations_action_plan'`,
@@ -237,7 +251,7 @@ export class AgentToolApprovalService {
       );
       return Number(result?.affectedRows) === 1;
     }
-    const [result] = await this.executor().execute(
+    const [result] = await executor.execute(
       `UPDATE agent_tool_approvals
        SET status = 'approved', reviewer_id = ?, review_note = ?, reviewed_at = NOW(),
            scope = CASE
@@ -266,20 +280,46 @@ export class AgentToolApprovalService {
     scope?: Exclude<ExecuteCodeApprovalScope, 'none'>,
   ): Promise<string[]> {
     if (!toolName || toolName.length > 128 || !Number.isSafeInteger(reviewerId) || reviewerId <= 0) return [];
-    const [rows] = await this.executor().execute(
-      `SELECT id FROM agent_tool_approvals
-       WHERE tool_name = ? AND tool_name <> 'operations_action_plan' AND status = 'pending' AND expires_at > NOW()
-       ORDER BY id ASC LIMIT 100`,
-      [toolName],
-    );
-    const ids = Array.isArray(rows)
-      ? rows.map((row) => String(row.id)).filter((id) => /^\d+$/.test(id))
-      : [];
-    const reviewed: string[] = [];
-    for (const id of ids) {
-      if (await this.review(id, reviewerId, action, note, scope)) reviewed.push(id);
+    const executor = this.executor();
+    if (!executor.getConnection) throw new Error('AGENT_APPROVAL_STORE_UNAVAILABLE');
+    const connection = await executor.getConnection();
+    let reusable = false;
+    let committing = false;
+    try {
+      if (!connection.beginTransaction || !connection.commit || !connection.rollback) {
+        throw new Error('AGENT_APPROVAL_STORE_UNAVAILABLE');
+      }
+      await connection.beginTransaction();
+      const [rows] = await connection.execute(
+        `SELECT id FROM agent_tool_approvals
+         WHERE tool_name = ? AND tool_name <> 'operations_action_plan' AND status = 'pending' AND expires_at > NOW()
+         ORDER BY id ASC LIMIT 100 FOR UPDATE`,
+        [toolName],
+      );
+      const ids = Array.isArray(rows)
+        ? rows.map((row) => String(row.id)).filter((id) => /^\d+$/.test(id))
+        : [];
+      const reviewed: string[] = [];
+      for (const id of ids) {
+        if (await this.reviewWithExecutor(connection, id, reviewerId, action, note, scope)) reviewed.push(id);
+      }
+      committing = true;
+      await connection.commit();
+      reusable = true;
+      return reviewed;
+    } catch (error) {
+      // A COMMIT may have reached MySQL even when its acknowledgement was lost.
+      // Never retry it or claim a rollback; callers must reconcile stored state.
+      if (committing) throw new Error('AGENT_APPROVAL_BATCH_REVIEW_OUTCOME_UNKNOWN');
+      try {
+        await connection.rollback!();
+        reusable = true;
+      } catch { /* Closing the pinned connection aborts an unfinished transaction. */ }
+      throw error;
+    } finally {
+      if (reusable) connection.release();
+      else connection.destroy();
     }
-    return reviewed;
   }
 
   async consumeApproved(

@@ -29,6 +29,11 @@ function store(failAt?: number, commitUnknown = false, rollbackFails = false) {
       throw new Error('unexpected query');
     }),
   };
+  Object.assign(connection, {
+    beginTransaction: () => connection.execute('START TRANSACTION'),
+    commit: () => connection.execute('COMMIT'),
+    rollback: () => connection.execute('ROLLBACK'),
+  });
   return { connection, persisted: () => persisted,
     service: new AgentToolApprovalService(() => ({ ...connection, getConnection: async () => connection }) as any, 'test-hmac-key') };
 }
@@ -53,7 +58,7 @@ describe('atomic batch reviews', () => {
     await expect(test.service.reviewPendingByTool('execute_code', 9, 'approve'))
       .rejects.toThrow('AGENT_APPROVAL_BATCH_REVIEW_OUTCOME_UNKNOWN');
     expect(test.persisted()).toEqual(['41', '42', '43']);
-    expect(test.connection.execute.mock.calls.filter(([sql]) => sql.includes('UPDATE'))).toHaveLength(3);
+    expect(test.connection.execute.mock.calls.filter(([sql]) => sql.startsWith('UPDATE'))).toHaveLength(3);
     expect(test.connection.destroy).toHaveBeenCalledOnce();
     expect(test.connection.release).not.toHaveBeenCalled();
   });

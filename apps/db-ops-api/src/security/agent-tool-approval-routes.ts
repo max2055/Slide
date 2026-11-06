@@ -177,8 +177,11 @@ export async function registerAgentToolApprovalRoutes(
           count: approvalIds.length,
         })
         : reply.code(409).send({ reasonCode: 'AGENT_APPROVAL_NOT_PENDING' });
-    } catch {
-      return writeUnavailable(request, reply, 'batch-review', 'AGENT_APPROVAL_BATCH_REVIEW_FAILED');
+    } catch (error) {
+      const reasonCode = error instanceof Error && error.message === 'AGENT_APPROVAL_BATCH_REVIEW_OUTCOME_UNKNOWN'
+        ? 'AGENT_APPROVAL_BATCH_REVIEW_OUTCOME_UNKNOWN'
+        : 'AGENT_APPROVAL_BATCH_REVIEW_FAILED';
+      return writeUnavailable(request, reply, 'batch-review', reasonCode);
     }
   });
 }
