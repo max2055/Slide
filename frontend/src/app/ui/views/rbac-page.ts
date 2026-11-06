@@ -327,7 +327,10 @@ export class RoleManagementTab extends LitElement {
 
   /* ─── Edit Permissions Modal ─── */
 
+  private permLoadSequence = 0;
+
   private async _openPermModal(role: Role) {
+    const request = ++this.permLoadSequence;
     this.permRoleId = role.id;
     this.permRoleName = role.name;
     this.permError = null;
@@ -339,20 +342,24 @@ export class RoleManagementTab extends LitElement {
         apiClient.get<Permission[]>("/v1/rbac/permissions"),
         apiClient.get<Permission[]>(`/v1/rbac/roles/${role.id}/permissions`),
       ]);
+      if (request !== this.permLoadSequence) return;
       this.allPermissions = allPerms;
       const granted = new Set(rolePerms.map((p) => p.id));
       this.checkedPermIds = new Set(granted);
       this.savedPermIds = new Set(granted);
       this.permReady = true;
     } catch (e: any) {
+      if (request !== this.permLoadSequence) return;
       this.permError = `加载权限失败：${e.message}`;
     } finally {
-      this.permLoading = false;
+      if (request === this.permLoadSequence) this.permLoading = false;
     }
   }
 
   private _closePermModal() {
     if (this.permSaving) return;
+    ++this.permLoadSequence;
+    this.permLoading = false;
     this.permReady = false;
     this.showPermModal = false;
     this.permRoleId = null;
@@ -890,7 +897,10 @@ export class InstancePermissionsTab extends LitElement {
     }
   }
 
+  private instanceLoadSequence = 0;
+
   private async _openModal(user: UserInfo) {
+    const request = ++this.instanceLoadSequence;
     this.modalUserId = user.id;
     this.modalUserName = user.username;
     this.saveError = null;
@@ -905,6 +915,7 @@ export class InstancePermissionsTab extends LitElement {
           `/v1/rbac/users/${user.id}/instances`
         ),
       ]);
+      if (request !== this.instanceLoadSequence) return;
       this.allInstances = Array.isArray(instances)
         ? instances
         : (instances as any).instances || [];
@@ -918,14 +929,17 @@ export class InstancePermissionsTab extends LitElement {
       this.savedGrantedIds = new Set(grantedIds);
       this.instancesReady = true;
     } catch (e: any) {
+      if (request !== this.instanceLoadSequence) return;
       this.saveError = `加载实例数据失败：${e.message}`;
     } finally {
-      this.loadingInstances = false;
+      if (request === this.instanceLoadSequence) this.loadingInstances = false;
     }
   }
 
   private _closeModal() {
     if (this.saving) return;
+    ++this.instanceLoadSequence;
+    this.loadingInstances = false;
     this.instancesReady = false;
     this.showModal = false;
     this.modalUserId = null;
