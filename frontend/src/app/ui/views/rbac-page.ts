@@ -4,6 +4,7 @@ import { LitElement, html, css, nothing } from "lit";
 import { sharedBtnStyles } from "../../styles/shared-btn-styles.ts";
 import { customElement, property, state } from "lit/decorators.js";
 import { apiClient } from '../../../api/index.js';
+import { showToast } from '../components/app-toast-container.ts';
 import "../components/app-dialog.js";
 import "../components/app-card.js";
 import "../components/app-badge.js";
@@ -320,7 +321,7 @@ export class RoleManagementTab extends LitElement {
       await apiClient.delete(`/v1/rbac/roles/${role.id}`);
       await this._loadRoles();
     } catch (e: any) {
-      this.error = `删除失败：${e.message}`;
+      showToast(`删除失败：${e.message}`, 'error');
     }
   }
 
@@ -680,7 +681,7 @@ export class PermissionManagementTab extends LitElement {
       await apiClient.delete(`/v1/rbac/permissions/${perm.id}`);
       await this._loadPermissions();
     } catch (e: any) {
-      this.error = `删除失败：${e.message}`;
+      showToast(`删除失败：${e.message}`, 'error');
     }
   }
 
