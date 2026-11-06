@@ -91,6 +91,18 @@ for (const kind of ['role', 'instance'] as const) {
       await h.save();
       expect(h.post).not.toHaveBeenCalled(); expect(h.del).not.toHaveBeenCalled();
     });
+    if (kind === 'instance') it('reads the real instance_id response on open and recovery', async () => {
+      const h = await setup();
+      h.get.mockImplementation(async (url: string) => url === h.endpoint
+        ? [...h.server].map(instance_id => ({ instance_id, access_level: 'read-only' }))
+        : [1, 2, 3].map(id => ({ id, name: `对象${id}` })));
+      await h.open();
+      expect(h.view[h.selected]).toEqual(new Set([1, 2]));
+      h.view[h.selected] = new Set([1, 2, 3]);
+      h.post.mockImplementationOnce(async () => { h.server.add(3); throw new Error('回执丢失'); });
+      await h.save();
+      expect(h.view[h.selected]).toEqual(new Set([1, 2, 3]));
+    });
     it('successfully saves grants and revokes and reopens from server state', async () => {
       const h = await setup();
       h.view[h.selected] = new Set([2, 3]);
