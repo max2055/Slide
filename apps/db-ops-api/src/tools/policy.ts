@@ -294,7 +294,7 @@ export async function executeToolWithPolicy(
         resource,
         requestOptions,
       );
-      decision = { ...decision, approvalId: approval.id, requestId: approval.id };
+      decision = { ...decision, approvalId: approval.id };
       return policyResult(decision, {
           success: false,
           errorCode: decision.reasonCode,
