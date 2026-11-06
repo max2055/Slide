@@ -510,7 +510,7 @@ export class RoleManagementTab extends LitElement {
   private _renderPermModal() {
     if (!this.showPermModal) return nothing;
     return html`
-      <app-dialog .open=${true} size="lg" .closeOnOverlay=${false} title="编辑权限 - ${this.permRoleName}" @app-dialog-close=${this._closePermModal}>
+      <app-dialog .open=${true} size="lg" .closeOnOverlay=${false} .closable=${!this.permSaving} title="编辑权限 - ${this.permRoleName}" @app-dialog-close=${this._closePermModal}>
         ${this.permError
           ? html`<div class="save-error">${this.permError}</div>`
           : ""}
@@ -793,6 +793,8 @@ export class PermissionManagementTab extends LitElement {
 
 /* ───────── InstancePermissionsTab ───────── */
 
+type InstanceGrant = number | { id: number } | { instance_id: number; access_level: string };
+
 interface DbInstance {
   id: number;
   name: string;
@@ -898,7 +900,7 @@ export class InstancePermissionsTab extends LitElement {
     try {
       const [instances, granted] = await Promise.all([
         apiClient.get<DbInstance[]>("/database/instances"),
-        apiClient.get<number[] | DbInstance[]>(
+        apiClient.get<InstanceGrant[]>(
           `/v1/rbac/users/${user.id}/instances`
         ),
       ]);
@@ -907,9 +909,9 @@ export class InstancePermissionsTab extends LitElement {
         : (instances as any).instances || [];
       // Sort instances by name
       this.allInstances.sort((a, b) => a.name.localeCompare(b.name));
-      // granted can be array of IDs or array of objects with id field
+      // Support the API instance_id records and legacy ID/id responses.
       const grantedIds: number[] = Array.isArray(granted)
-        ? granted.map((g: any) => (typeof g === "number" ? g : g.id))
+        ? granted.map((g: any) => (typeof g === "number" ? g : "instance_id" in g ? g.instance_id : g.id))
         : [];
       this.grantedInstanceIds = new Set(grantedIds);
       this.savedGrantedIds = new Set(grantedIds);
@@ -981,8 +983,8 @@ export class InstancePermissionsTab extends LitElement {
     } catch (e: any) {
       this.instancesReady = false;
       try {
-        const current = await apiClient.get<number[] | DbInstance[]>(`/v1/rbac/users/${userId}/instances`);
-        const ids = new Set(current.map(item => typeof item === "number" ? item : item.id));
+        const current = await apiClient.get<InstanceGrant[]>(`/v1/rbac/users/${userId}/instances`);
+        const ids = new Set(current.map(item => typeof item === "number" ? item : "instance_id" in item ? item.instance_id : item.id));
         this.grantedInstanceIds = new Set(ids);
         this.savedGrantedIds = new Set(ids);
         this.instancesReady = true;
@@ -1044,7 +1046,7 @@ export class InstancePermissionsTab extends LitElement {
     if (!this.showModal) return nothing;
     const title = `实例权限 - ${this.modalUserName}`;
     return html`
-      <app-dialog .open=${true} size="lg" title=${title} @app-dialog-close=${this._closeModal}>
+      <app-dialog .open=${true} size="lg" .closable=${!this.saving} title=${title} @app-dialog-close=${this._closeModal}>
         ${this.saveError
           ? html`<div class="save-error">${this.saveError}</div>`
           : ""}
