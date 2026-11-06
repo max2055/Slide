@@ -36,8 +36,12 @@ describe('RBAC route input boundaries (#493 / #494 / #495)', () => {
   let execute: ReturnType<typeof vi.fn>;
   beforeEach(async () => {
     vi.clearAllMocks();
-    execute = vi.fn(async (sql: string) => sql.startsWith('SELECT')
-      ? [[], []] : [{ insertId: 7, affectedRows: 1 }, []]);
+    execute = vi.fn(async (sql: string, values?: unknown[]) => {
+      if (sql === 'SELECT id FROM permissions WHERE id = ? FOR UPDATE') {
+        return [values?.[0] === 2 ? [{ id: 2 }] : [], []];
+      }
+      return sql.startsWith('SELECT') ? [[], []] : [{ insertId: 7, affectedRows: 1 }, []];
+    });
     const connection = { execute, beginTransaction: vi.fn(), commit: vi.fn(), rollback: vi.fn(), release: vi.fn() };
     vi.mocked(dbConnection.getPool).mockReturnValue({ execute, getConnection: vi.fn(async () => connection) } as any);
     app = Fastify();
@@ -115,12 +119,20 @@ describe('RBAC route input boundaries (#493 / #494 / #495)', () => {
 
   it('keeps authenticated administrator requests and numeric string IDs working', async () => {
     for (const [method, path, body] of writes) {
-      expect((await send(method, path, body)).statusCode).toBe(method === 'PUT' ? 200 : 201);
+      const response = await send(method, path, body);
+      expect(response.statusCode, `${method} ${path}: ${response.body}`).toBe(method === 'PUT' ? 200 : 201);
     }
     for (const [path, key] of [['/roles/1/permissions', 'permissionId'], ['/users/1/roles', 'roleId'], ['/users/1/instances', 'instanceId']]) {
       expect((await send('POST', path, { [key]: '2' })).statusCode).toBe(201);
     }
     expect(execute).toHaveBeenCalled();
+  });
+
+  it('keeps missing permission parents rejected without inserting a grant', async () => {
+    const response = await send('POST', '/roles/1/permissions', { permissionId: 999 });
+    expect(response.statusCode).toBe(400);
+    expect(response.json().error).toBe('权限不存在');
+    expect(execute.mock.calls.some(([sql]) => sql.startsWith('INSERT'))).toBe(false);
   });
 
   it('accepts schema boundary lengths and preserves optional descriptions', async () => {
