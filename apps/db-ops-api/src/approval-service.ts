@@ -110,7 +110,12 @@ class ApprovalService {
       console.warn('LLM 不可用，降级为模式匹配风险判断:', err);
     }
 
-    const riskLevel = aiRecommendation?.risk_level || (isDangerous ? 'high' : 'low');
+    const modelRiskLevel = typeof aiRecommendation?.risk_level === 'string'
+      ? aiRecommendation.risk_level.trim().toLowerCase()
+      : '';
+    const riskLevel = ['low', 'medium', 'high', 'critical'].includes(modelRiskLevel)
+      ? modelRiskLevel
+      : (isDangerous ? 'high' : 'low');
 
     // 写入数据库
     const pool = this.getPool();
