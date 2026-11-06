@@ -165,6 +165,13 @@ export interface ToolAuditRecorder {
   record(record: AgentToolAuditRecord, transaction?: AuditExecutor): Promise<void>;
 }
 
+/** A trusted handler guard rejected execution after the initial decision audit. */
+export class ToolPolicyDeniedError extends Error {
+  constructor(readonly actor: ActorContext, readonly decision: PolicyDecision) {
+    super(decision.reasonCode);
+  }
+}
+
 const persistentApprovalAuthorizer: ToolApprovalAuthorizer = {
   async authorize(actor, tool, args, resource, options, audit, signal) {
     const binding = getAgentToolApprovalService().binding(actor, tool, args, resource);
@@ -287,7 +294,7 @@ export async function executeToolWithPolicy(
         resource,
         requestOptions,
       );
-      decision = { ...decision, approvalId: approval.id, requestId: approval.id };
+      decision = { ...decision, approvalId: approval.id };
       return policyResult(decision, {
           success: false,
           errorCode: decision.reasonCode,
@@ -355,9 +362,15 @@ export async function executeToolWithPolicy(
   // Once entered, a throw may follow a side effect: never refund automatically.
   try {
     result = await tool.handler(args, context);
-  } catch {
-    console.error(`[AgentTool] Handler failed for ${tool.name}`);
-    result = { success: false, errorCode: 'TOOL_EXECUTION_FAILED', error: 'Tool execution failed' };
+  } catch (error) {
+    if (error instanceof ToolPolicyDeniedError) {
+      actor = error.actor;
+      decision = error.decision;
+      result = { success: false, errorCode: decision.reasonCode, error: 'Tool access denied' };
+    } else {
+      console.error(`[AgentTool] Handler failed for ${tool.name}`);
+      result = { success: false, errorCode: 'TOOL_EXECUTION_FAILED', error: 'Tool execution failed' };
+    }
   }
   try {
     await auditRecorder.record({ phase: 'result', actor, decision, args, result, agentId, agentPolicy });

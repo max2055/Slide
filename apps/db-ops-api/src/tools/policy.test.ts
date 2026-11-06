@@ -321,6 +321,31 @@ describe('actor tool policy', () => {
     expect(requester.submit).not.toHaveBeenCalled();
   });
 
+  it.each([
+    { code: 'pwd\nmv secret back' }, { code: 'ls\ncp a b' },
+    { code: 'pwd; cp a b' }, { code: 'cat foo > bar' },
+    { code: 'find . -delete' }, { code: 'find . -fprint output' },
+    { code: 'pwd ${x:=value}' },
+    { code: 'pwd', files: [{ path: 'input.txt', content: 'data' }] },
+  ])('GitHub #282: stops unsafe Shell before the handler with approval enabled: %j', async (input) => {
+    vi.spyOn(agentExecutionConfigService, 'get').mockResolvedValue({
+      approvalEnabled: true, restrictedNetworkEnabled: false, reasonCode: 'EXECUTION_CONFIG_READY',
+    });
+    const handler = vi.fn();
+    const requester = { submit: vi.fn().mockResolvedValue({ id: '73', expiresAt: new Date('2026-11-05T08:00:00Z') }) };
+    const result = await executeToolWithPolicy(
+      actor(['admin'], ['ai:execute']),
+      tool({ name: 'execute_code', requiredPermissions: ['ai:execute'], requiresApproval: true, handler }),
+      { runtime: 'shell', ...input }, undefined, { consume: async () => false },
+      { record: vi.fn().mockResolvedValue(undefined) }, undefined,
+      { approvalRequester: requester },
+    );
+    expect(result.decision).toMatchObject({ allow: false, reasonCode: 'APPROVAL_REQUIRED' });
+    expect(result.decision.riskLevel).not.toBe('low');
+    expect(requester.submit).toHaveBeenCalledOnce();
+    expect(handler).not.toHaveBeenCalled();
+  });
+
   it('creates an approval on the first medium-risk call and preserves session context', async () => {
     const requester = {
       submit: vi.fn().mockResolvedValue({ id: '73', expiresAt: new Date('2026-08-24T00:05:00.000Z') }),
@@ -338,7 +363,7 @@ describe('actor tool policy', () => {
     );
 
     expect(result).toMatchObject({
-      decision: { reasonCode: 'APPROVAL_REQUIRED', approvalId: '73', riskLevel: 'medium', approvalScope: 'window' },
+      decision: { reasonCode: 'APPROVAL_REQUIRED', requestId: 'policy-test', approvalId: '73', riskLevel: 'medium', approvalScope: 'window' },
       result: { success: false, data: { approvalId: '73', riskLevel: 'medium', approvalScope: 'window' } },
     });
     expect(requester.submit).toHaveBeenCalledWith(
@@ -346,6 +371,7 @@ describe('actor tool policy', () => {
       { scope: 'window', sessionKey: 'agent-session-1', riskLevel: 'medium' },
     );
     expect(JSON.stringify(audit.record.mock.calls[0][0])).toContain('"riskLevel":"medium"');
+    expect(audit.record.mock.calls[0][0].decision.requestId).toBe('policy-test');
   });
 
   it('passes the session and risk ceiling to approval consumption on retry', async () => {

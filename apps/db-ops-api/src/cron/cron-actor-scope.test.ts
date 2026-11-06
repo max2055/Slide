@@ -36,6 +36,38 @@ describe('Cron execution authority', () => {
       decision: expect.objectContaining({ allow: false, reasonCode: 'INSTANCE_SCOPE_DENIED' }) }));
   });
 
+  // GitHub #305: revoke during the initial allow audit, before the second check.
+  it.each(['scope', 'permission', 'boundary', 'unchanged'] as const)(
+    'keeps the refreshed %s decision consistent in the result and audit', async change => {
+      vi.spyOn(agentExecutionConfigService, 'get').mockResolvedValue({ approvalEnabled: false } as any);
+      let current = actor;
+      const audit = vi.spyOn(agentToolAuditService, 'record').mockImplementation(async record => {
+        if (record.phase !== 'decision' || !record.decision.allow) return;
+        if (change === 'scope') current = { ...actor, instanceScopes: {} };
+        if (change === 'permission') current = { ...actor, permissions: [] };
+        if (change === 'boundary') current = { ...actor, resourceBoundary: { instanceIds: [], serverIds: [], networkDeviceIds: [] } };
+      });
+      const handler = vi.spyOn((await getPlatformTool('get_instance_summary'))!, 'handler')
+        .mockResolvedValue({ success: true, data: { name: 'A' } });
+      const registry = await createCronToolRegistry({ actor, refreshActor: async () => current });
+      const result = await registry.execute('get_instance_summary', { instance_id: 1 });
+      const allow = change === 'unchanged';
+      const reasonCode = allow ? 'ALLOW' : change === 'permission' ? 'MISSING_PERMISSION' : 'INSTANCE_SCOPE_DENIED';
+      expect(result).toMatchObject({ success: allow, policyDecision: { allow, reasonCode },
+        ...(!allow ? { errorCode: reasonCode, error: 'Tool access denied' } : {}) });
+      expect(handler).toHaveBeenCalledTimes(allow ? 1 : 0);
+      const records = audit.mock.calls.map(([record]) => record);
+      expect(records[0]).toMatchObject({ phase: 'decision', decision: { allow: true, reasonCode: 'ALLOW' } });
+      expect(records.at(-1)).toMatchObject({ phase: 'result', actor: current,
+        decision: { allow, reasonCode }, result: { success: allow } });
+      if (!allow) {
+        expect(records).toHaveLength(3);
+        expect(records[1]).toMatchObject({ phase: 'decision', actor: current, decision: { allow: false, reasonCode } });
+        expect(records.at(-1)?.result).toMatchObject({ errorCode: reasonCode });
+      }
+    },
+  );
+
   it('closes execution when persistent decision audit fails', async () => {
     vi.spyOn(agentExecutionConfigService, 'get').mockResolvedValue({ approvalEnabled: false } as any);
     vi.spyOn(agentToolAuditService, 'record').mockRejectedValue(new Error('audit unavailable'));
