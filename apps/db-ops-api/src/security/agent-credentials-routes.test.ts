@@ -1,4 +1,7 @@
 import Fastify from 'fastify';
+import mysql from 'mysql2/promise';
+import { readFile } from 'node:fs/promises';
+import { decryptData } from '../db-connection.js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { registerAgentToolApprovalRoutes } from './agent-tool-approval-routes.js';
 import { dbConnection } from '../db-connection.js';
@@ -55,4 +58,30 @@ describe('Credential creation input and failure boundary', () => {
     expect(response.statusCode).toBe(503);
     expect(response.json()).toEqual({ reasonCode: 'CREDENTIAL_REFERENCE_CREATE_FAILED' });
   });
+});
+
+// Explicit opt-in: isolated disposable MySQL, never a platform business database.
+it.skipIf(!process.env.MAX349_MYSQL_PORT)('MAX-349 real MySQL boundary and encrypted round-trip', async () => {
+  const pool = mysql.createPool({ host: '127.0.0.1', port: Number(process.env.MAX349_MYSQL_PORT), user: 'root', database: 'max349' });
+  try {
+    await pool.query('CREATE TABLE IF NOT EXISTS users (id INT UNSIGNED PRIMARY KEY)');
+    await pool.query('INSERT IGNORE INTO users VALUES (9)');
+    const migration = await readFile(new URL('../../sql/migrations/056_agent_credential_references.sql', import.meta.url), 'utf8');
+    await pool.query(migration);
+    vi.spyOn(dbConnection, 'getPool').mockReturnValue(pool);
+    const invalid = await request('x'.repeat(16_385));
+    expect(invalid.statusCode).toBe(400);
+    expect(invalid.json()).toEqual({ reasonCode: 'CREDENTIAL_REFERENCE_INPUT_INVALID' });
+    const [empty] = await pool.query<any[]>('SELECT COUNT(*) AS count FROM agent_credential_references');
+    expect(empty[0].count).toBe(0);
+    const secret = 'x'.repeat(16_384);
+    const valid = await request(secret);
+    expect(valid.statusCode).toBe(201);
+    const [rows] = await pool.query<any[]>('SELECT secret_encrypted FROM agent_credential_references WHERE ref_id = ?', [valid.json().credentialRef]);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].secret_encrypted).not.toBe(secret);
+    expect(decryptData(rows[0].secret_encrypted)).toBe(secret);
+  } finally {
+    await pool.end();
+  }
 });
