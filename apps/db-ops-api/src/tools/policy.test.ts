@@ -45,6 +45,60 @@ describe('actor tool policy', () => {
     expect(consume).not.toHaveBeenCalled();
   });
 
+  // MAX-353 / #622: result audit and approval completion are independent.
+  it.each(
+    ['execute_code', 'list_database_instances'].flatMap(name =>
+      [false, true].flatMap(handlerFails =>
+        [false, true].flatMap(auditFails =>
+          [false, true].map(finishFails => ({ name, handlerFails, auditFails, finishFails }))))),
+  )('settles approval after handler: $name handler=$handlerFails audit=$auditFails finish=$finishFails', async ({ name, handlerFails, auditFails, finishFails }) => {
+    vi.spyOn(agentExecutionConfigService, 'get').mockResolvedValue({
+      approvalEnabled: true, restrictedNetworkEnabled: false, reasonCode: 'EXECUTION_CONFIG_READY',
+    });
+    const finish = vi.fn(async () => { if (finishFails) throw new Error('private finish failure'); });
+    const releaseBeforeHandler = vi.fn();
+    const handler = vi.fn(async () => {
+      if (handlerFails) throw new Error('private handler failure');
+      return { success: true, data: { output: 'tool output' }, details: { original: true } };
+    });
+    const record = vi.fn(async (entry: { phase: string }) => {
+      if (entry.phase === 'result' && auditFails) throw new Error('private audit failure');
+    });
+    const outcome = await executeToolWithPolicy(
+      actor(['admin']), tool({ name, requiresApproval: true, handler }),
+      { approvalId: '42', runtime: 'shell', code: 'curl https://example.com' },
+      async () => ({ type: 'none' }),
+      { consume: vi.fn(), authorize: async () => ({ approved: true, executionId: 'execution-42', finish, releaseBeforeHandler }) },
+      { record },
+    );
+    expect(handler).toHaveBeenCalledTimes(1);
+    expect(finish).toHaveBeenCalledTimes(1);
+    expect(releaseBeforeHandler).not.toHaveBeenCalled();
+    expect(record.mock.calls.map(([entry]) => entry.phase)).toEqual(['result']);
+    expect(outcome.decision).toMatchObject({ allow: true, approvalId: '42', requestId: 'policy-test' });
+    if (auditFails || finishFails) {
+      expect(outcome.result.details).toMatchObject({
+        resultAudit: auditFails ? 'unavailable' : 'persisted',
+        approvalExecution: finishFails ? 'unavailable' : 'finished',
+        executionId: 'execution-42', approvalId: '42', requestId: 'policy-test',
+      });
+      expect(outcome.result.next_actions?.join(' ')).toContain('不要重放');
+      if (name === 'execute_code') {
+        expect(outcome.result.success).toBe(false);
+        expect(outcome.result.errorCode).toBe('AUDIT_UNAVAILABLE');
+        expect(JSON.stringify(outcome.result)).not.toContain('tool output');
+      } else {
+        expect(outcome.result.success).toBe(!handlerFails);
+        expect(outcome.result.status).toBe(handlerFails ? 'error' : 'warning');
+        if (!handlerFails) expect(outcome.result.data).toEqual({ output: 'tool output' });
+        else expect(outcome.result.errorCode).toBe('TOOL_EXECUTION_FAILED');
+      }
+    } else {
+      expect(outcome.result.success).toBe(!handlerFails);
+    }
+    expect(JSON.stringify(outcome)).not.toContain('private');
+  });
+
   it('keeps execute_code available without a pending approval when the admin approval switch is off', async () => {
     vi.spyOn(agentExecutionConfigService, 'get').mockResolvedValue({
       approvalEnabled: false,
