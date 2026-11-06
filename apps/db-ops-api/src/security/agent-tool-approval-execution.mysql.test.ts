@@ -94,6 +94,41 @@ describe.skipIf(!port)('approval dispatch: real MySQL transactions', () => {
     expect(rows.map(r => r.allowed).sort()).toEqual([0, 1]);
   });
 
+  it('GitHub #621: preserves the call request ID through approval submission, retry and audit', async () => {
+    delete args.approvalId;
+    const requested = await execute();
+    const approvalId = requested.decision.approvalId;
+    expect(approvalId).toBeDefined();
+    expect(approvalId).not.toBe(actor.requestId);
+    expect(requested.decision).toMatchObject({
+      allow: false, reasonCode: 'APPROVAL_REQUIRED', requestId: actor.requestId,
+    });
+    expect(requested.result.data).toMatchObject({ approvalId });
+    expect(handler).not.toHaveBeenCalled();
+    const [approvals] = await pool.query<any[]>(
+      'SELECT status FROM agent_tool_approvals WHERE id = ?', [approvalId],
+    );
+    expect(approvals).toMatchObject([{ status: 'pending' }]);
+    const [requestAudits] = await pool.query<any[]>(
+      'SELECT request_id, approval_id FROM agent_tool_audit WHERE request_id = ?', [actor.requestId],
+    );
+    expect(requestAudits).toMatchObject([{ request_id: actor.requestId, approval_id: null }]);
+
+    await service.review(approvalId!, 7, 'approve');
+    args.approvalId = approvalId;
+    actor = { ...actor, requestId: randomUUID() };
+    const allowed = await execute();
+    expect(allowed.decision).toMatchObject({ allow: true, requestId: actor.requestId, approvalId });
+    expect(handler).toHaveBeenCalledOnce();
+    const [audits] = await pool.query<any[]>(
+      'SELECT phase, request_id, approval_id FROM agent_tool_audit WHERE approval_id = ? ORDER BY id', [approvalId],
+    );
+    expect(audits).toMatchObject([
+      { phase: 'decision', request_id: actor.requestId, approval_id: Number(approvalId) },
+      { phase: 'result', request_id: actor.requestId, approval_id: Number(approvalId) },
+    ]);
+  });
+
   it('rolls back consumption and intent when the real audit INSERT fails', async () => {
     const failingAudit = new AgentToolAuditService(() => store);
     vi.spyOn(failingAudit, 'record').mockImplementation((record, connection) =>

@@ -363,7 +363,7 @@ describe('actor tool policy', () => {
     );
 
     expect(result).toMatchObject({
-      decision: { reasonCode: 'APPROVAL_REQUIRED', approvalId: '73', riskLevel: 'medium', approvalScope: 'window' },
+      decision: { reasonCode: 'APPROVAL_REQUIRED', requestId: 'policy-test', approvalId: '73', riskLevel: 'medium', approvalScope: 'window' },
       result: { success: false, data: { approvalId: '73', riskLevel: 'medium', approvalScope: 'window' } },
     });
     expect(requester.submit).toHaveBeenCalledWith(
@@ -371,6 +371,7 @@ describe('actor tool policy', () => {
       { scope: 'window', sessionKey: 'agent-session-1', riskLevel: 'medium' },
     );
     expect(JSON.stringify(audit.record.mock.calls[0][0])).toContain('"riskLevel":"medium"');
+    expect(audit.record.mock.calls[0][0].decision.requestId).toBe('policy-test');
   });
 
   it('passes the session and risk ceiling to approval consumption on retry', async () => {
