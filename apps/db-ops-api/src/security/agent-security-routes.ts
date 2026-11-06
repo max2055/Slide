@@ -203,8 +203,33 @@ export async function registerAgentSecurityRoutes(
         return reply.code(503).send({ reasonCode: 'SANDBOX_NETWORK_NOT_READY' });
       }
     }
+    let updated;
     try {
-      const updated = await agentExecutionConfigService.set(request.body, actor.userId);
+      updated = await agentExecutionConfigService.set(request.body, actor.userId);
+    } catch (error) {
+      const reasonCode = error instanceof Error && error.message === 'EXECUTION_CONFIG_UPDATE_INVALID'
+        ? error.message : 'EXECUTION_CONFIG_UPDATE_FAILED';
+      for (const [field, configKey] of [
+        ['approvalEnabled', 'agent_tool_approval_enabled'],
+        ['restrictedNetworkEnabled', 'agent_sandbox_network_enabled'],
+      ] as const) {
+        if (request.body[field] !== undefined) {
+          await auditLogManager.logConfigChange({
+            userId: String(actor.userId),
+            username: actor.username,
+            configKey,
+            oldValue: current[field],
+            newValue: request.body[field],
+            clientIp: request.ip,
+            result: 'failure',
+            errorMessage: reasonCode,
+          }).catch(() => request.log.error({ reasonCode: 'EXECUTION_CONFIG_FAILURE_AUDIT_FAILED' },
+            'Failed to persist execution config failure audit'));
+        }
+      }
+      return reply.code(reasonCode === 'EXECUTION_CONFIG_UPDATE_INVALID' ? 400 : 500).send({ reasonCode });
+    }
+    try {
       for (const [configKey, oldValue, newValue] of [
         ['agent_tool_approval_enabled', current.approvalEnabled, updated.approvalEnabled],
         ['agent_sandbox_network_enabled', current.restrictedNetworkEnabled, updated.restrictedNetworkEnabled],
@@ -220,12 +245,10 @@ export async function registerAgentSecurityRoutes(
           });
         }
       }
-      return reply.send(updated);
-    } catch (error) {
-      const reasonCode = error instanceof Error && /^[A-Z0-9_]+$/.test(error.message)
-        ? error.message : 'EXECUTION_CONFIG_UPDATE_FAILED';
-      return reply.code(reasonCode === 'EXECUTION_CONFIG_UPDATE_INVALID' ? 400 : 500).send({ reasonCode });
+    } catch {
+      return reply.code(500).send({ reasonCode: 'EXECUTION_CONFIG_UPDATE_FAILED' });
     }
+    return reply.send(updated);
   });
 
   fastify.get('/api/agent/security/sandbox/config', {
