@@ -61,10 +61,19 @@ export class RbacService {
     pool: mysql.Pool,
     roleId: number,
     mutation: (connection: mysql.PoolConnection) => Promise<boolean>,
+    permissionId?: number,
   ): Promise<void> {
     const connection = await this.requireTransaction(pool);
     try {
       await connection.beginTransaction();
+      if (permissionId !== undefined) {
+        // Match deletePermission: lock the parent before any grant/session rows.
+        const [permissions] = await connection.execute(
+          'SELECT id FROM permissions WHERE id = ? FOR UPDATE',
+          [permissionId],
+        ) as any;
+        if (permissions.length === 0) throw new Error('权限不存在');
+      }
       const userIds = await this.getActiveRoleUserIds(connection, roleId);
       if (await mutation(connection)) {
         await this.bumpAndRevokeUsers(connection, userIds);
@@ -85,14 +94,13 @@ export class RbacService {
   private async mutateUserRoleAndRevokeSessions(
     pool: mysql.Pool,
     userId: number,
-    sql: string,
-    values: number[],
+    mutation: (connection: mysql.PoolConnection) => Promise<boolean>,
   ): Promise<void> {
     const connection = await this.requireTransaction(pool);
     try {
       await connection.beginTransaction();
-      const [result] = await connection.execute(sql, values) as any;
-      if (Number(result.affectedRows) > 0) {
+      await connection.execute('SELECT id FROM users WHERE id = ? FOR UPDATE', [userId]);
+      if (await mutation(connection)) {
         await connection.execute(
           'UPDATE users SET session_version = session_version + 1 WHERE id = ?',
           [userId],
@@ -393,22 +401,35 @@ export class RbacService {
       return { success: false, error: '数据库未连接' };
     }
 
+    let connection: mysql.PoolConnection | undefined;
     try {
-      // Check if any role references this permission
-      const [refs] = await pool.execute(
-        'SELECT COUNT(*) as cnt FROM role_permissions WHERE permission_id = ?',
+      connection = await this.requireTransaction(pool);
+      await connection.beginTransaction();
+      await connection.execute('SELECT id FROM permissions WHERE id = ? FOR UPDATE', [permissionId]);
+      // Current read after the parent lock sees grants committed while we waited.
+      const [refs] = await connection.execute(
+        'SELECT role_id FROM role_permissions WHERE permission_id = ? FOR UPDATE',
         [permissionId]
       ) as any;
 
-      if (refs[0].cnt > 0) {
-        return { success: false, error: `权限被 ${refs[0].cnt} 个角色引用，无法删除` };
+      if (refs.length > 0) {
+        await connection.rollback();
+        return { success: false, error: `权限被 ${refs.length} 个角色引用，无法删除` };
       }
 
-      await pool.execute('DELETE FROM permissions WHERE id = ?', [permissionId]);
+      await connection.execute('DELETE FROM permissions WHERE id = ?', [permissionId]);
+      await connection.commit();
       return { success: true };
     } catch (error: any) {
+      try {
+        await connection?.rollback();
+      } catch {
+        // Preserve the deletion failure.
+      }
       console.error('删除权限失败:', error);
       return { success: false, error: error.message };
+    } finally {
+      connection?.release();
     }
   }
 
@@ -433,6 +454,7 @@ export class RbacService {
           ) as any;
           return Number(result.affectedRows) > 0;
         },
+        permissionId,
       );
       return { success: true };
     } catch (error: any) {
@@ -466,9 +488,10 @@ export class RbacService {
     }
   }
 
-  async getRolePermissions(roleId: number): Promise<Array<{ id: number; code: string; name: string; resource: string; action: string }>> {
+  async getRolePermissions(roleId: number, options: { strict?: boolean } = {}): Promise<Array<{ id: number; code: string; name: string; resource: string; action: string }>> {
     const pool = this.getPool();
     if (!pool) {
+      if (options.strict) throw new Error("角色权限读取失败");
       return [];
     }
 
@@ -484,6 +507,7 @@ export class RbacService {
       return rows as any[];
     } catch (error) {
       console.error('获取角色权限失败:', error);
+      if (options.strict) throw new Error("角色权限读取失败");
       return [];
     }
   }
@@ -513,6 +537,35 @@ export class RbacService {
   // User-Role assignment
   // =========================================================================
 
+  /** Compare and replace under the same user lock used by individual grants. */
+  async replaceUserRoles(userId: number, roleIds: number[], expectedRoleIds: number[]): Promise<{ success: boolean; error?: string; conflict?: boolean }> {
+    const pool = this.getPool();
+    if (!pool) return { success: false, error: '数据库未连接' };
+    try {
+      await this.mutateUserRoleAndRevokeSessions(pool, userId, async (connection) => {
+        const [users] = await connection.execute('SELECT id FROM users WHERE id = ?', [userId]) as any;
+        if (!users.length) throw new Error('用户不存在');
+        const [rows] = await connection.execute('SELECT role_id FROM user_roles WHERE user_id = ? FOR UPDATE', [userId]) as any;
+        const current = rows.map((r: any) => Number(r.role_id)).sort((a: number, b: number) => a - b);
+        const expected = [...expectedRoleIds].sort((a, b) => a - b);
+        if (JSON.stringify(current) !== JSON.stringify(expected)) throw new Error('角色已被其他操作修改，请刷新后重试');
+        // Validate every destination before deleting anything; FK locks also guard role deletion.
+        for (const roleId of [...roleIds].sort((a, b) => a - b)) {
+          const [roles] = await connection.execute('SELECT id FROM roles WHERE id = ? FOR UPDATE', [roleId]) as any;
+          if (!roles.length) throw new Error('角色不存在');
+        }
+        const removed = current.filter((id: number) => !roleIds.includes(id));
+        const added = roleIds.filter(id => !current.includes(id));
+        for (const id of removed) await connection.execute('DELETE FROM user_roles WHERE user_id = ? AND role_id = ?', [userId, id]);
+        for (const id of added) await connection.execute('INSERT INTO user_roles (user_id, role_id) VALUES (?, ?)', [userId, id]);
+        return removed.length + added.length > 0;
+      });
+      return { success: true };
+    } catch (error: any) {
+      return { success: false, error: error.message, conflict: error.message === '角色已被其他操作修改，请刷新后重试' };
+    }
+  }
+
   async assignRoleToUser(userId: number, roleId: number): Promise<{ success: boolean; error?: string }> {
     const pool = this.getPool();
     if (!pool) {
@@ -523,8 +576,21 @@ export class RbacService {
       await this.mutateUserRoleAndRevokeSessions(
         pool,
         userId,
-        'INSERT IGNORE INTO user_roles (user_id, role_id) VALUES (?, ?)',
-        [userId, roleId],
+        async (connection) => {
+          const [inserted] = await connection.execute(
+            'INSERT IGNORE INTO user_roles (user_id, role_id) VALUES (?, ?)',
+            [userId, roleId],
+          ) as any;
+          if (Number(inserted.affectedRows) > 0) return true;
+          // This API grants without an expiry. Renew expired rows only, preserving
+          // active temporary grants and avoiding needless session invalidation.
+          const [renewed] = await connection.execute(
+            `UPDATE user_roles SET grant_expiry = NULL
+             WHERE user_id = ? AND role_id = ? AND grant_expiry <= NOW()`,
+            [userId, roleId],
+          ) as any;
+          return Number(renewed.affectedRows) > 0;
+        },
       );
       return { success: true };
     } catch (error: any) {
@@ -543,8 +609,13 @@ export class RbacService {
       await this.mutateUserRoleAndRevokeSessions(
         pool,
         userId,
-        'DELETE FROM user_roles WHERE user_id = ? AND role_id = ?',
-        [userId, roleId],
+        async (connection) => {
+          const [result] = await connection.execute(
+            'DELETE FROM user_roles WHERE user_id = ? AND role_id = ?',
+            [userId, roleId],
+          ) as any;
+          return Number(result.affectedRows) > 0;
+        },
       );
       return { success: true };
     } catch (error: any) {
@@ -644,9 +715,10 @@ export class RbacService {
     }
   }
 
-  async getUserInstanceAccess(userId: number): Promise<Array<{instance_id: number, access_level: string}>> {
+  async getUserInstanceAccess(userId: number, options: { strict?: boolean } = {}): Promise<Array<{instance_id: number, access_level: string}>> {
     const pool = this.getPool();
     if (!pool) {
+      if (options.strict) throw new Error("用户实例权限读取失败");
       return [];
     }
 
@@ -658,6 +730,7 @@ export class RbacService {
       return rows as {instance_id: number, access_level: string}[];
     } catch (error) {
       console.error('获取用户实例访问失败:', error);
+      if (options.strict) throw new Error("用户实例权限读取失败");
       return [];
     }
   }
