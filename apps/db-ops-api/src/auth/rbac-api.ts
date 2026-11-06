@@ -256,10 +256,10 @@ export async function rbacApiRoutes(fastify: FastifyInstance, _options: any) {
     }, async (request, reply) => {
       try {
         const { roleId } = request.params as any;
-        const permissions = await rbacService.getRolePermissions(Number(roleId));
+        const permissions = await rbacService.getRolePermissions(Number(roleId), { strict: true });
         reply.send(permissions);
-      } catch (error: any) {
-        reply.code(500).send({ error: error.message });
+      } catch {
+        reply.code(503).send({ error: "角色权限读取失败，请稍后重试" });
       }
     });
 
@@ -379,10 +379,10 @@ export async function rbacApiRoutes(fastify: FastifyInstance, _options: any) {
     }, async (request, reply) => {
       try {
         const { userId } = request.params as any;
-        const instances = await rbacService.getUserInstanceAccess(Number(userId));
+        const instances = await rbacService.getUserInstanceAccess(Number(userId), { strict: true });
         reply.send(instances);
-      } catch (error: any) {
-        reply.code(500).send({ error: error.message });
+      } catch {
+        reply.code(503).send({ error: "用户实例权限读取失败，请稍后重试" });
       }
     });
 

@@ -488,9 +488,10 @@ export class RbacService {
     }
   }
 
-  async getRolePermissions(roleId: number): Promise<Array<{ id: number; code: string; name: string; resource: string; action: string }>> {
+  async getRolePermissions(roleId: number, options: { strict?: boolean } = {}): Promise<Array<{ id: number; code: string; name: string; resource: string; action: string }>> {
     const pool = this.getPool();
     if (!pool) {
+      if (options.strict) throw new Error("角色权限读取失败");
       return [];
     }
 
@@ -506,6 +507,7 @@ export class RbacService {
       return rows as any[];
     } catch (error) {
       console.error('获取角色权限失败:', error);
+      if (options.strict) throw new Error("角色权限读取失败");
       return [];
     }
   }
@@ -713,9 +715,10 @@ export class RbacService {
     }
   }
 
-  async getUserInstanceAccess(userId: number): Promise<Array<{instance_id: number, access_level: string}>> {
+  async getUserInstanceAccess(userId: number, options: { strict?: boolean } = {}): Promise<Array<{instance_id: number, access_level: string}>> {
     const pool = this.getPool();
     if (!pool) {
+      if (options.strict) throw new Error("用户实例权限读取失败");
       return [];
     }
 
@@ -727,6 +730,7 @@ export class RbacService {
       return rows as {instance_id: number, access_level: string}[];
     } catch (error) {
       console.error('获取用户实例访问失败:', error);
+      if (options.strict) throw new Error("用户实例权限读取失败");
       return [];
     }
   }
