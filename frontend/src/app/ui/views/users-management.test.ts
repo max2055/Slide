@@ -27,8 +27,8 @@ it('MAX-339: explicit changes submit only the selected role differences', async 
   expect(view.formRoleIds).toEqual([2, 3]);
   view.formRoleIds = [3, 4];
   await view._saveUser();
-  expect(apiClient.delete).toHaveBeenCalledExactlyOnceWith('/v1/rbac/users/42/roles/2');
-  expect(apiClient.post).toHaveBeenCalledExactlyOnceWith('/v1/rbac/users/42/roles', { roleId: 4 });
+  expect(apiClient.put).toHaveBeenCalledWith('/v1/rbac/users/42/roles', { roleIds: [3, 4], expectedRoleIds: [2, 3] });
+  expect(apiClient.delete).not.toHaveBeenCalled();
 });
 it('MAX-339: cancelling never writes and reopening restores the complete selection', () => {
   view._openEditModal(user);
@@ -52,7 +52,7 @@ it('MAX-339: clearing selection explicitly removes both roles', async () => {
   view._openEditModal(user);
   view.formRoleIds = [];
   await view._saveUser();
-  expect(apiClient.delete).toHaveBeenCalledTimes(2);
+  expect(apiClient.put).toHaveBeenCalledWith('/v1/rbac/users/42/roles', { roleIds: [], expectedRoleIds: [2, 3] });
   expect(apiClient.post).not.toHaveBeenCalled();
 });
 it('MAX-339: role catalogue failure retains every bound role in the editor', async () => {
@@ -66,4 +66,15 @@ it('MAX-339: role catalogue failure retains every bound role in the editor', asy
   expect(checked).toHaveLength(2);
   expect(host.textContent).toContain('数据库管理员');
   expect(host.textContent).toContain('审计员');
+});
+
+it('MAX-340: rejected atomic replacement keeps editor open and reports failure', async () => {
+  vi.mocked(apiClient.put).mockResolvedValueOnce({ success: true }).mockRejectedValueOnce(new Error('角色已被其他操作修改'));
+  view._openEditModal(user);
+  view.formRoleIds = [4];
+  await view._saveUser();
+  expect(view.showModal).toBe(true);
+  expect(view.saveError).toContain('角色已被其他操作修改');
+  expect(view.userRoles.get(42).map((r: any) => r.role_id)).toEqual([2, 3]);
+  expect(apiClient.delete).not.toHaveBeenCalled();
 });

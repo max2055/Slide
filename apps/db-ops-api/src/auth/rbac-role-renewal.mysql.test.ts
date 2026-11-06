@@ -23,6 +23,8 @@ describe.skipIf(!port)('user role renewal with isolated MySQL and real JWT', () 
   let contexts: ActorContextService;
   let app: FastifyInstance;
   let failAt = '';
+  let failOnMatch = 1;
+  let matches = 0;
   let headers: { authorization: string };
   const store = {
     execute: (sql: string, values?: unknown[]) => pool.execute(sql, values as any[]),
@@ -31,7 +33,7 @@ describe.skipIf(!port)('user role renewal with isolated MySQL and real JWT', () 
       return {
         beginTransaction: () => connection.beginTransaction(),
         execute: async (sql: string, values?: unknown[]) => {
-          if (failAt && sql.startsWith(failAt)) throw new Error('injected renewal transaction failure');
+          if (failAt && sql.startsWith(failAt) && ++matches === failOnMatch) throw new Error('injected renewal transaction failure');
           return connection.execute(sql, values as any[]);
         },
         commit: () => connection.commit(), rollback: () => connection.rollback(),
@@ -78,6 +80,8 @@ describe.skipIf(!port)('user role renewal with isolated MySQL and real JWT', () 
   });
   beforeEach(async () => {
     failAt = '';
+    failOnMatch = 1;
+    matches = 0;
     await pool.query('DELETE FROM users');
     await pool.query('DELETE FROM roles');
     await pool.query('DELETE FROM permissions');
@@ -176,4 +180,49 @@ describe.skipIf(!port)('user role renewal with isolated MySQL and real JWT', () 
     expect((await service.revokeRoleFromUser(7, 1)).success).toBe(true);
     expect(await state()).toEqual({ grants: [], version: 3, revoked: 1 });
   });
+  async function completeState() {
+    const [grants] = await pool.query('SELECT id, role_id, grant_expiry, created_at FROM user_roles WHERE user_id = 7 ORDER BY role_id');
+    const [users] = await pool.query('SELECT session_version FROM users WHERE id = 7');
+    const [tokens] = await pool.query('SELECT id, revoked FROM refresh_tokens WHERE user_id = 7 ORDER BY id');
+    return { grants, users, tokens };
+  }
+  it.each(['DELETE FROM user_roles', 'INSERT INTO user_roles', 'UPDATE refresh_tokens'])('MAX-340 restores the complete set when %s fails', async failure => {
+    await pool.query("INSERT INTO roles (id, name) VALUES (3, 'old-third')");
+    await pool.query("INSERT INTO user_roles (user_id, role_id, grant_expiry) VALUES (7, 1, NOW()+INTERVAL 1 DAY), (7, 3, NULL)");
+    const before = await completeState();
+    failAt = failure;
+    // Fail the second delete, after the first old binding has already been removed.
+    failOnMatch = failure.startsWith('DELETE') ? 2 : 1;
+    const result = await service.replaceUserRoles(7, [2], [1, 3]);
+    expect(result.success).toBe(false);
+    expect(await completeState()).toEqual(before);
+  });
+  it('MAX-340 preserves unchanged binding expiry and identity on successful replacement', async () => {
+    await pool.query("INSERT INTO user_roles (user_id, role_id, grant_expiry) VALUES (7, 1, NOW()+INTERVAL 1 DAY)");
+    const before = await completeState();
+    expect(await service.replaceUserRoles(7, [1, 2], [1])).toEqual({ success: true });
+    const after = await completeState();
+    expect((after.grants as any[]).find(row => row.role_id === 1)).toEqual((before.grants as any[])[0]);
+    expect((after.grants as any[]).map(row => row.role_id)).toEqual([1, 2]);
+  });
+  it('MAX-340 concurrent replacements reject stale snapshot and commit one complete set', async () => {
+    await pool.query('INSERT INTO roles (id, name) VALUES (3, \'replacement\')');
+    await pool.query('INSERT INTO user_roles (user_id, role_id) VALUES (7, 1)');
+    const results = await Promise.all([service.replaceUserRoles(7, [2], [1]), service.replaceUserRoles(7, [3], [1])]);
+    expect(results.filter(r => r.success)).toHaveLength(1);
+    expect(results.filter(r => r.conflict)).toHaveLength(1);
+    const [rows] = await pool.query<any[]>('SELECT role_id FROM user_roles WHERE user_id = 7');
+    expect(rows).toHaveLength(1);
+    expect([2, 3]).toContain(rows[0].role_id);
+  });
+  it('MAX-340 real JWT replacement authorizes administrator and denies ordinary user', async () => {
+    await pool.query('INSERT INTO user_roles (user_id, role_id) VALUES (7, 1)');
+    const denied = await app.inject({ method: 'PUT', url: '/api/v1/rbac/users/7/roles',
+      headers: {authorization: `Bearer ${signAccessToken(await contexts.loadActiveActor(7), secret)}`}, payload: {roleIds: [], expectedRoleIds: [1]} });
+    expect(denied.statusCode).toBe(403);
+    const saved = await app.inject({ method: 'PUT', url: '/api/v1/rbac/users/7/roles', headers, payload: {roleIds: [], expectedRoleIds: [1]} });
+    expect(saved.statusCode).toBe(200);
+    expect((await state()).grants).toEqual([]);
+  });
+
 });

@@ -16,6 +16,7 @@ const writes = [
   ['POST', '/roles/1/permissions', { permissionId: 2 }],
   ['POST', '/users/1/roles', { roleId: 2 }],
   ['POST', '/users/1/instances', { instanceId: 2 }],
+  ['PUT', '/users/1/roles', { roleIds: [], expectedRoleIds: [] }],
 ] as const;
 
 // Every path parameter position is exercised, including the second ID in deletes.
@@ -28,7 +29,7 @@ const idRoutes: Array<[Method, string, unknown?]> = [
   ['DELETE', '/users/BAD/roles/2'], ['DELETE', '/users/1/roles/BAD'],
   ['GET', '/users/BAD/roles'], ['POST', '/users/BAD/instances', { instanceId: 2 }],
   ['DELETE', '/users/BAD/instances/2'], ['DELETE', '/users/1/instances/BAD'],
-  ['GET', '/users/BAD/instances'],
+  ['GET', '/users/BAD/instances'], ['PUT', '/users/BAD/roles', { roleIds: [], expectedRoleIds: [] }],
 ];
 
 describe('RBAC route input boundaries (#493 / #494 / #495)', () => {
@@ -37,6 +38,7 @@ describe('RBAC route input boundaries (#493 / #494 / #495)', () => {
   beforeEach(async () => {
     vi.clearAllMocks();
     execute = vi.fn(async (sql: string, values?: unknown[]) => {
+      if (sql.startsWith('SELECT id FROM users')) return [[{ id: 1 }], []];
       if (sql === 'SELECT id FROM permissions WHERE id = ? FOR UPDATE') {
         return [values?.[0] === 2 ? [{ id: 2 }] : [], []];
       }
@@ -59,6 +61,26 @@ describe('RBAC route input boundaries (#493 / #494 / #495)', () => {
       ...(body !== undefined ? { payload: JSON.stringify(body) } : {}),
     });
   }
+
+  it('MAX-340 replacement validates arrays and authorization before storage', async () => {
+    for (const body of [{}, {roleIds: [], expectedRoleIds: null}, {roleIds: [1, 1], expectedRoleIds: []}, {roleIds: ['1'], expectedRoleIds: []}]) {
+      expect((await send('PUT', '/users/1/roles', body)).statusCode).toBe(400);
+    }
+    expect((await send('PUT', '/users/1/roles', {roleIds: [], expectedRoleIds: []}, 'viewer')).statusCode).toBe(403);
+    expect(dbConnection.getPool).not.toHaveBeenCalled();
+  });
+
+  it('MAX-340 new PUT rejects anonymous and malformed role arrays before business DB', async () => {
+    const valid = { roleIds: [], expectedRoleIds: [] };
+    expect((await send('PUT', '/users/1/roles', valid, '')).statusCode).toBe(401);
+    for (const field of ['roleIds', 'expectedRoleIds']) {
+      for (const value of [undefined, null, {}, 1, '1', [0], [-1], [1.5], [9007199254740992], [true], [null], [[]], [{}], ['1'], [1, 1]]) {
+        expect((await send('PUT', '/users/1/roles', {...valid, [field]: value})).statusCode).toBe(400);
+      }
+    }
+    expect(dbConnection.getPool).not.toHaveBeenCalled();
+    expect(execute).not.toHaveBeenCalled();
+  });
 
   for (const [method, path] of writes) {
     it(`${method} ${path}: rejects null, absent, array and primitive bodies before DB`, async () => {

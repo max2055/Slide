@@ -255,14 +255,15 @@ describe('RbacService - User-Role assignments', () => {
 
   it('#496 renews an expired duplicate and invalidates sessions in the same transaction', async () => {
     const execute = vi.fn()
+      .mockResolvedValueOnce([[{ id: 1 }]])
       .mockResolvedValueOnce([{ affectedRows: 0 }])
       .mockResolvedValueOnce([{ affectedRows: 1 }])
       .mockResolvedValue([{ affectedRows: 1 }]);
     const connection = useTransaction(execute);
     expect(await service.assignRoleToUser(1, 2)).toEqual({ success: true });
-    expect(execute).toHaveBeenNthCalledWith(2, expect.stringMatching(/UPDATE user_roles SET grant_expiry = NULL[\s\S]*grant_expiry <= NOW\(\)/), [1, 2]);
-    expect(execute).toHaveBeenNthCalledWith(3, expect.stringContaining('UPDATE users SET session_version'), [1]);
-    expect(execute).toHaveBeenNthCalledWith(4, expect.stringContaining('UPDATE refresh_tokens SET revoked'), [1]);
+    expect(execute).toHaveBeenNthCalledWith(3, expect.stringMatching(/UPDATE user_roles SET grant_expiry = NULL[\s\S]*grant_expiry <= NOW\(\)/), [1, 2]);
+    expect(execute).toHaveBeenNthCalledWith(4, expect.stringContaining('UPDATE users SET session_version'), [1]);
+    expect(execute).toHaveBeenNthCalledWith(5, expect.stringContaining('UPDATE refresh_tokens SET revoked'), [1]);
     expect(connection.commit).toHaveBeenCalledOnce();
     expect(connection.release).toHaveBeenCalledOnce();
   });
@@ -271,7 +272,7 @@ describe('RbacService - User-Role assignments', () => {
     const execute = vi.fn().mockResolvedValue([{ affectedRows: 0 }]);
     const connection = useTransaction(execute);
     expect(await service.assignRoleToUser(1, 2)).toEqual({ success: true });
-    expect(execute).toHaveBeenCalledTimes(2);
+    expect(execute).toHaveBeenCalledTimes(3);
     expect(connection.commit).toHaveBeenCalledOnce();
   });
 
@@ -439,5 +440,30 @@ describe('RbacService - Permission lookup', () => {
     expect(perms.has('instance:view')).toBe(true);
     expect(perms.has('alert:view')).toBe(true);
     expect(perms.has('config:view')).toBe(true);
+  });
+});
+
+describe('MAX-340 atomic role replacement', () => {
+  for (const failure of ['DELETE FROM user_roles', 'INSERT INTO user_roles', 'UPDATE refresh_tokens']) {
+    it(`rolls back on ${failure} failure`, async () => {
+      const execute = vi.fn(async (sql: string) => {
+        if (sql.startsWith(failure)) throw new Error('injected failure');
+        if (sql.startsWith('SELECT role_id')) return [[{ role_id: 2 }]];
+        return [[{ id: 1 }]];
+      });
+      const connection = useTransaction(execute);
+      const result = await new RbacService().replaceUserRoles(7, [3], [2]);
+      expect(result.success).toBe(false);
+      expect(connection.rollback).toHaveBeenCalledOnce();
+      expect(connection.commit).not.toHaveBeenCalled();
+      expect(connection.release).toHaveBeenCalledOnce();
+    });
+  }
+  it('rejects stale snapshots before writes', async () => {
+    const execute = vi.fn(async (sql: string) => sql.startsWith('SELECT role_id') ? [[{ role_id: 4 }]] : [[{ id: 7 }]]);
+    const connection = useTransaction(execute);
+    expect(await new RbacService().replaceUserRoles(7, [3], [2])).toMatchObject({ success: false, conflict: true });
+    expect(execute.mock.calls.every(([sql]) => sql.startsWith('SELECT'))).toBe(true);
+    expect(connection.rollback).toHaveBeenCalledOnce();
   });
 });

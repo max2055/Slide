@@ -267,6 +267,20 @@ export async function rbacApiRoutes(fastify: FastifyInstance, _options: any) {
     // User-Role assignment
     // =========================================================
 
+    fastify.put('/users/:userId/roles', {
+      preHandler: [verifyToken, requirePermission('admin:*'), validateRbacInput],
+    }, async (request, reply) => {
+      const { userId } = request.params as { userId: string };
+      const { roleIds, expectedRoleIds } = request.body as { roleIds: unknown; expectedRoleIds: unknown };
+      const validIds = (ids: unknown): ids is number[] => Array.isArray(ids)
+        && ids.every(id => typeof id === 'number' && isPositiveId(id)) && new Set(ids).size === ids.length;
+      if (!validIds(roleIds) || !validIds(expectedRoleIds)) {
+        return reply.code(400).send({ error: 'roleIds 和 expectedRoleIds 必须为无重复的正安全整数数组' });
+      }
+      const result = await rbacService.replaceUserRoles(Number(userId), roleIds, expectedRoleIds);
+      return reply.code(result.success ? 200 : result.conflict ? 409 : 400).send(result);
+    });
+
     // 为用户分配角色
     fastify.post('/users/:userId/roles', {
       preHandler: [verifyToken, requirePermission('admin:*'), validateRbacInput],
