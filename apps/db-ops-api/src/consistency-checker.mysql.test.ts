@@ -33,6 +33,13 @@ describe.skipIf(!port)('MAX-347 approval event integrity on real MySQL', () => {
     await connection.query('DELETE FROM approval_requests');
   });
 
+  it('passes for an empty database and a recent pending request without events', async () => {
+    expect((await checker._checkApprovalEventIntegrity()).status).toBe('pass');
+    await connection.query(`INSERT INTO approval_requests (id, instance_id, sql_text, sql_hash)
+      VALUES (1, 1, 'SELECT 1', 'fixture')`);
+    expect((await checker._checkApprovalEventIntegrity()).status).toBe('pass');
+  });
+
   it.each([
     ['approved', ['approved'], 'pass'],
     ['approved', ['executed'], 'fail'],
@@ -74,6 +81,10 @@ describe.skipIf(!port)('MAX-347 approval event integrity on real MySQL', () => {
     const result = await checker._checkApprovalEventIntegrity();
     expect(result.status).toBe('fail');
     expect(result.details).toMatchObject({ orphaned_approvals: [{ id: 1 }] });
+    // Other checks lack their tables in this narrowly scoped schema; the approval
+    // check must still expose the same failure through the aggregate entry.
+    const snapshot = await checker.runAllChecks();
+    expect(snapshot.checks.find(check => check.id === 'approval_event_integrity')).toEqual(result);
   });
 });
 
