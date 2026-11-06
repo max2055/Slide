@@ -1,4 +1,5 @@
 import mysql, { type Connection } from 'mysql2/promise';
+import { readFileSync } from 'node:fs';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 let connection: Connection;
@@ -10,6 +11,72 @@ import { ConsistencyChecker } from './consistency-checker.js';
 // Opt-in disposable localhost MySQL, following the metrics integration suite.
 // Never load .env or connect to the application database.
 const port = Number(process.env.METRICS_TEST_MYSQL_PORT);
+describe.skipIf(!port)('MAX-347 approval event integrity on real MySQL', () => {
+  const database = `max347_${process.pid}`;
+  const checker = new ConsistencyChecker();
+  beforeAll(async () => {
+    connection = await mysql.createConnection({ host: '127.0.0.1', port, user: 'root', password: '', timezone: 'Z' });
+    await connection.query(`CREATE DATABASE ${database}`);
+    await connection.query(`USE ${database}`);
+    const schema = readFileSync(new URL('../sql/schema.sql', import.meta.url), 'utf8');
+    for (const table of ['approval_requests', 'approval_events']) {
+      const ddl = schema.match(new RegExp('CREATE TABLE IF NOT EXISTS `' + table + '` \\([\\s\\S]*?;'));
+      if (!ddl) throw new Error(`Missing schema for ${table}`);
+      await connection.query(ddl[0]);
+    }
+  });
+  afterAll(async () => {
+    if (connection) { await connection.query(`DROP DATABASE IF EXISTS ${database}`); await connection.end(); }
+  });
+  beforeEach(async () => {
+    await connection.query('DELETE FROM approval_events');
+    await connection.query('DELETE FROM approval_requests');
+  });
+
+  it.each([
+    ['approved', ['approved'], 'pass'],
+    ['approved', ['executed'], 'fail'],
+    ['approved', [], 'fail'],
+    ['executed', ['approved', 'executed'], 'pass'],
+    ['executed', ['approved'], 'fail'],
+    ['executed', ['executed'], 'fail'],
+    ['executed', [], 'fail'],
+    ['executed', ['submitted', 'claimed', 'notified'], 'fail'],
+    ['pending', [], 'warn'],
+    ['rejected', [], 'pass'],
+    ['execution_failed', [], 'pass'],
+    ['cancelled', [], 'pass'],
+  ])('%s with events %j returns %s, including retained legacy history', async (status, events, expected) => {
+    await connection.execute(`INSERT INTO approval_requests
+      (id, instance_id, sql_text, sql_hash, status, created_at)
+      VALUES (1, 1, 'SELECT 1', 'fixture', ?, '2020-01-01')`, [status]);
+    for (const event of events) {
+      await connection.execute('INSERT INTO approval_events (request_id, event_type) VALUES (1, ?)', [event]);
+    }
+    const [requestsBefore] = await connection.query('SELECT * FROM approval_requests');
+    const [eventsBefore] = await connection.query('SELECT * FROM approval_events ORDER BY id');
+    const result = await checker._checkApprovalEventIntegrity();
+    expect(result.status).toBe(expected);
+    if (expected === 'fail') {
+      expect(result.severity).toBe('major');
+      expect(result.details).toMatchObject({ orphaned_approvals: [{ id: 1 }] });
+    }
+    // A health check must report missing old evidence, never fabricate or repair it.
+    expect((await connection.query('SELECT * FROM approval_requests'))[0]).toEqual(requestsBefore);
+    expect((await connection.query('SELECT * FROM approval_events ORDER BY id'))[0]).toEqual(eventsBefore);
+  });
+
+  it('does not use another request’s complete chain to hide a missing execution event', async () => {
+    await connection.query(`INSERT INTO approval_requests (id, instance_id, sql_text, sql_hash, status)
+      VALUES (1, 1, 'SELECT 1', 'fixture', 'executed'), (2, 1, 'SELECT 2', 'fixture', 'executed')`);
+    await connection.query(`INSERT INTO approval_events (request_id, event_type)
+      VALUES (1, 'approved'), (2, 'approved'), (2, 'executed')`);
+    const result = await checker._checkApprovalEventIntegrity();
+    expect(result.status).toBe('fail');
+    expect(result.details).toMatchObject({ orphaned_approvals: [{ id: 1 }] });
+  });
+});
+
 describe.skipIf(!port)('resource health truth with legacy mixed collations', () => {
   const database = `max210_${process.pid}`;
   const checker = new ConsistencyChecker();
