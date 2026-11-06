@@ -674,22 +674,13 @@ export class RbacService {
     }
 
     try {
-      // Check if record exists, then INSERT or UPDATE
-      const [existing] = await pool.execute(
-        'SELECT id FROM instance_permissions WHERE user_id = ? AND instance_id = ?',
-        [userId, instanceId]
-      ) as any;
-      if (Array.isArray(existing) && existing.length > 0) {
-        await pool.execute(
-          'UPDATE instance_permissions SET access_level = COALESCE(?, access_level) WHERE user_id = ? AND instance_id = ?',
-          [accessLevel || 'read-only', userId, instanceId]
-        );
-      } else {
-        await pool.execute(
-          'INSERT INTO instance_permissions (user_id, instance_id, access_level) VALUES (?, ?, ?)',
-          [userId, instanceId, accessLevel || 'read-only']
-        );
-      }
+      // The unique (user_id, instance_id) key serializes concurrent grants.
+      // Different levels use last database write wins, including the read-only default.
+      // Update only the level: keep the existing ID, expiry and other grant metadata.
+      await pool.execute(
+        'INSERT INTO instance_permissions (user_id, instance_id, access_level) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE access_level = ?',
+        [userId, instanceId, accessLevel || 'read-only', accessLevel || 'read-only']
+      );
       return { success: true };
     } catch (error: any) {
       console.error('授予实例访问失败:', error);

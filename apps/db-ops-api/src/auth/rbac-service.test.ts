@@ -310,44 +310,12 @@ describe('RbacService - Instance permissions', () => {
     (dbConnection.getPool as any).mockReturnValue({ execute: mockExecute });
   });
 
-  it('should grant instance access to a user (new insert)', async () => {
-    // First call: SELECT to check existing -> no existing row
-    mockExecute.mockResolvedValueOnce([[]]);
-    // Second call: INSERT
-    mockExecute.mockResolvedValueOnce([{ affectedRows: 1 }]);
-    const result = await service.grantInstanceAccess(1, 5, 'read-write');
-    expect(result.success).toBe(true);
-    expect(mockExecute).toHaveBeenNthCalledWith(1,
-      'SELECT id FROM instance_permissions WHERE user_id = ? AND instance_id = ?',
-      [1, 5]
-    );
-    expect(mockExecute).toHaveBeenNthCalledWith(2,
-      'INSERT INTO instance_permissions (user_id, instance_id, access_level) VALUES (?, ?, ?)',
-      [1, 5, 'read-write']
-    );
-  });
-
-  it('should grant instance access defaults to read-only', async () => {
-    mockExecute.mockResolvedValueOnce([[]]);
-    mockExecute.mockResolvedValueOnce([{ affectedRows: 1 }]);
-    const result = await service.grantInstanceAccess(1, 5);
-    expect(result.success).toBe(true);
-    expect(mockExecute).toHaveBeenNthCalledWith(2,
-      'INSERT INTO instance_permissions (user_id, instance_id, access_level) VALUES (?, ?, ?)',
-      [1, 5, 'read-only']
-    );
-  });
-
-  it('should update access_level when grant already exists', async () => {
-    // First call: existing row found
-    mockExecute.mockResolvedValueOnce([[{ id: 10 }]]);
-    // Second call: UPDATE
-    mockExecute.mockResolvedValueOnce([{ affectedRows: 1 }]);
-    const result = await service.grantInstanceAccess(1, 5, 'admin');
-    expect(result.success).toBe(true);
-    expect(mockExecute).toHaveBeenNthCalledWith(2,
-      'UPDATE instance_permissions SET access_level = COALESCE(?, access_level) WHERE user_id = ? AND instance_id = ?',
-      ['admin', 1, 5]
+  it.each(['read-write', 'admin', undefined])('#317 atomically grants or updates level %s', async (level) => {
+    mockExecute.mockResolvedValue([{ affectedRows: 1 }]);
+    expect(await service.grantInstanceAccess(1, 5, level)).toEqual({ success: true });
+    expect(mockExecute).toHaveBeenCalledExactlyOnceWith(
+      'INSERT INTO instance_permissions (user_id, instance_id, access_level) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE access_level = ?',
+      [1, 5, level || 'read-only', level || 'read-only']
     );
   });
 
