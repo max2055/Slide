@@ -19,26 +19,30 @@ export async function registerAgentToolApprovalRoutes(
   }, async (request, reply) => {
     const actor = (request as any).user as ActorContext;
     const body = request.body as { toolName?: unknown; secret?: unknown; expiresInMs?: unknown };
-    if (typeof body?.toolName !== 'string' || typeof body.secret !== 'string' || !body.secret) {
+    if (typeof body?.toolName !== 'string' || typeof body.secret !== 'string' || !body.secret || body.secret.length > 16_384) {
       return reply.code(400).send({ reasonCode: 'CREDENTIAL_REFERENCE_INPUT_INVALID' });
     }
-    const tool = await getPlatformTool(body.toolName);
-    const security = tool ? getToolSecurityDefinition(tool.name) : undefined;
-    if (!tool || !security || security.credentials !== 'use' || !canActorDiscoverTool(actor, tool)) {
-      return reply.code(403).send({ reasonCode: 'TOOL_NOT_AVAILABLE' });
+    try {
+      const tool = await getPlatformTool(body.toolName);
+      const security = tool ? getToolSecurityDefinition(tool.name) : undefined;
+      if (!tool || !security || security.credentials !== 'use' || !canActorDiscoverTool(actor, tool)) {
+        return reply.code(403).send({ reasonCode: 'TOOL_NOT_AVAILABLE' });
+      }
+      const expiresInMs = Number.isSafeInteger(body.expiresInMs) ? Number(body.expiresInMs) : undefined;
+      const credential = await credentialReferenceService.create(
+        actor.userId,
+        tool.name,
+        body.secret,
+        expiresInMs,
+      );
+      return reply.code(201).send({
+        credentialRef: credential.ref,
+        toolName: tool.name,
+        expiresAt: credential.expiresAt.toISOString(),
+      });
+    } catch {
+      return reply.code(503).send({ reasonCode: 'CREDENTIAL_REFERENCE_CREATE_FAILED' });
     }
-    const expiresInMs = Number.isSafeInteger(body.expiresInMs) ? Number(body.expiresInMs) : undefined;
-    const credential = await credentialReferenceService.create(
-      actor.userId,
-      tool.name,
-      body.secret,
-      expiresInMs,
-    );
-    return reply.code(201).send({
-      credentialRef: credential.ref,
-      toolName: tool.name,
-      expiresAt: credential.expiresAt.toISOString(),
-    });
   });
 
   fastify.post('/api/agent/approvals', {
