@@ -2,6 +2,28 @@ import { describe, expect, it } from 'vitest';
 import { classifyExecuteCodeRisk, executeCodeRequiresNetwork } from './execute-code-risk.js';
 
 describe('execute_code risk policy', () => {
+  // GitHub #582 / OCR-1242: parent segments can occur inside relative paths.
+  it.each([
+    'cat ./../etc/passwd', 'cat foo/../etc/passwd', 'ls ./../',
+    'head ./../../etc/passwd', 'cat foo/../../etc/passwd',
+    'ls ./..', 'stat foo/..', 'du -s foo//..//../etc',
+    'cat ../etc/passwd', 'cat /etc/passwd', 'cat ~/report.txt',
+    'grep -f=./../pattern report.txt', 'ls --ignore=/etc/passwd',
+    'grep -f../etc/passwd report.txt', 'grep -f/etc/passwd report.txt',
+    'grep -f.. report.txt', 'grep --file=../etc/passwd report.txt',
+  ])('requires approval for unproven workspace paths: %j', (code) => {
+    expect(classifyExecuteCodeRisk({ runtime: 'shell', code })).toEqual({
+      level: 'medium', scope: 'window', requiresApproval: true,
+    });
+  });
+
+  it.each(['pwd', 'ls ./', 'cat ./report.txt', 'cat foo/report.txt',
+    'cat foo/.../report.txt', 'cat report..txt'])('allows literal workspace paths: %j', (code) => {
+    expect(classifyExecuteCodeRisk({ runtime: 'shell', code })).toEqual({
+      level: 'low', scope: 'none', requiresApproval: false,
+    });
+  });
+
   it('auto-allows a single read-only shell command in the sandbox workspace', () => {
     expect(classifyExecuteCodeRisk({ runtime: 'shell', code: 'pwd' })).toEqual({
       level: 'low',

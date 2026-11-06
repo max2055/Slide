@@ -39,7 +39,12 @@ function classifyShell(code: string): ExecuteCodeRiskLevel {
   // partial parse. find is excluded because its actions can write or execute.
   const simpleCommand = /^([a-z][a-z0-9_-]*)(?:[ \t]+[a-zA-Z0-9_./:=,@%+-]+)*[ \t]*$/;
   const command = source.match(simpleCommand)?.[1];
-  const hasUnsafePath = /(?:^|\s)(?:\/|\.\.|~\/)/.test(source);
+  // Do not normalize away parent segments: symlinks and missing directories
+  // make lexical containment insufficient. Also inspect option values; attached
+  // short-option paths (e.g. -f../pattern) cannot be proven safe without parsing.
+  const hasUnsafePath = source.split(/[\s=:,]+/).some((argument) =>
+    argument.startsWith('/') || argument.startsWith('~/') || argument.split('/').includes('..')
+    || (argument.startsWith('-') && (argument.includes('/') || argument.includes('..'))));
   if (command && READ_ONLY_SHELL_COMMANDS.has(command) && !hasUnsafePath) return 'low';
   return 'medium';
 }
