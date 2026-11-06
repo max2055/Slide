@@ -20,7 +20,7 @@ for (const width of [1366, 1440, 1920]) test(`multi-role edit ${width}`, async (
       : [{ id: 2, name: 'dba' }, { id: 3, name: 'auditor' }, { id: 4, name: 'viewer' }] });
   });
   await page.route('**/users-role-fixture', route => route.fulfill({ contentType: 'text/html', body:
-    '<html><body><users-management></users-management><script type="module">import "/src/app/ui/views/users-management.ts";</script></body></html>' }));
+    '<html><body><users-management></users-management><script type="module">import "/src/app/styles.css"; import "/src/app/ui/views/users-management.ts";</script></body></html>' }));
   await page.goto('/users-role-fixture');
   const edit = page.getByRole('button', { name: '编辑', exact: true });
   await edit.click();
