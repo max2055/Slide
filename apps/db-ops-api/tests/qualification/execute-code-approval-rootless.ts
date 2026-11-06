@@ -77,6 +77,12 @@ try {
     return await response.json() as any;
   };
   const cases = [
+    // MAX-352 / #582: these stay pending and never read outside /workspace.
+    { code: 'cat ./../etc/passwd' }, { code: 'cat foo/../etc/passwd' },
+    { code: 'ls ./../' }, { code: 'head ./../../etc/passwd' },
+    { code: 'cat foo/../../etc/passwd' }, { code: 'ls ./..' },
+    { code: 'cat ../etc/passwd' }, { code: 'cat /etc/passwd' },
+    { code: 'cat ~/report.txt' },
     { code: 'pwd\nmv secret back' }, { code: 'ls\ncp a b' },
     { code: 'find . -delete' }, { code: 'find . -fprint output' },
     { code: 'cat foo > bar' }, { code: 'pwd', files: [{ path: 'input.txt', content: 'fixture' }] },
