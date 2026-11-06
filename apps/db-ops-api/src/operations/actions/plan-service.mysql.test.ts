@@ -286,7 +286,17 @@ describe.skipIf(!port)('P06 SQL + JWT domain composition', () => {
       plans: true,
       dispatch: true,
     }));
-    legacy = new AgentToolApprovalService(() => ({ execute: sql }), key);
+    legacy = new AgentToolApprovalService(() => ({
+      execute: sql,
+      getConnection: async () => {
+        const connection = await pool.getConnection();
+        return {
+          execute: (query: string, values: unknown[] = []) => connection.execute(query, values as any[]),
+          release: () => connection.release(),
+          destroy: () => connection.destroy(),
+        };
+      },
+    }), key);
     app = Fastify();
     await registerActionPlanRoutes(
       app,
