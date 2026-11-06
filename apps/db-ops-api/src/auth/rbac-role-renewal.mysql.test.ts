@@ -176,4 +176,34 @@ describe.skipIf(!port)('user role renewal with isolated MySQL and real JWT', () 
     expect((await service.revokeRoleFromUser(7, 1)).success).toBe(true);
     expect(await state()).toEqual({ grants: [], version: 3, revoked: 1 });
   });
+  it('MAX-340 atomic replacement rolls back deletion, insertion and session failures', async () => {
+    await pool.query('INSERT INTO user_roles (user_id, role_id) VALUES (7, 1)');
+    const before = await state();
+    for (const failure of ['DELETE FROM user_roles', 'INSERT INTO user_roles', 'UPDATE refresh_tokens']) {
+      failAt = failure;
+      const result = await service.replaceUserRoles(7, [2], [1]);
+      expect(result.success).toBe(false);
+      expect(await state()).toEqual(before);
+    }
+  });
+  it('MAX-340 concurrent replacements reject stale snapshot and commit one complete set', async () => {
+    await pool.query('INSERT INTO roles (id, name) VALUES (3, \'replacement\')');
+    await pool.query('INSERT INTO user_roles (user_id, role_id) VALUES (7, 1)');
+    const results = await Promise.all([service.replaceUserRoles(7, [2], [1]), service.replaceUserRoles(7, [3], [1])]);
+    expect(results.filter(r => r.success)).toHaveLength(1);
+    expect(results.filter(r => r.conflict)).toHaveLength(1);
+    const [rows] = await pool.query<any[]>('SELECT role_id FROM user_roles WHERE user_id = 7');
+    expect(rows).toHaveLength(1);
+    expect([2, 3]).toContain(rows[0].role_id);
+  });
+  it('MAX-340 real JWT replacement authorizes administrator and denies ordinary user', async () => {
+    await pool.query('INSERT INTO user_roles (user_id, role_id) VALUES (7, 1)');
+    const denied = await app.inject({ method: 'PUT', url: '/api/v1/rbac/users/7/roles',
+      headers: {authorization: `Bearer ${signAccessToken(await contexts.loadActiveActor(7), secret)}`}, payload: {roleIds: [], expectedRoleIds: [1]} });
+    expect(denied.statusCode).toBe(403);
+    const saved = await app.inject({ method: 'PUT', url: '/api/v1/rbac/users/7/roles', headers, payload: {roleIds: [], expectedRoleIds: [1]} });
+    expect(saved.statusCode).toBe(200);
+    expect((await state()).grants).toEqual([]);
+  });
+
 });

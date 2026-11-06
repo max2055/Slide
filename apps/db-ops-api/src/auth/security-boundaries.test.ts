@@ -688,6 +688,7 @@ describe('actor session revocation', () => {
     const connection = {
       beginTransaction: vi.fn(),
       execute: vi.fn(async (sql: string) => {
+        if (sql === 'SELECT id FROM users WHERE id = ? FOR UPDATE') return [[{ id: 7 }]];
         if (sql.startsWith('INSERT IGNORE INTO user_roles')) {
           state.roleAssigned = true;
           return [{ affectedRows: 1 }];

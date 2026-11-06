@@ -135,12 +135,22 @@ test('MAX-339 real profile, role selection, cancel and permission denial', async
   await view.getByRole('checkbox', { name: '数据库管理员', exact: true }).uncheck();
   await view.getByRole('checkbox', { name: '观察者', exact: true }).check();
   await page.screenshot({ path: info.outputPath('real-role-selection.png') });
+  // Another administrator changes the set after this editor loaded its snapshot.
+  await db.execute("INSERT INTO user_roles(user_id,role_id) SELECT ?,id FROM roles WHERE name='viewer'", [targetId]);
+  const concurrent = await roleSnapshot();
+  const conflict = page.waitForResponse(r => r.url().endsWith(`/rbac/users/${targetId}/roles`) && r.request().method() === 'PUT');
+  await view.getByRole('button', { name: '保存', exact: true }).click();
+  expect((await conflict).status()).toBe(409);
+  await expect(view.locator('.save-error')).toContainText('角色已被其他操作修改');
+  expect(await roleSnapshot()).toEqual(concurrent);
+  await db.execute("DELETE ur FROM user_roles ur JOIN roles r ON r.id=ur.role_id WHERE ur.user_id=? AND r.name='viewer'", [targetId]);
+  report.checks.push('MAX-340 real stale snapshot: PUT 409 displayed, concurrent bindings preserved');
   await view.getByRole('button', { name: '保存', exact: true }).click();
   await expect(view.getByRole('dialog')).toHaveCount(0);
   const after = await roleSnapshot();
   expect(after.map((r: any) => r.name).sort()).toEqual(['auditor', 'viewer']);
   expect(after.find((r: any) => r.name === 'auditor')).toEqual(before.find((r: any) => r.name === 'auditor'));
-  expect(roleWrites).toHaveLength(2);
+  expect(roleWrites).toEqual(Array(2).fill(`PUT /api/v1/rbac/users/${targetId}/roles`));
   report.checks.push('explicit role change: MySQL has exactly auditor/viewer; auditor binding ID and expiry retained');
   report.explicitRoleWrites = roleWrites;
   report.afterBindings = after;

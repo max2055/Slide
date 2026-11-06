@@ -99,6 +99,7 @@ export class RbacService {
     const connection = await this.requireTransaction(pool);
     try {
       await connection.beginTransaction();
+      await connection.execute('SELECT id FROM users WHERE id = ? FOR UPDATE', [userId]);
       if (await mutation(connection)) {
         await connection.execute(
           'UPDATE users SET session_version = session_version + 1 WHERE id = ?',
@@ -533,6 +534,35 @@ export class RbacService {
   // =========================================================================
   // User-Role assignment
   // =========================================================================
+
+  /** Compare and replace under the same user lock used by individual grants. */
+  async replaceUserRoles(userId: number, roleIds: number[], expectedRoleIds: number[]): Promise<{ success: boolean; error?: string; conflict?: boolean }> {
+    const pool = this.getPool();
+    if (!pool) return { success: false, error: '数据库未连接' };
+    try {
+      await this.mutateUserRoleAndRevokeSessions(pool, userId, async (connection) => {
+        const [users] = await connection.execute('SELECT id FROM users WHERE id = ?', [userId]) as any;
+        if (!users.length) throw new Error('用户不存在');
+        const [rows] = await connection.execute('SELECT role_id FROM user_roles WHERE user_id = ? FOR UPDATE', [userId]) as any;
+        const current = rows.map((r: any) => Number(r.role_id)).sort((a: number, b: number) => a - b);
+        const expected = [...expectedRoleIds].sort((a, b) => a - b);
+        if (JSON.stringify(current) !== JSON.stringify(expected)) throw new Error('角色已被其他操作修改，请刷新后重试');
+        // Validate every destination before deleting anything; FK locks also guard role deletion.
+        for (const roleId of [...roleIds].sort((a, b) => a - b)) {
+          const [roles] = await connection.execute('SELECT id FROM roles WHERE id = ? FOR UPDATE', [roleId]) as any;
+          if (!roles.length) throw new Error('角色不存在');
+        }
+        const removed = current.filter((id: number) => !roleIds.includes(id));
+        const added = roleIds.filter(id => !current.includes(id));
+        for (const id of removed) await connection.execute('DELETE FROM user_roles WHERE user_id = ? AND role_id = ?', [userId, id]);
+        for (const id of added) await connection.execute('INSERT INTO user_roles (user_id, role_id) VALUES (?, ?)', [userId, id]);
+        return removed.length + added.length > 0;
+      });
+      return { success: true };
+    } catch (error: any) {
+      return { success: false, error: error.message, conflict: error.message === '角色已被其他操作修改，请刷新后重试' };
+    }
+  }
 
   async assignRoleToUser(userId: number, roleId: number): Promise<{ success: boolean; error?: string }> {
     const pool = this.getPool();

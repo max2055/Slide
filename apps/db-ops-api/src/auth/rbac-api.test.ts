@@ -60,6 +60,14 @@ describe('RBAC route input boundaries (#493 / #494 / #495)', () => {
     });
   }
 
+  it('MAX-340 replacement validates arrays and authorization before storage', async () => {
+    for (const body of [{}, {roleIds: [], expectedRoleIds: null}, {roleIds: [1, 1], expectedRoleIds: []}, {roleIds: ['1'], expectedRoleIds: []}]) {
+      expect((await send('PUT', '/users/1/roles', body)).statusCode).toBe(400);
+    }
+    expect((await send('PUT', '/users/1/roles', {roleIds: [], expectedRoleIds: []}, 'viewer')).statusCode).toBe(403);
+    expect(dbConnection.getPool).not.toHaveBeenCalled();
+  });
+
   for (const [method, path] of writes) {
     it(`${method} ${path}: rejects null, absent, array and primitive bodies before DB`, async () => {
       for (const body of [null, undefined, [], ['x'], 'text', 1, true, false]) {

@@ -10,6 +10,7 @@ for (const width of [1366, 1440, 1920]) test(`multi-role edit ${width}`, async (
     if (!path.startsWith('/api/')) return route.fallback();
     if (request.method() !== 'GET') {
       writes.push(request.method() + ' ' + path);
+      if (request.method() === 'PUT' && path.endsWith('/roles')) roles = request.postDataJSON().roleIds;
       if (request.method() === 'DELETE') roles = roles.filter(id => id !== Number(path.split('/').pop()));
       if (request.method() === 'POST') roles.push(request.postDataJSON().roleId);
       return route.fulfill({ json: { success: true } });

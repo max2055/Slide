@@ -455,22 +455,12 @@ export class UsersManagement extends LitElement {
 
   /** Preserve unchanged bindings, including their expiry metadata. */
   private async _syncUserRoles(userId: number, selectedRoleIds: number[]) {
-    const currentRoles = this.userRoles.get(userId) || [];
-    const currentIds = new Set(currentRoles.map(r => r.role_id));
-    const selectedIds = new Set(selectedRoleIds);
-    for (const r of currentRoles.filter(r => !selectedIds.has(r.role_id))) {
-      const res = await apiClient.delete(`/v1/rbac/users/${userId}/roles/${r.role_id}`);
-      if (!res || (res as any).success === false) {
-        throw new Error(`移除角色失败: ${(res as any)?.error || '未知错误'}`);
-      }
-    }
-    for (const roleId of selectedIds) {
-      if (currentIds.has(roleId)) continue;
-      const res = await apiClient.post(`/v1/rbac/users/${userId}/roles`, { roleId });
-      if (!res || (res as any).success === false) {
-        throw new Error(`添加角色失败: ${(res as any)?.error || '未知错误'}`);
-      }
-    }
+    const expectedRoleIds = (this.userRoles.get(userId) || []).map(r => r.role_id);
+    if (expectedRoleIds.length === selectedRoleIds.length && expectedRoleIds.every(id => selectedRoleIds.includes(id))) return;
+    const res = await apiClient.put<{ success: boolean; error?: string }>(`/v1/rbac/users/${userId}/roles`, {
+      roleIds: selectedRoleIds, expectedRoleIds,
+    });
+    if (!res?.success) throw new Error(res?.error || '角色保存失败');
   }
 
   // Password reset
