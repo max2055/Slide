@@ -11,6 +11,9 @@ import { CronExecutor } from './cron-executor.js';
 import { createCronToolRegistry, getPlatformTool } from '../adapter/get-agent-engine.js';
 import { CronManager } from './cron-manager.js';
 import { cronJobService } from './cron-job-service.js';
+import { CronAuthorityService } from './cron-authority.js';
+import { agentToolAuditService } from '../security/agent-tool-audit-service.js';
+import { agentExecutionConfigService } from '../security/agent-execution-config-service.js';
 import { cronRunStore, CronRunStore } from './cron-run-store.js';
 import { MysqlWorkflowStore, WorkerRuntime } from '../workflows/worker-runtime.js';
 import { registerCronRunHandler } from '../workflows/register-workflow-handlers.js';
@@ -130,6 +133,45 @@ describe.skipIf(!port)('Cron API + isolated MySQL security', () => {
     await pool?.end();
     if (admin) { await admin.query(`DROP DATABASE ${database}`); await admin.end(); }
   });
+
+  // GitHub #305: real RBAC reload and persistent audits across the audit I/O race.
+  it.each(['scope', 'permission', 'unchanged'] as const)(
+    'persists the refreshed %s decision and returns the same Cron result', async change => {
+      const id = await createJob(await createScript());
+      const scope = { version: 1, targetInstanceId: null, instanceIds: [9], serverIds: [], networkDeviceIds: [] };
+      await pool.query("UPDATE cron_jobs SET task_type='agent', script_id=NULL, owner_user_id=8, resource_scope=? WHERE id=?", [JSON.stringify(scope), id]);
+      const authority = await new CronAuthorityService().authorize((await cronJobService.getJobById(id))!);
+      const persistAudit = agentToolAuditService.record.bind(agentToolAuditService);
+      const config = vi.spyOn(agentExecutionConfigService, 'get').mockResolvedValue({ approvalEnabled: false } as any);
+      const audit = vi.spyOn(agentToolAuditService, 'record').mockImplementation(async (record, transaction) => {
+        await persistAudit(record, transaction);
+        if (record.phase !== 'decision' || !record.decision.allow) return;
+        if (change === 'scope') await pool.query('DELETE FROM instance_permissions WHERE user_id=8 AND instance_id=9');
+        if (change === 'permission') await pool.query('DELETE FROM role_permissions WHERE role_id=2 AND permission_id=4');
+      });
+      const handler = vi.spyOn((await getPlatformTool('get_instance_summary'))!, 'handler')
+        .mockResolvedValue({ success: true, data: { name: 'A' } });
+      try {
+        const registry = await createCronToolRegistry(authority);
+        const result = await registry.execute('get_instance_summary', { instance_id: 9 });
+        const allow = change === 'unchanged';
+        const reason = allow ? 'ALLOW' : change === 'permission' ? 'MISSING_PERMISSION' : 'INSTANCE_SCOPE_DENIED';
+        expect(result).toMatchObject({ success: allow, policyDecision: { allow, reasonCode: reason },
+          ...(!allow ? { errorCode: reason } : {}) });
+        expect(handler).toHaveBeenCalledTimes(allow ? 1 : 0);
+        const [rows] = await pool.query<any[]>('SELECT phase, allowed, reason_code, policy_snapshot, result_redacted FROM agent_tool_audit ORDER BY id');
+        expect(rows.map(row => [row.phase, Number(row.allowed), row.reason_code])).toEqual(allow
+          ? [['decision', 1, 'ALLOW'], ['result', 1, 'ALLOW']]
+          : [['decision', 1, 'ALLOW'], ['decision', 0, reason], ['result', 0, reason]]);
+        expect(rows.at(-1).result_redacted).toMatchObject({ success: allow, ...(!allow ? { errorCode: reason } : {}) });
+        if (change === 'permission') expect(rows.at(-1).policy_snapshot.permissions).not.toContain('instance:view');
+        if (change === 'scope') expect(rows.at(-1).policy_snapshot.resourceBoundary.instanceIds).toEqual([]);
+      } finally {
+        handler.mockRestore(); audit.mockRestore(); config.mockRestore();
+        if (change === 'permission') await pool.query('INSERT INTO role_permissions VALUES (2,4)');
+      }
+    },
+  );
 
   it('transactionally queues one run on concurrent retries and recovers request/run mapping after recreation', async () => {
     const id = await createJob(await createScript());
