@@ -72,7 +72,34 @@ describe('MAX-368 server deletion keeps historical reports', () => {
   });
 });
 
-const realMysql = process.env.MAX368_MYSQL === '1';
+type MysqlEnv = Record<string, string | undefined>;
+
+function acceptanceEnabled(env: MysqlEnv = process.env): boolean {
+  return env.MAX368_MYSQL === '1';
+}
+
+function readMysqlTestProfile(env: MysqlEnv = process.env): { host: string; port: number; user: string; password: string } {
+  const host = env.MAX368_MYSQL_HOST;
+  const portText = env.MAX368_MYSQL_PORT;
+  const user = env.MAX368_MYSQL_USER;
+  const password = env.MAX368_MYSQL_PASSWORD;
+  const port = Number(portText);
+  if (host !== '127.0.0.1' || portText !== '3308' || !Number.isInteger(port) || !user || !password) {
+    throw new Error(
+      'MAX368_MYSQL=1 requires MAX368_MYSQL_HOST=127.0.0.1, MAX368_MYSQL_PORT=3308, MAX368_MYSQL_USER, and MAX368_MYSQL_PASSWORD',
+    );
+  }
+  return { host, port, user, password };
+}
+
+function evidenceDirectory(env: MysqlEnv = process.env): string {
+  const directory = env.MAX368_EVIDENCE_DIR?.trim();
+  if (!directory) throw new Error('MAX368_MYSQL=1 requires MAX368_EVIDENCE_DIR for this task evidence directory');
+  return directory;
+}
+
+const realMysql = acceptanceEnabled();
+let evidenceDirectoryPath: string | null = null;
 const evidence: Record<string, unknown> = {
   task: 'MAX-368',
   github: 472,
@@ -86,6 +113,39 @@ const evidence: Record<string, unknown> = {
   },
 };
 
+describe('MAX-368 injected mysql acceptance config', () => {
+  it('stays off unless real mysql acceptance is explicitly enabled', () => {
+    expect(acceptanceEnabled({})).toBe(false);
+    expect(acceptanceEnabled({ MAX368_MYSQL: '0' })).toBe(false);
+  });
+
+  it('fails when real acceptance is enabled without the injected 3308 endpoint', () => {
+    expect(() => readMysqlTestProfile({ MAX368_MYSQL: '1' })).toThrow(/MAX368_MYSQL_PORT=3308/);
+    expect(() => readMysqlTestProfile({
+      MAX368_MYSQL: '1',
+      MAX368_MYSQL_HOST: '127.0.0.1',
+      MAX368_MYSQL_PORT: '3306',
+      MAX368_MYSQL_USER: 'root',
+      MAX368_MYSQL_PASSWORD: 'injected',
+    })).toThrow(/MAX368_MYSQL_PORT=3308/);
+  });
+
+  it('fails when real acceptance is enabled without an evidence directory', () => {
+    expect(() => evidenceDirectory({})).toThrow(/MAX368_EVIDENCE_DIR/);
+    expect(() => evidenceDirectory({ MAX368_EVIDENCE_DIR: '   ' })).toThrow(/MAX368_EVIDENCE_DIR/);
+  });
+
+  it('accepts an injected 3308 endpoint and evidence directory', () => {
+    expect(readMysqlTestProfile({
+      MAX368_MYSQL_HOST: '127.0.0.1',
+      MAX368_MYSQL_PORT: '3308',
+      MAX368_MYSQL_USER: 'root',
+      MAX368_MYSQL_PASSWORD: 'injected',
+    })).toEqual({ host: '127.0.0.1', port: 3308, user: 'root', password: 'injected' });
+    expect(evidenceDirectory({ MAX368_EVIDENCE_DIR: '/tmp/max368-evidence' })).toBe('/tmp/max368-evidence');
+  });
+});
+
 describe.skipIf(!realMysql)('MAX-368 real delete service on isolated mysql3308', () => {
   const database = `max368_${process.pid}`;
   let admin: Pool;
@@ -98,6 +158,7 @@ describe.skipIf(!realMysql)('MAX-368 real delete service on isolated mysql3308',
 
   beforeAll(async () => {
     const profile = readMysqlTestProfile();
+    evidenceDirectoryPath = evidenceDirectory();
     expect(profile.port).toBe(3308);
     expect(profile.host).toBe('127.0.0.1');
     try {
@@ -618,15 +679,6 @@ function sanitize(error: unknown, secret: string): Error {
   return new Error(message.split(secret).join('[redacted]'));
 }
 
-function readMysqlTestProfile(): { host: string; port: number; user: string; password: string } {
-  const parsed = JSON.parse(readFileSync('/Users/max/.config/slide-test-access/connection-profiles.json', 'utf8')) as {
-    'mysql-test'?: { host?: string; port?: number; user?: string; password?: string };
-  };
-  const profile = parsed['mysql-test'];
-  if (!profile?.host || !profile.port || !profile.user || !profile.password) throw new Error('mysql-test profile is incomplete');
-  return { host: profile.host, port: Number(profile.port), user: profile.user, password: profile.password };
-}
-
 const SAFE_DATABASE_NAME = /^[a-z][a-z0-9_]{0,63}$/;
 const UPGRADE_ROWS = 120000;
 
@@ -780,10 +832,9 @@ async function reportForeignKeys(pool: Pool): Promise<Array<{ name: string; dele
 }
 
 afterAll(() => {
-  if (!realMysql) return;
-  const directory = '/Users/max/Coding/40-Slide/outputs/max-368-acceptance';
-  mkdirSync(directory, { recursive: true });
-  writeFileSync(`${directory}/result.json`, `${JSON.stringify(evidence, null, 2)}\n`);
+  if (!realMysql || !evidenceDirectoryPath) return;
+  mkdirSync(evidenceDirectoryPath, { recursive: true });
+  writeFileSync(join(evidenceDirectoryPath, 'result.json'), `${JSON.stringify(evidence, null, 2)}\n`);
 });
 
 async function waitForProcess(pool: Pool, database: string, pattern: RegExp): Promise<boolean> {
