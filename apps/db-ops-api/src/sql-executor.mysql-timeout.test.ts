@@ -742,4 +742,126 @@ describe('MySQL mutation statement timeout (MAX-373)', () => {
       'SET SESSION lock_wait_timeout = DEFAULT',
     ]);
   });
+
+  async function transportLossLeavesTheInstanceIsolated(options: {
+    instanceId: number;
+    operationId: string;
+    threadId: number;
+    lose: 'borrow' | 'kill-ack' | 'proof';
+  }) {
+    const seen: string[] = [];
+    let stopped = false;
+    let rejectUpdate: (error: Error) => void = () => undefined;
+    const blocked = new Promise<never>((_, reject) => { rejectUpdate = reject; });
+    const lost = Object.assign(new Error('Connection lost'), { code: 'PROTOCOL_CONNECTION_LOST', fatal: true });
+    const worker = session(options.threadId);
+    worker.query.mockImplementation(async (sql: string) => {
+      seen.push(`worker:${sql}`);
+      if (sql.startsWith('UPDATE ')) return blocked;
+      return [[], []];
+    });
+    let releaseKiller: ((session: Session) => void) | undefined;
+    const killerGate = new Promise<Session>((resolve) => { releaseKiller = resolve; });
+    const killer = session(options.threadId + 1);
+    killer.query.mockImplementation(async (sql: string) => {
+      seen.push(`killer:${sql}`);
+      if (String(sql).includes('COMMAND AS command')) {
+        return [[{ command: 'Query', info: 'UPDATE t SET note = "transport" WHERE id = 1' }], []];
+      }
+      if (String(sql).startsWith('KILL ')) {
+        if (options.lose === 'kill-ack') rejectUpdate(lost);
+        return [[], []];
+      }
+      return [[], []];
+    });
+    const observer = session(options.threadId + 2);
+    observer.query.mockImplementation(async (sql: string) => {
+      seen.push(`observer:${sql}`);
+      if (options.lose === 'proof' && String(sql).includes('COMMAND AS command')) rejectUpdate(lost);
+      if (String(sql).includes('COMMAND AS command')) {
+        seen.push(stopped ? 'proof:clear' : 'proof:busy');
+        return stopped
+          ? [[{ command: 'Sleep', info: null }], []]
+          : [[{ command: 'Query', info: 'UPDATE t SET note = "transport" WHERE id = 1' }], []];
+      }
+      if (String(sql).includes('innodb_trx')) return [[{ transactions: stopped ? 0 : 1 }], []];
+      if (sql === 'UPDATE t SET note = "after-transport" WHERE id = 1') return [[{ affectedRows: 1 }], []];
+      return [[], []];
+    });
+    const queue: Array<Session | Promise<Session>> = [
+      worker,
+      options.lose === 'borrow' ? killerGate : killer,
+    ];
+    const pool = { getConnection: vi.fn(async () => queue.shift() ?? observer) };
+    mocks.getConnection.mockReturnValue({ id: options.instanceId, name: 'mysql', db_type: 'mysql', pool });
+
+    const sql = 'UPDATE t SET note = "transport" WHERE id = 1';
+    const followSql = 'UPDATE t SET note = "still-running" WHERE id = 1';
+    const update = sqlExecutor.executeSql(options.instanceId, sql, {
+      approvalGrant: { ...grant, operationId: options.operationId }, timeoutMs: 40, userId: '9', username: 'max373',
+    });
+    await vi.waitUntil(() => seen.some((line) => line === `worker:${sql}`));
+    if (options.lose === 'borrow') {
+      await new Promise((resolve) => setTimeout(resolve, 120));
+      rejectUpdate(Object.assign(new Error('read ECONNRESET'), { code: 'ECONNRESET' }));
+      releaseKiller!(killer);
+    }
+    const follow = sqlExecutor.executeSql(options.instanceId, followSql, {
+      approvalGrant: { ...grant, operationId: `${options.operationId}-next` }, timeoutMs: 1000, userId: '9', username: 'max373',
+    });
+    const updateResult = await update;
+    const followResult = await follow;
+
+    expect(updateResult).toMatchObject({ success: false, executionState: 'unknown', retryable: false });
+    expect(updateResult.error).toContain('MYSQL_STATEMENT_TIMEOUT');
+    expect(updateResult.error).toContain('server stop was not confirmed');
+    expect(updateResult.error).toContain('do not retry');
+    expect(updateResult.error).not.toContain('Connection lost');
+    expect(updateResult.error).not.toContain('ECONNRESET');
+    expect(followResult).toMatchObject({ success: false, executionState: 'not_started', retryable: false });
+    expect(followResult.error).toContain('MYSQL_INSTANCE_ISOLATED');
+    expect(seen.some((line) => line.includes('still-running'))).toBe(false);
+    expect(seen.some((line) => line === 'proof:busy')).toBe(true);
+    expect(worker.destroy).toHaveBeenCalled();
+    expect(worker.release).not.toHaveBeenCalled();
+    expect(mocks.beginIntent.mock.calls.map((call) => call[1].operationId)).toEqual([options.operationId]);
+    expect(mocks.finishIntent).toHaveBeenCalledWith(options.operationId, 'unknown', expect.anything());
+    expect(mocks.finishIntent).not.toHaveBeenCalledWith(options.operationId, 'succeeded', expect.anything());
+    expect(mocks.auditSql).toHaveBeenCalledWith(expect.objectContaining({
+      status: 'error',
+      dbType: 'mysql',
+      errorMessage: expect.stringContaining('server stop was not confirmed'),
+    }));
+
+    stopped = true;
+    const recovered = await sqlExecutor.executeSql(options.instanceId, 'UPDATE t SET note = "after-transport" WHERE id = 1', {
+      approvalGrant: { ...grant, operationId: `${options.operationId}-recovered` }, timeoutMs: 1000, userId: '9', username: 'max373',
+    });
+    expect(recovered).toMatchObject({ success: true, executionState: 'succeeded', retryable: false });
+    expect(seen.filter((line) => line === `worker:${sql}`)).toHaveLength(1);
+    expect(seen.indexOf('proof:clear')).toBeGreaterThanOrEqual(0);
+    expect(seen.indexOf('observer:UPDATE t SET note = "after-transport" WHERE id = 1')).toBeGreaterThan(seen.indexOf('proof:clear'));
+    expect(mocks.beginIntent.mock.calls.map((call) => call[1].operationId)).toEqual([
+      options.operationId,
+      `${options.operationId}-recovered`,
+    ]);
+  }
+
+  it('keeps isolation when the worker connection drops while the killer is still being borrowed', async () => {
+    await transportLossLeavesTheInstanceIsolated({
+      instanceId: 37324, operationId: 'max373-transport-borrow', threadId: 301, lose: 'borrow',
+    });
+  }, 15_000);
+
+  it('keeps isolation when KILL is acknowledged and the worker then loses the connection', async () => {
+    await transportLossLeavesTheInstanceIsolated({
+      instanceId: 37325, operationId: 'max373-transport-ack', threadId: 311, lose: 'kill-ack',
+    });
+  }, 15_000);
+
+  it('does not let a late transport reject replace an unconfirmed stop', async () => {
+    await transportLossLeavesTheInstanceIsolated({
+      instanceId: 37326, operationId: 'max373-transport-proof', threadId: 321, lose: 'proof',
+    });
+  }, 15_000);
 });

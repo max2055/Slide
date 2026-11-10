@@ -532,6 +532,8 @@ describe.skipIf(!enabled)('MAX-373 real MySQL change timeout', () => {
     let created = false;
     let small: mysql.Pool | null = null;
     let hanging: mysql.Pool | null = null;
+    let transportPool: mysql.Pool | null = null;
+    let transportConn: mysql.PoolConnection | null = null;
     let restorePool: (() => void) | undefined;
     const phases: Record<string, unknown> = {};
     const grantFor = (operationId: string) => ({
@@ -809,6 +811,196 @@ describe.skipIf(!enabled)('MAX-373 real MySQL change timeout', () => {
       expect(killNote[0]?.note).toBe('original');
       expect(phases.kill).toMatchObject({ remaining: 0, transactions: 0 });
 
+      // Controlled client fault on a real 3308 session. The worker promise is
+      // rejected with PROTOCOL_CONNECTION_LOST and KILL is acknowledged without
+      // being sent, so the server statement keeps running. destroy() on that
+      // worker does not close the socket. Processlist and innodb_trx below are
+      // the real server; the lost-connection error is not.
+      const transportMarker = 'max373_iso_transport';
+      let rejectTransport: ((error: Error) => void) | undefined;
+      let workerDestroyed = false;
+      let workerReleased = false;
+      transportPool = mysql.createPool({
+        host: profile.host,
+        port: Number(profile.port),
+        user: profile.user,
+        password,
+        database: isolatedSchema,
+        connectionLimit: 2,
+        waitForConnections: true,
+      });
+      record.pool = {
+        pool: transportPool.pool,
+        async getConnection() {
+          const conn = await transportPool!.getConnection();
+          const worker = { current: false };
+          return {
+            get threadId() { return conn.threadId; },
+            ping: () => conn.ping(),
+            query(sql: string, values?: unknown[]) {
+              const text = String(sql);
+              if (text.includes(transportMarker)) {
+                worker.current = true;
+                transportConn = conn;
+                void conn.query(text).catch(() => undefined);
+                return new Promise<never>((_, reject) => { rejectTransport = reject; });
+              }
+              if (text.startsWith('KILL ')) {
+                rejectTransport?.(Object.assign(new Error('Connection lost'), {
+                  code: 'PROTOCOL_CONNECTION_LOST',
+                  fatal: true,
+                }));
+                return Promise.resolve([[], []]);
+              }
+              return values === undefined ? conn.query(text) : conn.query(text, values);
+            },
+            release() {
+              if (worker.current) workerReleased = true;
+              conn.release();
+            },
+            destroy() {
+              if (worker.current) {
+                workerDestroyed = true;
+                return;
+              }
+              conn.destroy();
+            },
+          };
+        },
+      } as unknown as typeof record.pool;
+
+      const intentsBefore = mocks.beginIntent.mock.calls.length;
+      await localHolder!.query('ROLLBACK').catch(() => undefined);
+      await localHolder!.beginTransaction();
+      await localHolder!.query('SELECT note FROM t WHERE id = 1 FOR UPDATE');
+      const transportSql = `UPDATE t SET note = '${transportMarker}' WHERE id = 1`;
+      // The server lock wait stays above the observation window. The client
+      // promise is failed by the test once the real statement is visible.
+      const transportUpdate = sqlExecutor.executeSql(isolatedId, transportSql, {
+        ...grantFor('max373-iso-transport'),
+        timeoutMs: 30_000,
+      });
+      const transportSeen = Date.now();
+      const visibleDeadline = Date.now() + 4_000;
+      let transportRunning = 0;
+      while (Date.now() < visibleDeadline) {
+        transportRunning = await threads(transportMarker);
+        if (transportRunning && transportConn?.threadId && rejectTransport) break;
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+      if (!transportRunning || !transportConn?.threadId || !rejectTransport) {
+        throw new Error('transport statement did not reach processlist');
+      }
+      // The row lock is visible in processlist before innodb_trx lists it.
+      await new Promise((resolve) => setTimeout(resolve, 250));
+      const trxLook = await connect();
+      let transportTransactions = 0;
+      try {
+        const trxDeadline = Date.now() + 2_000;
+        while (Date.now() < trxDeadline) {
+          const [trxRows] = await trxLook.query<RowDataPacket[]>(
+            `SELECT COUNT(*) AS transactions FROM information_schema.innodb_trx WHERE trx_mysql_thread_id = ${Number(transportConn.threadId)}`,
+          );
+          transportTransactions = Number(trxRows[0]?.transactions ?? 0);
+          if (transportTransactions > 0) break;
+          await new Promise((resolve) => setTimeout(resolve, 50));
+        }
+      } finally {
+        await trxLook.end().catch(() => undefined);
+      }
+      if (transportTransactions < 1) {
+        throw new Error('transport statement was not waiting in a transaction');
+      }
+      rejectTransport(Object.assign(new Error('Connection lost'), { code: 'PROTOCOL_CONNECTION_LOST', fatal: true }));
+      const transportResult = await transportUpdate;
+      const transportFollow = await sqlExecutor.executeSql(
+        isolatedId,
+        successorSql('max373_follow_iso_transport'),
+        successorContext('max373-follow-iso-transport'),
+      );
+      const transportStill = await threads(transportMarker);
+      const transportSuccessor = await threads('max373_follow_iso_transport');
+      expect(transportResult).toMatchObject({ success: false, executionState: 'unknown', retryable: false });
+      expect(transportResult.error).toContain('server stop was not confirmed');
+      expect(transportResult.error).not.toContain('Connection lost');
+      expect(transportFollow).toMatchObject({ success: false, executionState: 'not_started', retryable: false });
+      expect(transportFollow.error).toContain('MYSQL_INSTANCE_ISOLATED');
+      expect(transportFollow.error).toContain('was not sent');
+      expect(transportStill).toBeGreaterThan(0);
+      expect(transportSuccessor).toBe(0);
+      expect(transportTransactions).toBeGreaterThan(0);
+      expect(workerDestroyed).toBe(true);
+      expect(workerReleased).toBe(false);
+      const [transportNote] = await localAdmin!.query<RowDataPacket[]>(`SELECT note FROM \`${isolatedSchema}\`.t WHERE id = 1`);
+      expect(transportNote[0]?.note).toBe('original');
+
+      const threadId = Number(transportConn?.threadId);
+      if (!Number.isInteger(threadId) || threadId <= 0 || !transportConn) throw new Error('transport thread was not identified');
+      const [holderRow] = await localHolder!.query<RowDataPacket[]>('SELECT CONNECTION_ID() AS id');
+      const holderId = Number(holderRow[0]?.id);
+      await localHolder!.query('ROLLBACK').catch(() => undefined);
+      await localAdmin!.query(`KILL CONNECTION ${threadId}`);
+      if (Number.isInteger(holderId) && holderId > 0) {
+        await localAdmin!.query(`KILL CONNECTION ${holderId}`).catch(() => undefined);
+      }
+      const stuck = transportConn;
+      transportConn = null;
+      try { stuck.destroy(); } catch { /* KILL CONNECTION already closed it. */ }
+      await new Promise((resolve) => setTimeout(resolve, 1_500));
+      const clearLook = await connect();
+      let clearCommand = '';
+      let clearTrx = 0;
+      try {
+        const [commandRows] = await clearLook.query<RowDataPacket[]>(
+          `SELECT COMMAND AS command FROM information_schema.processlist WHERE ID = ${threadId}`,
+        );
+        const [trxRows] = await clearLook.query<RowDataPacket[]>(
+          `SELECT COUNT(*) AS transactions FROM information_schema.innodb_trx WHERE trx_mysql_thread_id = ${threadId}`,
+        );
+        clearCommand = String(commandRows[0]?.command ?? 'absent');
+        clearTrx = Number(trxRows[0]?.transactions ?? 0);
+      } finally {
+        await clearLook.end().catch(() => undefined);
+      }
+      if (clearTrx !== 0 || (clearCommand !== 'absent' && clearCommand.toLowerCase() !== 'sleep')) {
+        throw new Error(`transport session did not stop after KILL (command=${clearCommand}, trx=${clearTrx})`);
+      }
+      const recovered = await sqlExecutor.executeSql(
+        isolatedId,
+        'UPDATE t SET note = \'max373_transport_recovered\' WHERE id = 1',
+        grantFor('max373-iso-transport-recovered'),
+      );
+      const [recoveredNote] = await localAdmin!.query<RowDataPacket[]>(`SELECT note FROM \`${isolatedSchema}\`.t WHERE id = 1`);
+      const transportAudits = await auditLogManager.query({ eventType: 'sql_execution', search: transportMarker, limit: 10 });
+      phases.transport = {
+        fault: 'controlled client PROTOCOL_CONNECTION_LOST after the real lock-wait was visible; socket left open',
+        server: 'real 3308 processlist Query and innodb_trx before the follow; KILL CONNECTION only after that refusal',
+        elapsedMs: Date.now() - transportSeen,
+        transactions: transportTransactions,
+        stillRunningWhenFollowReturned: transportStill,
+        successorThreads: transportSuccessor,
+        noteBeforeRecovery: transportNote[0]?.note,
+        noteAfterRecovery: recoveredNote[0]?.note,
+        error: transportResult.error,
+        follow: transportFollow.error,
+        recovered: recovered.success,
+        workerDestroyed,
+        workerReleased,
+        audits: transportAudits.entries.map((entry) => entry.result),
+      };
+      expect(recovered).toMatchObject({ success: true, executionState: 'succeeded', retryable: false });
+      expect(recoveredNote[0]?.note).toBe('max373_transport_recovered');
+      expect(transportAudits.entries.some((entry) => entry.result === 'failure')).toBe(true);
+      const intentCalls = mocks.beginIntent.mock.calls as unknown as Array<[unknown, { operationId: string }]>;
+      expect(intentCalls.slice(intentsBefore).map((call) => call[1].operationId)).toEqual([
+        'max373-iso-transport',
+        'max373-iso-transport-recovered',
+      ]);
+      expect(mocks.finishIntent).toHaveBeenCalledWith('max373-iso-transport', 'unknown', expect.anything());
+      expect(mocks.finishIntent).not.toHaveBeenCalledWith('max373-iso-transport', 'succeeded', expect.anything());
+      await transportPool.end();
+      transportPool = null;
+
       record.pool = original;
       const evidenceDir = process.env.MAX373_EVIDENCE_DIR;
       if (evidenceDir) fs.writeFileSync(`${evidenceDir}/isolate-phases.json`, `${JSON.stringify(phases, null, 2)}\n`);
@@ -824,9 +1016,18 @@ describe.skipIf(!enabled)('MAX-373 real MySQL change timeout', () => {
       await localGate?.end().catch(() => undefined);
       await orderWatcher?.end().catch(() => undefined);
       if (created && localAdmin) await localAdmin.query(`DROP DATABASE IF EXISTS \`${isolatedSchema}\``).catch(() => undefined);
+      if (transportConn && localAdmin) {
+        const stuck = Number(transportConn.threadId);
+        if (Number.isInteger(stuck) && stuck > 0) {
+          await localAdmin.query(`KILL QUERY ${stuck}`).catch(() => undefined);
+        }
+        try { transportConn.destroy(); } catch { /* The socket is already closing. */ }
+        transportConn = null;
+      }
       await localAdmin?.end().catch(() => undefined);
       await small?.end().catch(() => undefined);
       await hanging?.end().catch(() => undefined);
+      await transportPool?.end().catch(() => undefined);
       await databaseService.removeConnection(isolatedId).catch(() => undefined);
     }
   }, 60_000);
