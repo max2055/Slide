@@ -2,12 +2,20 @@
 -- available and deleting rows share one slot (0) per host + port + database name.
 -- deleted tombstones store NULL in the slot. InnoDB unique indexes allow multiple
 -- NULLs, so a tombstone keeps its row, name, and credentials without holding the address.
--- NULL and empty database_name are the same address. This statement does not rewrite
--- existing name, host, credential, or lifecycle values.
--- If two available/deleting rows already share an address, this ALTER fails and
--- rolls back; the table and its rows stay as they were. The migration ledger then
--- stays failed and must not be acknowledged as completed: remove only the duplicate
--- occupying rows, delete this migration's failed ledger row, and run migrations again.
+-- NULL and empty database_name are the same address. Equality follows the table
+-- collation, so case and trailing spaces compare equal. This statement does not
+-- rewrite existing name, host, credential, lifecycle, or reference values.
+-- If two available or deleting rows already share an address, this ALTER fails and
+-- rolls back. Stop writes to database_instances. Identify the occupying rows with a
+-- read-only query and back them up.
+-- Correct the collision only through an approved identity or lifecycle change.
+-- Do not delete historical rows, credentials, or references to clear it.
+-- Leave the ledger failed.
+-- Do not mark it completed and do not replay while it is failed.
+-- Explicit repair is allowed only after the approved correction, and only after
+-- confirming this DDL rolled back and neither generated column nor the unique index remains.
+-- Then delete this migration's failed ledger row and run migrations again.
+-- That ledger delete is not permission to remove history.
 ALTER TABLE database_instances
   ADD COLUMN physical_database_key VARCHAR(100)
     AS (IFNULL(database_name, '')) VIRTUAL INVISIBLE

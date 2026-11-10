@@ -91,12 +91,26 @@ describe.skipIf(!existsSync(profilePath))('MAX-363/MAX-369 physical identity on 
     return rows[0];
   }
 
+  const ownedSchemas = new Set<string>();
+
+  async function createOwnedDatabase(name: string, owned: Set<string> = ownedSchemas): Promise<void> {
+    await admin.query(`CREATE DATABASE \`${name}\``);
+    owned.add(name);
+  }
+
+  async function dropOwnedDatabases(owned: Set<string> = ownedSchemas): Promise<void> {
+    for (const name of [...owned]) {
+      await admin.query(`DROP DATABASE IF EXISTS \`${name}\``);
+      owned.delete(name);
+    }
+  }
+
   beforeAll(async () => {
     vi.stubEnv('ENCRYPTION_KEY', randomBytes(32).toString('hex'));
     vi.stubEnv('NODE_ENV', 'test');
     admin = await mysql.createConnection(config);
-    await admin.query(`CREATE DATABASE \`${failureSchema}\``);
-    await admin.query(`CREATE DATABASE \`${schema}\``);
+    await createOwnedDatabase(failureSchema);
+    await createOwnedDatabase(schema);
     pool = mysql.createPool({ ...config, database: schema, connectionLimit: 12 });
     await pool.query(tableSql);
     vi.spyOn(dbConnection, 'getPool').mockReturnValue(pool);
@@ -106,11 +120,40 @@ describe.skipIf(!existsSync(profilePath))('MAX-363/MAX-369 physical identity on 
     vi.restoreAllMocks();
     if (pool) await pool.end();
     if (admin) {
-      await admin.query(`DROP DATABASE IF EXISTS \`${schema}\``);
-      await admin.query(`DROP DATABASE IF EXISTS \`${failureSchema}\``);
+      await dropOwnedDatabases();
       await admin.end();
     }
     if (migrationDir) await rm(migrationDir, { recursive: true, force: true });
+  });
+
+  it('drops only databases this run created successfully', async () => {
+    const preexisting = `max363_pre_${suffix}`;
+    const created = `max363_owned_${suffix}`;
+    const probeOwned = new Set<string>();
+    await admin.query(`CREATE DATABASE \`${preexisting}\``);
+    try {
+      await admin.query(`CREATE TABLE \`${preexisting}\`.marker (id INT PRIMARY KEY)`);
+      await admin.query(`INSERT INTO \`${preexisting}\`.marker VALUES (1)`);
+      await expect(createOwnedDatabase(preexisting, probeOwned)).rejects.toThrow(/database exists/);
+      expect(probeOwned.has(preexisting)).toBe(false);
+      expect(ownedSchemas.has(preexisting)).toBe(false);
+      await dropOwnedDatabases(probeOwned);
+      const [kept] = await admin.query<mysql.RowDataPacket[]>(`SELECT id FROM \`${preexisting}\`.marker`);
+      expect(kept).toEqual([{ id: 1 }]);
+
+      await createOwnedDatabase(created, probeOwned);
+      await dropOwnedDatabases(probeOwned);
+      const [gone] = await admin.query<mysql.RowDataPacket[]>(
+        'SELECT SCHEMA_NAME AS name FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = ?',
+        [created],
+      );
+      expect(gone).toHaveLength(0);
+      const [still] = await admin.query<mysql.RowDataPacket[]>(`SELECT id FROM \`${preexisting}\`.marker`);
+      expect(still).toEqual([{ id: 1 }]);
+    } finally {
+      await dropOwnedDatabases(probeOwned);
+      await admin.query(`DROP DATABASE IF EXISTS \`${preexisting}\``);
+    }
   });
 
   it('fails the occupancy migration without rewriting duplicate history and does not replay it', async () => {
@@ -207,6 +250,51 @@ describe.skipIf(!existsSync(profilePath))('MAX-363/MAX-369 physical identity on 
     expect(nullName.error).toContain('纳管');
     const spaced = await instanceDatabaseService.createInstance(createInput({ name: 'spaced-db', environment: 'production', host: '192.0.2.24', database_name: 'sales ' }));
     expect(spaced.success).toBe(true);
+  });
+
+  it('treats a trailing space as the same address and still stores the original characters', async () => {
+    const host = '192.0.2.70';
+    const first = await instanceDatabaseService.createInstance(createInput({ name: 'space-a', host, database_name: 'sales' }));
+    expect(first.success).toBe(true);
+    const spaced = await instanceDatabaseService.createInstance(createInput({
+      name: 'space-b',
+      environment: 'testing',
+      host,
+      database_name: 'sales ',
+    }));
+    expect(spaced.success).toBe(false);
+    expect(spaced.instanceId).toBe(first.instanceId);
+    expect(spaced.error).toContain('纳管');
+    expect(spaced.error).not.toMatch(/Duplicate entry|ER_DUP_ENTRY/);
+    expect((await rowOf(first.instanceId!)).database_name).toBe('sales');
+
+    const mover = await instanceDatabaseService.createInstance(createInput({
+      name: 'space-mover',
+      host: '192.0.2.72',
+      database_name: 'other',
+      description: 'stay',
+    }));
+    const moved = await instanceDatabaseService.updateInstance(mover.instanceId!, {
+      host,
+      database_name: 'sales ',
+      description: 'changed',
+    });
+    expect(moved.success).toBe(false);
+    expect(moved.error).toContain('纳管');
+    expect(moved.error).not.toMatch(/Duplicate entry|ER_DUP_ENTRY/);
+    const unchanged = await rowOf(mover.instanceId!);
+    expect(unchanged.host).toBe('192.0.2.72');
+    expect(unchanged.database_name).toBe('other');
+    expect(unchanged.description).toBe('stay');
+
+    const otherHost = await instanceDatabaseService.createInstance(createInput({
+      name: 'space-c',
+      environment: 'staging',
+      host: '192.0.2.71',
+      database_name: 'sales ',
+    }));
+    expect(otherHost.success).toBe(true);
+    expect((await rowOf(otherHost.instanceId!)).database_name).toBe('sales ');
   });
 
   it('rejects a denied target before insert and keeps an ordinary update', async () => {
