@@ -165,6 +165,13 @@ export interface ToolAuditRecorder {
   record(record: AgentToolAuditRecord, transaction?: AuditExecutor): Promise<void>;
 }
 
+/** A trusted handler guard rejected execution after the initial decision audit. */
+export class ToolPolicyDeniedError extends Error {
+  constructor(readonly actor: ActorContext, readonly decision: PolicyDecision) {
+    super(decision.reasonCode);
+  }
+}
+
 const persistentApprovalAuthorizer: ToolApprovalAuthorizer = {
   async authorize(actor, tool, args, resource, options, audit, signal) {
     const binding = getAgentToolApprovalService().binding(actor, tool, args, resource);
@@ -189,7 +196,10 @@ export async function executeToolWithPolicy(
   actor: ActorContext | undefined,
   tool: AnyAgentTool,
   args: Record<string, unknown>,
-  resourceResolver: (toolName: string, args: Record<string, unknown>) => Promise<ToolPolicyResource> = resolveToolResource,
+  // resolveToolResource's third argument is an optional lookup. The policy
+  // contract passes the actor there, so the default adapter keeps them apart.
+  resourceResolver: (toolName: string, args: Record<string, unknown>, actor?: ActorContext) => Promise<ToolPolicyResource>
+    = (toolName, args, current) => resolveToolResource(toolName, args, undefined, current),
   approvalAuthorizer: ToolApprovalAuthorizer = persistentApprovalAuthorizer,
   auditRecorder: ToolAuditRecorder = agentToolAuditService,
   agentId?: string,
@@ -199,7 +209,7 @@ export async function executeToolWithPolicy(
     decision,
     result: normalizeToolResult(result, tool.name),
   });
-  const resource = await resourceResolver(tool.name, args);
+  const resource = await resourceResolver(tool.name, args, actor);
   const security = getToolSecurityDefinition(tool.name);
   const risk: ExecuteCodeRisk | undefined = tool.name === 'execute_code'
     ? classifyExecuteCodeRisk({
@@ -287,7 +297,7 @@ export async function executeToolWithPolicy(
         resource,
         requestOptions,
       );
-      decision = { ...decision, approvalId: approval.id, requestId: approval.id };
+      decision = { ...decision, approvalId: approval.id };
       return policyResult(decision, {
           success: false,
           errorCode: decision.reasonCode,
@@ -326,6 +336,15 @@ export async function executeToolWithPolicy(
       });
   }
   if (!decision.allow || !actor) {
+    if (decision.reasonCode === 'AMBIGUOUS_INSTANCE_NAME') {
+      return policyResult(decision, {
+        success: false,
+        status: 'error',
+        errorCode: 'AMBIGUOUS_INSTANCE_NAME',
+        error: '同名实例存在于多个环境，请改用实例 ID',
+        next_actions: ['使用 instance_id 指定要更新的实例，不要用新的 environment 选择现有实例'],
+      });
+    }
     return policyResult(decision, { success: false, errorCode: decision.reasonCode, error: 'Tool access denied' });
   }
   const context: ToolExecutionContext = {
@@ -355,18 +374,55 @@ export async function executeToolWithPolicy(
   // Once entered, a throw may follow a side effect: never refund automatically.
   try {
     result = await tool.handler(args, context);
-  } catch {
-    console.error(`[AgentTool] Handler failed for ${tool.name}`);
-    result = { success: false, errorCode: 'TOOL_EXECUTION_FAILED', error: 'Tool execution failed' };
+  } catch (error) {
+    if (error instanceof ToolPolicyDeniedError) {
+      actor = error.actor;
+      decision = error.decision;
+      result = { success: false, errorCode: decision.reasonCode, error: 'Tool access denied' };
+    } else {
+      console.error(`[AgentTool] Handler failed for ${tool.name}`);
+      result = { success: false, errorCode: 'TOOL_EXECUTION_FAILED', error: 'Tool execution failed' };
+    }
   }
+  let resultAuditFailed = false;
+  let finishFailed = false;
   try {
     await auditRecorder.record({ phase: 'result', actor, decision, args, result, agentId, agentPolicy });
+  } catch {
+    resultAuditFailed = true;
+    console.error('[AgentToolAudit] Failed to persist tool result', {
+      tool: tool.name, requestId: actor.requestId, approvalId: decision.approvalId, executionId: execution?.executionId,
+    });
+  }
+  // The handler has run: always settle its receipt, without refunding or replaying
+  // side effects, even when result audit persistence failed.
+  try {
     await execution?.finish?.();
-  } catch (error) {
-    console.error('[AgentToolAudit] Failed to persist tool result:', error);
+  } catch {
+    finishFailed = true;
+    console.error('[AgentToolApproval] Failed to finish execution', {
+      tool: tool.name, requestId: actor.requestId, approvalId: decision.approvalId, executionId: execution?.executionId,
+    });
+  }
+  if (resultAuditFailed || finishFailed) {
+    const details = {
+      resultAudit: resultAuditFailed ? 'unavailable' : 'persisted',
+      approvalExecution: finishFailed ? 'unavailable' : execution?.finish ? 'finished' : 'not_applicable',
+      executionId: execution?.executionId, approvalId: decision.approvalId, requestId: actor.requestId,
+    };
+    const next_actions = ['工具已执行，不要重放；请核对结果审计和审批执行状态后人工对账'];
     if (tool.name === 'execute_code') {
-      return policyResult(decision, { success: false, errorCode: 'AUDIT_UNAVAILABLE', error: 'Tool result unavailable' });
+      return policyResult(decision, {
+        success: false, errorCode: 'AUDIT_UNAVAILABLE', error: 'Tool result unavailable', details, next_actions,
+      });
     }
+    return policyResult(decision, {
+      ...result,
+      status: result.success ? 'warning' : 'error',
+      summary: `${result.summary ?? (result.success ? '工具执行完成' : '工具执行失败')}；${resultAuditFailed ? '结果审计未持久化' : '结果审计已持久化'}${finishFailed ? '；审批执行收尾失败' : ''}`,
+      details: { ...result.details, ...details },
+      next_actions,
+    });
   }
   return policyResult(decision, result);
 }
