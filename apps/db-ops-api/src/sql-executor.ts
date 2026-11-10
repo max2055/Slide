@@ -30,6 +30,176 @@ function errorText(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+function isPgIdentStart(char: string): boolean {
+  return /[A-Za-z_\u0080-\uFFFF]/.test(char);
+}
+
+function isPgIdentCont(char: string): boolean {
+  return /[A-Za-z0-9_\u0080-\uFFFF]/.test(char);
+}
+
+function postgresDollarDelimiter(sql: string, index: number): string | null {
+  if (sql[index] !== '$') return null;
+  if (sql[index + 1] === '$') return '$$';
+  const start = sql[index + 1];
+  if (!start || !isPgIdentStart(start)) return null;
+  let cursor = index + 2;
+  while (cursor < sql.length && isPgIdentCont(sql[cursor]!)) cursor += 1;
+  if (sql[cursor] !== '$') return null;
+  return sql.slice(index, cursor + 1);
+}
+
+function postgresQuoteEscapes(sql: string, quoteAt: number): boolean {
+  const prev = quoteAt - 1;
+  if (prev >= 1 && sql[prev] === '&' && (sql[prev - 1] === 'U' || sql[prev - 1] === 'u')) {
+    const before = prev - 2;
+    if (before < 0 || !isPgIdentCont(sql[before]!)) return true;
+  }
+  if (prev >= 0 && (sql[prev] === 'E' || sql[prev] === 'e')) {
+    const before = prev - 1;
+    if (before < 0 || !isPgIdentCont(sql[before]!)) return true;
+  }
+  return false;
+}
+
+/**
+ * Locate a trailing semicolon that is outside PostgreSQL strings and comments.
+ * Semicolons inside literals or comments stay. A semicolon followed by more
+ * statement text is left in place so this never executes a prefix.
+ * PostgreSQL ends a "--" comment on CR or LF, including the CR of CRLF.
+ */
+function postgresTrailingTerminator(sql: string): { cut: number | null; lineComment: boolean; multiple: boolean } {
+  let index = 0;
+  let mode: 'code' | 'line' | 'block' | 'quote' | 'ident' | 'dollar' = 'code';
+  let blockDepth = 0;
+  let quoteEscapes = false;
+  let dollarTag = '';
+  let cut: number | null = null;
+  let codeAfterCut = false;
+
+  while (index < sql.length) {
+    if (mode === 'line') {
+      if (sql[index] === '\n' || sql[index] === '\r') mode = 'code';
+      index += 1;
+      continue;
+    }
+    if (mode === 'block') {
+      if (sql.startsWith('/*', index)) {
+        blockDepth += 1;
+        index += 2;
+        continue;
+      }
+      if (sql.startsWith('*/', index)) {
+        blockDepth -= 1;
+        index += 2;
+        if (blockDepth === 0) mode = 'code';
+        continue;
+      }
+      index += 1;
+      continue;
+    }
+    if (mode === 'quote') {
+      if (quoteEscapes && sql[index] === '\\') {
+        index += index + 1 < sql.length ? 2 : 1;
+        continue;
+      }
+      if (sql[index] === '\'') {
+        if (sql[index + 1] === '\'') {
+          index += 2;
+          continue;
+        }
+        mode = 'code';
+        index += 1;
+        continue;
+      }
+      index += 1;
+      continue;
+    }
+    if (mode === 'ident') {
+      if (sql[index] === '"') {
+        if (sql[index + 1] === '"') {
+          index += 2;
+          continue;
+        }
+        mode = 'code';
+        index += 1;
+        continue;
+      }
+      index += 1;
+      continue;
+    }
+    if (mode === 'dollar') {
+      if (sql.startsWith(dollarTag, index)) {
+        index += dollarTag.length;
+        mode = 'code';
+        continue;
+      }
+      index += 1;
+      continue;
+    }
+
+    const dollar = postgresDollarDelimiter(sql, index);
+    if (dollar) {
+      dollarTag = dollar;
+      mode = 'dollar';
+      index += dollar.length;
+      continue;
+    }
+    if (sql.startsWith('--', index)) {
+      mode = 'line';
+      index += 2;
+      continue;
+    }
+    if (sql.startsWith('/*', index)) {
+      mode = 'block';
+      blockDepth = 1;
+      index += 2;
+      continue;
+    }
+    if (sql[index] === '\'') {
+      quoteEscapes = postgresQuoteEscapes(sql, index);
+      mode = 'quote';
+      index += 1;
+      continue;
+    }
+    if (sql[index] === '"') {
+      mode = 'ident';
+      index += 1;
+      continue;
+    }
+    if (sql[index] === ';') {
+      if (cut === null) cut = index;
+      index += 1;
+      continue;
+    }
+    if (!/\s/.test(sql[index]!)) {
+      if (cut !== null) codeAfterCut = true;
+    }
+    index += 1;
+  }
+
+  return {
+    cut: cut !== null && !codeAfterCut ? cut : null,
+    lineComment: mode === 'line',
+    multiple: codeAfterCut,
+  };
+}
+
+function postgresReadOnlyInner(sql: string): string {
+  const body = sql.trim();
+  const terminator = postgresTrailingTerminator(body);
+  const kept = terminator.cut === null ? body : body.slice(0, terminator.cut);
+  const openLineComment = terminator.cut === null
+    ? terminator.lineComment
+    : postgresTrailingTerminator(kept).lineComment;
+  // The wrapper's ")" must stay outside a trailing "--" comment.
+  return openLineComment ? `${kept}\n` : kept;
+}
+
+function boundedPostgresReadOnlySql(sql: string, limit: number): string {
+  return `SELECT * FROM (${postgresReadOnlyInner(sql)}) AS slide_read_limit LIMIT ${limit}`;
+}
+
 function damengTimeoutSeconds(timeoutMs: number): number {
   return Math.max(1, Math.ceil(timeoutMs / 1000));
 }
@@ -812,6 +982,12 @@ class SqlExecutor {
         }
         result = mysqlResult;
       } else if (conn.db_type === 'postgresql' && conn.pgClient) {
+        // The MySQL-oriented classifier does not treat CR as the end of a "--"
+        // comment, so a CR-split script can still be labeled read-only. Refuse
+        // it here instead of wrapping or running only the text before the semicolon.
+        if (isReadOnly && postgresTrailingTerminator(sql.trim()).multiple) {
+          return { success: false, error: 'SQL_STATEMENT_NOT_ALLOWED_MULTI_STATEMENT' };
+        }
         const pgClient = conn.pgClient;
         result = await this.serializeForInstance(instanceId, async () => {
           // Receipts follow command completion only. A ROLLBACK after an
@@ -834,10 +1010,9 @@ class SqlExecutor {
             if (context?.database) {
               await pgClient.query('SET LOCAL search_path TO ' + pgClient.escapeIdentifier(context.database));
             }
-            const cleanSql = sql.trim().replace(/;+\s*$/, '');
             const boundedSql = isReadOnly
-              ? `SELECT * FROM (${cleanSql}) AS slide_read_limit LIMIT ${MAX_SQL_ROWS + 1}`
-              : cleanSql;
+              ? boundedPostgresReadOnlySql(sql, MAX_SQL_ROWS + 1)
+              : sql.trim().replace(/;+\s*$/, '');
             userStatementSent = true;
             const pgResult = await pgClient.query(boundedSql);
             commitAttempted = true;
