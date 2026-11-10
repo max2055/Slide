@@ -304,4 +304,267 @@ describe.skipIf(!enabled)('MAX-373 real MySQL change timeout', () => {
     if (evidenceDir) fs.writeFileSync(`${evidenceDir}/phases.json`, `${JSON.stringify(phases, null, 2)}\n`);
     expect(phases.row).toBeTruthy();
   }, 60_000);
+
+  it('stops a real statement when no killer is available and when KILL has no receipt', async () => {
+    const profilePath = resolveMysqlTimeoutProfile(process.env);
+    if (!profilePath) throw new Error('integration started without SLIDE_MYSQL_STATEMENT_TIMEOUT_INTEGRATION=1');
+    const profiles = JSON.parse(fs.readFileSync(profilePath, 'utf8')) as {
+      'mysql-test'?: { host?: string; port?: number; user?: string; password?: string };
+    };
+    const profile = profiles['mysql-test'];
+    if (!profile?.host || !profile.user || !profile.password) throw new Error('mysql-test profile is incomplete');
+    if (profile.host !== '127.0.0.1' || Number(profile.port) !== 3308) {
+      throw new Error('mysql-test profile must target 127.0.0.1:3308');
+    }
+    const password = profile.password;
+    const isolatedId = instanceId + 50;
+    const isolatedSchema = `slide_max373i_${process.pid}_${randomBytes(3).toString('hex')}`;
+    const connect = () => mysql.createConnection({
+      host: profile.host,
+      port: Number(profile.port),
+      user: profile.user,
+      password,
+      multipleStatements: false,
+    });
+    let localAdmin: mysql.Connection | null = null;
+    let localHolder: mysql.Connection | null = null;
+    let created = false;
+    let small: mysql.Pool | null = null;
+    let hanging: mysql.Pool | null = null;
+    let restorePool: (() => void) | undefined;
+    const phases: Record<string, unknown> = {};
+    const grantFor = (operationId: string) => ({
+      approvalGrant: { approvalRequestId: 598, reviewerId: 9, operationId },
+      timeoutMs: 400,
+      userId: '9',
+      username: 'max373',
+    });
+
+    async function threads(marker: string): Promise<number> {
+      const [rows] = await localAdmin!.query<RowDataPacket[]>(
+        'SELECT ID AS id, INFO AS info FROM information_schema.processlist',
+      );
+      return rows.filter((row) => {
+        const info = String(row.info ?? '');
+        return info.includes(marker) && !info.includes('information_schema.processlist');
+      }).length;
+    }
+
+    async function waitThread(marker: string): Promise<void> {
+      const deadline = Date.now() + 4_000;
+      while (Date.now() < deadline) {
+        if (await threads(marker)) return;
+        await new Promise((resolve) => setTimeout(resolve, 40));
+      }
+      throw new Error(`timed out waiting for ${marker}`);
+    }
+
+    async function markerTransactions(marker: string): Promise<number> {
+      const [rows] = await localAdmin!.query<RowDataPacket[]>(
+        'SELECT trx_mysql_thread_id AS id FROM information_schema.innodb_trx WHERE trx_query LIKE ?',
+        [`%${marker}%`],
+      );
+      return rows.length;
+    }
+
+    try {
+      localAdmin = await connect();
+      await localAdmin.query(`CREATE DATABASE \`${isolatedSchema}\``);
+      created = true;
+      await localAdmin.query(`CREATE TABLE \`${isolatedSchema}\`.t (id INT PRIMARY KEY, note VARCHAR(64)) ENGINE=InnoDB`);
+      await localAdmin.query(`INSERT INTO \`${isolatedSchema}\`.t (id, note) VALUES (1, 'original')`);
+      const opened = await databaseService.addConnection(isolatedId, 'max373-mysql-isolate', {
+        host: profile.host,
+        port: Number(profile.port),
+        user: profile.user,
+        password,
+        database: isolatedSchema,
+        db_type: 'mysql',
+      });
+      if (!opened) throw new Error('MySQL addConnection failed');
+      const record = databaseService.getConnection(isolatedId);
+      if (!record?.pool) throw new Error('MySQL pool missing');
+      const original = record.pool;
+      restorePool = () => { record.pool = original; };
+      small = mysql.createPool({
+        host: profile.host,
+        port: Number(profile.port),
+        user: profile.user,
+        password,
+        database: isolatedSchema,
+        connectionLimit: 1,
+        waitForConnections: true,
+      });
+      record.pool = small;
+      localHolder = await connect();
+      await localHolder.query(`USE \`${isolatedSchema}\``);
+
+      const lockMarker = 'max373_iso_lock';
+      await localHolder.beginTransaction();
+      await localHolder.query('SELECT note FROM t WHERE id = 1 FOR UPDATE');
+      const lockStarted = Date.now();
+      const lockUpdate = sqlExecutor.executeSql(
+        isolatedId,
+        `UPDATE t SET note = '${lockMarker}' WHERE id = 1`,
+        grantFor('max373-iso-lock'),
+      );
+      await waitThread(lockMarker);
+      let lockFollowFirst = false;
+      const lockFollow = sqlExecutor.executeSql(isolatedId, 'SELECT 1 AS ready', { timeoutMs: 2000, userId: '9', username: 'max373' })
+        .then((result) => {
+          if (!lockDone) lockFollowFirst = true;
+          return result;
+        });
+      let lockDone = false;
+      const lockResult = await lockUpdate;
+      lockDone = true;
+      const lockFollowResult = await lockFollow;
+      const [lockedNote] = await localHolder.query<RowDataPacket[]>('SELECT note FROM t WHERE id = 1');
+      phases.lock = {
+        elapsedMs: Date.now() - lockStarted,
+        remaining: await threads(lockMarker),
+        transactions: await markerTransactions(lockMarker),
+        note: lockedNote[0]?.note,
+        error: lockResult.error,
+        executionState: lockResult.executionState,
+        retryable: lockResult.retryable,
+        followFinishedFirst: lockFollowFirst,
+        follow: lockFollowResult.success,
+      };
+      expect(lockResult).toMatchObject({ success: false, executionState: 'unknown', retryable: false });
+      expect(lockResult.error).toContain('MYSQL_STATEMENT_TIMEOUT');
+      expect(lockResult.error).toContain('outcome may be unknown');
+      expect(lockFollowFirst).toBe(false);
+      expect(lockFollowResult).toMatchObject({ success: true, rows: [{ ready: 1 }] });
+      expect(lockedNote[0]?.note).toBe('original');
+      expect(phases.lock).toMatchObject({ remaining: 0, transactions: 0 });
+      expect(Date.now() - lockStarted).toBeLessThan(8_000);
+      await localHolder.query('ROLLBACK');
+
+      const runMarker = 'max373_iso_run';
+      const runStarted = Date.now();
+      const runUpdate = sqlExecutor.executeSql(
+        isolatedId,
+        `UPDATE t SET note = '${runMarker}' WHERE id = 1 AND SLEEP(15) = 0`,
+        grantFor('max373-iso-run'),
+      );
+      await waitThread(runMarker);
+      let runFollowFirst = false;
+      const runFollow = sqlExecutor.executeSql(isolatedId, 'SELECT 1 AS ready', { timeoutMs: 2000, userId: '9', username: 'max373' })
+        .then((result) => {
+          if (!runDone) runFollowFirst = true;
+          return result;
+        });
+      let runDone = false;
+      const runResult = await runUpdate;
+      runDone = true;
+      const runFollowResult = await runFollow;
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      const [runNote] = await localAdmin.query<RowDataPacket[]>(`SELECT note FROM \`${isolatedSchema}\`.t WHERE id = 1`);
+      phases.run = {
+        elapsedMs: Date.now() - runStarted,
+        remaining: await threads(runMarker),
+        transactions: await markerTransactions(runMarker),
+        note: runNote[0]?.note,
+        error: runResult.error,
+        executionState: runResult.executionState,
+        retryable: runResult.retryable,
+        followFinishedFirst: runFollowFirst,
+        follow: runFollowResult.success,
+      };
+      expect(runResult).toMatchObject({ success: false, executionState: 'unknown', retryable: false });
+      expect(runResult.error).toContain('MYSQL_STATEMENT_TIMEOUT');
+      expect(runResult.error).not.toContain('server stop was not confirmed');
+      expect(Date.now() - runStarted).toBeGreaterThanOrEqual(1_200);
+      expect(Date.now() - runStarted).toBeLessThan(8_000);
+      expect(runFollowFirst).toBe(false);
+      expect(runFollowResult.success).toBe(true);
+      expect(runNote[0]?.note).toBe('original');
+      expect(phases.run).toMatchObject({ remaining: 0, transactions: 0 });
+
+      await small.end();
+      small = null;
+      hanging = mysql.createPool({
+        host: profile.host,
+        port: Number(profile.port),
+        user: profile.user,
+        password,
+        database: isolatedSchema,
+        connectionLimit: 2,
+        waitForConnections: true,
+      });
+      record.pool = {
+        pool: hanging.pool,
+        async getConnection() {
+          const conn = await hanging!.getConnection();
+          return {
+            get threadId() { return conn.threadId; },
+            query(sql: string, values?: unknown[]) {
+              if (String(sql).startsWith('KILL ')) return new Promise(() => undefined);
+              return values === undefined ? conn.query(sql) : conn.query(sql, values);
+            },
+            ping: () => conn.ping(),
+            release: () => conn.release(),
+            destroy: () => conn.destroy(),
+          };
+        },
+      } as unknown as typeof record.pool;
+
+      const killMarker = 'max373_iso_kill';
+      const killStarted = Date.now();
+      const killUpdate = sqlExecutor.executeSql(
+        isolatedId,
+        `UPDATE t SET note = '${killMarker}' WHERE id = 1 AND SLEEP(15) = 0`,
+        grantFor('max373-iso-kill'),
+      );
+      await waitThread(killMarker);
+      let killFollowFirst = false;
+      const killFollow = sqlExecutor.executeSql(isolatedId, 'SELECT 1 AS ready', { timeoutMs: 2000, userId: '9', username: 'max373' })
+        .then((result) => {
+          if (!killDone) killFollowFirst = true;
+          return result;
+        });
+      let killDone = false;
+      const killResult = await killUpdate;
+      killDone = true;
+      const killFollowResult = await killFollow;
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      const [killNote] = await localAdmin.query<RowDataPacket[]>(`SELECT note FROM \`${isolatedSchema}\`.t WHERE id = 1`);
+      phases.kill = {
+        elapsedMs: Date.now() - killStarted,
+        remaining: await threads(killMarker),
+        transactions: await markerTransactions(killMarker),
+        note: killNote[0]?.note,
+        error: killResult.error,
+        executionState: killResult.executionState,
+        retryable: killResult.retryable,
+        followFinishedFirst: killFollowFirst,
+        follow: killFollowResult.success,
+      };
+      expect(killResult).toMatchObject({ success: false, executionState: 'unknown', retryable: false });
+      expect(killResult.error).toContain('MYSQL_STATEMENT_TIMEOUT');
+      expect(killResult.error).not.toContain('server stop was not confirmed');
+      expect(Date.now() - killStarted).toBeGreaterThanOrEqual(1_200);
+      expect(Date.now() - killStarted).toBeLessThan(8_000);
+      expect(killFollowFirst).toBe(false);
+      expect(killFollowResult.success).toBe(true);
+      expect(killNote[0]?.note).toBe('original');
+      expect(phases.kill).toMatchObject({ remaining: 0, transactions: 0 });
+
+      record.pool = original;
+      const evidenceDir = process.env.MAX373_EVIDENCE_DIR;
+      if (evidenceDir) fs.writeFileSync(`${evidenceDir}/isolate-phases.json`, `${JSON.stringify(phases, null, 2)}\n`);
+    } catch (error) {
+      throw new Error(redact(password, error));
+    } finally {
+      restorePool?.();
+      try { await localHolder?.query('ROLLBACK'); } catch { /* The holder may already be closed. */ }
+      await localHolder?.end().catch(() => undefined);
+      if (created && localAdmin) await localAdmin.query(`DROP DATABASE IF EXISTS \`${isolatedSchema}\``).catch(() => undefined);
+      await localAdmin?.end().catch(() => undefined);
+      await small?.end().catch(() => undefined);
+      await hanging?.end().catch(() => undefined);
+      await databaseService.removeConnection(isolatedId).catch(() => undefined);
+    }
+  }, 45_000);
 });

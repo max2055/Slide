@@ -2,6 +2,7 @@
  * SQL 执行服务
  * 安全执行 SQL 查询，支持 SELECT 直接执行、DDL/DML 走审批流
  */
+import mysql from 'mysql2/promise';
 import { sqlExecutionIntent } from './audit/sql-execution-intent.js';
 import { databaseService } from './database-service';
 import { auditLogManager } from './audit/audit-log';
@@ -55,11 +56,37 @@ type MysqlPool = {
   getConnection: () => Promise<MysqlSession>;
 };
 
-const MYSQL_KILL_CONNECTION_BUDGET_MS = 1_000;
+const MYSQL_KILL_ACQUIRE_BUDGET_MS = 1_000;
+const MYSQL_KILL_RECEIPT_BUDGET_MS = 1_000;
+const MYSQL_STOP_PROOF_BUDGET_MS = 1_000;
+const MYSQL_PROCESSLIST_SQL = 'SELECT COMMAND AS command, INFO AS info FROM information_schema.processlist WHERE ID = ?';
+const MYSQL_THREAD_PROOF_SQL = 'SELECT COUNT(*) AS threads FROM information_schema.processlist WHERE ID = ?';
+const MYSQL_TRX_PROOF_SQL = 'SELECT COUNT(*) AS transactions FROM information_schema.innodb_trx WHERE trx_mysql_thread_id = ?';
 
-function mysqlStatementTimeoutError(): Error {
+type MysqlBudget<T> = { status: 'ok'; value: T } | { status: 'error'; error: unknown } | { status: 'budget' };
+type MysqlQueryOutcome = { ok: true; value: [unknown, unknown] } | { ok: false; error: unknown };
+
+function budgeted<T>(work: Promise<T>, budgetMs: number): Promise<MysqlBudget<T>> {
+  const guarded = work.then(
+    (value) => ({ status: 'ok' as const, value }),
+    (error) => ({ status: 'error' as const, error }),
+  );
+  if (budgetMs <= 0) return Promise.resolve({ status: 'budget' });
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => resolve({ status: 'budget' }), budgetMs);
+    void guarded.then((result) => {
+      clearTimeout(timer);
+      resolve(result);
+    });
+  });
+}
+
+function mysqlStatementTimeoutError(stopConfirmed: boolean): Error {
+  const detail = stopConfirmed
+    ? 'the statement was cancelled or hit the server lock wait limit'
+    : 'the statement exceeded its timeout and the session was isolated; server stop was not confirmed';
   const error = new Error(
-    'MYSQL_STATEMENT_TIMEOUT: the statement was cancelled or hit the server lock wait limit; outcome may be unknown; do not retry or claim a confirmed rollback',
+    `MYSQL_STATEMENT_TIMEOUT: ${detail}; outcome may be unknown; do not retry or claim a confirmed rollback`,
   );
   (error as Error & { code: string }).code = 'MYSQL_STATEMENT_TIMEOUT';
   return error;
@@ -110,45 +137,219 @@ class SqlExecutor {
     return positiveThreadId((row as { connection_id?: unknown }).connection_id);
   }
 
+  private releaseMysqlSession(connection: MysqlSession): void {
+    try { connection.release(); } catch { this.destroyMysqlSession(connection); }
+  }
+
+  private destroyMysqlSession(connection: MysqlSession): void {
+    try { connection.destroy(); } catch { /* The socket is already closing. */ }
+  }
+
   /**
-   * Stop a MySQL statement on the server before the caller returns.
-   * KILL QUERY uses another pooled session. If that session cannot be acquired,
-   * the busy session is destroyed so the server drops its thread.
-   * A connection acquired after the budget expires is released and not used.
+   * Borrow a pooled session. A checkout that arrives after the budget, or after
+   * the original statement has already finished, is released and never used.
    */
-  private async cancelMysqlStatement(pool: MysqlPool, connection: MysqlSession, threadId: number | null): Promise<void> {
-    if (threadId === null) {
-      try { connection.destroy(); } catch { /* The socket is already closing. */ }
-      return;
+  private async borrowMysqlSession(
+    pool: MysqlPool,
+    budgetMs: number,
+    abandon: { current: boolean },
+    finished: () => boolean,
+  ): Promise<MysqlSession | undefined> {
+    const acquired = pool.getConnection().then(
+      (candidate) => {
+        if (abandon.current || finished()) {
+          this.releaseMysqlSession(candidate);
+          return undefined;
+        }
+        return candidate;
+      },
+      () => undefined,
+    );
+    const winner = await budgeted(acquired, budgetMs);
+    if (winner.status !== 'ok' || !winner.value) {
+      abandon.current = true;
+      return undefined;
     }
-    let retireLate = false;
-    let killer: MysqlSession | undefined;
-    const acquired = pool.getConnection().then((candidate) => {
-      if (retireLate) {
-        candidate.release();
+    return winner.value;
+  }
+
+  private async mysqlStatementStillRunning(
+    killer: MysqlSession,
+    threadId: number,
+  ): Promise<boolean | 'budget' | 'error'> {
+    const seen = await budgeted(killer.query(MYSQL_PROCESSLIST_SQL, [threadId]), MYSQL_KILL_RECEIPT_BUDGET_MS);
+    if (seen.status === 'budget') return 'budget';
+    if (seen.status === 'error') return 'error';
+    const [rows] = seen.value;
+    const row = Array.isArray(rows) ? rows[0] : undefined;
+    if (!row || typeof row !== 'object') return false;
+    const command = String((row as { command?: unknown }).command ?? '').toLowerCase();
+    if (!command || command === 'sleep') return false;
+    return true;
+  }
+
+  /**
+   * Observe that the server thread and its InnoDB transaction are gone.
+   * mysql2 destroy() only sets _closing and ends the socket; it does not reject
+   * the in-flight query, so this probe is the stop evidence.
+   */
+  private async proveMysqlStopped(pool: MysqlPool, threadId: number): Promise<boolean> {
+    const deadline = Date.now() + MYSQL_STOP_PROOF_BUDGET_MS;
+    while (Date.now() < deadline) {
+      const abandon = { current: false };
+      const remaining = Math.max(1, deadline - Date.now());
+      const observer = await this.borrowMysqlSession(pool, remaining, abandon, () => false);
+      if (!observer) return false;
+      const threads = await budgeted(observer.query(MYSQL_THREAD_PROOF_SQL, [threadId]), Math.max(1, deadline - Date.now()));
+      if (threads.status === 'budget') {
+        this.destroyMysqlSession(observer);
+        return false;
+      }
+      const transactions = threads.status === 'ok'
+        ? await budgeted(observer.query(MYSQL_TRX_PROOF_SQL, [threadId]), Math.max(1, deadline - Date.now()))
+        : threads;
+      if (transactions.status === 'budget') {
+        this.destroyMysqlSession(observer);
+        return false;
+      }
+      this.releaseMysqlSession(observer);
+      if (threads.status === 'ok' && transactions.status === 'ok') {
+        const threadRow = Array.isArray(threads.value[0]) ? threads.value[0][0] : undefined;
+        const trxRow = Array.isArray(transactions.value[0]) ? transactions.value[0][0] : undefined;
+        const threadCount = Number((threadRow as { threads?: unknown } | undefined)?.threads);
+        const trxCount = Number((trxRow as { transactions?: unknown } | undefined)?.transactions);
+        if (threadCount === 0 && trxCount === 0) return true;
+      }
+      if (Date.now() >= deadline) return false;
+      await new Promise((resolve) => setTimeout(resolve, 40));
+    }
+    return false;
+  }
+
+  /**
+   * Cancel shares ownership with the statement. No KILL or destroy is issued
+   * after the statement promise settles, and the caller must not release or
+   * hand off the worker until this method returns. A KILL that has no receipt
+   * retires both sessions so a late command cannot hit a reused thread.
+   */
+  private async cancelMysqlStatement(
+    pool: MysqlPool,
+    connection: MysqlSession,
+    threadId: number | null,
+    lease: { querySettled: boolean; sideEffect: 'none' | 'kill' | 'destroy' },
+  ): Promise<'aborted' | 'stopped' | 'unconfirmed'> {
+    const finished = () => lease.querySettled && lease.sideEffect === 'none';
+    const retireWorker = () => {
+      if (finished()) return;
+      lease.sideEffect = lease.sideEffect === 'none' ? 'destroy' : lease.sideEffect;
+      this.destroyMysqlSession(connection);
+    };
+    if (threadId === null) {
+      if (finished()) return 'aborted';
+      retireWorker();
+      return 'unconfirmed';
+    }
+
+    const pooled = await this.borrowMysqlSession(
+      pool,
+      MYSQL_KILL_ACQUIRE_BUDGET_MS,
+      { current: false },
+      finished,
+    );
+    const pooledAttempt = pooled
+      ? await this.issueMysqlKill(pooled, threadId, lease, finished, 'pool')
+      : 'failed' as const;
+    if (pooledAttempt === 'stopped') {
+      retireWorker();
+      return 'stopped';
+    }
+    if (pooledAttempt === 'aborted' || finished()) return 'aborted';
+
+    // A saturated pool cannot lend a killer. A direct session uses the pool's
+    // own connection settings and does not take a pooled slot.
+    const direct = await this.openDirectMysqlSession(pool);
+    if (!direct) {
+      retireWorker();
+      return await this.proveMysqlStopped(pool, threadId) ? 'stopped' : 'unconfirmed';
+    }
+    const directAttempt = await this.issueMysqlKill(direct, threadId, lease, finished, 'direct');
+    if (directAttempt === 'aborted' || finished()) return 'aborted';
+    retireWorker();
+    if (directAttempt === 'stopped') return 'stopped';
+    return await this.proveMysqlStopped(pool, threadId) ? 'stopped' : 'unconfirmed';
+  }
+
+  /**
+   * KILL only while the original statement is still executing. The killer is
+   * closed before this returns: a pooled session goes back only when no KILL
+   * was left in flight, and a direct session is always destroyed.
+   */
+  private async issueMysqlKill(
+    killer: MysqlSession,
+    threadId: number,
+    lease: { querySettled: boolean; sideEffect: 'none' | 'kill' | 'destroy' },
+    finished: () => boolean,
+    kind: 'pool' | 'direct',
+  ): Promise<'aborted' | 'stopped' | 'failed'> {
+    let open = true;
+    let dispose: 'release' | 'destroy' = kind === 'direct' ? 'destroy' : 'release';
+    const closeKiller = () => {
+      if (!open) return;
+      open = false;
+      if (dispose === 'release') this.releaseMysqlSession(killer);
+      else this.destroyMysqlSession(killer);
+    };
+    try {
+      if (finished()) return 'aborted';
+      const stillRunning = await this.mysqlStatementStillRunning(killer, threadId);
+      if (finished() || stillRunning === false) return 'aborted';
+      if (stillRunning !== true) {
+        dispose = 'destroy';
+        return 'failed';
+      }
+      if (finished()) return 'aborted';
+      lease.sideEffect = 'kill';
+      const receipt = await budgeted(killer.query(`KILL QUERY ${threadId}`), MYSQL_KILL_RECEIPT_BUDGET_MS);
+      if (receipt.status !== 'ok') {
+        dispose = 'destroy';
+        return 'failed';
+      }
+      return 'stopped';
+    } finally {
+      closeKiller();
+    }
+  }
+
+  private async openDirectMysqlSession(pool: MysqlPool): Promise<MysqlSession | undefined> {
+    const source = (pool as {
+      pool?: { config?: { connectionConfig?: { host?: unknown; port?: unknown; user?: unknown; password?: unknown; database?: unknown; socketPath?: unknown; ssl?: unknown } } };
+    }).pool?.config?.connectionConfig;
+    if (!source || typeof source.user !== 'string') return undefined;
+    if (typeof source.host !== 'string' && typeof source.socketPath !== 'string') return undefined;
+    let abandon = false;
+    const connecting = mysql.createConnection({
+      host: typeof source.host === 'string' ? source.host : undefined,
+      port: typeof source.port === 'number' ? source.port : undefined,
+      user: source.user,
+      password: typeof source.password === 'string' ? source.password : undefined,
+      database: typeof source.database === 'string' ? source.database : undefined,
+      socketPath: typeof source.socketPath === 'string' ? source.socketPath : undefined,
+      ssl: source.ssl as never,
+      connectTimeout: MYSQL_KILL_ACQUIRE_BUDGET_MS,
+      multipleStatements: false,
+    }).then((connection) => {
+      if (abandon) {
+        this.destroyMysqlSession(connection as unknown as MysqlSession);
         return undefined;
       }
-      killer = candidate;
-      return candidate;
-    }).catch(() => undefined);
-    const winner = await Promise.race([
-      acquired.then((value) => ({ value, expired: false as const })),
-      new Promise<{ value: undefined; expired: true }>((resolve) => {
-        setTimeout(() => resolve({ value: undefined, expired: true }), MYSQL_KILL_CONNECTION_BUDGET_MS);
-      }),
-    ]);
-    if (winner.expired || !winner.value) {
-      retireLate = true;
-      try { connection.destroy(); } catch { /* The socket is already closing. */ }
-      return;
+      return connection as unknown as MysqlSession;
+    });
+    const opened = await budgeted(connecting, MYSQL_KILL_ACQUIRE_BUDGET_MS);
+    if (opened.status !== 'ok' || !opened.value) {
+      abandon = true;
+      return undefined;
     }
-    try {
-      await winner.value.query(`KILL QUERY ${threadId}`);
-    } catch {
-      try { connection.destroy(); } catch { /* The socket is already closing. */ }
-    } finally {
-      try { killer?.release(); } catch { try { killer?.destroy(); } catch { /* The killer session is unusable. */ } }
-    }
+    return opened.value;
   }
 
   private async queryMysql(
@@ -159,22 +360,60 @@ class SqlExecutor {
   ): Promise<[unknown, unknown]> {
     if (timeoutMs <= 0) return connection.query(sql);
     const threadId = await this.mysqlThreadId(connection);
-    let settled = false;
-    let cancelStarted = false;
-    const pending = connection.query(sql).finally(() => { settled = true; });
-    const timer = setTimeout(() => {
-      if (settled) return;
-      cancelStarted = true;
-      void this.cancelMysqlStatement(pool, connection, threadId).catch(() => undefined);
-    }, timeoutMs);
-    try {
-      return await pending;
-    } catch (error) {
-      if (cancelStarted || isMysqlServerTimeout(error)) throw mysqlStatementTimeoutError();
-      throw error;
-    } finally {
-      clearTimeout(timer);
+    const lease: { querySettled: boolean; sideEffect: 'none' | 'kill' | 'destroy' } = {
+      querySettled: false,
+      sideEffect: 'none',
+    };
+    const pending: Promise<MysqlQueryOutcome> = connection.query(sql).then(
+      (value) => {
+        lease.querySettled = true;
+        return { ok: true as const, value };
+      },
+      (error: unknown) => {
+        lease.querySettled = true;
+        return { ok: false as const, error };
+      },
+    );
+    let timeoutTimer: ReturnType<typeof setTimeout> | undefined;
+    const first = await Promise.race([
+      pending.then((result) => ({ kind: 'done' as const, result })),
+      new Promise<{ kind: 'timeout' }>((resolve) => {
+        timeoutTimer = setTimeout(() => resolve({ kind: 'timeout' }), timeoutMs);
+      }),
+    ]);
+    if (timeoutTimer) clearTimeout(timeoutTimer);
+    if (first.kind === 'done') {
+      if (first.result.ok === false) {
+        if (isMysqlServerTimeout(first.result.error)) throw mysqlStatementTimeoutError(true);
+        throw first.result.error;
+      }
+      return first.result.value;
     }
+
+    // The statement, the cancel, and retirement stay joined. The session is not
+    // released until this function returns, which is after cancel has either
+    // aborted with no side effect or finished its KILL/destroy.
+    const outcome = await this.cancelMysqlStatement(pool, connection, threadId, lease);
+    if (lease.sideEffect === 'none') {
+      if (!lease.querySettled) {
+        // mysql2 destroy does not reject the in-flight query. Do not wait for it.
+        this.destroyMysqlSession(connection);
+        const proven = threadId !== null && await this.proveMysqlStopped(pool, threadId);
+        throw mysqlStatementTimeoutError(proven);
+      }
+      const driver = await pending;
+      if (driver.ok === true) return driver.value;
+      if (isMysqlServerTimeout(driver.error)) throw mysqlStatementTimeoutError(true);
+      throw driver.error;
+    }
+    if (lease.querySettled) {
+      const driver = await pending;
+      const driverSawServerStop = driver.ok === false && isMysqlServerTimeout(driver.error);
+      throw mysqlStatementTimeoutError(outcome === 'stopped' || driverSawServerStop);
+    }
+    // The driver promise is still pending. The queue stays held only until cancel
+    // has finished its bounded KILL, destroy, and process-list proof above.
+    throw mysqlStatementTimeoutError(outcome === 'stopped');
   }
 
   private async acquireOwnedDameng(instanceId: number) {
@@ -390,7 +629,7 @@ class SqlExecutor {
                   sqlText: sql.substring(0, 500),
                   durationMs: Date.now() - startTime,
                   status: 'error',
-                  errorMessage: 'MYSQL_STATEMENT_TIMEOUT: outcome may be unknown; do not retry or claim a confirmed rollback',
+                  errorMessage: errorText(error),
                   ipAddress: context?.ipAddress,
                   approvalRequestId: context?.approvalGrant?.approvalRequestId,
                 }).catch(() => undefined);
@@ -615,7 +854,7 @@ class SqlExecutor {
         const timedOut = isMysqlStatementTimeout(error);
         return { success: false, executionState: 'unknown', operationId, retryable: false,
           error: timedOut
-            ? 'MYSQL_STATEMENT_TIMEOUT: the statement was cancelled or hit the server lock wait limit; outcome may be unknown; do not retry or claim a confirmed rollback; inspect durable intent and target database'
+            ? `${error.message}; inspect durable intent and target database`
             : 'SQL_OUTCOME_REQUIRES_RECONCILIATION: SQL may have committed; do not retry; inspect durable intent and target database' };
       }
       if (isMutation) {

@@ -99,6 +99,9 @@ describe('MySQL mutation statement timeout (MAX-373)', () => {
     const killer = session(82);
     killer.query.mockImplementation(async (sql: string) => {
       events.push(`killer:${sql}`);
+      if (String(sql).includes('information_schema.processlist') && String(sql).includes('COMMAND')) {
+        return [[{ command: 'Query', info: 'UPDATE t SET note = "waiting" WHERE id = 1' }], []];
+      }
       if (sql === 'KILL QUERY 81') {
         rejectUpdate(Object.assign(new Error('Query execution was interrupted'), { errno: 1317, code: 'ER_QUERY_INTERRUPTED' }));
       }
@@ -164,19 +167,21 @@ describe('MySQL mutation statement timeout (MAX-373)', () => {
     expect(mocks.beginIntent).toHaveBeenCalledOnce();
   });
 
-  it('destroys the session when no killer connection is available and still unblocks the queue', async () => {
-    let rejectUpdate: (error: Error) => void = () => undefined;
-    const blocked = new Promise<never>((_, reject) => { rejectUpdate = reject; });
+  it('destroys a session when no killer is available and proves the server thread is gone before releasing the queue', async () => {
+    let querySettled = false;
+    const blocked = new Promise<[unknown, unknown]>(() => undefined);
+    void blocked.then(() => { querySettled = true; }, () => { querySettled = true; });
     const worker = session(84);
     worker.query.mockImplementation(async (sql: string) => {
       if (sql.startsWith('DELETE ')) return blocked;
       return [[], []];
     });
-    worker.destroy.mockImplementation(() => {
-      rejectUpdate(Object.assign(new Error('Connection lost'), { code: 'PROTOCOL_CONNECTION_LOST' }));
-    });
-    const reader = session(85);
-    reader.query.mockImplementation(async (sql: string) => {
+    const observer = session(85);
+    const proof: string[] = [];
+    observer.query.mockImplementation(async (sql: string) => {
+      proof.push(String(sql));
+      if (String(sql).includes('COUNT(*) AS threads')) return [[{ threads: 0 }], []];
+      if (String(sql).includes('innodb_trx')) return [[{ transactions: 0 }], []];
       if (sql === 'SELECT 1 AS ready') return [[{ ready: 1 }], [{ name: 'ready' }]];
       return [[], []];
     });
@@ -186,24 +191,324 @@ describe('MySQL mutation statement timeout (MAX-373)', () => {
         checkouts += 1;
         if (checkouts === 1) return worker;
         if (checkouts === 2) throw new Error('pool exhausted');
-        return reader;
+        return observer;
       }),
     };
     mocks.getConnection.mockReturnValue({ id: 3732, name: 'mysql', db_type: 'mysql', pool });
 
+    const started = Date.now();
     const update = sqlExecutor.executeSql(3732, 'DELETE FROM t WHERE id = 1', {
-      approvalGrant: { ...grant, operationId: 'max373-destroy' }, timeoutMs: 100,
+      approvalGrant: { ...grant, operationId: 'max373-destroy' }, timeoutMs: 80, userId: '9', username: 'max373',
     });
     await vi.waitUntil(() => worker.query.mock.calls.some(([sql]) => sql === 'DELETE FROM t WHERE id = 1'));
-    const follow = sqlExecutor.executeSql(3732, 'SELECT 1 AS ready');
-    const [updateResult, followResult] = await Promise.all([update, follow]);
+    let followFinishedFirst = false;
+    const follow = sqlExecutor.executeSql(3732, 'SELECT 1 AS ready', { timeoutMs: 1000, userId: '9', username: 'max373' })
+      .then((result) => {
+        if (!updateDone) followFinishedFirst = true;
+        return result;
+      });
+    let updateDone = false;
+    const updateResult = await update;
+    updateDone = true;
+    const followResult = await follow;
 
+    expect(Date.now() - started).toBeLessThan(5_000);
+    expect(querySettled).toBe(false);
     expect(updateResult).toMatchObject({ success: false, executionState: 'unknown', retryable: false, operationId: 'max373-destroy' });
     expect(updateResult.error).toContain('MYSQL_STATEMENT_TIMEOUT');
+    expect(updateResult.error).toContain('outcome may be unknown');
+    expect(updateResult.error).not.toContain('server stop was not confirmed');
+    expect(proof.some((sql) => sql.includes('COUNT(*) AS threads'))).toBe(true);
+    expect(proof.some((sql) => sql.includes('innodb_trx'))).toBe(true);
+    expect(worker.destroy).toHaveBeenCalled();
+    expect(worker.release).not.toHaveBeenCalled();
+    expect(observer.release).toHaveBeenCalled();
+    expect(followFinishedFirst).toBe(false);
+    expect(followResult).toMatchObject({ success: true, rows: [{ ready: 1 }] });
+    expect(worker.query.mock.calls.filter(([sql]) => sql === 'DELETE FROM t WHERE id = 1')).toHaveLength(1);
+    expect(mocks.finishIntent).toHaveBeenCalledWith('max373-destroy', 'unknown', expect.anything());
+  });
+
+  it('reports an isolated session when destroy cannot be shown to have stopped the server', async () => {
+    const blocked = new Promise<[unknown, unknown]>(() => undefined);
+    const worker = session(184);
+    worker.query.mockImplementation(async (sql: string) => {
+      if (sql.startsWith('DELETE ')) return blocked;
+      return [[], []];
+    });
+    const observer = session(185);
+    observer.query.mockImplementation(async (sql: string) => {
+      if (String(sql).includes('COUNT(*) AS threads')) return [[{ threads: 1 }], []];
+      if (String(sql).includes('innodb_trx')) return [[{ transactions: 1 }], []];
+      if (sql === 'SELECT 1 AS ready') return [[{ ready: 1 }], []];
+      return [[], []];
+    });
+    let checkouts = 0;
+    const pool = {
+      getConnection: vi.fn(async () => {
+        checkouts += 1;
+        if (checkouts === 1) return worker;
+        if (checkouts === 2) throw new Error('pool exhausted');
+        return observer;
+      }),
+    };
+    mocks.getConnection.mockReturnValue({ id: 37321, name: 'mysql', db_type: 'mysql', pool });
+
+    const started = Date.now();
+    let updateDone = false;
+    const update = sqlExecutor.executeSql(37321, 'DELETE FROM t WHERE id = 2', {
+      approvalGrant: { ...grant, operationId: 'max373-unconfirmed' }, timeoutMs: 40, userId: '9', username: 'max373',
+    });
+    await vi.waitUntil(() => worker.query.mock.calls.some(([sql]) => sql.startsWith('DELETE ')));
+    let followFinishedFirst = false;
+    const follow = sqlExecutor.executeSql(37321, 'SELECT 1 AS ready').then((result) => {
+      if (!updateDone) followFinishedFirst = true;
+      return result;
+    });
+    const updateResult = await update;
+    updateDone = true;
+    const followResult = await follow;
+    const elapsed = Date.now() - started;
+
+    expect(elapsed).toBeGreaterThanOrEqual(900);
+    expect(elapsed).toBeLessThan(5_000);
+    expect(followFinishedFirst).toBe(false);
+    expect(updateResult).toMatchObject({ success: false, executionState: 'unknown', retryable: false });
+    expect(updateResult.error).toContain('server stop was not confirmed');
+    expect(updateResult.error).toContain('session was isolated');
+    expect(updateResult.error).toContain('do not retry');
+    expect(updateResult.error?.toLowerCase()).not.toContain('rolled back');
     expect(worker.destroy).toHaveBeenCalled();
     expect(worker.release).not.toHaveBeenCalled();
     expect(followResult.success).toBe(true);
-    expect(worker.query.mock.calls.filter(([sql]) => sql === 'DELETE FROM t WHERE id = 1')).toHaveLength(1);
+    expect(mocks.finishIntent).toHaveBeenCalledWith('max373-unconfirmed', 'unknown', expect.anything());
+    expect(mocks.finishIntent).not.toHaveBeenCalledWith('max373-unconfirmed', 'succeeded', expect.anything());
+  });
+
+  it('bounds a KILL that never returns and does not put either session back in the pool', async () => {
+    const blocked = new Promise<[unknown, unknown]>(() => undefined);
+    const worker = session(87);
+    worker.query.mockImplementation(async (sql: string) => {
+      if (sql.startsWith('UPDATE ')) return blocked;
+      return [[], []];
+    });
+    const killer = session(88);
+    let killStarted = false;
+    killer.query.mockImplementation(async (sql: string) => {
+      if (String(sql).includes('COMMAND AS command')) {
+        return [[{ command: 'Query', info: 'UPDATE t SET note = "hang" WHERE id = 1' }], []];
+      }
+      if (String(sql).startsWith('KILL ')) {
+        killStarted = true;
+        return new Promise(() => undefined);
+      }
+      return [[], []];
+    });
+    const observer = session(89);
+    observer.query.mockImplementation(async (sql: string) => {
+      if (String(sql).includes('COUNT(*) AS threads')) return [[{ threads: 0 }], []];
+      if (String(sql).includes('innodb_trx')) return [[{ transactions: 0 }], []];
+      if (sql === 'SELECT 1 AS ready') return [[{ ready: 1 }], []];
+      return [[], []];
+    });
+    let checkouts = 0;
+    const pool = {
+      getConnection: vi.fn(async () => {
+        checkouts += 1;
+        if (checkouts === 1) return worker;
+        if (checkouts === 2) return killer;
+        return observer;
+      }),
+    };
+    mocks.getConnection.mockReturnValue({ id: 3735, name: 'mysql', db_type: 'mysql', pool });
+
+    const started = Date.now();
+    let updateDone = false;
+    const update = sqlExecutor.executeSql(3735, 'UPDATE t SET note = "hang" WHERE id = 1', {
+      approvalGrant: { ...grant, operationId: 'max373-kill-budget' }, timeoutMs: 40, userId: '9', username: 'max373',
+    });
+    await vi.waitUntil(() => worker.query.mock.calls.some(([sql]) => String(sql).startsWith('UPDATE ')));
+    let followFinishedFirst = false;
+    const follow = sqlExecutor.executeSql(3735, 'SELECT 1 AS ready').then((result) => {
+      if (!updateDone) followFinishedFirst = true;
+      return result;
+    });
+    const updateResult = await update;
+    updateDone = true;
+    const followResult = await follow;
+
+    expect(killStarted).toBe(true);
+    expect(Date.now() - started).toBeGreaterThanOrEqual(900);
+    expect(Date.now() - started).toBeLessThan(5_000);
+    expect(followFinishedFirst).toBe(false);
+    expect(updateResult).toMatchObject({ success: false, executionState: 'unknown', retryable: false });
+    expect(updateResult.error).toContain('MYSQL_STATEMENT_TIMEOUT');
+    expect(updateResult.error).not.toContain('server stop was not confirmed');
+    expect(worker.destroy).toHaveBeenCalled();
+    expect(worker.release).not.toHaveBeenCalled();
+    expect(killer.destroy).toHaveBeenCalled();
+    expect(killer.release).not.toHaveBeenCalled();
+    expect(followResult.success).toBe(true);
+    expect(mocks.finishIntent).toHaveBeenCalledWith('max373-kill-budget', 'unknown', expect.anything());
+  });
+
+  it('does not KILL or destroy when the statement finishes before a delayed killer arrives', async () => {
+    const events: string[] = [];
+    let finishUpdate: (value: [unknown, unknown]) => void = () => undefined;
+    const update = new Promise<[unknown, unknown]>((resolve) => { finishUpdate = resolve; });
+    const worker = session(91);
+    worker.query.mockImplementation(async (sql: string) => {
+      events.push(`worker:${sql}`);
+      if (sql.startsWith('UPDATE ')) return update;
+      if (sql === 'SELECT 1 AS ready') return [[{ ready: 1 }], []];
+      return [[], []];
+    });
+    worker.release.mockImplementation(() => { events.push('worker:release'); });
+    worker.destroy.mockImplementation(() => { events.push('worker:destroy'); });
+    let releaseKillerCheckout: ((session: Session) => void) | undefined;
+    const killerGate = new Promise<Session>((resolve) => { releaseKillerCheckout = resolve; });
+    const killer = session(92);
+    killer.query.mockImplementation(async (sql: string) => {
+      events.push(`killer:${sql}`);
+      return [[], []];
+    });
+    killer.destroy.mockImplementation(() => { events.push('killer:destroy'); });
+    killer.release.mockImplementation(() => { events.push('killer:release'); });
+    let checkouts = 0;
+    const pool = {
+      getConnection: vi.fn(() => {
+        checkouts += 1;
+        if (checkouts === 1) return Promise.resolve(worker);
+        if (checkouts === 2) return killerGate;
+        return Promise.resolve(worker);
+      }),
+    };
+    mocks.getConnection.mockReturnValue({ id: 3736, name: 'mysql', db_type: 'mysql', pool });
+
+    const first = sqlExecutor.executeSql(3736, 'UPDATE t SET note = "late" WHERE id = 1', {
+      approvalGrant: { ...grant, operationId: 'max373-late-killer' }, timeoutMs: 40, userId: '9', username: 'max373',
+    });
+    await vi.waitUntil(() => events.includes('worker:UPDATE t SET note = "late" WHERE id = 1'));
+    // normalizeTimeout floors at 100ms. Wait past that floor before the statement succeeds.
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    finishUpdate([[{ affectedRows: 1 }], []]);
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    expect(events).not.toContain('worker:release');
+    expect(events).not.toContain('worker:destroy');
+    releaseKillerCheckout!(killer);
+    const result = await first;
+    const follow = await sqlExecutor.executeSql(3736, 'SELECT 1 AS ready', { timeoutMs: 1000, userId: '9', username: 'max373' });
+    await new Promise((resolve) => setTimeout(resolve, 30));
+
+    expect(result).toMatchObject({ success: true, executionState: 'succeeded', retryable: false });
+    expect(follow).toMatchObject({ success: true, rows: [{ ready: 1 }] });
+    expect(events.filter((event) => event.startsWith('killer:'))).toEqual(['killer:release']);
+    expect(events).not.toContain('worker:destroy');
+    expect(events).not.toContain('killer:destroy');
+    expect(events).toContain('worker:release');
+    const releaseAt = events.indexOf('worker:release');
+    expect(events.indexOf('worker:SET SESSION innodb_lock_wait_timeout = DEFAULT')).toBeLessThan(releaseAt);
+    expect(events.indexOf('worker:SELECT 1 AS ready')).toBeGreaterThan(releaseAt);
+    expect(mocks.finishIntent).toHaveBeenCalledWith('max373-late-killer', 'succeeded', expect.anything());
+    expect(mocks.auditSql).not.toHaveBeenCalledWith(expect.objectContaining({ status: 'error', sqlText: expect.stringContaining('late') }));
+  });
+
+  it('does not destroy a finished statement when the killer arrives after the acquire budget', async () => {
+    const events: string[] = [];
+    let finishUpdate: (value: [unknown, unknown]) => void = () => undefined;
+    const update = new Promise<[unknown, unknown]>((resolve) => { finishUpdate = resolve; });
+    const worker = session(93);
+    worker.query.mockImplementation(async (sql: string) => {
+      events.push(`worker:${sql}`);
+      if (sql.startsWith('INSERT ')) return update;
+      if (sql === 'SELECT 1 AS ready') return [[{ ready: 1 }], []];
+      return [[], []];
+    });
+    worker.release.mockImplementation(() => { events.push('worker:release'); });
+    worker.destroy.mockImplementation(() => { events.push('worker:destroy'); });
+    let releaseKillerCheckout: ((session: Session) => void) | undefined;
+    const killerGate = new Promise<Session>((resolve) => { releaseKillerCheckout = resolve; });
+    const killer = session(94);
+    killer.query.mockImplementation(async (sql: string) => {
+      events.push(`killer:${sql}`);
+      return [[], []];
+    });
+    killer.destroy.mockImplementation(() => { events.push('killer:destroy'); });
+    killer.release.mockImplementation(() => { events.push('killer:release'); });
+    let checkouts = 0;
+    const pool = {
+      getConnection: vi.fn(() => {
+        checkouts += 1;
+        if (checkouts === 1) return Promise.resolve(worker);
+        if (checkouts === 2) return killerGate;
+        return Promise.resolve(worker);
+      }),
+    };
+    mocks.getConnection.mockReturnValue({ id: 3737, name: 'mysql', db_type: 'mysql', pool });
+
+    const started = Date.now();
+    const first = sqlExecutor.executeSql(3737, 'INSERT INTO t (id, note) VALUES (7, "budget")', {
+      approvalGrant: { ...grant, operationId: 'max373-budget-arrival' }, timeoutMs: 40, userId: '9', username: 'max373',
+    });
+    await vi.waitUntil(() => events.some((event) => event.startsWith('worker:INSERT ')));
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    finishUpdate([[{ affectedRows: 1 }], []]);
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    expect(events).not.toContain('worker:release');
+    expect(events).not.toContain('worker:destroy');
+    const result = await first;
+    expect(Date.now() - started).toBeGreaterThanOrEqual(900);
+    expect(Date.now() - started).toBeLessThan(4_000);
+    releaseKillerCheckout!(killer);
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    const follow = await sqlExecutor.executeSql(3737, 'SELECT 1 AS ready', { userId: '9', username: 'max373' });
+
+    expect(result).toMatchObject({ success: true, executionState: 'succeeded' });
+    expect(follow.success).toBe(true);
+    expect(events).not.toContain('worker:destroy');
+    expect(events).not.toContain('killer:destroy');
+    expect(events.filter((event) => event.startsWith('killer:'))).toEqual(['killer:release']);
+    expect(events.filter((event) => event.startsWith('worker:INSERT '))).toHaveLength(1);
+  });
+
+  it('does not send KILL when the acquired killer sees the statement is already idle', async () => {
+    let finishUpdate: (value: [unknown, unknown]) => void = () => undefined;
+    const update = new Promise<[unknown, unknown]>((resolve) => { finishUpdate = resolve; });
+    const worker = session(95);
+    worker.query.mockImplementation(async (sql: string) => {
+      if (sql.startsWith('UPDATE ')) return update;
+      return [[], []];
+    });
+    const killer = session(96);
+    const killerSql: string[] = [];
+    killer.query.mockImplementation(async (sql: string) => {
+      killerSql.push(String(sql));
+      if (String(sql).includes('COMMAND AS command')) {
+        finishUpdate([[{ affectedRows: 1 }], []]);
+        return [[], []];
+      }
+      return [[], []];
+    });
+    const acquired = [worker, killer];
+    const pool = {
+      getConnection: vi.fn(async () => {
+        const next = acquired.shift();
+        if (!next) throw new Error('unexpected checkout');
+        return next;
+      }),
+    };
+    mocks.getConnection.mockReturnValue({ id: 3738, name: 'mysql', db_type: 'mysql', pool });
+
+    const result = await sqlExecutor.executeSql(3738, 'UPDATE t SET note = "idle" WHERE id = 1', {
+      approvalGrant: { ...grant, operationId: 'max373-idle' }, timeoutMs: 40, userId: '9', username: 'max373',
+    });
+
+    expect(result).toMatchObject({ success: true, executionState: 'succeeded' });
+    expect(killerSql.some((sql) => sql.startsWith('KILL '))).toBe(false);
+    expect(worker.destroy).not.toHaveBeenCalled();
+    expect(worker.release).toHaveBeenCalled();
+    expect(killer.release).toHaveBeenCalled();
+    expect(killer.destroy).not.toHaveBeenCalled();
   });
 
   it('reports a server lock-wait timeout without retrying or returning the session to the pool', async () => {
