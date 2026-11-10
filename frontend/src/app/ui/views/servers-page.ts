@@ -231,6 +231,12 @@ export class ServersPage extends LitElement {
   };
   /** True only after the user changes the operating-system control. */
   private _osTouched = false;
+  /**
+   * Unknown or empty os_type captured when this edit opened.
+   * Stays selectable after the user picks kylin, rhel, or centos, until the
+   * dialog closes or a supported type is saved.
+   */
+  @state() private _editOriginalOs: string | null = null;
   @state() private _testConnectionMessage = "";
   @state() private _testConnectionSuccess: boolean | null = null;
   @state() private _osFilter = restoredListState('server')?.state.os ?? "all";
@@ -294,6 +300,7 @@ export class ServersPage extends LitElement {
     this.connectionPending = true;
     this._editingId = null;
     this._osTouched = false;
+    this._editOriginalOs = null;
     this._form = {
       host: "",
       port: 22,
@@ -326,6 +333,7 @@ export class ServersPage extends LitElement {
     const originalOsType = server.os_type ?? "";
     const recognized = canonicalOsKey(originalOsType);
     this._osTouched = false;
+    this._editOriginalOs = recognized === "unknown" ? originalOsType : null;
     this._form = {
       host: server.host,
       port: server.port,
@@ -357,6 +365,7 @@ export class ServersPage extends LitElement {
     const id = this._editingId;
     this._showDialog = false;
     this._editingId = null;
+    this._editOriginalOs = null;
     this._testConnectionMessage = "";
     this._testConnectionSuccess = null;
     await this.updateComplete;
@@ -367,9 +376,13 @@ export class ServersPage extends LitElement {
     else this.renderRoot.querySelector<HTMLElement>('.resource-action--add')?.focus();
   }
 
+  private _isCanonicalOs(value: string): boolean {
+    return CANONICAL_OS_OPTIONS.some((option) => option.value === value);
+  }
+
   private _shouldSendEditedOsType(): boolean {
     if (!this._osTouched) return false;
-    return CANONICAL_OS_OPTIONS.some((option) => option.value === this._form.os_type);
+    return this._isCanonicalOs(this._form.os_type);
   }
 
   private _onOsChange = (event: Event) => {
@@ -421,6 +434,7 @@ export class ServersPage extends LitElement {
       }
 
       const savedId = isEdit ? this._editingId : Number((await res.json()).id);
+      if (isEdit && this._shouldSendEditedOsType()) this._editOriginalOs = null;
       if (configureCollection) {
         this._editingId = savedId;
         this.connectionPending = false;
@@ -729,6 +743,7 @@ export class ServersPage extends LitElement {
     if (!this._showDialog) return nothing;
 
     const title = this._editingId ? "编辑服务器" : "添加服务器";
+    const originalOs = this._editOriginalOs;
 
     return html`
       <resource-editor-shell .heading=${title} .caption=${`${this._form.label || this._form.host || '新资源'} · ${this._form.os_type} · ${this._form.host}:${this._form.port}`} .activeTab=${this.editorTab} .busy=${this._isSubmitting}
@@ -759,9 +774,9 @@ export class ServersPage extends LitElement {
             <app-form-field label="操作系统" .inline=${true}>
               <select class="form-select" .value=${this._form.os_type}
                 @change=${this._onOsChange}>
-                ${CANONICAL_OS_OPTIONS.some((option) => option.value === this._form.os_type)
-                  ? nothing
-                  : html`<option value=${this._form.os_type} selected>${this._form.os_type.trim() ? this._form.os_type : "未知"}</option>`}
+                ${originalOs !== null
+                  ? html`<option .value=${originalOs} ?selected=${this._form.os_type === originalOs}>${originalOs.trim() ? originalOs : "未知"}</option>`
+                  : nothing}
                 ${CANONICAL_OS_OPTIONS.map((option) => html`<option value=${option.value} ?selected=${option.value === this._form.os_type}>${option.label}</option>`)}
               </select>
             </app-form-field>

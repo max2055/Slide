@@ -67,6 +67,16 @@ async function setLabel(element: HTMLElement, value: string) {
   await (element as any).updateComplete;
 }
 
+async function chooseOs(element: HTMLElement, value: string) {
+  const select = osSelect(element);
+  if (![...select.options].some((option) => option.value === value)) {
+    throw new Error(`操作系统选项缺少 ${JSON.stringify(value)}：${[...select.options].map((option) => option.value).join(",")}`);
+  }
+  select.value = value;
+  select.dispatchEvent(new Event("change"));
+  await (element as any).updateComplete;
+}
+
 async function setHost(element: HTMLElement, value: string) {
   const input = [...element.shadowRoot!.querySelectorAll("input")].find((candidate) =>
     candidate.getAttribute("placeholder") === "192.168.1.100",
@@ -156,19 +166,13 @@ describe("servers-page preserves an unchanged operating system", () => {
   it("sends an explicit supported operating system and still creates with centos", async () => {
     const element = await mount();
     await openEdit(element, server("debian"));
-    const select = osSelect(element);
-    select.value = "kylin";
-    select.dispatchEvent(new Event("change"));
-    await element.updateComplete;
+    await chooseOs(element, "kylin");
     await element._handleSubmit();
     expect(putBodies()[0]).toMatchObject({ os_type: "kylin" });
 
     authFetch.mockClear();
     await openEdit(element, server("rhel"));
-    const known = osSelect(element);
-    known.value = "centos";
-    known.dispatchEvent(new Event("change"));
-    await element.updateComplete;
+    await chooseOs(element, "centos");
     await element._handleSubmit();
     expect(putBodies()[0]).toMatchObject({ os_type: "centos" });
 
@@ -185,16 +189,32 @@ describe("servers-page preserves an unchanged operating system", () => {
   it("does not submit an unsupported value even if the control is touched and returned", async () => {
     const element = await mount();
     await openEdit(element, server("debian"));
-    const select = osSelect(element);
-    select.value = "rhel";
-    select.dispatchEvent(new Event("change"));
-    select.value = "debian";
-    select.dispatchEvent(new Event("change"));
-    await element.updateComplete;
+    await chooseOs(element, "rhel");
+    expect([...osSelect(element).options].map((option) => option.value)).toEqual([
+      "debian", "kylin", "rhel", "centos",
+    ]);
+    await chooseOs(element, "debian");
+    expect(osSelect(element).value).toBe("debian");
     await setLabel(element, "回到原系统");
     await element._handleSubmit();
     expect(putBodies()[0]).not.toHaveProperty("os_type");
     expect(putBodies()[0]).toMatchObject({ label: "回到原系统" });
+  });
+
+  it("keeps an empty original option after a supported choice and omits it when restored", async () => {
+    const element = await mount();
+    await openEdit(element, server(""));
+    await chooseOs(element, "rhel");
+    const select = osSelect(element);
+    expect([...select.options].map((option) => option.value)).toEqual(["", "kylin", "rhel", "centos"]);
+    expect(select.selectedOptions[0]?.textContent).toBe("Red Hat Enterprise Linux");
+    await chooseOs(element, "");
+    expect(osSelect(element).value).toBe("");
+    expect(osSelect(element).selectedOptions[0]?.textContent).toBe("未知");
+    await setLabel(element, "空值回到原系统");
+    await element._handleSubmit();
+    expect(putBodies()[0]).not.toHaveProperty("os_type");
+    expect(putBodies()[0]).toMatchObject({ label: "空值回到原系统" });
   });
 
   it("keeps the original request shape after a failed save is retried", async () => {
@@ -225,6 +245,36 @@ describe("servers-page preserves an unchanged operating system", () => {
     expect(bodies[1]).toMatchObject({ label: "失败后重试" });
   });
 
+  it("keeps the original option after a failed save and omits it when the user returns", async () => {
+    let puts = 0;
+    authFetch.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (init?.method === "PUT") {
+        puts += 1;
+        if (puts === 1) return { ok: false, status: 503, json: async () => ({ error: "暂时失败" }) };
+        return { ok: true, status: 200, json: async () => ({ message: "更新成功" }) };
+      }
+      if (String(url).startsWith("/api/servers/")) return { ok: true, status: 200, json: async () => ({ credential_username: "ops" }) };
+      return { ok: true, status: 200, json: async () => [] };
+    });
+    const element = document.createElement("servers-page") as any;
+    document.body.append(element);
+    await element.updateComplete;
+    await openEdit(element, server("debian"));
+    await chooseOs(element, "centos");
+    await setLabel(element, "失败后改回");
+    await element._handleSubmit();
+    expect(showToast).toHaveBeenCalledWith("保存失败: 暂时失败", "error");
+    expect(element._showDialog).toBe(true);
+    expect([...osSelect(element).options].map((option) => option.value)).toContain("debian");
+    await chooseOs(element, "debian");
+    await element._handleSubmit();
+    const bodies = putBodies();
+    expect(bodies).toHaveLength(2);
+    expect(bodies[0]).toMatchObject({ os_type: "centos", label: "失败后改回" });
+    expect(bodies[1]).not.toHaveProperty("os_type");
+    expect(bodies[1]).toMatchObject({ label: "失败后改回" });
+  });
+
   it("does not send an update when the editor is cancelled", async () => {
     const element = await mount([server("debian")]);
     element._servers = [server("debian")];
@@ -232,6 +282,8 @@ describe("servers-page preserves an unchanged operating system", () => {
     await element.requestUpdate();
     await element.updateComplete;
     await openEdit(element, server("debian"));
+    await chooseOs(element, "rhel");
+    expect([...osSelect(element).options].map((option) => option.value)).toContain("debian");
     const cancel = [...element.shadowRoot.querySelectorAll("button")].find((button) => button.textContent?.trim() === "取消");
     cancel.click();
     await element.updateComplete;
