@@ -1,5 +1,4 @@
 import { randomBytes } from 'node:crypto';
-import { existsSync, readFileSync } from 'node:fs';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -10,15 +9,26 @@ import { dbConnection } from '../src/db-connection.js';
 import { instanceDatabaseService } from '../src/instance-database-service.js';
 import { MigrationRunner } from '../src/migrations/runner.js';
 
-const profilePath = '/Users/max/.config/slide-test-access/connection-profiles.json';
 const migrationFile = fileURLToPath(new URL('../sql/migrations/153_instance_physical_occupancy.sql', import.meta.url));
 
-function mysqlTestConfig(): mysql.ConnectionOptions {
-  const profile = JSON.parse(readFileSync(profilePath, 'utf8'))['mysql-test'];
-  if (profile?.host !== '127.0.0.1' || Number(profile.port) !== 3308) {
-    throw new Error('mysql-test must be the isolated 127.0.0.1:3308 endpoint');
+type MysqlEnv = Record<string, string | undefined>;
+
+function acceptanceEnabled(env: MysqlEnv = process.env): boolean {
+  return env.MAX363_MYSQL_ACCEPTANCE === '1';
+}
+
+function mysqlTestConfig(env: MysqlEnv = process.env): mysql.ConnectionOptions {
+  const host = env.MAX363_MYSQL_HOST;
+  const portText = env.MAX363_MYSQL_PORT;
+  const user = env.MAX363_MYSQL_USER;
+  const password = env.MAX363_MYSQL_PASSWORD;
+  const port = Number(portText);
+  if (host !== '127.0.0.1' || portText !== '3308' || !Number.isInteger(port) || !user || password === undefined) {
+    throw new Error(
+      'MAX363_MYSQL_ACCEPTANCE=1 requires MAX363_MYSQL_HOST=127.0.0.1, MAX363_MYSQL_PORT=3308, MAX363_MYSQL_USER, and MAX363_MYSQL_PASSWORD',
+    );
   }
-  return { host: profile.host, port: Number(profile.port), user: profile.user, password: profile.password };
+  return { host, port, user, password };
 }
 
 const tableSql = `
@@ -54,8 +64,26 @@ CREATE TABLE database_instances (
   UNIQUE KEY idx_name_environment (name, environment)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`;
 
-describe.skipIf(!existsSync(profilePath))('MAX-363/MAX-369 physical identity on isolated mysql3308', () => {
-  const config = existsSync(profilePath) ? mysqlTestConfig() : undefined;
+describe('MAX-363 injected mysql acceptance config', () => {
+  it('stays disabled until this task explicitly enables real acceptance', () => {
+    expect(acceptanceEnabled({})).toBe(false);
+    expect(acceptanceEnabled({ MAX363_MYSQL_ACCEPTANCE: '0' })).toBe(false);
+  });
+
+  it('fails when real acceptance is enabled without the injected 3308 endpoint', () => {
+    expect(() => mysqlTestConfig({ MAX363_MYSQL_ACCEPTANCE: '1' })).toThrow(/MAX363_MYSQL_PORT=3308/);
+    expect(() => mysqlTestConfig({
+      MAX363_MYSQL_ACCEPTANCE: '1',
+      MAX363_MYSQL_HOST: '127.0.0.1',
+      MAX363_MYSQL_PORT: '3306',
+      MAX363_MYSQL_USER: 'root',
+      MAX363_MYSQL_PASSWORD: 'injected',
+    })).toThrow(/MAX363_MYSQL_PORT=3308/);
+  });
+});
+
+describe.skipIf(!acceptanceEnabled())('MAX-363/MAX-369 physical identity on isolated mysql3308', () => {
+  let config: mysql.ConnectionOptions;
   const suffix = randomBytes(4).toString('hex');
   const failureSchema = `max363_fail_${suffix}`;
   const schema = `max363_ok_${suffix}`;
@@ -106,6 +134,7 @@ describe.skipIf(!existsSync(profilePath))('MAX-363/MAX-369 physical identity on 
   }
 
   beforeAll(async () => {
+    config = mysqlTestConfig();
     vi.stubEnv('ENCRYPTION_KEY', randomBytes(32).toString('hex'));
     vi.stubEnv('NODE_ENV', 'test');
     admin = await mysql.createConnection(config);
