@@ -216,6 +216,8 @@ export class UsersManagement extends LitElement {
       transition: all var(--duration-normal) var(--ease-out);
     }
 
+    .form-group input[type="checkbox"] { width: auto; }
+
     .form-group input:focus,
     .form-group select:focus {
       outline: none;
@@ -262,6 +264,7 @@ export class UsersManagement extends LitElement {
   @state() private formEmail = "";
   @state() private formPassword = "";
   @state() private formRoleId: number | null = null;
+  @state() private formRoleIds: number[] = [];
   @state() private formStatus = "active";
   @state() private formErrors: string[] = [];
 
@@ -375,7 +378,7 @@ export class UsersManagement extends LitElement {
     this.formEmail = user.email || "";
     this.formPassword = "";
     const roles = this.userRoles.get(user.id) || [];
-    this.formRoleId = roles.length > 0 ? roles[0].role_id : null;
+    this.formRoleIds = roles.map(r => r.role_id);
     this.formStatus = user.status;
     this.formErrors = [];
     this.saveError = null;
@@ -419,7 +422,7 @@ export class UsersManagement extends LitElement {
         await apiClient.put(`/users/${userId}`, body);
 
         // Sync role via RBAC API
-        await this._syncUserRole(userId, this.formRoleId);
+        await this._syncUserRoles(userId, this.formRoleIds);
       } else {
         // Create user
         const body: Record<string, string> = {
@@ -450,33 +453,14 @@ export class UsersManagement extends LitElement {
     }
   }
 
-  /** Sync a user's role: remove existing roles not matching, add the selected one */
-  private async _syncUserRole(userId: number, newRoleId: number | null) {
-    const currentRoles = this.userRoles.get(userId) || [];
-
-    // No change: current role matches new role
-    if (currentRoles.length === 1 && currentRoles[0].role_id === newRoleId) {
-      return;
-    }
-    // Both empty: nothing to do
-    if (currentRoles.length === 0 && newRoleId === null) {
-      return;
-    }
-
-    // Remove all current roles
-    for (const r of currentRoles) {
-      const res = await apiClient.delete(`/v1/rbac/users/${userId}/roles/${r.role_id}`);
-      if (!res || (res as any).success === false) {
-        throw new Error(`移除角色失败: ${(res as any)?.error || '未知错误'}`);
-      }
-    }
-    // Add the new role if one is selected
-    if (newRoleId !== null) {
-      const res = await apiClient.post(`/v1/rbac/users/${userId}/roles`, { roleId: newRoleId });
-      if (!res || (res as any).success === false) {
-        throw new Error(`添加角色失败: ${(res as any)?.error || '未知错误'}`);
-      }
-    }
+  /** Preserve unchanged bindings, including their expiry metadata. */
+  private async _syncUserRoles(userId: number, selectedRoleIds: number[]) {
+    const expectedRoleIds = (this.userRoles.get(userId) || []).map(r => r.role_id);
+    if (expectedRoleIds.length === selectedRoleIds.length && expectedRoleIds.every(id => selectedRoleIds.includes(id))) return;
+    const res = await apiClient.put<{ success: boolean; error?: string }>(`/v1/rbac/users/${userId}/roles`, {
+      roleIds: selectedRoleIds, expectedRoleIds,
+    });
+    if (!res?.success) throw new Error(res?.error || '角色保存失败');
   }
 
   // Password reset
@@ -671,7 +655,7 @@ export class UsersManagement extends LitElement {
 
             <div class="form-group">
               <label>邮箱</label>
-              <input type="email" autocomplete="off" .value=${this.formEmail} @input=${(e: Event) => { this.formEmail = (e.target as HTMLInputElement).value; }} placeholder="可选" />
+              <input type="email" aria-label="邮箱" autocomplete="off" .value=${this.formEmail} @input=${(e: Event) => { this.formEmail = (e.target as HTMLInputElement).value; }} placeholder="可选" />
             </div>
 
             ${!this.editingUser ? html`
@@ -681,6 +665,26 @@ export class UsersManagement extends LitElement {
               </div>
             ` : ""}
 
+            ${this.editingUser ? html`
+              <fieldset class="form-group" ?disabled=${this.saving}>
+                <legend>角色（可多选）</legend>
+                ${Array.from(new Map([
+                  ...(this.userRoles.get(this.editingUser.id) || []).map(r => [r.role_id, { id: r.role_id, name: r.role_name, description: null }] as const),
+                  ...this.allRoles.map(r => [r.id, r] as const),
+                ]).values()).map(r => html`
+                  <label>
+                    <input type="checkbox" .checked=${this.formRoleIds.includes(r.id)}
+                      @change=${(e: Event) => {
+                        this.formRoleIds = (e.target as HTMLInputElement).checked
+                          ? [...this.formRoleIds, r.id]
+                          : this.formRoleIds.filter(id => id !== r.id);
+                      }} />
+                    ${this._roleLabel(r)}
+                  </label>
+                `)}
+                ${this.formRoleIds.length === 0 ? html`<span>不分配角色</span>` : ""}
+              </fieldset>
+            ` : html`
             <div class="form-group">
               <label>角色</label>
               <select @change=${(e: Event) => { const v = (e.target as HTMLSelectElement).value; this.formRoleId = v ? Number(v) : null; }}>
@@ -688,6 +692,7 @@ export class UsersManagement extends LitElement {
                 ${this.allRoles.map((r) => html`<option value=${r.id} ?selected=${this.formRoleId === r.id}>${this._roleLabel(r)}</option>`)}
               </select>
             </div>
+            `}
 
             ${this.editingUser ? html`
               <div class="form-group">
