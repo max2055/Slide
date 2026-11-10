@@ -210,6 +210,7 @@ export class ServersPage extends LitElement {
 
   `];
 
+  @state() private searchResultCount = 0;
   @state() private _servers: ServerRow[] = [];
   @state() private _searchQuery = restoredListState('server')?.state.search ?? "";
   @state() private _loading = true;
@@ -720,13 +721,13 @@ export class ServersPage extends LitElement {
             </div>
           </div>
           <div class="resource-toolbar-meta" aria-live="polite">
-            <span class="resource-result-count">共 ${rows.length} 台服务器</span>
+            <span class="resource-result-count">共 ${rows.length ? this.searchResultCount : 0} 台服务器</span>
             ${this._activeFilterCount > 0
               ? html`<span class="resource-filter-state">已启用 ${this._activeFilterCount} 项筛选</span>`
               : nothing}
           </div>
           ${rows.length > 0
-            ? html`<resource-metrics-table resourceType="server" .refreshVersion=${this.metricRefreshVersion} @resource-metrics-loading=${(e: CustomEvent<boolean>) => { this.metricsLoading = e.detail; }} .search=${this._searchQuery} .columns=${columns} .entries=${rows} @resource-metric-open=${(e: CustomEvent<{ id: number }>) => this._navigateToDetail(e.detail.id)}></resource-metrics-table>`
+            ? html`<resource-metrics-table resourceType="server" @resource-results-changed=${(e: CustomEvent<number>) => { this.searchResultCount = e.detail; }} .refreshVersion=${this.metricRefreshVersion} @resource-metrics-loading=${(e: CustomEvent<boolean>) => { this.metricsLoading = e.detail; }} .search=${this._searchQuery} .columns=${columns} .entries=${rows} @resource-metric-open=${(e: CustomEvent<{ id: number }>) => this._navigateToDetail(e.detail.id)}></resource-metrics-table>`
             : html`<app-empty-state title="无匹配服务器" description="尝试更换搜索关键词" icon="search"></app-empty-state>`}
         </div>
 
