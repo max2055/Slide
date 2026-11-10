@@ -44,6 +44,51 @@ function damengCell(result: any): string {
   return value;
 }
 
+type MysqlSession = {
+  threadId?: number;
+  query: (sql: string, values?: unknown[]) => Promise<[unknown, unknown]>;
+  release: () => void;
+  destroy: () => void;
+};
+
+type MysqlPool = {
+  getConnection: () => Promise<MysqlSession>;
+};
+
+const MYSQL_KILL_CONNECTION_BUDGET_MS = 1_000;
+
+function mysqlStatementTimeoutError(): Error {
+  const error = new Error(
+    'MYSQL_STATEMENT_TIMEOUT: the statement was cancelled or hit the server lock wait limit; outcome may be unknown; do not retry or claim a confirmed rollback',
+  );
+  (error as Error & { code: string }).code = 'MYSQL_STATEMENT_TIMEOUT';
+  return error;
+}
+
+function isMysqlStatementTimeout(error: unknown): boolean {
+  return Boolean(error && typeof error === 'object' && (error as { code?: string }).code === 'MYSQL_STATEMENT_TIMEOUT');
+}
+
+function isMysqlServerTimeout(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false;
+  const errno = Number((error as { errno?: unknown }).errno);
+  const code = String((error as { code?: unknown }).code ?? '');
+  return errno === 1205 || errno === 1317 || code === 'ER_LOCK_WAIT_TIMEOUT' || code === 'ER_QUERY_INTERRUPTED';
+}
+
+function mysqlLockWaitSeconds(timeoutMs: number): number {
+  const seconds = Math.ceil(timeoutMs / 1000);
+  if (!Number.isSafeInteger(seconds) || seconds < 1 || seconds > 30) {
+    throw new Error('MYSQL_LOCK_WAIT_TIMEOUT_INVALID');
+  }
+  return seconds;
+}
+
+function positiveThreadId(value: unknown): number | null {
+  const id = Number(value);
+  return Number.isSafeInteger(id) && id > 0 ? id : null;
+}
+
 class SqlExecutor {
   private readonly retiredDamengSessions = new WeakSet<object>();
 
@@ -54,6 +99,82 @@ class SqlExecutor {
 
   private serializeForInstance<T>(instanceId: number, action: () => Promise<T>): Promise<T> {
     return withInstanceExecutionLock(instanceId, action);
+  }
+
+  private async mysqlThreadId(connection: MysqlSession): Promise<number | null> {
+    const direct = positiveThreadId(connection.threadId);
+    if (direct) return direct;
+    const [rows] = await connection.query('SELECT CONNECTION_ID() AS connection_id');
+    const row = Array.isArray(rows) ? rows[0] : undefined;
+    if (!row || typeof row !== 'object') return null;
+    return positiveThreadId((row as { connection_id?: unknown }).connection_id);
+  }
+
+  /**
+   * Stop a MySQL statement on the server before the caller returns.
+   * KILL QUERY uses another pooled session. If that session cannot be acquired,
+   * the busy session is destroyed so the server drops its thread.
+   * A connection acquired after the budget expires is released and not used.
+   */
+  private async cancelMysqlStatement(pool: MysqlPool, connection: MysqlSession, threadId: number | null): Promise<void> {
+    if (threadId === null) {
+      try { connection.destroy(); } catch { /* The socket is already closing. */ }
+      return;
+    }
+    let retireLate = false;
+    let killer: MysqlSession | undefined;
+    const acquired = pool.getConnection().then((candidate) => {
+      if (retireLate) {
+        candidate.release();
+        return undefined;
+      }
+      killer = candidate;
+      return candidate;
+    }).catch(() => undefined);
+    const winner = await Promise.race([
+      acquired.then((value) => ({ value, expired: false as const })),
+      new Promise<{ value: undefined; expired: true }>((resolve) => {
+        setTimeout(() => resolve({ value: undefined, expired: true }), MYSQL_KILL_CONNECTION_BUDGET_MS);
+      }),
+    ]);
+    if (winner.expired || !winner.value) {
+      retireLate = true;
+      try { connection.destroy(); } catch { /* The socket is already closing. */ }
+      return;
+    }
+    try {
+      await winner.value.query(`KILL QUERY ${threadId}`);
+    } catch {
+      try { connection.destroy(); } catch { /* The socket is already closing. */ }
+    } finally {
+      try { killer?.release(); } catch { try { killer?.destroy(); } catch { /* The killer session is unusable. */ } }
+    }
+  }
+
+  private async queryMysql(
+    pool: MysqlPool,
+    connection: MysqlSession,
+    sql: string,
+    timeoutMs: number,
+  ): Promise<[unknown, unknown]> {
+    if (timeoutMs <= 0) return connection.query(sql);
+    const threadId = await this.mysqlThreadId(connection);
+    let settled = false;
+    let cancelStarted = false;
+    const pending = connection.query(sql).finally(() => { settled = true; });
+    const timer = setTimeout(() => {
+      if (settled) return;
+      cancelStarted = true;
+      void this.cancelMysqlStatement(pool, connection, threadId).catch(() => undefined);
+    }, timeoutMs);
+    try {
+      return await pending;
+    } catch (error) {
+      if (cancelStarted || isMysqlServerTimeout(error)) throw mysqlStatementTimeoutError();
+      throw error;
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   private async acquireOwnedDameng(instanceId: number) {
@@ -219,9 +340,16 @@ class SqlExecutor {
       const timeoutMs = this.normalizeTimeout(context?.timeoutMs);
 
       if (conn.db_type === 'mysql' && conn.pool) {
+        const pool = conn.pool as unknown as MysqlPool;
         result = await this.serializeForInstance(instanceId, async () => {
-          const connection = await conn.pool!.getConnection();
+          const connection = await pool.getConnection();
           let transactionStarted = false;
+          let discard = false;
+          const discardConnection = () => {
+            if (discard) return;
+            discard = true;
+            try { connection.destroy(); } catch { /* The socket is already closing. */ }
+          };
           try {
             // MySQL max_execution_time bounds SELECT only, not DML/DDL.
             if (isReadOnly) await connection.query(`SET SESSION max_execution_time = ${timeoutMs}`);
@@ -233,8 +361,15 @@ class SqlExecutor {
             if (isReadOnly) {
               await connection.query('START TRANSACTION READ ONLY');
               transactionStarted = true;
+            } else {
+              // Server-side ceilings for row locks and metadata locks. They are
+              // whole seconds, so the client also KILL QUERY at timeoutMs.
+              // The queue stays held until that statement has actually ended.
+              const lockWaitSeconds = mysqlLockWaitSeconds(timeoutMs);
+              await connection.query(`SET SESSION innodb_lock_wait_timeout = ${lockWaitSeconds}`);
+              await connection.query(`SET SESSION lock_wait_timeout = ${lockWaitSeconds}`);
             }
-            const [rows, fields] = await connection.query(sql);
+            const [rows, fields] = await this.queryMysql(pool, connection, sql, isReadOnly ? 0 : timeoutMs);
             if (transactionStarted) {
               await connection.query('COMMIT');
               transactionStarted = false;
@@ -242,11 +377,40 @@ class SqlExecutor {
             return { rows, fields };
           } catch (error) {
             if (transactionStarted) await connection.query('ROLLBACK').catch(() => undefined);
+            if (!isReadOnly && isMysqlStatementTimeout(error)) {
+              discardConnection();
+              const userId = context?.userId || (context?.approvalGrant ? String(context.approvalGrant.reviewerId) : '');
+              if (userId) {
+                await auditLogManager.logSqlExecution({
+                  userId,
+                  username: context?.username || 'unknown',
+                  instanceId,
+                  instanceName: conn.name,
+                  dbType: 'mysql',
+                  sqlText: sql.substring(0, 500),
+                  durationMs: Date.now() - startTime,
+                  status: 'error',
+                  errorMessage: 'MYSQL_STATEMENT_TIMEOUT: outcome may be unknown; do not retry or claim a confirmed rollback',
+                  ipAddress: context?.ipAddress,
+                  approvalRequestId: context?.approvalGrant?.approvalRequestId,
+                }).catch(() => undefined);
+              }
+            }
             throw error;
           } finally {
-            if (isReadOnly) await connection.query('SET SESSION max_execution_time = 0').catch(() => undefined);
-            if (isReadOnly) await connection.query('SET SESSION sql_select_limit = DEFAULT').catch(() => undefined);
-            connection.release();
+            if (isReadOnly) {
+              await connection.query('SET SESSION max_execution_time = 0').catch(() => undefined);
+              await connection.query('SET SESSION sql_select_limit = DEFAULT').catch(() => undefined);
+            } else if (!discard) {
+              try {
+                await connection.query('SET SESSION innodb_lock_wait_timeout = DEFAULT');
+                await connection.query('SET SESSION lock_wait_timeout = DEFAULT');
+              } catch {
+                discardConnection();
+              }
+            }
+            if (discard) discardConnection();
+            else connection.release();
           }
         });
       } else if (conn.db_type === 'postgresql' && conn.pgClient) {
@@ -448,8 +612,11 @@ class SqlExecutor {
     } catch (error: any) {
       if (isMutation && intentStarted) {
         await sqlExecutionIntent.finish(operationId!, 'unknown', { targetAcknowledged, error: 'SQL_EXECUTION_OR_AUDIT_FAILED' }).catch(() => undefined);
+        const timedOut = isMysqlStatementTimeout(error);
         return { success: false, executionState: 'unknown', operationId, retryable: false,
-          error: 'SQL_OUTCOME_REQUIRES_RECONCILIATION: SQL may have committed; do not retry; inspect durable intent and target database' };
+          error: timedOut
+            ? 'MYSQL_STATEMENT_TIMEOUT: the statement was cancelled or hit the server lock wait limit; outcome may be unknown; do not retry or claim a confirmed rollback; inspect durable intent and target database'
+            : 'SQL_OUTCOME_REQUIRES_RECONCILIATION: SQL may have committed; do not retry; inspect durable intent and target database' };
       }
       if (isMutation) {
         return { success: false, executionState: 'not_started', operationId, retryable: false, error: error.message };
