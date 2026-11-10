@@ -1,23 +1,44 @@
 /** D1 process fence plus durable checks. IDs are never reused after tombstoning. */
 export class InstanceAccessLifecycle {
   private readonly revoked = new Map<number, AbortController>();
+  private readonly fenceToken = new Map<number, number>();
+  private nextFence = 0;
   private readonly operations = new Map<number, Set<Promise<unknown>>>();
   private readonly temporary = new Map<number, Set<() => Promise<void>>>();
   constructor(private check?: (id: number) => Promise<boolean>) {}
   configure(check: (id: number) => Promise<boolean>): void { this.check = check; }
-  isRevoked(id: number): boolean { return this.revoked.get(id)?.signal.aborted === true; }
+  isRevoked(id: number): boolean {
+    return this.fenceToken.has(id) || this.revoked.get(id)?.signal.aborted === true;
+  }
   signal(id: number): AbortSignal {
     let controller = this.revoked.get(id);
     if (!controller) { controller = new AbortController(); this.revoked.set(id, controller); }
     return controller.signal;
   }
-  revoke(id: number): void {
+  /** Block new access before durable intent exists. Does not abort work already in flight. */
+  hold(id: number): number {
+    const token = ++this.nextFence;
+    this.fenceToken.set(id, token);
+    return token;
+  }
+  revoke(id: number): number {
+    const token = ++this.nextFence;
+    this.fenceToken.set(id, token);
     this.signal(id);
     this.revoked.get(id)!.abort(new Error('INSTANCE_REMOVED'));
+    return token;
   }
-  forgetMissing(id: number): void {
+  /** Clear only the generation this attempt installed. A newer fence stays closed. */
+  releaseIfCurrent(id: number, token: number): void {
+    if (this.fenceToken.get(id) !== token) return;
+    this.fenceToken.delete(id);
+  }
+  forgetMissing(id: number, token?: number): void {
     // A rejected DELETE of a future ID must not fence a later legitimate INSERT.
-    if (!this.operations.has(id) && !this.temporary.has(id)) this.revoked.delete(id);
+    if (token !== undefined && this.fenceToken.get(id) !== token) return;
+    if (this.operations.has(id) || this.temporary.has(id)) return;
+    this.fenceToken.delete(id);
+    if (this.revoked.get(id)?.signal.aborted) this.revoked.delete(id);
   }
   async assertAvailable(id: number): Promise<void> {
     if (this.isRevoked(id)) throw new Error('INSTANCE_REMOVED');

@@ -1,9 +1,28 @@
-import type { Pool } from 'mysql2/promise';
+import type { Pool, PoolConnection } from 'mysql2/promise';
 import { dbConnection } from '../db-connection.js';
 import { cleanupDeadline, instanceAccessLifecycle, type InstanceAccessLifecycle } from './instance-access-lifecycle.js';
 
+export type RemovalLifecycle = 'available' | 'deleting' | 'deleted';
+
+/** Begin failed before commit. The local fence may be released. */
+export class RemovalIntentUncommittedError extends Error {
+  constructor(cause?: unknown) {
+    super('INSTANCE_REMOVAL_INTENT_UNCOMMITTED', cause === undefined ? undefined : { cause });
+    this.name = 'RemovalIntentUncommittedError';
+  }
+}
+
+/** Commit was attempted and its outcome was not observed. Do not release the fence until a durable read. */
+export class RemovalIntentUnknownError extends Error {
+  constructor(cause?: unknown) {
+    super('INSTANCE_REMOVAL_INTENT_UNKNOWN', cause === undefined ? undefined : { cause });
+    this.name = 'RemovalIntentUnknownError';
+  }
+}
+
 export interface RemovalStore {
   begin(id: number): Promise<'deleting' | 'deleted' | null>;
+  observe(id: number): Promise<RemovalLifecycle | null>;
   detach(id: number): Promise<void>;
   record(id: number, reasons: string[]): Promise<void>;
   complete(id: number): Promise<void>;
@@ -31,15 +50,47 @@ export class InstanceRemovalService {
   }
   private async perform(id: number): Promise<RemovalResult> {
     if (!this.runtime) return { success: false, state: 'deleting', statusCode: 503, error: 'INSTANCE_CLEANUP_UNAVAILABLE' };
-    // Fence locally before the first await; durable intent commits before any socket cleanup.
-    this.access.revoke(id);
+    // Block new access before the first await, but do not abort in-flight work until intent is durable.
+    const fence = this.access.hold(id);
     let state: 'deleting' | 'deleted' | null;
     try { state = await this.store.begin(id); }
-    catch { return { success: false, state: 'deleting', statusCode: 503, error: 'INSTANCE_REMOVAL_INTENT_FAILED' }; }
+    catch (error) { return this.recoverFailedIntent(id, fence, error); }
     if (!state) {
-      this.access.forgetMissing(id);
+      this.access.forgetMissing(id, fence);
       return { success: false, state: 'deleting', statusCode: 404, error: 'INSTANCE_NOT_FOUND' };
     }
+    this.access.revoke(id);
+    if (state === 'deleted') return { success: true, state: 'deleted' };
+    return this.finishRemoval(id);
+  }
+
+  private intentFailed(): RemovalResult {
+    return { success: false, state: 'deleting', statusCode: 503, error: 'INSTANCE_REMOVAL_INTENT_FAILED' };
+  }
+
+  private async recoverFailedIntent(id: number, fence: number, error: unknown): Promise<RemovalResult> {
+    if (error instanceof RemovalIntentUncommittedError) {
+      this.access.releaseIfCurrent(id, fence);
+      return this.intentFailed();
+    }
+    // Unknown and unclassified failures stay fenced until a durable read says the row is still usable.
+    if (!(error instanceof RemovalIntentUnknownError)) return this.intentFailed();
+    let observed: RemovalLifecycle | null;
+    try { observed = await this.store.observe(id); }
+    catch { return this.intentFailed(); }
+    if (observed === 'deleted') {
+      this.access.revoke(id);
+      return { success: true, state: 'deleted' };
+    }
+    if (observed === 'deleting') {
+      this.access.revoke(id);
+      return this.finishRemoval(id);
+    }
+    this.access.releaseIfCurrent(id, fence);
+    return this.intentFailed();
+  }
+
+  private async finishRemoval(id: number): Promise<RemovalResult> {
     const reasons: string[] = [];
     const attempt = async (code: string, action: () => Promise<void>) => {
       try { await cleanupDeadline(Promise.resolve().then(action), this.deadlineMs); }
@@ -58,6 +109,9 @@ export class InstanceRemovalService {
     await attempt('RELATION_CLEANUP_PENDING', () => this.store.detach(id));
     if (!reasons.length) await attempt('TOMBSTONE_COMMIT_FAILED', () => this.store.complete(id));
     if (reasons.length) {
+      try {
+        if (await this.store.observe(id) === 'deleted') return { success: true, state: 'deleted' };
+      } catch { /* a failed read must not turn a pending cleanup into a false terminal state */ }
       try { await this.store.record(id, reasons); } catch { reasons.push('CLEANUP_RECORD_FAILED'); }
       return { success: false, state: 'deleting', statusCode: 409, error: 'INSTANCE_REMOVAL_PENDING', reasons };
     }
@@ -73,17 +127,41 @@ export class MysqlInstanceRemovalStore implements RemovalStore {
     return pool;
   }
   async begin(id: number): Promise<'deleting' | 'deleted' | null> {
-    const c = await this.pool().getConnection();
+    let connection: PoolConnection;
     try {
-      await c.beginTransaction();
-      const [rows] = await c.execute<any[]>('SELECT lifecycle_state FROM database_instances WHERE id = ? FOR UPDATE', [id]);
-      if (!rows.length) { await c.rollback(); return null; }
-      await c.execute(`UPDATE database_instances SET lifecycle_state = 'deleting', status = 'inactive',
+      connection = await this.pool().getConnection();
+    } catch (error) {
+      throw new RemovalIntentUncommittedError(error);
+    }
+    try {
+      await connection.beginTransaction();
+      const [rows] = await connection.execute<any[]>('SELECT lifecycle_state FROM database_instances WHERE id = ? FOR UPDATE', [id]);
+      if (!rows.length) {
+        await connection.rollback();
+        return null;
+      }
+      await connection.execute(`UPDATE database_instances SET lifecycle_state = 'deleting', status = 'inactive',
         removal_requested_at = COALESCE(removal_requested_at, NOW(6)) WHERE id = ? AND lifecycle_state <> 'deleted'`, [id]);
-      await c.commit();
+      try {
+        await connection.commit();
+      } catch (error) {
+        throw new RemovalIntentUnknownError(error);
+      }
       return rows[0].lifecycle_state === 'deleted' ? 'deleted' : 'deleting';
-    } catch (error) { await c.rollback().catch(() => {}); throw error; }
-    finally { c.release(); }
+    } catch (error) {
+      if (error instanceof RemovalIntentUnknownError) throw error;
+      await connection.rollback().catch(() => {});
+      throw new RemovalIntentUncommittedError(error);
+    } finally {
+      try { connection.release(); } catch { /* keep the classified begin result */ }
+    }
+  }
+  async observe(id: number): Promise<RemovalLifecycle | null> {
+    const [rows] = await this.pool().execute<any[]>('SELECT lifecycle_state FROM database_instances WHERE id = ?', [id]);
+    if (!rows.length) return null;
+    const state = rows[0].lifecycle_state;
+    if (state === 'available' || state === 'deleting' || state === 'deleted') return state;
+    throw new Error('INSTANCE_REMOVAL_STATE_UNKNOWN');
   }
   async detach(id: number): Promise<void> {
     const c = await this.pool().getConnection();
@@ -115,7 +193,10 @@ export class MysqlInstanceRemovalStore implements RemovalStore {
     finally { c.release(); }
   }
   async record(id: number, reasons: string[]): Promise<void> {
-    await this.pool().execute('UPDATE database_instances SET removal_reasons = ? WHERE id = ?', [JSON.stringify(reasons), id]);
+    await this.pool().execute(
+      `UPDATE database_instances SET removal_reasons = ? WHERE id = ? AND lifecycle_state = 'deleting'`,
+      [JSON.stringify(reasons), id],
+    );
   }
   async complete(id: number): Promise<void> {
     await this.pool().execute(`UPDATE database_instances SET lifecycle_state = 'deleted', status = 'inactive',
