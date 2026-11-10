@@ -112,6 +112,45 @@ function isBlankStoredCredential(value: unknown): boolean {
   return typeof value !== 'string' || value.trim().length === 0;
 }
 
+const NAME_ENVIRONMENT_CONFLICT = '该环境下实例名称已存在';
+const IDENTITY_CONFLICT = '实例身份冲突，未保存重复目标';
+
+interface PhysicalOccupant {
+  id: number;
+  name: string;
+  lifecycle_state: 'available' | 'deleting' | 'deleted' | string;
+}
+
+export interface AvailableInstanceIdentity {
+  id: number;
+  name: string;
+  environment: string;
+}
+
+function physicalDatabaseKey(value: string | null | undefined): string {
+  return value == null || value.length === 0 ? '' : value;
+}
+
+function physicalConflictError(occupant: PhysicalOccupant): string {
+  const identity = `"${occupant.name}" (ID: ${occupant.id})`;
+  if (occupant.lifecycle_state === 'deleting') {
+    return `该地址已被实例 ${identity} 占用，该实例正在删除，不能重复纳管`;
+  }
+  return `该地址已被实例 ${identity} 纳管，请勿重复添加`;
+}
+
+function isDuplicateEntry(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false;
+  const candidate = error as { code?: string; errno?: number };
+  return candidate.code === 'ER_DUP_ENTRY' || candidate.errno === 1062;
+}
+
+function duplicateKeyText(error: unknown): string {
+  if (!error || typeof error !== 'object') return '';
+  const candidate = error as { sqlMessage?: string; message?: string };
+  return candidate.sqlMessage || candidate.message || '';
+}
+
 export function formatDatabaseConnectionError(error: unknown, dbType: string, hasUsername: boolean): string {
   if (isMissingUsernameError(error)) return hasUsername ? '用户名或密码错误' : '请输入用户名';
   if (isDatabaseAuthenticationError(error)) return '用户名或密码错误';
@@ -131,6 +170,80 @@ class InstanceDatabaseService {
    */
   private isConnected(): boolean {
     return dbConnection.isConnected();
+  }
+
+  private async findNameEnvironmentConflict(
+    pool: mysql.Pool,
+    name: string,
+    environment: string,
+    excludeId?: number,
+  ): Promise<boolean> {
+    const params: Array<string | number> = [name, environment];
+    let sql = 'SELECT id FROM database_instances WHERE name = ? AND environment = ?';
+    if (excludeId != null) {
+      sql += ' AND id <> ?';
+      params.push(excludeId);
+    }
+    sql += ' LIMIT 1';
+    const [rows] = await pool.execute(sql, params) as any;
+    return Array.isArray(rows) && rows.length > 0;
+  }
+
+  private async findPhysicalOccupant(
+    pool: mysql.Pool,
+    host: string,
+    port: number,
+    databaseName: string | null | undefined,
+    excludeId?: number,
+  ): Promise<PhysicalOccupant | null> {
+    const params: Array<string | number> = [host, Number(port), physicalDatabaseKey(databaseName)];
+    let sql = `SELECT id, name, lifecycle_state
+      FROM database_instances
+      WHERE host = ? AND port = ? AND IFNULL(database_name, '') = ? AND lifecycle_state <> 'deleted'`;
+    if (excludeId != null) {
+      sql += ' AND id <> ?';
+      params.push(excludeId);
+    }
+    sql += ' LIMIT 1';
+    const [rows] = await pool.execute(sql, params) as any;
+    if (!Array.isArray(rows) || rows.length === 0) return null;
+    return rows[0] as PhysicalOccupant;
+  }
+
+  private async mapIdentityConflict(
+    pool: mysql.Pool,
+    error: unknown,
+    target: {
+      name?: string;
+      environment?: string;
+      host: string;
+      port: number;
+      databaseName: string | null | undefined;
+      excludeId?: number;
+      includeInstanceId: boolean;
+    },
+  ): Promise<{ success: false; error: string; instanceId?: number } | null> {
+    if (!isDuplicateEntry(error)) return null;
+    const keyText = duplicateKeyText(error);
+    try {
+      if (keyText.includes('idx_name_environment') && !keyText.includes('uk_instance_physical_occupancy')) {
+        return { success: false, error: NAME_ENVIRONMENT_CONFLICT };
+      }
+      const occupant = await this.findPhysicalOccupant(pool, target.host, target.port, target.databaseName, target.excludeId);
+      if (occupant) {
+        return {
+          success: false,
+          error: physicalConflictError(occupant),
+          instanceId: target.includeInstanceId && occupant.lifecycle_state !== 'deleting' ? Number(occupant.id) : undefined,
+        };
+      }
+      if (target.name != null && target.environment != null && await this.findNameEnvironmentConflict(pool, target.name, target.environment, target.excludeId)) {
+        return { success: false, error: NAME_ENVIRONMENT_CONFLICT };
+      }
+    } catch (lookupError) {
+      console.error('解析实例身份冲突失败:', lookupError);
+    }
+    return { success: false, error: IDENTITY_CONFLICT };
   }
 
   /**
@@ -239,7 +352,10 @@ class InstanceDatabaseService {
     }
   }
 
-  /** Resolve a canonical instance id without loading credential-bearing columns. */
+  /** Resolve a canonical instance id without loading credential-bearing columns.
+   *  Compatibility: still returns one id for any lifecycle, or null. It is not
+   *  an authorization decision and does not express cross-environment ambiguity.
+   */
   async findInstanceIdByName(name: string): Promise<number | null> {
     const pool = this.getPool();
     if (!pool || !name.trim()) return null;
@@ -252,6 +368,33 @@ class InstanceDatabaseService {
     } catch (error) {
       console.error('解析实例名称失败:', error);
       return null;
+    }
+  }
+
+  /** Active available identities whose stored name trims to `name`.
+   *  Selects id, name, and environment only. A length other than 1 is unresolved;
+   *  callers must not pick a row. Does not change physical occupancy or removal.
+   */
+  async listAvailableInstancesByNormalizedName(name: string): Promise<AvailableInstanceIdentity[]> {
+    const normalized = typeof name === 'string' ? name.trim() : '';
+    if (!normalized) return [];
+    const pool = this.getPool();
+    if (!pool) throw new Error('INSTANCE_ENUMERATION_UNAVAILABLE');
+    try {
+      const [rows] = await pool.execute(
+        `SELECT id, name, environment
+         FROM database_instances
+         WHERE status = 'active' AND lifecycle_state = 'available' AND TRIM(name) = ?
+         ORDER BY id`,
+        [normalized],
+      ) as any;
+      return (Array.isArray(rows) ? rows : []).map((row: any) => ({
+        id: Number(row.id),
+        name: String(row.name),
+        environment: String(row.environment),
+      })).filter((row: AvailableInstanceIdentity) => Number.isSafeInteger(row.id) && row.id > 0);
+    } catch (error) {
+      throw new Error('INSTANCE_ENUMERATION_UNAVAILABLE', { cause: error });
     }
   }
 
@@ -362,28 +505,18 @@ class InstanceDatabaseService {
     try {
       await authorizeDatabaseTarget({ host: data.host, port: Number(data.port), dbType: data.db_type });
       assertCreatableDatabaseType(data.db_type);
-      // 检查名称是否已存在
-      const [existing] = await pool.execute(
-        'SELECT id FROM database_instances WHERE name = ? AND environment = ?',
-        [data.name, data.environment]
-      ) as any;
-
-      if (existing && existing.length > 0) {
-        return { success: false, error: '该环境下实例名称已存在' };
+      const databaseName = data.database_name || null;
+      if (await this.findNameEnvironmentConflict(pool, data.name, data.environment)) {
+        return { success: false, error: NAME_ENVIRONMENT_CONFLICT };
       }
 
-      // 检查物理地址是否已纳管（防止同一库被不同名字重复添加）
-      const [physicallyExists] = await pool.execute(
-        'SELECT id, name FROM database_instances WHERE host = ? AND port = ? AND (database_name = ? OR (database_name IS NULL AND ? IS NULL))',
-        [data.host, data.port, data.database_name || null, data.database_name || null]
-      ) as any;
-
-      if (physicallyExists && physicallyExists.length > 0) {
-        const dup = physicallyExists[0];
+      // available 与 deleting 占用物理地址；deleted 只保留墓碑，不阻止新资源。
+      const occupant = await this.findPhysicalOccupant(pool, data.host, data.port, databaseName);
+      if (occupant) {
         return {
           success: false,
-          instanceId: Number(dup.id),
-          error: `该地址已被实例 "${dup.name}" (ID: ${dup.id}) 纳管，请勿重复添加`,
+          error: physicalConflictError(occupant),
+          instanceId: occupant.lifecycle_state === 'deleting' ? undefined : Number(occupant.id),
         };
       }
 
@@ -411,7 +544,7 @@ class InstanceDatabaseService {
           encryptedPassword,
           0,
           'unknown',
-          data.database_name || null,
+          databaseName,
           data.max_connections || 100,
           data.connection_timeout_ms || 30000,
           data.tags ? JSON.stringify(data.tags) : null,
@@ -421,9 +554,18 @@ class InstanceDatabaseService {
       ) as any;
 
       return { success: true, instanceId: result.insertId };
-    } catch (error: any) {
+    } catch (error: unknown) {
+      const conflict = await this.mapIdentityConflict(pool, error, {
+        name: data.name,
+        environment: data.environment,
+        host: data.host,
+        port: Number(data.port),
+        databaseName: data.database_name || null,
+        includeInstanceId: true,
+      });
+      if (conflict) return conflict;
       console.error('创建实例失败:', error);
-      return { success: false, error: error.message };
+      return { success: false, error: error instanceof Error ? error.message : '创建实例失败' };
     }
   }
 
@@ -452,16 +594,41 @@ class InstanceDatabaseService {
       return { success: false, error: '数据库未连接' };
     }
 
+    let identity: {
+      name: string;
+      environment: string;
+      host: string;
+      port: number;
+      databaseName: string | null;
+    } | null = null;
     try {
       await instanceAccessLifecycle.assertAvailable(id);
       const current = await this.getInstanceById(id);
       if (!current) return { success: false, error: '实例不存在' };
+      const nextHost = data.host ?? current.host;
+      const nextPort = Number(data.port ?? current.port);
+      const nextDatabaseName = data.database_name !== undefined ? (data.database_name || null) : current.database_name;
+      identity = {
+        name: data.name ?? current.name,
+        environment: data.environment ?? current.environment,
+        host: nextHost,
+        port: nextPort,
+        databaseName: nextDatabaseName,
+      };
       await authorizeDatabaseTarget({
-        host: data.host ?? current.host,
-        port: Number(data.port ?? current.port),
+        host: nextHost,
+        port: nextPort,
         dbType: data.db_type ?? current.db_type,
       });
       if (data.db_type !== undefined) assertCreatableDatabaseType(data.db_type);
+      if (data.name !== undefined || data.environment !== undefined) {
+        const nameTaken = await this.findNameEnvironmentConflict(pool, identity.name, identity.environment, id);
+        if (nameTaken) return { success: false, error: NAME_ENVIRONMENT_CONFLICT };
+      }
+      if (data.host !== undefined || data.port !== undefined || data.database_name !== undefined) {
+        const occupant = await this.findPhysicalOccupant(pool, nextHost, nextPort, nextDatabaseName, id);
+        if (occupant) return { success: false, error: physicalConflictError(occupant) };
+      }
       const updates: string[] = [];
       const values: any[] = [];
 
@@ -531,9 +698,18 @@ class InstanceDatabaseService {
       }
 
       return { success: true };
-    } catch (error: any) {
+    } catch (error: unknown) {
+      if (isDuplicateEntry(error)) {
+        if (!identity) return { success: false, error: IDENTITY_CONFLICT };
+        const conflict = await this.mapIdentityConflict(pool, error, {
+          ...identity,
+          excludeId: id,
+          includeInstanceId: false,
+        });
+        if (conflict) return { success: false, error: conflict.error };
+      }
       console.error('更新实例失败:', error);
-      return { success: false, error: error.message };
+      return { success: false, error: error instanceof Error ? error.message : '更新实例失败' };
     }
   }
 
