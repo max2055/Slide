@@ -14,6 +14,12 @@ import { authorizeServerTarget } from './security/server-target-policy.js';
 import { createCredentialSshHostVerifier, normalizeOptionalSshHostKeyFingerprint } from './security/ssh-host-key.js';
 import { normalizeServerOs } from './server-os-profile.js';
 
+/** Stable refusal when deleting a server would drop historical reports. */
+export const SERVER_HAS_HISTORICAL_REPORTS = 'SERVER_HAS_HISTORICAL_REPORTS';
+/** Shown by the delete route. The service itself returns the stable code. */
+export const SERVER_HISTORICAL_REPORT_DELETE_ERROR =
+  '该服务器仍有历史报表，删除已阻止。报表和原目标身份保持不变，访问权限不变，也不会重新采集。';
+
 export interface ServerRow {
   id: number;
   host: string;
@@ -428,6 +434,19 @@ class ServerDatabaseService {
         await connection.rollback();
         return { success: false, error: 'SERVER_HAS_INSTANCE_RELATIONS' };
       }
+      // The server row lock is already held. A normal report insert needs a
+      // shared lock on that parent, so it cannot commit until this transaction
+      // ends. Lock matching report rows too, then refuse before DELETE.
+      // fk_report_server_restrict is ON DELETE RESTRICT, so a report that still
+      // appears at DELETE time fails the statement instead of being cascaded.
+      const [reports] = await connection.execute(
+        'SELECT id FROM reports WHERE server_id = ? LIMIT 1 FOR UPDATE',
+        [id],
+      ) as any;
+      if (Array.isArray(reports) && reports.length > 0) {
+        await connection.rollback();
+        return { success: false, error: SERVER_HAS_HISTORICAL_REPORTS };
+      }
       const [result] = await connection.execute('DELETE FROM servers WHERE id = ?', [id]) as any;
       if (result.affectedRows === 0) {
         await connection.rollback();
@@ -437,6 +456,9 @@ class ServerDatabaseService {
       return { success: true };
     } catch (error: any) {
       await connection.rollback().catch(() => undefined);
+      if (error?.errno === 1451 || error?.code === 'ER_ROW_IS_REFERENCED_2') {
+        return { success: false, error: SERVER_HAS_HISTORICAL_REPORTS };
+      }
       console.error('删除服务器失败:', error);
       return { success: false, error: error.message };
     } finally {
