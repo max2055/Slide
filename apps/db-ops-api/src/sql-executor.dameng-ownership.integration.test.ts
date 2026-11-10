@@ -1,6 +1,9 @@
 /**
  * Real Dameng ownership for MAX-367 / GitHub #385.
- * Opt in with SLIDE_DAMENG_OWNERSHIP_INTEGRATION=1.
+ * Opt in with SLIDE_DAMENG_OWNERSHIP_INTEGRATION=1 and set
+ * SLIDE_CONNECTION_PROFILES to the credential profile file.
+ * Default collection does not read credentials. An opted-in run without
+ * that path fails with an explicit error.
  *
  * The Dameng session, server timeout (-608) and schema switch are real.
  * executeSql uses the production databaseService ensure/check/reconnect path.
@@ -18,8 +21,17 @@ import fs from 'node:fs';
 import { afterAll, describe, expect, it, vi } from 'vitest';
 
 const enabled = process.env.SLIDE_DAMENG_OWNERSHIP_INTEGRATION === '1';
-const profilePath = process.env.SLIDE_CONNECTION_PROFILES
-  ?? '/Users/max/.config/slide-test-access/connection-profiles.json';
+
+export function resolveDamengOwnershipProfile(env: NodeJS.ProcessEnv): string | null {
+  if (env.SLIDE_DAMENG_OWNERSHIP_INTEGRATION !== '1') return null;
+  const profilePath = env.SLIDE_CONNECTION_PROFILES;
+  if (!profilePath) {
+    throw new Error(
+      'SLIDE_DAMENG_OWNERSHIP_INTEGRATION=1 requires SLIDE_CONNECTION_PROFILES to name the credential profile file. Default collection does not read credentials.',
+    );
+  }
+  return profilePath;
+}
 
 const mocks = vi.hoisted(() => ({
   authorizeApproval: vi.fn(async () => true),
@@ -97,6 +109,25 @@ describe('MAX-367 cleanup ownership', () => {
   });
 });
 
+describe('MAX-367 credential injection', () => {
+  it('does not resolve a credential path when the integration flag is off', () => {
+    expect(resolveDamengOwnershipProfile({})).toBeNull();
+    expect(resolveDamengOwnershipProfile({ SLIDE_CONNECTION_PROFILES: 'task-owned/profile.json' })).toBeNull();
+  });
+
+  it('fails clearly when the integration flag is set without a profile path', () => {
+    expect(() => resolveDamengOwnershipProfile({ SLIDE_DAMENG_OWNERSHIP_INTEGRATION: '1' }))
+      .toThrow(/SLIDE_CONNECTION_PROFILES/);
+  });
+
+  it('uses only the injected profile path', () => {
+    expect(resolveDamengOwnershipProfile({
+      SLIDE_DAMENG_OWNERSHIP_INTEGRATION: '1',
+      SLIDE_CONNECTION_PROFILES: 'task-owned/profile.json',
+    })).toBe('task-owned/profile.json');
+  });
+});
+
 function redact(secret: string, error: unknown): string {
   const message = error instanceof Error ? error.message : String(error);
   return secret ? message.split(secret).join('[redacted]') : message;
@@ -114,6 +145,9 @@ describe.skipIf(!enabled)('MAX-367 real Dameng execution ownership', () => {
   });
 
   it('serializes one session, cancels by the driver session timeout, and does not replay a timed-out write', async () => {
+    const profilePath = resolveDamengOwnershipProfile(process.env);
+    if (!profilePath) throw new Error('Dameng ownership integration started without SLIDE_DAMENG_OWNERSHIP_INTEGRATION=1');
+    const profiles = JSON.parse(fs.readFileSync(profilePath, 'utf8'));
     const token = roundToken();
     const burn = `${token}_BURN`;
     const hold = `${token}_HOLD`;
@@ -200,7 +234,6 @@ describe.skipIf(!enabled)('MAX-367 real Dameng execution ownership', () => {
 
     let bodyError: unknown;
     try {
-      const profiles = JSON.parse(fs.readFileSync(profilePath, 'utf8'));
       const dameng = profiles['dameng-test'];
       secret = String(dameng.password);
       const connect = () => dmdb.getConnection({
