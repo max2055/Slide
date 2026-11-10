@@ -3176,6 +3176,11 @@ class DatabaseService {
     try { await instanceAccessLifecycle.assertAvailable(id); } catch { return false; }
     const conn = this.connections.get(id);
     if (!conn) return false;
+    // Dameng has one shared session. A disconnected flag, a failed probe and the
+    // rebuild that follows stay in one ownership so a waiter cannot enter between them.
+    if (conn.db_type === 'dameng') {
+      return withInstanceExecutionLock(id, () => this.ensureDamengSession(id));
+    }
     if (!conn.connected) {
       return this.reconnect(id);
     }
@@ -3184,6 +3189,29 @@ class DatabaseService {
     if (alive) return true;
     // 连接标记为 alive 但实际已死，尝试重连
     return this.reconnect(id);
+  }
+
+  private async ensureDamengSession(id: number): Promise<boolean> {
+    const conn = this.connections.get(id);
+    if (!conn || conn.db_type !== 'dameng') return false;
+    if (conn.connected && conn.dmConnection) {
+      if (await this.probeDamengSession(id)) return true;
+    }
+    return this.reconnect(id);
+  }
+
+  private async probeDamengSession(id: number): Promise<boolean> {
+    const current = this.connections.get(id);
+    if (!current?.dmConnection || current.db_type !== 'dameng') return false;
+    try {
+      await current.dmConnection.execute('SELECT 1 FROM DUAL');
+      current.connected = true;
+      return true;
+    } catch (error) {
+      current.connected = false;
+      console.error(`[checkConnectionAlive] 实例 ${id} (${current.name}) 连接不可用:`, error);
+      return false;
+    }
   }
 
   /**
@@ -3209,12 +3237,7 @@ class DatabaseService {
       } else if (conn.db_type === 'dameng' && conn.dmConnection) {
         // The shared session's default autoCommit commits an open transaction.
         // Wait for the SQL owner, then probe whatever session is current.
-        await withInstanceExecutionLock(id, async () => {
-          const current = this.connections.get(id);
-          if (!current?.dmConnection || current.db_type !== 'dameng') throw new Error('DAMENG_SESSION_MISSING');
-          await current.dmConnection.execute('SELECT 1 FROM DUAL');
-          current.connected = true;
-        });
+        return withInstanceExecutionLock(id, () => this.probeDamengSession(id));
       } else {
         return false;
       }
@@ -3233,6 +3256,15 @@ class DatabaseService {
    * 当不存在旧连接 entry 时，可通过 fallbackName + fallbackConfig 从头建连
    */
   async reconnect(id: number, fallbackName?: string, fallbackConfig?: DatabaseConfig): Promise<boolean> {
+    try { await instanceAccessLifecycle.assertAvailable(id); } catch { return false; }
+    const current = this.connections.get(id);
+    if (current?.db_type === 'dameng') {
+      return withInstanceExecutionLock(id, () => this.replaceConnection(id, fallbackName, fallbackConfig));
+    }
+    return this.replaceConnection(id, fallbackName, fallbackConfig);
+  }
+
+  private async replaceConnection(id: number, fallbackName?: string, fallbackConfig?: DatabaseConfig): Promise<boolean> {
     try { await instanceAccessLifecycle.assertAvailable(id); } catch { return false; }
     const oldConn = this.connections.get(id);
 

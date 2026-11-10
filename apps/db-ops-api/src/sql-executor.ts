@@ -318,6 +318,7 @@ class SqlExecutor {
       } else if (conn.db_type === 'dameng' && conn.dmConnection) {
         // One shared session. Ownership covers the production probe, reconnect,
         // statement, commit/rollback, schema restore and timeout restore.
+        // An external ensure/reconnect also waits on this lock before close.
         // dmdb socketTimeout (error 20010) drops the socket and is not a cancel.
         // sessionTimeout is the server statement limit (DM8 error -608). It is
         // integer seconds, so a sub-second request becomes one second; 0 would disable it.

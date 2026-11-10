@@ -3,6 +3,7 @@
  * Opt in with SLIDE_DAMENG_OWNERSHIP_INTEGRATION=1.
  *
  * The Dameng session, server timeout (-608) and schema switch are real.
+ * executeSql uses the production databaseService ensure/check/reconnect path.
  * Approval authorization and the durable intent store are stubbed and labeled
  * below; they still belong to the platform MySQL path and are not re-proven here.
  * sql_execution_history uses the real audit manager and, when 3306 accepts the
@@ -16,19 +17,11 @@ const profilePath = process.env.SLIDE_CONNECTION_PROFILES
   ?? '/Users/max/.config/slide-test-access/connection-profiles.json';
 
 const mocks = vi.hoisted(() => ({
-  ensureConnectionAlive: vi.fn(async () => true),
-  getConnection: vi.fn(),
   authorizeApproval: vi.fn(async () => true),
   beginIntent: vi.fn(async () => undefined),
   finishIntent: vi.fn(async () => undefined),
 }));
 
-vi.mock('./database-service', () => ({
-  databaseService: {
-    ensureConnectionAlive: mocks.ensureConnectionAlive,
-    getConnection: mocks.getConnection,
-  },
-}));
 vi.mock('./db-connection', () => ({ dbConnection: { getPool: () => ({}) } }));
 vi.mock('./security/approval-execution-authorizer', () => ({
   authorizeApprovedSqlExecution: mocks.authorizeApproval,
@@ -41,6 +34,7 @@ vi.mock('./audit/sql-execution-intent.js', () => ({
 import dmdb from 'dmdb';
 import mysql from 'mysql2/promise';
 import { auditLogManager, DatabaseAuditLogStore, memoryAuditLogStore } from './audit/audit-log.js';
+import { databaseService } from './database-service.js';
 import { sqlExecutor } from './sql-executor.js';
 
 const grant = { approvalRequestId: 385, reviewerId: 2, operationId: 'max367-dameng-visibility' };
@@ -64,21 +58,25 @@ describe.skipIf(!enabled)('MAX-367 real Dameng execution ownership', () => {
   }
 
   afterAll(async () => {
-    if (!session) return;
-    for (const sql of [
+    const drops = [
       'DROP VIEW SLIDE_MAX367_HOLD',
       'DROP VIEW SLIDE_MAX367_HOLD_B',
       'DROP VIEW SLIDE_MAX367_SLOW',
       'DROP TABLE SLIDE_MAX367_DML',
       'DROP TABLE SLIDE_MAX367_R1',
+      'DROP TABLE SLIDE_MAX367_REBUILD',
       'DROP TABLE SLIDE_MAX367.SLIDE_MAX367_VIS',
       'DROP SCHEMA SLIDE_MAX367',
       'DROP FUNCTION SLIDE_MAX367_BURN',
-    ]) {
-      await session.execute(sql).catch(() => undefined);
+    ];
+    // Reconnect closes the executor session. Witness stays open for cleanup.
+    for (const conn of [witness, session]) {
+      if (!conn) continue;
+      for (const sql of drops) await conn.execute(sql).catch(() => undefined);
     }
-    await session.close().catch(() => undefined);
+    await session?.close().catch(() => undefined);
     await witness?.close().catch(() => undefined);
+    await databaseService.removeConnection(instanceId).catch(() => undefined);
   });
 
   it('serializes one session, cancels by the driver session timeout, and does not replay a timed-out write', async () => {
@@ -95,8 +93,17 @@ describe.skipIf(!enabled)('MAX-367 real Dameng execution ownership', () => {
       socketTimeout: 30_000,
     });
     try {
-      session = await connect();
       witness = await connect();
+      const opened = await databaseService.addConnection(instanceId, 'max367-dameng', {
+        host: dameng.host,
+        port: Number(dameng.port),
+        user: dameng.user,
+        password: dameng.password,
+        db_type: 'dameng',
+      });
+      const stored = databaseService.getConnection(instanceId);
+      if (!opened || !stored?.dmConnection) throw new Error('Dameng addConnection failed');
+      session = stored.dmConnection;
     } catch (error) {
       throw new Error(redact(secret, error));
     }
@@ -105,6 +112,8 @@ describe.skipIf(!enabled)('MAX-367 real Dameng execution ownership', () => {
 
     const execute = session.execute.bind(session);
     const rollback = session.rollback.bind(session);
+    const commit = session.commit.bind(session);
+    const close = session.close.bind(session);
     let pauseAfterSql = '';
     let pausedSql = '';
     let releasePause: (() => void) | null = null;
@@ -122,14 +131,14 @@ describe.skipIf(!enabled)('MAX-367 real Dameng execution ownership', () => {
       marks.push({ sql: 'rollback', at: Date.now() - startedAt });
       return rollback();
     }) as dmdb.Connection['rollback'];
-    mocks.getConnection.mockReturnValue({
-      id: instanceId, name: 'dameng-test', db_type: 'dameng', dmConnection: session, connected: true,
-    });
-    // Production checkConnectionAlive uses this exact call, including default autoCommit.
-    mocks.ensureConnectionAlive.mockImplementation(async () => {
-      await session.execute('SELECT 1 FROM DUAL');
-      return true;
-    });
+    session.commit = (async () => {
+      marks.push({ sql: 'commit', at: Date.now() - startedAt });
+      return commit();
+    }) as dmdb.Connection['commit'];
+    session.close = (async () => {
+      marks.push({ sql: 'close', at: Date.now() - startedAt });
+      return close();
+    }) as dmdb.Connection['close'];
 
     for (const sql of [
       'DROP VIEW SLIDE_MAX367_HOLD',
@@ -137,6 +146,7 @@ describe.skipIf(!enabled)('MAX-367 real Dameng execution ownership', () => {
       'DROP VIEW SLIDE_MAX367_SLOW',
       'DROP TABLE SLIDE_MAX367_DML',
       'DROP TABLE SLIDE_MAX367_R1',
+      'DROP TABLE SLIDE_MAX367_REBUILD',
       'DROP TABLE SLIDE_MAX367.SLIDE_MAX367_VIS',
       'DROP SCHEMA SLIDE_MAX367',
       'DROP FUNCTION SLIDE_MAX367_BURN',
@@ -302,5 +312,45 @@ describe.skipIf(!enabled)('MAX-367 real Dameng execution ownership', () => {
       auditLogManager.setPersistentStore(memoryAuditLogStore);
       await pool.end();
     }
-  }, 60_000);
+
+    await session.execute('CREATE TABLE SLIDE_MAX367_REBUILD(ID INT)');
+    await session.execute('INSERT INTO SLIDE_MAX367_REBUILD(ID) VALUES (1)', [], { autoCommit: true });
+    expect(await witnessRows('SELECT ID FROM SLIDE_MAX367_REBUILD')).toEqual([[1]]);
+    const rebuildSql = 'UPDATE SLIDE_MAX367_REBUILD SET ID = 2';
+    pauseAfterSql = rebuildSql;
+    const rebuilding = sqlExecutor.executeSql(instanceId, rebuildSql, {
+      approvalGrant: { ...grant, operationId: 'max367-rebuild' }, timeoutMs: 15_000,
+    });
+    const rebuildStarted = Date.now();
+    while (pausedSql !== rebuildSql && Date.now() - rebuildStarted < 5_000) {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    expect(pausedSql).toBe(rebuildSql);
+    const closesAtPause = marks.filter((mark) => mark.sql === 'close').length;
+    const probesAtPause = marks.filter((mark) => mark.sql === 'SELECT 1 FROM DUAL').length;
+    const held = databaseService.getConnection(instanceId);
+    if (!held) throw new Error('Dameng session missing while the owner is running');
+    held.connected = false;
+    const ensured = databaseService.ensureConnectionAlive(instanceId);
+    const checked = databaseService.checkConnectionAlive(instanceId);
+    const reconnected = databaseService.reconnect(instanceId);
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    expect(marks.filter((mark) => mark.sql === 'close')).toHaveLength(closesAtPause);
+    expect(marks.filter((mark) => mark.sql === 'SELECT 1 FROM DUAL')).toHaveLength(probesAtPause);
+    expect(await witnessRows('SELECT ID FROM SLIDE_MAX367_REBUILD')).toEqual([[1]]);
+    releasePause?.();
+    releasePause = null;
+    pauseAfterSql = '';
+    const rebuilt = await rebuilding;
+    expect(rebuilt).toMatchObject({ success: true, executionState: 'succeeded', retryable: false });
+    expect(await witnessRows('SELECT ID FROM SLIDE_MAX367_REBUILD')).toEqual([[2]]);
+    expect(await ensured).toBe(true);
+    expect(await checked).toBe(true);
+    expect(await reconnected).toBe(true);
+    const commitAt = marks.map((mark) => mark.sql).lastIndexOf('commit');
+    const closeAt = marks.findIndex((mark) => mark.sql === 'close');
+    expect(commitAt).toBeGreaterThanOrEqual(0);
+    expect(closeAt).toBeGreaterThan(commitAt);
+    await witness.execute('DROP TABLE SLIDE_MAX367_REBUILD').catch(() => undefined);
+  }, 90_000);
 });
