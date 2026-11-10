@@ -216,6 +216,65 @@ describe('instance removal lifecycle', () => {
     expect(await f.service.remove(8)).toEqual({ success: true, state: 'deleted' });
     expect(f.store.complete).toHaveBeenCalledOnce();
   });
+  it('a failed verification followed by a refused connection keeps every unresolved fence', async () => {
+    const access = new InstanceAccessLifecycle(async () => true);
+    const runtime = { stopTasks: vi.fn(async () => {}), stopCollection: vi.fn(async () => {}), closeConnections: vi.fn(async () => {}) };
+    const store: RemovalStore = {
+      begin: vi.fn(async () => { throw new RemovalIntentUnknownError(new Error('receipt lost')); }),
+      observe: vi.fn(async () => { throw new Error('verify down'); }),
+      detach: vi.fn(async () => {}), record: vi.fn(async () => {}), complete: vi.fn(async () => {}),
+    };
+    const service = new InstanceRemovalService(store, access, runtime, 20);
+    expect(await service.remove(8)).toMatchObject({ statusCode: 503, error: 'INSTANCE_REMOVAL_INTENT_FAILED' });
+    expect(store.observe).toHaveBeenCalledOnce();
+    expect(access.isRevoked(8)).toBe(true);
+
+    vi.mocked(store.begin).mockRejectedValueOnce(new RemovalIntentUncommittedError(new Error('connection refused')));
+    expect(await service.remove(8)).toMatchObject({ statusCode: 503, error: 'INSTANCE_REMOVAL_INTENT_FAILED' });
+    expect(store.observe).toHaveBeenCalledTimes(2);
+    expect(access.isRevoked(8)).toBe(true);
+    await expect(access.assertAvailable(8)).rejects.toThrow('INSTANCE_REMOVED');
+    expect(runtime.stopTasks).not.toHaveBeenCalled();
+
+    vi.mocked(store.begin).mockRejectedValueOnce(new RemovalIntentUncommittedError(new Error('rolled back')));
+    vi.mocked(store.observe).mockResolvedValueOnce('available');
+    expect(await service.remove(8)).toMatchObject({ statusCode: 503, error: 'INSTANCE_REMOVAL_INTENT_FAILED' });
+    expect(access.isRevoked(8)).toBe(false);
+    await expect(access.assertAvailable(8)).resolves.toBeUndefined();
+    expect(runtime.stopTasks).not.toHaveBeenCalled();
+
+    vi.mocked(store.begin).mockResolvedValueOnce('deleting');
+    expect(await service.remove(8)).toEqual({ success: true, state: 'deleted' });
+    expect(access.isRevoked(8)).toBe(true);
+  });
+  it('an older verified token cannot clear a newer fence, and a newer uncommitted token cannot clear an older unknown', async () => {
+    const access = new InstanceAccessLifecycle(async () => true);
+    const runtime = { stopTasks: vi.fn(async () => {}), stopCollection: vi.fn(async () => {}), closeConnections: vi.fn(async () => {}) };
+    let releaseObserve!: (state: 'available') => void;
+    const older: RemovalStore = {
+      begin: vi.fn(async () => { throw new RemovalIntentUnknownError(new Error('receipt lost')); }),
+      observe: vi.fn(() => new Promise<'available'>(resolve => { releaseObserve = resolve; })),
+      detach: vi.fn(async () => {}), record: vi.fn(async () => {}), complete: vi.fn(async () => {}),
+    };
+    const pending = new InstanceRemovalService(older, access, runtime, 20).remove(8);
+    await vi.waitFor(() => expect(releaseObserve).toBeTypeOf('function'));
+    access.hold(8);
+    releaseObserve('available');
+    expect(await pending).toMatchObject({ statusCode: 503 });
+    expect(access.isRevoked(8)).toBe(true);
+
+    const newer: RemovalStore = {
+      begin: vi.fn(async () => { throw new RemovalIntentUncommittedError(new Error('connection refused')); }),
+      observe: vi.fn(async () => { throw new Error('verify down'); }),
+      detach: vi.fn(async () => {}), record: vi.fn(async () => {}), complete: vi.fn(async () => {}),
+    };
+    access.retainUnresolved(8, access.hold(8));
+    expect(await new InstanceRemovalService(newer, access, runtime, 20).remove(8)).toMatchObject({ statusCode: 503 });
+    expect(newer.observe).toHaveBeenCalledOnce();
+    expect(access.isRevoked(8)).toBe(true);
+    await expect(access.assertAvailable(8)).rejects.toThrow('INSTANCE_REMOVED');
+    expect(runtime.stopTasks).not.toHaveBeenCalled();
+  });
   it('an unclassified begin failure does not release the fence or skip verification', async () => {
     const f = fixture();
     vi.mocked(f.store.begin).mockRejectedValueOnce(new Error('unclassified'));
@@ -340,7 +399,12 @@ function fakeStore(behavior: {
     }),
     commit: vi.fn(async () => { if (behavior.commit === 'throw') throw new Error('commit receipt lost'); }),
     rollback: vi.fn(async () => { if (behavior.rollback === 'throw') throw new Error('rollback failed'); }),
+    query: vi.fn(async (sql: string) => {
+      if (String(sql).includes('tx_state')) return [[{ innodb_pending: 0, tx_state: 'COMMITTED' }]];
+      return connection.execute(sql);
+    }),
     release: vi.fn(),
+    destroy: vi.fn(),
   };
   const pool = {
     getConnection: vi.fn(async () => {
@@ -363,15 +427,43 @@ describe('removal intent classification', () => {
     expect(rolled.connection.commit).not.toHaveBeenCalled();
     expect(rolled.connection.rollback).toHaveBeenCalled();
     expect(rolled.connection.release).toHaveBeenCalled();
+    expect(rolled.connection.destroy).not.toHaveBeenCalled();
 
     const rollbackFailed = fakeStore({ execute: 'throw', rollback: 'throw' });
-    await expect(rollbackFailed.store.begin(4)).rejects.toBeInstanceOf(RemovalIntentUncommittedError);
+    await expect(rollbackFailed.store.begin(4)).rejects.toBeInstanceOf(RemovalIntentUnknownError);
     expect(rollbackFailed.connection.commit).not.toHaveBeenCalled();
+    expect(rollbackFailed.connection.release).not.toHaveBeenCalled();
+    expect(rollbackFailed.connection.destroy).toHaveBeenCalledOnce();
 
     const lost = fakeStore({ commit: 'throw' });
     await expect(lost.store.begin(4)).rejects.toBeInstanceOf(RemovalIntentUnknownError);
     expect(lost.connection.rollback).not.toHaveBeenCalled();
-    expect(lost.connection.release).toHaveBeenCalled();
+    expect(lost.connection.release).not.toHaveBeenCalled();
+    expect(lost.connection.destroy).toHaveBeenCalledOnce();
+  });
+  it('reads a clean connection and destroys one that still has a transaction', async () => {
+    const dirty = {
+      query: vi.fn(async () => [[{ innodb_pending: 1, tx_state: 'ACTIVE' }]]),
+      execute: vi.fn(async () => [[{ lifecycle_state: 'deleting' }]]),
+      release: vi.fn(),
+      destroy: vi.fn(),
+    };
+    const clean = {
+      query: vi.fn(async (sql: string) => String(sql).includes('tx_state') ? [[{ innodb_pending: 0, tx_state: 'COMMITTED' }]] : [[{ lifecycle_state: 'available' }]]),
+      execute: vi.fn(async () => [[{ lifecycle_state: 'available' }]]),
+      release: vi.fn(),
+      destroy: vi.fn(),
+    };
+    const queued = [dirty, clean];
+    const pool = { getConnection: vi.fn(async () => queued.shift()), execute: vi.fn() };
+    const store = new MysqlInstanceRemovalStore(() => pool as any);
+    await expect(store.observe(4)).resolves.toBe('available');
+    expect(dirty.execute).not.toHaveBeenCalled();
+    expect(dirty.release).not.toHaveBeenCalled();
+    expect(dirty.destroy).toHaveBeenCalledOnce();
+    expect(clean.execute).toHaveBeenCalledOnce();
+    expect(clean.release).toHaveBeenCalledOnce();
+    expect(pool.execute).not.toHaveBeenCalled();
   });
   it('returns deleted without rewriting a tombstone and records reasons only while deleting', async () => {
     const deleted = fakeStore({ rows: [{ lifecycle_state: 'deleted' }] });

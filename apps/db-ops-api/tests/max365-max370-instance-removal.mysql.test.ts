@@ -89,6 +89,49 @@ function withLostCommit(base: Pool, mode: 'before' | 'after'): Pool {
   });
 }
 
+function withHeldTransaction(base: Pool, mode: 'commit' | 'rollback'): { pool: Pool; sessions: number[] } {
+  // The server has applied the deleting update and this wrapper never confirms
+  // COMMIT or ROLLBACK. Returning that session to the pool would let the next
+  // START TRANSACTION commit the unknown write.
+  const sessions: number[] = [];
+  let armed = true;
+  const pool = new Proxy(base, {
+    get(target, prop, receiver) {
+      if (prop !== 'getConnection') return Reflect.get(target, prop, receiver);
+      return async () => {
+        const connection = await target.getConnection();
+        if (!armed) return connection;
+        const [ident] = await connection.query<RowDataPacket[]>('SELECT CONNECTION_ID() AS id');
+        sessions.push(Number(ident[0].id));
+        const execute = connection.execute.bind(connection);
+        const commit = connection.commit.bind(connection);
+        const rollback = connection.rollback.bind(connection);
+        let updated = false;
+        connection.execute = (async (...args: unknown[]) => {
+          const result = await execute(...(args as [string]));
+          if (armed && mode === 'rollback' && String(args[0]).includes("lifecycle_state = 'deleting'")) {
+            updated = true;
+            armed = false;
+            throw new Error('UPDATE_APPLIED_RECEIPT_LOST');
+          }
+          return result;
+        }) as typeof connection.execute;
+        connection.commit = (async () => {
+          if (!(armed && mode === 'commit')) return commit();
+          armed = false;
+          throw new Error('COMMIT_RECEIPT_LOST_OPEN');
+        }) as typeof connection.commit;
+        connection.rollback = (async () => {
+          if (mode === 'rollback' && updated) throw new Error('ROLLBACK_FAILED');
+          return rollback();
+        }) as typeof connection.rollback;
+        return connection;
+      };
+    },
+  });
+  return { pool, sessions };
+}
+
 function asReasons(value: unknown): string[] | null {
   if (value == null) return null;
   if (typeof value === 'string') return JSON.parse(value) as string[];
@@ -260,6 +303,54 @@ describe.skipIf(!acceptanceEnabled())('MAX-365/MAX-370 instance removal on isola
     await expect(after.remove(instanceId)).resolves.toEqual({ success: true, state: 'deleted' });
     expect(await snapshot()).toMatchObject({ lifecycle_state: 'deleted', password_encrypted: '', removal_reasons: null });
     await expect(instanceAccessLifecycle.assertAvailable(instanceId)).rejects.toThrow('INSTANCE_REMOVED');
+  });
+
+  it('a one-connection pool destroys an open removal transaction instead of reusing or replaying it', async () => {
+    const small = mysql.createPool({ ...mysqlTestConfig(), database: schema, connectionLimit: 1, maxIdle: 1 });
+    try {
+      for (const mode of ['commit', 'rollback'] as const) {
+        const held = withHeldTransaction(small, mode);
+        const service = new InstanceRemovalService(new MysqlInstanceRemovalStore(() => held.pool), instanceAccessLifecycle, runtime());
+        await expect(service.remove(instanceId)).resolves.toMatchObject({ statusCode: 503, error: 'INSTANCE_REMOVAL_INTENT_FAILED' });
+        expect(stopTasks).not.toHaveBeenCalled();
+        const doomed = held.sessions[0];
+        expect(doomed).toBeGreaterThan(0);
+        let gone = false;
+        for (let attempt = 0; attempt < 20 && !gone; attempt++) {
+          const [alive] = await admin.query<RowDataPacket[]>('SELECT ID FROM information_schema.PROCESSLIST WHERE ID = ?', [doomed]);
+          gone = alive.length === 0;
+          if (!gone) await new Promise(resolve => setTimeout(resolve, 25));
+        }
+        expect(gone).toBe(true);
+        const [committed] = await admin.query<RowDataPacket[]>(
+          `SELECT lifecycle_state, removal_requested_at, password_encrypted FROM \`${schema}\`.database_instances WHERE id = ?`,
+          [instanceId],
+        );
+        expect(committed[0]).toMatchObject({ lifecycle_state: 'available', removal_requested_at: null, password_encrypted: 'fixture-secret' });
+        const probe = await small.getConnection();
+        try {
+          const [session] = await probe.query<RowDataPacket[]>(`SELECT CONNECTION_ID() AS id,
+            (SELECT COUNT(*) FROM information_schema.innodb_trx WHERE trx_mysql_thread_id = CONNECTION_ID()) AS innodb_pending,
+            (SELECT c.state FROM performance_schema.events_transactions_current c
+               JOIN performance_schema.threads t ON t.thread_id = c.thread_id
+               WHERE t.processlist_id = CONNECTION_ID() LIMIT 1) AS tx_state`);
+          expect(Number(session[0].innodb_pending)).toBe(0);
+          expect(session[0].tx_state).not.toBe('ACTIVE');
+          expect(Number(session[0].id)).not.toBe(doomed);
+          await probe.beginTransaction();
+          const [afterStart] = await probe.query<RowDataPacket[]>('SELECT lifecycle_state FROM database_instances WHERE id = ?', [instanceId]);
+          expect(afterStart[0].lifecycle_state).toBe('available');
+          await probe.rollback();
+        } finally {
+          probe.release();
+        }
+        await expect(instanceAccessLifecycle.assertAvailable(instanceId)).resolves.toBeUndefined();
+      }
+      expect(await instanceDatabaseService.deleteInstance(instanceId)).toEqual({ success: true, state: 'deleted' });
+      expect(await snapshot()).toMatchObject({ lifecycle_state: 'deleted', password_encrypted: '', connection_string: null });
+    } finally {
+      await small.end();
+    }
   });
 
   it('an injected verification failure keeps the fence while the real row stays available', async () => {

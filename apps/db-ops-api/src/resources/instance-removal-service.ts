@@ -69,15 +69,20 @@ export class InstanceRemovalService {
   }
 
   private async recoverFailedIntent(id: number, fence: number, error: unknown): Promise<RemovalResult> {
-    if (error instanceof RemovalIntentUncommittedError) {
+    if (error instanceof RemovalIntentUnknownError) this.access.retainUnresolved(id, fence);
+    // A known rollback of this attempt does not prove an older unknown commit finished.
+    if (error instanceof RemovalIntentUncommittedError && !this.access.hasUnresolved(id)) {
       this.access.releaseIfCurrent(id, fence);
       return this.intentFailed();
     }
-    // Unknown and unclassified failures stay fenced until a durable read says the row is still usable.
-    if (!(error instanceof RemovalIntentUnknownError)) return this.intentFailed();
+    if (!(error instanceof RemovalIntentUnknownError) && !(error instanceof RemovalIntentUncommittedError)) {
+      return this.intentFailed();
+    }
+    const pending = this.access.unresolvedSnapshot(id);
     let observed: RemovalLifecycle | null;
     try { observed = await this.store.observe(id); }
     catch { return this.intentFailed(); }
+    this.access.resolveVerified(id, pending);
     if (observed === 'deleted') {
       this.access.revoke(id);
       return { success: true, state: 'deleted' };
@@ -86,6 +91,8 @@ export class InstanceRemovalService {
       this.access.revoke(id);
       return this.finishRemoval(id);
     }
+    // A newer unknown may have been retained while this read was in flight.
+    if (this.access.hasUnresolved(id)) return this.intentFailed();
     this.access.releaseIfCurrent(id, fence);
     return this.intentFailed();
   }
@@ -133,6 +140,7 @@ export class MysqlInstanceRemovalStore implements RemovalStore {
     } catch (error) {
       throw new RemovalIntentUncommittedError(error);
     }
+    let isolate = false;
     try {
       await connection.beginTransaction();
       const [rows] = await connection.execute<any[]>('SELECT lifecycle_state FROM database_instances WHERE id = ? FOR UPDATE', [id]);
@@ -145,23 +153,63 @@ export class MysqlInstanceRemovalStore implements RemovalStore {
       try {
         await connection.commit();
       } catch (error) {
+        isolate = true;
         throw new RemovalIntentUnknownError(error);
       }
       return rows[0].lifecycle_state === 'deleted' ? 'deleted' : 'deleting';
     } catch (error) {
       if (error instanceof RemovalIntentUnknownError) throw error;
-      await connection.rollback().catch(() => {});
+      try {
+        await connection.rollback();
+      } catch (rollbackError) {
+        // A failed ROLLBACK is not proof the write was undone. Destroy the session
+        // so the server cannot implicitly commit it on the next START TRANSACTION.
+        isolate = true;
+        throw new RemovalIntentUnknownError(rollbackError);
+      }
       throw new RemovalIntentUncommittedError(error);
     } finally {
-      try { connection.release(); } catch { /* keep the classified begin result */ }
+      if (isolate) this.isolate(connection);
+      else {
+        try { connection.release(); } catch { this.isolate(connection); }
+      }
     }
   }
+  /** Close the socket and drop the pool slot. release() would keep the open transaction reusable. */
+  private isolate(connection: PoolConnection): void {
+    try { connection.destroy(); } catch { /* the slot is already detached or the socket is gone */ }
+  }
+  private async cleanConnection(): Promise<PoolConnection> {
+    const pool = this.pool();
+    for (let attempt = 0; attempt < 8; attempt++) {
+      const connection = await pool.getConnection();
+      try {
+        const [rows] = await connection.query<any[]>(`SELECT
+          (SELECT COUNT(*) FROM information_schema.innodb_trx WHERE trx_mysql_thread_id = CONNECTION_ID()) AS innodb_pending,
+          (SELECT c.state FROM performance_schema.events_transactions_current c
+             JOIN performance_schema.threads t ON t.thread_id = c.thread_id
+             WHERE t.processlist_id = CONNECTION_ID() LIMIT 1) AS tx_state`);
+        const open = Number(rows?.[0]?.innodb_pending) > 0 || rows?.[0]?.tx_state === 'ACTIVE';
+        if (!open) return connection;
+      } catch (error) {
+        this.isolate(connection);
+        throw error;
+      }
+      this.isolate(connection);
+    }
+    throw new Error('INSTANCE_REMOVAL_OBSERVE_DIRTY');
+  }
   async observe(id: number): Promise<RemovalLifecycle | null> {
-    const [rows] = await this.pool().execute<any[]>('SELECT lifecycle_state FROM database_instances WHERE id = ?', [id]);
-    if (!rows.length) return null;
-    const state = rows[0].lifecycle_state;
-    if (state === 'available' || state === 'deleting' || state === 'deleted') return state;
-    throw new Error('INSTANCE_REMOVAL_STATE_UNKNOWN');
+    const connection = await this.cleanConnection();
+    try {
+      const [rows] = await connection.execute<any[]>('SELECT lifecycle_state FROM database_instances WHERE id = ?', [id]);
+      if (!rows.length) return null;
+      const state = rows[0].lifecycle_state;
+      if (state === 'available' || state === 'deleting' || state === 'deleted') return state;
+      throw new Error('INSTANCE_REMOVAL_STATE_UNKNOWN');
+    } finally {
+      try { connection.release(); } catch { this.isolate(connection); }
+    }
   }
   async detach(id: number): Promise<void> {
     const c = await this.pool().getConnection();
