@@ -16,6 +16,7 @@ import { classifySql } from './sql-validator.js';
 import { ensureOracleClientReady, formatOracleConnectionError, initializeOracleClient } from './oracle-client.js';
 import { collectDamengMemoryUsage } from './collectors/dameng-memory.js';
 import { calculateCounterRate } from './collectors/base-provider.js';
+import { withInstanceExecutionLock } from './instance-execution-lock.js';
 
 initializeOracleClient();
 
@@ -3175,6 +3176,11 @@ class DatabaseService {
     try { await instanceAccessLifecycle.assertAvailable(id); } catch { return false; }
     const conn = this.connections.get(id);
     if (!conn) return false;
+    // Dameng has one shared session. A disconnected flag, a failed probe and the
+    // rebuild that follows stay in one ownership so a waiter cannot enter between them.
+    if (conn.db_type === 'dameng') {
+      return withInstanceExecutionLock(id, () => this.ensureDamengSession(id));
+    }
     if (!conn.connected) {
       return this.reconnect(id);
     }
@@ -3183,6 +3189,29 @@ class DatabaseService {
     if (alive) return true;
     // 连接标记为 alive 但实际已死，尝试重连
     return this.reconnect(id);
+  }
+
+  private async ensureDamengSession(id: number): Promise<boolean> {
+    const conn = this.connections.get(id);
+    if (!conn || conn.db_type !== 'dameng') return false;
+    if (conn.connected && conn.dmConnection) {
+      if (await this.probeDamengSession(id)) return true;
+    }
+    return this.reconnect(id);
+  }
+
+  private async probeDamengSession(id: number): Promise<boolean> {
+    const current = this.connections.get(id);
+    if (!current?.dmConnection || current.db_type !== 'dameng') return false;
+    try {
+      await current.dmConnection.execute('SELECT 1 FROM DUAL');
+      current.connected = true;
+      return true;
+    } catch (error) {
+      current.connected = false;
+      console.error(`[checkConnectionAlive] 实例 ${id} (${current.name}) 连接不可用:`, error);
+      return false;
+    }
   }
 
   /**
@@ -3206,7 +3235,9 @@ class DatabaseService {
       } else if (conn.db_type === 'oracle' && conn.oracleConnection) {
         await conn.oracleConnection.execute('SELECT 1 FROM DUAL');
       } else if (conn.db_type === 'dameng' && conn.dmConnection) {
-        await conn.dmConnection.execute('SELECT 1 FROM DUAL');
+        // The shared session's default autoCommit commits an open transaction.
+        // Wait for the SQL owner, then probe whatever session is current.
+        return withInstanceExecutionLock(id, () => this.probeDamengSession(id));
       } else {
         return false;
       }
@@ -3225,6 +3256,23 @@ class DatabaseService {
    * 当不存在旧连接 entry 时，可通过 fallbackName + fallbackConfig 从头建连
    */
   async reconnect(id: number, fallbackName?: string, fallbackConfig?: DatabaseConfig): Promise<boolean> {
+    try { await instanceAccessLifecycle.assertAvailable(id); } catch { return false; }
+    // removeConnection drops the entry before addConnection installs the new session.
+    // Monitor tryReconnect then calls back with fallbackConfig while that entry is gone.
+    // Locking only when an entry is already Dameng lets that fallback close the session
+    // the owner still holds. A live non-Dameng entry stays on the unlocked path.
+    if (this.damengRebuildOwnsSession(fallbackConfig, this.connections.get(id))) {
+      return withInstanceExecutionLock(id, () => this.replaceConnection(id, fallbackName, fallbackConfig));
+    }
+    return this.replaceConnection(id, fallbackName, fallbackConfig);
+  }
+
+  private damengRebuildOwnsSession(fallbackConfig: DatabaseConfig | undefined, current: DatabaseConnection | undefined): boolean {
+    if (current) return current.db_type === 'dameng';
+    return fallbackConfig?.db_type === 'dameng';
+  }
+
+  private async replaceConnection(id: number, fallbackName?: string, fallbackConfig?: DatabaseConfig): Promise<boolean> {
     try { await instanceAccessLifecycle.assertAvailable(id); } catch { return false; }
     const oldConn = this.connections.get(id);
 

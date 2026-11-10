@@ -67,7 +67,7 @@ describe('T07-B durable event/admission concurrency, real MySQL', () => {
     await pool.execute(`INSERT INTO role_permissions (role_id, permission_id) SELECT ?, id FROM permissions
       WHERE code IN ('chat:view','instance:view','metric:view','alert:view','servers:view','network_devices:view','config:view')`, [roleId]);
     await pool.execute('INSERT INTO user_roles (user_id, role_id) VALUES (?, ?)', [serviceId, roleId]);
-    await pool.execute("INSERT INTO database_instances (id, name, host, port, username, password_encrypted) VALUES (101, 'fixture-1', 'fixture.invalid', 3306, 'fixture', 'unused'), (102, 'fixture-2', 'fixture.invalid', 3306, 'fixture', 'unused')");
+    await pool.execute("INSERT INTO database_instances (id, name, host, port, database_name, username, password_encrypted) VALUES (101, 'fixture-1', 'fixture.invalid', 3306, 'trigger-101', 'fixture', 'unused'), (102, 'fixture-2', 'fixture.invalid', 3306, 'trigger-102', 'fixture', 'unused')");
     await pool.execute("INSERT INTO servers (id, label, host, os_type, credential_type, credential_encrypted) VALUES (201, 'fixture-server', 'fixture.invalid', 'Other', 'password', 'unused')");
     await pool.execute("INSERT INTO network_devices (id, name, host) VALUES (301, 'fixture-network', 'fixture.invalid')");
     contexts = new ActorContextService(() => pool as unknown as ReturnType<NonNullable<ConstructorParameters<typeof ActorContextService>[0]>>);
