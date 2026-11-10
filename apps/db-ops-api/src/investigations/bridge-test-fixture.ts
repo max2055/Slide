@@ -43,7 +43,7 @@ export async function bridgeTestFixture(connectionLimit = 12) {
   await pool.query("INSERT INTO roles (id,name) VALUES (101,'t08-readonly')");
   await pool.query("INSERT INTO role_permissions (role_id,permission_id) SELECT 101,id FROM permissions WHERE code IN ('chat:view','instance:view','metric:view','alert:view','ai:view','ai:manage')");
   await pool.query('INSERT INTO user_roles (user_id,role_id) VALUES (101,101),(102,101)');
-  await pool.query("INSERT INTO database_instances (id,name,host,port,username,password_encrypted) VALUES (101,'CPU fixture','fixture.invalid',3306,'fixture','unused'),(102,'SQL fixture','fixture.invalid',3306,'fixture','unused')");
+  await pool.query("INSERT INTO database_instances (id,name,host,port,database_name,username,password_encrypted) VALUES (101,'CPU fixture','fixture.invalid',3306,'cpu-fixture','fixture','unused'),(102,'SQL fixture','fixture.invalid',3306,'sql-fixture','fixture','unused')");
   await pool.query("INSERT INTO instance_permissions (user_id,instance_id,access_level) VALUES (101,101,'read-only'),(101,102,'read-only'),(102,101,'read-only'),(102,102,'read-only')");
   const c = await pool.getConnection();
   let serviceId: number;
