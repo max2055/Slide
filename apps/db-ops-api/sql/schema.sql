@@ -1146,7 +1146,7 @@ ALTER TABLE ai_analysis ADD COLUMN cache_ttl_minutes INT DEFAULT NULL;
 CREATE TABLE IF NOT EXISTS `approval_events` (
   `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   `request_id` BIGINT UNSIGNED NOT NULL,
-  `event_type` ENUM('submitted','ai_reviewed','claimed','approved','rejected','executed','execution_failed','notified') NOT NULL,
+  `event_type` ENUM('submitted','ai_reviewed','claimed','approved','rejected','executed','execution_failed','notified','reconciliation_required') NOT NULL,
   `event_data` JSON DEFAULT NULL COMMENT 'Event-specific payload (risk_level for ai_reviewed, {rows,duration} for executed)',
   `created_by` INT UNSIGNED DEFAULT NULL,
   `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
