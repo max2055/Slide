@@ -18,10 +18,12 @@ export function driverError(error) {
 // Startup logs can contain generated passwords, URLs or credentials in errors.
 // Drop the entire sensitive line rather than guessing where its value ends.
 export function safeLogs(text) {
-  return text.split(/\r?\n/).slice(-80).map(line =>
-    /pass(?:word|wd)?|\bpwd\b|secret|token|credential|authorization|api[_-]?key|private[_-]?key|:\/\/[^\s/]*@/i.test(line)
+  return text.split(/\r?\n/).slice(-80).map(line => {
+    const clean = line.replace(/[\u0000-\u0008\u000b-\u001f\u007f]/g, '');
+    return /pass(?:word|wd)?|\bpwd\b|secret|token|credential|authorization|api[_-]?key|private[_-]?key|:\/\/[^\s/]*@/i.test(clean)
       ? '[redacted sensitive log line]'
-      : line.replace(/[\u0000-\u0008\u000b-\u001f\u007f]/g, '').slice(0, 1000)).join('\n');
+      : clean.slice(0, 1000);
+  }).join('\n');
 }
 
 export function record(directory, event) {

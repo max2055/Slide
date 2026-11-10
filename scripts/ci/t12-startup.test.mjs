@@ -15,7 +15,7 @@ test('MAX251: driver errors retain only codes, not credentials or SQL', () => {
 test('MAX251: bounded logs redact sensitive lines and terminal controls', () => {
   const text = safeLogs(['old\n'.repeat(90), '[MY-013576] InnoDB initialization has started.',
     'GENERATED ROOT PASSWORD: sentinel', 'pAsSwD="sentinel"', '{"apiKey":"sentinel"}',
-    'Authorization: Bearer sentinel', 'redis://user:sentinel@example.test', '\u001b[31mhealthy'].join('\n'));
+    'Authorization: Bearer sentinel', 'redis://user:sentinel@example.test', 'pass\u001bword=sentinel', '\u001b[31mhealthy'].join('\n'));
   assert.ok(!text.includes('sentinel'));
   assert.ok(!text.includes('\u001b'));
   assert.ok(text.includes('MY-013576'));
