@@ -22,17 +22,22 @@ type InstanceScopedActor = {
   resourceBoundary?: { readonly instanceIds: readonly number[] };
 };
 
-export function hasUnrestrictedInstanceAccess(actor: InstanceScopedActor | null | undefined): boolean {
-  if (actor?.resourceBoundary) return false;
+function hasGlobalInstancePermission(actor: InstanceScopedActor | null | undefined): boolean {
   const permissions = new Set(Array.isArray(actor?.permissions) ? actor.permissions : []);
   return permissions.has('*') || permissions.has('instance:*') || actor?.roles?.includes('admin') === true;
+}
+
+export function hasUnrestrictedInstanceAccess(actor: InstanceScopedActor | null | undefined): boolean {
+  return !actor?.resourceBoundary && hasGlobalInstancePermission(actor);
 }
 
 /** null means unrestricted; an empty array means no instance access. */
 export function getAccessibleInstanceIds(actor: InstanceScopedActor | null | undefined): number[] | null {
   if (hasUnrestrictedInstanceAccess(actor)) return null;
-  return Object.keys(actor?.instanceScopes ?? {})
-    .map(Number)
+  const candidates = hasGlobalInstancePermission(actor)
+    ? actor!.resourceBoundary!.instanceIds
+    : Object.keys(actor?.instanceScopes ?? {}).map(Number);
+  return [...new Set(candidates)]
     .filter((id) => hasInstanceAccess(actor, id))
     .sort((a, b) => a - b);
 }
@@ -43,8 +48,8 @@ export function hasInstanceAccess(
   minLevel: AccessLevel = 'read-only',
 ): boolean {
   if (!actor || !Number.isSafeInteger(instanceId) || instanceId <= 0) return false;
-  if (hasUnrestrictedInstanceAccess(actor)) return true;
   if (actor.resourceBoundary && !actor.resourceBoundary.instanceIds.includes(instanceId)) return false;
+  if (hasGlobalInstancePermission(actor)) return true;
   const accessLevel = actor.instanceScopes?.[instanceId];
   return Boolean(accessLevel) && ACCESS_LEVEL_HIERARCHY[accessLevel!] >= ACCESS_LEVEL_HIERARCHY[minLevel];
 }
