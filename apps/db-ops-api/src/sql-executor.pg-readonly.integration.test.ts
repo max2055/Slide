@@ -143,15 +143,26 @@ describe.skipIf(!enabled)('MAX-375 real PostgreSQL read-only wrapping', () => {
     return Number(result.rows[0].n);
   }
 
-  async function transactionReleased(client: Client): Promise<boolean> {
-    const result = await client.query('SELECT txid_current_if_assigned() IS NULL AS released');
-    return result.rows[0].released === true;
+  async function backendPid(client: Client): Promise<number> {
+    const result = await client.query('SELECT pg_backend_pid() AS pid');
+    return Number(result.rows[0].pid);
+  }
+
+  async function witnessActivity(pid: number): Promise<{ state: string; openXact: boolean }> {
+    const witness = await open();
+    const result = await witness.query(
+      'SELECT state, xact_start IS NOT NULL AS open_xact FROM pg_stat_activity WHERE pid = $1',
+      [pid],
+    );
+    if (result.rowCount !== 1) throw new Error(`pg_stat_activity returned ${result.rowCount} rows`);
+    return { state: String(result.rows[0].state), openXact: result.rows[0].open_xact === true };
   }
 
   it('runs a trailing line comment, a normal select, and the owned table', async () => {
     const schema = await ownedProbe();
     const client = await open();
     bind(client);
+    const pid = await backendPid(client);
     const commented = await sqlExecutor.executeSql(37501, 'SELECT 1 -- note;', { timeoutMs: 5_000 });
     expect(commented).toMatchObject({ success: true, rowCount: 1, truncated: false, rows: [{ '?column?': 1 }] });
 
@@ -164,7 +175,7 @@ describe.skipIf(!enabled)('MAX-375 real PostgreSQL read-only wrapping', () => {
     });
     expect(owned).toMatchObject({ success: true, truncated: false, rowCount: 2 });
     expect(owned.rows?.map((row) => row.id).sort((a, b) => a - b)).toEqual([1, 2]);
-    expect(await transactionReleased(client)).toBe(true);
+    expect(await witnessActivity(pid)).toEqual({ state: 'idle', openXact: false });
     expect(mocks.auditSql).not.toHaveBeenCalled();
     expect(mocks.beginIntent).not.toHaveBeenCalled();
   });
@@ -172,9 +183,15 @@ describe.skipIf(!enabled)('MAX-375 real PostgreSQL read-only wrapping', () => {
   it('keeps literals, block comments, and a comment after the real terminator', async () => {
     const client = await open();
     bind(client);
+    const pid = await backendPid(client);
     const cases = [
       ['SELECT 1 -- note', 1],
       ['SELECT 1 -- note\n', 1],
+      ['SELECT 1 -- note\r', 1],
+      ['SELECT 1 -- note\r\n', 1],
+      ['SELECT 1 -- note\r;', 1],
+      ['SELECT 1 -- note\r\n;', 1],
+      ['SELECT 1;\r-- after', 1],
       ['SELECT 1; -- after', 1],
       ['SELECT 1; /* tail */', 1],
       ["SELECT ';'", ';'],
@@ -205,13 +222,25 @@ describe.skipIf(!enabled)('MAX-375 real PostgreSQL read-only wrapping', () => {
       expect(Object.values(result.rows?.[0] ?? {})[0]).toEqual(expected);
     }
     expect(mocks.beginIntent).not.toHaveBeenCalled();
-    expect(await transactionReleased(client)).toBe(true);
+    expect(await witnessActivity(pid)).toEqual({ state: 'idle', openXact: false });
+  });
+
+  it('sees an intentionally unfinished read-only transaction from another session', async () => {
+    const client = await open();
+    const pid = await backendPid(client);
+    await client.query('BEGIN READ ONLY');
+    const weak = await client.query('SELECT txid_current_if_assigned() IS NULL AS released');
+    expect(weak.rows[0].released).toBe(true);
+    expect(await witnessActivity(pid)).toEqual({ state: 'idle in transaction', openXact: true });
+    await client.query('ROLLBACK');
+    expect(await witnessActivity(pid)).toEqual({ state: 'idle', openXact: false });
   });
 
   it('caps an owned table at 1000 rows and reports truncation', async () => {
     const schema = await ownedProbe();
     const client = await open();
     bind(client);
+    const pid = await backendPid(client);
     const result = await sqlExecutor.executeSql(37501, 'SELECT id FROM probe ORDER BY id;', {
       database: schema,
       timeoutMs: 5_000,
@@ -221,13 +250,14 @@ describe.skipIf(!enabled)('MAX-375 real PostgreSQL read-only wrapping', () => {
     expect(new Set(ids).size).toBe(1000);
     expect(ids.every((id) => id >= 1 && id <= 1001)).toBe(true);
     expect(await count(schema)).toBe(1001);
-    expect(await transactionReleased(client)).toBe(true);
+    expect(await witnessActivity(pid)).toEqual({ state: 'idle', openXact: false });
   });
 
   it('cancels a long read and leaves the same session idle', async () => {
     const schema = await ownedProbe();
     const client = await open();
     bind(client);
+    const pid = await backendPid(client);
     const started = Date.now();
     const timedOut = await sqlExecutor.executeSql(
       37501,
@@ -239,6 +269,7 @@ describe.skipIf(!enabled)('MAX-375 real PostgreSQL read-only wrapping', () => {
     expect(timedOut.error).toMatch(/statement timeout/i);
     expect(elapsed).toBeLessThan(5_000);
     expect(await count(schema)).toBe(1001);
+    expect(await witnessActivity(pid)).toEqual({ state: 'idle', openXact: false });
 
     const next = await sqlExecutor.executeSql(37501, 'SELECT count(*) FROM probe;', {
       database: schema,
@@ -246,13 +277,14 @@ describe.skipIf(!enabled)('MAX-375 real PostgreSQL read-only wrapping', () => {
     });
     expect(next).toMatchObject({ success: true, rowCount: 1 });
     expect(Number(Object.values(next.rows?.[0] ?? {})[0])).toBe(1001);
-    expect(await transactionReleased(client)).toBe(true);
+    expect(await witnessActivity(pid)).toEqual({ state: 'idle', openXact: false });
   });
 
   it('refuses a write and a second statement without changing the owned table', async () => {
     const schema = await ownedProbe();
     const client = await open();
     bind(client);
+    const pid = await backendPid(client);
     mocks.authorizeApproval.mockResolvedValue(false);
     const write = await sqlExecutor.executeSql(37501, "DELETE FROM probe WHERE id = 1", {
       database: schema,
@@ -264,9 +296,17 @@ describe.skipIf(!enabled)('MAX-375 real PostgreSQL read-only wrapping', () => {
       approvalGrant: { approvalRequestId: 375, reviewerId: 2, operationId: 'max375-multi' },
     });
     expect(multi).toMatchObject({ success: false, error: 'SQL_STATEMENT_NOT_ALLOWED_MULTI_STATEMENT' });
+    const splitByCr = await sqlExecutor.executeSql(37501, 'SELECT 1 -- note\r; DELETE FROM probe', {
+      database: schema,
+      timeoutMs: 5_000,
+    });
+    expect(splitByCr).toMatchObject({ success: false, error: 'SQL_STATEMENT_NOT_ALLOWED_MULTI_STATEMENT' });
+    const codeAfterCr = await sqlExecutor.executeSql(37501, 'SELECT 1 -- note\r+ 2', { timeoutMs: 5_000 });
+    expect(codeAfterCr.success, codeAfterCr.error).toBe(true);
+    expect(Number(Object.values(codeAfterCr.rows?.[0] ?? {})[0])).toBe(3);
     expect(await count(schema)).toBe(1001);
     expect(mocks.beginIntent).not.toHaveBeenCalled();
     expect(mocks.auditSql).not.toHaveBeenCalled();
-    expect(await transactionReleased(client)).toBe(true);
+    expect(await witnessActivity(pid)).toEqual({ state: 'idle', openXact: false });
   });
 });

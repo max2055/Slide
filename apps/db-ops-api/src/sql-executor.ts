@@ -66,8 +66,9 @@ function postgresQuoteEscapes(sql: string, quoteAt: number): boolean {
  * Locate a trailing semicolon that is outside PostgreSQL strings and comments.
  * Semicolons inside literals or comments stay. A semicolon followed by more
  * statement text is left in place so this never executes a prefix.
+ * PostgreSQL ends a "--" comment on CR or LF, including the CR of CRLF.
  */
-function postgresTrailingTerminator(sql: string): { cut: number | null; lineComment: boolean } {
+function postgresTrailingTerminator(sql: string): { cut: number | null; lineComment: boolean; multiple: boolean } {
   let index = 0;
   let mode: 'code' | 'line' | 'block' | 'quote' | 'ident' | 'dollar' = 'code';
   let blockDepth = 0;
@@ -78,7 +79,7 @@ function postgresTrailingTerminator(sql: string): { cut: number | null; lineComm
 
   while (index < sql.length) {
     if (mode === 'line') {
-      if (sql[index] === '\n') mode = 'code';
+      if (sql[index] === '\n' || sql[index] === '\r') mode = 'code';
       index += 1;
       continue;
     }
@@ -177,7 +178,11 @@ function postgresTrailingTerminator(sql: string): { cut: number | null; lineComm
     index += 1;
   }
 
-  return { cut: cut !== null && !codeAfterCut ? cut : null, lineComment: mode === 'line' };
+  return {
+    cut: cut !== null && !codeAfterCut ? cut : null,
+    lineComment: mode === 'line',
+    multiple: codeAfterCut,
+  };
 }
 
 function postgresReadOnlyInner(sql: string): string {
@@ -977,6 +982,12 @@ class SqlExecutor {
         }
         result = mysqlResult;
       } else if (conn.db_type === 'postgresql' && conn.pgClient) {
+        // The MySQL-oriented classifier does not treat CR as the end of a "--"
+        // comment, so a CR-split script can still be labeled read-only. Refuse
+        // it here instead of wrapping or running only the text before the semicolon.
+        if (isReadOnly && postgresTrailingTerminator(sql.trim()).multiple) {
+          return { success: false, error: 'SQL_STATEMENT_NOT_ALLOWED_MULTI_STATEMENT' };
+        }
         const pgClient = conn.pgClient;
         result = await this.serializeForInstance(instanceId, async () => {
           // Receipts follow command completion only. A ROLLBACK after an
