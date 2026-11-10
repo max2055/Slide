@@ -71,7 +71,7 @@ export async function registerAgentToolApprovalRoutes(
         return reply.code(403).send({ reasonCode: 'TOOL_NOT_AVAILABLE' });
       }
       const security = getToolSecurityDefinition(tool.name);
-      const resource = await resolveToolResource(tool.name, args);
+      const resource = await resolveToolResource(tool.name, args, undefined, actor);
       const risk = tool.name === 'execute_code'
         ? classifyExecuteCodeRisk({
           runtime: String(args.runtime ?? ''),

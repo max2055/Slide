@@ -26,7 +26,7 @@ describe.skipIf(!process.env.ADD_DATABASE_TEST_MYSQL_URL)('MAX-311 MySQL credent
       await pool.execute('INSERT INTO users VALUES (7)');
       await pool.query(readFileSync(new URL('../../../../sql/migrations/056_agent_credential_references.sql', import.meta.url), 'utf8'));
       vi.spyOn(dbConnection, 'getPool').mockReturnValue(pool);
-      vi.spyOn(instanceDatabaseService, 'getAllInstances').mockResolvedValue([]);
+      vi.spyOn(instanceDatabaseService, 'listAvailableInstancesByNormalizedName').mockResolvedValue([]);
       const connection = vi.spyOn(instanceDatabaseService, 'testConnection');
       const create = vi.spyOn(instanceDatabaseService, 'createInstance');
       for (const scenario of ['connection_rejected', 'create_rejected', 'address_exists', 'acknowledgement_lost']) {

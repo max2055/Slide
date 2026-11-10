@@ -8,7 +8,7 @@ describe('slide_add_database', () => {
   afterEach(() => vi.restoreAllMocks());
 
   it('creates an instance with pending credentials when no credential reference is supplied', async () => {
-    vi.spyOn(instanceDatabaseService, 'getAllInstances').mockResolvedValue([]);
+    vi.spyOn(instanceDatabaseService, 'listAvailableInstancesByNormalizedName').mockResolvedValue([]);
     const createInstance = vi.spyOn(instanceDatabaseService, 'createInstance').mockResolvedValue({
       success: true,
       instanceId: 41,
@@ -34,10 +34,11 @@ describe('slide_add_database', () => {
   });
 
   it('returns the existing instance id as a terminal result for duplicate names', async () => {
-    vi.spyOn(instanceDatabaseService, 'getAllInstances').mockResolvedValue([{
+    vi.spyOn(instanceDatabaseService, 'listAvailableInstancesByNormalizedName').mockResolvedValue([{
       id: 73,
       name: 'mysql_db_internal_3306',
-    } as any]);
+      environment: 'development',
+    }]);
 
     const result = await addDatabaseTool.handler({
       db_type: 'mysql',
@@ -53,6 +54,49 @@ describe('slide_add_database', () => {
       details: { terminal: true, retryable: false },
     });
   });
+
+  it('allows the same trimmed name in another environment and stores the normalized name', async () => {
+    vi.spyOn(instanceDatabaseService, 'listAvailableInstancesByNormalizedName').mockResolvedValue([{
+      id: 73,
+      name: 'orders',
+      environment: 'production',
+    }]);
+    const createInstance = vi.spyOn(instanceDatabaseService, 'createInstance').mockResolvedValue({
+      success: true,
+      instanceId: 74,
+    });
+
+    const result = await addDatabaseTool.handler({
+      db_type: 'mysql',
+      name: '  orders  ',
+      host: '192.0.2.11',
+      port: 3306,
+      username: 'slide',
+      environment: 'development',
+    }, { actor: { userId: 7 } as any } as any);
+
+    expect(result).toMatchObject({ success: true, data: { instanceId: 74, name: 'orders' } });
+    expect(createInstance).toHaveBeenCalledWith(expect.objectContaining({
+      name: 'orders',
+      environment: 'development',
+      host: '192.0.2.11',
+    }));
+  });
+
+  it('rejects a blank name before enumeration or creation', async () => {
+    const list = vi.spyOn(instanceDatabaseService, 'listAvailableInstancesByNormalizedName');
+    const createInstance = vi.spyOn(instanceDatabaseService, 'createInstance');
+    const result = await addDatabaseTool.handler({
+      db_type: 'mysql',
+      name: '   ',
+      host: '192.0.2.11',
+      port: 3306,
+      username: 'slide',
+    }, { actor: { userId: 7 } as any } as any);
+    expect(result).toMatchObject({ success: false, errorCode: 'INVALID_ARGUMENTS' });
+    expect(list).not.toHaveBeenCalled();
+    expect(createInstance).not.toHaveBeenCalled();
+  });
 });
 
 // MAX-311 / #389: a failed operation must not invite replay of a single-use reference.
@@ -62,7 +106,7 @@ describe('slide_add_database single-use credential recovery', () => {
   const context = { actor: { userId: 7 } as any };
 
   beforeEach(() => {
-    vi.spyOn(instanceDatabaseService, 'getAllInstances').mockResolvedValue([]);
+    vi.spyOn(instanceDatabaseService, 'listAvailableInstancesByNormalizedName').mockResolvedValue([]);
     vi.spyOn(instanceDatabaseService, 'testConnection').mockResolvedValue({ success: true, message: 'OK' });
     vi.spyOn(instanceDatabaseService, 'createInstance').mockResolvedValue({ success: true, instanceId: 41 });
     vi.spyOn(credentialReferenceService, 'consume').mockResolvedValueOnce(secret).mockResolvedValue(null);
@@ -102,9 +146,9 @@ describe('slide_add_database single-use credential recovery', () => {
     expect(result.next_actions?.join(' ')).toMatch(/确认未创建.*新的 credential_ref/);
     expect(JSON.stringify(result)).not.toContain(secret);
     expect(writes).toBe(1);
-    expect(instanceDatabaseService.getAllInstances).toHaveBeenCalledTimes(1);
+    expect(instanceDatabaseService.listAvailableInstancesByNormalizedName).toHaveBeenCalledTimes(1);
     // Reconciliation finds the row whose acknowledgement was lost; reuse it.
-    vi.mocked(instanceDatabaseService.getAllInstances).mockResolvedValue([{ id: 41, name: 'mysql_db_internal_3306' } as any]);
+    vi.mocked(instanceDatabaseService.listAvailableInstancesByNormalizedName).mockResolvedValue([{ id: 41, name: 'mysql_db_internal_3306', environment: 'development' }]);
     expect(await addDatabaseTool.handler(args, context)).toMatchObject({ errorCode: 'INSTANCE_EXISTS', data: { instanceId: 41 } });
     expect(writes).toBe(1);
     expect(credentialReferenceService.consume).toHaveBeenCalledTimes(1);
@@ -119,7 +163,7 @@ describe('slide_add_database single-use credential recovery', () => {
   });
 
   it('does not consume the reference for a duplicate name detected before creation', async () => {
-    vi.mocked(instanceDatabaseService.getAllInstances).mockResolvedValue([{ id: 73, name: 'mysql_db_internal_3306' } as any]);
+    vi.mocked(instanceDatabaseService.listAvailableInstancesByNormalizedName).mockResolvedValue([{ id: 73, name: 'mysql_db_internal_3306', environment: 'development' }]);
     expect(await addDatabaseTool.handler(args, context)).toMatchObject({ errorCode: 'INSTANCE_EXISTS' });
     expect(credentialReferenceService.consume).not.toHaveBeenCalled();
     expect(instanceDatabaseService.createInstance).not.toHaveBeenCalled();
@@ -158,7 +202,7 @@ describe('slide_add_database single-use credential recovery', () => {
   it('can create with a fresh reference after confirming the prior attempt did not create an instance', async () => {
     vi.mocked(instanceDatabaseService.createInstance).mockResolvedValueOnce({ success: false, error: '数据库未连接' });
     expect(await addDatabaseTool.handler(args, context)).toMatchObject({ errorCode: 'CREATE_INSTANCE_FAILED' });
-    expect(await instanceDatabaseService.getAllInstances()).toEqual([]);
+    expect(await instanceDatabaseService.listAvailableInstancesByNormalizedName('mysql_db_internal_3306')).toEqual([]);
     vi.mocked(credentialReferenceService.consume).mockResolvedValueOnce(secret);
     const recovered = await addDatabaseTool.handler({ ...args, credential_ref: 'fresh-reference' }, context);
     expect(recovered).toMatchObject({ success: true, data: { instanceId: 41, connectionStatus: 'connected' } });
@@ -167,7 +211,7 @@ describe('slide_add_database single-use credential recovery', () => {
   });
 
   it('does not consume a reference when instance enumeration fails before any creation attempt', async () => {
-    vi.mocked(instanceDatabaseService.getAllInstances).mockRejectedValue(new Error(secret));
+    vi.mocked(instanceDatabaseService.listAvailableInstancesByNormalizedName).mockRejectedValue(new Error(secret));
     const result = await addDatabaseTool.handler(args, context);
     expect(result).toMatchObject({ errorCode: 'ADD_DATABASE_FAILED', details: { terminal: true, retryable: false } });
     expect(result.next_actions?.join(' ')).toContain('尚未消费');

@@ -112,11 +112,12 @@ export const addDatabaseTool: AnyAgentTool = {
     const unknownCreationError = `创建结果未知：先对账，确认未创建且修复原因后${typedArgs.credential_ref ? '申请新的 credential_ref ' : ''}再发起创建，不要直接重试`;
 
     try {
-      // 1. 生成实例名称（如果未提供）
-      const instanceName = typedArgs.name || generateInstanceName(typedArgs);
+      // 1. 名称与环境跟 createInstance 使用同一规范化结果。空白名称已在校验中拒绝。
+      const instanceName = typeof typedArgs.name === 'string' ? typedArgs.name.trim() : generateInstanceName(typedArgs);
+      const environment = typedArgs.environment || 'development';
 
-      // 2. 检查实例是否已存在
-      const existing = await checkInstanceExists(instanceName);
+      // 2. 只拒绝同一环境的同名实例。其他环境的同名实例不在这里拦截。
+      const existing = await checkInstanceExists(instanceName, environment);
       if (existing) {
         return {
           success: false,
@@ -178,7 +179,7 @@ export const addDatabaseTool: AnyAgentTool = {
       creationSubmitted = true;
       const createResult = await instanceDatabaseService.createInstance({
         name: instanceName,
-        environment: typedArgs.environment || 'development',
+        environment,
         db_type: typedArgs.db_type,
         host: typedArgs.host,
         port: typedArgs.port,
@@ -222,6 +223,7 @@ export const addDatabaseTool: AnyAgentTool = {
         instanceName,
         instanceId: realInstanceId,
         connectionTest: password ? connectionTest.success : null,
+        environment,
         args: typedArgs,
       });
 
@@ -242,7 +244,7 @@ export const addDatabaseTool: AnyAgentTool = {
           dbType: typedArgs.db_type,
           host: typedArgs.host,
           port: typedArgs.port,
-          environment: typedArgs.environment || 'development',
+          environment,
           message: content,
           terminal: false,
           retryable: false,
@@ -322,9 +324,9 @@ function generateInstanceName(args: AddDatabaseArgs): string {
 /**
  * 检查实例是否存在
  */
-async function checkInstanceExists(name: string): Promise<{ id: number; name: string } | null> {
-  const instances = await instanceDatabaseService.getAllInstances();
-  const instance = instances.find(inst => inst.name === name);
+async function checkInstanceExists(name: string, environment: string): Promise<{ id: number; name: string } | null> {
+  const matches = await instanceDatabaseService.listAvailableInstancesByNormalizedName(name);
+  const instance = matches.find((item) => item.environment === environment);
   return instance ? { id: instance.id, name: instance.name } : null;
 }
 
@@ -353,6 +355,7 @@ function buildAddDatabaseResponse(params: {
   instanceName: string;
   instanceId: number;
   connectionTest: boolean | null;
+  environment: string;
   args: AddDatabaseArgs;
 }): string {
   const lines: string[] = [];
@@ -363,7 +366,7 @@ function buildAddDatabaseResponse(params: {
   lines.push(`实例 ID: ${params.instanceId}`);
   lines.push(`类型：${params.args.db_type.toUpperCase()}`);
   lines.push(`地址：${params.args.host}:${params.args.port}`);
-  lines.push(`环境：${params.args.environment || 'development'}`);
+  lines.push(`环境：${params.environment}`);
 
   if (params.args.database_name) {
     lines.push(`数据库：${params.args.database_name}`);
