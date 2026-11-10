@@ -36,8 +36,75 @@ describe('slide_update_db_config boundary scenarios', () => {
     const result = await updateDbConfigTool.handler({ instance_id: 42, port: 3307, description: '' });
 
     expect(instanceService.updateInstance).toHaveBeenCalledWith(42, { port: 3307, description: '' });
-    expect(result).toMatchObject({ success: true, status: 'warning', data: { connectionTested: true, connectionSuccess: false } });
+    expect(result).toMatchObject({
+      success: true,
+      status: 'warning',
+      data: {
+        connectionTested: true,
+        connectionSuccess: false,
+        connectionTestOutcome: 'failed',
+        warning: '配置已保存，但新连接测试失败',
+      },
+    });
+    expect(JSON.stringify(result)).not.toContain('未能执行');
     expect(result.next_actions).toEqual(expect.arrayContaining([expect.stringContaining('slide_test_connection')]));
+    expect(instanceService.testConnection).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not report a failed test when the saved instance cannot be retrieved', async () => {
+    instanceService.getInstanceWithDecryptedPassword.mockResolvedValue(null);
+    const result = await updateDbConfigTool.handler({ instance_id: 42, port: 3307 }, { actor });
+    expect(instanceService.updateInstance).toHaveBeenCalledTimes(1);
+    expect(instanceService.testConnection).not.toHaveBeenCalled();
+    expect(result).toMatchObject({
+      success: true,
+      status: 'warning',
+      data: {
+        configSaved: true,
+        connectionTested: false,
+        connectionSuccess: false,
+        connectionTestOutcome: 'unavailable',
+        warning: '配置已保存，但未能执行连接测试',
+      },
+      details: { connectionTestOutcome: 'unavailable' },
+    });
+    expect(result.error).toBeUndefined();
+    expect(result.errorCode).toBeUndefined();
+    expect(JSON.stringify(result)).not.toContain('测试失败');
+    expect(JSON.stringify(result)).not.toContain('secret');
+    expect(result.next_actions?.join('\n')).toContain('未执行');
+    expect(result.next_actions?.join('\n')).toContain('不要再次提交');
+  });
+
+  it('does not consume the credential again when retrieval returns null', async () => {
+    credentialService.consumeInTransaction.mockResolvedValue({ status: 'committed' });
+    instanceService.getInstanceWithDecryptedPassword.mockResolvedValue(null);
+    const result = await updateDbConfigTool.handler({ instance_id: 42, credential_ref: 'ref' }, { actor });
+    expect(credentialService.consumeInTransaction).toHaveBeenCalledTimes(1);
+    expect(credentialService.consume).not.toHaveBeenCalled();
+    expect(instanceService.updateInstance).not.toHaveBeenCalled();
+    expect(instanceService.testConnection).not.toHaveBeenCalled();
+    expect(result).toMatchObject({
+      success: true,
+      status: 'warning',
+      data: { connectionTestOutcome: 'unavailable', connectionTested: false },
+    });
+    expect(JSON.stringify(result)).not.toContain('测试失败');
+  });
+
+  it('reports an actual connection test success without a failure warning', async () => {
+    instanceService.testConnection.mockResolvedValue({ success: true, message: 'ok' });
+    const result = await updateDbConfigTool.handler({ instance_id: 42, username: 'app' }, { actor });
+    expect(instanceService.updateInstance).toHaveBeenCalledTimes(1);
+    expect(instanceService.testConnection).toHaveBeenCalledTimes(1);
+    expect(result).toMatchObject({
+      success: true,
+      status: 'success',
+      data: { connectionTested: true, connectionSuccess: true, connectionTestOutcome: 'passed' },
+    });
+    expect(JSON.stringify(result)).not.toContain('测试失败');
+    expect(JSON.stringify(result)).not.toContain('未能执行');
+    expect(result.next_actions).toEqual([]);
   });
 
   it.each([
@@ -73,6 +140,7 @@ describe('slide_update_db_config boundary scenarios', () => {
     });
     expect(result.error).toBeUndefined();
     expect(result.errorCode).toBeUndefined();
+    expect(result.data && typeof result.data === 'object' ? (result.data as { connectionTestOutcome?: string }).connectionTestOutcome : '').toBeUndefined();
     expect(result.data && typeof result.data === 'object' ? (result.data as { warning?: string }).warning : '').toContain('已保存');
     expect(result.next_actions?.join('\n')).not.toMatch(/重试|重新提交/);
     expect(JSON.stringify(result)).not.toContain('synthetic password');
@@ -104,7 +172,13 @@ describe('slide_update_db_config boundary scenarios', () => {
     expect(instanceService.updateInstance).toHaveBeenCalledTimes(1);
     expect(instanceService.getInstanceWithDecryptedPassword).not.toHaveBeenCalled();
     expect(instanceService.testConnection).not.toHaveBeenCalled();
-    expect(result).toMatchObject({ success: true, status: 'success', data: { connectionTested: false, connectionSuccess: false } });
+    expect(result).toMatchObject({
+      success: true,
+      status: 'success',
+      data: { connectionTested: false, connectionSuccess: false, connectionTestOutcome: 'not_required' },
+    });
+    expect(JSON.stringify(result)).not.toContain('测试失败');
+    expect(JSON.stringify(result)).not.toContain('未能执行');
   });
 
   it('keeps a definite update failure failed and does not verify the connection', async () => {

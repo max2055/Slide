@@ -218,16 +218,19 @@ export const updateDbConfigTool: AnyAgentTool = {
       credentialCommitted = typedArgs.credential_ref !== undefined;
       configCommitted = true;
 
-      // 4. 连接字段变更后才验证。解密为空时不改判，留给后续独立验收。
+      // 4. 只有连接字段变更才验证。取回 null 时测试没有执行，不能记成测试失败。
       let connectionTested = false;
       let connectionSuccess = false;
+      let connectionTestOutcome: 'not_required' | 'unavailable' | 'failed' | 'passed' = 'not_required';
 
       if (typedArgs.host !== undefined || typedArgs.port !== undefined || typedArgs.username !== undefined || typedArgs.credential_ref !== undefined) {
-        connectionTested = true;
         verificationStage = 'decrypt';
         const decrypted = await instanceDatabaseService.getInstanceWithDecryptedPassword(instanceId);
-        if (decrypted) {
+        if (!decrypted) {
+          connectionTestOutcome = 'unavailable';
+        } else {
           verificationStage = 'connect';
+          connectionTested = true;
           const testResult = await instanceDatabaseService.testConnection({
             db_type: decrypted.db_type,
             host: typedArgs.host ?? decrypted.host,
@@ -236,29 +239,41 @@ export const updateDbConfigTool: AnyAgentTool = {
             password: decrypted.password,
             database: decrypted.database_name || undefined,
           });
-          connectionSuccess = testResult.success;
+          connectionSuccess = testResult.success === true;
+          connectionTestOutcome = connectionSuccess ? 'passed' : 'failed';
         }
       }
 
+      const warning = connectionTestOutcome === 'failed'
+        ? '配置已保存，但新连接测试失败'
+        : connectionTestOutcome === 'unavailable'
+          ? '配置已保存，但未能执行连接测试'
+          : undefined;
+
       return {
         success: true,
-        status: connectionTested && !connectionSuccess ? 'warning' : 'success',
+        status: warning ? 'warning' : 'success',
         data: {
           instanceId,
           updatedFields,
+          configSaved: true,
           connectionTested,
           connectionSuccess,
-          ...(connectionTested && !connectionSuccess ? { warning: '配置已保存，但新连接测试失败' } : {}),
+          connectionTestOutcome,
+          ...(warning ? { warning } : {}),
         },
-        next_actions: connectionTested && !connectionSuccess
+        next_actions: connectionTestOutcome === 'failed'
           ? ['配置已保存，不要再次提交本次更新；调用 slide_test_connection 单独验证连接']
-          : [],
-        summary: `✅ 成功更新实例配置：${updatedFields.join(', ')}`,
+          : connectionTestOutcome === 'unavailable'
+            ? ['配置已保存，不要再次提交本次更新；连接测试未执行，调用 slide_test_connection 单独验证连接']
+            : [],
+        summary: warning ?? `✅ 成功更新实例配置：${updatedFields.join(', ')}`,
         details: {
           instanceId,
           updatedFields,
           connectionTested,
           connectionSuccess,
+          connectionTestOutcome,
         },
       };
     } catch {
