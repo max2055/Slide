@@ -219,10 +219,28 @@ function astHasLockingRead(node: any, seen = new WeakSet<object>()): boolean {
   return false;
 }
 
+const CHANGING_STATEMENT_TYPES = new Set([
+  'insert', 'update', 'delete', 'replace', 'merge',
+  'create', 'alter', 'drop', 'truncate', 'rename', 'grant', 'revoke',
+  'call', 'execute',
+  'begin', 'start', 'commit', 'rollback', 'savepoint',
+  'set', 'use', 'pragma',
+]);
+
+function nestedChangingStatement(node: any, seen = new WeakSet<object>()): boolean {
+  if (!node || typeof node !== 'object' || seen.has(node)) return false;
+  seen.add(node);
+  if (Array.isArray(node)) return node.some((item) => nestedChangingStatement(item, seen));
+  const type = String(node.type ?? '').toLowerCase();
+  if (type !== 'select' && CHANGING_STATEMENT_TYPES.has(type)) return true;
+  return Object.values(node).some((value) => nestedChangingStatement(value, seen));
+}
+
 function hasDangerousSelectShape(node: any, skeleton: string): SqlReasonCode | null {
   const fromText = dangerousSelectText(skeleton);
   if (fromText) return fromText;
   if (astHasLockingRead(node)) return 'LOCKING_READ';
+  if (nestedChangingStatement(node)) return 'UNCLASSIFIED';
   return checkUnsafeFunctions(node) ? 'DANGEROUS_FUNCTION' : null;
 }
 
@@ -307,12 +325,14 @@ export function isSingleReadOnlySql(sql: string, dialect?: string): SqlClassific
 }
 
 /**
- * 验证 SQL 是否为纯 SELECT 查询
+ * 验证 SQL 是否为纯 SELECT 查询。
+ * 省略方言时保持 MySQL，与既有调用方兼容。显式传入未知方言时拒绝，而不是退回 MySQL。
  * @param sql 用户输入的 SQL 语句
+ * @param dialect 实例 db_type；仅 mysql、postgresql、oracle、dameng 可被分类
  * @returns { valid: true } 或 { valid: false, error: string }
  */
-export function validateSqlIsSelectOnly(sql: string): ValidationResult {
-  const classification = classifySql(sql);
+export function validateSqlIsSelectOnly(sql: string, dialect: string = 'mysql'): ValidationResult {
+  const classification = classifySql(sql, dialect);
   return classification.commandType === 'read'
     ? { valid: true }
     : { valid: false, error: `仅允许单条只读 SQL（${classification.reasonCode}）` };
