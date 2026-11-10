@@ -58,7 +58,11 @@ describe.skipIf(!port)('formal investigation persistence transactions', () => {
       });
       initialized = true;
     } finally { observation.finish(initialized); }
-  });
+  // MAX-376 CI artifact: migration-1 was still progressing through >1,300
+  // SQL operations at the default 10s hook deadline (no stalled query).
+  // Budget both full migration passes and schema checks here, independently
+  // of business assertions, which retain their existing deadlines.
+  }, 30_000);
   beforeEach(async () => {
     await pool.query('DROP TRIGGER IF EXISTS inject_admission_failure');
     for (const table of ['test_scope_grants', 'test_operator_grants', 'investigation_admission_keys', 'investigation_requests', 'investigation_resources', 'investigation_members', 'investigations', 'chat_messages', 'chat_sessions', 'outbox_events', 'workflow_jobs', 'agent_runs']) await pool.query(`DELETE FROM ${table}`);

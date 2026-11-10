@@ -31,6 +31,42 @@ function acquisitionBarrier(pool: Awaited<ReturnType<typeof bridgeTestFixture>>[
 }
 
 describe('T08-POOL-01 different sources with a fixed MySQL pool', () => {
+  it('MAX-376 CI: unrelated legacy admissions do not lock the empty analysis index gap', async () => {
+    const f = await bridgeTestFixture(10);
+    const connections = await Promise.all(Array.from({ length: 10 }, () => f.pool.getConnection()));
+    const originals = connections.map(c => c.execute);
+    let arrived = 0;
+    let open!: () => void;
+    const barrier = new Promise<void>(resolve => open = resolve);
+    try {
+      const [before] = await connections[0].query<any[]>('SELECT @@transaction_isolation AS isolation_level');
+      connections.forEach((connection, index) => {
+        connection.execute = (async (...args: any[]) => {
+          const result = await (originals[index] as any).apply(connection, args);
+          // Force all distinct scopes to finish the historical unknown lookup
+          // before any inserts. Under REPEATABLE READ each holds the same gap.
+          if (String(args[0]).includes("d.analysis_id IS NULL AND a.status = 'unknown'")) {
+            if (++arrived === connections.length) open();
+            await barrier;
+          }
+          return result;
+        }) as typeof connection.execute;
+      });
+      const outcomes = await Promise.allSettled(connections.map((c, index) => f.oldFor(f.source(2001 + index))(c)));
+      expect(outcomes.filter(row => row.status === 'rejected')).toEqual([]);
+      // All pool slots are reserved; observe through one of those connections.
+      for (const [table, expected] of [['analysis_dispatches', 10], ['workflow_jobs', 10], ['agent_runs', 0], ['llm_usage_records', 0]] as const) {
+        const [rows] = await connections[0].query<any[]>(`SELECT COUNT(*) AS n FROM ${table}`);
+        expect(Number(rows[0].n)).toBe(expected);
+      }
+      const [after] = await connections[0].query<any[]>('SELECT @@transaction_isolation AS isolation_level');
+      expect(after).toEqual(before);
+    } finally {
+      connections.forEach((c, index) => { c.execute = originals[index]; c.release(); });
+      await f.close();
+    }
+  }, 120_000);
+
   it('legacy production prompt/model configuration and enqueue share one reserved connection', async () => {
     const f = await bridgeTestFixture(1);
     try {

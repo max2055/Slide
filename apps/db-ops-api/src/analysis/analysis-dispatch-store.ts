@@ -38,9 +38,17 @@ export class AnalysisDispatchStore {
       LEFT JOIN analysis_dispatch_attempts a ON a.analysis_id = d.analysis_id LIMIT 0`);
     await this.pool().execute('SELECT scope_key FROM analysis_dispatch_keys LIMIT 0');
   }
-  private async transaction<T>(work: (connection: PoolConnection) => Promise<T>, reservedConnection?: PoolConnection): Promise<T> {
+  private async transaction<T>(work: (connection: PoolConnection) => Promise<T>, reservedConnection?: PoolConnection, admission = false): Promise<T> {
     const connection = reservedConnection ?? await this.pool().getConnection();
-    try { await connection.beginTransaction(); const result = await work(connection); await connection.commit(); return result; }
+    try {
+      // Admission is serialized by the unique scope-key row below. Its legacy
+      // lookup must lock matching unknown rows, not gaps shared by unrelated
+      // sources: concurrent gap locks otherwise deadlock at ai_analysis INSERT.
+      // SET TRANSACTION applies only to this transaction, including on a caller's
+      // reserved connection; it does not change the pool session's default.
+      if (admission) await connection.query('SET TRANSACTION ISOLATION LEVEL READ COMMITTED');
+      await connection.beginTransaction(); const result = await work(connection); await connection.commit(); return result;
+    }
     catch (error) { await connection.rollback(); throw error; }
     finally { if (!reservedConnection) connection.release(); }
   }
@@ -136,7 +144,7 @@ export class AnalysisDispatchStore {
       await connection.execute("UPDATE ai_analysis SET status = 'pending', session_key = ?, started_at = NULL WHERE id = ?", [snapshot.sessionKey, id]);
       await connection.execute('UPDATE analysis_dispatch_keys SET analysis_id = ? WHERE scope_key = ?', [id, scope]);
       return { analysisId: id, cached: false, success: true, status: 'pending' };
-    }, reservedConnection);
+    }, reservedConnection, true);
   }
 
   private async lock(connection: PoolConnection, id: number) {
