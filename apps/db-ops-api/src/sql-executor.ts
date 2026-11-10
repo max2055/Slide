@@ -107,6 +107,22 @@ function isMysqlInstanceIsolated(error: unknown): boolean {
   return Boolean(error && typeof error === 'object' && (error as { code?: string }).code === 'MYSQL_INSTANCE_ISOLATED');
 }
 
+/** Driver receipt for a PostgreSQL mutation. Never inferred from error text. */
+type PgReceipt = 'not_executed' | 'rolled_back' | 'unknown';
+const pgReceiptTag = Symbol('pgReceipt');
+
+function tagPgReceipt(error: unknown, receipt: PgReceipt): void {
+  if (error && typeof error === 'object') {
+    Object.defineProperty(error, pgReceiptTag, { value: receipt, enumerable: false });
+  }
+}
+
+function readPgReceipt(error: unknown): PgReceipt | undefined {
+  if (!error || typeof error !== 'object') return undefined;
+  const receipt = (error as { [pgReceiptTag]?: unknown })[pgReceiptTag];
+  return receipt === 'not_executed' || receipt === 'rolled_back' || receipt === 'unknown' ? receipt : undefined;
+}
+
 type MysqlTerminal = 'pending' | 'interrupted' | 'finished' | 'statement' | 'transport';
 type MysqlSettlement = 'open' | 'succeeded' | 'interrupted' | 'statement' | 'transport';
 
@@ -604,9 +620,11 @@ class SqlExecutor {
     truncated?: boolean;
     duration_ms?: number;
     error?: string;
-    executionState?: 'succeeded' | 'unknown' | 'not_started';
+    executionState?: 'succeeded' | 'unknown' | 'not_started' | 'rolled_back' | 'not_executed';
     operationId?: string;
-    retryable?: false;
+    retryable?: boolean;
+    auditStatus?: 'failed';
+    auditError?: 'AUDIT_LOG_FAILED';
   }> {
     const startTime = Date.now();
     let approvalAuthorized = false;
@@ -794,25 +812,46 @@ class SqlExecutor {
         }
         result = mysqlResult;
       } else if (conn.db_type === 'postgresql' && conn.pgClient) {
+        const pgClient = conn.pgClient;
         result = await this.serializeForInstance(instanceId, async () => {
-          let transactionStarted = false;
+          // Receipts follow command completion only. A ROLLBACK after an
+          // unacknowledged COMMIT does not prove the commit failed.
+          let began = false;
+          let userStatementSent = false;
+          let commitAttempted = false;
+          let commitAcknowledged = false;
+          let rollbackAcknowledged = false;
+          const receipt = (): PgReceipt => {
+            if (commitAttempted || commitAcknowledged) return 'unknown';
+            if (rollbackAcknowledged) return userStatementSent ? 'rolled_back' : 'not_executed';
+            if (!began) return 'not_executed';
+            return 'unknown';
+          };
           try {
-            await conn.pgClient!.query(isReadOnly ? 'BEGIN READ ONLY' : 'BEGIN');
-            transactionStarted = true;
-            await conn.pgClient!.query(`SET LOCAL statement_timeout = ${timeoutMs}`);
+            await pgClient.query(isReadOnly ? 'BEGIN READ ONLY' : 'BEGIN');
+            began = true;
+            await pgClient.query(`SET LOCAL statement_timeout = ${timeoutMs}`);
             if (context?.database) {
-              await conn.pgClient!.query('SET LOCAL search_path TO ' + conn.pgClient!.escapeIdentifier(context.database));
+              await pgClient.query('SET LOCAL search_path TO ' + pgClient.escapeIdentifier(context.database));
             }
             const cleanSql = sql.trim().replace(/;+\s*$/, '');
             const boundedSql = isReadOnly
               ? `SELECT * FROM (${cleanSql}) AS slide_read_limit LIMIT ${MAX_SQL_ROWS + 1}`
               : cleanSql;
-            const pgResult = await conn.pgClient!.query(boundedSql);
-            await conn.pgClient!.query('COMMIT');
-            transactionStarted = false;
+            userStatementSent = true;
+            const pgResult = await pgClient.query(boundedSql);
+            commitAttempted = true;
+            await pgClient.query('COMMIT');
+            commitAcknowledged = true;
             return { rows: pgResult.rows, fields: pgResult.fields };
           } catch (error) {
-            if (transactionStarted) await conn.pgClient!.query('ROLLBACK').catch(() => undefined);
+            if (began && !commitAcknowledged) {
+              try {
+                await pgClient.query('ROLLBACK');
+                if (!commitAttempted) rollbackAcknowledged = true;
+              } catch { /* A missing rollback receipt stays unknown. */ }
+            }
+            tagPgReceipt(error, receipt());
             throw error;
           }
         });
@@ -967,7 +1006,8 @@ class SqlExecutor {
         ? result.fields.map((f: any) => f.name)
         : Object.keys(rows[0] || {});
 
-      // 审计记录
+      // 审计记录. A failed audit does not change a commit the driver already acknowledged.
+      let auditStatus: 'recorded' | 'failed' | undefined;
       if (context?.userId || isMutation) {
         try {
           await auditLogManager.logSqlExecution({
@@ -983,18 +1023,70 @@ class SqlExecutor {
             ipAddress: context?.ipAddress,
             approvalRequestId: context?.approvalGrant?.approvalRequestId,
           });
-        } catch (error) { if (isMutation) throw error; }
+          if (isMutation) auditStatus = 'recorded';
+        } catch {
+          if (isMutation) auditStatus = 'failed';
+        }
       }
 
-      if (isMutation) await sqlExecutionIntent.finish(operationId!, 'succeeded', { duration_ms, targetAcknowledged: true });
+      if (isMutation) {
+        await sqlExecutionIntent.finish(operationId!, 'succeeded', {
+          duration_ms,
+          targetAcknowledged: true,
+          ...(auditStatus ? { auditStatus, ...(auditStatus === 'failed' ? { auditError: 'AUDIT_LOG_FAILED' } : {}) } : {}),
+        });
+      }
       return { success: true, columns, rows, rowCount: rows.length, truncated, duration_ms,
-        ...(isMutation ? { executionState: 'succeeded' as const, operationId, retryable: false as const } : {}) };
+        ...(isMutation ? {
+          executionState: 'succeeded' as const,
+          operationId,
+          retryable: false as const,
+          ...(auditStatus === 'failed' ? { auditStatus: 'failed' as const, auditError: 'AUDIT_LOG_FAILED' as const } : {}),
+        } : {}) };
     } catch (error: any) {
       if (isMysqlInstanceIsolated(error)) {
         return {
           success: false,
           error: error.message,
           ...(isMutation ? { executionState: 'not_started' as const, operationId, retryable: false as const } : {}),
+        };
+      }
+      const pgOutcome = readPgReceipt(error);
+      if (isMutation && intentStarted && (pgOutcome === 'rolled_back' || pgOutcome === 'not_executed')) {
+        const duration_ms = Date.now() - startTime;
+        let recorded = false;
+        try {
+          await sqlExecutionIntent.finish(operationId!, pgOutcome, { targetAcknowledged: false, receipt: pgOutcome });
+          recorded = true;
+        } catch { recorded = false; }
+        if (!recorded) {
+          await sqlExecutionIntent.finish(operationId!, 'unknown', {
+            targetAcknowledged: false,
+            error: 'SQL_RECEIPT_NOT_RECORDED',
+          }).catch(() => undefined);
+          return { success: false, executionState: 'unknown', operationId, retryable: false,
+            error: 'SQL_OUTCOME_REQUIRES_RECONCILIATION: SQL may have committed; do not retry; inspect durable intent and target database' };
+        }
+        await auditLogManager.logSqlExecution({
+          userId: context?.userId || String(context!.approvalGrant!.reviewerId),
+          username: context?.username || 'unknown',
+          instanceId,
+          instanceName: conn.name,
+          dbType: conn.db_type,
+          sqlText: sql.substring(0, 500),
+          durationMs: duration_ms,
+          status: 'error',
+          errorMessage: typeof error?.message === 'string' ? error.message : pgOutcome,
+          ipAddress: context?.ipAddress,
+          approvalRequestId: context?.approvalGrant?.approvalRequestId,
+        }).catch(() => undefined);
+        return {
+          success: false,
+          executionState: pgOutcome,
+          operationId,
+          retryable: true,
+          duration_ms,
+          error: typeof error?.message === 'string' && error.message ? error.message : 'SQL_EXECUTION_FAILED',
         };
       }
       if (isMutation && intentStarted) {
