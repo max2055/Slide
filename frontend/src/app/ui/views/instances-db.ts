@@ -487,6 +487,7 @@ export class InstancesPage extends LitElement {
     }
   `];
 
+  @state() private searchResultCount = 0;
   @state() private instances: DatabaseInstance[] = [];
   @state() private loading = true;
   @state() private refreshing = false;
@@ -748,14 +749,14 @@ export class InstancesPage extends LitElement {
           </div>
 
           <div class="resource-toolbar-meta" aria-live="polite">
-            <span class="resource-result-count">共 ${filtered.length} 个数据库实例</span>
+            <span class="resource-result-count">共 ${filtered.length ? this.searchResultCount : 0} 个数据库实例</span>
             <span id="instance-search-help">支持名称、主机、类型、版本、状态；空格组合搜索</span>
             ${this.activeFilterCount > 0
               ? html`<span class="resource-filter-state">已启用 ${this.activeFilterCount} 项筛选</span>`
               : nothing}
           </div>
 
-          <resource-metrics-table resourceType="instance" .refreshVersion=${this.metricRefreshVersion} @resource-metrics-loading=${(e: CustomEvent<boolean>) => { this.metricsLoading = e.detail; }} .search=${this.searchQuery}
+          <resource-metrics-table resourceType="instance" @resource-results-changed=${(e: CustomEvent<number>) => { this.searchResultCount = e.detail; }} .refreshVersion=${this.metricRefreshVersion} @resource-metrics-loading=${(e: CustomEvent<boolean>) => { this.metricsLoading = e.detail; }} .search=${this.searchQuery}
             .columns=${[{ key: 'name', label: '实例' }, { key: 'address', label: '地址' }, { key: 'version', label: '版本' }, { key: 'health', label: '观测健康' }, { key: 'actions', label: '操作', width: '14rem' }]}
             .entries=${filtered.map(inst => ({ id: inst.id, type: inst.db_type, version: inst.db_version,
               searchValues: [inst.name, inst.host, this.currentStatus(inst), ({ healthy: "健康", warning: "警告", critical: "异常", error: "异常" } as Record<string, string>)[this.currentStatus(inst)] ?? "未知"],
