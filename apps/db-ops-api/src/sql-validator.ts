@@ -31,32 +31,198 @@ const TYPE_MAP: Record<string, SqlCommandType> = {
   call: 'procedure', execute: 'procedure',
 };
 
-function hasDangerousSelectShape(node: any, sql: string): SqlReasonCode | null {
-  const normalized = sql.replace(/--[^\n]*(?:\n|$)|\/\*[\s\S]*?\*\//g, ' ').toLowerCase();
-  if (/\bfor\s+(update|share)\b/.test(normalized)) return 'LOCKING_READ';
-  if (/\bselect\b[\s\S]*\binto\b/.test(normalized)) return 'SELECT_INTO';
-  if (/(?:^|[^a-z0-9_])(load_file|benchmark|get_lock|release_lock|sleep)\s*\(/.test(normalized)) return 'DANGEROUS_FUNCTION';
-  const functionViolation = checkUnsafeFunctions(node);
-  return functionViolation ? 'DANGEROUS_FUNCTION' : null;
+function isSqlWhitespace(ch: string | undefined): boolean {
+  return ch === ' ' || ch === '\n' || ch === '\r' || ch === '\t' || ch === '\f' || ch === '\v';
+}
+
+/**
+ * Separate executable MySQL comments from text that cannot change statement
+ * shape. Versioned comments are always inlined: the classifier does not know
+ * the server version, and dropping a future-version body would hide the
+ * statement a newer server would run. Returns null when a comment or literal
+ * is unclosed.
+ */
+function scanSqlTokens(sql: string, dialect: string): { expanded: string; skeleton: string } | null {
+  const mysql = dialect === 'mysql';
+  const expanded: string[] = [];
+  const skeleton: string[] = [];
+  let index = 0;
+  let inliningExecutable = false;
+
+  const pushBoth = (text: string) => {
+    expanded.push(text);
+    skeleton.push(text);
+  };
+  const pushMasked = (original: string, mask: string) => {
+    expanded.push(original);
+    skeleton.push(mask);
+  };
+
+  while (index < sql.length) {
+    const current = sql[index];
+    const next = sql[index + 1];
+
+    if (current === '\'' || current === '"') {
+      let cursor = index + 1;
+      let closed = false;
+      while (cursor < sql.length) {
+        if (sql[cursor] === '\\') {
+          cursor += 2;
+          continue;
+        }
+        if (sql[cursor] === current) {
+          if (sql[cursor + 1] === current) {
+            cursor += 2;
+            continue;
+          }
+          cursor += 1;
+          closed = true;
+          break;
+        }
+        cursor += 1;
+      }
+      if (!closed) return null;
+      pushMasked(sql.slice(index, cursor), current === '\'' ? "''" : '""');
+      index = cursor;
+      continue;
+    }
+
+    if (current === '`') {
+      let cursor = index + 1;
+      let closed = false;
+      while (cursor < sql.length) {
+        if (sql[cursor] === '`' && sql[cursor + 1] === '`') {
+          cursor += 2;
+          continue;
+        }
+        if (sql[cursor] === '`') {
+          cursor += 1;
+          closed = true;
+          break;
+        }
+        cursor += 1;
+      }
+      if (!closed) return null;
+      pushMasked(sql.slice(index, cursor), '``');
+      index = cursor;
+      continue;
+    }
+
+    const dollar = /^\$[A-Za-z0-9_]*\$/.exec(sql.slice(index));
+    if (dollar) {
+      const closer = sql.indexOf(dollar[0], index + dollar[0].length);
+      if (closer < 0) return null;
+      const end = closer + dollar[0].length;
+      pushMasked(sql.slice(index, end), "''");
+      index = end;
+      continue;
+    }
+
+    if (inliningExecutable && current === '*' && next === '/') {
+      inliningExecutable = false;
+      pushBoth(' ');
+      index += 2;
+      continue;
+    }
+
+    const afterDash = sql[index + 2];
+    const lineComment = (sql.startsWith('--', index) && (!mysql || afterDash === undefined || isSqlWhitespace(afterDash)))
+      || (mysql && current === '#');
+    if (lineComment) {
+      let cursor = index;
+      while (cursor < sql.length && sql[cursor] !== '\n') cursor += 1;
+      if (sql[cursor] === '\n') cursor += 1;
+      pushMasked(sql.slice(index, cursor), ' ');
+      index = cursor;
+      continue;
+    }
+
+    if (current === '/' && next === '*') {
+      const executable = mysql && sql[index + 2] === '!' && !inliningExecutable;
+      if (executable) {
+        let cursor = index + 3;
+        if (/^\d{5}/.test(sql.slice(cursor))) {
+          const sixth = sql[cursor + 5];
+          const seventh = sql[cursor + 6];
+          cursor += sixth !== undefined && sixth >= '0' && sixth <= '9' && isSqlWhitespace(seventh) ? 6 : 5;
+        }
+        inliningExecutable = true;
+        pushBoth(' ');
+        index = cursor;
+        continue;
+      }
+      let cursor = index + 2;
+      let closed = false;
+      while (cursor < sql.length) {
+        if (sql[cursor] === '*' && sql[cursor + 1] === '/') {
+          cursor += 2;
+          closed = true;
+          break;
+        }
+        cursor += 1;
+      }
+      if (!closed) return null;
+      pushMasked(sql.slice(index, cursor), ' ');
+      index = cursor;
+      continue;
+    }
+
+    pushBoth(current);
+    index += 1;
+  }
+
+  if (inliningExecutable) return null;
+  return { expanded: expanded.join(''), skeleton: skeleton.join('') };
+}
+
+function dangerousSelectText(skeleton: string): SqlReasonCode | null {
+  const normalized = skeleton.toLowerCase();
+  if (/\bfor\s+(?:update|share|no\s+key\s+update|key\s+share)\b/.test(normalized)) return 'LOCKING_READ';
+  if (/\block\s+in\s+share\s+mode\b/.test(normalized)) return 'LOCKING_READ';
+  if (/\binto\s+(?:outfile|dumpfile)\b/.test(normalized) || /\bselect\b[\s\S]*\binto\b/.test(normalized)) return 'SELECT_INTO';
+  if (/(?:^|[^a-z0-9_])(?:load_file|benchmark|get_lock|release_lock|sleep)\s*\(/.test(normalized)) return 'DANGEROUS_FUNCTION';
+  return null;
+}
+
+function astHasLockingRead(node: any, seen = new WeakSet<object>()): boolean {
+  if (!node || typeof node !== 'object' || seen.has(node)) return false;
+  seen.add(node);
+  if (node.locking_read) return true;
+  for (const value of Object.values(node)) {
+    if (astHasLockingRead(value, seen)) return true;
+  }
+  return false;
+}
+
+function hasDangerousSelectShape(node: any, skeleton: string): SqlReasonCode | null {
+  const fromText = dangerousSelectText(skeleton);
+  if (fromText) return fromText;
+  if (astHasLockingRead(node)) return 'LOCKING_READ';
+  return checkUnsafeFunctions(node) ? 'DANGEROUS_FUNCTION' : null;
 }
 
 /** AST-first classifier. Parser failure is deliberately unknown rather than a heuristic allow. */
 export function classifySql(sql: string, dialect: string = 'mysql'): SqlClassification {
   if (!DIALECTS.has(dialect) || !sql.trim()) return { commandType: 'unknown', reasonCode: 'UNCLASSIFIED', dialect };
   if (Buffer.byteLength(sql, 'utf8') > 64 * 1024) return { commandType: 'unknown', reasonCode: 'SQL_TOO_LARGE', dialect };
+  const scanned = scanSqlTokens(sql, dialect);
+  if (!scanned) return { commandType: 'unknown', reasonCode: 'UNCLASSIFIED', dialect };
+  const source = dialect === 'mysql' ? scanned.expanded : sql;
   const parser = new Parser();
   let ast: any;
   try {
     // node-sql-parser does not fully model Dameng, so try its Oracle grammar
     // first and fall back to the shared MySQL subset below when unavailable.
     const parserDialect = dialect === 'dameng' ? 'oracle' : dialect;
-    ast = parser.astify(sql, { database: parserDialect });
+    ast = parser.astify(source, { database: parserDialect });
   } catch {
+    const dangerous = dangerousSelectText(scanned.skeleton);
+    if (dangerous) return { commandType: 'unknown', reasonCode: dangerous, dialect };
     if (dialect !== 'oracle' && dialect !== 'dameng') {
       return { commandType: 'unknown', reasonCode: 'UNCLASSIFIED', dialect };
     }
     try {
-      ast = parser.astify(sql, { database: 'mysql' });
+      ast = parser.astify(source, { database: 'mysql' });
     } catch {
       return { commandType: 'unknown', reasonCode: 'UNCLASSIFIED', dialect };
     }
@@ -64,7 +230,7 @@ export function classifySql(sql: string, dialect: string = 'mysql'): SqlClassifi
   const statements = Array.isArray(ast) ? ast : [ast];
   if (statements.length !== 1) return { commandType: 'unknown', reasonCode: 'MULTI_STATEMENT', dialect, ast };
   const rawType = String(statements[0]?.type ?? '').toLowerCase();
-  const firstKeyword = sql.trim().replace(/^(?:--[^\n]*\n|\/\*[\s\S]*?\*\/\s*)*/g, '').split(/\s+/)[0]?.toLowerCase();
+  const firstKeyword = scanned.skeleton.trim().split(/\s+/)[0]?.toLowerCase();
   const type = TYPE_MAP[rawType] ?? TYPE_MAP[firstKeyword] ?? 'unknown';
   // User-submitted read paths deliberately accept SELECT only. SHOW,
   // DESCRIBE and EXPLAIN have separate application-owned implementations.
@@ -72,7 +238,7 @@ export function classifySql(sql: string, dialect: string = 'mysql'): SqlClassifi
     return { commandType: 'unknown', reasonCode: 'UNCLASSIFIED', dialect, ast };
   }
   if (type === 'read') {
-    const dangerous = hasDangerousSelectShape(statements[0], sql);
+    const dangerous = hasDangerousSelectShape(statements[0], scanned.skeleton);
     if (dangerous) return { commandType: 'unknown', reasonCode: dangerous, dialect, ast };
   }
   return { commandType: type, reasonCode: type === 'read' ? 'READ_ONLY' : 'UNCLASSIFIED', dialect, ast };

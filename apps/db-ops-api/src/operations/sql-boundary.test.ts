@@ -48,4 +48,59 @@ describe('SQL read-only boundary', () => {
     });
   });
 
+  it.each([
+    ['SELECT * FROM t LOCK IN SHARE MODE', 'LOCKING_READ'],
+    ['select * from t lock in share mode', 'LOCKING_READ'],
+    ['SELECT * FROM t LOCK\nIN\tSHARE MODE', 'LOCKING_READ'],
+    ['SELECT * FROM t LOCK/**/IN/**/SHARE/**/MODE', 'LOCKING_READ'],
+    ['SELECT * FROM t LOCK IN SHARE MODE NOWAIT', 'LOCKING_READ'],
+    ['SELECT * FROM t FOR SHARE', 'LOCKING_READ'],
+    ['SELECT * FROM t FOR/**/UPDATE', 'LOCKING_READ'],
+    ['SELECT * FROM t FOR UPDATE NOWAIT', 'LOCKING_READ'],
+    ['SELECT * FROM t FOR UPDATE OF t SKIP LOCKED', 'LOCKING_READ'],
+    ['SELECT * FROM (SELECT id FROM t FOR UPDATE) nested', 'LOCKING_READ'],
+    ["SELECT 1 /*! LOCK IN SHARE MODE */", 'LOCKING_READ'],
+    ["SELECT 1 /*!50110 FOR UPDATE */", 'LOCKING_READ'],
+    ["SELECT 1 /*!99999 LOCK IN SHARE MODE */", 'LOCKING_READ'],
+    ["SELECT 1 /*! INTO OUTFILE '/tmp/x' */", 'SELECT_INTO'],
+    ["SELECT 1 /*!50110 INTO DUMPFILE '/tmp/x' */", 'SELECT_INTO'],
+    ['SELECT 1 INTO/**/OUTFILE \'/tmp/x\'', 'SELECT_INTO'],
+    ['SELECT id INTO @bucket FROM t', 'SELECT_INTO'],
+    ['SELECT SLEEP(1)', 'DANGEROUS_FUNCTION'],
+    ["SELECT 1 /*! SLEEP(1) */", 'DANGEROUS_FUNCTION'],
+    ['SELECT BENCHMARK(1, 1)', 'DANGEROUS_FUNCTION'],
+    ["SELECT 1 /*!; DROP TABLE t */", 'MULTI_STATEMENT'],
+  ] as const)('rejects MySQL read bypass %s', (sql, reasonCode) => {
+    expect(classifySql(sql, 'mysql')).toMatchObject({ commandType: 'unknown', reasonCode });
+  });
+
+  it.each([
+    ["SELECT msg FROM t WHERE msg = 'please for update now'"],
+    ["SELECT msg FROM t WHERE msg LIKE '%into%'"],
+    ["SELECT msg FROM t WHERE msg = 'sleep('"],
+    ["SELECT msg FROM t WHERE msg = 'lock in share mode'"],
+    ["SELECT msg FROM t WHERE msg = '/*! INTO OUTFILE \"/tmp/x\" */'"],
+    ["SELECT msg FROM t WHERE msg = 'it\\'s for update now'"],
+    ['SELECT msg FROM t WHERE msg = "for update"'],
+    ['SELECT `for update` FROM t'],
+    ['SELECT 1 /* FOR UPDATE */'],
+    ['SELECT 1 /*+ FOR UPDATE */'],
+    ['SELECT 1 -- FOR UPDATE\n'],
+    ['SELECT 1 # LOCK IN SHARE MODE\n'],
+    ['SELECT 1 /*! + 1 */'],
+  ] as const)('keeps ordinary MySQL text read-only: %s', (sql) => {
+    expect(classifySql(sql, 'mysql')).toMatchObject({ commandType: 'read', reasonCode: 'READ_ONLY' });
+  });
+
+  it('does not treat a MySQL executable comment as executable on PostgreSQL', () => {
+    expect(classifySql('SELECT 1 /*! FOR UPDATE */', 'postgresql')).toMatchObject({
+      commandType: 'read',
+      reasonCode: 'READ_ONLY',
+    });
+    expect(classifySql("SELECT $body$ for update $body$", 'postgresql')).toMatchObject({
+      commandType: 'read',
+      reasonCode: 'READ_ONLY',
+    });
+  });
+
 });
