@@ -1,4 +1,8 @@
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { randomBytes } from 'node:crypto';
+import { mkdtempSync, mkdirSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import Fastify from 'fastify';
 import mysql, { type Pool, type PoolConnection, type RowDataPacket } from 'mysql2/promise';
 import ts from 'typescript';
@@ -6,7 +10,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { filterByInstanceAccess } from './auth/require-instance-access.js';
 import { requirePermission } from './auth/require-permission.js';
 import { dbConnection } from './db-connection.js';
-import { MigrationRunner } from './migrations/runner.js';
+import { MigrationError, MigrationRunner, splitSqlStatements } from './migrations/runner.js';
 import type { MigrationPool } from './migrations/types.js';
 import { reportDatabaseService } from './report-database-service.js';
 import {
@@ -45,9 +49,13 @@ describe('MAX-368 server deletion keeps historical reports', () => {
     expect(deleteMethod.indexOf('FOR UPDATE')).toBeLessThan(deleteAt);
   });
 
-  it('restricts only the historical report foreign key', () => {
+  it('replaces the historical report foreign key in one statement', () => {
+    expect(splitSqlStatements(migrationSource)).toHaveLength(1);
     expect(migrationSource).toContain('DROP FOREIGN KEY fk_report_server');
+    expect(migrationSource).toContain('ADD CONSTRAINT fk_report_server_restrict');
     expect(migrationSource).toContain('ON DELETE RESTRICT');
+    expect(migrationSource).toContain('ALGORITHM=COPY');
+    expect(migrationSource).toContain('LOCK=SHARED');
     expect(migrationSource).not.toContain('fk_rc_server');
     expect(migrationSource).not.toContain('fk_server_metrics_server');
     expect(migrationSource).not.toContain('ON DELETE CASCADE');
@@ -69,13 +77,20 @@ const evidence: Record<string, unknown> = {
   task: 'MAX-368',
   github: 472,
   mode: realMysql ? 'real-mysql3308-isolated-schema' : 'source-contract-only',
-  mock_used_for_acceptance: false,
+  // The database assertions use mysql3308. This does not mean the whole
+  // request path is free of test doubles: JWT login is not exercised.
+  mock_used_for_acceptance: {
+    database: false,
+    jwt_login_chain: 'not tested',
+    permission_check: 'production requirePermission; the test Fastify hook injects the user',
+  },
 };
 
 describe.skipIf(!realMysql)('MAX-368 real delete service on isolated mysql3308', () => {
   const database = `max368_${process.pid}`;
   let admin: Pool;
   let pool: Pool;
+  let lease: DatabaseLease | null = null;
   const counts = [
     'audit_log_entries', 'ssh_trust_decisions', 'permissions', 'role_permissions', 'user_roles',
     'server_metrics', 'metric_collect_requests', 'workflow_jobs',
@@ -103,13 +118,12 @@ describe.skipIf(!realMysql)('MAX-368 real delete service on isolated mysql3308',
     };
     const [schemas] = await admin.query<RowDataPacket[]>('SELECT SCHEMA_NAME AS name FROM information_schema.SCHEMATA');
     const names = schemas.map(row => String(row.name));
-    expect(names).not.toContain(database);
     evidence.schema_present_before = names.filter(name => name.startsWith('max368_') || name === 'db_ops_ai');
     const [activity] = await admin.query<RowDataPacket[]>(
       `SELECT DB AS db, COMMAND AS command, TIME AS time FROM information_schema.processlist WHERE DB IS NOT NULL`,
     );
     evidence.other_activity = activity.map(row => ({ db: row.db, command: row.command, time: Number(row.time) }));
-    await admin.query(`CREATE DATABASE \`${database}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`);
+    lease = await claimIsolatedDatabase(admin, database);
     pool = mysql.createPool({
       host: profile.host, port: profile.port, user: profile.user, password: profile.password,
       database, connectionLimit: 6, timezone: 'Z',
@@ -134,18 +148,21 @@ describe.skipIf(!realMysql)('MAX-368 real delete service on isolated mysql3308',
     vi.restoreAllMocks();
     await pool?.end().catch(() => undefined);
     if (admin) {
-      await admin.query(`DROP DATABASE IF EXISTS \`${database}\``).catch((error: unknown) => {
-        evidence.cleanup_error = error instanceof Error ? 'drop database failed' : 'drop database failed';
-      });
-      const [left] = await admin.query<RowDataPacket[]>(
-        'SELECT SCHEMA_NAME AS name FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = ?', [database],
-      );
-      evidence.schema_removed = left.length === 0;
+      const ownedByThisRun = lease?.owned === true;
+      if (ownedByThisRun) {
+        await releaseIsolatedDatabase(admin, lease).catch((error: unknown) => {
+          evidence.cleanup_error = error instanceof Error ? 'drop database failed' : 'drop database failed';
+        });
+        const [left] = await admin.query<RowDataPacket[]>(
+          'SELECT SCHEMA_NAME AS name FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = ?', [database],
+        );
+        evidence.schema_removed = left.length === 0;
+      } else {
+        evidence.schema_removed = false;
+        evidence.cleanup = 'skipped because this run did not create the database';
+      }
       await admin.end();
     }
-    const directory = '/Users/max/Coding/40-Slide/outputs/max-368-acceptance';
-    mkdirSync(directory, { recursive: true });
-    writeFileSync(`${directory}/result.json`, `${JSON.stringify(evidence, null, 2)}\n`);
   });
 
   it('blocks deletion, preserves identity, and rejects a second delete the same way', async () => {
@@ -259,7 +276,7 @@ describe.skipIf(!realMysql)('MAX-368 real delete service on isolated mysql3308',
       expect(still).toHaveLength(1);
       const [rule] = await pool.query<RowDataPacket[]>(
         `SELECT DELETE_RULE AS delete_rule FROM information_schema.REFERENTIAL_CONSTRAINTS
-         WHERE CONSTRAINT_SCHEMA = DATABASE() AND CONSTRAINT_NAME = 'fk_report_server'`,
+         WHERE CONSTRAINT_SCHEMA = DATABASE() AND CONSTRAINT_NAME = 'fk_report_server_restrict'`,
       );
       expect(rule[0].delete_rule).toBe('RESTRICT');
       evidence.concurrent_insert = { saw_lock_wait: sawWait, service_error: result.error, raw_delete_errno: raw.errno, delete_rule: rule[0].delete_rule };
@@ -378,6 +395,218 @@ describe.skipIf(!realMysql)('MAX-368 real delete service on isolated mysql3308',
   }
 });
 
+describe('MAX-368 isolated database cleanup ownership', () => {
+  it('does not drop a sentinel when the name already exists', async () => {
+    const server = memoryServer(['max368_sentinel']);
+    await expect(claimIsolatedDatabase(server, 'max368_sentinel')).rejects.toThrow(/refusing to adopt existing database/);
+    expect(await releaseIsolatedDatabase(server, { name: 'max368_sentinel', owned: false })).toBe(false);
+    expect(await releaseIsolatedDatabase(server, null)).toBe(false);
+    expect(server.dropped).toEqual([]);
+    expect(server.schemas.has('max368_sentinel')).toBe(true);
+  });
+
+  it('does not drop a sentinel when create fails', async () => {
+    const server = memoryServer(['max368_sentinel']);
+    await expect(claimIsolatedDatabase(server, 'max368_new_run', async () => {
+      throw new Error('create failed before the schema existed');
+    })).rejects.toThrow(/create failed before the schema existed/);
+    expect(await releaseIsolatedDatabase(server, { name: 'max368_new_run', owned: false })).toBe(false);
+    expect(server.dropped).toEqual([]);
+    expect(server.schemas.has('max368_sentinel')).toBe(true);
+    expect(server.schemas.has('max368_new_run')).toBe(false);
+  });
+
+  it('drops only the database this claim created', async () => {
+    const server = memoryServer(['max368_sentinel']);
+    const lease = await claimIsolatedDatabase(server, 'max368_created');
+    expect(lease.owned).toBe(true);
+    expect(await releaseIsolatedDatabase(server, lease)).toBe(true);
+    expect(lease.owned).toBe(false);
+    expect(server.dropped).toEqual(['max368_created']);
+    expect(server.schemas.has('max368_sentinel')).toBe(true);
+    expect(server.schemas.has('max368_created')).toBe(false);
+  });
+});
+
+describe.skipIf(!realMysql)('MAX-368 mysql3308 ownership and migration 152', () => {
+  it('keeps a real sentinel when the name conflicts or creation fails', async () => {
+    const profile = readMysqlTestProfile();
+    const admin = mysql.createPool({
+      host: profile.host, port: profile.port, user: profile.user, password: profile.password,
+      connectionLimit: 2, timezone: 'Z',
+    });
+    const nonce = randomBytes(4).toString('hex');
+    const sentinelName = `max368_sentinel_${nonce}`;
+    let sentinel: DatabaseLease | null = null;
+    try {
+      sentinel = await claimIsolatedDatabase(admin, sentinelName);
+      await admin.query(`CREATE TABLE \`${sentinelName}\`.sentinel_marker (id INT PRIMARY KEY)`);
+      await admin.query(`INSERT INTO \`${sentinelName}\`.sentinel_marker (id) VALUES (1)`);
+      await expect(claimIsolatedDatabase(admin, sentinelName)).rejects.toThrow(/refusing to adopt existing database/);
+      expect(await releaseIsolatedDatabase(admin, { name: sentinelName, owned: false })).toBe(false);
+      const failedName = `max368_uncreated_${nonce}`;
+      await expect(claimIsolatedDatabase(admin, failedName, async () => {
+        throw new Error('create failed before the schema existed');
+      })).rejects.toThrow(/create failed before the schema existed/);
+      expect(await releaseIsolatedDatabase(admin, { name: failedName, owned: false })).toBe(false);
+      const [marker] = await admin.query<RowDataPacket[]>(`SELECT id FROM \`${sentinelName}\`.sentinel_marker`);
+      expect(Number(marker[0].id)).toBe(1);
+      const [ghost] = await admin.query<RowDataPacket[]>(
+        'SELECT SCHEMA_NAME AS name FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = ?',
+        [failedName],
+      );
+      expect(ghost).toHaveLength(0);
+      evidence.ownership_regression = { conflict_preserved_sentinel: true, create_failure_left_no_schema: true };
+    } finally {
+      if (sentinel) await releaseIsolatedDatabase(admin, sentinel).catch(() => undefined);
+      await admin.end();
+    }
+  }, 60000);
+
+  it('upgrades existing reports while concurrent writes wait, without dropping the foreign key', async () => {
+    const prior = migrationsExcept152();
+    const nonce = randomBytes(4).toString('hex');
+    try {
+      await withOwnedDatabase(`max368_upgrade_${nonce}`, async (pool, database) => {
+        await runMigrations(pool, prior);
+        const keptId = await insertPlainServer(pool, 36871);
+        const otherId = await insertPlainServer(pool, 36872);
+        const [historical] = await pool.execute<mysql.ResultSetHeader>(
+          `INSERT INTO reports (name, type, format, server_id, content, status)
+           VALUES ('MAX-368 upgrade', 'server_health', 'json', ?, 'upgrade-body', 'completed')`,
+          [keptId],
+        );
+        const historicalId = Number(historical.insertId);
+        const loader = await pool.getConnection();
+        try {
+          await loader.query('SET SESSION cte_max_recursion_depth = 1000000');
+          await loader.query(
+            `INSERT INTO reports (name, type, format, server_id, content, status)
+             WITH RECURSIVE seq AS (
+               SELECT 1 AS n UNION ALL SELECT n + 1 FROM seq WHERE n < ?
+             )
+             SELECT 'bulk', 'server_health', 'json', ?, 'bulk-body', 'completed' FROM seq`,
+            [UPGRADE_ROWS, keptId],
+          );
+        } finally {
+          loader.release();
+        }
+        const before = await reportCount(pool, keptId);
+        const migration = runMigrations(pool);
+        const deleter = await pool.getConnection();
+        const writer = await pool.getConnection();
+        let deletePromise: Promise<{ rejected: boolean; errno: number }> = Promise.resolve({ rejected: false, errno: 0 });
+        let insertPromise: Promise<mysql.ResultSetHeader> = Promise.resolve({ insertId: 0 } as mysql.ResultSetHeader);
+        try {
+          const sawCopy = await waitForProcess(pool, database, /copy to tmp table|altering table|fk_report_server_restrict/);
+          expect(sawCopy).toBe(true);
+          deletePromise = deleter.query('DELETE FROM servers WHERE id = ?', [keptId]).then(
+            () => ({ rejected: false, errno: 0 }),
+            (error: { errno?: number }) => ({ rejected: true, errno: error.errno ?? 0 }),
+          );
+          insertPromise = writer.execute<mysql.ResultSetHeader>(
+            `INSERT INTO reports (name, type, format, server_id, content, status)
+             VALUES ('MAX-368 during', 'server_health', 'json', ?, 'during-body', 'completed')`,
+            [otherId],
+          ).then(([header]) => header);
+          expect(await waitForProcess(pool, database, /Waiting for table metadata lock/)).toBe(true);
+          await migration;
+          const deleted = await deletePromise;
+          const inserted = await insertPromise;
+          expect(deleted).toEqual({ rejected: true, errno: 1451 });
+          expect(Number(inserted.insertId)).toBeGreaterThan(0);
+        } finally {
+          await migration.catch(() => undefined);
+          await Promise.allSettled([deletePromise, insertPromise]);
+          deleter.release();
+          writer.release();
+        }
+        expect(await reportCount(pool, keptId)).toBe(before);
+        const [kept] = await pool.query<RowDataPacket[]>(
+          'SELECT server_id, content FROM reports WHERE id = ?', [historicalId],
+        );
+        expect(kept[0]).toMatchObject({ server_id: keptId, content: 'upgrade-body' });
+        const [during] = await pool.query<RowDataPacket[]>(
+          `SELECT server_id, content FROM reports WHERE content = 'during-body'`,
+        );
+        expect(during[0]).toMatchObject({ server_id: otherId, content: 'during-body' });
+        const rules = await reportForeignKeys(pool);
+        expect(rules).toEqual([{ name: 'fk_report_server_restrict', delete_rule: 'RESTRICT' }]);
+        const [device] = await pool.query<RowDataPacket[]>(
+          `SELECT DELETE_RULE AS delete_rule FROM information_schema.REFERENTIAL_CONSTRAINTS
+           WHERE CONSTRAINT_SCHEMA = DATABASE() AND CONSTRAINT_NAME = 'fk_report_network_device'`,
+        );
+        expect(device[0].delete_rule).toBe('CASCADE');
+        const [index] = await pool.query<RowDataPacket[]>(
+          `SELECT COUNT(*) AS count FROM information_schema.STATISTICS
+           WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'reports' AND INDEX_NAME = 'idx_report_server_id'`,
+        );
+        expect(Number(index[0].count)).toBeGreaterThan(0);
+        evidence.migration_upgrade = {
+          separate_from_delete_service_e2e: true,
+          existing_reports_preserved: before,
+          concurrent_delete_errno: 1451,
+          concurrent_insert_committed: true,
+          delete_rule: 'RESTRICT',
+          network_device_fk: 'CASCADE',
+        };
+      });
+    } finally {
+      rmSync(prior, { recursive: true, force: true });
+    }
+  }, 300000);
+
+  it('keeps the old foreign key when 152 fails and does not replay the migration', async () => {
+    const prior = migrationsExcept152();
+    const nonce = randomBytes(4).toString('hex');
+    try {
+      await withOwnedDatabase(`max368_fail_${nonce}`, async (pool) => {
+        await runMigrations(pool, prior);
+        const serverId = await insertPlainServer(pool, 36873);
+        const [report] = await pool.execute<mysql.ResultSetHeader>(
+          `INSERT INTO reports (name, type, format, server_id, content, status)
+           VALUES ('MAX-368 still cascaded', 'server_health', 'json', ?, 'cascade-body', 'completed')`,
+          [serverId],
+        );
+        const reportId = Number(report.insertId);
+        const planter = await pool.getConnection();
+        try {
+          await planter.query('SET FOREIGN_KEY_CHECKS = 0');
+          await planter.query(
+            `INSERT INTO reports (name, type, format, server_id, content, status)
+             VALUES ('MAX-368 orphan', 'server_health', 'json', 4294967295, 'orphan-body', 'completed')`,
+          );
+          await planter.query('SET FOREIGN_KEY_CHECKS = 1');
+        } finally {
+          await planter.query('SET FOREIGN_KEY_CHECKS = 1').catch(() => undefined);
+          planter.release();
+        }
+        await expect(runMigrations(pool)).rejects.toBeInstanceOf(MigrationError);
+        expect(await reportForeignKeys(pool)).toEqual([{ name: 'fk_report_server', delete_rule: 'CASCADE' }]);
+        await pool.query('DELETE FROM reports WHERE server_id = 4294967295');
+        await expect(runMigrations(pool)).rejects.toThrow(/requires explicit repair/);
+        expect(await reportForeignKeys(pool)).toEqual([{ name: 'fk_report_server', delete_rule: 'CASCADE' }]);
+        const [ledger] = await pool.query<RowDataPacket[]>(
+          `SELECT status FROM app_schema_migrations WHERE migration_id = '152_report_server_delete_restrict.sql'`,
+        );
+        expect(ledger[0].status).toBe('failed');
+        await pool.query('DELETE FROM servers WHERE id = ?', [serverId]);
+        const [left] = await pool.query<RowDataPacket[]>('SELECT id FROM reports WHERE id = ?', [reportId]);
+        const [serverLeft] = await pool.query<RowDataPacket[]>('SELECT id FROM servers WHERE id = ?', [serverId]);
+        expect(left).toHaveLength(0);
+        expect(serverLeft).toHaveLength(0);
+        evidence.migration_failure = {
+          replayed: false,
+          delete_rule_after_rejected_retry: 'CASCADE',
+          old_constraint_still_cascades: true,
+        };
+      });
+    } finally {
+      rmSync(prior, { recursive: true, force: true });
+    }
+  }, 300000);
+});
+
 function fakeReply() {
   const reply = { code: vi.fn(), send: vi.fn() };
   reply.code.mockReturnValue(reply);
@@ -396,4 +625,176 @@ function readMysqlTestProfile(): { host: string; port: number; user: string; pas
   const profile = parsed['mysql-test'];
   if (!profile?.host || !profile.port || !profile.user || !profile.password) throw new Error('mysql-test profile is incomplete');
   return { host: profile.host, port: Number(profile.port), user: profile.user, password: profile.password };
+}
+
+const SAFE_DATABASE_NAME = /^[a-z][a-z0-9_]{0,63}$/;
+const UPGRADE_ROWS = 120000;
+
+type SqlClient = {
+  query(sql: string, values?: unknown[]): Promise<unknown>;
+};
+
+type DatabaseLease = {
+  name: string;
+  owned: boolean;
+};
+
+async function schemaExists(client: SqlClient, name: string): Promise<boolean> {
+  const result = await client.query(
+    'SELECT SCHEMA_NAME AS name FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = ?',
+    [name],
+  );
+  const rows = Array.isArray(result) ? result[0] : [];
+  return Array.isArray(rows) && rows.length > 0;
+}
+
+async function claimIsolatedDatabase(
+  client: SqlClient,
+  name: string,
+  create?: () => Promise<void>,
+): Promise<DatabaseLease> {
+  if (!SAFE_DATABASE_NAME.test(name)) throw new Error(`refusing unexpected database name ${name}`);
+  const lease: DatabaseLease = { name, owned: false };
+  if (await schemaExists(client, name)) throw new Error(`refusing to adopt existing database ${name}`);
+  try {
+    if (create) await create();
+    else await client.query(`CREATE DATABASE \`${name}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`);
+  } catch (error) {
+    lease.owned = false;
+    throw error;
+  }
+  lease.owned = true;
+  return lease;
+}
+
+async function releaseIsolatedDatabase(client: SqlClient, lease: DatabaseLease | null): Promise<boolean> {
+  if (!lease?.owned) return false;
+  if (!SAFE_DATABASE_NAME.test(lease.name)) throw new Error(`refusing to drop unexpected database name ${lease.name}`);
+  await client.query(`DROP DATABASE IF EXISTS \`${lease.name}\``);
+  lease.owned = false;
+  return true;
+}
+
+function memoryServer(initial: string[]) {
+  const schemas = new Set(initial);
+  const dropped: string[] = [];
+  const client: SqlClient = {
+    async query(sql: string, values?: unknown[]) {
+      if (sql.includes('information_schema.SCHEMATA')) {
+        const name = String(values?.[0] ?? '');
+        return [schemas.has(name) ? [{ name }] : []];
+      }
+      const identifier = /`([^`]+)`/.exec(sql)?.[1] ?? '';
+      if (sql.startsWith('CREATE DATABASE')) {
+        if (schemas.has(identifier)) throw new Error('database exists');
+        schemas.add(identifier);
+        return [{ affectedRows: 1 }];
+      }
+      if (sql.startsWith('DROP DATABASE')) {
+        dropped.push(identifier);
+        schemas.delete(identifier);
+        return [{ affectedRows: 1 }];
+      }
+      throw new Error(`unexpected sql ${sql}`);
+    },
+  };
+  return { schemas, dropped, ...client };
+}
+
+function migrationsExcept152(): string {
+  const source = fileURLToPath(new URL('../sql/migrations/', import.meta.url));
+  const dir = mkdtempSync(join(tmpdir(), 'max368-mig-'));
+  for (const file of readdirSync(source)) {
+    if (!/^\d+_.+\.sql$/.test(file) || file.startsWith('152_')) continue;
+    symlinkSync(join(source, file), join(dir, file));
+  }
+  return dir;
+}
+
+async function runMigrations(pool: Pool, directory?: string): Promise<void> {
+  const previousEnv = process.env.NODE_ENV;
+  process.env.NODE_ENV = 'test';
+  try {
+    await new MigrationRunner(pool as unknown as MigrationPool, directory).run();
+  } finally {
+    if (previousEnv === undefined) delete process.env.NODE_ENV;
+    else process.env.NODE_ENV = previousEnv;
+  }
+}
+
+async function withOwnedDatabase(
+  name: string,
+  body: (pool: Pool, database: string) => Promise<void>,
+): Promise<void> {
+  const profile = readMysqlTestProfile();
+  const admin = mysql.createPool({
+    host: profile.host, port: profile.port, user: profile.user, password: profile.password,
+    connectionLimit: 2, timezone: 'Z',
+  });
+  let lease: DatabaseLease | null = null;
+  let pool: Pool | undefined;
+  try {
+    lease = await claimIsolatedDatabase(admin, name);
+    pool = mysql.createPool({
+      host: profile.host, port: profile.port, user: profile.user, password: profile.password,
+      database: name, connectionLimit: 8, timezone: 'Z',
+    });
+    pool.on('connection', (connection) => {
+      connection.query('SET SESSION innodb_lock_wait_timeout = 60');
+      connection.query('SET SESSION lock_wait_timeout = 120');
+    });
+    await body(pool, name);
+  } finally {
+    await pool?.end().catch(() => undefined);
+    if (lease) await releaseIsolatedDatabase(admin, lease).catch(() => undefined);
+    await admin.end();
+  }
+}
+
+async function insertPlainServer(pool: Pool, port: number): Promise<number> {
+  const [result] = await pool.execute<mysql.ResultSetHeader>(
+    `INSERT INTO servers (host, port, label, os_type, credential_type, credential_encrypted, collection_enabled)
+     VALUES ('203.0.113.68', ?, 'max368-upgrade', 'Other', 'password', 'max368-placeholder', 0)`,
+    [port],
+  );
+  return Number(result.insertId);
+}
+
+async function reportCount(pool: Pool, serverId: number): Promise<number> {
+  const [rows] = await pool.query<RowDataPacket[]>(
+    'SELECT COUNT(*) AS count FROM reports WHERE server_id = ?',
+    [serverId],
+  );
+  return Number(rows[0].count);
+}
+
+async function reportForeignKeys(pool: Pool): Promise<Array<{ name: string; delete_rule: string }>> {
+  const [rows] = await pool.query<RowDataPacket[]>(
+    `SELECT CONSTRAINT_NAME AS name, DELETE_RULE AS delete_rule
+     FROM information_schema.REFERENTIAL_CONSTRAINTS
+     WHERE CONSTRAINT_SCHEMA = DATABASE() AND TABLE_NAME = 'reports'
+       AND CONSTRAINT_NAME IN ('fk_report_server', 'fk_report_server_restrict')
+     ORDER BY CONSTRAINT_NAME`,
+  );
+  return rows.map(row => ({ name: String(row.name), delete_rule: String(row.delete_rule) }));
+}
+
+afterAll(() => {
+  if (!realMysql) return;
+  const directory = '/Users/max/Coding/40-Slide/outputs/max-368-acceptance';
+  mkdirSync(directory, { recursive: true });
+  writeFileSync(`${directory}/result.json`, `${JSON.stringify(evidence, null, 2)}\n`);
+});
+
+async function waitForProcess(pool: Pool, database: string, pattern: RegExp): Promise<boolean> {
+  const deadline = Date.now() + 20000;
+  while (Date.now() < deadline) {
+    const [rows] = await pool.query<RowDataPacket[]>(
+      'SELECT STATE AS state, INFO AS info FROM information_schema.processlist WHERE DB = ?',
+      [database],
+    );
+    if (rows.some(row => pattern.test(`${row.state ?? ''} ${row.info ?? ''}`))) return true;
+    await new Promise(resolve => setTimeout(resolve, 20));
+  }
+  return false;
 }

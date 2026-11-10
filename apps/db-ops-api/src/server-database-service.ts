@@ -437,8 +437,8 @@ class ServerDatabaseService {
       // The server row lock is already held. A normal report insert needs a
       // shared lock on that parent, so it cannot commit until this transaction
       // ends. Lock matching report rows too, then refuse before DELETE.
-      // fk_report_server is ON DELETE RESTRICT, so a report that still appears
-      // at DELETE time fails the statement instead of being cascaded.
+      // fk_report_server_restrict is ON DELETE RESTRICT, so a report that still
+      // appears at DELETE time fails the statement instead of being cascaded.
       const [reports] = await connection.execute(
         'SELECT id FROM reports WHERE server_id = ? LIMIT 1 FOR UPDATE',
         [id],
