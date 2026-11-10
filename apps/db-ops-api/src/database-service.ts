@@ -3257,11 +3257,19 @@ class DatabaseService {
    */
   async reconnect(id: number, fallbackName?: string, fallbackConfig?: DatabaseConfig): Promise<boolean> {
     try { await instanceAccessLifecycle.assertAvailable(id); } catch { return false; }
-    const current = this.connections.get(id);
-    if (current?.db_type === 'dameng') {
+    // removeConnection drops the entry before addConnection installs the new session.
+    // Monitor tryReconnect then calls back with fallbackConfig while that entry is gone.
+    // Locking only when an entry is already Dameng lets that fallback close the session
+    // the owner still holds. A live non-Dameng entry stays on the unlocked path.
+    if (this.damengRebuildOwnsSession(fallbackConfig, this.connections.get(id))) {
       return withInstanceExecutionLock(id, () => this.replaceConnection(id, fallbackName, fallbackConfig));
     }
     return this.replaceConnection(id, fallbackName, fallbackConfig);
+  }
+
+  private damengRebuildOwnsSession(fallbackConfig: DatabaseConfig | undefined, current: DatabaseConnection | undefined): boolean {
+    if (current) return current.db_type === 'dameng';
+    return fallbackConfig?.db_type === 'dameng';
   }
 
   private async replaceConnection(id: number, fallbackName?: string, fallbackConfig?: DatabaseConfig): Promise<boolean> {

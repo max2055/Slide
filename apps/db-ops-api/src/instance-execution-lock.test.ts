@@ -209,3 +209,220 @@ describe('Dameng session rebuild ownership', () => {
     expect(await pending).toBe(true);
   });
 });
+
+describe('Dameng fallback rebuild while the entry is absent', () => {
+  const id = 367006;
+  const mysqlId = 367007;
+  const service = databaseService as unknown as {
+    connections: Map<number, Record<string, unknown>>;
+    openConnection: (id: number, name: string, config: Record<string, unknown>) => Promise<boolean>;
+  };
+  const config = { host: '127.0.0.1', port: 1, user: 'slide', password: 'unused', db_type: 'dameng' };
+
+  function entry(name: string, events: string[]) {
+    return {
+      id, name, config, db_type: 'dameng', connected: true,
+      pool: null, pgClient: null, oracleConnection: null, oraclePool: null,
+      dmConnection: { close: async () => { events.push(`close-${name}`); } },
+    };
+  }
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    service.connections.delete(id);
+    service.connections.delete(mysqlId);
+  });
+
+  function installOpen(events: string[], onOpen: (n: number) => Promise<boolean>) {
+    let opens = 0;
+    vi.spyOn(service, 'openConnection').mockImplementation(async () => onOpen(++opens));
+  }
+
+  it('does not close the new Dameng session when fallback reconnect runs during rebuild', async () => {
+    const events: string[] = [];
+    let openFirst: () => void = () => undefined;
+    let leaveOwner: () => void = () => undefined;
+    const firstGate = new Promise<void>((resolve) => { openFirst = resolve; });
+    const ownerGate = new Promise<void>((resolve) => { leaveOwner = resolve; });
+    service.connections.set(id, entry('old', events));
+    installOpen(events, async (n) => {
+      events.push(`open-${n}`);
+      if (n === 1) await firstGate;
+      service.connections.set(id, entry(`new-${n}`, events));
+      return true;
+    });
+    const owner = withInstanceExecutionLock(id, async () => {
+      events.push('owner-enter');
+      await databaseService.reconnect(id);
+      events.push('owner-using-new');
+      await ownerGate;
+      events.push('owner-leave');
+    });
+    await vi.waitUntil(() => events.includes('open-1'));
+    expect(service.connections.has(id)).toBe(false);
+    const fallback = databaseService.reconnect(id, 'fallback', config);
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    openFirst();
+    await vi.waitUntil(() => events.includes('owner-using-new'));
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(events).not.toContain('close-new-1');
+    expect(events).not.toContain('open-2');
+    leaveOwner();
+    await owner;
+    expect(await fallback).toBe(true);
+    expect(events).toEqual([
+      'owner-enter', 'close-old', 'open-1', 'owner-using-new', 'owner-leave', 'close-new-1', 'open-2',
+    ]);
+  });
+
+  it('queues fallback rebuilds until the owner leaves, then runs them one at a time', async () => {
+    const events: string[] = [];
+    let openFirst: () => void = () => undefined;
+    let leaveOwner: () => void = () => undefined;
+    const firstGate = new Promise<void>((resolve) => { openFirst = resolve; });
+    const ownerGate = new Promise<void>((resolve) => { leaveOwner = resolve; });
+    service.connections.set(id, entry('old', events));
+    installOpen(events, async (n) => {
+      events.push(`open-${n}`);
+      if (n === 1) await firstGate;
+      service.connections.set(id, entry(`new-${n}`, events));
+      return true;
+    });
+    const owner = withInstanceExecutionLock(id, async () => {
+      events.push('owner-enter');
+      await databaseService.reconnect(id);
+      events.push('owner-using-new');
+      await ownerGate;
+      events.push('owner-leave');
+    });
+    await vi.waitUntil(() => events.includes('open-1'));
+    const first = databaseService.reconnect(id, 'fallback-a', config);
+    const second = databaseService.reconnect(id, 'fallback-b', config);
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    openFirst();
+    await vi.waitUntil(() => events.includes('owner-using-new'));
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(events).not.toContain('open-2');
+    leaveOwner();
+    await owner;
+    expect(await first).toBe(true);
+    expect(await second).toBe(true);
+    expect(events).toEqual([
+      'owner-enter', 'close-old', 'open-1', 'owner-using-new', 'owner-leave',
+      'close-new-1', 'open-2', 'close-new-2', 'open-3',
+    ]);
+  });
+
+  it('recovers with a fallback rebuild after the in-lock rebuild fails', async () => {
+    const events: string[] = [];
+    let releaseFail: () => void = () => undefined;
+    let leaveOwner: () => void = () => undefined;
+    const failGate = new Promise<void>((resolve) => { releaseFail = resolve; });
+    const ownerGate = new Promise<void>((resolve) => { leaveOwner = resolve; });
+    service.connections.set(id, entry('old', events));
+    installOpen(events, async (n) => {
+      events.push(`open-${n}`);
+      if (n === 1) {
+        await failGate;
+        return false;
+      }
+      service.connections.set(id, entry(`new-${n}`, events));
+      return true;
+    });
+    const owner = withInstanceExecutionLock(id, async () => {
+      events.push('owner-enter');
+      const rebuilt = await databaseService.reconnect(id);
+      events.push(`rebuild-${rebuilt}`);
+      await ownerGate;
+      events.push('owner-leave');
+    });
+    await vi.waitUntil(() => events.includes('open-1'));
+    expect(service.connections.has(id)).toBe(false);
+    const fallback = databaseService.reconnect(id, 'fallback', config);
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(events).toEqual(['owner-enter', 'close-old', 'open-1']);
+    releaseFail();
+    await vi.waitUntil(() => events.includes('rebuild-false'));
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(events).not.toContain('open-2');
+    leaveOwner();
+    await owner;
+    expect(await fallback).toBe(true);
+    expect(events).toEqual([
+      'owner-enter', 'close-old', 'open-1', 'rebuild-false', 'owner-leave', 'open-2',
+    ]);
+  });
+
+  it('reconnects from the owner after the entry is gone without deadlocking', async () => {
+    const events: string[] = [];
+    service.connections.set(id, entry('old', events));
+    installOpen(events, async (n) => {
+      events.push(`open-${n}`);
+      service.connections.set(id, entry(`new-${n}`, events));
+      return true;
+    });
+    const replaced = await Promise.race([
+      withInstanceExecutionLock(id, async () => {
+        events.push('owner-enter');
+        await databaseService.removeConnection(id);
+        events.push('entry-gone');
+        const ok = await databaseService.reconnect(id, 'fallback', config);
+        events.push('after-fallback');
+        return ok;
+      }),
+      new Promise<never>((_resolve, reject) => setTimeout(() => reject(new Error('deadlock')), 500)),
+    ]);
+    expect(replaced).toBe(true);
+    expect(events).toEqual(['owner-enter', 'close-old', 'entry-gone', 'open-1', 'after-fallback']);
+  });
+
+  it('does not take the instance lock for a non-dameng fallback with no entry', async () => {
+    const events: string[] = [];
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    installOpen(events, async () => {
+      events.push('open');
+      return true;
+    });
+    const owner = withInstanceExecutionLock(mysqlId, async () => {
+      events.push('owner-enter');
+      await gate;
+      events.push('owner-leave');
+    });
+    await vi.waitUntil(() => events.includes('owner-enter'));
+    const pending = databaseService.reconnect(mysqlId, 'mysql', { ...config, db_type: 'mysql' });
+    await vi.waitUntil(() => events.includes('open'));
+    expect(events).toEqual(['owner-enter', 'open']);
+    release();
+    await owner;
+    expect(await pending).toBe(true);
+  });
+
+  it('does not lock a reconnect that still has a non-dameng entry', async () => {
+    const events: string[] = [];
+    service.connections.set(mysqlId, {
+      id: mysqlId, name: 'mysql', connected: true, db_type: 'mysql',
+      config: { ...config, db_type: 'mysql' },
+      pool: null, pgClient: null, oracleConnection: null, oraclePool: null,
+      dmConnection: { close: async () => { events.push('close'); } },
+    });
+    installOpen(events, async () => {
+      events.push('open');
+      return true;
+    });
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const owner = withInstanceExecutionLock(mysqlId, async () => {
+      events.push('owner-enter');
+      await gate;
+      events.push('owner-leave');
+    });
+    await vi.waitUntil(() => events.includes('owner-enter'));
+    const pending = databaseService.reconnect(mysqlId, 'fallback', config);
+    await vi.waitUntil(() => events.includes('open'));
+    expect(events).toEqual(['owner-enter', 'close', 'open']);
+    release();
+    await owner;
+    expect(await pending).toBe(true);
+  });
+});
