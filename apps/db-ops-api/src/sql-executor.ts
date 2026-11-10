@@ -60,7 +60,6 @@ const MYSQL_KILL_ACQUIRE_BUDGET_MS = 1_000;
 const MYSQL_KILL_RECEIPT_BUDGET_MS = 1_000;
 const MYSQL_STOP_PROOF_BUDGET_MS = 1_000;
 const MYSQL_PROCESSLIST_SQL = 'SELECT COMMAND AS command, INFO AS info FROM information_schema.processlist WHERE ID = ?';
-const MYSQL_THREAD_PROOF_SQL = 'SELECT COUNT(*) AS threads FROM information_schema.processlist WHERE ID = ?';
 const MYSQL_TRX_PROOF_SQL = 'SELECT COUNT(*) AS transactions FROM information_schema.innodb_trx WHERE trx_mysql_thread_id = ?';
 
 type MysqlBudget<T> = { status: 'ok'; value: T } | { status: 'error'; error: unknown } | { status: 'budget' };
@@ -96,6 +95,25 @@ function isMysqlStatementTimeout(error: unknown): boolean {
   return Boolean(error && typeof error === 'object' && (error as { code?: string }).code === 'MYSQL_STATEMENT_TIMEOUT');
 }
 
+function mysqlInstanceIsolatedError(detail: string): Error {
+  const error = new Error(
+    `MYSQL_INSTANCE_ISOLATED: a previous statement's server stop was not confirmed; this statement was not sent; ${detail}; do not retry the original write`,
+  );
+  (error as Error & { code: string }).code = 'MYSQL_INSTANCE_ISOLATED';
+  return error;
+}
+
+function isMysqlInstanceIsolated(error: unknown): boolean {
+  return Boolean(error && typeof error === 'object' && (error as { code?: string }).code === 'MYSQL_INSTANCE_ISOLATED');
+}
+
+type MysqlTerminal = 'pending' | 'interrupted' | 'finished' | 'other';
+
+type MysqlQuarantine = {
+  threadId: number | null;
+  quarantinedAt: number;
+};
+
 function isMysqlServerTimeout(error: unknown): boolean {
   if (!error || typeof error !== 'object') return false;
   const errno = Number((error as { errno?: unknown }).errno);
@@ -118,6 +136,8 @@ function positiveThreadId(value: unknown): number | null {
 
 class SqlExecutor {
   private readonly retiredDamengSessions = new WeakSet<object>();
+  // In-process only. A restart drops this map; it does not survive another API process.
+  private readonly mysqlQuarantines = new Map<number, MysqlQuarantine>();
 
   private normalizeTimeout(timeoutMs?: number): number {
     if (!Number.isFinite(timeoutMs)) return DEFAULT_SQL_TIMEOUT_MS;
@@ -189,9 +209,9 @@ class SqlExecutor {
   }
 
   /**
-   * Observe that the server thread and its InnoDB transaction are gone.
-   * mysql2 destroy() only sets _closing and ends the socket; it does not reject
-   * the in-flight query, so this probe is the stop evidence.
+   * The original statement has stopped when it is no longer executing and its
+   * InnoDB transaction is gone. A Sleep session can remain after mysql2
+   * destroy(); that idle connection is not the statement still running.
    */
   private async proveMysqlStopped(pool: MysqlPool, threadId: number): Promise<boolean> {
     const deadline = Date.now() + MYSQL_STOP_PROOF_BUDGET_MS;
@@ -200,7 +220,7 @@ class SqlExecutor {
       const remaining = Math.max(1, deadline - Date.now());
       const observer = await this.borrowMysqlSession(pool, remaining, abandon, () => false);
       if (!observer) return false;
-      const threads = await budgeted(observer.query(MYSQL_THREAD_PROOF_SQL, [threadId]), Math.max(1, deadline - Date.now()));
+      const threads = await budgeted(observer.query(MYSQL_PROCESSLIST_SQL, [threadId]), Math.max(1, deadline - Date.now()));
       if (threads.status === 'budget') {
         this.destroyMysqlSession(observer);
         return false;
@@ -216,9 +236,10 @@ class SqlExecutor {
       if (threads.status === 'ok' && transactions.status === 'ok') {
         const threadRow = Array.isArray(threads.value[0]) ? threads.value[0][0] : undefined;
         const trxRow = Array.isArray(transactions.value[0]) ? transactions.value[0][0] : undefined;
-        const threadCount = Number((threadRow as { threads?: unknown } | undefined)?.threads);
+        const command = String((threadRow as { command?: unknown } | undefined)?.command ?? '').toLowerCase();
+        const threadIdle = !threadRow || command === '' || command === 'sleep';
         const trxCount = Number((trxRow as { transactions?: unknown } | undefined)?.transactions);
-        if (threadCount === 0 && trxCount === 0) return true;
+        if (threadIdle && trxCount === 0) return true;
       }
       if (Date.now() >= deadline) return false;
       await new Promise((resolve) => setTimeout(resolve, 40));
@@ -226,23 +247,74 @@ class SqlExecutor {
     return false;
   }
 
+  private quarantineMysql(instanceId: number, threadId: number | null): void {
+    if (this.mysqlQuarantines.has(instanceId)) return;
+    this.mysqlQuarantines.set(instanceId, { threadId, quarantinedAt: Date.now() });
+  }
+
+  /**
+   * Recovery path for one instance. A new statement is admitted only after the
+   * quarantined thread is idle or absent and its InnoDB transaction count is 0.
+   * The caller's SQL is not used as the probe. No thread id means this process
+   * cannot tell the old execution from a later one, so the instance stays isolated.
+   */
+  private async admitMysqlInstance(
+    instanceId: number,
+    pool: MysqlPool,
+  ): Promise<{ admitted: true } | { admitted: false; detail: string }> {
+    const hold = this.mysqlQuarantines.get(instanceId);
+    if (!hold) return { admitted: true };
+    if (hold.threadId === null) {
+      return {
+        admitted: false,
+        detail: 'the server thread was not identified, so this process cannot prove it stopped',
+      };
+    }
+    const stopped = await this.proveMysqlStopped(pool, hold.threadId);
+    if (!stopped) {
+      return {
+        admitted: false,
+        detail: `thread ${hold.threadId} or its transaction is still present; the next attempt repeats this bounded proof`,
+      };
+    }
+    this.mysqlQuarantines.delete(instanceId);
+    return { admitted: true };
+  }
+
   /**
    * Cancel shares ownership with the statement. No KILL or destroy is issued
    * after the statement promise settles, and the caller must not release or
-   * hand off the worker until this method returns. A KILL that has no receipt
-   * retires both sessions so a late command cannot hit a reused thread.
+   * hand off the worker until this method returns. A KILL receipt only means
+   * the server accepted the cancel. The queue stays held until the thread is
+   * idle or absent and its InnoDB transaction count is 0.
    */
   private async cancelMysqlStatement(
     pool: MysqlPool,
     connection: MysqlSession,
     threadId: number | null,
     lease: { querySettled: boolean; sideEffect: 'none' | 'kill' | 'destroy' },
+    terminal: () => Promise<MysqlTerminal>,
   ): Promise<'aborted' | 'stopped' | 'unconfirmed'> {
     const finished = () => lease.querySettled && lease.sideEffect === 'none';
     const retireWorker = () => {
       if (finished()) return;
       lease.sideEffect = lease.sideEffect === 'none' ? 'destroy' : lease.sideEffect;
       this.destroyMysqlSession(connection);
+    };
+    const confirmStop = async (): Promise<'aborted' | 'stopped' | 'unconfirmed'> => {
+      const state = await terminal();
+      if (state === 'finished' || state === 'other') return 'aborted';
+      if (state === 'interrupted') {
+        retireWorker();
+        if (threadId === null) return 'unconfirmed';
+        // The driver saw an interrupt. KILL's own receipt does not prove the
+        // server thread and its transaction are gone, so the queue stays held
+        // until that observation succeeds.
+        return await this.proveMysqlStopped(pool, threadId) ? 'stopped' : 'unconfirmed';
+      }
+      retireWorker();
+      if (threadId === null) return 'unconfirmed';
+      return await this.proveMysqlStopped(pool, threadId) ? 'stopped' : 'unconfirmed';
     };
     if (threadId === null) {
       if (finished()) return 'aborted';
@@ -259,10 +331,7 @@ class SqlExecutor {
     const pooledAttempt = pooled
       ? await this.issueMysqlKill(pooled, threadId, lease, finished, 'pool')
       : 'failed' as const;
-    if (pooledAttempt === 'stopped') {
-      retireWorker();
-      return 'stopped';
-    }
+    if (pooledAttempt === 'accepted') return confirmStop();
     if (pooledAttempt === 'aborted' || finished()) return 'aborted';
 
     // A saturated pool cannot lend a killer. A direct session uses the pool's
@@ -270,12 +339,20 @@ class SqlExecutor {
     const direct = await this.openDirectMysqlSession(pool);
     if (!direct) {
       retireWorker();
+      const state = await terminal();
+      if (state === 'finished' || state === 'other') return 'aborted';
+      if (state === 'interrupted') {
+        return threadId === null ? 'unconfirmed' : await this.proveMysqlStopped(pool, threadId) ? 'stopped' : 'unconfirmed';
+      }
       return await this.proveMysqlStopped(pool, threadId) ? 'stopped' : 'unconfirmed';
     }
     const directAttempt = await this.issueMysqlKill(direct, threadId, lease, finished, 'direct');
+    if (directAttempt === 'accepted') return confirmStop();
     if (directAttempt === 'aborted' || finished()) return 'aborted';
     retireWorker();
-    if (directAttempt === 'stopped') return 'stopped';
+    const state = await terminal();
+    if (state === 'finished' || state === 'other') return 'aborted';
+    if (state === 'interrupted' && threadId === null) return 'unconfirmed';
     return await this.proveMysqlStopped(pool, threadId) ? 'stopped' : 'unconfirmed';
   }
 
@@ -290,7 +367,7 @@ class SqlExecutor {
     lease: { querySettled: boolean; sideEffect: 'none' | 'kill' | 'destroy' },
     finished: () => boolean,
     kind: 'pool' | 'direct',
-  ): Promise<'aborted' | 'stopped' | 'failed'> {
+  ): Promise<'aborted' | 'accepted' | 'failed'> {
     let open = true;
     let dispose: 'release' | 'destroy' = kind === 'direct' ? 'destroy' : 'release';
     const closeKiller = () => {
@@ -314,7 +391,9 @@ class SqlExecutor {
         dispose = 'destroy';
         return 'failed';
       }
-      return 'stopped';
+      // KILL returns when the cancel is accepted. It does not wait for the
+      // target statement to end. The caller must observe that separately.
+      return 'accepted';
     } finally {
       closeKiller();
     }
@@ -357,6 +436,7 @@ class SqlExecutor {
     connection: MysqlSession,
     sql: string,
     timeoutMs: number,
+    instanceId: number,
   ): Promise<[unknown, unknown]> {
     if (timeoutMs <= 0) return connection.query(sql);
     const threadId = await this.mysqlThreadId(connection);
@@ -390,30 +470,34 @@ class SqlExecutor {
       return first.result.value;
     }
 
-    // The statement, the cancel, and retirement stay joined. The session is not
-    // released until this function returns, which is after cancel has either
-    // aborted with no side effect or finished its KILL/destroy.
-    const outcome = await this.cancelMysqlStatement(pool, connection, threadId, lease);
-    if (lease.sideEffect === 'none') {
-      if (!lease.querySettled) {
-        // mysql2 destroy does not reject the in-flight query. Do not wait for it.
-        this.destroyMysqlSession(connection);
-        const proven = threadId !== null && await this.proveMysqlStopped(pool, threadId);
-        throw mysqlStatementTimeoutError(proven);
-      }
+    const terminal = async (): Promise<MysqlTerminal> => {
+      if (!lease.querySettled) await Promise.resolve();
+      if (!lease.querySettled) return 'pending';
       const driver = await pending;
-      if (driver.ok === true) return driver.value;
-      if (isMysqlServerTimeout(driver.error)) throw mysqlStatementTimeoutError(true);
-      throw driver.error;
-    }
+      if (driver.ok === true) return 'finished';
+      if (isMysqlServerTimeout(driver.error)) return 'interrupted';
+      return 'other';
+    };
+    // The statement, the cancel, and retirement stay joined. The session is not
+    // released until this function returns. A pending driver promise is not a
+    // reason to keep the caller waiting after the bounded proof finishes.
+    const outcome = await this.cancelMysqlStatement(pool, connection, threadId, lease, terminal);
+    if (!lease.querySettled) await Promise.resolve();
     if (lease.querySettled) {
       const driver = await pending;
-      const driverSawServerStop = driver.ok === false && isMysqlServerTimeout(driver.error);
-      throw mysqlStatementTimeoutError(outcome === 'stopped' || driverSawServerStop);
+      if (driver.ok === true) return driver.value;
+      if (isMysqlServerTimeout(driver.error)) {
+        if (outcome === 'unconfirmed') {
+          this.quarantineMysql(instanceId, threadId);
+          throw mysqlStatementTimeoutError(false);
+        }
+        throw mysqlStatementTimeoutError(true);
+      }
+      throw driver.error;
     }
-    // The driver promise is still pending. The queue stays held only until cancel
-    // has finished its bounded KILL, destroy, and process-list proof above.
-    throw mysqlStatementTimeoutError(outcome === 'stopped');
+    if (outcome === 'stopped') throw mysqlStatementTimeoutError(true);
+    this.quarantineMysql(instanceId, threadId);
+    throw mysqlStatementTimeoutError(false);
   }
 
   private async acquireOwnedDameng(instanceId: number) {
@@ -565,7 +649,8 @@ class SqlExecutor {
       await sqlExecutionIntent.begin({ instanceId, sql, database: context?.database, userId: context?.userId }, context!.approvalGrant!);
       intentStarted = true;
     };
-    if (isMutation && !damengOwned) {
+    const mysqlPooled = conn.db_type === 'mysql' && Boolean(conn.pool);
+    if (isMutation && !damengOwned && !mysqlPooled) {
       try {
         await beginIntent();
       } catch (error: any) {
@@ -580,7 +665,16 @@ class SqlExecutor {
 
       if (conn.db_type === 'mysql' && conn.pool) {
         const pool = conn.pool as unknown as MysqlPool;
-        result = await this.serializeForInstance(instanceId, async () => {
+        const mysqlResult = await this.serializeForInstance(instanceId, async () => {
+          const admission = await this.admitMysqlInstance(instanceId, pool);
+          if (admission.admitted === false) throw mysqlInstanceIsolatedError(admission.detail);
+          if (isMutation && !intentStarted) {
+            try {
+              await beginIntent();
+            } catch (error: any) {
+              return { intentRejected: error as { message?: string } };
+            }
+          }
           const connection = await pool.getConnection();
           let transactionStarted = false;
           let discard = false;
@@ -608,7 +702,7 @@ class SqlExecutor {
               await connection.query(`SET SESSION innodb_lock_wait_timeout = ${lockWaitSeconds}`);
               await connection.query(`SET SESSION lock_wait_timeout = ${lockWaitSeconds}`);
             }
-            const [rows, fields] = await this.queryMysql(pool, connection, sql, isReadOnly ? 0 : timeoutMs);
+            const [rows, fields] = await this.queryMysql(pool, connection, sql, isReadOnly ? 0 : timeoutMs, instanceId);
             if (transactionStarted) {
               await connection.query('COMMIT');
               transactionStarted = false;
@@ -652,6 +746,10 @@ class SqlExecutor {
             else connection.release();
           }
         });
+        if (mysqlResult && typeof mysqlResult === 'object' && 'intentRejected' in mysqlResult) {
+          return rejectIntent(mysqlResult.intentRejected);
+        }
+        result = mysqlResult;
       } else if (conn.db_type === 'postgresql' && conn.pgClient) {
         result = await this.serializeForInstance(instanceId, async () => {
           let transactionStarted = false;
@@ -849,6 +947,13 @@ class SqlExecutor {
       return { success: true, columns, rows, rowCount: rows.length, truncated, duration_ms,
         ...(isMutation ? { executionState: 'succeeded' as const, operationId, retryable: false as const } : {}) };
     } catch (error: any) {
+      if (isMysqlInstanceIsolated(error)) {
+        return {
+          success: false,
+          error: error.message,
+          ...(isMutation ? { executionState: 'not_started' as const, operationId, retryable: false as const } : {}),
+        };
+      }
       if (isMutation && intentStarted) {
         await sqlExecutionIntent.finish(operationId!, 'unknown', { targetAcknowledged, error: 'SQL_EXECUTION_OR_AUDIT_FAILED' }).catch(() => undefined);
         const timedOut = isMysqlStatementTimeout(error);

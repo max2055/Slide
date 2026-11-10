@@ -56,6 +56,174 @@ function redact(secret: string, error: unknown): string {
   return secret ? message.split(secret).join('[redacted]') : message;
 }
 
+type StatementWatch = {
+  overlap: number;
+  samples: number;
+  originalSeenAtMs: number | null;
+  stopEvidenceAtMs: number | null;
+  successorSeenAtMs: number | null;
+  transitions: Array<{ atMs: number; original: boolean; successor: boolean; originalTrx: boolean }>;
+  statementTimers: {
+    originalEnd: string;
+    successorStart: string;
+    ordered: boolean;
+  } | { unavailable: string } | null;
+};
+
+function successorSql(marker: string): string {
+  return `UPDATE s SET note = '${marker}' WHERE id = 1`;
+}
+
+function successorContext(operationId: string) {
+  return {
+    approvalGrant: { approvalRequestId: 598, reviewerId: 9, operationId },
+    timeoutMs: 5000,
+    userId: '9',
+    username: 'max373',
+  };
+}
+
+async function holdSideRow(conn: mysql.Connection): Promise<void> {
+  await conn.query('ROLLBACK').catch(() => undefined);
+  await conn.beginTransaction();
+  await conn.query('SELECT note FROM s WHERE id = 1 FOR UPDATE');
+}
+
+async function watchStatementOrder<T>(
+  watcher: mysql.Connection,
+  originalMarker: string,
+  successorMarker: string,
+  work: Promise<T>,
+  onSuccessorVisible?: () => Promise<void>,
+): Promise<StatementWatch & { value: T }> {
+  const started = Date.now();
+  const transitions: StatementWatch['transitions'] = [];
+  let overlap = 0;
+  let samples = 0;
+  let originalSeenAtMs: number | null = null;
+  let stopEvidenceAtMs: number | null = null;
+  let successorSeenAtMs: number | null = null;
+  let closed = false;
+  let released = false;
+  let previous = '';
+  const loop = (async () => {
+    while (!closed) {
+      let releaseNow = false;
+      try {
+        const [rows] = await watcher.query<RowDataPacket[]>('SELECT INFO AS info FROM information_schema.processlist');
+        const atMs = Date.now() - started;
+        const infos = rows.map((row) => String(row.info ?? ''));
+        const original = infos.some((info) => info.includes(originalMarker) && !info.includes('information_schema.processlist'));
+        const successor = infos.some((info) => info.includes(successorMarker) && !info.includes('information_schema.processlist'));
+        const originalTrx = false;
+        samples += 1;
+        if (original && originalSeenAtMs === null) originalSeenAtMs = atMs;
+        if (successor && successorSeenAtMs === null) successorSeenAtMs = atMs;
+        if (original && successor) overlap += 1;
+        if (originalSeenAtMs !== null && !original && stopEvidenceAtMs === null) stopEvidenceAtMs = atMs;
+        if (successor && !released) {
+          released = true;
+          releaseNow = true;
+        }
+        const key = `${original}:${successor}`;
+        if (key !== previous) {
+          transitions.push({ atMs, original, successor, originalTrx });
+          previous = key;
+        }
+      } catch {
+        // The watcher can lose one sample while the test is closing it.
+      }
+      if (releaseNow && onSuccessorVisible) await onSuccessorVisible();
+      if (!closed) await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+  })();
+  let value: T;
+  try {
+    value = await work;
+  } finally {
+    closed = true;
+    await loop;
+  }
+  let statementTimers: StatementWatch['statementTimers'] = null;
+  try {
+    const [history] = await watcher.query<RowDataPacket[]>(
+      `SELECT SQL_TEXT AS sqlText, TIMER_START AS timerStart, TIMER_END AS timerEnd
+       FROM performance_schema.events_statements_history_long
+       WHERE SQL_TEXT LIKE ? OR SQL_TEXT LIKE ?
+       ORDER BY TIMER_START`,
+      [`%${originalMarker}%`, `%${successorMarker}%`],
+    );
+    const usable = history.filter((row) => {
+      const text = String(row.sqlText ?? '');
+      return !text.includes('events_statements_history') && !text.includes('information_schema.processlist');
+    });
+    const original = usable.filter((row) => String(row.sqlText).includes(originalMarker) && !String(row.sqlText).includes(successorMarker));
+    const successor = usable.filter((row) => String(row.sqlText).includes(successorMarker));
+    if (!original.length || !successor.length) {
+      statementTimers = { unavailable: `history rows original=${original.length} successor=${successor.length}` };
+    } else {
+      const originalEnd = BigInt(String(original[original.length - 1]?.timerEnd ?? '0'));
+      const successorStart = BigInt(String(successor[successor.length - 1]?.timerStart ?? '0'));
+      statementTimers = {
+        originalEnd: originalEnd.toString(),
+        successorStart: successorStart.toString(),
+        ordered: successorStart > originalEnd,
+      };
+    }
+  } catch (error) {
+    statementTimers = { unavailable: error instanceof Error ? error.message : String(error) };
+  }
+  return {
+    value,
+    overlap,
+    samples,
+    originalSeenAtMs,
+    stopEvidenceAtMs,
+    successorSeenAtMs,
+    transitions,
+    statementTimers,
+  };
+}
+
+const statementConsumers = ['events_statements_current', 'events_statements_history', 'events_statements_history_long'];
+
+async function enableStatementHistory(conn: mysql.Connection): Promise<() => Promise<void>> {
+  const [consumers] = await conn.query<RowDataPacket[]>(
+    `SELECT NAME AS name, ENABLED AS enabled FROM performance_schema.setup_consumers WHERE NAME IN (${statementConsumers.map(() => '?').join(',')})`,
+    statementConsumers,
+  );
+  const [instruments] = await conn.query<RowDataPacket[]>(
+    `SELECT NAME AS name, ENABLED AS enabled, TIMED AS timed
+     FROM performance_schema.setup_instruments
+     WHERE NAME LIKE 'statement/%' AND (ENABLED <> 'YES' OR TIMED <> 'YES')`,
+  );
+  await conn.query(
+    `UPDATE performance_schema.setup_consumers SET ENABLED = 'YES' WHERE NAME IN (${statementConsumers.map(() => '?').join(',')})`,
+    statementConsumers,
+  );
+  await conn.query("UPDATE performance_schema.setup_instruments SET ENABLED = 'YES', TIMED = 'YES' WHERE NAME LIKE 'statement/%'");
+  return async () => {
+    for (const row of consumers) {
+      await conn.query('UPDATE performance_schema.setup_consumers SET ENABLED = ? WHERE NAME = ?', [row.enabled, row.name]);
+    }
+    for (const row of instruments) {
+      await conn.query(
+        'UPDATE performance_schema.setup_instruments SET ENABLED = ?, TIMED = ? WHERE NAME = ?',
+        [row.enabled, row.timed, row.name],
+      );
+    }
+  };
+}
+
+function expectStopBeforeSuccessor(order: StatementWatch): void {
+  expect(order.overlap, JSON.stringify(order.transitions)).toBe(0);
+  expect(order.samples).toBeGreaterThan(0);
+  expect(order.originalSeenAtMs).not.toBeNull();
+  expect(order.stopEvidenceAtMs).not.toBeNull();
+  expect(order.successorSeenAtMs).not.toBeNull();
+  expect(order.successorSeenAtMs!).toBeGreaterThanOrEqual(order.stopEvidenceAtMs!);
+}
+
 describe('MAX-373 credential injection', () => {
   it('does not resolve a credential path when the integration flag is off', () => {
     expect(resolveMysqlTimeoutProfile({})).toBeNull();
@@ -80,12 +248,19 @@ describe.skipIf(!enabled)('MAX-373 real MySQL change timeout', () => {
   let secret = '';
   let admin: mysql.Connection | null = null;
   let holder: mysql.Connection | null = null;
+  let gate: mysql.Connection | null = null;
+  let watcher: mysql.Connection | null = null;
+  let restoreHistory: (() => Promise<void>) | null = null;
   let created = false;
 
   afterAll(async () => {
     try { await holder?.query('ROLLBACK'); } catch { /* The holder may already be closed. */ }
     try { await holder?.query('UNLOCK TABLES'); } catch { /* No metadata lock was held. */ }
+    try { await gate?.query('ROLLBACK'); } catch { /* The side-row gate may already be closed. */ }
     await holder?.end().catch(() => undefined);
+    await gate?.end().catch(() => undefined);
+    await watcher?.end().catch(() => undefined);
+    if (restoreHistory && admin) await restoreHistory().catch(() => undefined);
     if (created && admin) await admin.query(`DROP DATABASE IF EXISTS \`${schema}\``);
     await admin?.end().catch(() => undefined);
     await databaseService.removeConnection(instanceId).catch(() => undefined);
@@ -137,6 +312,8 @@ describe.skipIf(!enabled)('MAX-373 real MySQL change timeout', () => {
       created = true;
       await admin.query(`CREATE TABLE \`${schema}\`.t (id INT PRIMARY KEY, note VARCHAR(64)) ENGINE=InnoDB`);
       await admin.query(`INSERT INTO \`${schema}\`.t (id, note) VALUES (1, 'original')`);
+      await admin.query(`CREATE TABLE \`${schema}\`.s (id INT PRIMARY KEY, note VARCHAR(64)) ENGINE=InnoDB`);
+      await admin.query(`INSERT INTO \`${schema}\`.s (id, note) VALUES (1, 'side')`);
       const opened = await databaseService.addConnection(instanceId, 'max373-mysql-timeout', {
         host: profile.host,
         port: Number(profile.port),
@@ -148,8 +325,13 @@ describe.skipIf(!enabled)('MAX-373 real MySQL change timeout', () => {
       if (!opened) throw new Error('MySQL addConnection failed');
       holder = await connect();
       await holder.query(`USE \`${schema}\``);
+      gate = await connect();
+      await gate.query(`USE \`${schema}\``);
+      watcher = await connect();
+      restoreHistory = await enableStatementHistory(admin);
     } catch (error) {
-      throw new Error(redact(secret, error));
+      if (error instanceof Error) error.message = redact(secret, error);
+      throw error;
     }
 
     const rowMarker = 'max373_row_wait';
@@ -159,6 +341,7 @@ describe.skipIf(!enabled)('MAX-373 real MySQL change timeout', () => {
 
     await holder!.beginTransaction();
     await holder!.query('SELECT note FROM t WHERE id = 1 FOR UPDATE');
+    await holdSideRow(gate!);
     const rowStarted = Date.now();
     const rowUpdate = sqlExecutor.executeSql(
       instanceId,
@@ -166,16 +349,22 @@ describe.skipIf(!enabled)('MAX-373 real MySQL change timeout', () => {
       { approvalGrant: { approvalRequestId: 598, reviewerId: 9, operationId: 'max373-row' }, timeoutMs: 800, userId: '9', username: 'max373' },
     );
     const rowThreads = await waitForMarker(rowMarker);
-    let followFinishedFirst = false;
-    const follow = sqlExecutor.executeSql(instanceId, 'SELECT 1 AS ready', { timeoutMs: 2000, userId: '9', username: 'max373' })
-      .then((result) => {
-        if (rowPending) followFinishedFirst = true;
-        return result;
-      });
-    let rowPending = true;
-    const rowResult = await rowUpdate;
-    rowPending = false;
-    const followResult = await follow;
+    const watchedRow = await watchStatementOrder(watcher!, rowMarker, 'max373_follow_row', (async () => {
+      let followFinishedFirst = false;
+      const follow = sqlExecutor.executeSql(instanceId, successorSql('max373_follow_row'), successorContext('max373-follow-row'))
+        .then((result) => {
+          if (rowPending) followFinishedFirst = true;
+          return result;
+        });
+      let rowPending = true;
+      const rowResult = await rowUpdate;
+      rowPending = false;
+      const followResult = await follow;
+      return { rowResult, followResult, followFinishedFirst };
+    })(), async () => {
+      await gate!.query('ROLLBACK');
+    });
+    const { rowResult, followResult, followFinishedFirst } = watchedRow.value;
     phases.row = {
       elapsedMs: Date.now() - rowStarted,
       threads: rowThreads,
@@ -185,7 +374,14 @@ describe.skipIf(!enabled)('MAX-373 real MySQL change timeout', () => {
       retryable: rowResult.retryable,
       follow: followResult.success,
       followFinishedFirst,
+      overlap: watchedRow.overlap,
+      originalSeenAtMs: watchedRow.originalSeenAtMs,
+      stopEvidenceAtMs: watchedRow.stopEvidenceAtMs,
+      successorSeenAtMs: watchedRow.successorSeenAtMs,
+      transitions: watchedRow.transitions,
+      statementTimers: watchedRow.statementTimers,
     };
+    expectStopBeforeSuccessor(watchedRow);
     expect(rowResult.success).toBe(false);
     expect(rowResult.executionState).toBe('unknown');
     expect(rowResult.retryable).toBe(false);
@@ -195,7 +391,9 @@ describe.skipIf(!enabled)('MAX-373 real MySQL change timeout', () => {
     expect(phases.row).toMatchObject({ followFinishedFirst: false, remaining: [] });
     expect(rowThreads).toHaveLength(1);
     expect(Date.now() - rowStarted).toBeLessThan(8_000);
-    expect(followResult).toMatchObject({ success: true, rows: [{ ready: 1 }] });
+    expect(followResult).toMatchObject({ success: true, executionState: 'succeeded', retryable: false });
+    const [side] = await admin!.query<RowDataPacket[]>(`SELECT note FROM \`${schema}\`.s WHERE id = 1`);
+    expect(side[0]?.note).toBe('max373_follow_row');
     const [held] = await holder!.query<RowDataPacket[]>('SELECT note FROM t WHERE id = 1');
     expect(held[0]?.note).toBe('original');
     await holder!.query('ROLLBACK');
@@ -291,8 +489,8 @@ describe.skipIf(!enabled)('MAX-373 real MySQL change timeout', () => {
     };
     expect(timeoutAudits.length).toBeGreaterThanOrEqual(3);
     expect(timeoutAudits.every((entry) => entry.result === 'failure')).toBe(true);
-    expect((mocks.finishIntent.mock.calls as unknown as unknown[][]).map((call) => call[1])).toEqual(['unknown', 'unknown', 'unknown']);
-    expect(mocks.beginIntent).toHaveBeenCalledTimes(3);
+    expect((mocks.finishIntent.mock.calls as unknown as unknown[][]).map((call) => call[1])).toEqual(['unknown', 'succeeded', 'unknown', 'unknown']);
+    expect(mocks.beginIntent).toHaveBeenCalledTimes(4);
 
     const [trx] = await admin!.query<RowDataPacket[]>(
       'SELECT trx_mysql_thread_id AS id FROM information_schema.innodb_trx WHERE trx_query LIKE ?',
@@ -328,6 +526,9 @@ describe.skipIf(!enabled)('MAX-373 real MySQL change timeout', () => {
     });
     let localAdmin: mysql.Connection | null = null;
     let localHolder: mysql.Connection | null = null;
+    let localGate: mysql.Connection | null = null;
+    let orderWatcher: mysql.Connection | null = null;
+    let restoreIsolateHistory: (() => Promise<void>) | undefined;
     let created = false;
     let small: mysql.Pool | null = null;
     let hanging: mysql.Pool | null = null;
@@ -373,6 +574,8 @@ describe.skipIf(!enabled)('MAX-373 real MySQL change timeout', () => {
       created = true;
       await localAdmin.query(`CREATE TABLE \`${isolatedSchema}\`.t (id INT PRIMARY KEY, note VARCHAR(64)) ENGINE=InnoDB`);
       await localAdmin.query(`INSERT INTO \`${isolatedSchema}\`.t (id, note) VALUES (1, 'original')`);
+      await localAdmin.query(`CREATE TABLE \`${isolatedSchema}\`.s (id INT PRIMARY KEY, note VARCHAR(64)) ENGINE=InnoDB`);
+      await localAdmin.query(`INSERT INTO \`${isolatedSchema}\`.s (id, note) VALUES (1, 'side')`);
       const opened = await databaseService.addConnection(isolatedId, 'max373-mysql-isolate', {
         host: profile.host,
         port: Number(profile.port),
@@ -398,10 +601,15 @@ describe.skipIf(!enabled)('MAX-373 real MySQL change timeout', () => {
       record.pool = small;
       localHolder = await connect();
       await localHolder.query(`USE \`${isolatedSchema}\``);
+      localGate = await connect();
+      await localGate.query(`USE \`${isolatedSchema}\``);
+      orderWatcher = await connect();
+      restoreIsolateHistory = await enableStatementHistory(localAdmin);
 
       const lockMarker = 'max373_iso_lock';
       await localHolder.beginTransaction();
       await localHolder.query('SELECT note FROM t WHERE id = 1 FOR UPDATE');
+      await holdSideRow(localGate!);
       const lockStarted = Date.now();
       const lockUpdate = sqlExecutor.executeSql(
         isolatedId,
@@ -409,16 +617,24 @@ describe.skipIf(!enabled)('MAX-373 real MySQL change timeout', () => {
         grantFor('max373-iso-lock'),
       );
       await waitThread(lockMarker);
-      let lockFollowFirst = false;
-      const lockFollow = sqlExecutor.executeSql(isolatedId, 'SELECT 1 AS ready', { timeoutMs: 2000, userId: '9', username: 'max373' })
-        .then((result) => {
-          if (!lockDone) lockFollowFirst = true;
-          return result;
-        });
-      let lockDone = false;
-      const lockResult = await lockUpdate;
-      lockDone = true;
-      const lockFollowResult = await lockFollow;
+      const watchedLock = await watchStatementOrder(orderWatcher!, lockMarker, 'max373_follow_iso_lock', (async () => {
+        let followFinishedFirst = false;
+        const follow = sqlExecutor.executeSql(isolatedId, successorSql('max373_follow_iso_lock'), successorContext('max373-follow-iso-lock'))
+          .then((result) => {
+            if (!lockDone) followFinishedFirst = true;
+            return result;
+          });
+        let lockDone = false;
+        const result = await lockUpdate;
+        lockDone = true;
+        return { result, follow: await follow, followFinishedFirst };
+      })(), async () => {
+        await localGate!.query('ROLLBACK');
+      });
+      expectStopBeforeSuccessor(watchedLock);
+      const lockResult = watchedLock.value.result;
+      const lockFollowResult = watchedLock.value.follow;
+      const lockFollowFirst = watchedLock.value.followFinishedFirst;
       const [lockedNote] = await localHolder.query<RowDataPacket[]>('SELECT note FROM t WHERE id = 1');
       phases.lock = {
         elapsedMs: Date.now() - lockStarted,
@@ -430,18 +646,27 @@ describe.skipIf(!enabled)('MAX-373 real MySQL change timeout', () => {
         retryable: lockResult.retryable,
         followFinishedFirst: lockFollowFirst,
         follow: lockFollowResult.success,
+        overlap: watchedLock.overlap,
+        originalSeenAtMs: watchedLock.originalSeenAtMs,
+        stopEvidenceAtMs: watchedLock.stopEvidenceAtMs,
+        successorSeenAtMs: watchedLock.successorSeenAtMs,
+        transitions: watchedLock.transitions,
+        statementTimers: watchedLock.statementTimers,
       };
       expect(lockResult).toMatchObject({ success: false, executionState: 'unknown', retryable: false });
       expect(lockResult.error).toContain('MYSQL_STATEMENT_TIMEOUT');
       expect(lockResult.error).toContain('outcome may be unknown');
       expect(lockFollowFirst).toBe(false);
-      expect(lockFollowResult).toMatchObject({ success: true, rows: [{ ready: 1 }] });
+      expect(lockFollowResult).toMatchObject({ success: true, executionState: 'succeeded', retryable: false });
+      const [lockSide] = await localAdmin.query<RowDataPacket[]>(`SELECT note FROM \`${isolatedSchema}\`.s WHERE id = 1`);
+      expect(lockSide[0]?.note).toBe('max373_follow_iso_lock');
       expect(lockedNote[0]?.note).toBe('original');
       expect(phases.lock).toMatchObject({ remaining: 0, transactions: 0 });
       expect(Date.now() - lockStarted).toBeLessThan(8_000);
       await localHolder.query('ROLLBACK');
 
       const runMarker = 'max373_iso_run';
+      await holdSideRow(localGate!);
       const runStarted = Date.now();
       const runUpdate = sqlExecutor.executeSql(
         isolatedId,
@@ -449,16 +674,24 @@ describe.skipIf(!enabled)('MAX-373 real MySQL change timeout', () => {
         grantFor('max373-iso-run'),
       );
       await waitThread(runMarker);
-      let runFollowFirst = false;
-      const runFollow = sqlExecutor.executeSql(isolatedId, 'SELECT 1 AS ready', { timeoutMs: 2000, userId: '9', username: 'max373' })
-        .then((result) => {
-          if (!runDone) runFollowFirst = true;
-          return result;
-        });
-      let runDone = false;
-      const runResult = await runUpdate;
-      runDone = true;
-      const runFollowResult = await runFollow;
+      const watchedRun = await watchStatementOrder(orderWatcher!, runMarker, 'max373_follow_iso_run', (async () => {
+        let followFinishedFirst = false;
+        const follow = sqlExecutor.executeSql(isolatedId, successorSql('max373_follow_iso_run'), successorContext('max373-follow-iso-run'))
+          .then((result) => {
+            if (!runDone) followFinishedFirst = true;
+            return result;
+          });
+        let runDone = false;
+        const result = await runUpdate;
+        runDone = true;
+        return { result, follow: await follow, followFinishedFirst };
+      })(), async () => {
+        await localGate!.query('ROLLBACK');
+      });
+      expectStopBeforeSuccessor(watchedRun);
+      const runResult = watchedRun.value.result;
+      const runFollowResult = watchedRun.value.follow;
+      const runFollowFirst = watchedRun.value.followFinishedFirst;
       await new Promise((resolve) => setTimeout(resolve, 300));
       const [runNote] = await localAdmin.query<RowDataPacket[]>(`SELECT note FROM \`${isolatedSchema}\`.t WHERE id = 1`);
       phases.run = {
@@ -471,6 +704,12 @@ describe.skipIf(!enabled)('MAX-373 real MySQL change timeout', () => {
         retryable: runResult.retryable,
         followFinishedFirst: runFollowFirst,
         follow: runFollowResult.success,
+        overlap: watchedRun.overlap,
+        originalSeenAtMs: watchedRun.originalSeenAtMs,
+        stopEvidenceAtMs: watchedRun.stopEvidenceAtMs,
+        successorSeenAtMs: watchedRun.successorSeenAtMs,
+        transitions: watchedRun.transitions,
+        statementTimers: watchedRun.statementTimers,
       };
       expect(runResult).toMatchObject({ success: false, executionState: 'unknown', retryable: false });
       expect(runResult.error).toContain('MYSQL_STATEMENT_TIMEOUT');
@@ -478,7 +717,9 @@ describe.skipIf(!enabled)('MAX-373 real MySQL change timeout', () => {
       expect(Date.now() - runStarted).toBeGreaterThanOrEqual(1_200);
       expect(Date.now() - runStarted).toBeLessThan(8_000);
       expect(runFollowFirst).toBe(false);
-      expect(runFollowResult.success).toBe(true);
+      expect(runFollowResult).toMatchObject({ success: true, executionState: 'succeeded', retryable: false });
+      const [runSide] = await localAdmin.query<RowDataPacket[]>(`SELECT note FROM \`${isolatedSchema}\`.s WHERE id = 1`);
+      expect(runSide[0]?.note).toBe('max373_follow_iso_run');
       expect(runNote[0]?.note).toBe('original');
       expect(phases.run).toMatchObject({ remaining: 0, transactions: 0 });
 
@@ -511,6 +752,7 @@ describe.skipIf(!enabled)('MAX-373 real MySQL change timeout', () => {
       } as unknown as typeof record.pool;
 
       const killMarker = 'max373_iso_kill';
+      await holdSideRow(localGate!);
       const killStarted = Date.now();
       const killUpdate = sqlExecutor.executeSql(
         isolatedId,
@@ -518,16 +760,24 @@ describe.skipIf(!enabled)('MAX-373 real MySQL change timeout', () => {
         grantFor('max373-iso-kill'),
       );
       await waitThread(killMarker);
-      let killFollowFirst = false;
-      const killFollow = sqlExecutor.executeSql(isolatedId, 'SELECT 1 AS ready', { timeoutMs: 2000, userId: '9', username: 'max373' })
-        .then((result) => {
-          if (!killDone) killFollowFirst = true;
-          return result;
-        });
-      let killDone = false;
-      const killResult = await killUpdate;
-      killDone = true;
-      const killFollowResult = await killFollow;
+      const watchedKill = await watchStatementOrder(orderWatcher!, killMarker, 'max373_follow_iso_kill', (async () => {
+        let followFinishedFirst = false;
+        const follow = sqlExecutor.executeSql(isolatedId, successorSql('max373_follow_iso_kill'), successorContext('max373-follow-iso-kill'))
+          .then((result) => {
+            if (!killDone) followFinishedFirst = true;
+            return result;
+          });
+        let killDone = false;
+        const result = await killUpdate;
+        killDone = true;
+        return { result, follow: await follow, followFinishedFirst };
+      })(), async () => {
+        await localGate!.query('ROLLBACK');
+      });
+      expectStopBeforeSuccessor(watchedKill);
+      const killResult = watchedKill.value.result;
+      const killFollowResult = watchedKill.value.follow;
+      const killFollowFirst = watchedKill.value.followFinishedFirst;
       await new Promise((resolve) => setTimeout(resolve, 300));
       const [killNote] = await localAdmin.query<RowDataPacket[]>(`SELECT note FROM \`${isolatedSchema}\`.t WHERE id = 1`);
       phases.kill = {
@@ -540,6 +790,12 @@ describe.skipIf(!enabled)('MAX-373 real MySQL change timeout', () => {
         retryable: killResult.retryable,
         followFinishedFirst: killFollowFirst,
         follow: killFollowResult.success,
+        overlap: watchedKill.overlap,
+        originalSeenAtMs: watchedKill.originalSeenAtMs,
+        stopEvidenceAtMs: watchedKill.stopEvidenceAtMs,
+        successorSeenAtMs: watchedKill.successorSeenAtMs,
+        transitions: watchedKill.transitions,
+        statementTimers: watchedKill.statementTimers,
       };
       expect(killResult).toMatchObject({ success: false, executionState: 'unknown', retryable: false });
       expect(killResult.error).toContain('MYSQL_STATEMENT_TIMEOUT');
@@ -547,7 +803,9 @@ describe.skipIf(!enabled)('MAX-373 real MySQL change timeout', () => {
       expect(Date.now() - killStarted).toBeGreaterThanOrEqual(1_200);
       expect(Date.now() - killStarted).toBeLessThan(8_000);
       expect(killFollowFirst).toBe(false);
-      expect(killFollowResult.success).toBe(true);
+      expect(killFollowResult).toMatchObject({ success: true, executionState: 'succeeded', retryable: false });
+      const [killSide] = await localAdmin.query<RowDataPacket[]>(`SELECT note FROM \`${isolatedSchema}\`.s WHERE id = 1`);
+      expect(killSide[0]?.note).toBe('max373_follow_iso_kill');
       expect(killNote[0]?.note).toBe('original');
       expect(phases.kill).toMatchObject({ remaining: 0, transactions: 0 });
 
@@ -555,16 +813,21 @@ describe.skipIf(!enabled)('MAX-373 real MySQL change timeout', () => {
       const evidenceDir = process.env.MAX373_EVIDENCE_DIR;
       if (evidenceDir) fs.writeFileSync(`${evidenceDir}/isolate-phases.json`, `${JSON.stringify(phases, null, 2)}\n`);
     } catch (error) {
-      throw new Error(redact(password, error));
+      if (error instanceof Error) error.message = redact(password, error);
+      throw error;
     } finally {
+      if (localAdmin) await restoreIsolateHistory?.().catch(() => undefined);
       restorePool?.();
       try { await localHolder?.query('ROLLBACK'); } catch { /* The holder may already be closed. */ }
+      try { await localGate?.query('ROLLBACK'); } catch { /* The side-row gate may already be closed. */ }
       await localHolder?.end().catch(() => undefined);
+      await localGate?.end().catch(() => undefined);
+      await orderWatcher?.end().catch(() => undefined);
       if (created && localAdmin) await localAdmin.query(`DROP DATABASE IF EXISTS \`${isolatedSchema}\``).catch(() => undefined);
       await localAdmin?.end().catch(() => undefined);
       await small?.end().catch(() => undefined);
       await hanging?.end().catch(() => undefined);
       await databaseService.removeConnection(isolatedId).catch(() => undefined);
     }
-  }, 45_000);
+  }, 60_000);
 });

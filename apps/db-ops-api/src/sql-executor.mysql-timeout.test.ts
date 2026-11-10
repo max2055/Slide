@@ -110,14 +110,15 @@ describe('MySQL mutation statement timeout (MAX-373)', () => {
     const reader = session(83);
     reader.query.mockImplementation(async (sql: string) => {
       events.push(`reader:${sql}`);
+      if (String(sql).includes('COUNT(*) AS threads')) return [[{ threads: 0 }], []];
+      if (String(sql).includes('innodb_trx')) return [[{ transactions: 0 }], []];
       if (sql === 'SELECT 1 AS ready') return [[{ ready: 1 }], [{ name: 'ready' }]];
       return [[], []];
     });
-    const acquired: Session[] = [worker, killer, reader];
+    const acquired: Session[] = [worker, killer];
     const pool = {
       getConnection: vi.fn(async () => {
-        const next = acquired.shift();
-        if (!next) throw new Error('unexpected checkout');
+        const next = acquired.shift() ?? reader;
         events.push(`checkout:${next.threadId}`);
         return next;
       }),
@@ -218,7 +219,7 @@ describe('MySQL mutation statement timeout (MAX-373)', () => {
     expect(updateResult.error).toContain('MYSQL_STATEMENT_TIMEOUT');
     expect(updateResult.error).toContain('outcome may be unknown');
     expect(updateResult.error).not.toContain('server stop was not confirmed');
-    expect(proof.some((sql) => sql.includes('COUNT(*) AS threads'))).toBe(true);
+    expect(proof.some((sql) => sql.includes('COMMAND AS command'))).toBe(true);
     expect(proof.some((sql) => sql.includes('innodb_trx'))).toBe(true);
     expect(worker.destroy).toHaveBeenCalled();
     expect(worker.release).not.toHaveBeenCalled();
@@ -231,16 +232,25 @@ describe('MySQL mutation statement timeout (MAX-373)', () => {
 
   it('reports an isolated session when destroy cannot be shown to have stopped the server', async () => {
     const blocked = new Promise<[unknown, unknown]>(() => undefined);
+    const seen: string[] = [];
+    let stopped = false;
     const worker = session(184);
     worker.query.mockImplementation(async (sql: string) => {
+      seen.push(`worker:${sql}`);
       if (sql.startsWith('DELETE ')) return blocked;
       return [[], []];
     });
     const observer = session(185);
     observer.query.mockImplementation(async (sql: string) => {
-      if (String(sql).includes('COUNT(*) AS threads')) return [[{ threads: 1 }], []];
-      if (String(sql).includes('innodb_trx')) return [[{ transactions: 1 }], []];
-      if (sql === 'SELECT 1 AS ready') return [[{ ready: 1 }], []];
+      seen.push(`observer:${sql}`);
+      if (String(sql).includes('COMMAND AS command')) {
+        seen.push(stopped ? 'proof:clear' : 'proof:busy');
+        return stopped
+          ? [[{ command: 'Sleep', info: null }], []]
+          : [[{ command: 'Query', info: 'DELETE FROM t WHERE id = 2' }], []];
+      }
+      if (String(sql).includes('innodb_trx')) return [[{ transactions: stopped ? 0 : 1 }], []];
+      if (sql === 'UPDATE t SET note = "recovered" WHERE id = 2') return [[{ affectedRows: 1 }], []];
       return [[], []];
     });
     let checkouts = 0;
@@ -261,7 +271,10 @@ describe('MySQL mutation statement timeout (MAX-373)', () => {
     });
     await vi.waitUntil(() => worker.query.mock.calls.some(([sql]) => sql.startsWith('DELETE ')));
     let followFinishedFirst = false;
-    const follow = sqlExecutor.executeSql(37321, 'SELECT 1 AS ready').then((result) => {
+    const followSql = 'UPDATE t SET note = "blocked-next" WHERE id = 2';
+    const follow = sqlExecutor.executeSql(37321, followSql, {
+      approvalGrant: { ...grant, operationId: 'max373-unconfirmed-next' }, timeoutMs: 1000, userId: '9', username: 'max373',
+    }).then((result) => {
       if (!updateDone) followFinishedFirst = true;
       return result;
     });
@@ -271,7 +284,7 @@ describe('MySQL mutation statement timeout (MAX-373)', () => {
     const elapsed = Date.now() - started;
 
     expect(elapsed).toBeGreaterThanOrEqual(900);
-    expect(elapsed).toBeLessThan(5_000);
+    expect(elapsed).toBeLessThan(8_000);
     expect(followFinishedFirst).toBe(false);
     expect(updateResult).toMatchObject({ success: false, executionState: 'unknown', retryable: false });
     expect(updateResult.error).toContain('server stop was not confirmed');
@@ -280,9 +293,174 @@ describe('MySQL mutation statement timeout (MAX-373)', () => {
     expect(updateResult.error?.toLowerCase()).not.toContain('rolled back');
     expect(worker.destroy).toHaveBeenCalled();
     expect(worker.release).not.toHaveBeenCalled();
-    expect(followResult.success).toBe(true);
+    expect(followResult).toMatchObject({ success: false, executionState: 'not_started', retryable: false });
+    expect(followResult.error).toContain('MYSQL_INSTANCE_ISOLATED');
+    expect(followResult.error).toContain('was not sent');
+    expect(seen.some((line) => line.includes('blocked-next'))).toBe(false);
+    expect(mocks.beginIntent).toHaveBeenCalledTimes(1);
     expect(mocks.finishIntent).toHaveBeenCalledWith('max373-unconfirmed', 'unknown', expect.anything());
     expect(mocks.finishIntent).not.toHaveBeenCalledWith('max373-unconfirmed', 'succeeded', expect.anything());
+
+    stopped = true;
+    const recovered = await sqlExecutor.executeSql(37321, 'UPDATE t SET note = "recovered" WHERE id = 2', {
+      approvalGrant: { ...grant, operationId: 'max373-unconfirmed-recovered' }, timeoutMs: 1000, userId: '9', username: 'max373',
+    });
+    expect(recovered).toMatchObject({ success: true, executionState: 'succeeded', retryable: false });
+    const clearAt = seen.indexOf('proof:clear');
+    const recoveredAt = seen.indexOf('observer:UPDATE t SET note = "recovered" WHERE id = 2');
+    expect(clearAt).toBeGreaterThanOrEqual(0);
+    expect(recoveredAt).toBeGreaterThan(clearAt);
+    expect(mocks.beginIntent).toHaveBeenCalledTimes(2);
+    expect(mocks.finishIntent).toHaveBeenCalledWith('max373-unconfirmed-recovered', 'succeeded', expect.anything());
+  }, 15_000);
+
+  it('does not treat a KILL receipt as a stop while the statement and transaction remain', async () => {
+    const blocked = new Promise<[unknown, unknown]>(() => undefined);
+    const seen: string[] = [];
+    let stopped = false;
+    const worker = session(201);
+    worker.query.mockImplementation(async (sql: string) => {
+      seen.push(`worker:${sql}`);
+      if (sql.startsWith('UPDATE ')) return blocked;
+      return [[], []];
+    });
+    const killer = session(202);
+    killer.query.mockImplementation(async (sql: string) => {
+      seen.push(`killer:${sql}`);
+      if (String(sql).includes('COMMAND AS command')) {
+        return [[{ command: 'Query', info: 'UPDATE t SET note = "ack" WHERE id = 1' }], []];
+      }
+      if (String(sql).startsWith('KILL ')) return [[], []];
+      return [[], []];
+    });
+    const observer = session(203);
+    observer.query.mockImplementation(async (sql: string) => {
+      seen.push(`observer:${sql}`);
+      if (String(sql).includes('COMMAND AS command')) {
+        seen.push(stopped ? 'proof:clear' : 'proof:busy');
+        return stopped
+          ? [[{ command: 'Sleep', info: null }], []]
+          : [[{ command: 'Query', info: 'UPDATE t SET note = "ack" WHERE id = 1' }], []];
+      }
+      if (String(sql).includes('innodb_trx')) return [[{ transactions: stopped ? 0 : 1 }], []];
+      if (sql === 'UPDATE t SET note = "after-stop" WHERE id = 1') return [[{ affectedRows: 1 }], []];
+      return [[], []];
+    });
+    const queue = [worker, killer];
+    const pool = { getConnection: vi.fn(async () => queue.shift() ?? observer) };
+    mocks.getConnection.mockReturnValue({ id: 37322, name: 'mysql', db_type: 'mysql', pool });
+
+    const started = Date.now();
+    const update = sqlExecutor.executeSql(37322, 'UPDATE t SET note = "ack" WHERE id = 1', {
+      approvalGrant: { ...grant, operationId: 'max373-ack' }, timeoutMs: 40, userId: '9', username: 'max373',
+    });
+    await vi.waitUntil(() => seen.some((line) => line.includes('note = "ack"')));
+    const follow = sqlExecutor.executeSql(37322, 'UPDATE t SET note = "still-running" WHERE id = 1', {
+      approvalGrant: { ...grant, operationId: 'max373-ack-next' }, timeoutMs: 1000, userId: '9', username: 'max373',
+    });
+    const updateResult = await update;
+    const followResult = await follow;
+
+    expect(Date.now() - started).toBeGreaterThanOrEqual(900);
+    expect(Date.now() - started).toBeLessThan(8_000);
+    expect(seen.some((line) => line.startsWith('killer:KILL '))).toBe(true);
+    expect(updateResult).toMatchObject({ success: false, executionState: 'unknown', retryable: false });
+    expect(updateResult.error).toContain('server stop was not confirmed');
+    expect(updateResult.error).toContain('do not retry');
+    expect(followResult).toMatchObject({ success: false, executionState: 'not_started', retryable: false });
+    expect(followResult.error).toContain('MYSQL_INSTANCE_ISOLATED');
+    expect(followResult.error).toContain('was not sent');
+    expect(seen.some((line) => line.includes('still-running'))).toBe(false);
+    expect(worker.destroy).toHaveBeenCalled();
+    expect(worker.release).not.toHaveBeenCalled();
+    expect(killer.release).toHaveBeenCalled();
+    expect(mocks.beginIntent.mock.calls.map((call) => call[1].operationId)).toEqual(['max373-ack']);
+
+    stopped = true;
+    const recovered = await sqlExecutor.executeSql(37322, 'UPDATE t SET note = "after-stop" WHERE id = 1', {
+      approvalGrant: { ...grant, operationId: 'max373-ack-recovered' }, timeoutMs: 1000, userId: '9', username: 'max373',
+    });
+    expect(recovered).toMatchObject({ success: true, executionState: 'succeeded', retryable: false });
+    const clearAt = seen.lastIndexOf('proof:clear');
+    const recoveredAt = seen.indexOf('observer:UPDATE t SET note = "after-stop" WHERE id = 1');
+    expect(clearAt).toBeGreaterThanOrEqual(0);
+    expect(recoveredAt).toBeGreaterThan(clearAt);
+    expect(seen.some((line) => line.includes('still-running'))).toBe(false);
+    expect(mocks.beginIntent.mock.calls.map((call) => call[1].operationId)).toEqual(['max373-ack', 'max373-ack-recovered']);
+    expect(mocks.finishIntent).toHaveBeenCalledWith('max373-ack', 'unknown', expect.anything());
+    expect(mocks.finishIntent).not.toHaveBeenCalledWith('max373-ack', 'succeeded', expect.anything());
+  }, 15_000);
+
+  it('admits the next change only after a KILL receipt is followed by server stop evidence', async () => {
+    const blocked = new Promise<[unknown, unknown]>(() => undefined);
+    const seen: string[] = [];
+    const worker = session(211);
+    worker.query.mockImplementation(async (sql: string) => {
+      seen.push(`worker:${sql}`);
+      if (sql.startsWith('DELETE ')) return blocked;
+      return [[], []];
+    });
+    const killer = session(212);
+    killer.query.mockImplementation(async (sql: string) => {
+      seen.push(`killer:${sql}`);
+      if (String(sql).includes('COMMAND AS command')) {
+        return [[{ command: 'Query', info: 'DELETE FROM t WHERE id = 4' }], []];
+      }
+      if (String(sql).startsWith('KILL ')) return [[], []];
+      return [[], []];
+    });
+    const observer = session(213);
+    observer.query.mockImplementation(async (sql: string) => {
+      seen.push(`observer:${sql}`);
+      if (String(sql).includes('COMMAND AS command')) {
+        seen.push('proof:clear');
+        return [[{ command: 'Sleep', info: null }], []];
+      }
+      if (String(sql).includes('innodb_trx')) return [[{ transactions: 0 }], []];
+      return [[], []];
+    });
+    const follower = session(214);
+    follower.query.mockImplementation(async (sql: string) => {
+      seen.push(`follower:${sql}`);
+      if (sql === 'UPDATE t SET note = "next-write" WHERE id = 4') return [[{ affectedRows: 1 }], []];
+      return [[], []];
+    });
+    const queue = [worker, killer, observer, follower];
+    const pool = {
+      getConnection: vi.fn(async () => {
+        const next = queue.shift();
+        if (!next) throw new Error('unexpected checkout');
+        return next;
+      }),
+    };
+    mocks.getConnection.mockReturnValue({ id: 37323, name: 'mysql', db_type: 'mysql', pool });
+
+    const update = sqlExecutor.executeSql(37323, 'DELETE FROM t WHERE id = 4', {
+      approvalGrant: { ...grant, operationId: 'max373-kill-observed' }, timeoutMs: 40, userId: '9', username: 'max373',
+    });
+    await vi.waitUntil(() => seen.some((line) => line.startsWith('worker:DELETE ')));
+    const follow = sqlExecutor.executeSql(37323, 'UPDATE t SET note = "next-write" WHERE id = 4', {
+      approvalGrant: { ...grant, operationId: 'max373-kill-observed-next' }, timeoutMs: 1000, userId: '9', username: 'max373',
+    });
+    const updateResult = await update;
+    const followResult = await follow;
+
+    expect(updateResult).toMatchObject({ success: false, executionState: 'unknown', retryable: false });
+    expect(updateResult.error).toContain('MYSQL_STATEMENT_TIMEOUT');
+    expect(updateResult.error).toContain('cancelled');
+    expect(updateResult.error).not.toContain('server stop was not confirmed');
+    expect(followResult).toMatchObject({ success: true, executionState: 'succeeded' });
+    const killAt = seen.findIndex((line) => line.startsWith('killer:KILL '));
+    const proofAt = seen.indexOf('proof:clear');
+    const followAt = seen.indexOf('follower:UPDATE t SET note = "next-write" WHERE id = 4');
+    expect(killAt).toBeGreaterThanOrEqual(0);
+    expect(proofAt).toBeGreaterThan(killAt);
+    expect(followAt).toBeGreaterThan(proofAt);
+    expect(worker.query.mock.calls.filter(([sql]) => String(sql).startsWith('DELETE '))).toHaveLength(1);
+    expect(worker.release).not.toHaveBeenCalled();
+    expect(killer.release).toHaveBeenCalled();
+    expect(mocks.finishIntent).toHaveBeenCalledWith('max373-kill-observed', 'unknown', expect.anything());
+    expect(mocks.finishIntent).toHaveBeenCalledWith('max373-kill-observed-next', 'succeeded', expect.anything());
   });
 
   it('bounds a KILL that never returns and does not put either session back in the pool', async () => {
