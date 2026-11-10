@@ -9,6 +9,7 @@ import { classifySql } from './sql-validator.js';
 import { dbConnection } from './db-connection.js';
 import { authorizeApprovedSqlExecution, type ApprovalExecutionGrant } from './security/approval-execution-authorizer.js';
 import { securityEventService } from './security/security-event-service.js';
+import { withInstanceExecutionLock } from './instance-execution-lock.js';
 
 const DEFAULT_SQL_TIMEOUT_MS = 15_000;
 const MAX_SQL_TIMEOUT_MS = 30_000;
@@ -18,10 +19,15 @@ type DamengSession = {
   execute: (sql: string, binds?: unknown[], options?: { maxRows?: number; autoCommit?: boolean }) => Promise<any>;
   commit: () => Promise<void>;
   rollback: () => Promise<void>;
+  close?: () => Promise<void>;
   // dmdb copies ConnectionAttributes.sessionTimeout onto each statement as queryTimeout.
   // The public attribute is integer seconds; 0 disables the server limit.
   conn_prop_sessionTimeout?: number;
 };
+
+function errorText(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
 
 function damengTimeoutSeconds(timeoutMs: number): number {
   return Math.max(1, Math.ceil(timeoutMs / 1000));
@@ -39,26 +45,62 @@ function damengCell(result: any): string {
 }
 
 class SqlExecutor {
-  private readonly executionQueues = new Map<number, Promise<void>>();
+  private readonly retiredDamengSessions = new WeakSet<object>();
 
   private normalizeTimeout(timeoutMs?: number): number {
     if (!Number.isFinite(timeoutMs)) return DEFAULT_SQL_TIMEOUT_MS;
     return Math.max(100, Math.min(Math.trunc(timeoutMs!), MAX_SQL_TIMEOUT_MS));
   }
 
-  private async serializeForInstance<T>(instanceId: number, action: () => Promise<T>): Promise<T> {
-    const previous = this.executionQueues.get(instanceId) ?? Promise.resolve();
-    let release!: () => void;
-    const gate = new Promise<void>((resolve) => { release = resolve; });
-    const queued = previous.catch(() => undefined).then(() => gate);
-    this.executionQueues.set(instanceId, queued);
-    await previous.catch(() => undefined);
-    try {
-      return await action();
-    } finally {
-      release();
-      if (this.executionQueues.get(instanceId) === queued) this.executionQueues.delete(instanceId);
+  private serializeForInstance<T>(instanceId: number, action: () => Promise<T>): Promise<T> {
+    return withInstanceExecutionLock(instanceId, action);
+  }
+
+  private async acquireOwnedDameng(instanceId: number) {
+    let conn = databaseService.getConnection(instanceId);
+    if (conn?.dmConnection && this.retiredDamengSessions.has(conn.dmConnection)) {
+      conn.connected = false;
+      const replaced = await databaseService.reconnect(instanceId).catch(() => false);
+      if (!replaced) throw new Error('实例未连接或重连失败');
     }
+    const alive = await databaseService.ensureConnectionAlive(instanceId);
+    if (!alive) throw new Error('实例未连接或重连失败');
+    conn = databaseService.getConnection(instanceId);
+    if (!conn?.dmConnection || conn.db_type !== 'dameng' || this.retiredDamengSessions.has(conn.dmConnection)) {
+      throw new Error('实例未连接或重连失败');
+    }
+    return conn;
+  }
+
+  private async quarantineDamengSession(
+    instanceId: number,
+    dm: DamengSession,
+    context: { userId?: string; username?: string; ipAddress?: string; approvalGrant?: ApprovalExecutionGrant } | undefined,
+    sql: string,
+    instanceName: string,
+    detail: string,
+  ): Promise<void> {
+    this.retiredDamengSessions.add(dm);
+    const current = databaseService.getConnection(instanceId);
+    if (current?.dmConnection === dm) current.connected = false;
+    try { await dm.close?.(); } catch { /* The session is already unusable. */ }
+    let rebuilt = false;
+    try { rebuilt = await databaseService.reconnect(instanceId); } catch { rebuilt = false; }
+    const userId = context?.userId || (context?.approvalGrant ? String(context.approvalGrant.reviewerId) : '');
+    if (!userId) return;
+    await auditLogManager.logSqlExecution({
+      userId,
+      username: context?.username || 'unknown',
+      instanceId,
+      instanceName,
+      dbType: 'dameng',
+      sqlText: sql.substring(0, 500),
+      durationMs: 0,
+      status: 'error',
+      errorMessage: `${detail} reconnect=${rebuilt ? 'ok' : 'failed'}`,
+      ipAddress: context?.ipAddress,
+      approvalRequestId: context?.approvalGrant?.approvalRequestId,
+    }).catch(() => undefined);
   }
 
   /**
@@ -117,13 +159,18 @@ class SqlExecutor {
       }
     }
 
-    // 先确保连接可用（触发重连如果需要）
-    const alive = await databaseService.ensureConnectionAlive(instanceId);
-    if (!alive) {
-      return { success: false, error: '实例未连接或重连失败' };
+    // Approval above returns before any probe. Dameng shares one session, so its
+    // probe, reconnect and the handle used for the statement stay inside the lock.
+    const preview = databaseService.getConnection(instanceId);
+    const damengOwned = preview?.db_type === 'dameng' && Boolean(preview.dmConnection);
+    if (!damengOwned) {
+      const alive = await databaseService.ensureConnectionAlive(instanceId);
+      if (!alive) {
+        return { success: false, error: '实例未连接或重连失败' };
+      }
     }
 
-    const conn = databaseService.getConnection(instanceId);
+    let conn = databaseService.getConnection(instanceId);
     if (!conn) {
       return { success: false, error: '实例未连接' };
     }
@@ -146,12 +193,23 @@ class SqlExecutor {
 
     const isMutation = reclassification.commandType !== 'read';
     const operationId = context?.approvalGrant?.operationId;
-    if (isMutation) {
+    let intentStarted = false;
+    const rejectIntent = (error: { message?: string }) => ({
+      success: false as const,
+      executionState: error.message === 'SQL_OPERATION_ALREADY_RECORDED_RECONCILE_DO_NOT_RETRY' ? 'unknown' as const : 'not_started' as const,
+      operationId,
+      retryable: false as const,
+      error: `SQL_INTENT_REJECTED: ${error.message}; inspect operation before any retry`,
+    });
+    const beginIntent = async () => {
+      await sqlExecutionIntent.begin({ instanceId, sql, database: context?.database, userId: context?.userId }, context!.approvalGrant!);
+      intentStarted = true;
+    };
+    if (isMutation && !damengOwned) {
       try {
-        await sqlExecutionIntent.begin({ instanceId, sql, database: context?.database, userId: context?.userId }, context!.approvalGrant!);
+        await beginIntent();
       } catch (error: any) {
-        return { success: false, executionState: error.message === 'SQL_OPERATION_ALREADY_RECORDED_RECONCILE_DO_NOT_RETRY' ? 'unknown' : 'not_started', operationId, retryable: false,
-          error: `SQL_INTENT_REJECTED: ${error.message}; inspect operation before any retry` };
+        return rejectIntent(error);
       }
     }
     let targetAcknowledged = false;
@@ -258,18 +316,29 @@ class SqlExecutor {
           }
         });
       } else if (conn.db_type === 'dameng' && conn.dmConnection) {
-        // One shared session. Hold instance ownership until execute, commit/rollback,
-        // schema restore and the timeout property restore have all settled.
+        // One shared session. Ownership covers the production probe, reconnect,
+        // statement, commit/rollback, schema restore and timeout restore.
         // dmdb socketTimeout (error 20010) drops the socket and is not a cancel.
         // sessionTimeout is the server statement limit (DM8 error -608). It is
         // integer seconds, so a sub-second request becomes one second; 0 would disable it.
-        result = await this.serializeForInstance(instanceId, async () => {
-          const dm = conn.dmConnection as DamengSession;
+        const owned = await this.serializeForInstance(instanceId, async () => {
+          const live = await this.acquireOwnedDameng(instanceId);
+          conn = live;
+          if (isMutation && !intentStarted) {
+            try {
+              await beginIntent();
+            } catch (error: any) {
+              return { intentRejected: error as { message?: string } };
+            }
+          }
+          const dm = live.dmConnection as DamengSession;
           const previousTimeout = dm.conn_prop_sessionTimeout;
           dm.conn_prop_sessionTimeout = damengTimeoutSeconds(timeoutMs);
           let readOnlyTransaction = false;
           let restoreSchema: string | null = null;
-          let failed = false;
+          let primaryError: unknown;
+          let rollbackError: unknown;
+          let restoreError: unknown;
           try {
             if (context?.database) {
               const current = await dm.execute(
@@ -302,27 +371,44 @@ class SqlExecutor {
                   fields.forEach((f: any, i: number) => { obj[f.name] = row[i]; });
                   return obj;
                 });
-            return { rows, fields };
+            return { statement: { rows, fields } };
           } catch (error) {
-            failed = true;
+            primaryError = error;
             if (readOnlyTransaction || reclassification.commandType === 'write') {
-              await dm.rollback().catch(() => undefined);
-              readOnlyTransaction = false;
+              try {
+                await dm.rollback();
+                readOnlyTransaction = false;
+              } catch (rollbackFailure) {
+                rollbackError = rollbackFailure;
+              }
             }
             throw error;
           } finally {
-            let restoreError: unknown;
-            if (restoreSchema) {
+            // SET SCHEMA auto-commits. Skip it when rollback did not clear the transaction.
+            if (restoreSchema && !rollbackError) {
               try {
                 await dm.execute(`SET SCHEMA ${quoteDamengIdentifier(restoreSchema)}`, [], { autoCommit: true });
               } catch (error) {
                 restoreError = error;
               }
             }
-            dm.conn_prop_sessionTimeout = previousTimeout;
-            if (restoreError && !failed) throw restoreError;
+            const dirty = Boolean(rollbackError || restoreError);
+            if (!dirty) dm.conn_prop_sessionTimeout = previousTimeout;
+            if (dirty) {
+              const parts = ['DAMENG_SESSION_QUARANTINED'];
+              if (rollbackError) parts.push(`rollback=${errorText(rollbackError)}`);
+              if (restoreError) parts.push(`schema=${errorText(restoreError)}`);
+              if (primaryError) parts.push(`cause=${errorText(primaryError)}`);
+              try {
+                await this.quarantineDamengSession(instanceId, dm, context, sql, live.name, parts.join(' '));
+              } catch { /* Keep the statement error. */ }
+            }
+            if (restoreError && !primaryError) throw restoreError;
           }
         });
+        if (owned.intentRejected) return rejectIntent(owned.intentRejected);
+        if (!owned.statement) throw new Error('实例未连接或重连失败');
+        result = owned.statement;
       } else {
         return { success: false, error: `不支持的数据库类型: ${conn.db_type}` };
       }
@@ -359,10 +445,13 @@ class SqlExecutor {
       return { success: true, columns, rows, rowCount: rows.length, truncated, duration_ms,
         ...(isMutation ? { executionState: 'succeeded' as const, operationId, retryable: false as const } : {}) };
     } catch (error: any) {
-      if (isMutation) {
+      if (isMutation && intentStarted) {
         await sqlExecutionIntent.finish(operationId!, 'unknown', { targetAcknowledged, error: 'SQL_EXECUTION_OR_AUDIT_FAILED' }).catch(() => undefined);
         return { success: false, executionState: 'unknown', operationId, retryable: false,
           error: 'SQL_OUTCOME_REQUIRES_RECONCILIATION: SQL may have committed; do not retry; inspect durable intent and target database' };
+      }
+      if (isMutation) {
+        return { success: false, executionState: 'not_started', operationId, retryable: false, error: error.message };
       }
       const duration_ms = Date.now() - startTime;
       if (context?.userId || isMutation) {

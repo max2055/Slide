@@ -70,6 +70,7 @@ describe.skipIf(!enabled)('MAX-367 real Dameng execution ownership', () => {
       'DROP VIEW SLIDE_MAX367_HOLD_B',
       'DROP VIEW SLIDE_MAX367_SLOW',
       'DROP TABLE SLIDE_MAX367_DML',
+      'DROP TABLE SLIDE_MAX367_R1',
       'DROP TABLE SLIDE_MAX367.SLIDE_MAX367_VIS',
       'DROP SCHEMA SLIDE_MAX367',
       'DROP FUNCTION SLIDE_MAX367_BURN',
@@ -104,16 +105,30 @@ describe.skipIf(!enabled)('MAX-367 real Dameng execution ownership', () => {
 
     const execute = session.execute.bind(session);
     const rollback = session.rollback.bind(session);
+    let pauseAfterSql = '';
+    let pausedSql = '';
+    let releasePause: (() => void) | null = null;
     session.execute = (async (...args: Parameters<dmdb.Connection['execute']>) => {
-      marks.push({ sql: String(args[0] ?? '').slice(0, 120), at: Date.now() - startedAt });
-      return execute(...args);
+      const text = String(args[0] ?? '');
+      marks.push({ sql: text.slice(0, 120), at: Date.now() - startedAt });
+      const result = await execute(...args);
+      if (pauseAfterSql && text === pauseAfterSql) {
+        pausedSql = text;
+        await new Promise<void>((resolve) => { releasePause = resolve; });
+      }
+      return result;
     }) as dmdb.Connection['execute'];
     session.rollback = (async () => {
       marks.push({ sql: 'rollback', at: Date.now() - startedAt });
       return rollback();
     }) as dmdb.Connection['rollback'];
     mocks.getConnection.mockReturnValue({
-      id: instanceId, name: 'dameng-test', db_type: 'dameng', dmConnection: session,
+      id: instanceId, name: 'dameng-test', db_type: 'dameng', dmConnection: session, connected: true,
+    });
+    // Production checkConnectionAlive uses this exact call, including default autoCommit.
+    mocks.ensureConnectionAlive.mockImplementation(async () => {
+      await session.execute('SELECT 1 FROM DUAL');
+      return true;
     });
 
     for (const sql of [
@@ -121,6 +136,7 @@ describe.skipIf(!enabled)('MAX-367 real Dameng execution ownership', () => {
       'DROP VIEW SLIDE_MAX367_HOLD_B',
       'DROP VIEW SLIDE_MAX367_SLOW',
       'DROP TABLE SLIDE_MAX367_DML',
+      'DROP TABLE SLIDE_MAX367_R1',
       'DROP TABLE SLIDE_MAX367.SLIDE_MAX367_VIS',
       'DROP SCHEMA SLIDE_MAX367',
       'DROP FUNCTION SLIDE_MAX367_BURN',
@@ -161,6 +177,11 @@ describe.skipIf(!enabled)('MAX-367 real Dameng execution ownership', () => {
     expect(secondSql).toBeGreaterThan(firstRollback);
     expect(marks[secondSql].at).toBeGreaterThanOrEqual(marks[firstRollback].at);
     expect(marks.some((mark) => mark.sql === 'SET TRANSACTION READ ONLY')).toBe(true);
+    const probeAt = marks
+      .map((mark, index) => mark.sql === 'SELECT 1 FROM DUAL' ? index : -1)
+      .filter((index) => index >= 0);
+    expect(probeAt.length).toBeGreaterThanOrEqual(2);
+    expect(probeAt[1]).toBeGreaterThan(firstRollback);
 
     const timed = Date.now();
     const timeout = await sqlExecutor.executeSql(
@@ -212,6 +233,40 @@ describe.skipIf(!enabled)('MAX-367 real Dameng execution ownership', () => {
     expect(restored.success).toBe(false);
     expect(driverSession.conn_prop_sessionTimeout).toBe(15);
     expect(driverSession.conn_prop_socketTimeout).toBe(30_000);
+
+    await session.execute('CREATE TABLE SLIDE_MAX367_R1(ID INT)');
+    await session.execute('INSERT INTO SLIDE_MAX367_R1(ID) VALUES (1)', [], { autoCommit: true });
+    expect(await witnessRows('SELECT ID FROM SLIDE_MAX367_R1')).toEqual([[1]]);
+    const updateSql = 'UPDATE SLIDE_MAX367_R1 SET ID = 2';
+    pauseAfterSql = updateSql;
+    const probeBaseline = marks.filter((mark) => mark.sql === 'SELECT 1 FROM DUAL').length;
+    const updating = sqlExecutor.executeSql(instanceId, updateSql, {
+      approvalGrant: { ...grant, operationId: 'max367-r1-visibility' }, timeoutMs: 15_000,
+    });
+    let overlapping: ReturnType<typeof sqlExecutor.executeSql> | undefined;
+    try {
+      const updateStarted = Date.now();
+      while (pausedSql !== updateSql && Date.now() - updateStarted < 5_000) {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+      expect(pausedSql).toBe(updateSql);
+      expect(await witnessRows('SELECT ID FROM SLIDE_MAX367_R1')).toEqual([[1]]);
+      overlapping = sqlExecutor.executeSql(instanceId, 'SELECT ID FROM SLIDE_MAX367_R1', { timeoutMs: 15_000 });
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      expect(marks.filter((mark) => mark.sql === 'SELECT 1 FROM DUAL')).toHaveLength(probeBaseline + 1);
+      expect(await witnessRows('SELECT ID FROM SLIDE_MAX367_R1')).toEqual([[1]]);
+    } finally {
+      releasePause?.();
+      releasePause = null;
+      pauseAfterSql = '';
+    }
+    const updated = await updating;
+    expect(updated).toMatchObject({ success: true, executionState: 'succeeded', retryable: false });
+    expect(await witnessRows('SELECT ID FROM SLIDE_MAX367_R1')).toEqual([[2]]);
+    if (!overlapping) throw new Error('overlapping read did not start');
+    const overlapped = await overlapping;
+    expect(overlapped.success).toBe(true);
+    expect(marks.filter((mark) => mark.sql === 'SELECT 1 FROM DUAL').length).toBeGreaterThan(probeBaseline + 1);
 
     const audited = await auditLogManager.query({ eventType: 'sql_execution', userId: '367', limit: 50 });
     expect(audited.entries.some((entry) => String(entry.details?.sql ?? '').includes('MAX367_AUDIT') && entry.result === 'success')).toBe(true);

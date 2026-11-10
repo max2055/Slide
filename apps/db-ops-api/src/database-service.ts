@@ -16,6 +16,7 @@ import { classifySql } from './sql-validator.js';
 import { ensureOracleClientReady, formatOracleConnectionError, initializeOracleClient } from './oracle-client.js';
 import { collectDamengMemoryUsage } from './collectors/dameng-memory.js';
 import { calculateCounterRate } from './collectors/base-provider.js';
+import { withInstanceExecutionLock } from './instance-execution-lock.js';
 
 initializeOracleClient();
 
@@ -3206,7 +3207,14 @@ class DatabaseService {
       } else if (conn.db_type === 'oracle' && conn.oracleConnection) {
         await conn.oracleConnection.execute('SELECT 1 FROM DUAL');
       } else if (conn.db_type === 'dameng' && conn.dmConnection) {
-        await conn.dmConnection.execute('SELECT 1 FROM DUAL');
+        // The shared session's default autoCommit commits an open transaction.
+        // Wait for the SQL owner, then probe whatever session is current.
+        await withInstanceExecutionLock(id, async () => {
+          const current = this.connections.get(id);
+          if (!current?.dmConnection || current.db_type !== 'dameng') throw new Error('DAMENG_SESSION_MISSING');
+          await current.dmConnection.execute('SELECT 1 FROM DUAL');
+          current.connected = true;
+        });
       } else {
         return false;
       }
