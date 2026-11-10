@@ -192,13 +192,28 @@ class SqlExecutor {
         });
       } else if (conn.db_type === 'oracle' && conn.oracleConnection) {
         result = await this.serializeForInstance(instanceId, async () => {
-          const oracleConnection = conn.oraclePool ? await conn.oraclePool.getConnection() : conn.oracleConnection!;
+          const fromPool = Boolean(conn.oraclePool);
+          const oracleConnection = fromPool ? await conn.oraclePool.getConnection() : conn.oracleConnection!;
           const previousCallTimeout = oracleConnection.callTimeout;
+          // DDL commits inside Oracle. DML does not: releasing a pooled connection
+          // rolls the change back, so a write is succeeded only after commit().
+          let readOnlyTransaction = false;
           try {
             oracleConnection.callTimeout = timeoutMs;
-            if (isReadOnly) await oracleConnection.execute('SET TRANSACTION READ ONLY');
-            const oracleResult = await oracleConnection.execute(sql, [], { maxRows: isReadOnly ? MAX_SQL_ROWS + 1 : 0 });
-            if (isReadOnly) await oracleConnection.rollback();
+            if (isReadOnly) {
+              await oracleConnection.execute('SET TRANSACTION READ ONLY', [], { autoCommit: false });
+              readOnlyTransaction = true;
+            }
+            const oracleResult = await oracleConnection.execute(sql, [], {
+              maxRows: isReadOnly ? MAX_SQL_ROWS + 1 : 0,
+              autoCommit: false,
+            });
+            if (readOnlyTransaction) {
+              await oracleConnection.rollback();
+              readOnlyTransaction = false;
+            } else if (reclassification.commandType === 'write') {
+              await oracleConnection.commit();
+            }
             const fields = oracleResult.metaData?.map((m: any) => ({ name: m.name })) || [];
             const rows = Array.isArray(oracleResult.rows) && oracleResult.rows.length > 0 && !Array.isArray(oracleResult.rows[0])
               ? oracleResult.rows
@@ -209,11 +224,13 @@ class SqlExecutor {
                 });
             return { rows, fields };
           } catch (error) {
-            if (isReadOnly) await oracleConnection.rollback().catch(() => undefined);
+            if (readOnlyTransaction || reclassification.commandType === 'write') {
+              await oracleConnection.rollback().catch(() => undefined);
+            }
             throw error;
           } finally {
             oracleConnection.callTimeout = previousCallTimeout;
-            if (conn.oraclePool) await oracleConnection.close().catch(() => undefined);
+            if (fromPool) await oracleConnection.close().catch(() => undefined);
           }
         });
       } else if (conn.db_type === 'dameng' && conn.dmConnection) {

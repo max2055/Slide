@@ -12,6 +12,15 @@ const ACTION_APPROVAL_TOOL = 'operations_action_plan';
 
 interface ApprovalExecutor {
   execute(sql: string, values?: unknown[]): Promise<[any, unknown?]>;
+  getConnection?(): Promise<ApprovalConnection>;
+}
+
+interface ApprovalConnection extends ApprovalExecutor {
+  beginTransaction?(): Promise<void>;
+  commit?(): Promise<void>;
+  rollback?(): Promise<void>;
+  release(): void;
+  destroy(): void;
 }
 
 export interface AgentToolPolicySnapshot {
@@ -153,39 +162,65 @@ export class AgentToolApprovalService {
     const defaultExpiry = scope === 'window' ? 5 * 60_000 : scope === 'session' ? 30 * 60_000 : 30 * 60_000;
     const expiresInMs = options.expiresInMs ?? defaultExpiry;
     const expiresAt = new Date(Date.now() + Math.min(Math.max(expiresInMs, 60_000), 24 * 60 * 60_000));
-    const [pendingRows] = await executor.execute(
-      `SELECT id, expires_at
-       FROM agent_tool_approvals
-       WHERE requester_id = ? AND tool_name = ? AND binding_hash = ?
-         AND status = 'pending' AND expires_at > NOW()
-       ORDER BY id DESC LIMIT 1`,
-      [actor.userId, tool.name, binding.bindingHash],
-    );
-    const pending = Array.isArray(pendingRows) ? pendingRows[0] : undefined;
-    if (pending?.id !== undefined) {
-      return { id: String(pending.id), expiresAt: new Date(pending.expires_at) };
+    expiresAt.setMilliseconds(0); // Match the stored DATETIME for the first caller and retries.
+    const sessionKey = options.sessionKey ?? null;
+    // GET_LOCK is connection-scoped: never run this critical section on pool.execute.
+    // Include the schema and exact grant identity; no permanent uniqueness prevents reapplication.
+    if (!executor.getConnection) throw new Error('AGENT_APPROVAL_STORE_UNAVAILABLE');
+    const connection = await executor.getConnection();
+    const lockKey = stableJson([actor.userId, tool.name, binding.bindingHash, scope, sessionKey, riskLevel, maxUses]);
+    const lockNameSql = "SHA2(CONCAT('slide:approval:', DATABASE(), ':', ?), 256)";
+    let locked = false;
+    try {
+      const [locks] = await connection.execute(`SELECT GET_LOCK(${lockNameSql}, 10) AS acquired`, [lockKey]);
+      if (Number(locks[0]?.acquired) !== 1) throw new Error('AGENT_APPROVAL_LOCK_UNAVAILABLE');
+      locked = true;
+      const [pendingRows] = await connection.execute(
+        `SELECT id, expires_at
+         FROM agent_tool_approvals
+         WHERE requester_id = ? AND tool_name = ? AND binding_hash = ?
+           AND scope = ? AND CAST(session_key AS BINARY) <=> CAST(? AS BINARY)
+           AND risk_level = ? AND max_uses = ?
+           AND status = 'pending' AND expires_at > NOW()
+         ORDER BY id DESC LIMIT 1`,
+        [actor.userId, tool.name, binding.bindingHash, scope, sessionKey, riskLevel, maxUses],
+      );
+      const pending = Array.isArray(pendingRows) ? pendingRows[0] : undefined;
+      if (pending?.id !== undefined) {
+        return { id: String(pending.id), expiresAt: new Date(pending.expires_at) };
+      }
+      const [result] = await connection.execute(
+        `INSERT INTO agent_tool_approvals
+         (tool_name, requester_id, binding_hash, args_redacted, resource_json, policy_snapshot,
+          status, scope, session_key, risk_level, max_uses, used_count, expires_at)
+         VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, 0, ?)`,
+        [
+          tool.name,
+          actor.userId,
+          binding.bindingHash,
+          JSON.stringify(binding.redactedArgs),
+          JSON.stringify(resource),
+          JSON.stringify(binding.policySnapshot),
+          scope,
+          sessionKey,
+          riskLevel,
+          maxUses,
+          expiresAt,
+        ],
+      );
+      if (!result?.insertId) throw new Error('AGENT_APPROVAL_CREATE_FAILED');
+      return { id: String(result.insertId), expiresAt };
+    } finally {
+      let released = false;
+      if (locked) {
+        try {
+          const [rows] = await connection.execute(`SELECT RELEASE_LOCK(${lockNameSql}) AS released`, [lockKey]);
+          released = Number(rows[0]?.released) === 1;
+        } catch { /* Discard a connection whose lock ownership is uncertain. */ }
+      }
+      if (released) connection.release();
+      else connection.destroy();
     }
-    const [result] = await executor.execute(
-      `INSERT INTO agent_tool_approvals
-       (tool_name, requester_id, binding_hash, args_redacted, resource_json, policy_snapshot,
-        status, scope, session_key, risk_level, max_uses, used_count, expires_at)
-       VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, 0, ?)`,
-      [
-        tool.name,
-        actor.userId,
-        binding.bindingHash,
-        JSON.stringify(binding.redactedArgs),
-        JSON.stringify(resource),
-        JSON.stringify(binding.policySnapshot),
-        scope,
-        options.sessionKey ?? null,
-        riskLevel,
-        maxUses,
-        expiresAt,
-      ],
-    );
-    if (!result?.insertId) throw new Error('AGENT_APPROVAL_CREATE_FAILED');
-    return { id: String(result.insertId), expiresAt };
   }
 
   async review(
@@ -196,8 +231,19 @@ export class AgentToolApprovalService {
     scope?: Exclude<ExecuteCodeApprovalScope, 'none'>,
   ): Promise<boolean> {
     if (!/^\d+$/.test(id) || !Number.isSafeInteger(reviewerId) || reviewerId <= 0) return false;
+    return this.reviewWithExecutor(this.executor(), id, reviewerId, action, note, scope);
+  }
+
+  private async reviewWithExecutor(
+    executor: ApprovalExecutor,
+    id: string,
+    reviewerId: number,
+    action: 'approve' | 'reject',
+    note?: string,
+    scope?: Exclude<ExecuteCodeApprovalScope, 'none'>,
+  ): Promise<boolean> {
     if (action === 'reject') {
-      const [result] = await this.executor().execute(
+      const [result] = await executor.execute(
         `UPDATE agent_tool_approvals
          SET status = 'rejected', reviewer_id = ?, review_note = ?, reviewed_at = NOW()
          WHERE id = ? AND status = 'pending' AND expires_at > NOW() AND tool_name <> 'operations_action_plan'`,
@@ -205,7 +251,7 @@ export class AgentToolApprovalService {
       );
       return Number(result?.affectedRows) === 1;
     }
-    const [result] = await this.executor().execute(
+    const [result] = await executor.execute(
       `UPDATE agent_tool_approvals
        SET status = 'approved', reviewer_id = ?, review_note = ?, reviewed_at = NOW(),
            scope = CASE
@@ -233,21 +279,48 @@ export class AgentToolApprovalService {
     note?: string,
     scope?: Exclude<ExecuteCodeApprovalScope, 'none'>,
   ): Promise<string[]> {
-    if (!toolName || toolName.length > 128 || !Number.isSafeInteger(reviewerId) || reviewerId <= 0) return [];
-    const [rows] = await this.executor().execute(
-      `SELECT id FROM agent_tool_approvals
-       WHERE tool_name = ? AND tool_name <> 'operations_action_plan' AND status = 'pending' AND expires_at > NOW()
-       ORDER BY id ASC LIMIT 100`,
-      [toolName],
-    );
-    const ids = Array.isArray(rows)
-      ? rows.map((row) => String(row.id)).filter((id) => /^\d+$/.test(id))
-      : [];
-    const reviewed: string[] = [];
-    for (const id of ids) {
-      if (await this.review(id, reviewerId, action, note, scope)) reviewed.push(id);
+    if (!toolName || toolName === ACTION_APPROVAL_TOOL || toolName.length > 128
+      || !Number.isSafeInteger(reviewerId) || reviewerId <= 0) return [];
+    const executor = this.executor();
+    if (!executor.getConnection) throw new Error('AGENT_APPROVAL_STORE_UNAVAILABLE');
+    const connection = await executor.getConnection();
+    let reusable = false;
+    let committing = false;
+    try {
+      if (!connection.beginTransaction || !connection.commit || !connection.rollback) {
+        throw new Error('AGENT_APPROVAL_STORE_UNAVAILABLE');
+      }
+      await connection.beginTransaction();
+      const [rows] = await connection.execute(
+        `SELECT id FROM agent_tool_approvals
+         WHERE tool_name = ? AND tool_name <> 'operations_action_plan' AND status = 'pending' AND expires_at > NOW()
+         ORDER BY id ASC LIMIT 100 FOR UPDATE`,
+        [toolName],
+      );
+      const ids = Array.isArray(rows)
+        ? rows.map((row) => String(row.id)).filter((id) => /^\d+$/.test(id))
+        : [];
+      const reviewed: string[] = [];
+      for (const id of ids) {
+        if (await this.reviewWithExecutor(connection, id, reviewerId, action, note, scope)) reviewed.push(id);
+      }
+      committing = true;
+      await connection.commit();
+      reusable = true;
+      return reviewed;
+    } catch (error) {
+      // A COMMIT may have reached MySQL even when its acknowledgement was lost.
+      // Never retry it or claim a rollback; callers must reconcile stored state.
+      if (committing) throw new Error('AGENT_APPROVAL_BATCH_REVIEW_OUTCOME_UNKNOWN');
+      try {
+        await connection.rollback!();
+        reusable = true;
+      } catch { /* Closing the pinned connection aborts an unfinished transaction. */ }
+      throw error;
+    } finally {
+      if (reusable) connection.release();
+      else connection.destroy();
     }
-    return reviewed;
   }
 
   async consumeApproved(
