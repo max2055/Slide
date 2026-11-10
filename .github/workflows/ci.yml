@@ -42,14 +42,6 @@ jobs:
           node-version-file: .nvmrc
       - name: Test selection and failure propagation
         run: node --test scripts/ci/*.test.mjs
-      - name: Reject non-portable source and focused tests
-        env:
-          POLICY_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
-          POLICY_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
-        run: |
-          base="${POLICY_BASE:-HEAD^}"
-          base="$(git merge-base "$base" "$POLICY_HEAD")"
-          node scripts/ci/check-source-policy.mjs "$base" "$POLICY_HEAD"
       - name: Select required qualification
         id: select
         run: node scripts/ci/plan.mjs

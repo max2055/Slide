@@ -54,7 +54,7 @@ test.beforeAll(async () => {
   for (let n = 1; n <= 4; n++) {
     const [p] = await db.execute('INSERT INTO permissions(code,name,resource,action) VALUES(?,?,?,?)', [`max354:${n}`, `权限${n}`, 'max354', String(n)]);
     perms.push(p.insertId);
-    const [i] = await db.execute("INSERT INTO database_instances(name,host,port,username,password_encrypted) VALUES(?,'127.0.0.1',3306,'fixture','unused')", [`实例${n}`]);
+    const [i] = await db.execute("INSERT INTO database_instances(name,host,port,database_name,username,password_encrypted) VALUES(?,'127.0.0.1',3306,?,'fixture','unused')", [`实例${n}`, `max354-${n}`]);
     instances.push(i.insertId);
   }
   const api = await start(process.execPath, ['--import', 'tsx', 'server.ts'], env, apiDir, 'api');
