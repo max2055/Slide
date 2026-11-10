@@ -218,6 +218,8 @@ export class ServersPage extends LitElement {
   @state() private _editingId: number | null = null;
   @state() private _showDeleteDialog = false;
   @state() private _deletingServer: ServerRow | null = null;
+  @state() private _isDeleting = false;
+  @state() private _deleteError = "";
   @state() private _testingServerId: number | null = null;
   @state() private _testingConnection = false;
   @state() private _isSubmitting = false;
@@ -451,31 +453,48 @@ export class ServersPage extends LitElement {
   }
 
   private _confirmDelete(server: ServerRow) {
+    if (this._isDeleting) return;
+    this._deleteError = "";
     this._deletingServer = server;
     this._showDeleteDialog = true;
   }
 
-  private _closeDeleteDialog() {
+  private _closeDeleteDialog(event?: Event) {
+    if (this._isDeleting) { event?.preventDefault(); return; }
     this._showDeleteDialog = false;
     this._deletingServer = null;
+    this._deleteError = "";
   }
 
   private async _handleDelete() {
-    if (!this._deletingServer) return;
+    if (!this._deletingServer || this._isDeleting) return;
+    const server = this._deletingServer;
+    this._isDeleting = true;
+    this._deleteError = "";
 
     try {
-      const res = await authFetch(`/api/servers/${this._deletingServer.id}`, {
+      const res = await authFetch(`/api/servers/${server.id}`, {
         method: "DELETE",
       });
       if (!res.ok) {
         const err = await res.json();
         throw new Error(err.error || "删除失败");
       }
-      this._closeDeleteDialog();
+      this._showDeleteDialog = false;
+      this._deletingServer = null;
       await this._loadServers();
       showToast("服务器已删除", "success");
-    } catch (err: any) {
-      showToast(`删除失败: ${err.message}`, "error");
+      await this.updateComplete;
+      this.renderRoot.querySelector<HTMLElement>('.search-input, .resource-action--add')?.focus();
+    } catch (err: unknown) {
+      this._deleteError = `删除失败：${err instanceof Error ? err.message : '请稍后重试'}。请刷新列表核对后再重试。`;
+      showToast(this._deleteError, "error");
+    } finally {
+      this._isDeleting = false;
+      if (this._showDeleteDialog) {
+        await this.updateComplete;
+        this.renderRoot.querySelector<HTMLElement>('app-dialog button.danger')?.focus();
+      }
     }
   }
 
@@ -856,7 +875,7 @@ export class ServersPage extends LitElement {
     if (!this._showDeleteDialog || !this._deletingServer) return nothing;
 
     return html`
-      <app-dialog .open=${true} size="sm" .closeOnOverlay=${false} title="确认删除" @app-dialog-close=${this._closeDeleteDialog}>
+      <app-dialog .open=${true} .closable=${!this._isDeleting} size="sm" .closeOnOverlay=${false} title="确认删除" @app-dialog-close=${this._closeDeleteDialog}>
         <div style="text-align:center;padding:var(--space-md) 0">
           <div style="margin-bottom:var(--space-md);color:var(--warn);display:flex;justify-content:center;">
             ${icons['triangle-alert']}
@@ -864,11 +883,12 @@ export class ServersPage extends LitElement {
           <div style="font-size:var(--text-md);color:var(--muted);">
             确定要删除服务器 ${this._deletingServer.host} 吗？此操作不可撤销。
           </div>
+          ${this._deleteError ? html`<p role="alert">${this._deleteError}</p>` : nothing}
         </div>
-        <div slot="footer" style="display:flex;justify-content:center;gap:var(--space-md);">
-          <button class="btn" @click=${this._closeDeleteDialog}>取消</button>
-          <button class="btn danger" @click=${this._handleDelete}
-            >确认删除</button>
+        <div slot="footer" aria-busy=${String(this._isDeleting)} style="display:flex;justify-content:center;gap:var(--space-md);">
+          <button class="btn" .disabled=${this._isDeleting} @click=${this._closeDeleteDialog}>取消</button>
+          <button class="btn danger" .disabled=${this._isDeleting} @click=${this._handleDelete}
+            >${this._isDeleting ? '删除中...' : '确认删除'}</button>
         </div>
       </app-dialog>
     `;
