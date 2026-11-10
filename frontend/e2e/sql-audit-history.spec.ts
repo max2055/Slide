@@ -39,7 +39,7 @@ test.beforeAll(async () => {
   await pool.query("INSERT IGNORE INTO permissions (code,name,resource,action) VALUES ('*','Fixture admin','admin','all')");
   await pool.query('INSERT INTO role_permissions (role_id,permission_id) SELECT 101,id FROM permissions');
   await pool.query('INSERT INTO user_roles (user_id,role_id) VALUES (101,101)');
-  await pool.query("INSERT INTO database_instances (id,name,host,port,username,password_encrypted,status) VALUES (101,'SQL 审核验收','127.0.0.1',9,'fixture','unused','inactive'),(102,'空历史','127.0.0.1',9,'fixture','unused','inactive')");
+  await pool.query("INSERT INTO database_instances (id,name,host,port,database_name,username,password_encrypted,status) VALUES (101,'SQL 审核验收','127.0.0.1',9,'audit-101','fixture','unused','inactive'),(102,'空历史','127.0.0.1',9,'audit-102','fixture','unused','inactive')");
   modelGuard = createHttpServer((_request, response) => { modelCalls++; response.writeHead(503); response.end('MODEL_CALL_FORBIDDEN'); });
   await new Promise<void>(done => modelGuard.listen(0, '127.0.0.1', done));
   await pool.query('UPDATE llm_providers SET enabled=0,is_default=0');

@@ -34,6 +34,7 @@ describe.skipIf(!enabled)('isolated MySQL control / target fault injection', () 
     control = mysql.createPool({ host: '127.0.0.1', port: Number(enabled), user: 'root', timezone: 'Z', database: 'max58_control' });
     target = mysql.createPool({ host: '127.0.0.1', port: Number(enabled), user: 'root', timezone: 'Z', database: 'max58_target' });
     await control.query(await readFile(new URL('../sql/migrations/091_sql_execution_intents.sql', import.meta.url), 'utf8'));
+    await control.query(await readFile(new URL('../sql/migrations/154_sql_execution_intent_receipts.sql', import.meta.url), 'utf8'));
     await control.query(`CREATE TABLE IF NOT EXISTS approval_requests (
       id INT PRIMARY KEY, instance_id INT, sql_hash VARCHAR(64), status VARCHAR(32),
       operation_id VARCHAR(128), reviewed_by INT, updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, target_database VARCHAR(255))`);
@@ -73,16 +74,25 @@ describe.skipIf(!enabled)('isolated MySQL control / target fault injection', () 
     expect(results.filter(r => r.success)).toHaveLength(1);
     expect(await value()).toBe(1);
   });
-  it('audit failure keeps durable uncertainty after committed SQL and blocks retry', async () => {
+  it('audit failure after a committed mutation stays succeeded and does not replay', async () => {
     state.audit.mockRejectedValue(new Error('injected audit outage'));
-    expect(await run()).toMatchObject({ executionState: 'unknown', retryable: false });
+    expect(await run()).toMatchObject({
+      success: true,
+      executionState: 'succeeded',
+      retryable: false,
+      auditStatus: 'failed',
+      auditError: 'AUDIT_LOG_FAILED',
+    });
     expect(await value()).toBe(1);
-    expect(await store().inspect(grant.operationId)).toMatchObject({ state: 'unknown', result_json: { targetAcknowledged: true } });
+    expect(await store().inspect(grant.operationId)).toMatchObject({
+      state: 'succeeded',
+      result_json: { targetAcknowledged: true, auditStatus: 'failed', auditError: 'AUDIT_LOG_FAILED' },
+    });
     await run();
     expect(await value()).toBe(1);
-    // A fresh store has no process-local memory; recovery only records external evidence.
-    await store().reconcile(grant.operationId, true, 'test-operator', 'executor fenced; target intent_counter verified as 1');
-    expect(await store().inspect(grant.operationId)).toMatchObject({ state: 'reconciled_applied' });
+    // The target commit is already recorded. It is not an unknown row awaiting reconciliation.
+    await expect(store().reconcile(grant.operationId, true, 'test-operator', 'executor fenced; target intent_counter verified as 1'))
+      .rejects.toThrow('SQL_INTENT_NOT_RECONCILABLE');
     await run();
     expect(await value()).toBe(1);
   });
