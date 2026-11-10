@@ -24,6 +24,10 @@ describe.skipIf(!port)('formal investigation persistence transactions', () => {
     idempotencyKey: 'request:1', message: 'Investigate the latency', expectedVersion: 1 });
 
   const observation = recoveryObservation(database);
+  // MAX-389 CI42820938621/API8: migration-1 spent 9.89s actively running
+  // 1,000+ statements (lock wait 1.5ms); the generic 10s hook cut it off.
+  // Allow 3x that measured setup cost for this full-schema hook only. Per-test
+  // and global timeouts stay unchanged; stage/SQL timings remain archived.
   beforeAll(async () => {
     let initialized = false;
     try {
@@ -58,10 +62,6 @@ describe.skipIf(!port)('formal investigation persistence transactions', () => {
       });
       initialized = true;
     } finally { observation.finish(initialized); }
-  // MAX-376 CI artifact: migration-1 was still progressing through >1,300
-  // SQL operations at the default 10s hook deadline (no stalled query).
-  // Budget both full migration passes and schema checks here, independently
-  // of business assertions, which retain their existing deadlines.
   }, 30_000);
   beforeEach(async () => {
     await pool.query('DROP TRIGGER IF EXISTS inject_admission_failure');

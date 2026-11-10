@@ -196,7 +196,10 @@ export async function executeToolWithPolicy(
   actor: ActorContext | undefined,
   tool: AnyAgentTool,
   args: Record<string, unknown>,
-  resourceResolver: (toolName: string, args: Record<string, unknown>) => Promise<ToolPolicyResource> = resolveToolResource,
+  // resolveToolResource's third argument is an optional lookup. The policy
+  // contract passes the actor there, so the default adapter keeps them apart.
+  resourceResolver: (toolName: string, args: Record<string, unknown>, actor?: ActorContext) => Promise<ToolPolicyResource>
+    = (toolName, args, current) => resolveToolResource(toolName, args, undefined, current),
   approvalAuthorizer: ToolApprovalAuthorizer = persistentApprovalAuthorizer,
   auditRecorder: ToolAuditRecorder = agentToolAuditService,
   agentId?: string,
@@ -206,7 +209,7 @@ export async function executeToolWithPolicy(
     decision,
     result: normalizeToolResult(result, tool.name),
   });
-  const resource = await resourceResolver(tool.name, args);
+  const resource = await resourceResolver(tool.name, args, actor);
   const security = getToolSecurityDefinition(tool.name);
   const risk: ExecuteCodeRisk | undefined = tool.name === 'execute_code'
     ? classifyExecuteCodeRisk({
@@ -333,6 +336,15 @@ export async function executeToolWithPolicy(
       });
   }
   if (!decision.allow || !actor) {
+    if (decision.reasonCode === 'AMBIGUOUS_INSTANCE_NAME') {
+      return policyResult(decision, {
+        success: false,
+        status: 'error',
+        errorCode: 'AMBIGUOUS_INSTANCE_NAME',
+        error: '同名实例存在于多个环境，请改用实例 ID',
+        next_actions: ['使用 instance_id 指定要更新的实例，不要用新的 environment 选择现有实例'],
+      });
+    }
     return policyResult(decision, { success: false, errorCode: decision.reasonCode, error: 'Tool access denied' });
   }
   const context: ToolExecutionContext = {

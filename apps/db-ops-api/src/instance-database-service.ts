@@ -121,6 +121,12 @@ interface PhysicalOccupant {
   lifecycle_state: 'available' | 'deleting' | 'deleted' | string;
 }
 
+export interface AvailableInstanceIdentity {
+  id: number;
+  name: string;
+  environment: string;
+}
+
 function physicalDatabaseKey(value: string | null | undefined): string {
   return value == null || value.length === 0 ? '' : value;
 }
@@ -346,7 +352,10 @@ class InstanceDatabaseService {
     }
   }
 
-  /** Resolve a canonical instance id without loading credential-bearing columns. */
+  /** Resolve a canonical instance id without loading credential-bearing columns.
+   *  Compatibility: still returns one id for any lifecycle, or null. It is not
+   *  an authorization decision and does not express cross-environment ambiguity.
+   */
   async findInstanceIdByName(name: string): Promise<number | null> {
     const pool = this.getPool();
     if (!pool || !name.trim()) return null;
@@ -359,6 +368,33 @@ class InstanceDatabaseService {
     } catch (error) {
       console.error('解析实例名称失败:', error);
       return null;
+    }
+  }
+
+  /** Active available identities whose stored name trims to `name`.
+   *  Selects id, name, and environment only. A length other than 1 is unresolved;
+   *  callers must not pick a row. Does not change physical occupancy or removal.
+   */
+  async listAvailableInstancesByNormalizedName(name: string): Promise<AvailableInstanceIdentity[]> {
+    const normalized = typeof name === 'string' ? name.trim() : '';
+    if (!normalized) return [];
+    const pool = this.getPool();
+    if (!pool) throw new Error('INSTANCE_ENUMERATION_UNAVAILABLE');
+    try {
+      const [rows] = await pool.execute(
+        `SELECT id, name, environment
+         FROM database_instances
+         WHERE status = 'active' AND lifecycle_state = 'available' AND TRIM(name) = ?
+         ORDER BY id`,
+        [normalized],
+      ) as any;
+      return (Array.isArray(rows) ? rows : []).map((row: any) => ({
+        id: Number(row.id),
+        name: String(row.name),
+        environment: String(row.environment),
+      })).filter((row: AvailableInstanceIdentity) => Number.isSafeInteger(row.id) && row.id > 0);
+    } catch (error) {
+      throw new Error('INSTANCE_ENUMERATION_UNAVAILABLE', { cause: error });
     }
   }
 
