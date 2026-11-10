@@ -1,6 +1,40 @@
-import type { Pool } from 'mysql2/promise';
+import type { Pool, PoolConnection } from 'mysql2/promise';
 import { dbConnection } from '../db-connection.js';
 import { authorizeApprovedSqlExecution, type ApprovalExecutionGrant } from '../security/approval-execution-authorizer.js';
+
+const RECEIPT_STATES = new Set(['rolled_back', 'not_executed']);
+
+/** True only when information_schema already lists this exact ENUM member. */
+export function sqlIntentEnumAccepts(columnType: string, state: string): boolean {
+  const match = /^enum\((.*)\)$/i.exec(columnType.trim());
+  if (!match) return false;
+  const body = match[1];
+  const members: string[] = [];
+  let index = 0;
+  while (index < body.length) {
+    const char = body[index];
+    if (char === ' ' || char === ',') { index += 1; continue; }
+    if (char !== "'") return false;
+    index += 1;
+    let value = '';
+    while (index < body.length) {
+      if (body[index] === '\\' && index + 1 < body.length) {
+        value += body[index + 1];
+        index += 2;
+        continue;
+      }
+      if (body[index] === "'") {
+        if (body[index + 1] === "'") { value += "'"; index += 2; continue; }
+        index += 1;
+        break;
+      }
+      value += body[index];
+      index += 1;
+    }
+    members.push(value);
+  }
+  return members.includes(state);
+}
 
 /** Control DB only. No in-memory fallback and no cross-database exactly-once claim. */
 export class SqlExecutionIntentStore {
@@ -41,10 +75,41 @@ export class SqlExecutionIntentStore {
   }
 
   async finish(operationId: string, state: 'succeeded' | 'unknown' | 'rolled_back' | 'not_executed', result: unknown): Promise<void> {
-    const [updated] = await this.pool().execute<any>(
-      `UPDATE sql_execution_intents SET state = ?, result_json = ? WHERE operation_id = ? AND state = 'unknown' AND reconciliation_json IS NULL`,
-      [state, JSON.stringify(result), operationId]);
-    if (updated.affectedRows !== 1) throw new Error('SQL_INTENT_RESULT_NOT_RECORDED');
+    const connection = await this.pool().getConnection();
+    let started = false;
+    try {
+      // Reject an unsupported receipt before any UPDATE. A non-strict session
+      // would otherwise store an empty ENUM and still report affectedRows = 1.
+      if (RECEIPT_STATES.has(state) && !await this.receiptColumnAccepts(connection, state)) {
+        throw new Error('SQL_INTENT_STATE_UNSUPPORTED');
+      }
+      await connection.beginTransaction();
+      started = true;
+      const [updated] = await connection.execute<any>(
+        `UPDATE sql_execution_intents SET state = ?, result_json = ? WHERE operation_id = ? AND state = 'unknown' AND reconciliation_json IS NULL`,
+        [state, JSON.stringify(result), operationId]);
+      if (updated.affectedRows !== 1) throw new Error('SQL_INTENT_RESULT_NOT_RECORDED');
+      if (RECEIPT_STATES.has(state)) {
+        const [rows] = await connection.execute<any[]>(
+          'SELECT state FROM sql_execution_intents WHERE operation_id = ?', [operationId]);
+        if (rows[0]?.state !== state) throw new Error('SQL_INTENT_STATE_UNSUPPORTED');
+      }
+      await connection.commit();
+      started = false;
+    } catch (error) {
+      if (started) await connection.rollback().catch(() => undefined);
+      throw error;
+    } finally {
+      connection.release();
+    }
+  }
+
+  private async receiptColumnAccepts(connection: PoolConnection, state: string): Promise<boolean> {
+    const [rows] = await connection.query<any[]>(
+      `SELECT COLUMN_TYPE AS column_type
+       FROM information_schema.COLUMNS
+       WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'sql_execution_intents' AND COLUMN_NAME = 'state'`);
+    return sqlIntentEnumAccepts(String(rows[0]?.column_type ?? ''), state);
   }
 
   async inspect(operationId: string): Promise<unknown> {
