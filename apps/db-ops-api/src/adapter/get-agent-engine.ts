@@ -18,7 +18,7 @@ import { DirectAdapter } from './direct-adapter.js';
 import { PlatformUnavailableError } from '../lifecycle/platform-unavailable.js';
 import type { ActorContext } from '../auth/actor-context.js';
 import { normalizeToolResult, type AnyAgentTool } from '../tools/types.js';
-import { canActorDiscoverTool, decideToolPolicy, executeToolWithPolicy } from '../tools/policy.js';
+import { canActorDiscoverTool, decideToolPolicy, executeToolWithPolicy, ToolPolicyDeniedError } from '../tools/policy.js';
 import {
   assertToolSecurityCatalogCoverage,
   getToolSecurityDefinition,
@@ -214,9 +214,8 @@ export async function createCronToolRegistry(authority: CronToolAuthority): Prom
           });
           const decision = decideToolPolicy(current, anyTool, args, await resolveResource(anyTool.name, args), true, false);
           if (!decision.allow) {
-            authorityError = new Error(decision.reasonCode);
             await audit.record({ phase: 'decision', actor: current, decision, args });
-            return { success: false, errorCode: decision.reasonCode, error: 'Tool access denied' };
+            throw new ToolPolicyDeniedError(current, decision);
           }
           if (context?.signal?.aborted) throw new Error('TOOL_EXECUTION_CANCELLED');
           return anyTool.handler(args, { ...toolContext, actor: current, userId: current.userId, policyDecision: decision });
