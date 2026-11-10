@@ -504,6 +504,8 @@ export class InstancesPage extends LitElement {
   @state() private listTestMessage = "";
   @state() private showEditDialog = false;
   @state() private showDeleteDialog = false;
+  @state() private isDeleting = false;
+  @state() private deleteError = "";
   @state() private showAddDialog = false;
   @state() private editingInstance: DatabaseInstance | null = null;
   @state() private deletingInstance: DatabaseInstance | null = null;
@@ -961,6 +963,8 @@ export class InstancesPage extends LitElement {
   }
 
   private _deleteInstance(inst: DatabaseInstance) {
+    if (this.isDeleting) return;
+    this.deleteError = "";
     this.deletingInstance = inst;
     this.showDeleteDialog = true;
   }
@@ -997,7 +1001,7 @@ export class InstancesPage extends LitElement {
     return result;
   }
   private _closeDialogs() {
-    if (this.isSubmitting || this.listTestStatus === "testing") return;
+    if (this.isSubmitting || this.isDeleting || this.listTestStatus === "testing") return;
     this._confirmEditorLeave(() => this._finishCloseDialogs());
   }
   private _finishCloseDialogs() {
@@ -1119,11 +1123,14 @@ export class InstancesPage extends LitElement {
   }
 
   private async _handleDelete() {
-    if (!this.deletingInstance) return;
+    if (!this.deletingInstance || this.isDeleting) return;
+    const instance = this.deletingInstance;
+    this.isDeleting = true;
+    this.deleteError = "";
 
     try {
       const res = await authFetch(
-        `/api/database/instances/${this.deletingInstance.id}`,
+        `/api/database/instances/${instance.id}`,
         {
           method: "DELETE",
         }
@@ -1134,11 +1141,16 @@ export class InstancesPage extends LitElement {
         throw new Error(error.error || "删除失败");
       }
 
-      this._closeDialogs();
+      this._finishCloseDialogs();
       await this.loadInstances();
-      showToast("Instance deleted successfully", "success");
-    } catch (err: any) {
-      showToast(`Update failed: ${err.message}`, "error");
+      showToast("实例删除成功", "success");
+      await this.updateComplete;
+      this.renderRoot.querySelector<HTMLInputElement>('.search-input')?.focus();
+    } catch (err: unknown) {
+      this.deleteError = `删除失败：${err instanceof Error ? err.message : '请稍后重试'}。请刷新列表核对后再重试。`;
+      showToast(this.deleteError, "error");
+    } finally {
+      this.isDeleting = false;
     }
   }
 
@@ -1326,16 +1338,20 @@ export class InstancesPage extends LitElement {
     if (!this.showDeleteDialog || !this.deletingInstance) return html``;
 
     return html`
-      <app-dialog .open=${true} size="sm" title="确认删除实例？" @app-dialog-close=${this._closeDialogs}>
+      <app-dialog .open=${true} .closable=${!this.isDeleting} size="sm" title="确认删除实例？" @app-dialog-close=${(event: Event) => {
+        if (this.isDeleting) { event.preventDefault(); return; }
+        this._closeDialogs();
+      }}>
         <div style="text-align:center;padding:var(--space-md) 0">
           <div class="confirm-icon">${icons['triangle-alert']}</div>
           <div class="confirm-text" style="font-size:var(--text-md);color:var(--muted);margin-top:var(--space-md)">
             您即将删除实例 "${this.deletingInstance.name}"，此操作不可恢复。
           </div>
         </div>
-        <div slot="footer" style="justify-content:center;display:flex;gap:var(--space-md)">
-          <button class="btn" @click=${this._closeDialogs}>取消</button>
-          <button class="btn danger" @click=${this._handleDelete} >确认删除</button>
+        ${this.deleteError ? html`<p role="alert">${this.deleteError}</p>` : nothing}
+        <div slot="footer" aria-busy=${String(this.isDeleting)} style="justify-content:center;display:flex;gap:var(--space-md)">
+          <button class="btn" .disabled=${this.isDeleting} @click=${this._closeDialogs}>取消</button>
+          <button class="btn danger" .disabled=${this.isDeleting} @click=${this._handleDelete}>${this.isDeleting ? '删除中...' : '确认删除'}</button>
         </div>
       </app-dialog>
     `;
