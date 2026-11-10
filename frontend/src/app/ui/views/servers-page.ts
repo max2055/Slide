@@ -229,6 +229,8 @@ export class ServersPage extends LitElement {
     credential_username: "",
     credential_value: "",
   };
+  /** True only after the user changes the operating-system control. */
+  private _osTouched = false;
   @state() private _testConnectionMessage = "";
   @state() private _testConnectionSuccess: boolean | null = null;
   @state() private _osFilter = restoredListState('server')?.state.os ?? "all";
@@ -291,6 +293,7 @@ export class ServersPage extends LitElement {
     this.editorTab = "basic";
     this.connectionPending = true;
     this._editingId = null;
+    this._osTouched = false;
     this._form = {
       host: "",
       port: 22,
@@ -320,11 +323,16 @@ export class ServersPage extends LitElement {
       }
     } catch { /* fall back to empty */ }
 
+    const originalOsType = server.os_type ?? "";
+    const recognized = canonicalOsKey(originalOsType);
+    this._osTouched = false;
     this._form = {
       host: server.host,
       port: server.port,
       label: server.label || "",
-      os_type: canonicalOsKey(server.os_type) === "unknown" ? "centos" : canonicalOsKey(server.os_type),
+      // Recognized families keep their existing option. Unknown and empty
+      // values stay as stored so the control does not present CentOS.
+      os_type: recognized === "unknown" ? originalOsType : recognized,
       host_key_fingerprint: server.host_key_fingerprint || undefined,
       ssh_trust_mode: server.ssh_trust_mode || (server.host_key_fingerprint ? "pinned" : "pending"),
       credential_type: server.credential_type,
@@ -359,6 +367,16 @@ export class ServersPage extends LitElement {
     else this.renderRoot.querySelector<HTMLElement>('.resource-action--add')?.focus();
   }
 
+  private _shouldSendEditedOsType(): boolean {
+    if (!this._osTouched) return false;
+    return CANONICAL_OS_OPTIONS.some((option) => option.value === this._form.os_type);
+  }
+
+  private _onOsChange = (event: Event) => {
+    this._osTouched = true;
+    this._updateForm("os_type", (event.target as HTMLSelectElement).value);
+  };
+
   private _updateForm<K extends keyof ServerFormData>(field: K, value: ServerFormData[K]) {
     this.connectionPending = true;
     this._form = { ...this._form, [field]: value };
@@ -385,6 +403,10 @@ export class ServersPage extends LitElement {
       if (isEdit) {
         if (!body.credential_value) delete body.credential_value;
         if (!body.credential_username) delete body.credential_username;
+        // Leave os_type out unless the user picked kylin, rhel, or centos.
+        // Sending the stored unknown value is rejected, and substituting
+        // centos would overwrite it.
+        if (!this._shouldSendEditedOsType()) delete body.os_type;
       }
 
       const res = await authFetch(url, {
@@ -736,10 +758,11 @@ export class ServersPage extends LitElement {
           <div class="form-row">
             <app-form-field label="操作系统" .inline=${true}>
               <select class="form-select" .value=${this._form.os_type}
-                @change=${(e: any) => this._updateForm("os_type", e.target.value)}>
-                <option value="kylin">Kylin OS</option>
-                <option value="rhel">Red Hat Enterprise Linux</option>
-                <option value="centos">CentOS</option>
+                @change=${this._onOsChange}>
+                ${CANONICAL_OS_OPTIONS.some((option) => option.value === this._form.os_type)
+                  ? nothing
+                  : html`<option value=${this._form.os_type} selected>${this._form.os_type.trim() ? this._form.os_type : "未知"}</option>`}
+                ${CANONICAL_OS_OPTIONS.map((option) => html`<option value=${option.value} ?selected=${option.value === this._form.os_type}>${option.label}</option>`)}
               </select>
             </app-form-field>
 
