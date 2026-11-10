@@ -97,6 +97,9 @@ export const oracleTablespaceDetailTool: AnyAgentTool = {
           LEFT JOIN (
             SELECT
               tablespace_name,
+              -- 任一数据文件可自动扩展，则表空间标记为 YES；全部不可扩展则为 NO
+              CASE WHEN MAX(CASE WHEN autoextensible = 'YES' THEN 1 ELSE 0 END) = 1
+                THEN 'YES' ELSE 'NO' END as autoextensible,
               SUM(bytes) as total_bytes,
               SUM(CASE WHEN autoextensible = 'YES' THEN maxbytes ELSE bytes END) as max_bytes,
               SUM(CASE WHEN autoextensible = 'YES' THEN maxbytes ELSE bytes END) - SUM(bytes) as free_bytes,
