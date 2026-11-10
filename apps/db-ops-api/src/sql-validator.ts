@@ -38,30 +38,40 @@ function isSqlWhitespace(ch: string | undefined): boolean {
 interface ScannedSql {
   expanded: string;
   skeleton: string;
+  /** Parser input whose literals cannot be re-tokenized by default escapes. */
+  canonical: string;
 }
 
 /**
  * Separate executable MySQL comments from text that cannot change statement
  * shape. Versioned comments are always inlined: the classifier does not know
  * the server version, and dropping a future-version body would hide the
- * statement a newer server would run. `backslashEscapes` follows MySQL's
- * default; NO_BACKSLASH_ESCAPES is scanned separately. Returns null when a
- * comment or literal is unclosed.
+ * statement a newer server would run. `backslashEscapes` follows one sql_mode
+ * interpretation; callers scan each closed interpretation. Returns null when a
+ * comment or literal is unclosed in that interpretation.
+ *
+ * `canonical` keeps keywords, operators and quoted identifiers, replaces
+ * string bodies with `''`, and drops ordinary comments. The parser always
+ * uses its own default escape rules, so it must not see the original literal
+ * text or it will reassemble a different statement than this mode executes.
  */
 function scanSqlTokens(sql: string, dialect: string, backslashEscapes = true): ScannedSql | null {
   const mysql = dialect === 'mysql';
   const expanded: string[] = [];
   const skeleton: string[] = [];
+  const canonical: string[] = [];
   let index = 0;
   let inliningExecutable = false;
 
-  const pushBoth = (text: string) => {
+  const pushCode = (text: string) => {
     expanded.push(text);
     skeleton.push(text);
+    canonical.push(text);
   };
-  const pushMasked = (original: string, mask: string) => {
+  const pushMasked = (original: string, skeletonMask: string, canonicalMask: string) => {
     expanded.push(original);
-    skeleton.push(mask);
+    skeleton.push(skeletonMask);
+    canonical.push(canonicalMask);
   };
 
   while (index < sql.length) {
@@ -88,7 +98,7 @@ function scanSqlTokens(sql: string, dialect: string, backslashEscapes = true): S
         cursor += 1;
       }
       if (!closed) return null;
-      pushMasked(sql.slice(index, cursor), current === '\'' ? "''" : '""');
+      pushMasked(sql.slice(index, cursor), current === '\'' ? "''" : '""', "''");
       index = cursor;
       continue;
     }
@@ -109,7 +119,9 @@ function scanSqlTokens(sql: string, dialect: string, backslashEscapes = true): S
         cursor += 1;
       }
       if (!closed) return null;
-      pushMasked(sql.slice(index, cursor), '``');
+      // Keep the identifier in the parser input. Masking it in the skeleton
+      // avoids keyword false positives; the function whitelist reads the AST.
+      pushMasked(sql.slice(index, cursor), '``', sql.slice(index, cursor));
       index = cursor;
       continue;
     }
@@ -119,14 +131,17 @@ function scanSqlTokens(sql: string, dialect: string, backslashEscapes = true): S
       const closer = sql.indexOf(dollar[0], index + dollar[0].length);
       if (closer < 0) return null;
       const end = closer + dollar[0].length;
-      pushMasked(sql.slice(index, end), "''");
+      // MySQL has no dollar literals. Keep the original text in the parser
+      // input so SELECT $$sleep(0)$$ still fails closed, and mask the skeleton
+      // so the keyword scan does not reclassify that parser failure.
+      pushMasked(sql.slice(index, end), "''", mysql ? sql.slice(index, end) : "''");
       index = end;
       continue;
     }
 
     if (inliningExecutable && current === '*' && next === '/') {
       inliningExecutable = false;
-      pushBoth(' ');
+      pushCode(' ');
       index += 2;
       continue;
     }
@@ -138,7 +153,7 @@ function scanSqlTokens(sql: string, dialect: string, backslashEscapes = true): S
       let cursor = index;
       while (cursor < sql.length && sql[cursor] !== '\n') cursor += 1;
       if (sql[cursor] === '\n') cursor += 1;
-      pushMasked(sql.slice(index, cursor), ' ');
+      pushMasked(sql.slice(index, cursor), ' ', ' ');
       index = cursor;
       continue;
     }
@@ -153,7 +168,7 @@ function scanSqlTokens(sql: string, dialect: string, backslashEscapes = true): S
           cursor += sixth !== undefined && sixth >= '0' && sixth <= '9' && isSqlWhitespace(seventh) ? 6 : 5;
         }
         inliningExecutable = true;
-        pushBoth(' ');
+        pushCode(' ');
         index = cursor;
         continue;
       }
@@ -168,17 +183,21 @@ function scanSqlTokens(sql: string, dialect: string, backslashEscapes = true): S
         cursor += 1;
       }
       if (!closed) return null;
-      pushMasked(sql.slice(index, cursor), ' ');
+      pushMasked(sql.slice(index, cursor), ' ', ' ');
       index = cursor;
       continue;
     }
 
-    pushBoth(current);
+    pushCode(current);
     index += 1;
   }
 
   if (inliningExecutable) return null;
-  return { expanded: expanded.join(''), skeleton: skeleton.join('') };
+  return {
+    expanded: expanded.join(''),
+    skeleton: skeleton.join(''),
+    canonical: canonical.join(''),
+  };
 }
 
 function dangerousSelectText(skeleton: string): SqlReasonCode | null {
@@ -227,7 +246,10 @@ function stricterClassification(primary: SqlClassification, alternate: SqlClassi
 }
 
 function classifyScanned(sql: string, dialect: string, scanned: ScannedSql): SqlClassification {
-  const source = dialect === 'mysql' ? scanned.expanded : sql;
+  // MySQL parses the mode-specific canonical statement so default backslash
+  // rules cannot pull code back into a literal. Other dialects parse the
+  // original text; their scan only builds the skeleton.
+  const source = dialect === 'mysql' ? scanned.canonical : sql;
   const parser = new Parser();
   let ast: any;
   try {
@@ -266,13 +288,18 @@ export function classifySql(sql: string, dialect: string = 'mysql'): SqlClassifi
   if (Buffer.byteLength(sql, 'utf8') > 64 * 1024) return { commandType: 'unknown', reasonCode: 'SQL_TOO_LARGE', dialect };
   const escaped = scanSqlTokens(sql, dialect, true);
   if (dialect !== 'mysql') return escaped ? classifyScanned(sql, dialect, escaped) : unclassified(dialect);
-  // The session sql_mode is not known here. An unclosed literal cannot run;
-  // a closed reading that is not a pure read cannot be allowed.
+  // The session sql_mode is not known here. An unclosed literal cannot run.
+  // Every closed reading must parse to the same whitelist decision: the
+  // alternate text skeleton is not a function allow-list.
   const literal = scanSqlTokens(sql, dialect, false);
-  const same = !!escaped && !!literal && escaped.expanded === literal.expanded && escaped.skeleton === literal.skeleton;
-  if (!literal || same) return escaped ? classifyScanned(sql, dialect, escaped) : unclassified(dialect);
-  if (!escaped) return classifyScanned(sql, dialect, literal);
-  return stricterClassification(classifyScanned(sql, dialect, escaped), classifyScanned(sql, dialect, literal));
+  const closed = [escaped, literal].filter((scan): scan is ScannedSql => scan !== null);
+  if (closed.length === 0) return unclassified(dialect);
+  let result = classifyScanned(sql, dialect, closed[0]);
+  for (const scan of closed.slice(1)) {
+    if (scan.canonical === closed[0].canonical) continue;
+    result = stricterClassification(result, classifyScanned(sql, dialect, scan));
+  }
+  return result;
 }
 
 export function isSingleReadOnlySql(sql: string, dialect?: string): SqlClassification {

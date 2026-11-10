@@ -122,6 +122,35 @@ describe.skipIf(!acceptance)('MAX-362 MySQL read-only execution gate', () => {
     expect(await statementHits(admin, marker)).toBe(before);
   }, 30_000);
 
+  it.each([
+    ["SELECT 'a\\' , `SLEEP`(0) AS executed -- max362tick '", 0],
+    ["SELECT 'a\\' , UUID() AS executed -- max362uuid '", 'string'],
+    ["SELECT 'a\\' , CONNECTION_ID() AS executed -- max362cid '", 'number'],
+    ["SELECT 'a\\' , UUID() AS executed # max362hash '", 'string'],
+    ["SELECT 'a\\' , /* max362block */ CONNECTION_ID() AS executed -- max362blockend '", 'number'],
+    ["SELECT 'a\\' /*! , `SLEEP`(0) */ AS executed -- max362execc '", 0],
+  ] as const)('refuses %s under NO_BACKSLASH_ESCAPES before MySQL sees the executor statement', async (sql, expected) => {
+    const connection = await admin.getConnection();
+    const marker = sql.match(/max362[a-z]+/)?.[0] ?? 'max362mode';
+    try {
+      await connection.query("SET SESSION sql_mode = 'NO_BACKSLASH_ESCAPES'");
+      const [modeRows] = await connection.query<RowDataPacket[]>('SELECT @@SESSION.sql_mode AS sql_mode');
+      expect(String(modeRows[0]?.sql_mode)).toContain('NO_BACKSLASH_ESCAPES');
+      const [rows] = await connection.query<RowDataPacket[]>(sql);
+      const executed = rows[0]?.executed;
+      if (expected === 'string') expect(typeof executed).toBe('string');
+      else if (expected === 'number') expect(typeof executed === 'number' || typeof executed === 'bigint').toBe(true);
+      else expect(Number(executed)).toBe(expected);
+      const before = await statementHits(admin, marker);
+      const result = await sqlExecutor.executeSql(INSTANCE_ID, sql);
+      expect(result).toMatchObject({ success: false, error: 'SQL_APPROVAL_REQUIRED_DANGEROUS_FUNCTION' });
+      expect(await statementHits(admin, marker)).toBe(before);
+    } finally {
+      await connection.query('SET SESSION sql_mode = @@GLOBAL.sql_mode').catch(() => undefined);
+      connection.release();
+    }
+  }, 30_000);
+
   it('executes a literal whose escaped quote stays inside the string', async () => {
     const result = await sqlExecutor.executeSql(
       INSTANCE_ID,

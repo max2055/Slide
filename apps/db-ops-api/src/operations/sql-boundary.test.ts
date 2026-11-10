@@ -79,6 +79,15 @@ describe('SQL read-only boundary', () => {
     ["SELECT 'a\\', SLEEP(0)", 'DANGEROUS_FUNCTION'],
     ['SELECT "a\\" , SLEEP(0) AS executed -- "', 'DANGEROUS_FUNCTION'],
     ['SELECT "a\\" FROM t FOR UPDATE -- "', 'LOCKING_READ'],
+    ["SELECT 'a\\' , `SLEEP`(0) AS executed -- '", 'DANGEROUS_FUNCTION'],
+    ["SELECT 'a\\' , `UUID`() AS executed -- '", 'DANGEROUS_FUNCTION'],
+    ["SELECT 'a\\' , UUID() AS executed -- '", 'DANGEROUS_FUNCTION'],
+    ["SELECT 'a\\' , CONNECTION_ID() AS executed -- '", 'DANGEROUS_FUNCTION'],
+    ["SELECT 'a\\' , not_a_real_function(0) AS executed -- '", 'DANGEROUS_FUNCTION'],
+    ["SELECT 'a\\' , UUID() AS executed # '", 'DANGEROUS_FUNCTION'],
+    ["SELECT 'a\\' , /* mode */ CONNECTION_ID() AS executed -- '", 'DANGEROUS_FUNCTION'],
+    ["SELECT 'a\\' /*! , `SLEEP`(0) */ -- '", 'DANGEROUS_FUNCTION'],
+    ["SELECT 'a\\' , BENCHMARK(1, 1) /* ' */", 'DANGEROUS_FUNCTION'],
   ] as const)('rejects MySQL read bypass %s', (sql, reasonCode) => {
     expect(classifySql(sql, 'mysql')).toMatchObject({ commandType: 'unknown', reasonCode });
   });
@@ -99,8 +108,16 @@ describe('SQL read-only boundary', () => {
     ['SELECT 1 /*! + 1 */'],
     ["SELECT 'a\\\\', 1 AS n -- '"],
     ["SELECT 'a\\', 1 AS still_text'"],
+    ['SELECT `uuid` FROM t'],
+    ['SELECT `sleep` FROM t'],
+    ["SELECT msg FROM t WHERE msg = 'uuid()'"],
+    ["SELECT msg FROM t WHERE msg = '`SLEEP`(0)'"],
   ] as const)('keeps ordinary MySQL text read-only: %s', (sql) => {
     expect(classifySql(sql, 'mysql')).toMatchObject({ commandType: 'read', reasonCode: 'READ_ONLY' });
+  });
+
+  it('does not treat MySQL dollar text as a readable literal', () => {
+    expect(classifySql('SELECT $$sleep(0)$$', 'mysql')).toMatchObject({ commandType: 'unknown', reasonCode: 'UNCLASSIFIED' });
   });
 
   it('does not treat a MySQL executable comment as executable on PostgreSQL', () => {
