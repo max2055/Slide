@@ -40,7 +40,7 @@ export class SqlExecutionIntentStore {
     }
   }
 
-  async finish(operationId: string, state: 'succeeded' | 'unknown', result: unknown): Promise<void> {
+  async finish(operationId: string, state: 'succeeded' | 'unknown' | 'rolled_back' | 'not_executed', result: unknown): Promise<void> {
     const [updated] = await this.pool().execute<any>(
       `UPDATE sql_execution_intents SET state = ?, result_json = ? WHERE operation_id = ? AND state = 'unknown' AND reconciliation_json IS NULL`,
       [state, JSON.stringify(result), operationId]);
