@@ -4,6 +4,13 @@ import { credentialReferenceService } from '../../../security/credential-referen
 import { addDatabaseTool } from './add_database.js';
 import { addDatabaseBatchTool } from './add_database_batch.js';
 
+const visibleActor = {
+  userId: 7, username: 'dba', roles: ['dba'], permissions: ['instance:*'], instanceScopes: {}, sessionVersion: 1, requestId: 'unit',
+};
+const hiddenActor = {
+  userId: 8, username: 'operator', roles: ['operator'], permissions: ['instance:create', 'instance:update'], instanceScopes: {}, sessionVersion: 1, requestId: 'unit-hidden',
+};
+
 describe('slide_add_database', () => {
   afterEach(() => vi.restoreAllMocks());
 
@@ -45,7 +52,7 @@ describe('slide_add_database', () => {
       host: 'db.internal',
       port: 3306,
       username: 'slide',
-    }, { actor: { userId: 7 } as any } as any);
+    }, { actor: visibleActor } as any);
 
     expect(result).toMatchObject({
       success: false,
@@ -53,6 +60,61 @@ describe('slide_add_database', () => {
       data: { instanceId: 73, connectionStatus: 'already_managed' },
       details: { terminal: true, retryable: false },
     });
+  });
+
+  it('rejects a hidden same-environment name without disclosing its identity or existence', async () => {
+    vi.spyOn(instanceDatabaseService, 'listAvailableInstancesByNormalizedName').mockResolvedValue([{
+      id: 73,
+      name: 'hidden-orders',
+      environment: 'development',
+    }]);
+    const createInstance = vi.spyOn(instanceDatabaseService, 'createInstance');
+    const result = await addDatabaseTool.handler({
+      db_type: 'mysql',
+      name: 'hidden-orders',
+      host: '192.0.2.77',
+      port: 3306,
+      username: 'slide',
+    }, { actor: hiddenActor } as any);
+    const packed = JSON.stringify(result);
+    expect(result).toMatchObject({
+      success: false,
+      errorCode: 'INSTANCE_CREATE_DENIED',
+      error: '无法完成纳管',
+      details: { terminal: true, retryable: false },
+    });
+    expect(result.data).toBeUndefined();
+    expect(result.details).not.toHaveProperty('instanceId');
+    expect(packed).not.toContain('73');
+    expect(packed).not.toContain('hidden-orders');
+    expect(packed).not.toContain('已存在');
+    expect(packed).not.toContain('INSTANCE_EXISTS');
+    expect(createInstance).not.toHaveBeenCalled();
+  });
+
+  it('still discloses a duplicate when the caller can see that instance', async () => {
+    vi.spyOn(instanceDatabaseService, 'listAvailableInstancesByNormalizedName').mockResolvedValue([{
+      id: 73,
+      name: 'orders',
+      environment: 'development',
+    }]);
+    const scoped = { ...hiddenActor, instanceScopes: { 73: 'read-only' as const } };
+    const result = await addDatabaseTool.handler({
+      db_type: 'mysql', name: 'orders', host: '192.0.2.77', port: 3306, username: 'slide',
+    }, { actor: scoped } as any);
+    expect(result).toMatchObject({ errorCode: 'INSTANCE_EXISTS', data: { instanceId: 73 } });
+  });
+
+  it('hides an occupant outside the caller resource boundary even with global instance permission', async () => {
+    vi.spyOn(instanceDatabaseService, 'listAvailableInstancesByNormalizedName').mockResolvedValue([{
+      id: 73, name: 'orders', environment: 'development',
+    }]);
+    const bounded = { ...visibleActor, resourceBoundary: { instanceIds: [4], serverIds: [], networkDeviceIds: [] } };
+    const result = await addDatabaseTool.handler({
+      db_type: 'mysql', name: 'orders', host: '192.0.2.77', port: 3306, username: 'slide',
+    }, { actor: bounded } as any);
+    expect(JSON.stringify(result)).not.toContain('73');
+    expect(result.errorCode).toBe('INSTANCE_CREATE_DENIED');
   });
 
   it('allows the same trimmed name in another environment and stores the normalized name', async () => {
@@ -103,7 +165,7 @@ describe('slide_add_database', () => {
 describe('slide_add_database single-use credential recovery', () => {
   const secret = 'synthetic-secret-must-not-reach-model';
   const args = { db_type: 'mysql', host: 'db.internal', port: 3306, username: 'slide', credential_ref: 'ref-once' };
-  const context = { actor: { userId: 7 } as any };
+  const context = { actor: visibleActor as any };
 
   beforeEach(() => {
     vi.spyOn(instanceDatabaseService, 'listAvailableInstancesByNormalizedName').mockResolvedValue([]);
@@ -160,6 +222,25 @@ describe('slide_add_database single-use credential recovery', () => {
     expect(result).toMatchObject({ errorCode: 'INSTANCE_EXISTS', data: { instanceId: 73 }, details: { terminal: true, retryable: false } });
     expect(result.next_actions?.join(' ')).toContain('复用已有实例 ID 73');
     expect(JSON.stringify(result)).not.toContain(secret);
+  });
+
+  it('does not disclose a hidden physical occupant id, name, or existence', async () => {
+    const occupant = 'occupant-name-must-stay-hidden';
+    vi.mocked(instanceDatabaseService.createInstance).mockResolvedValue({
+      success: false,
+      instanceId: 73,
+      error: `该地址已被实例 "${occupant}" (ID: 73) 纳管，请勿重复添加`,
+    });
+    const result = await addDatabaseTool.handler(args, { actor: hiddenActor as any });
+    const packed = JSON.stringify(result);
+    expect(result).toMatchObject({ errorCode: 'INSTANCE_CREATE_DENIED', details: { terminal: true, retryable: false } });
+    expect(result.data).toBeUndefined();
+    expect(packed).not.toContain('73');
+    expect(packed).not.toContain(occupant);
+    expect(packed).not.toContain('已存在');
+    expect(packed).not.toContain('已被实例');
+    expect(packed).not.toContain(secret);
+    expect(credentialReferenceService.consume).toHaveBeenCalledTimes(1);
   });
 
   it('does not consume the reference for a duplicate name detected before creation', async () => {

@@ -28,6 +28,51 @@ function mysqlTestConfig(env: MysqlEnv = process.env): mysql.ConnectionOptions {
   return { host, port, user, password };
 }
 
+const SCHEMA_NAME = /^[A-Za-z0-9_]+$/;
+
+/** A resolved Ok packet is the only receipt that grants cleanup ownership. */
+function isConfirmedCreateDatabaseReceipt(receipt: unknown): boolean {
+  const packet = Array.isArray(receipt) ? receipt[0] : receipt;
+  if (!packet || typeof packet !== 'object') return false;
+  const row = packet as { fieldCount?: unknown; affectedRows?: unknown; serverStatus?: unknown; warningStatus?: unknown };
+  return row.fieldCount === 0
+    && typeof row.affectedRows === 'number'
+    && Number.isFinite(row.affectedRows)
+    && typeof row.serverStatus === 'number'
+    && typeof row.warningStatus === 'number';
+}
+
+type SqlExecutor = { query: (sql: string) => Promise<unknown> };
+
+async function createOwnedDatabase(executor: SqlExecutor, name: string, owned: Set<string>): Promise<void> {
+  if (!SCHEMA_NAME.test(name)) throw new Error('INVALID_SCHEMA_NAME');
+  const receipt = await executor.query(`CREATE DATABASE \`${name}\``);
+  if (!isConfirmedCreateDatabaseReceipt(receipt)) throw new Error('CREATE_DATABASE_RECEIPT_UNKNOWN');
+  owned.add(name);
+}
+
+async function dropOwnedDatabases(executor: SqlExecutor, owned: Set<string>): Promise<void> {
+  const failed: string[] = [];
+  for (const name of [...owned]) {
+    if (!SCHEMA_NAME.test(name)) {
+      failed.push(name);
+      continue;
+    }
+    try {
+      await executor.query(`DROP DATABASE \`${name}\``);
+      owned.delete(name);
+    } catch {
+      failed.push(name);
+    }
+  }
+  if (failed.length) throw new Error(`CLEANUP_ERROR ${failed.join(',')}`);
+}
+
+/** Cleanup failure stays separate and must not replace an already recorded init failure. */
+function cleanupReplacesInit(initError: unknown, cleanupError: unknown): boolean {
+  return cleanupError != null && initError == null;
+}
+
 describe('MAX-377 injected mysql acceptance config', () => {
   it('stays disabled until this task explicitly enables real acceptance', () => {
     expect(acceptanceEnabled({})).toBe(false);
@@ -43,6 +88,36 @@ describe('MAX-377 injected mysql acceptance config', () => {
       MAX377_MYSQL_USER: 'root',
       MAX377_MYSQL_PASSWORD: 'injected',
     })).toThrow(/MAX377_MYSQL_PORT=3308/);
+  });
+
+  it('grants drop rights only after a confirmed create receipt', async () => {
+    const dropped: string[] = [];
+    const owned = new Set<string>();
+    const executor: SqlExecutor = {
+      async query(sql: string) {
+        if (sql.includes('`exists`')) throw new Error("Can't create database 'exists'; database exists");
+        if (sql.includes('`unknown`')) return { unexpected: true };
+        if (sql.startsWith('CREATE')) return [{ fieldCount: 0, affectedRows: 1, serverStatus: 2, warningStatus: 0 }];
+        if (sql.startsWith('DROP')) {
+          dropped.push(sql);
+          return [];
+        }
+        throw new Error(`unexpected sql ${sql}`);
+      },
+    };
+    await expect(createOwnedDatabase(executor, 'exists', owned)).rejects.toThrow(/database exists/);
+    await expect(createOwnedDatabase(executor, 'unknown', owned)).rejects.toThrow(/CREATE_DATABASE_RECEIPT_UNKNOWN/);
+    expect(owned.size).toBe(0);
+    expect(isConfirmedCreateDatabaseReceipt(undefined)).toBe(false);
+    expect(isConfirmedCreateDatabaseReceipt({ affectedRows: 1, serverStatus: 2, warningStatus: 0 })).toBe(false);
+    await dropOwnedDatabases(executor, owned);
+    expect(dropped).toEqual([]);
+    await createOwnedDatabase(executor, 'owned_ok', owned);
+    await dropOwnedDatabases(executor, owned);
+    expect(dropped).toEqual(['DROP DATABASE `owned_ok`']);
+    expect(owned.size).toBe(0);
+    expect(cleanupReplacesInit(new Error('init'), new Error('CLEANUP_ERROR'))).toBe(false);
+    expect(cleanupReplacesInit(undefined, new Error('CLEANUP_ERROR'))).toBe(true);
   });
 });
 
@@ -128,6 +203,8 @@ describe.skipIf(!acceptanceEnabled())('MAX-377/MAX-379 name identity on isolated
   const hiddenMarker = `hidden-${suffix}`;
   let admin: mysql.Connection;
   let pool: mysql.Pool;
+  let initError: unknown;
+  const ownedSchemas = new Set<string>();
   let addTool: AnyAgentTool;
   let updateTool: AnyAgentTool;
   let writer: ActorContext;
@@ -191,11 +268,12 @@ describe.skipIf(!acceptanceEnabled())('MAX-377/MAX-379 name identity on isolated
   }
 
   beforeAll(async () => {
+    try {
     vi.spyOn(instanceDatabaseService, 'testConnection').mockImplementation(async () => {
       throw new Error('CONNECTION_PROBE_NOT_PART_OF_THIS_ACCEPTANCE');
     });
     admin = await mysql.createConnection(mysqlTestConfig());
-    await admin.query(`CREATE DATABASE \`${schema}\``);
+    await createOwnedDatabase(admin, schema, ownedSchemas);
     pool = mysql.createPool({ ...mysqlTestConfig(), database: schema, connectionLimit: 8 });
     for (const statement of tableSql.split(';').map((part) => part.trim()).filter(Boolean)) {
       await pool.query(statement);
@@ -229,15 +307,43 @@ describe.skipIf(!acceptanceEnabled())('MAX-377/MAX-379 name identity on isolated
     limited = await login(22);
     noscope = await login(23);
     noperm = await login(24);
+    } catch (error) {
+      initError = error;
+      throw error;
+    }
   }, 60_000);
 
   afterAll(async () => {
-    vi.restoreAllMocks();
-    if (pool) await pool.end();
-    if (admin) {
-      await admin.query(`DROP DATABASE IF EXISTS \`${schema}\``);
-      await admin.end();
+    let cleanupError: unknown;
+    try {
+      vi.restoreAllMocks();
+    } catch (error) {
+      cleanupError = error;
     }
+    if (pool) {
+      try {
+        await pool.end();
+      } catch (error) {
+        cleanupError = cleanupError ?? error;
+      }
+    }
+    if (admin) {
+      try {
+        await dropOwnedDatabases(admin, ownedSchemas);
+      } catch (error) {
+        cleanupError = cleanupError ?? error;
+      }
+      try {
+        await admin.end();
+      } catch (error) {
+        cleanupError = cleanupError ?? error;
+      }
+    }
+    if (!cleanupReplacesInit(initError, cleanupError)) {
+      if (cleanupError) console.error(JSON.stringify({ phase: 'cleanup', separatedFrom: 'init' }));
+      return;
+    }
+    throw cleanupError;
   });
 
   it('creates the same trimmed name in two environments and rejects the same environment', async () => {
@@ -253,7 +359,13 @@ describe.skipIf(!acceptanceEnabled())('MAX-377/MAX-379 name identity on isolated
     const duplicate = await run(addTool, writer, {
       db_type: 'mysql', name: 'orders', host: '192.0.2.42', port: 3306, username: 'slide', database_name: 'app-c',
     });
-    expect(duplicate.result).toMatchObject({ success: false, errorCode: 'INSTANCE_EXISTS' });
+    expect(duplicate.result).toMatchObject({
+      success: false,
+      errorCode: 'INSTANCE_EXISTS',
+      data: { instanceId: Number((await instances())[0].id) },
+    });
+    expect(duplicate.result.artifacts).toMatchObject({ instanceId: Number((await instances())[0].id) });
+    expect(duplicate.result.next_actions?.join(' ')).toContain(`复用已有实例 ID ${(await instances())[0].id}`);
     const blank = await run(addTool, writer, {
       db_type: 'mysql', name: '   ', host: '192.0.2.43', port: 3306, username: 'slide', database_name: 'app-d',
     });
@@ -339,5 +451,163 @@ describe.skipIf(!acceptanceEnabled())('MAX-377/MAX-379 name identity on isolated
     const missingPermission = await run(updateTool, noperm, { instance_id: Number(visible!.id), description: 'noperm' });
     expect(missingPermission.decision.reasonCode).toBe('MISSING_PERMISSION');
     expect(await instances()).toEqual(before);
+  });
+
+  function packedDenial(value: unknown): string {
+    return JSON.stringify(value);
+  }
+
+  function disclosesInstance(packed: string, id: number): boolean {
+    return [`"instanceId":${id}`, `"instanceId": ${id}`, `(ID: ${id})`, `ID ${id},`, `ID ${id}，`].some((token) => packed.includes(token));
+  }
+
+  it('keeps a preexisting database when create fails or the receipt is unknown', async () => {
+    const preexisting = `max377_pre_${suffix}`;
+    const created = `max377_owned_${suffix}`;
+    const probeOwned = new Set<string>();
+    let preexistingCreated = false;
+    try {
+      await admin.query(`CREATE DATABASE \`${preexisting}\``);
+      preexistingCreated = true;
+      await admin.query(`CREATE TABLE \`${preexisting}\`.marker (id INT PRIMARY KEY)`);
+      await admin.query(`INSERT INTO \`${preexisting}\`.marker VALUES (1)`);
+      await expect(createOwnedDatabase(admin, preexisting, probeOwned)).rejects.toThrow(/database exists/);
+      expect(probeOwned.has(preexisting)).toBe(false);
+      await expect(createOwnedDatabase({
+        async query() {
+          return { unexpected: true };
+        },
+      }, created, probeOwned)).rejects.toThrow(/CREATE_DATABASE_RECEIPT_UNKNOWN/);
+      expect(probeOwned.has(created)).toBe(false);
+      await dropOwnedDatabases(admin, probeOwned);
+      const [kept] = await admin.query<mysql.RowDataPacket[]>(`SELECT id FROM \`${preexisting}\`.marker`);
+      expect(kept).toEqual([{ id: 1 }]);
+
+      await createOwnedDatabase(admin, created, probeOwned);
+      await dropOwnedDatabases(admin, probeOwned);
+      const [gone] = await admin.query<mysql.RowDataPacket[]>(
+        'SELECT SCHEMA_NAME AS name FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = ?',
+        [created],
+      );
+      expect(gone).toHaveLength(0);
+      const [still] = await admin.query<mysql.RowDataPacket[]>(`SELECT id FROM \`${preexisting}\`.marker`);
+      expect(still).toEqual([{ id: 1 }]);
+    } finally {
+      if (probeOwned.has(created)) await admin.query(`DROP DATABASE \`${created}\``);
+      if (preexistingCreated) await admin.query(`DROP DATABASE \`${preexisting}\``);
+    }
+  });
+
+  it('does not disclose a hidden same-environment instance through the production tool entry', async () => {
+    const rows = await instances();
+    const hidden = rows.find((row) => row.name === 'orders' && row.environment === 'development');
+    expect(hidden?.id).toBeTruthy();
+    const before = await instances();
+    const denied = await run(addTool, noscope, {
+      db_type: 'mysql', name: 'orders', host: '192.0.2.77', port: 3306, username: 'slide', database_name: 'app-hidden',
+    });
+    const packed = packedDenial(denied);
+    expect(denied.decision.reasonCode).toBe('ALLOW');
+    expect(denied.result).toMatchObject({ success: false, errorCode: 'INSTANCE_CREATE_DENIED', error: '无法完成纳管' });
+    expect(denied.result.data).toBeUndefined();
+    expect(denied.result.artifacts).toEqual({});
+    expect(denied.result.details).not.toHaveProperty('instanceId');
+    expect(denied.result.next_actions?.join(' ')).not.toContain(`ID ${hidden!.id}`);
+    expect(disclosesInstance(packed, Number(hidden!.id))).toBe(false);
+    expect(packed).not.toContain('已存在');
+    expect(packed).not.toContain('INSTANCE_EXISTS');
+    expect(await instances()).toEqual(before);
+    const [audits] = await pool.query<mysql.RowDataPacket[]>(
+      `SELECT result_redacted, resource_json, reason_code FROM agent_tool_audit
+       WHERE tool_name = 'slide_add_database' AND actor_id = 23 AND reason_code = 'ALLOW'
+       ORDER BY id DESC LIMIT 2`,
+    );
+    expect(audits.length).toBeGreaterThan(0);
+    const auditText = JSON.stringify(audits);
+    expect(disclosesInstance(auditText, Number(hidden!.id))).toBe(false);
+    expect(auditText).not.toContain('已存在');
+    expect(auditText).not.toContain('hidden-orders');
+  });
+
+  it('rejects a hidden physical occupant without disclosing it and still creates another environment', async () => {
+    const rows = await instances();
+    const hidden = rows.find((row) => row.environment === 'development' && row.name === 'orders');
+    const before = rows.length;
+    const physical = await run(addTool, noscope, {
+      db_type: 'mysql', name: 'orders-shadow', host: '192.0.2.40', port: 3306, username: 'slide', database_name: 'app-a',
+    });
+    const packed = packedDenial(physical);
+    expect(physical.result.errorCode).toBe('INSTANCE_CREATE_DENIED');
+    expect(disclosesInstance(packed, Number(hidden!.id))).toBe(false);
+    expect(packed).not.toContain('id-updated');
+    expect(packed).not.toContain('已被实例');
+    expect((await instances()).length).toBe(before);
+    const staged = await run(addTool, noscope, {
+      db_type: 'mysql', name: 'orders', host: '192.0.2.78', port: 3306, username: 'slide', database_name: 'app-stage', environment: 'staging',
+    });
+    expect(staged.result).toMatchObject({ success: true, data: { name: 'orders' } });
+    const after = await instances();
+    expect(after.some((row) => row.environment === 'staging' && row.host === '192.0.2.78')).toBe(true);
+    expect(after.find((row) => row.id === hidden!.id)?.description).toBe('id-updated');
+  });
+
+  it('does not select a tombstone or the wrong environment when the candidate set changes', async () => {
+    const marker = `tomb-${suffix}`;
+    await pool.query(
+      `INSERT INTO database_instances
+        (name, environment, db_type, host, port, username, password_encrypted, database_name, lifecycle_state, description)
+       VALUES (?, 'staging', 'mysql', '192.0.2.60', 3306, 'slide', '', 'app-tomb', 'deleted', 'tomb-secret')`,
+      [marker],
+    );
+    const deleted = (await instances()).find((row) => row.name === marker);
+    const recreated = await run(addTool, writer, {
+      db_type: 'mysql', name: `${marker}-live`, host: '192.0.2.60', port: 3306, username: 'slide', database_name: 'app-tomb', environment: 'staging',
+    });
+    expect(recreated.result).toMatchObject({ success: true });
+    const sameName = await run(addTool, noscope, {
+      db_type: 'mysql', name: marker, host: '192.0.2.62', port: 3306, username: 'slide', database_name: 'app-tomb-2', environment: 'staging',
+    });
+    expect(sameName.result.errorCode).toBe('CREATE_INSTANCE_FAILED');
+    expect(disclosesInstance(packedDenial(sameName), Number(deleted!.id))).toBe(false);
+    expect(packedDenial(sameName)).not.toContain('tomb-secret');
+    expect((await instances()).filter((row) => row.name === marker)).toHaveLength(1);
+    const named = await run(updateTool, writer, { instance_name: marker, description: 'should-not-touch-tomb' });
+    expect(named.decision.reasonCode).toBe('RESOURCE_NOT_FOUND');
+    expect((await instances()).find((row) => row.id === deleted!.id)?.description).toBe('tomb-secret');
+
+    await pool.query(
+      `INSERT INTO database_instances
+        (name, environment, db_type, host, port, username, password_encrypted, database_name, lifecycle_state)
+       VALUES ('orders', 'testing', 'mysql', '192.0.2.63', 3306, 'slide', '', 'app-del', 'deleting')`,
+    );
+    const deleting = (await instances()).find((row) => row.database_name === 'app-del');
+    const blocked = await run(addTool, noscope, {
+      db_type: 'mysql', name: 'orders-deleting', host: '192.0.2.63', port: 3306, username: 'slide', database_name: 'app-del',
+    });
+    expect(blocked.result.errorCode).not.toBe('INSTANCE_EXISTS');
+    expect(disclosesInstance(packedDenial(blocked), Number(deleting!.id))).toBe(false);
+    expect((await instances()).find((row) => row.id === deleting!.id)?.database_name).toBe('app-del');
+
+    const original = instanceDatabaseService.listAvailableInstancesByNormalizedName.bind(instanceDatabaseService);
+    let resolutionCalls = 0;
+    const spy = vi.spyOn(instanceDatabaseService, 'listAvailableInstancesByNormalizedName').mockImplementation(async (name) => {
+      const rows = await original(name);
+      if (name.trim() !== 'orders') return rows;
+      resolutionCalls += 1;
+      const dev = rows.filter((row) => row.environment === 'development');
+      const prod = rows.filter((row) => row.environment === 'production');
+      if (resolutionCalls <= 2) return dev;
+      return resolutionCalls === 3 ? prod : rows;
+    });
+    const beforeOrders = await instances();
+    try {
+      const shifted = await run(updateTool, writer, { instance_name: ' orders ', description: 'wrong-environment' });
+      expect(shifted.result).toMatchObject({ success: false, errorCode: 'INSTANCE_NOT_FOUND' });
+      expect(shifted.decision.resource.instanceId).toBe(beforeOrders.find((row) => row.environment === 'development')?.id);
+      const afterOrders = await instances();
+      expect(afterOrders.map((row) => [row.id, row.description])).toEqual(beforeOrders.map((row) => [row.id, row.description]));
+    } finally {
+      spy.mockRestore();
+    }
   });
 });
