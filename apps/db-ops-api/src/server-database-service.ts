@@ -10,9 +10,87 @@ import mysql from 'mysql2/promise';
 import { dbConnection, encryptData, decryptData, needsEncryptionMigration } from './db-connection';
 import { assertCredentialUsable, CredentialRotationRequiredError } from './credential-rotation.js';
 import { Client } from 'ssh2';
-import { authorizeServerTarget } from './security/server-target-policy.js';
+import { authorizeServerTarget, ServerTargetPolicyError } from './security/server-target-policy.js';
 import { createCredentialSshHostVerifier, normalizeOptionalSshHostKeyFingerprint } from './security/ssh-host-key.js';
 import { normalizeServerOs } from './server-os-profile.js';
+
+/** Stable refusal when deleting a server would drop historical reports. */
+export const SERVER_HAS_HISTORICAL_REPORTS = 'SERVER_HAS_HISTORICAL_REPORTS';
+/** Shown by the delete route. The service itself returns the stable code. */
+export const SERVER_HISTORICAL_REPORT_DELETE_ERROR =
+  '该服务器仍有历史报表，删除已阻止。报表和原目标身份保持不变，访问权限不变，也不会重新采集。';
+/** Shared by create and update when MySQL rejects a duplicate host/port. */
+export const SERVER_ADDRESS_ALREADY_MANAGED = '该主机地址和端口已被纳管，请勿重复添加';
+/** Client text for an unexpected update failure. Driver details stay in the server log. */
+export const SERVER_UPDATE_FAILED = '更新服务器失败';
+
+const UPDATE_BUSINESS_ERRORS = new Set([
+  'SSH_CREDENTIAL_TYPE_INVALID',
+  'SSH_TRUST_MODE_INVALID',
+  'SSH_HOST_KEY_FINGERPRINT_REQUIRED',
+  'SSH_TRUST_CONFIRMATION_REQUIRED',
+  'HOST_OS_UNSUPPORTED',
+  '服务器不存在',
+  '更换认证方式时必须提供新的凭据值',
+  '重新录入凭据时必须提供 SSH 用户名',
+  '数据库未连接',
+  'SERVER_CREDENTIALS_INVALID',
+]);
+
+function serverHostIdentity(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const hostname = value.trim().toLowerCase();
+  return hostname.length > 0 ? hostname : null;
+}
+
+function serverPortIdentity(value: unknown): number | null {
+  if (typeof value !== 'number' && typeof value !== 'string') return null;
+  const port = Number(value);
+  if (!Number.isInteger(port) || port <= 0 || port > 65535) return null;
+  return port;
+}
+
+function serverTargetUnchanged(
+  existingHost: unknown,
+  existingPort: unknown,
+  patch: { host?: unknown; port?: unknown },
+): boolean {
+  const storedHost = serverHostIdentity(existingHost);
+  const storedPort = serverPortIdentity(existingPort);
+  if (storedHost === null || storedPort === null) return false;
+  const nextHost = patch.host === undefined ? storedHost : serverHostIdentity(patch.host);
+  const nextPort = patch.port === undefined ? storedPort : serverPortIdentity(patch.port);
+  return nextHost === storedHost && nextPort === storedPort;
+}
+
+function duplicateServerAddress(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false;
+  const candidate = error as { code?: unknown; errno?: unknown };
+  return candidate.code === 'ER_DUP_ENTRY' || candidate.errno === 1062;
+}
+
+function isMysqlDriverError(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false;
+  const candidate = error as { code?: unknown; errno?: unknown; sqlMessage?: unknown; sql?: unknown };
+  if (typeof candidate.sqlMessage === 'string' || typeof candidate.sql === 'string' || typeof candidate.errno === 'number') {
+    return true;
+  }
+  return typeof candidate.code === 'string' && candidate.code.startsWith('ER_');
+}
+
+function updateClientError(error: unknown): string {
+  if (duplicateServerAddress(error)) return SERVER_ADDRESS_ALREADY_MANAGED;
+  if (error instanceof ServerTargetPolicyError) return error.reasonCode;
+  if (isMysqlDriverError(error)) {
+    console.error('更新服务器失败:', error);
+    return SERVER_UPDATE_FAILED;
+  }
+  if (error instanceof Error && (UPDATE_BUSINESS_ERRORS.has(error.message) || (error as { code?: unknown }).code === 'CREDENTIAL_ROTATION_REQUIRED')) {
+    return error.message;
+  }
+  console.error('更新服务器失败:', error);
+  return SERVER_UPDATE_FAILED;
+}
 
 export interface ServerRow {
   id: number;
@@ -251,8 +329,8 @@ class ServerDatabaseService {
       return { success: true, serverId: result.insertId };
     } catch (error: any) {
       // Handle duplicate entry from UNIQUE INDEX uq_host_port (TOCTOU race fallback)
-      if (error.code === 'ER_DUP_ENTRY') {
-        return { success: false, error: '该主机地址和端口已被纳管，请勿重复添加' };
+      if (duplicateServerAddress(error)) {
+        return { success: false, error: SERVER_ADDRESS_ALREADY_MANAGED };
       }
       console.error('创建服务器失败:', error);
       return { success: false, error: error.message };
@@ -282,28 +360,38 @@ class ServerDatabaseService {
       return { success: false, error: '数据库未连接' };
     }
 
-    try {
-      const existingServer = await this.getServerById(id);
+    const apply = async (sql: { execute(statement: string, values?: any[]): Promise<any> }) => {
+      const [rows] = await sql.execute(
+        `SELECT id, host, port, label, os_type, credential_type,
+                credential_encrypted, host_key_fingerprint, ssh_trust_mode, status,
+                last_check_at, collection_enabled, created_at, updated_at
+         FROM servers WHERE id = ? FOR UPDATE`,
+        [id],
+      ) as [ServerRow[], unknown];
+      const existingServer = Array.isArray(rows) ? rows[0] : undefined;
       if (!existingServer) return { success: false, error: '服务器不存在' };
       const canonicalOs = data.os_type === undefined ? undefined : normalizeServerOs(data.os_type);
       if (data.os_type !== undefined && !canonicalOs) {
         return { success: false, error: 'HOST_OS_UNSUPPORTED' };
       }
-      const target = await authorizeServerTarget({
-        host: data.host ?? existingServer.host,
-        port: data.port ?? existingServer.port,
+      const targetUnchanged = serverTargetUnchanged(existingServer.host, existingServer.port, data);
+      const target = targetUnchanged ? null : await authorizeServerTarget({
+        host: data.host !== undefined ? data.host : existingServer.host,
+        port: data.port !== undefined ? Number(data.port) : existingServer.port,
       });
       const updates: string[] = [];
       const values: any[] = [];
+      if (target) {
+        updates.push('host = ?', 'port = ?');
+        values.push(target.hostname, target.port);
+      } else if (data.host !== undefined) {
+        const canonicalHost = serverHostIdentity(data.host);
+        if (canonicalHost && canonicalHost !== existingServer.host) {
+          updates.push('host = ?');
+          values.push(canonicalHost);
+        }
+      }
 
-      if (data.host !== undefined) {
-        updates.push('host = ?');
-        values.push(target.hostname);
-      }
-      if (data.port !== undefined) {
-        updates.push('port = ?');
-        values.push(target.port);
-      }
       if (data.label !== undefined) {
         updates.push('label = ?');
         values.push(data.label);
@@ -315,8 +403,7 @@ class ServerDatabaseService {
       if (data.credential_type !== undefined) {
         // When credential_type changes, require new credential_value to avoid payload/type mismatch
         if (data.credential_value === undefined || data.credential_value === '') {
-          const existing = await this.getServerById(id);
-          if (existing && existing.credential_type !== data.credential_type) {
+          if (existingServer.credential_type !== data.credential_type) {
             return { success: false, error: '更换认证方式时必须提供新的凭据值' };
           }
         }
@@ -326,31 +413,28 @@ class ServerDatabaseService {
       // Re-encrypt if credential username or value provided (non-empty)
       if ((data.credential_username !== undefined && data.credential_username !== '')
           || (data.credential_value !== undefined && data.credential_value !== '')) {
-        const existing = await this.getServerById(id);
-        if (existing) {
-          // A new credential is a complete replacement. Do not decrypt the
-          // old blob first: this is the recovery path for records encrypted
-          // with a rotated/lost application key (for example server 3).
-          if (data.credential_value !== undefined && data.credential_value !== '') {
-            const actualType = data.credential_type || existing.credential_type;
-            const username = data.credential_username || (() => {
-              try { return this.decryptCredentials(existing.credential_encrypted).username; } catch { return ''; }
-            })();
-            if (!username) return { success: false, error: '重新录入凭据时必须提供 SSH 用户名' };
-            const credPayload: Record<string, string> = { username };
-            credPayload[actualType === 'password' ? 'password' : 'privateKey'] = data.credential_value;
-            updates.push('credential_encrypted = ?');
-            values.push(encryptData(JSON.stringify(credPayload)));
-          } else {
-            const decrypted = this.decryptCredentials(existing.credential_encrypted);
-            const credPayload: Record<string, string> = {
-              username: data.credential_username || decrypted.username,
-            };
-            if (decrypted.password) credPayload.password = decrypted.password;
-            if (decrypted.privateKey) credPayload.privateKey = decrypted.privateKey;
-            updates.push('credential_encrypted = ?');
-            values.push(encryptData(JSON.stringify(credPayload)));
-          }
+        // A new credential is a complete replacement. Do not decrypt the
+        // old blob first: this is the recovery path for records encrypted
+        // with a rotated/lost application key (for example server 3).
+        if (data.credential_value !== undefined && data.credential_value !== '') {
+          const actualType = data.credential_type || existingServer.credential_type;
+          const username = data.credential_username || (() => {
+            try { return this.decryptCredentials(existingServer.credential_encrypted).username; } catch { return ''; }
+          })();
+          if (!username) return { success: false, error: '重新录入凭据时必须提供 SSH 用户名' };
+          const credPayload: Record<string, string> = { username };
+          credPayload[actualType === 'password' ? 'password' : 'privateKey'] = data.credential_value;
+          updates.push('credential_encrypted = ?');
+          values.push(encryptData(JSON.stringify(credPayload)));
+        } else {
+          const decrypted = this.decryptCredentials(existingServer.credential_encrypted);
+          const credPayload: Record<string, string> = {
+            username: data.credential_username || decrypted.username,
+          };
+          if (decrypted.password) credPayload.password = decrypted.password;
+          if (decrypted.privateKey) credPayload.privateKey = decrypted.privateKey;
+          updates.push('credential_encrypted = ?');
+          values.push(encryptData(JSON.stringify(credPayload)));
         }
       }
       if (data.collection_enabled !== undefined) {
@@ -358,7 +442,8 @@ class ServerDatabaseService {
         values.push(data.collection_enabled);
       }
       const effectiveType = data.credential_type ?? existingServer.credential_type;
-      const changesTarget = target.hostname !== existingServer.host || target.port !== existingServer.port;
+      const changesTarget = target !== null
+        && (target.hostname !== existingServer.host || target.port !== existingServer.port);
       const changesToKey = effectiveType === 'key' && existingServer.credential_type !== 'key';
       if ((changesTarget || changesToKey) && effectiveType === 'key' && data.ssh_trust_mode === undefined) {
         updates.push('ssh_trust_mode = ?');
@@ -383,20 +468,60 @@ class ServerDatabaseService {
       }
 
       values.push(id);
-
-      const [result] = await pool.execute(
+      const [result] = await sql.execute(
         `UPDATE servers SET ${updates.join(', ')} WHERE id = ?`,
-        values
-      ) as any;
-
-      if (result.affectedRows === 0) {
+        values,
+      ) as [{ affectedRows?: number }, unknown];
+      if (!result || result.affectedRows === 0) {
         return { success: false, error: '服务器不存在' };
       }
-
       return { success: true };
-    } catch (error: any) {
-      console.error('更新服务器失败:', error);
-      return { success: false, error: error.message };
+    };
+
+    try {
+      const connection = await pool.getConnection();
+      let reusable = false;
+      // One rollback attempt. mysql2 release() does not roll back, and the next
+      // BEGIN implicitly commits a session that still has an open transaction.
+      const destroyAfterFailedRollback = (cleanupError: unknown) => {
+        console.error('更新服务器回滚失败:', cleanupError);
+        try {
+          connection.destroy();
+        } catch (destroyError) {
+          console.error('更新服务器连接销毁失败:', destroyError);
+        }
+      };
+      const rollbackOrDestroy = async () => {
+        try {
+          await connection.rollback();
+          reusable = true;
+        } catch (cleanupError) {
+          destroyAfterFailedRollback(cleanupError);
+        }
+      };
+      try {
+        await connection.beginTransaction();
+        const result = await apply(connection);
+        if (result.success) {
+          await connection.commit();
+          reusable = true;
+          return result;
+        }
+        try {
+          await connection.rollback();
+          reusable = true;
+        } catch (cleanupError) {
+          destroyAfterFailedRollback(cleanupError);
+        }
+        return result;
+      } catch (error) {
+        if (!reusable) await rollbackOrDestroy();
+        throw error;
+      } finally {
+        if (reusable) connection.release();
+      }
+    } catch (error) {
+      return { success: false, error: updateClientError(error) };
     }
   }
 
@@ -428,6 +553,19 @@ class ServerDatabaseService {
         await connection.rollback();
         return { success: false, error: 'SERVER_HAS_INSTANCE_RELATIONS' };
       }
+      // The server row lock is already held. A normal report insert needs a
+      // shared lock on that parent, so it cannot commit until this transaction
+      // ends. Lock matching report rows too, then refuse before DELETE.
+      // fk_report_server_restrict is ON DELETE RESTRICT, so a report that still
+      // appears at DELETE time fails the statement instead of being cascaded.
+      const [reports] = await connection.execute(
+        'SELECT id FROM reports WHERE server_id = ? LIMIT 1 FOR UPDATE',
+        [id],
+      ) as any;
+      if (Array.isArray(reports) && reports.length > 0) {
+        await connection.rollback();
+        return { success: false, error: SERVER_HAS_HISTORICAL_REPORTS };
+      }
       const [result] = await connection.execute('DELETE FROM servers WHERE id = ?', [id]) as any;
       if (result.affectedRows === 0) {
         await connection.rollback();
@@ -437,6 +575,9 @@ class ServerDatabaseService {
       return { success: true };
     } catch (error: any) {
       await connection.rollback().catch(() => undefined);
+      if (error?.errno === 1451 || error?.code === 'ER_ROW_IS_REFERENCED_2') {
+        return { success: false, error: SERVER_HAS_HISTORICAL_REPORTS };
+      }
       console.error('删除服务器失败:', error);
       return { success: false, error: error.message };
     } finally {

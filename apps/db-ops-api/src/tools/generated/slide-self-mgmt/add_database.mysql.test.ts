@@ -19,14 +19,14 @@ describe.skipIf(!process.env.ADD_DATABASE_TEST_MYSQL_URL)('MAX-311 MySQL credent
     url.pathname = `/${schema}`;
     const pool = mysql.createPool(url.toString());
     const secret = randomBytes(20).toString('hex');
-    const context = { actor: { userId: 7 } as any };
+    const context = { actor: { userId: 7, permissions: ['instance:*'], roles: [], instanceScopes: {} } as any };
     try {
       vi.stubEnv('ENCRYPTION_KEY', randomBytes(32).toString('hex'));
       await pool.execute('CREATE TABLE users (id INT UNSIGNED PRIMARY KEY)');
       await pool.execute('INSERT INTO users VALUES (7)');
       await pool.query(readFileSync(new URL('../../../../sql/migrations/056_agent_credential_references.sql', import.meta.url), 'utf8'));
       vi.spyOn(dbConnection, 'getPool').mockReturnValue(pool);
-      vi.spyOn(instanceDatabaseService, 'getAllInstances').mockResolvedValue([]);
+      vi.spyOn(instanceDatabaseService, 'listAvailableInstancesByNormalizedName').mockResolvedValue([]);
       const connection = vi.spyOn(instanceDatabaseService, 'testConnection');
       const create = vi.spyOn(instanceDatabaseService, 'createInstance');
       for (const scenario of ['connection_rejected', 'create_rejected', 'address_exists', 'acknowledgement_lost']) {
@@ -111,7 +111,7 @@ describe.skipIf(!process.env.ADD_DATABASE_TEST_MYSQL_URL || !process.env.ADD_DAT
       vi.spyOn(dbConnection, 'getPool').mockReturnValue(pool);
       await new Promise<void>((resolve, reject) => { relay.once('error', reject); relay.listen(0, relayHost, resolve); });
       const port = (relay.address() as { port: number }).port;
-      const actor = { actor: { userId: 7 } as any };
+      const actor = { actor: { userId: 7, permissions: ['instance:*'], roles: [], instanceScopes: {} } as any };
       const baseArgs = { db_type: 'mysql', name: 'recovery', host: relayHost, port, username: targetUser, database_name: schema };
       const reference = async (password = secret) => (await credentialReferenceService.create(7, addDatabaseTool.name, password)).ref;
       const rowsFor = async (database: string) => (await pool.query<any[]>('SELECT id, password_encrypted FROM database_instances WHERE host = ? AND port = ? AND database_name = ?', [relayHost, port, database]))[0];

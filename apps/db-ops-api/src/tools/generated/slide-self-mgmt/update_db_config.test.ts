@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const instanceService = vi.hoisted(() => ({
   getAllInstances: vi.fn(),
+  listAvailableInstancesByNormalizedName: vi.fn(),
   updateInstance: vi.fn(),
   getInstanceWithDecryptedPassword: vi.fn(),
   testConnection: vi.fn(),
@@ -74,5 +75,45 @@ describe('slide_update_db_config boundary scenarios', () => {
     const result = await updateDbConfigTool.handler({ instance_id: 42, description: '' }, { actor });
     expect(result).toMatchObject({ errorCode: 'UPDATE_OUTCOME_UNKNOWN', details: { retryable: false } });
     expect(JSON.stringify(result)).not.toContain('synthetic password');
+  });
+
+  const writer = { userId: 7, username: 'operator', roles: ['dba'], permissions: ['instance:update'], instanceScopes: { 8: 'read-write', 9: 'read-write' }, sessionVersion: 1, requestId: 'r' } as any;
+  const limited = { ...writer, instanceScopes: { 8: 'read-write' } };
+
+  it('updates the trimmed unique name and stores a trimmed new name', async () => {
+    instanceService.listAvailableInstancesByNormalizedName.mockResolvedValue([{ id: 8, name: 'orders', environment: 'development' }]);
+    const result = await updateDbConfigTool.handler({ instance_name: '  orders  ', name: '  orders-2  ', description: 'kept' }, { actor: writer });
+    expect(instanceService.listAvailableInstancesByNormalizedName).toHaveBeenCalledWith('orders');
+    expect(instanceService.updateInstance).toHaveBeenCalledWith(8, { name: 'orders-2', description: 'kept' });
+    expect(result).toMatchObject({ success: true, data: { instanceId: 8 } });
+  });
+
+  it('rejects the same name in two environments without using the new environment as a selector', async () => {
+    instanceService.listAvailableInstancesByNormalizedName.mockResolvedValue([
+      { id: 8, name: 'orders', environment: 'development' },
+      { id: 9, name: 'orders', environment: 'staging' },
+    ]);
+    const result = await updateDbConfigTool.handler({ instance_name: 'orders', environment: 'staging', description: 'nope' }, { actor: writer });
+    expect(result).toMatchObject({ success: false, errorCode: 'AMBIGUOUS_INSTANCE_NAME' });
+    expect(JSON.stringify(result)).not.toContain('staging');
+    expect(instanceService.updateInstance).not.toHaveBeenCalled();
+  });
+
+  it('does not reveal or update another environment when the caller can write only one match', async () => {
+    instanceService.listAvailableInstancesByNormalizedName.mockResolvedValue([
+      { id: 8, name: 'orders', environment: 'development' },
+      { id: 9, name: 'orders', environment: 'staging' },
+    ]);
+    const result = await updateDbConfigTool.handler({ instance_name: 'orders', description: 'nope' }, { actor: limited });
+    expect(result).toMatchObject({ success: false, errorCode: 'INSTANCE_NOT_FOUND' });
+    expect(JSON.stringify(result)).not.toMatch(/staging|9/);
+    expect(instanceService.updateInstance).not.toHaveBeenCalled();
+  });
+
+  it('keeps an explicit id update on that id when another environment shares the name', async () => {
+    const result = await updateDbConfigTool.handler({ instance_id: 8, description: 'only-8' }, { actor: limited, instanceId: 8 });
+    expect(instanceService.listAvailableInstancesByNormalizedName).not.toHaveBeenCalled();
+    expect(instanceService.updateInstance).toHaveBeenCalledWith(8, { description: 'only-8' });
+    expect(result).toMatchObject({ success: true, data: { instanceId: 8 } });
   });
 });

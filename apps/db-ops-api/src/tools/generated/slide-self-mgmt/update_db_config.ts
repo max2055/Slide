@@ -4,10 +4,12 @@
  * 更新已纳管数据库实例的配置信息
  */
 
+import type { ActorContext } from '../../../auth/actor-context.js';
 import { encryptData } from '../../../db-connection.js';
 import { authorizeDatabaseTarget } from '../../../security/database-target-policy.js';
-import type { AnyAgentTool } from '../../types.js';
+import type { AnyAgentTool, ToolResult } from '../../types.js';
 import { toolCatalog } from '../../catalog.js';
+import { actorCanWriteInstance } from '../../resource-resolver.js';
 import { instanceDatabaseService } from '../../../instance-database-service.js';
 import { credentialReferenceService } from '../../../security/credential-reference-service.js';
 
@@ -136,22 +138,26 @@ export const updateDbConfigTool: AnyAgentTool = {
     let updateSubmitted = false;
     let configCommitted = false;
     try {
-      // 1. 查找实例
-      const instanceId = typedArgs.instance_id ?? await findInstanceIdByName(typedArgs.instance_name!);
-
-      if (!instanceId) {
+      // 1. 显式 ID 只更新该行。名称必须在 trim 后唯一确定一个可用实例。
+      // environment 是要写入的新环境，不能用来挑选现有行。
+      const resolved = typedArgs.instance_id !== undefined
+        ? { id: typedArgs.instance_id }
+        : await resolveInstanceIdByName(typedArgs.instance_name!, context?.actor);
+      if ('error' in resolved) return resolved.error;
+      const instanceId = resolved.id;
+      if (context?.instanceId !== undefined && context.instanceId !== instanceId) {
         return {
           success: false,
           status: 'error',
-          error: `未找到实例：${typedArgs.instance_name ? `"${typedArgs.instance_name}"` : `ID=${typedArgs.instance_id}`}`,
+          error: '名称已不能唯一对应原实例，未更新任何实例',
           errorCode: 'INSTANCE_NOT_FOUND',
-          next_actions: ['先调用 list_database_instances 确认实例 ID 或名称'],
+          next_actions: ['使用 instance_id 指定要更新的实例'],
         };
       }
 
       // 2. 构建更新数据
       const updateData: Record<string, unknown> = {};
-      if (typedArgs.name !== undefined) updateData.name = typedArgs.name;
+      if (typedArgs.name !== undefined) updateData.name = typedArgs.name.trim();
       if (typedArgs.host !== undefined) updateData.host = typedArgs.host;
       if (typedArgs.port !== undefined) updateData.port = typedArgs.port;
       if (typedArgs.username !== undefined) updateData.username = typedArgs.username;
@@ -267,12 +273,36 @@ export const updateDbConfigTool: AnyAgentTool = {
 // ============== 辅助函数 ==============
 
 /**
- * 根据名称查找实例 ID
+ * 按 trim 后的名称选择唯一可用实例。多环境同名不取第一条。
+ * 调用者看不到至少两个可写匹配时，返回与不存在相同的结果，避免暴露无权限实例。
  */
-async function findInstanceIdByName(name: string): Promise<number | null> {
-  const instances = await instanceDatabaseService.getAllInstances();
-  const instance = instances.find(inst => inst.name === name);
-  return instance?.id || null;
+async function resolveInstanceIdByName(
+  name: string,
+  actor: ActorContext | undefined,
+): Promise<{ id: number } | { error: ToolResult }> {
+  const normalized = name.trim();
+  const matches = await instanceDatabaseService.listAvailableInstancesByNormalizedName(normalized);
+  const notFound: ToolResult = {
+    success: false,
+    status: 'error',
+    error: `未找到实例："${normalized}"`,
+    errorCode: 'INSTANCE_NOT_FOUND',
+    next_actions: ['先调用 list_database_instances 确认实例 ID 或名称'],
+  };
+  if (matches.length === 1 && actor && actorCanWriteInstance(actor, matches[0].id)) return { id: matches[0].id };
+  const visible = actor ? matches.filter((match) => actorCanWriteInstance(actor, match.id)) : [];
+  if (matches.length > 1 && visible.length >= 2) {
+    return {
+      error: {
+        success: false,
+        status: 'error',
+        error: '同名实例存在于多个环境，请改用实例 ID',
+        errorCode: 'AMBIGUOUS_INSTANCE_NAME',
+        next_actions: ['使用 instance_id 指定要更新的实例，不要用新的 environment 选择现有实例'],
+      },
+    };
+  }
+  return { error: notFound };
 }
 
 // 注册工具到全局目录
