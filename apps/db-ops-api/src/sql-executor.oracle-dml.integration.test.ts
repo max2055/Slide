@@ -60,7 +60,9 @@ describe.skipIf(!enabled)('MAX-361 real Oracle DML visibility', () => {
     return row?.NOTE ?? null;
   }
 
-  function usePool(mode: 'normal' | 'commit-fails' | 'connection-break' = 'normal') {
+  const executedSql: string[] = [];
+
+  function usePool(mode: 'normal' | 'commit-fails' | 'connection-break' | 'commit-ack-lost' = 'normal') {
     mocks.getConnection.mockReturnValue({
       id: 361,
       name: 'oracle19c',
@@ -69,22 +71,54 @@ describe.skipIf(!enabled)('MAX-361 real Oracle DML visibility', () => {
       oraclePool: {
         getConnection: async () => {
           const connection = await pool.getConnection();
+          const execute = connection.execute.bind(connection);
+          connection.execute = (async (...args: Parameters<oracledb.Connection['execute']>) => {
+            executedSql.push(String(args[0] ?? ''));
+            return execute(...args);
+          }) as oracledb.Connection['execute'];
           if (mode === 'commit-fails') {
             connection.commit = async () => {
               throw Object.assign(new Error('ORA-03113: end-of-file on communication channel'), { errorNum: 3113 });
             };
           } else if (mode === 'connection-break') {
+            // Fault injection: call break(), then throw a synthetic NJS-500.
+            // The TCP session is not cut, so this is not a real network partition.
             const close = connection.close.bind(connection);
             connection.close = () => close({ drop: true });
             connection.commit = async () => {
               if (typeof connection.break === 'function') await connection.break().catch(() => undefined);
               throw Object.assign(new Error('NJS-500: connection to the Oracle Database was broken'), { code: 'NJS-500' });
             };
+          } else if (mode === 'commit-ack-lost') {
+            // The real COMMIT finishes, then the driver acknowledgement is discarded.
+            const commit = connection.commit.bind(connection);
+            connection.commit = async () => {
+              await commit();
+              throw Object.assign(new Error('synthetic lost commit acknowledgement'), { code: 'SYNTHETIC_LOST_ACK' });
+            };
           }
           return connection;
         },
       },
     });
+  }
+
+  async function readCommittedNote(): Promise<{ NOTE?: string }[]> {
+    const deadline = Date.now() + 20_000;
+    let attempts = 0;
+    while (true) {
+      attempts += 1;
+      const readTable = await sqlExecutor.executeSql(361, 'SELECT NOTE FROM SLIDE_MAX361_DML WHERE ID = 1');
+      expect(pool.connectionsInUse).toBe(0);
+      if (readTable.success) {
+        if (attempts > 1) console.log(`ORA-01466 settled after ${attempts} read-only attempts`);
+        return (readTable.rows ?? []) as { NOTE?: string }[];
+      }
+      const error = String(readTable.error ?? '');
+      if (!error.includes('ORA-01466')) throw new Error(`read-only query failed: ${error}`);
+      if (Date.now() >= deadline) throw new Error(`ORA-01466 remained after ${attempts} read-only attempts: ${error}`);
+      await new Promise((resolve) => setTimeout(resolve, 1_000));
+    }
   }
 
   it('commits an approved UPDATE that another Oracle session can read', async () => {
@@ -152,6 +186,33 @@ describe.skipIf(!enabled)('MAX-361 real Oracle DML visibility', () => {
     });
     expect(broken).toMatchObject({ success: false, executionState: 'unknown', retryable: false });
     expect(await witnessNote(1)).toBe('after');
+    expect(pool.connectionsInUse).toBe(0);
+
+    const ackSql = `UPDATE SLIDE_MAX361_DML SET NOTE = 'ack-lost-visible' WHERE ID = 1`;
+    const ackMark = executedSql.length;
+    const auditCallsBeforeLostAck = mocks.auditSql.mock.calls.length;
+    usePool('commit-ack-lost');
+    const lostAck = await sqlExecutor.executeSql(361, ackSql, {
+      approvalGrant: { ...grant, operationId: 'max361-ack-lost' },
+    });
+    expect(executedSql.slice(ackMark).filter((sql) => sql === ackSql)).toHaveLength(1);
+    expect(lostAck).toMatchObject({ success: false, executionState: 'unknown', retryable: false });
+    expect(mocks.finishIntent).toHaveBeenCalledWith(
+      'max361-ack-lost',
+      'unknown',
+      expect.objectContaining({ targetAcknowledged: false, error: 'SQL_EXECUTION_OR_AUDIT_FAILED' }),
+    );
+    expect(mocks.auditSql.mock.calls.length).toBe(auditCallsBeforeLostAck);
+    expect(await witnessNote(1)).toBe('ack-lost-visible');
+    expect(pool.connectionsInUse).toBe(0);
+
+    usePool();
+    const restored = await sqlExecutor.executeSql(361, `UPDATE SLIDE_MAX361_DML SET NOTE = 'after' WHERE ID = 1`, {
+      approvalGrant: { ...grant, operationId: 'max361-restore' },
+    });
+    expect(restored).toMatchObject({ success: true, executionState: 'succeeded', retryable: false });
+    expect(await witnessNote(1)).toBe('after');
+    expect(pool.connectionsInUse).toBe(0);
 
     let statementError = '';
     mocks.getConnection.mockReturnValue({
@@ -183,17 +244,16 @@ describe.skipIf(!enabled)('MAX-361 real Oracle DML visibility', () => {
     expect(await witnessNote(1)).toBe('after');
     usePool();
 
-    // A table created moments earlier raises ORA-01466 inside SET TRANSACTION
-    // READ ONLY. DUAL has a stable definition, so it checks the real read-only
-    // transaction and pool release without that dictionary race.
+    // DUAL has a stable definition, so it checks the read-only transaction and
+    // pool release without the new-table dictionary race.
     const read = await sqlExecutor.executeSql(361, 'SELECT 1 AS ID FROM DUAL');
     expect(read).toMatchObject({ success: true, rowCount: 1 });
     expect(read.executionState).toBeUndefined();
     expect(pool.connectionsInUse).toBe(0);
-    await new Promise((resolve) => setTimeout(resolve, 1200));
-    const readTable = await sqlExecutor.executeSql(361, 'SELECT NOTE FROM SLIDE_MAX361_DML WHERE ID = 1');
-    expect(readTable).toMatchObject({ success: true, rows: [{ NOTE: 'after' }] });
-    expect(pool.connectionsInUse).toBe(0);
+    // SET TRANSACTION READ ONLY can raise ORA-01466 until Oracle can see the
+    // new table's definition. Retry only that read; each attempt ends its own
+    // transaction inside the executor. Any other error fails immediately.
+    expect(await readCommittedNote()).toEqual([{ NOTE: 'after' }]);
 
     const created = await sqlExecutor.executeSql(361, 'CREATE TABLE SLIDE_MAX361_DDL (ID INT)', {
       approvalGrant: { ...grant, operationId: 'max361-ddl' },
@@ -207,7 +267,7 @@ describe.skipIf(!enabled)('MAX-361 real Oracle DML visibility', () => {
     expect((ddl.rows?.[0] as { N?: string | number } | undefined)?.N).toEqual(expect.anything());
     const count = Number((ddl.rows?.[0] as { N: string | number }).N);
     expect(count).toBe(1);
-  }, 60_000);
+  }, 90_000);
 
   afterAll(async () => {
     if (!enabled || !pool) return;
