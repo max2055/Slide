@@ -3,7 +3,7 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import Fastify from 'fastify';
 import mysql, { type Pool, type RowDataPacket } from 'mysql2/promise';
 import ts from 'typescript';
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { requirePermission } from './auth/require-permission.js';
 import { dbConnection, encryptData } from './db-connection.js';
 import { MigrationRunner } from './migrations/runner.js';
@@ -224,6 +224,9 @@ describe('MAX-371 / MAX-372 server edit target and duplicate response', () => {
     expect(update).toContain('serverTargetUnchanged');
     expect(update).toContain('FOR UPDATE');
     expect(update).toContain('updateClientError');
+    expect(update).toContain('connection.destroy()');
+    expect(update).not.toContain('typeof pool.getConnection');
+    expect(update).not.toContain('.catch(() => undefined)');
     expect(update).not.toContain('error.message');
     expect(service).toContain(`export const SERVER_ADDRESS_ALREADY_MANAGED = '该主机地址和端口已被纳管，请勿重复添加'`);
     expect(remove).toContain('SELECT id FROM reports WHERE server_id = ? LIMIT 1 FOR UPDATE');
@@ -354,6 +357,235 @@ describe('MAX-371 / MAX-372 server edit target and duplicate response', () => {
     expect(conflict.status).toBe(400);
     expect(conflict.body).toEqual({ error: SERVER_ADDRESS_ALREADY_MANAGED });
     assertNoDriverLeak(conflict.body, ['uq_host_port', 'Duplicate entry']);
+  });
+});
+
+// R1: a failed update must not survive on a pooled session. MySQL START TRANSACTION
+// commits the previous transaction, and mysql2 release() does not roll back.
+function createLifecyclePool() {
+  const rows: MemoryRow[] = [];
+  let nextId = 1;
+  let failStatement = false;
+  let failCommit = false;
+  let failRollback = false;
+  const events: string[] = [];
+  let idle: Connection | null = null;
+  let chain: Promise<void> = Promise.resolve();
+  const acquire = () => {
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const previous = chain;
+    chain = gate;
+    return previous.then(() => release);
+  };
+
+  class Connection {
+    private draft: MemoryRow[] | null = null;
+    private pending = false;
+    private releaseLock: (() => void) | null = null;
+    destroyed = false;
+
+    async beginTransaction() {
+      events.push('begin');
+      if (this.pending && this.draft) {
+        events.push('implicit-commit');
+        rows.splice(0, rows.length, ...this.draft);
+      }
+      this.releaseLock = await acquire();
+      this.draft = rows.map(row => ({ ...row }));
+      this.pending = true;
+    }
+
+    async execute(sql: string, values: unknown[] = []) {
+      const table = this.draft ?? rows;
+      if (sql.startsWith('SELECT')) {
+        const id = Number(values[0]);
+        return [table.filter(row => row.id === id).map(row => ({ ...row })), []];
+      }
+      if (!sql.startsWith('UPDATE servers SET ')) throw new Error(`unexpected sql ${sql}`);
+      if (failStatement) throw driverError('ER_NO_SUCH_TABLE', 1146, 'max371-r1-statement');
+      const assignments = sql.slice('UPDATE servers SET '.length).replace(/ WHERE id = \?$/, '').split(', ');
+      const id = Number(values[values.length - 1]);
+      const row = table.find(item => item.id === id);
+      if (!row) return [{ affectedRows: 0 }, []];
+      const next = { ...row };
+      assignments.forEach((assignment, index) => {
+        const field = assignment.replace(' = ?', '') as keyof MemoryRow;
+        (next as Record<string, unknown>)[field] = values[index];
+      });
+      next.port = Number(next.port);
+      Object.assign(row, next);
+      return [{ affectedRows: 1 }, []];
+    }
+
+    async commit() {
+      if (failCommit) {
+        events.push('commit-not-sent');
+        throw new Error('commit-not-sent');
+      }
+      if (this.draft) rows.splice(0, rows.length, ...this.draft);
+      this.pending = false;
+      this.draft = null;
+      this.unlock();
+      events.push('commit');
+    }
+
+    async rollback() {
+      if (failRollback) {
+        events.push('rollback-failed');
+        throw new Error('rollback-failed');
+      }
+      this.pending = false;
+      this.draft = null;
+      this.unlock();
+      events.push('rollback');
+    }
+
+    release() {
+      events.push('release-to-pool');
+      this.unlock();
+      if (!this.destroyed) idle = this;
+    }
+
+    destroy() {
+      events.push('destroy');
+      this.destroyed = true;
+      this.pending = false;
+      this.draft = null;
+      this.unlock();
+      if (idle === this) idle = null;
+    }
+
+    private unlock() {
+      this.releaseLock?.();
+      this.releaseLock = null;
+    }
+  }
+
+  return {
+    rows,
+    events,
+    setFaults(flags: { statement?: boolean; commit?: boolean; rollback?: boolean }) {
+      failStatement = flags.statement === true;
+      failCommit = flags.commit === true;
+      failRollback = flags.rollback === true;
+    },
+    insert(patch: Partial<MemoryRow> & Pick<MemoryRow, 'host' | 'port'>): MemoryRow {
+      const row: MemoryRow = {
+        id: nextId++,
+        host: patch.host,
+        port: patch.port,
+        label: patch.label ?? null,
+        os_type: patch.os_type ?? 'centos',
+        credential_type: patch.credential_type ?? 'password',
+        credential_encrypted: patch.credential_encrypted ?? 'stored-secret',
+        host_key_fingerprint: patch.host_key_fingerprint ?? null,
+        ssh_trust_mode: patch.ssh_trust_mode ?? null,
+        status: 'offline',
+        last_check_at: null,
+        collection_enabled: patch.collection_enabled ?? 1,
+        created_at: new Date(),
+        updated_at: new Date(),
+      };
+      rows.push(row);
+      return row;
+    },
+    reset() {
+      idle = null;
+      chain = Promise.resolve();
+    },
+    getConnection: async () => {
+      if (idle && !idle.destroyed) {
+        const reused = idle;
+        idle = null;
+        events.push('reuse');
+        return reused;
+      }
+      events.push('new-connection');
+      return new Connection();
+    },
+    async execute() { throw new Error('update must use the locked connection'); },
+  };
+}
+
+describe('MAX-371 failed update connection lifecycle', () => {
+  const pool = createLifecyclePool();
+
+  beforeEach(() => {
+    pool.rows.splice(0, pool.rows.length);
+    pool.events.splice(0, pool.events.length);
+    pool.setFaults({});
+    pool.reset();
+    vi.spyOn(dbConnection, 'getPool').mockReturnValue(pool as never);
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('releases after success and after a business refusal', async () => {
+    const row = pool.insert({ host: '192.0.2.10', port: 22, label: 'before' });
+    expect(await servers.updateServer(row.id, { label: 'after' })).toEqual({ success: true });
+    expect(pool.rows[0].label).toBe('after');
+    expect(pool.events).toContain('commit');
+    expect(pool.events).toContain('release-to-pool');
+    expect(pool.events).not.toContain('destroy');
+
+    pool.events.splice(0, pool.events.length);
+    expect(await servers.updateServer(999, { label: 'missing' })).toEqual({ success: false, error: '服务器不存在' });
+    expect(pool.rows[0].label).toBe('after');
+    expect(pool.events).toContain('rollback');
+    expect(pool.events).toContain('release-to-pool');
+    expect(pool.events).not.toContain('destroy');
+  });
+
+  it('keeps the business error when rollback fails and discards the session', async () => {
+    pool.insert({ host: '192.0.2.10', port: 22, label: 'before' });
+    pool.setFaults({ rollback: true });
+    const logged: string[] = [];
+    vi.spyOn(console, 'error').mockImplementation((message?: unknown) => {
+      logged.push(String(message));
+    });
+    expect(await servers.updateServer(999, { label: 'missing' })).toEqual({ success: false, error: '服务器不存在' });
+    expect(pool.rows[0].label).toBe('before');
+    expect(pool.events).toEqual(['new-connection', 'begin', 'rollback-failed', 'destroy']);
+    expect(logged).toEqual(['更新服务器回滚失败:']);
+  });
+
+  it.each([
+    ['statement', { statement: true }, ['rollback', 'release-to-pool']],
+    ['commit', { commit: true }, ['commit-not-sent', 'rollback', 'release-to-pool']],
+    ['rollback', { commit: true, rollback: true }, ['commit-not-sent', 'rollback-failed', 'destroy']],
+  ] as const)('a %s failure cannot be committed by the next borrower', async (name, faults, expectedEvents) => {
+    const row = pool.insert({ host: '192.0.2.10', port: 22, label: 'before' });
+    pool.setFaults(faults);
+    const logged: string[] = [];
+    vi.spyOn(console, 'error').mockImplementation((message?: unknown) => {
+      logged.push(String(message));
+    });
+    const failed = await servers.updateServer(row.id, { label: 'should-not-commit' });
+    expect(failed).toEqual({ success: false, error: SERVER_UPDATE_FAILED });
+    assertNoDriverLeak(failed, ['should-not-commit', 'commit-not-sent', 'rollback-failed', 'max371-r1-statement']);
+    expect(pool.rows[0].label).toBe('before');
+    for (const event of expectedEvents) expect(pool.events).toContain(event);
+    if (name === 'rollback') {
+      expect(pool.events).not.toContain('release-to-pool');
+      expect(logged).toEqual(expect.arrayContaining(['更新服务器回滚失败:', '更新服务器失败:']));
+    } else {
+      expect(pool.events).not.toContain('destroy');
+      expect(logged).not.toContain('更新服务器回滚失败:');
+    }
+
+    pool.setFaults({});
+    const borrowed = await pool.getConnection();
+    await borrowed.beginTransaction();
+    expect(pool.events).not.toContain('implicit-commit');
+    expect(pool.rows[0].label).toBe('before');
+    await borrowed.rollback();
+    borrowed.release();
+    expect(await servers.updateServer(row.id, { label: 'successor' })).toEqual({ success: true });
+    expect(pool.rows[0].label).toBe('successor');
+    expect(pool.events).not.toContain('implicit-commit');
   });
 });
 
@@ -572,4 +804,177 @@ describe.skipIf(!realMysql)('MAX-371 real mysql3308 server edit', () => {
     evidence.concurrency = { authorized_second_pair: seen[1], stored: await read(id) };
     evidence.delete_protection = { error: SERVER_HAS_HISTORICAL_REPORTS, report_rows: 1 };
   });
+
+  async function openTransactions() {
+    const [rows] = await admin.query<RowDataPacket[]>(
+      `SELECT COUNT(*) AS n
+       FROM information_schema.innodb_trx trx
+       JOIN information_schema.processlist p ON p.ID = trx.trx_mysql_thread_id
+       WHERE p.DB = ?`,
+      [database],
+    );
+    return Number(rows[0].n);
+  }
+
+  it('releases a size-1 connection after success and business refusal', async () => {
+    const tiny = mysql.createPool({
+      host: profile.host, port: profile.port, user: profile.user, password: profile.password,
+      database, connectionLimit: 1,
+    });
+    const events: string[] = [];
+    const wrapper = {
+      getConnection: async () => {
+        const connection = await tiny.getConnection();
+        return {
+          execute: (sql: string, values?: unknown[]) => connection.execute(sql, values as never),
+          beginTransaction: async () => { events.push('begin'); return connection.beginTransaction(); },
+          commit: async () => { events.push('commit'); return connection.commit(); },
+          rollback: async () => { events.push('rollback'); return connection.rollback(); },
+          release: () => { events.push('release-to-pool'); connection.release(); },
+          destroy: () => { events.push('destroy'); connection.destroy(); },
+        };
+      },
+    };
+    vi.spyOn(dbConnection, 'getPool').mockReturnValue(wrapper as never);
+    try {
+      expect((tiny.pool as { config?: { connectionLimit?: number } }).config?.connectionLimit).toBe(1);
+      const id = await insert('192.0.2.80', 22, 'before');
+      expect(await servers.updateServer(id, { label: 'ok' })).toEqual({ success: true });
+      expect(events).toContain('commit');
+      expect(events).toContain('release-to-pool');
+      expect(events).not.toContain('destroy');
+      events.splice(0, events.length);
+      expect(await servers.updateServer(id, { os_type: 'not-an-os' })).toEqual({ success: false, error: 'HOST_OS_UNSUPPORTED' });
+      expect(await read(id)).toMatchObject({ label: 'ok', os_type: 'centos' });
+      expect(events).toContain('rollback');
+      expect(events).toContain('release-to-pool');
+      expect(events).not.toContain('destroy');
+      expect(await openTransactions()).toBe(0);
+    } finally {
+      vi.spyOn(dbConnection, 'getPool').mockReturnValue(pool as never);
+      await tiny.end();
+    }
+  });
+
+  it.each(['statement', 'commit', 'rollback'] as const)(
+    'a %s failure on a size-1 pool cannot be committed by the next borrower',
+    async (mode) => {
+      const tiny = mysql.createPool({
+        host: profile.host, port: profile.port, user: profile.user, password: profile.password,
+        database, connectionLimit: 1,
+      });
+      const events: string[] = [];
+      let statementArmed = mode === 'statement';
+      let commitArmed = mode === 'commit' || mode === 'rollback';
+      let rollbackArmed = mode === 'rollback';
+      const wrapper = {
+        getConnection: async () => {
+          const connection = await tiny.getConnection();
+          return {
+            execute: async (sql: string, values?: unknown[]) => {
+              if (statementArmed && sql.startsWith('UPDATE ')) {
+                statementArmed = false;
+                events.push('statement-failed');
+                throw driverError('ER_NO_SUCH_TABLE', 1146, 'max371-r1-statement');
+              }
+              return connection.execute(sql, values as never);
+            },
+            beginTransaction: async () => {
+              events.push('begin');
+              return connection.beginTransaction();
+            },
+            commit: async () => {
+              if (commitArmed) {
+                commitArmed = false;
+                events.push('commit-not-sent');
+                throw new Error('commit-not-sent');
+              }
+              events.push('commit');
+              return connection.commit();
+            },
+            rollback: async () => {
+              if (rollbackArmed) {
+                rollbackArmed = false;
+                events.push('rollback-failed');
+                throw new Error('rollback-failed');
+              }
+              events.push('rollback');
+              return connection.rollback();
+            },
+            release: () => {
+              events.push('release-to-pool');
+              connection.release();
+            },
+            destroy: () => {
+              events.push('destroy');
+              connection.destroy();
+            },
+          };
+        },
+      };
+      const logged: string[] = [];
+      const log = vi.spyOn(console, 'error').mockImplementation((message?: unknown) => {
+        logged.push(String(message));
+      });
+      vi.spyOn(dbConnection, 'getPool').mockReturnValue(wrapper as never);
+      const observer = await admin.getConnection();
+      const host = mode === 'statement' ? '192.0.2.81' : mode === 'commit' ? '192.0.2.82' : '192.0.2.83';
+      try {
+        await observer.query(`USE \`${database}\``);
+        await observer.query('SET innodb_lock_wait_timeout = 2');
+        const id = await insert(host, 22, 'before');
+        const failed = await servers.updateServer(id, { label: 'should-not-commit' });
+        expect(failed).toEqual({ success: false, error: SERVER_UPDATE_FAILED });
+        assertNoDriverLeak(failed, ['should-not-commit', 'commit-not-sent', 'rollback-failed', 'max371-r1-statement', 'uq_host_port']);
+        const [visible] = await observer.query<RowDataPacket[]>('SELECT label FROM servers WHERE id = ?', [id]);
+        expect(visible[0].label).toBe('before');
+        let open = await openTransactions();
+        for (let attempt = 0; open !== 0 && attempt < 20; attempt += 1) {
+          await new Promise(resolve => setTimeout(resolve, 50));
+          open = await openTransactions();
+        }
+        expect(open).toBe(0);
+        await observer.beginTransaction();
+        await observer.query('SELECT id FROM servers WHERE id = ? FOR UPDATE', [id]);
+        await observer.rollback();
+
+        const next = await tiny.getConnection();
+        try {
+          const [own] = await next.query<RowDataPacket[]>('SELECT label FROM servers WHERE id = ?', [id]);
+          expect(own[0].label).toBe('before');
+          await next.beginTransaction();
+          const [afterBegin] = await observer.query<RowDataPacket[]>('SELECT label FROM servers WHERE id = ?', [id]);
+          expect(afterBegin[0].label).toBe('before');
+          await next.rollback();
+        } finally {
+          next.release();
+        }
+
+        if (mode === 'rollback') {
+          expect(events).toEqual(['begin', 'commit-not-sent', 'rollback-failed', 'destroy']);
+          expect(logged).toEqual(expect.arrayContaining(['更新服务器回滚失败:', '更新服务器失败:']));
+        } else if (mode === 'commit') {
+          expect(events).toEqual(['begin', 'commit-not-sent', 'rollback', 'release-to-pool']);
+          expect(logged).not.toContain('更新服务器回滚失败:');
+        } else {
+          expect(events).toEqual(['begin', 'statement-failed', 'rollback', 'release-to-pool']);
+          expect(logged).not.toContain('更新服务器回滚失败:');
+        }
+
+        expect(await servers.updateServer(id, { label: 'successor' })).toEqual({ success: true });
+        const [stored] = await observer.query<RowDataPacket[]>('SELECT label FROM servers WHERE id = ?', [id]);
+        expect(stored[0].label).toBe('successor');
+        expect(await openTransactions()).toBe(0);
+        evidence[`r1_${mode}`] = { client_error: failed.error, leaked_label: false, successor: 'successor', open_transactions: 0 };
+      } finally {
+        log.mockRestore();
+        if (observer) {
+          await observer.rollback().catch(() => undefined);
+          observer.release();
+        }
+        vi.spyOn(dbConnection, 'getPool').mockReturnValue(pool as never);
+        await tiny.end();
+      }
+    },
+  );
 });

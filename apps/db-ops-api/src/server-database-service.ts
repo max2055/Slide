@@ -479,19 +479,46 @@ class ServerDatabaseService {
     };
 
     try {
-      if (typeof pool.getConnection !== 'function') return await apply(pool);
       const connection = await pool.getConnection();
+      let reusable = false;
+      // One rollback attempt. mysql2 release() does not roll back, and the next
+      // BEGIN implicitly commits a session that still has an open transaction.
+      const destroyAfterFailedRollback = (cleanupError: unknown) => {
+        console.error('更新服务器回滚失败:', cleanupError);
+        try {
+          connection.destroy();
+        } catch (destroyError) {
+          console.error('更新服务器连接销毁失败:', destroyError);
+        }
+      };
+      const rollbackOrDestroy = async () => {
+        try {
+          await connection.rollback();
+          reusable = true;
+        } catch (cleanupError) {
+          destroyAfterFailedRollback(cleanupError);
+        }
+      };
       try {
         await connection.beginTransaction();
         const result = await apply(connection);
-        if (result.success) await connection.commit();
-        else await connection.rollback();
+        if (result.success) {
+          await connection.commit();
+          reusable = true;
+          return result;
+        }
+        try {
+          await connection.rollback();
+          reusable = true;
+        } catch (cleanupError) {
+          destroyAfterFailedRollback(cleanupError);
+        }
         return result;
       } catch (error) {
-        await connection.rollback().catch(() => undefined);
+        if (!reusable) await rollbackOrDestroy();
         throw error;
       } finally {
-        connection.release();
+        if (reusable) connection.release();
       }
     } catch (error) {
       return { success: false, error: updateClientError(error) };
