@@ -278,9 +278,89 @@ describe('instance removal lifecycle', () => {
   it('an unclassified begin failure does not release the fence or skip verification', async () => {
     const f = fixture();
     vi.mocked(f.store.begin).mockRejectedValueOnce(new Error('unclassified'));
+    vi.mocked(f.store.observe).mockRejectedValueOnce(new Error('verify failed'));
     expect(await f.service.remove(8)).toMatchObject({ statusCode: 503, error: 'INSTANCE_REMOVAL_INTENT_FAILED' });
-    expect(f.store.observe).not.toHaveBeenCalled();
+    expect(f.store.observe).toHaveBeenCalledOnce();
     expect(f.access.isRevoked(8)).toBe(true);
+    await expect(f.access.assertAvailable(8)).rejects.toThrow('INSTANCE_REMOVED');
+  });
+  it('a later known failure cannot clear an unclassified intent until verification succeeds', async () => {
+    const access = new InstanceAccessLifecycle(async () => true);
+    const runtime = { stopTasks: vi.fn(async () => {}), stopCollection: vi.fn(async () => {}), closeConnections: vi.fn(async () => {}) };
+    const store: RemovalStore = {
+      begin: vi.fn(async () => 'deleting' as const),
+      observe: vi.fn(async () => 'available' as const),
+      detach: vi.fn(async () => {}), record: vi.fn(async () => {}), complete: vi.fn(async () => {}),
+    };
+    const service = new InstanceRemovalService(store, access, runtime, 20);
+
+    vi.mocked(store.begin).mockRejectedValueOnce(new Error('unclassified'));
+    vi.mocked(store.observe).mockRejectedValueOnce(new Error('verify failed'));
+    expect(await service.remove(8)).toMatchObject({ statusCode: 503, error: 'INSTANCE_REMOVAL_INTENT_FAILED' });
+    expect(store.observe).toHaveBeenCalledOnce();
+    expect(access.isRevoked(8)).toBe(true);
+
+    vi.mocked(store.begin).mockRejectedValueOnce(new RemovalIntentUncommittedError(new Error('connection refused')));
+    vi.mocked(store.observe).mockRejectedValueOnce(new Error('verify failed'));
+    expect(await service.remove(8)).toMatchObject({ statusCode: 503, error: 'INSTANCE_REMOVAL_INTENT_FAILED' });
+    expect(store.observe).toHaveBeenCalledTimes(2);
+    expect(access.isRevoked(8)).toBe(true);
+    await expect(access.assertAvailable(8)).rejects.toThrow('INSTANCE_REMOVED');
+
+    vi.mocked(store.begin).mockRejectedValueOnce(new RemovalIntentUncommittedError(new Error('rolled back')));
+    vi.mocked(store.observe).mockRejectedValueOnce(new Error('verify failed'));
+    expect(await service.remove(8)).toMatchObject({ statusCode: 503, error: 'INSTANCE_REMOVAL_INTENT_FAILED' });
+    expect(store.observe).toHaveBeenCalledTimes(3);
+    expect(access.isRevoked(8)).toBe(true);
+
+    vi.mocked(store.begin).mockResolvedValueOnce(null);
+    vi.mocked(store.observe).mockRejectedValueOnce(new Error('verify failed'));
+    expect(await service.remove(8)).toMatchObject({ success: false, statusCode: 404, error: 'INSTANCE_NOT_FOUND' });
+    expect(store.observe).toHaveBeenCalledTimes(4);
+    expect(access.isRevoked(8)).toBe(true);
+    await expect(access.assertAvailable(8)).rejects.toThrow('INSTANCE_REMOVED');
+    expect(runtime.stopTasks).not.toHaveBeenCalled();
+
+    vi.mocked(store.begin).mockImplementationOnce(async () => {
+      access.retainUnresolved(8, access.hold(8));
+      return null;
+    });
+    vi.mocked(store.observe).mockResolvedValueOnce(null);
+    expect(await service.remove(8)).toMatchObject({ statusCode: 404, error: 'INSTANCE_NOT_FOUND' });
+    expect(access.isRevoked(8)).toBe(true);
+    expect(access.unresolvedSnapshot(8).length).toBeGreaterThan(0);
+
+    vi.mocked(store.begin).mockRejectedValueOnce(new RemovalIntentUncommittedError(new Error('rolled back')));
+    vi.mocked(store.observe).mockResolvedValueOnce('available');
+    expect(await service.remove(8)).toMatchObject({ statusCode: 503, error: 'INSTANCE_REMOVAL_INTENT_FAILED' });
+    expect(access.isRevoked(8)).toBe(false);
+    expect(access.unresolvedSnapshot(8)).toEqual([]);
+    await expect(access.assertAvailable(8)).resolves.toBeUndefined();
+    expect(runtime.stopTasks).not.toHaveBeenCalled();
+
+    vi.mocked(store.begin).mockRejectedValueOnce(new Error('unclassified'));
+    vi.mocked(store.observe).mockResolvedValueOnce(null);
+    expect(await service.remove(9)).toMatchObject({ statusCode: 503, error: 'INSTANCE_REMOVAL_INTENT_FAILED' });
+    expect(access.isRevoked(9)).toBe(false);
+    await expect(access.assertAvailable(9)).resolves.toBeUndefined();
+
+    vi.mocked(store.begin).mockRejectedValueOnce(new Error('unclassified'));
+    vi.mocked(store.observe).mockRejectedValueOnce(new Error('verify failed'));
+    expect(await service.remove(11)).toMatchObject({ statusCode: 503, error: 'INSTANCE_REMOVAL_INTENT_FAILED' });
+    expect(access.isRevoked(11)).toBe(true);
+    vi.mocked(store.begin).mockResolvedValueOnce(null);
+    vi.mocked(store.observe).mockResolvedValueOnce(null);
+    expect(await service.remove(11)).toMatchObject({ success: false, statusCode: 404, error: 'INSTANCE_NOT_FOUND' });
+    expect(access.isRevoked(11)).toBe(false);
+    await expect(access.assertAvailable(11)).resolves.toBeUndefined();
+    expect(runtime.stopTasks).not.toHaveBeenCalled();
+
+    vi.mocked(store.begin).mockRejectedValueOnce(new Error('unclassified'));
+    vi.mocked(store.observe).mockResolvedValueOnce('deleting');
+    expect(await service.remove(10)).toEqual({ success: true, state: 'deleted' });
+    expect(access.isRevoked(10)).toBe(true);
+    expect(store.complete).toHaveBeenCalledOnce();
+    expect(runtime.stopTasks).toHaveBeenCalledOnce();
   });
   it('an older attempt cannot clear a newer deletion fence', async () => {
     const f = fixture();

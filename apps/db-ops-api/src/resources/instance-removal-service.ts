@@ -52,13 +52,11 @@ export class InstanceRemovalService {
     if (!this.runtime) return { success: false, state: 'deleting', statusCode: 503, error: 'INSTANCE_CLEANUP_UNAVAILABLE' };
     // Block new access before the first await, but do not abort in-flight work until intent is durable.
     const fence = this.access.hold(id);
+    const covered = this.access.unresolvedSnapshot(id);
     let state: 'deleting' | 'deleted' | null;
     try { state = await this.store.begin(id); }
     catch (error) { return this.recoverFailedIntent(id, fence, error); }
-    if (!state) {
-      this.access.forgetMissing(id, fence);
-      return { success: false, state: 'deleting', statusCode: 404, error: 'INSTANCE_NOT_FOUND' };
-    }
+    if (!state) return this.missingInstance(id, fence, covered);
     this.access.revoke(id);
     if (state === 'deleted') return { success: true, state: 'deleted' };
     return this.finishRemoval(id);
@@ -68,14 +66,39 @@ export class InstanceRemovalService {
     return { success: false, state: 'deleting', statusCode: 503, error: 'INSTANCE_REMOVAL_INTENT_FAILED' };
   }
 
+  private notFound(): RemovalResult {
+    return { success: false, state: 'deleting', statusCode: 404, error: 'INSTANCE_NOT_FOUND' };
+  }
+
+  /** A missing row clears earlier unknowns only after this read verifies the generations it covered. */
+  private async missingInstance(id: number, fence: number, covered: readonly number[]): Promise<RemovalResult> {
+    if (covered.length || this.access.hasUnresolved(id)) {
+      let observed: RemovalLifecycle | null;
+      try { observed = await this.store.observe(id); }
+      catch { return this.notFound(); }
+      if (observed === 'deleted') {
+        this.access.resolveVerified(id, covered);
+        this.access.revoke(id);
+        return { success: true, state: 'deleted' };
+      }
+      if (observed === 'deleting') {
+        this.access.resolveVerified(id, covered);
+        this.access.revoke(id);
+        return this.finishRemoval(id);
+      }
+      this.access.resolveVerified(id, covered);
+    }
+    if (this.access.hasUnresolved(id)) return this.notFound();
+    this.access.forgetMissing(id, fence);
+    return this.notFound();
+  }
+
   private async recoverFailedIntent(id: number, fence: number, error: unknown): Promise<RemovalResult> {
-    if (error instanceof RemovalIntentUnknownError) this.access.retainUnresolved(id, fence);
+    // A plain Error is not a proven rollback. Keep it with the other unverified generations.
+    if (!(error instanceof RemovalIntentUncommittedError)) this.access.retainUnresolved(id, fence);
     // A known rollback of this attempt does not prove an older unknown commit finished.
     if (error instanceof RemovalIntentUncommittedError && !this.access.hasUnresolved(id)) {
       this.access.releaseIfCurrent(id, fence);
-      return this.intentFailed();
-    }
-    if (!(error instanceof RemovalIntentUnknownError) && !(error instanceof RemovalIntentUncommittedError)) {
       return this.intentFailed();
     }
     const pending = this.access.unresolvedSnapshot(id);
