@@ -4,6 +4,7 @@ import type { AnyAgentTool } from './types.js';
 import { canActorDiscoverTool, decideToolPolicy, executeToolWithPolicy } from './policy.js';
 import { projectContextBlocks } from '@slide/agent-core';
 import { agentExecutionConfigService } from '../security/agent-execution-config-service.js';
+import { instanceDatabaseService } from '../instance-database-service.js';
 
 const actor = (roles: string[], permissions: string[] = [], scopes: Record<number, 'read-only' | 'read-write' | 'admin'> = {}): ActorContext => Object.freeze({
   userId: 7,
@@ -43,6 +44,33 @@ describe('actor tool policy', () => {
     expect(result.result.success).toBe(false);
     expect(handler).not.toHaveBeenCalled();
     expect(consume).not.toHaveBeenCalled();
+  });
+
+  it('default resolver receives the actor and rejects a cross-environment name before approval', async () => {
+    vi.spyOn(agentExecutionConfigService, 'get').mockResolvedValue({
+      approvalEnabled: true, restrictedNetworkEnabled: false, reasonCode: 'EXECUTION_CONFIG_READY',
+    });
+    const list = vi.spyOn(instanceDatabaseService, 'listAvailableInstancesByNormalizedName').mockResolvedValue([
+      { id: 8, name: 'orders', environment: 'development' },
+      { id: 9, name: 'orders', environment: 'production' },
+    ]);
+    const submit = vi.fn();
+    const handler = vi.fn(async () => ({ success: true }));
+    const outcome = await executeToolWithPolicy(
+      actor(['dba'], ['instance:*']),
+      tool({ name: 'slide_update_db_config', handler }),
+      { instance_name: ' orders ', environment: 'staging' },
+      undefined,
+      { consume: vi.fn(async () => false) },
+      { record: async () => {} },
+      undefined,
+      { approvalRequester: { submit } },
+    );
+    expect(list).toHaveBeenCalledWith('orders');
+    expect(outcome.decision.reasonCode).toBe('AMBIGUOUS_INSTANCE_NAME');
+    expect(outcome.decision.resource.instanceId).toBeUndefined();
+    expect(handler).not.toHaveBeenCalled();
+    expect(submit).not.toHaveBeenCalled();
   });
 
   it('reports a result-audit gap without an approval receipt and preserves tool data', async () => {
