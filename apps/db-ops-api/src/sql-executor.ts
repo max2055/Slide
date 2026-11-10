@@ -14,6 +14,30 @@ const DEFAULT_SQL_TIMEOUT_MS = 15_000;
 const MAX_SQL_TIMEOUT_MS = 30_000;
 const MAX_SQL_ROWS = 1_000;
 
+type DamengSession = {
+  execute: (sql: string, binds?: unknown[], options?: { maxRows?: number; autoCommit?: boolean }) => Promise<any>;
+  commit: () => Promise<void>;
+  rollback: () => Promise<void>;
+  // dmdb copies ConnectionAttributes.sessionTimeout onto each statement as queryTimeout.
+  // The public attribute is integer seconds; 0 disables the server limit.
+  conn_prop_sessionTimeout?: number;
+};
+
+function damengTimeoutSeconds(timeoutMs: number): number {
+  return Math.max(1, Math.ceil(timeoutMs / 1000));
+}
+
+function quoteDamengIdentifier(name: string): string {
+  return `"${name.replace(/"/g, '""')}"`;
+}
+
+function damengCell(result: any): string {
+  const row = result?.rows?.[0];
+  const value = Array.isArray(row) ? row[0] : row && Object.values(row)[0];
+  if (typeof value !== 'string' || !value.trim()) throw new Error('DAMENG_SCHEMA_UNAVAILABLE');
+  return value;
+}
+
 class SqlExecutor {
   private readonly executionQueues = new Map<number, Promise<void>>();
 
@@ -234,16 +258,71 @@ class SqlExecutor {
           }
         });
       } else if (conn.db_type === 'dameng' && conn.dmConnection) {
-        const dmResult = await conn.dmConnection.execute(sql, [], { maxRows: isReadOnly ? MAX_SQL_ROWS + 1 : 0 });
-        const fields = dmResult.metaData?.map((m: any) => ({ name: m.name })) || [];
-        const rows = Array.isArray(dmResult.rows) && dmResult.rows.length > 0 && !Array.isArray(dmResult.rows[0])
-          ? dmResult.rows
-          : (dmResult.rows || []).map((row: any) => {
-              const obj: any = {};
-              fields.forEach((f: any, i: number) => { obj[f.name] = row[i]; });
-              return obj;
+        // One shared session. Hold instance ownership until execute, commit/rollback,
+        // schema restore and the timeout property restore have all settled.
+        // dmdb socketTimeout (error 20010) drops the socket and is not a cancel.
+        // sessionTimeout is the server statement limit (DM8 error -608). It is
+        // integer seconds, so a sub-second request becomes one second; 0 would disable it.
+        result = await this.serializeForInstance(instanceId, async () => {
+          const dm = conn.dmConnection as DamengSession;
+          const previousTimeout = dm.conn_prop_sessionTimeout;
+          dm.conn_prop_sessionTimeout = damengTimeoutSeconds(timeoutMs);
+          let readOnlyTransaction = false;
+          let restoreSchema: string | null = null;
+          let failed = false;
+          try {
+            if (context?.database) {
+              const current = await dm.execute(
+                "SELECT SYS_CONTEXT('USERENV','CURRENT_SCHEMA') FROM DUAL",
+                [],
+                { maxRows: 1, autoCommit: true },
+              );
+              restoreSchema = damengCell(current);
+              await dm.execute(`SET SCHEMA ${quoteDamengIdentifier(context.database)}`, [], { autoCommit: true });
+            }
+            if (isReadOnly) {
+              await dm.execute('SET TRANSACTION READ ONLY', [], { autoCommit: false });
+              readOnlyTransaction = true;
+            }
+            const dmResult = await dm.execute(sql, [], {
+              maxRows: isReadOnly ? MAX_SQL_ROWS + 1 : 0,
+              autoCommit: false,
             });
-        result = { rows, fields };
+            if (readOnlyTransaction) {
+              await dm.rollback();
+              readOnlyTransaction = false;
+            } else if (reclassification.commandType === 'write') {
+              await dm.commit();
+            }
+            const fields = dmResult.metaData?.map((m: any) => ({ name: m.name })) || [];
+            const rows = Array.isArray(dmResult.rows) && dmResult.rows.length > 0 && !Array.isArray(dmResult.rows[0])
+              ? dmResult.rows
+              : (dmResult.rows || []).map((row: any) => {
+                  const obj: any = {};
+                  fields.forEach((f: any, i: number) => { obj[f.name] = row[i]; });
+                  return obj;
+                });
+            return { rows, fields };
+          } catch (error) {
+            failed = true;
+            if (readOnlyTransaction || reclassification.commandType === 'write') {
+              await dm.rollback().catch(() => undefined);
+              readOnlyTransaction = false;
+            }
+            throw error;
+          } finally {
+            let restoreError: unknown;
+            if (restoreSchema) {
+              try {
+                await dm.execute(`SET SCHEMA ${quoteDamengIdentifier(restoreSchema)}`, [], { autoCommit: true });
+              } catch (error) {
+                restoreError = error;
+              }
+            }
+            dm.conn_prop_sessionTimeout = previousTimeout;
+            if (restoreError && !failed) throw restoreError;
+          }
+        });
       } else {
         return { success: false, error: `不支持的数据库类型: ${conn.db_type}` };
       }
