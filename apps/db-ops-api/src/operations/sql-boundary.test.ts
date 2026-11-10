@@ -70,6 +70,13 @@ describe('SQL read-only boundary', () => {
     ["SELECT 1 /*! SLEEP(1) */", 'DANGEROUS_FUNCTION'],
     ['SELECT BENCHMARK(1, 1)', 'DANGEROUS_FUNCTION'],
     ["SELECT 1 /*!; DROP TABLE t */", 'MULTI_STATEMENT'],
+    ["SELECT 'a\\' , SLEEP(0) AS executed -- '", 'DANGEROUS_FUNCTION'],
+    ["SELECT 'a\\' FROM t FOR UPDATE -- '", 'LOCKING_READ'],
+    ["SELECT 'a\\' FROM t LOCK IN SHARE MODE -- '", 'LOCKING_READ'],
+    ["SELECT 'a\\' INTO OUTFILE '/tmp/x' -- '", 'SELECT_INTO'],
+    ["SELECT 'a\\' FROM t /*!50110 FOR UPDATE */ -- '", 'LOCKING_READ'],
+    ["SELECT 'a\\' /*! , SLEEP(0) AS executed */ -- '", 'DANGEROUS_FUNCTION'],
+    ["SELECT 'a\\', SLEEP(0)", 'DANGEROUS_FUNCTION'],
   ] as const)('rejects MySQL read bypass %s', (sql, reasonCode) => {
     expect(classifySql(sql, 'mysql')).toMatchObject({ commandType: 'unknown', reasonCode });
   });
@@ -88,6 +95,8 @@ describe('SQL read-only boundary', () => {
     ['SELECT 1 -- FOR UPDATE\n'],
     ['SELECT 1 # LOCK IN SHARE MODE\n'],
     ['SELECT 1 /*! + 1 */'],
+    ["SELECT 'a\\\\', 1 AS n -- '"],
+    ["SELECT 'a\\', 1 AS still_text'"],
   ] as const)('keeps ordinary MySQL text read-only: %s', (sql) => {
     expect(classifySql(sql, 'mysql')).toMatchObject({ commandType: 'read', reasonCode: 'READ_ONLY' });
   });

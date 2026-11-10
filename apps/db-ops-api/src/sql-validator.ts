@@ -35,14 +35,20 @@ function isSqlWhitespace(ch: string | undefined): boolean {
   return ch === ' ' || ch === '\n' || ch === '\r' || ch === '\t' || ch === '\f' || ch === '\v';
 }
 
+interface ScannedSql {
+  expanded: string;
+  skeleton: string;
+}
+
 /**
  * Separate executable MySQL comments from text that cannot change statement
  * shape. Versioned comments are always inlined: the classifier does not know
  * the server version, and dropping a future-version body would hide the
- * statement a newer server would run. Returns null when a comment or literal
- * is unclosed.
+ * statement a newer server would run. `backslashEscapes` follows MySQL's
+ * default; NO_BACKSLASH_ESCAPES is scanned separately. Returns null when a
+ * comment or literal is unclosed.
  */
-function scanSqlTokens(sql: string, dialect: string): { expanded: string; skeleton: string } | null {
+function scanSqlTokens(sql: string, dialect: string, backslashEscapes = true): ScannedSql | null {
   const mysql = dialect === 'mysql';
   const expanded: string[] = [];
   const skeleton: string[] = [];
@@ -66,7 +72,7 @@ function scanSqlTokens(sql: string, dialect: string): { expanded: string; skelet
       let cursor = index + 1;
       let closed = false;
       while (cursor < sql.length) {
-        if (sql[cursor] === '\\') {
+        if (backslashEscapes && sql[cursor] === '\\') {
           cursor += 2;
           continue;
         }
@@ -201,12 +207,26 @@ function hasDangerousSelectShape(node: any, skeleton: string): SqlReasonCode | n
   return checkUnsafeFunctions(node) ? 'DANGEROUS_FUNCTION' : null;
 }
 
-/** AST-first classifier. Parser failure is deliberately unknown rather than a heuristic allow. */
-export function classifySql(sql: string, dialect: string = 'mysql'): SqlClassification {
-  if (!DIALECTS.has(dialect) || !sql.trim()) return { commandType: 'unknown', reasonCode: 'UNCLASSIFIED', dialect };
-  if (Buffer.byteLength(sql, 'utf8') > 64 * 1024) return { commandType: 'unknown', reasonCode: 'SQL_TOO_LARGE', dialect };
-  const scanned = scanSqlTokens(sql, dialect);
-  if (!scanned) return { commandType: 'unknown', reasonCode: 'UNCLASSIFIED', dialect };
+function unclassified(dialect: string): SqlClassification {
+  return { commandType: 'unknown', reasonCode: 'UNCLASSIFIED', dialect };
+}
+
+function isReadOnly(result: SqlClassification): boolean {
+  return result.commandType === 'read' && result.reasonCode === 'READ_ONLY';
+}
+
+/** A read is allowed only when every closed interpretation is a read. */
+function stricterClassification(primary: SqlClassification, alternate: SqlClassification): SqlClassification {
+  const primaryDenies = !isReadOnly(primary);
+  const alternateDenies = !isReadOnly(alternate);
+  if (primaryDenies && alternateDenies) {
+    if (primary.reasonCode === 'UNCLASSIFIED' && alternate.reasonCode !== 'UNCLASSIFIED') return alternate;
+    return primary;
+  }
+  return alternateDenies ? alternate : primary;
+}
+
+function classifyScanned(sql: string, dialect: string, scanned: ScannedSql): SqlClassification {
   const source = dialect === 'mysql' ? scanned.expanded : sql;
   const parser = new Parser();
   let ast: any;
@@ -218,13 +238,11 @@ export function classifySql(sql: string, dialect: string = 'mysql'): SqlClassifi
   } catch {
     const dangerous = dangerousSelectText(scanned.skeleton);
     if (dangerous) return { commandType: 'unknown', reasonCode: dangerous, dialect };
-    if (dialect !== 'oracle' && dialect !== 'dameng') {
-      return { commandType: 'unknown', reasonCode: 'UNCLASSIFIED', dialect };
-    }
+    if (dialect !== 'oracle' && dialect !== 'dameng') return unclassified(dialect);
     try {
       ast = parser.astify(source, { database: 'mysql' });
     } catch {
-      return { commandType: 'unknown', reasonCode: 'UNCLASSIFIED', dialect };
+      return unclassified(dialect);
     }
   }
   const statements = Array.isArray(ast) ? ast : [ast];
@@ -234,14 +252,27 @@ export function classifySql(sql: string, dialect: string = 'mysql'): SqlClassifi
   const type = TYPE_MAP[rawType] ?? TYPE_MAP[firstKeyword] ?? 'unknown';
   // User-submitted read paths deliberately accept SELECT only. SHOW,
   // DESCRIBE and EXPLAIN have separate application-owned implementations.
-  if (type === 'read' && rawType !== 'select') {
-    return { commandType: 'unknown', reasonCode: 'UNCLASSIFIED', dialect, ast };
-  }
+  if (type === 'read' && rawType !== 'select') return { commandType: 'unknown', reasonCode: 'UNCLASSIFIED', dialect, ast };
   if (type === 'read') {
     const dangerous = hasDangerousSelectShape(statements[0], scanned.skeleton);
     if (dangerous) return { commandType: 'unknown', reasonCode: dangerous, dialect, ast };
   }
   return { commandType: type, reasonCode: type === 'read' ? 'READ_ONLY' : 'UNCLASSIFIED', dialect, ast };
+}
+
+/** AST-first classifier. Parser failure is deliberately unknown rather than a heuristic allow. */
+export function classifySql(sql: string, dialect: string = 'mysql'): SqlClassification {
+  if (!DIALECTS.has(dialect) || !sql.trim()) return unclassified(dialect);
+  if (Buffer.byteLength(sql, 'utf8') > 64 * 1024) return { commandType: 'unknown', reasonCode: 'SQL_TOO_LARGE', dialect };
+  const escaped = scanSqlTokens(sql, dialect, true);
+  if (dialect !== 'mysql') return escaped ? classifyScanned(sql, dialect, escaped) : unclassified(dialect);
+  // The session sql_mode is not known here. An unclosed literal cannot run;
+  // a closed reading that is not a pure read cannot be allowed.
+  const literal = scanSqlTokens(sql, dialect, false);
+  const same = !!escaped && !!literal && escaped.expanded === literal.expanded && escaped.skeleton === literal.skeleton;
+  if (!literal || same) return escaped ? classifyScanned(sql, dialect, escaped) : unclassified(dialect);
+  if (!escaped) return classifyScanned(sql, dialect, literal);
+  return stricterClassification(classifyScanned(sql, dialect, escaped), classifyScanned(sql, dialect, literal));
 }
 
 export function isSingleReadOnlySql(sql: string, dialect?: string): SqlClassification {

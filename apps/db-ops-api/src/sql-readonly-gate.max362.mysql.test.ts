@@ -1,12 +1,13 @@
 /**
  * MAX-362 real MySQL read-only execution gate.
  *
- * Classification unit tests cannot prove the product refuses a statement
- * before SqlExecutor sends it. This file connects to the shared mysql3308
- * test instance, runs the allowed statements through the real executor, and
- * checks that locking reads and executable-comment writes never arrive.
+ * The full suite collects this file without a local credential path. Set
+ * MAX362_READONLY_GATE=1 and MAX362_MYSQL_HOST, MAX362_MYSQL_PORT,
+ * MAX362_MYSQL_USER, MAX362_MYSQL_PASSWORD to run it. With the gate enabled,
+ * missing configuration fails the file instead of skipping. Optional
+ * MAX362_MYSQL_CONTAINER selects the server container used to confirm the
+ * refused outfile was not created (default mysql3308).
  */
-import { readFileSync } from 'node:fs';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import mysql, { type Pool, type RowDataPacket } from 'mysql2/promise';
@@ -17,7 +18,9 @@ import { sqlExecutor } from './sql-executor.js';
 const execFileAsync = promisify(execFile);
 const SCHEMA = `slide_max362_${process.pid}`;
 const INSTANCE_ID = 3_620_000_000 + (process.pid % 100_000);
-const OUTFILE = '/var/lib/mysql-files/max362-not-written.txt';
+const OUTFILE_NAME = `max362-${process.pid}-${Date.now()}-not-written.txt`;
+const OUTFILE = `/var/lib/mysql-files/${OUTFILE_NAME}`;
+const acceptance = process.env.MAX362_READONLY_GATE === '1';
 
 interface MysqlTestProfile {
   host: string;
@@ -26,16 +29,18 @@ interface MysqlTestProfile {
   password: string;
 }
 
-function loadMysqlTestProfile(): MysqlTestProfile {
-  const profiles = JSON.parse(readFileSync('/Users/max/.config/slide-test-access/connection-profiles.json', 'utf8')) as {
-    'mysql-test'?: MysqlTestProfile;
-  };
-  const profile = profiles['mysql-test'];
-  if (!profile?.host || !profile.port || !profile.user || !profile.password) {
-    throw new Error('mysql-test profile is incomplete');
+function loadGateProfile(): MysqlTestProfile {
+  const host = process.env.MAX362_MYSQL_HOST ?? '';
+  const port = Number(process.env.MAX362_MYSQL_PORT);
+  const user = process.env.MAX362_MYSQL_USER ?? '';
+  const password = process.env.MAX362_MYSQL_PASSWORD ?? '';
+  if (!host || !Number.isSafeInteger(port) || port <= 0 || !user || !password) {
+    throw new Error('MAX362_READONLY_GATE=1 requires MAX362_MYSQL_HOST, MAX362_MYSQL_PORT, MAX362_MYSQL_USER and MAX362_MYSQL_PASSWORD');
   }
-  return profile;
+  return { host, port, user, password };
 }
+
+if (acceptance) loadGateProfile();
 
 async function statementHits(pool: Pool, marker: string): Promise<number> {
   const [rows] = await pool.query<RowDataPacket[]>(
@@ -48,11 +53,11 @@ async function statementHits(pool: Pool, marker: string): Promise<number> {
   return Number(rows[0]?.hits ?? 0);
 }
 
-describe('MAX-362 MySQL read-only execution gate', () => {
-  const profile = loadMysqlTestProfile();
+describe.skipIf(!acceptance)('MAX-362 MySQL read-only execution gate', () => {
   let admin: Pool;
 
   beforeAll(async () => {
+    const profile = loadGateProfile();
     admin = mysql.createPool({
       host: profile.host,
       port: profile.port,
@@ -82,7 +87,6 @@ describe('MAX-362 MySQL read-only execution gate', () => {
       await admin.query(`DROP DATABASE IF EXISTS \`${SCHEMA}\``).catch(() => undefined);
       await admin.end().catch(() => undefined);
     }
-    await execFileAsync('docker', ['exec', 'mysql3308', 'rm', '-f', OUTFILE]).catch(() => undefined);
   }, 30_000);
 
   it('executes a real read whose strings only look dangerous', async () => {
@@ -108,6 +112,9 @@ describe('MAX-362 MySQL read-only execution gate', () => {
     [`SELECT id FROM gate_rows /*! INTO OUTFILE '${OUTFILE}' */ /* max362outfile */`, 'SELECT_INTO', 'max362outfile'],
     ["SELECT id FROM gate_rows WHERE msg = 'sleep(' AND SLEEP(1) /* max362sleep */", 'DANGEROUS_FUNCTION', 'max362sleep'],
     ["SELECT id FROM gate_rows /*!50110 LOCK IN SHARE MODE */ /* max362version */", 'LOCKING_READ', 'max362version'],
+    ["SELECT 'a\\' , SLEEP(0) AS executed -- max362nobackslash '", 'DANGEROUS_FUNCTION', 'max362nobackslash'],
+    ["SELECT 'a\\' FROM gate_rows FOR UPDATE -- max362nobacklock '", 'LOCKING_READ', 'max362nobacklock'],
+    ["SELECT 'a\\' FROM gate_rows /*!50110 FOR UPDATE */ -- max362nobackcmt '", 'LOCKING_READ', 'max362nobackcmt'],
   ] as const)('refuses %s before MySQL sees it', async (sql, reasonCode, marker) => {
     const before = await statementHits(admin, marker);
     const result = await sqlExecutor.executeSql(INSTANCE_ID, sql);
@@ -115,8 +122,19 @@ describe('MAX-362 MySQL read-only execution gate', () => {
     expect(await statementHits(admin, marker)).toBe(before);
   }, 30_000);
 
+  it('executes a literal whose escaped quote stays inside the string', async () => {
+    const result = await sqlExecutor.executeSql(
+      INSTANCE_ID,
+      "SELECT 'it\\'s for update now' AS msg /* max362literal */",
+    );
+    expect(result.success).toBe(true);
+    expect(result.rows?.[0]?.msg).toBe("it's for update now");
+    expect(await statementHits(admin, 'max362literal')).toBeGreaterThan(0);
+  }, 30_000);
+
   it('does not create the outfile named by the refused statement', async () => {
-    const listing = await execFileAsync('docker', ['exec', 'mysql3308', 'ls', '/var/lib/mysql-files']);
-    expect(listing.stdout).not.toContain('max362-not-written.txt');
+    const container = process.env.MAX362_MYSQL_CONTAINER ?? 'mysql3308';
+    const listing = await execFileAsync('docker', ['exec', container, 'ls', '/var/lib/mysql-files']);
+    expect(listing.stdout.split('\n')).not.toContain(OUTFILE_NAME);
   });
 });
