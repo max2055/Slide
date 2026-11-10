@@ -20,6 +20,72 @@ import { updateDbConfigTool } from './update_db_config.js';
 
 const acceptance = process.env.MAX378_MYSQL_ACCEPTANCE === '1';
 
+interface Max378QueryRow { user?: string; host?: string }
+interface Max378CleanupHandles {
+  restoreMocks?: () => void;
+  observer?: { end: () => Promise<void> } | null;
+  pool?: { end: () => Promise<void> } | null;
+  root?: {
+    query: (sql: string, values?: unknown[]) => Promise<[Max378QueryRow[], unknown]>;
+    end: () => Promise<void>;
+  } | null;
+  userCreated: boolean;
+  loginUser: string;
+  owned?: { drop: () => Promise<void> } | null;
+}
+
+/**
+ * Each cleanup runs even when an earlier one throws. The root connection is
+ * closed last. A prior test or setup error stays first and is not replaced.
+ */
+export async function releaseMax378Acceptance(
+  handles: Max378CleanupHandles,
+  priorError?: unknown,
+): Promise<void> {
+  const cleanupErrors: unknown[] = [];
+  const steps: Array<() => Promise<void>> = [
+    async () => { handles.restoreMocks?.(); },
+    async () => { await handles.observer?.end(); },
+    async () => { await handles.pool?.end(); },
+    async () => { await dropOwnedMysqlUser(handles); },
+    async () => { await handles.owned?.drop(); },
+    async () => { await handles.root?.end(); },
+  ];
+  for (const step of steps) {
+    try {
+      await step();
+    } catch (error) {
+      cleanupErrors.push(error);
+    }
+  }
+  if (cleanupErrors.length === 0) {
+    if (priorError !== undefined) throw priorError;
+    return;
+  }
+  const retained = priorError === undefined ? cleanupErrors : [priorError, ...cleanupErrors];
+  const failure = new AggregateError(
+    retained,
+    priorError === undefined
+      ? 'MAX-378 cleanup failed'
+      : 'MAX-378 cleanup failed; the first error is retained',
+  );
+  if (priorError !== undefined) failure.cause = priorError;
+  throw failure;
+}
+
+async function dropOwnedMysqlUser(handles: Max378CleanupHandles): Promise<void> {
+  if (!handles.userCreated) return;
+  if (!handles.root) throw new Error('refusing to drop a MySQL account without the connection that created it');
+  const [accounts] = await handles.root.query(
+    'SELECT user, host FROM mysql.user WHERE user = ?',
+    [handles.loginUser],
+  );
+  if (accounts.length !== 1 || accounts[0]?.host !== '%' || !/^m378_[a-z0-9]+$/.test(handles.loginUser)) {
+    throw new Error('refusing to drop a MySQL account this run does not uniquely own');
+  }
+  await handles.root.query(`DROP USER '${handles.loginUser}'@'%'`);
+}
+
 describe.skipIf(!acceptance)('MAX-378 saved config versus later connection checks', () => {
   let root: mysql.Connection;
   let pool: Pool;
@@ -29,6 +95,7 @@ describe.skipIf(!acceptance)('MAX-378 saved config versus later connection check
   let loginUser = '';
   let secret = '';
   let targetHost = '';
+  let targetPort = 0;
   let instanceUpdates = 0;
   const nonce = generateRunNonce();
   const handleDir = join(process.cwd(), '.max378-handles');
@@ -83,7 +150,8 @@ describe.skipIf(!acceptance)('MAX-378 saved config versus later connection check
     const [sessions] = await root.query<RowDataPacket[]>(
       "SELECT COUNT(*) AS total, SUM(command <> 'Sleep') AS active FROM information_schema.processlist",
     );
-    console.log(`mysql3308 sessions=${Number(sessions[0]?.total ?? 0)} active=${Number(sessions[0]?.active ?? 0)}`);
+    targetPort = port;
+    console.log(`mysql acceptance sessions=${Number(sessions[0]?.total ?? 0)} active=${Number(sessions[0]?.active ?? 0)} port=${port}`);
     owned = await createOwnedDatabase(root, { nonce, purpose: 'max378', handleDir });
     loginUser = `m378_${nonce}`;
     await root.query("CREATE USER ?@'%' IDENTIFIED BY ?", [loginUser, secret]);
@@ -169,22 +237,18 @@ describe.skipIf(!acceptance)('MAX-378 saved config versus later connection check
   }, 60000);
 
   afterAll(async () => {
-    vi.restoreAllMocks();
-    await observer?.end();
-    await pool?.end();
-    if (userCreated) {
-      const [accounts] = await root.query<RowDataPacket[]>(
-        'SELECT user, host FROM mysql.user WHERE user = ?',
-        [loginUser],
-      );
-      if (accounts.length !== 1 || accounts[0]?.host !== '%' || !/^m378_[a-z0-9]+$/.test(loginUser)) {
-        throw new Error('refusing to drop a MySQL account this run does not uniquely own');
-      }
-      await root.query(`DROP USER '${loginUser}'@'%'`);
-    }
-    if (owned) await owned.drop();
-    await root?.end();
+    await releaseMax378Acceptance({
+      restoreMocks: () => { vi.restoreAllMocks(); },
+      observer,
+      pool,
+      root,
+      userCreated,
+      loginUser,
+      owned,
+    });
   }, 60000);
+
+  const previousPort = () => (targetPort === 33061 ? 33062 : 33061);
 
   const insert = async (values: Record<string, unknown>) => {
     const [result] = await pool.query(
@@ -215,9 +279,12 @@ describe.skipIf(!acceptance)('MAX-378 saved config versus later connection check
   });
 
   it('reports the save and a separate warning when decrypt throws, and writes once', async () => {
+    const oldPort = previousPort();
+    const marker = `decrypt-${nonce}`;
     const id = await insert({
-      name: `decrypt-${nonce}`, environment: 'development', host: targetHost, port: 3308,
+      name: `decrypt-${nonce}`, environment: 'development', host: targetHost, port: oldPort,
       username: loginUser, passwordEncrypted: encryptData(secret), databaseName: `decrypt-${nonce}`,
+      description: `before-${nonce}`,
     });
     const real = instanceDatabaseService.getInstanceWithDecryptedPassword.bind(instanceDatabaseService);
     const spy = vi.spyOn(instanceDatabaseService, 'getInstanceWithDecryptedPassword').mockImplementation(async (instanceId) => {
@@ -226,7 +293,10 @@ describe.skipIf(!acceptance)('MAX-378 saved config versus later connection check
     });
     const before = instanceUpdates;
     try {
-      const { result, audits } = await run({ instance_id: id, port: 3308 }, actorFor({ [id]: 'read-write' }));
+      const { result, audits } = await run(
+        { instance_id: id, port: targetPort, description: marker },
+        actorFor({ [id]: 'read-write' }),
+      );
       expect(result).toMatchObject({
         success: true,
         status: 'warning',
@@ -238,7 +308,10 @@ describe.skipIf(!acceptance)('MAX-378 saved config versus later connection check
       expect(String((result.data as { warning?: string }).warning)).toContain('已保存');
       expect(result.next_actions?.join('\n')).toContain('不要再次提交');
       expect(instanceUpdates - before).toBe(1);
-      expect(Number((await readRow(id)).port)).toBe(3308);
+      const committed = await readRow(id);
+      expect(Number(committed.port)).toBe(targetPort);
+      expect(Number(committed.port)).not.toBe(oldPort);
+      expect(committed.description).toBe(marker);
       const packed = JSON.stringify({ result, audits });
       expect(packed).not.toContain(secret);
       expect(packed).not.toContain('UPDATE_CONFIG_FAILED');
@@ -249,24 +322,35 @@ describe.skipIf(!acceptance)('MAX-378 saved config versus later connection check
   });
 
   it('reports the save and a separate warning when the connection check throws, and writes once', async () => {
+    const oldUser = `stale_${nonce}`;
+    const marker = `connect-${nonce}`;
     const id = await insert({
-      name: `connect-${nonce}`, environment: 'development', host: targetHost, port: 3308,
-      username: loginUser, passwordEncrypted: encryptData(secret), databaseName: `connect-${nonce}`,
+      name: `connect-${nonce}`, environment: 'development', host: targetHost, port: targetPort,
+      username: oldUser, passwordEncrypted: encryptData(secret), databaseName: `connect-${nonce}`,
+      description: `before-${nonce}`,
     });
     const spy = vi.spyOn(instanceDatabaseService, 'testConnection').mockImplementation(async () => {
       throw new Error(`connect ${secret}`);
     });
     const before = instanceUpdates;
     try {
-      const { result, audits } = await run({ instance_id: id, username: loginUser }, actorFor({ [id]: 'read-write' }));
+      const { result, audits } = await run(
+        { instance_id: id, username: loginUser, description: marker },
+        actorFor({ [id]: 'read-write' }),
+      );
       expect(result).toMatchObject({
         success: true,
         status: 'warning',
         data: { configSaved: true, connectionTested: true, connectionSuccess: false, verification: { stage: 'connect' } },
       });
       expect(result.error).toBeUndefined();
+      expect(result.errorCode).toBeUndefined();
+      expect(String((result.data as { warning?: string }).warning)).toContain('已保存');
       expect(instanceUpdates - before).toBe(1);
-      expect((await readRow(id)).username).toBe(loginUser);
+      const committed = await readRow(id);
+      expect(committed.username).toBe(loginUser);
+      expect(committed.username).not.toBe(oldUser);
+      expect(committed.description).toBe(marker);
       expect(JSON.stringify({ result, audits })).not.toContain(secret);
     } finally {
       spy.mockRestore();
@@ -275,18 +359,19 @@ describe.skipIf(!acceptance)('MAX-378 saved config versus later connection check
 
   it('connects successfully after a real connection-field update', async () => {
     const id = await insert({
-      name: `live-${nonce}`, environment: 'development', host: targetHost, port: 3307,
+      name: `live-${nonce}`, environment: 'development', host: targetHost, port: previousPort(),
       username: loginUser, passwordEncrypted: encryptData(secret), databaseName: owned.database,
     });
     const before = instanceUpdates;
-    const { result } = await run({ instance_id: id, port: 3308 }, actorFor({ [id]: 'read-write' }));
+    const { result } = await run({ instance_id: id, port: targetPort }, actorFor({ [id]: 'read-write' }));
     expect(result).toMatchObject({
       success: true,
       status: 'success',
       data: { connectionTested: true, connectionSuccess: true, instanceId: id },
     });
     expect(instanceUpdates - before).toBe(1);
-    expect(Number((await readRow(id)).port)).toBe(3308);
+    expect(Number((await readRow(id)).port)).toBe(targetPort);
+    expect(Number((await readRow(id)).port)).not.toBe(previousPort());
     expect(JSON.stringify(result)).not.toContain(secret);
   });
 
@@ -333,7 +418,7 @@ describe.skipIf(!acceptance)('MAX-378 saved config versus later connection check
 
   it('consumes a credential once and does not write again when the later connection check throws', async () => {
     const id = await insert({
-      name: `cred-${nonce}`, environment: 'development', host: targetHost, port: 3308,
+      name: `cred-${nonce}`, environment: 'development', host: targetHost, port: targetPort,
       username: loginUser, passwordEncrypted: encryptData('old-secret'), databaseName: `cred-${nonce}`, description: 'before',
     });
     const issued = await credentialReferenceService.create(7, updateDbConfigTool.name, secret);
@@ -418,5 +503,101 @@ describe.skipIf(!acceptance)('MAX-378 saved config versus later connection check
     const named = await run({ instance_name: ` solo-${nonce} `, description: `named-${nonce}` }, actorFor({ [only]: 'read-write' }));
     expect(named.result).toMatchObject({ success: true, data: { instanceId: only } });
     expect((await readRow(only)).description).toBe(`named-${nonce}`);
+  });
+});
+
+const OWNED_LOGIN = 'm378_abcdef01';
+
+function cleanupHarness(failAt: string[] = []) {
+  const calls: string[] = [];
+  const fail = new Set(failAt);
+  const step = async (name: string) => {
+    calls.push(name);
+    if (fail.has(name)) throw new Error(`injected ${name}`);
+  };
+  const handles: Max378CleanupHandles = {
+    restoreMocks: () => { calls.push('restore-mocks'); if (fail.has('restore-mocks')) throw new Error('injected restore-mocks'); },
+    observer: { end: () => step('observer.end') },
+    pool: { end: () => step('pool.end') },
+    root: {
+      query: async (sql: string) => {
+        if (sql.includes('DROP USER')) {
+          await step('dropUser');
+          return [[], undefined];
+        }
+        calls.push('select-user');
+        return [[{ user: OWNED_LOGIN, host: '%' }], undefined];
+      },
+      end: () => step('root.end'),
+    },
+    userCreated: true,
+    loginUser: OWNED_LOGIN,
+    owned: { drop: () => step('owned.drop') },
+  };
+  return { calls, handles };
+}
+
+describe('MAX-378 cleanup failure regression', () => {
+  const laterSteps = ['observer.end', 'pool.end', 'dropUser', 'owned.drop', 'root.end'];
+
+  it.each(['observer.end', 'pool.end', 'dropUser', 'owned.drop'])(
+    'still closes the root connection when %s fails',
+    async (failure) => {
+      const { calls, handles } = cleanupHarness([failure]);
+      await expect(releaseMax378Acceptance(handles)).rejects.toMatchObject({
+        errors: [expect.objectContaining({ message: `injected ${failure}` })],
+      });
+      const start = laterSteps.indexOf(failure);
+      for (const name of laterSteps.slice(start)) expect(calls).toContain(name);
+      expect(calls.at(-1)).toBe('root.end');
+    },
+  );
+
+  it('keeps the ownership check and still finishes the remaining cleanup', async () => {
+    const { calls, handles } = cleanupHarness();
+    handles.root = {
+      query: async (sql: string) => {
+        calls.push(sql.includes('DROP USER') ? 'dropUser' : 'select-user');
+        return [[{ user: OWNED_LOGIN, host: 'localhost' }], undefined];
+      },
+      end: async () => { calls.push('root.end'); },
+    };
+    const error = await releaseMax378Acceptance(handles).then(
+      () => { throw new Error('cleanup resolved'); },
+      (caught: unknown) => caught,
+    );
+    expect(error).toBeInstanceOf(AggregateError);
+    expect((error as AggregateError).errors.map((item) => item instanceof Error ? item.message : String(item))).toEqual([
+      'refusing to drop a MySQL account this run does not uniquely own',
+    ]);
+    expect(calls).not.toContain('dropUser');
+    expect(calls).toContain('owned.drop');
+    expect(calls.at(-1)).toBe('root.end');
+  });
+
+  it('retains the first error together with every later cleanup error', async () => {
+    const prior = new Error('business failed');
+    const failures = ['observer.end', 'pool.end', 'dropUser', 'owned.drop', 'root.end'];
+    const { calls, handles } = cleanupHarness(failures);
+    const error = await releaseMax378Acceptance(handles, prior).then(
+      () => { throw new Error('cleanup resolved'); },
+      (caught: unknown) => caught,
+    );
+    expect(error).toBeInstanceOf(AggregateError);
+    const aggregate = error as AggregateError;
+    expect(aggregate.cause).toBe(prior);
+    expect(aggregate.errors.map((item) => item instanceof Error ? item.message : String(item))).toEqual([
+      'business failed',
+      ...failures.map((name) => `injected ${name}`),
+    ]);
+    expect(calls).toEqual(['restore-mocks', 'observer.end', 'pool.end', 'select-user', 'dropUser', 'owned.drop', 'root.end']);
+  });
+
+  it('rethrows the original error unchanged when cleanup itself succeeds', async () => {
+    const prior = new Error('init failed');
+    const { calls, handles } = cleanupHarness();
+    await expect(releaseMax378Acceptance(handles, prior)).rejects.toBe(prior);
+    expect(calls).toContain('dropUser');
+    expect(calls.at(-1)).toBe('root.end');
   });
 });
