@@ -176,10 +176,10 @@ export const oracleTablespaceDetailTool: AnyAgentTool = {
           total_gb: Number(row[5] || 0),
           used_gb: Number(row[6] || 0),
           usage_percent: Number(row[7] || 0),
-          max_gb: row[8] ? Number(row[8]) : null,
+          max_gb: row[8] != null ? Number(row[8]) : null,
           autoextensible: row[9],
           segment_count: Number(row[10] || 0),
-          free_gb: row[8] ? Math.round((Number(row[8]) - Number(row[6] || 0)) * 100) / 100 : null,
+          free_gb: row[8] != null ? Math.round((Number(row[8]) - Number(row[6] || 0)) * 100) / 100 : null,
         };
       });
 
