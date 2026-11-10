@@ -191,7 +191,7 @@ import { startSessionCleanup, stopSessionCleanup } from './src/session-cleanup.j
 import { loadPredefinedSkills, skillRegistry } from './src/skills/loader.js';
 import { promptManager } from './src/prompts/prompt-manager.js';
 import { optimizePromptContent } from './src/prompts/optimize.js';
-import { serverDatabaseService } from './src/server-database-service.js';
+import { SERVER_HAS_HISTORICAL_REPORTS, SERVER_HISTORICAL_REPORT_DELETE_ERROR, serverDatabaseService } from './src/server-database-service.js';
 import { serverReportService } from './src/server-report-service.js';
 import serverCollector from './src/server-collector.js';
 import { serverDiagnosticService } from './src/server-diagnostic-service.js';
@@ -1592,6 +1592,12 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
       } else {
         if (result.error === 'SERVER_HAS_INSTANCE_RELATIONS') {
           return reply.code(409).send({ error: result.error });
+        }
+        if (result.error === SERVER_HAS_HISTORICAL_REPORTS) {
+          return reply.code(409).send({
+            error: SERVER_HISTORICAL_REPORT_DELETE_ERROR,
+            code: SERVER_HAS_HISTORICAL_REPORTS,
+          });
         }
         reply.code(400).send({ error: result.error });
       }
