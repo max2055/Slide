@@ -46,3 +46,20 @@ describe('Agent tool resource resolver', () => {
       .toMatchObject({ type: 'none', error: 'RESOURCE_INVALID' });
   });
 });
+
+// GitHub #623 / OCR-1364: evidence reads must carry a concrete policy subject.
+describe.each(['get_evidence_bundle', 'get_evidence_item'])('%s resource scope', (toolName) => {
+  it.each([
+    ['instance', 'instanceId'], ['server', 'serverId'], ['network_device', 'networkDeviceId'],
+  ])('resolves %s', (resourceType, key) => {
+    expect(resolveToolResourceFromArgs(toolName, { resourceType, resourceId: 12 }))
+      .toEqual({ type: resourceType, [key]: 12 });
+  });
+  it.each([
+    {}, { resourceId: 12 }, { resourceType: 'server' },
+    { resourceType: 'unknown', resourceId: 12 },
+    ...[0, -1, 1.5, '12', null, Number.MAX_SAFE_INTEGER + 1].map(resourceId => ({ resourceType: 'server', resourceId })),
+  ])('rejects invalid or missing reference %j', (args) => {
+    expect(resolveToolResourceFromArgs(toolName, args)).toMatchObject({ error: 'RESOURCE_INVALID' });
+  });
+});
