@@ -77,6 +77,8 @@ describe('SQL read-only boundary', () => {
     ["SELECT 'a\\' FROM t /*!50110 FOR UPDATE */ -- '", 'LOCKING_READ'],
     ["SELECT 'a\\' /*! , SLEEP(0) AS executed */ -- '", 'DANGEROUS_FUNCTION'],
     ["SELECT 'a\\', SLEEP(0)", 'DANGEROUS_FUNCTION'],
+    ['SELECT "a\\" , SLEEP(0) AS executed -- "', 'DANGEROUS_FUNCTION'],
+    ['SELECT "a\\" FROM t FOR UPDATE -- "', 'LOCKING_READ'],
   ] as const)('rejects MySQL read bypass %s', (sql, reasonCode) => {
     expect(classifySql(sql, 'mysql')).toMatchObject({ commandType: 'unknown', reasonCode });
   });
