@@ -85,13 +85,13 @@ describe('MAX-627 chat input', () => {
   });
 
   it('marks a steer send failure as unknown and never automatically replays it (#410)', async () => {
-    const request = vi.fn().mockResolvedValueOnce({ sessions: [{ key: 'main', status: 'running' }] })
-      .mockRejectedValue(new Error('connection lost'));
+    // MAX-626 /steer now admits atomically via chat.steer, without sessions.list.
+    const request = vi.fn().mockRejectedValue(new Error('connection lost'));
     const state = host(request); state.chatMessage = '/steer hello';
     await handleSendChat(state);
     expect(state.lastError).toContain('结果未知');
     expect(state.chatMessage).toBe('/steer hello');
     await flushChatQueueForEvent(state);
-    expect(request).toHaveBeenCalledTimes(2);
+    expect(request).toHaveBeenCalledExactlyOnceWith('chat.steer', { sessionKey: 'main', message: 'hello' });
   });
 });
