@@ -1,7 +1,7 @@
 import { createPrivateKey, createPublicKey } from 'node:crypto';
 import { createRequire } from 'node:module';
 import { expect, it } from 'vitest';
-import { generateSshFixtureKeyPair } from './ssh-key.fixture.js';
+import { generateSshFixtureKeyPair } from '../../../tests/fixtures/ssh-key.fixture.js';
 const { utils } = createRequire(import.meta.url)('ssh2') as typeof import('ssh2');
 
 it('MAX-624 preserves a leading-zero Ed25519 public byte through OpenSSH parsing and signing', () => {

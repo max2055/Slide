@@ -1,4 +1,4 @@
-import { generateSshFixtureKeyPair } from '../ssh-key.fixture.js';
+import { generateSshFixtureKeyPair } from '../../../../tests/fixtures/ssh-key.fixture.js';
 import { generateKeyPairSync, sign, createHash, randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import { Server, Client as RealClient, utils } from 'ssh2';

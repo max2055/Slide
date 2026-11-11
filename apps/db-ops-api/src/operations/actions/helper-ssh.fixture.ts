@@ -1,4 +1,4 @@
-import { generateSshFixtureKeyPair } from './ssh-key.fixture.js';
+import { generateSshFixtureKeyPair } from '../../../tests/fixtures/ssh-key.fixture.js';
 /** Synthetic signing/identity and socket routing; real SSH2, production adapter,
  * and source helper disk/lock protocol. No VM/systemd or external target. */
 import { createHash, generateKeyPairSync, sign } from 'node:crypto';
