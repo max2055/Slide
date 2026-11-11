@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { expect, it } from 'vitest';
 import { MAX_FILE_BYTES, MAX_FILES } from './source-snapshot-service.js';
+import { createSourceBinding } from './deployment-binding.js';
 
 const script = fileURLToPath(new URL('../../../../scripts/release/write-release-manifest.ts', import.meta.url));
 const TREE_LIST_BYTES = MAX_FILES * (512 + 1);
@@ -96,7 +97,7 @@ it('rejects one file above the 32MiB contract with a domain error and no manifes
   } finally { await rm(directory, { recursive: true, force: true }); }
 }, 120_000);
 
-it('rejects a snapshot above 32MiB after both files are read', async () => {
+it('rejects a snapshot above 32MiB with no manifest', async () => {
   const { directory, commit } = await commitEntries([
     { path: 'apps/keep/a.ts', content: Buffer.alloc(MAX_FILE_BYTES, 0x61) },
     { path: 'apps/keep/b.ts', content: 'b' },
@@ -136,5 +137,21 @@ it('rejects a selected binary file before writing the manifest', async () => {
     expect(result.status).not.toBe(0);
     expect(result.stderr).toContain('SOURCE_BINARY_FILE');
     await expect(readFile(result.destination)).rejects.toThrow(/ENOENT/);
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});
+
+it('preserves byte boundaries and the exact source digest across empty, UTF-8 and multiline blobs', async () => {
+  const files = [
+    { path: 'src/empty.ts', content: '' },
+    { path: 'src/unicode.ts', content: '// 中文🙂\nexport const x = 1;\n' },
+    { path: 'src/header.ts', content: 'abc blob 12\n\nend\r\n' },
+    { path: 'src/last.ts', content: 'no trailing newline' },
+  ];
+  const { directory, commit } = await commitEntries(files);
+  try {
+    const result = runManifest(directory, commit, 'src/');
+    expect(result.status).toBe(0);
+    const manifest = JSON.parse(await readFile(result.destination, 'utf8'));
+    expect(manifest.source).toEqual(createSourceBinding('qualification', commit, ['src/'], files));
   } finally { await rm(directory, { recursive: true, force: true }); }
 });
