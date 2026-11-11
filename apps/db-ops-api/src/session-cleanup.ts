@@ -1,6 +1,6 @@
 import { chatDatabaseService } from './chat-database-service.js';
+import { parseSessionRetentionDays } from './session-retention.js';
 
-const DEFAULT_RETENTION_DAYS = 30;
 const DEFAULT_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24 hours
 const DEFAULT_MAX_MESSAGES_PER_SESSION = 2000;
 
@@ -15,7 +15,7 @@ export function startSessionCleanup(intervalMs: number = DEFAULT_INTERVAL_MS): v
     return;
   }
 
-  const retentionDays = parseInt(process.env.SESSION_RETENTION_DAYS || String(DEFAULT_RETENTION_DAYS), 10);
+  const retentionDays = parseSessionRetentionDays(process.env.SESSION_RETENTION_DAYS);
   const maxMessages = parseInt(process.env.SESSION_MAX_MESSAGES || String(DEFAULT_MAX_MESSAGES_PER_SESSION), 10);
 
   console.log(`[SessionCleanup] Starting (retention: ${retentionDays}d, maxMsgs: ${maxMessages}, interval: ${intervalMs}ms)`);
