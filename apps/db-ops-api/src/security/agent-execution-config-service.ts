@@ -85,19 +85,25 @@ export class AgentExecutionConfigService {
       restrictedNetworkEnabled: update.restrictedNetworkEnabled ?? current.restrictedNetworkEnabled,
     };
     try {
-      for (const [key, value, description] of [
+      const entries = [
         [AGENT_EXECUTION_CONFIG_KEYS.approvalEnabled, update.approvalEnabled, DESCRIPTIONS.approvalEnabled],
         [AGENT_EXECUTION_CONFIG_KEYS.restrictedNetworkEnabled, update.restrictedNetworkEnabled, DESCRIPTIONS.restrictedNetworkEnabled],
-      ] as const) {
+      ] as const;
+      const values: unknown[] = [];
+      const placeholders: string[] = [];
+      for (const [key, value, description] of entries) {
         if (value === undefined) continue;
-        await executor.execute(
-          `INSERT INTO system_config (config_key, config_value, value_type, description, updated_by)
-           VALUES (?, ?, 'boolean', ?, ?)
-           ON DUPLICATE KEY UPDATE config_value = VALUES(config_value), value_type = VALUES(value_type),
-             description = VALUES(description), updated_by = VALUES(updated_by)`,
-          [key, String(value), description, actorId],
-        );
+        placeholders.push("(?, ?, 'boolean', ?, ?)");
+        values.push(key, String(value), description, actorId);
       }
+      // system_config uses InnoDB: all requested rows commit or roll back together.
+      await executor.execute(
+        `INSERT INTO system_config (config_key, config_value, value_type, description, updated_by)
+         VALUES ${placeholders.join(', ')}
+         ON DUPLICATE KEY UPDATE config_value = VALUES(config_value), value_type = VALUES(value_type),
+           description = VALUES(description), updated_by = VALUES(updated_by)`,
+        values,
+      );
       return { ...next, reasonCode: 'EXECUTION_CONFIG_UPDATED' };
     } catch {
       throw new Error('EXECUTION_CONFIG_UPDATE_FAILED');
