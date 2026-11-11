@@ -169,6 +169,14 @@ const FALLBACK_TOAST_DURATION_MS = 8000;
 const inputHistories = new Map<string, InputHistory>();
 const pinnedMessagesMap = new Map<string, PinnedMessages>();
 const deletedMessagesMap = new Map<string, DeletedMessages>();
+let activeDeletedMessages: { store: DeletedMessages; requestUpdate: () => void } | null = null;
+function handleDeletedMessagesStorage(event: StorageEvent) {
+  const active = activeDeletedMessages;
+  if (!active || !active.store.handlesStorageKey(event.key)) return;
+  // Read current storage rather than a possibly superseded event payload.
+  active.store.refresh();
+  active.requestUpdate();
+}
 
 // Agent greeting cache — fetched once from backend
 let _agentGreeting: string | null = null;
@@ -178,6 +186,8 @@ let _greetingIdentity: string | null = null;
 let _greetingGeneration = 0;
 
 export function clearChatViewCaches() {
+  window.removeEventListener("storage", handleDeletedMessagesStorage);
+  activeDeletedMessages = null;
   resetChatViewState();
   for (const cache of [inputHistories, pinnedMessagesMap, deletedMessagesMap, expandedToolCardsBySession, initializedToolCardsBySession, lastAutoExpandPrefBySession]) cache.clear();
   _agentGreeting = null; _agentGreetingPending = false; _agentGreetingAttempted = false; _greetingIdentity = null; _greetingGeneration++;
@@ -1385,6 +1395,9 @@ export function renderChat(props: ChatProps) {
   };
   const pinned = getPinnedMessages(props.sessionKey);
   const deleted = getDeletedMessages(props.sessionKey);
+  deleted.refresh();
+  activeDeletedMessages = { store: deleted, requestUpdate: props.onRequestUpdate ?? (() => {}) };
+  window.addEventListener("storage", handleDeletedMessagesStorage);
   const inputHistory = getInputHistory(props.sessionKey);
   const hasAttachments = (props.attachments?.length ?? 0) > 0;
   const tokens = tokenEstimate(props.draft);
