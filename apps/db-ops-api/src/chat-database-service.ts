@@ -9,6 +9,7 @@ import type { ActorContext } from './auth/actor-context.js';
 import { recordMessageParts, persistedMessageParts } from './adapter/message-parts.js';
 import { investigationAuthorization, type AuthorityExecutor, type InvestigationAuthorization } from './investigations/authorization.js';
 import { InvestigationStoreError } from './investigations/store.js';
+import { assertSessionRetentionDays } from './session-retention.js';
 
 export type ChatAction =
   | 'read'
@@ -601,6 +602,7 @@ export class ChatDatabaseService {
   }
 
   async deleteOldSessionsForMaintenance(retentionDays: number): Promise<number> {
+    assertSessionRetentionDays(retentionDays);
     const pool = this.getPool();
     const [result] = await pool.query<ResultSetHeader>(
       `DELETE FROM chat_sessions

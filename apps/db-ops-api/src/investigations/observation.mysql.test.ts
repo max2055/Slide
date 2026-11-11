@@ -60,7 +60,7 @@ describe.skipIf(!port)('T05 observation / real MySQL, JWT, HTTP and WebSocket', 
     await pool.query("INSERT INTO users (id, username, password_hash) VALUES (101, 't05-owner', 'no-login'), (102, 't05-viewer', 'no-login'), (103, 't05-share', 'no-login')");
     await pool.query("INSERT INTO roles (id, name) VALUES (101, 't05-readonly')");
     await pool.query("INSERT INTO role_permissions (role_id, permission_id) SELECT 101, id FROM permissions WHERE code IN ('chat:view','instance:view','metric:view','alert:view')");
-    await pool.query("INSERT INTO database_instances (id, name, host, port, username, password_encrypted) VALUES (101, 'one', 'fixture.invalid', 3306, 'fixture', 'unused'), (102, 'two', 'fixture.invalid', 3306, 'fixture', 'unused')");
+    await pool.query("INSERT INTO database_instances (id, name, host, port, database_name, username, password_encrypted) VALUES (101, 'one', 'fixture.invalid', 3306, 'observe-101', 'fixture', 'unused'), (102, 'two', 'fixture.invalid', 3306, 'observe-102', 'fixture', 'unused')");
   }, 60_000);
   beforeEach(async () => {
     for (const table of ['investigation_results','investigation_evidence','investigation_stream_events','investigation_stream_heads','investigation_observed_sources',

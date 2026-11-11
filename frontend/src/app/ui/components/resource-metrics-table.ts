@@ -36,6 +36,7 @@ export class ResourceMetricsTable extends LitElement {
   @state() private observations = new Map<number, OverviewItem>();
   private observationGeneration = 0;
   private previousSearch = '';
+  private reportedResultCount: number | undefined;
   @state() private page = 1;
   @state() private rows = new Map<number, MetricRow>();
   @state() private pending = false;
@@ -96,6 +97,13 @@ export class ResourceMetricsTable extends LitElement {
     if (entriesChanged) { this.identity = identity; this.rows = new Map(); }
     if (entriesChanged || changed.has('refreshVersion')) void this.loadObservations();
     if (entriesChanged || searchChanged || changed.has('refreshVersion')) void this.load(changed.has('refreshVersion'));
+    // Report the complete filtered collection, before pagination, including
+    // asynchronous collection-state matches. Pages must not duplicate this filter.
+    const count = this.filtered.length;
+    if (count !== this.reportedResultCount) {
+      this.reportedResultCount = count;
+      this.dispatchEvent(new CustomEvent<number>('resource-results-changed', { detail: count, bubbles: true, composed: true }));
+    }
   }
   override disconnectedCallback() {
     this.generation++; this.observationGeneration++; this.setPending(false);
