@@ -6,6 +6,49 @@ test.beforeEach(async ({ page }) => {
   await expect(page.locator('chat-history-nav .tick')).toHaveCount(260);
 });
 
+for (const width of [1366, 1440, 1920]) {
+  test(`MAX-640: earlier conversation button reaches the first user turn at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: width === 1366 ? 768 : width === 1440 ? 900 : 1080 });
+    await page.evaluate(() => {
+      const fixture = (window as any).historyFixture;
+      fixture.props.sessionKey = 'max-640';
+      fixture.props.messages = Array.from({ length: 650 }, (_, index) => ({
+        id: String(index), role: index === 0 ? 'system' : index % 2 ? 'user' : 'assistant',
+        content: `历史消息 ${index}`,
+      }));
+      fixture.update();
+    });
+    const firstIndex = () => page.locator('[data-chat-turn]').first().getAttribute('data-chat-turn');
+    const earlier = page.getByRole('button', { name: '查看更早对话', exact: true });
+    await expect.poll(firstIndex).toBe('msg:449');
+    for (const index of [249, 49, 1]) {
+      await earlier.focus();
+      await expect(earlier).toBeFocused();
+      await page.keyboard.press('Enter');
+      await expect.poll(firstIndex).toBe(`msg:${index}`);
+      await expect(page.locator(`[data-chat-turn="msg:${index}"]`)).toBeInViewport();
+    }
+    await expect(earlier).toHaveCount(0);
+    await page.screenshot({ path: test.info().outputPath(`max-640-first-turn-${width}.png`) });
+    // Selecting the early third message must still offer the first turn.
+    await page.locator('chat-history-nav .tick').nth(1).click();
+    await expect.poll(firstIndex).toBe('msg:3');
+    await earlier.click();
+    await expect.poll(firstIndex).toBe('msg:1');
+    await expect(earlier).toHaveCount(0);
+    // A history starting at index zero also hides the button at its beginning.
+    await page.evaluate(() => {
+      const fixture = (window as any).historyFixture;
+      fixture.props.sessionKey = 'max-640-zero';
+      fixture.props.messages = fixture.props.messages.slice(1);
+      fixture.update();
+    });
+    await page.locator('chat-history-nav .tick').first().click();
+    await expect.poll(firstIndex).toBe('msg:1');
+    await expect(earlier).toHaveCount(0);
+  });
+}
+
 test('equal ticks expand near the pointer, preview without scrolling, and restore on leave', async ({ page }) => {
   const ticks = page.locator('chat-history-nav .tick');
   const thread = page.locator('.chat-thread');
