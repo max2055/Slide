@@ -14,8 +14,10 @@
  */
 import { findCodeRegions, isInsideCode } from "./code-regions.js";
 
-// Match both ASCII pipe <|...|> and full-width pipe <｜...｜> (U+FF5C) variants.
-const MODEL_SPECIAL_TOKEN_RE = /<[|｜][^|｜]*[|｜]>/g;
+// Only recognized delimiter names, with matching ASCII or full-width pipes.
+// Unknown examples and incomplete / multiline text are user-visible content.
+const MODEL_SPECIAL_TOKEN_RE =
+  /<([|｜])(?:assistant|user|system|tool|im_start|im_end|im_sep|endoftext|begin_of_text|end_of_text|eot_id|start_header_id|end_header_id|tool_call_begin|tool_call_end|tool_call_result_begin|tool_call_result_end|begin▁of▁sentence|end▁of▁sentence|User|Assistant|tool▁calls▁begin|tool▁calls▁end|tool▁call▁begin|tool▁call▁end|tool▁sep|tool▁outputs▁begin|tool▁outputs▁end|tool▁output▁begin|tool▁output▁end)\1>/g;
 
 function overlapsCodeRegion(
   start: number,
