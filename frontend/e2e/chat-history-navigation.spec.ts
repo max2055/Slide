@@ -172,6 +172,11 @@ test('the application shell wires transcript scrolling and return-to-latest call
   // Production renderApp -> renderChat props, without starting a real transport.
   await page.evaluate(() => (window as any).historyFixture.mountShell());
   await expect(page.locator('chat-history-nav .tick')).toHaveCount(260);
+  // Initial auto-scroll includes a deferred retry; let it finish before user scrolling.
+  await expect.poll(() => page.evaluate(() => {
+    const app = document.querySelector('history-fixture-shell') as any;
+    return app.chatHasAutoScrolled && app.chatScrollFrame === null && app.chatScrollTimeout === null;
+  })).toBe(true);
   await page.locator('.chat-thread').evaluate((el) => { el.scrollTop = 900; });
   await expect(page.getByRole('button', { name: '回到最新' })).toBeVisible();
   await page.locator('chat-history-nav .tick').first().click();
