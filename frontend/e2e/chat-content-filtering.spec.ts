@@ -37,7 +37,9 @@ for (const width of [1366, 1440, 1920]) {
     const downloadEvent = page.waitForEvent('download');
     await page.getByRole('button', { name: 'Export chat', exact: true }).click();
     const download = await downloadEvent;
-    const markdown = await readFile((await download.path())!, 'utf8');
+    const exportPath = test.info().outputPath('chat-export.md');
+    await download.saveAs(exportPath);
+    const markdown = await readFile(exportPath, 'utf8');
     expect(markdown).toContain('[会议 2024-01-01 12:00 提醒] 保留正文');
     expect(markdown).toContain('前 后');
     expect(markdown).toContain('第一行重要正文');
@@ -45,6 +47,7 @@ for (const width of [1366, 1440, 1920]) {
     expect(markdown).toContain('</relevant_memories>');
     expect(markdown).toContain('world');
     expect(markdown).not.toContain('隐藏的记忆内容');
+    expect(await page.evaluate(() => (window as any).historyFixture.props.messages)).toEqual(messages);
     await test.info().attach('export.md', { body: markdown, contentType: 'text/markdown' });
     const composer = page.locator('textarea');
     await composer.focus();
