@@ -25,6 +25,8 @@ import { generateUUID } from "../uuid.ts";
 import { SLASH_COMMANDS } from "./slash-commands.ts";
 
 export type SlashCommandResult = {
+  /** Unknown means a side-effecting request may have reached the server. Never auto-replay. */
+  failure?: "retryable" | "unknown";
   /** Markdown-formatted result to display in chat. */
   content: string;
   /** Side-effect action the caller should perform after displaying the result. */
@@ -135,7 +137,7 @@ async function executeUsage(
     }
     return { content: lines.join("\n") };
   } catch (err) {
-    return { content: `Failed to get usage: ${String(err)}` };
+    return { content: `Failed to get usage: ${String(err)}`, failure: "retryable" };
   }
 }
 
@@ -155,7 +157,7 @@ async function executeAgents(client: DirectGatewayClient): Promise<SlashCommandR
     }
     return { content: lines.join("\n") };
   } catch (err) {
-    return { content: `Failed to list agents: ${String(err)}` };
+    return { content: `Failed to list agents: ${String(err)}`, failure: "retryable" };
   }
 }
 
@@ -344,11 +346,13 @@ async function executeSteer(
   args: string,
   context: SlashCommandContext,
 ): Promise<SlashCommandResult> {
+  let sendAttempted = false;
   try {
     const resolved = await resolveSteerTarget(client, sessionKey, args, context);
     if ("error" in resolved) {
       return {
         content: resolved.error === "empty" ? "Usage: `/steer [id] <message>`" : resolved.error,
+        failure: "retryable",
       };
     }
     const sessions =
@@ -356,11 +360,13 @@ async function executeSteer(
     const targetSession = resolveCurrentSession(sessions, resolved.key);
     if (!isActiveSteerSession(targetSession)) {
       return {
+        failure: "retryable",
         content: resolved.label
           ? `No active run matched \`${resolved.label}\`. Use \`/redirect\` instead.`
           : "No active run. Use the chat input or `/redirect` instead.",
       };
     }
+    sendAttempted = true;
     await client.request("chat.send", {
       sessionKey: resolved.key,
       message: resolved.message,
@@ -372,7 +378,7 @@ async function executeSteer(
       pendingCurrentRun: resolved.key === sessionKey,
     };
   } catch (err) {
-    return { content: `Failed to steer: ${String(err)}` };
+    return { content: `Failed to steer: ${String(err)}`, failure: sendAttempted ? "unknown" : "retryable" };
   }
 }
 
