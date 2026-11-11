@@ -266,7 +266,7 @@ export class DirectAdapter implements IAgentEngine {
   private readonly displayStreams: DisplayStreamAuthority<WebSocket>;
   private readonly investigationWatches: InvestigationWatchService;
   private readonly partsPeers = new WeakSet<WebSocket>();
-  private activeRuns = new Map<string, { actorId: number; sessionId: string; controller: AbortController }>();
+  private activeRuns = new Map<string, { actorId: number; sessionId: string; controller: AbortController; acceptingSteers: boolean; injections: Array<{ id: string; message: string }> }>();
   private lifecycle = new AbortController();
   private operations = new Set<Promise<unknown>>();
   private disposing?: Promise<void>;
@@ -687,6 +687,37 @@ export class DirectAdapter implements IAgentEngine {
             // could let a slow revalidation erase a newer successful watch.
             break;
           }
+          case 'chat.steer': {
+            const requestId = typeof msg.requestId === 'string' ? msg.requestId : '';
+            const rawKey = typeof msg.sessionKey === 'string' ? msg.sessionKey.trim() : '';
+            const message = typeof msg.message === 'string' ? msg.message.trim() : '';
+            const respond = (status: string, runId?: string) => this.sendSocketEvent(ws,
+              { type: 'steer.result', requestId, status, ...(runId ? { runId } : {}) });
+            if (!requestId || requestId.length > 128 || !rawKey || rawKey.length > 512
+              || !message || message.length > this.runtimeLimits.maxMessageChars) {
+              respond('invalid'); break;
+            }
+            const sessionId = chatSessionId(rawKey);
+            try {
+              await chatDatabaseService.authorizeSession(connectionActor, sessionId, 'append');
+              const candidates = [...this.activeRuns.entries()].filter(([, run]) =>
+                run.actorId === connectionActor!.userId && run.sessionId === sessionId && !run.controller.signal.aborted && run.acceptingSteers !== false);
+              if (candidates.length !== 1) { respond(candidates.length ? 'ambiguous' : 'no_active_run'); break; }
+              const [runId, active] = candidates[0];
+              const persisted = await agentRunService.getForActor(runId, connectionActor.userId, sessionId);
+              // Recheck identity after every asynchronous boundary; a replacement
+              // Run must not receive a command admitted for the previous one.
+              if (!persisted || persisted.state !== 'running' || (persisted.result as { completionPending?: boolean })?.completionPending
+                || this.activeRuns.get(runId) !== active || active.controller.signal.aborted || active.acceptingSteers === false) {
+                respond('no_active_run'); break;
+              }
+              if (ws.readyState !== WebSocket.OPEN || authGeneration !== commandGeneration) break;
+              if (active.injections.length >= 15) { respond('queue_full'); break; }
+              active.injections.push({ id: randomUUID(), message });
+              respond('queued', runId);
+            } catch { respond('unavailable'); }
+            break;
+          }
           case 'chat.send': {
             if ((msg as any).protocolVersion === 2) {
               const parsed = validateChatSendV2(msg);
@@ -800,7 +831,7 @@ export class DirectAdapter implements IAgentEngine {
                 return;
               }
               if (persistentRun) {
-                this.activeRuns.set(persistentRun.run.id, { actorId: messageActor.userId, sessionId: sessionKey, controller });
+                this.activeRuns.set(persistentRun.run.id, { actorId: messageActor.userId, sessionId: sessionKey, controller, acceptingSteers: true, injections: [] });
                 subscribeToSession(sessionKey, typeof msg.subscriptionId === 'string' ? msg.subscriptionId : undefined);
                 this.sendSocketEvent(ws, { type: 'run.started', runId: persistentRun.run.id, sessionKey, messageId });
               }
@@ -1275,6 +1306,29 @@ export class DirectAdapter implements IAgentEngine {
         ...runtimeSpec(policy),
         streamingLimits: this.streamingLimits,
         runtimeRunId: runId,
+        injectionCallback: _actor ? async (limit = 3) => {
+          const active = this.activeRuns.get(runId);
+          if (!active || active.controller.signal.aborted || !active.injections.length) return [];
+          try {
+            const liveActor = await this.actorContexts.revalidateActor(_actor, randomUUID());
+            await chatDatabaseService.authorizeSession(liveActor, sessionKey, 'append');
+            if (this.activeRuns.get(runId) !== active || active.controller.signal.aborted) return [];
+            const messages: Message[] = [];
+            for (const item of active.injections.splice(0, limit)) {
+              const id = `steer_${item.id}`;
+              await chatDatabaseService.addMessage(liveActor, sessionKey, { messageId: id, parentId: userFactId, role: 'user', content: item.message,
+                metadata: { canonicalRunId: runId, canonicalTurnId: userFactId } });
+              session.addMessage('user', item.message, { id, runId, turnId: userFactId });
+              messages.push({ role: 'user', content: item.message });
+            }
+            return messages;
+          } catch (error) {
+            // The runtime treats a failed drain as empty. Abort explicitly so
+            // revoked authority or an unknown persistence result cannot proceed.
+            active.controller.abort(error);
+            throw error;
+          }
+        } : undefined,
         onRuntimePhase: async phase => { await deliver({ type: 'message_parts', operations: [{ type: 'run.status', phase }] }); },
         onRuntimeEvent: recordRuntimeEvent,
         maxToolResultChars: this.runtimeLimits.maxToolResultChars,
@@ -1325,6 +1379,9 @@ export class DirectAdapter implements IAgentEngine {
         }
         return { stopReason, finalContent: null, usage: counters?.usage, error: cancelled.message, resolution };
       });
+
+      const active = this.activeRuns.get(runId);
+      if (active) active.acceptingSteers = false;
 
       // Embed reasoning as <think> tags in the session/DB content string.
       // The frontend uses extractThinking() to render it as a collapsible section.
