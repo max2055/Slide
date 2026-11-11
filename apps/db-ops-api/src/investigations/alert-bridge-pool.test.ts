@@ -31,6 +31,120 @@ function acquisitionBarrier(pool: Awaited<ReturnType<typeof bridgeTestFixture>>[
 }
 
 describe('T08-POOL-01 different sources with a fixed MySQL pool', () => {
+  it('MAX-385: ten legacy admissions do not deadlock after simultaneous historical scans', async () => {
+    const f = await bridgeTestFixture(10);
+    const acquire = f.pool.getConnection.bind(f.pool);
+    const restoreConnections: Array<() => void> = [];
+    const errors: string[] = [];
+    let arrived = 0, timedOut = false;
+    let open!: () => void;
+    const scanned = new Promise<void>(resolve => { open = resolve; });
+    const timeout = setTimeout(() => { timedOut = true; open(); }, 10_000);
+    try {
+      f.flags.manual = false; f.flags.opsAuto = false;
+      const [db] = await f.pool.query<any[]>('SELECT DATABASE() AS name');
+      f.pool.getConnection = async () => {
+        const c = await acquire(), execute = c.execute.bind(c);
+        let firstScan = true;
+        restoreConnections.push(() => { c.execute = execute; });
+        c.execute = (async (sql: string, values?: any) => {
+          let result;
+          try { result = await execute(sql, values); }
+          catch (error) { errors.push((error as { code: string }).code); throw error; }
+          if (firstScan && sql.includes('d.analysis_id IS NULL') && sql.includes('FOR UPDATE')) {
+            firstScan = false;
+            if (++arrived === 10) {
+              try {
+                const [locks] = await f.admin.query<any[]>(`SELECT INDEX_NAME, LOCK_TYPE, LOCK_MODE, COUNT(*) AS n,
+                  SUM(LOCK_DATA='supremum pseudo-record') AS supremum
+                  FROM performance_schema.data_locks WHERE OBJECT_SCHEMA=? AND OBJECT_NAME='ai_analysis'
+                  GROUP BY INDEX_NAME, LOCK_TYPE, LOCK_MODE`, [db[0].name]);
+                console.info('MAX385 historical scan locks', JSON.stringify(locks));
+              } finally { open(); }
+            }
+            await scanned;
+          }
+          return result;
+        }) as typeof c.execute;
+        return c;
+      };
+      const sources = Array.from({ length: 10 }, (_, i) => f.source(1385 + i));
+      const outcomes = await Promise.allSettled(sources.map(source =>
+        f.alertBridge.dispatch(source, 'manual', f.owner, f.oldFor(source))));
+      if (errors.length) {
+        const [status] = await f.admin.query<any[]>('SHOW ENGINE INNODB STATUS');
+        const deadlock = String(status[0].Status).split('LATEST DETECTED DEADLOCK')[1]?.split('TRANSACTIONS')[0] ?? '';
+        if (deadlock.includes(db[0].name)) console.info('MAX385 deadlock locks', deadlock.split('\n')
+          .filter(line => /index .* of table|lock_mode|insert intention|WE ROLL BACK/.test(line)).join('\n'));
+      }
+      expect(timedOut).toBe(false);
+      expect(arrived).toBe(10);
+      expect(errors).toEqual([]);
+      expect(outcomes.filter(outcome => outcome.status === 'rejected')).toEqual([]);
+      const ids = outcomes.map(outcome => outcome.status === 'fulfilled' ? outcome.value.analysisId : undefined);
+      expect(new Set(ids).size).toBe(10);
+      expect(ids.every(Boolean)).toBe(true);
+      for (const table of ['ai_analysis', 'analysis_dispatch_keys', 'analysis_dispatches', 'outbox_events', 'workflow_jobs'])
+        expect(await f.count(table)).toBe(10);
+      const again = await Promise.all(sources.map(source => f.alertBridge.dispatch(source, 'manual', f.owner, f.oldFor(source))));
+      expect(again.map(result => result.analysisId)).toEqual(ids);
+      expect(await f.count('workflow_jobs')).toBe(10);
+      expect(await f.count('agent_runs')).toBe(0);
+      expect(await f.count('llm_usage_records')).toBe(0);
+      for (const source of sources) {
+        const lock = `slide-alert:${createHash('sha256').update(`${db[0].name}:${source.id}`).digest('hex').slice(0, 48)}`;
+        const [locks] = await f.pool.query<any[]>('SELECT IS_USED_LOCK(?) AS owner', [lock]);
+        expect(locks[0].owner).toBeNull();
+      }
+      // Admission isolation must not leak into the next transaction on a pooled connection.
+      const c = await acquire();
+      try {
+        await c.beginTransaction();
+        await c.query('SELECT id FROM ai_analysis WHERE instance_id=999999 FOR UPDATE');
+        const [locks] = await f.admin.query<any[]>(`SELECT LOCK_MODE FROM performance_schema.data_locks
+          WHERE OBJECT_SCHEMA=? AND OBJECT_NAME='ai_analysis' AND LOCK_TYPE='RECORD'`, [db[0].name]);
+        expect(locks.length).toBeGreaterThan(0);
+        expect(locks.some(lock => lock.LOCK_MODE === 'X' || lock.LOCK_MODE.includes('GAP'))).toBe(true);
+        await c.rollback();
+      } finally { c.release(); }
+    } finally {
+      clearTimeout(timeout); open();
+      f.pool.getConnection = acquire;
+      for (const restore of restoreConnections) restore();
+      await f.close();
+    }
+  }, 120_000);
+
+  it('MAX-385: failed legacy admission rolls back all intents, releases the source lock and keeps the chosen lane', async () => {
+    const f = await bridgeTestFixture(1);
+    try {
+      f.flags.manual = false;
+      const source = f.source(2385);
+      await f.pool.query(`CREATE TRIGGER max385_fail_intent BEFORE INSERT ON outbox_events
+        FOR EACH ROW SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='MAX385_INTENT_FAILURE'`);
+      await expect(f.alertBridge.dispatch(source, 'manual', f.owner, f.oldFor(source))).rejects.toThrow('MAX385_INTENT_FAILURE');
+      expect(f.oldCalls()).toBe(1);
+      for (const table of ['ai_analysis', 'analysis_dispatch_keys', 'analysis_dispatches', 'outbox_events', 'workflow_jobs'])
+        expect(await f.count(table)).toBe(0);
+      const [owners] = await f.pool.query<any[]>('SELECT lane, analysis_id FROM investigation_alert_owners');
+      expect(owners).toEqual([{ lane: 'legacy', analysis_id: null }]);
+      const [db] = await f.pool.query<any[]>('SELECT DATABASE() AS name');
+      const lock = `slide-alert:${createHash('sha256').update(`${db[0].name}:${source.id}`).digest('hex').slice(0, 48)}`;
+      const [locks] = await f.pool.query<any[]>('SELECT IS_USED_LOCK(?) AS owner', [lock]);
+      expect(locks[0].owner).toBeNull();
+      await f.pool.query('DROP TRIGGER max385_fail_intent');
+      // A new caller action after a confirmed rollback recovers the same lane.
+      const result = await f.alertBridge.dispatch(source, 'manual', f.owner, f.oldFor(source));
+      const again = await f.alertBridge.dispatch(source, 'manual', f.owner, f.oldFor(source));
+      expect(result.success).toBe(true);
+      expect(again.analysisId).toBe(result.analysisId);
+      expect(f.oldCalls()).toBe(2);
+      expect(await f.count('workflow_jobs')).toBe(1);
+      expect(await f.count('agent_runs')).toBe(0);
+      expect(await f.count('llm_usage_records')).toBe(0);
+    } finally { await f.close(); }
+  }, 120_000);
+
   it('legacy production prompt/model configuration and enqueue share one reserved connection', async () => {
     const f = await bridgeTestFixture(1);
     try {
