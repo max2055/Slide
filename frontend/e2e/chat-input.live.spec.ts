@@ -159,8 +159,12 @@ test('MAX-627 four fixes: real MySQL, HTTP, Adapter, WS, Gateway and desktop com
     expect(images[0].count).toBe(0);
     expect(received.some(frame => frame.type === 'protocol.error' && frame.code === 'PROTOCOL_V2_INVALID')).toBe(true);
 
-    await mount(2); blockNext = true; await draft.fill('保持运行以验证停止'); await draft.press('Enter');
-    await expect.poll(async () => page.evaluate(() => Boolean((window as any).chatInputFixture.app.chatRunId))).toBe(true);
+    await mount(2); blockNext = true; const beforeStop = calls;
+    await draft.fill('保持运行以验证停止'); await draft.press('Enter');
+    // A provisional client ID is not yet an accepted running server operation.
+    await expect.poll(() => calls).toBe(beforeStop + 1);
+    const acceptedRun = received.find(frame => frame.type === 'run.started' && frame.sessionKey === sessions[2].session_id);
+    await expect.poll(async () => page.evaluate(() => (window as any).chatInputFixture.app.chatRunId)).toBe(acceptedRun.runId);
     await draft.fill('/stop'); await draft.press('Escape'); await draft.press('Enter');
     await expect.poll(() => sent.filter(frame => frame.type === 'chat.cancel').length).toBe(1);
     await expect.poll(async () => page.evaluate(() => (window as any).chatInputFixture.app.chatRunId)).toBeNull();
