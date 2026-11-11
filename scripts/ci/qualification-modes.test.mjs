@@ -11,8 +11,8 @@ function harness(work) {
   const trace = resolve(directory, 'trace');
   writeFileSync(trace, '');
   const stubs = {
-    docker: '#!/bin/sh\nprintf "docker %s\\n" "$*" >> "$CI_TRACE"\nif [ "$1" = port ]; then echo 127.0.0.1:33306; fi\n',
-    pnpm: '#!/bin/sh\nprintf "pnpm %s\\n" "$*" >> "$CI_TRACE"\ncase "$*" in *"exec node -e"*) exit 0 ;; esac\nexit "${CI_STUB_EXIT:-0}"\n',
+    docker: '#!/bin/sh\nprintf "docker %s\\n" "$*" >> "$CI_TRACE"\ncase "$1" in port) echo 127.0.0.1:33306;; inspect) echo \'{"status":"running","running":true,"oomKilled":false,"exitCode":0,"memoryBytes":805306368}\';; esac\n',
+    pnpm: '#!/bin/sh\nprintf "pnpm %s\\n" "$*" >> "$CI_TRACE"\ncase "$*" in *"exec node -e"*|*"t12-startup.mjs probe "*) exit 0 ;; esac\nexit "${CI_STUB_EXIT:-0}"\n',
   };
   for (const [name, content] of Object.entries(stubs)) {
     writeFileSync(resolve(directory, name), content); chmodSync(resolve(directory, name), 0o755);
