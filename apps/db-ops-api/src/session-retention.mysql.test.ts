@@ -5,7 +5,7 @@ import { ChatDatabaseService } from './chat-database-service.js';
 import { MigrationRunner } from './migrations/runner.js';
 
 // Explicit opt-in, shared with the existing real-MySQL CI candidate.
-const port = process.env.REPORT_TEST_MYSQL_PORT;
+const port = process.env.INVESTIGATION_TEST_MYSQL_PORT ?? process.env.REPORT_TEST_MYSQL_PORT;
 describe.skipIf(!port)('MAX-622 retention with production MySQL schema', () => {
   const database = `max622_${randomUUID().replaceAll('-', '')}`;
   let admin: Pool;
@@ -17,7 +17,7 @@ describe.skipIf(!port)('MAX-622 retention with production MySQL schema', () => {
       host: process.env.REPORT_TEST_MYSQL_HOST ?? '127.0.0.1',
       port: Number(port),
       user: process.env.REPORT_TEST_MYSQL_USER ?? 'root',
-      password: process.env.REPORT_TEST_MYSQL_PASSWORD ?? '',
+      password: process.env.INVESTIGATION_TEST_MYSQL_PASSWORD ?? process.env.REPORT_TEST_MYSQL_PASSWORD ?? '',
       connectionLimit: 2,
     };
     admin = mysql.createPool(options);
