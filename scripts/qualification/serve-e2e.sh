@@ -30,6 +30,7 @@ group_pgid=""
 baseline_pids=""
 owned_pids=" "
 cleaned_up=0
+stop_requested=0
 tracker_pid=""
 tracker_dir=""
 tracker_py=""
@@ -162,6 +163,7 @@ EOF
 }
 
 start_service() {
+  check_stop
   local reply
   service_pid=""
   ensure_tracker
@@ -304,16 +306,21 @@ cleanup() {
   fi
   cleaned_up=1
   trap '' INT TERM
+  if [[ "$stop_requested" == 1 ]]; then
+    printf 'E2E服务停止：收到信号，清理本次进程 pid=%s\n' "$$" >&2
+  fi
   stop_our_processes
+  if [[ "$stop_requested" == 1 ]]; then exit 0; fi
   return 0
 }
 
-on_stop() {
-  printf 'E2E服务停止：收到信号，清理本次进程 pid=%s\n' "$$" >&2
-  exit 0
+check_stop() {
+  if [[ "$stop_requested" == 1 ]]; then exit 0; fi
 }
 
-trap on_stop INT TERM
+# GNU Bash can run a trap while parsing a nested command substitution. Keep
+# the handler to a builtin assignment; run EXIT cleanup at a parsed boundary.
+trap 'stop_requested=1' INT TERM
 trap cleanup EXIT
 
 if [[ "${SERVE_E2E_FUNCTION_PROBE:-}" == "fork-gap" ]]; then
@@ -364,10 +371,13 @@ ready=0
 for _ in $(seq 1 45); do
   finished=""
   record_service_tree
+  check_stop
   if finished="$(child_finished "$api_pid")"; then
+    check_stop
     printf 'E2E服务异常：API退出 code=%s pid=%s\n' "$finished" "$api_pid" >&2
     exit 1
   fi
+  check_stop
   if curl --fail --silent --max-time 1 "http://127.0.0.1:${api_port}/api/health/ready" >/dev/null; then
     ready=1
     break
@@ -389,13 +399,18 @@ record_service_tree
 while true; do
   finished=""
   record_service_tree
+  check_stop
   if finished="$(child_finished "$api_pid")"; then
+    check_stop
     printf 'E2E服务异常：API退出 code=%s pid=%s\n' "$finished" "$api_pid" >&2
     exit 1
   fi
+  check_stop
   if finished="$(child_finished "$vite_pid")"; then
+    check_stop
     printf 'E2E服务异常：Vite退出 code=%s pid=%s\n' "$finished" "$vite_pid" >&2
     exit 1
   fi
+  check_stop
   sleep 0.2 || true
 done
