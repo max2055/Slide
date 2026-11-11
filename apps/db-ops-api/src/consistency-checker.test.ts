@@ -251,6 +251,26 @@ describe('ConsistencyChecker', () => {
     });
   });
 
+  describe('_checkApprovalEventIntegrity', () => {
+    it('reports incomplete approval evidence through the full checker entry', async () => {
+      mockExecute.mockImplementation(async (sql: string) => [
+        sql.includes('SELECT ar.id FROM approval_requests ar') ? [{ id: 17 }] : [], [],
+      ]);
+      const result = await checker.runAllChecks();
+      expect(result.checks.find(check => check.id === 'approval_event_integrity')).toMatchObject({
+        status: 'fail', severity: 'major', details: { orphaned_approvals: [{ id: 17 }] },
+      });
+      expect(result.summary.fail).toBeGreaterThan(0);
+    });
+
+    it('preserves the stale pending warning when no terminal evidence is missing', async () => {
+      mockExecute.mockResolvedValueOnce([[], []]).mockResolvedValueOnce([[{ id: 18, created_at: '2020-01-01' }], []]);
+      expect(await checker._checkApprovalEventIntegrity()).toMatchObject({
+        status: 'warn', severity: 'minor', details: { orphaned_approvals: [], old_pending: [{ id: 18, created_at: '2020-01-01' }] },
+      });
+    });
+  });
+
   // ── Error isolation ───────────────────────────────────
 
   describe('error isolation', () => {
