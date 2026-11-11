@@ -21,7 +21,6 @@ import type {
   ModelCatalogEntry,
   SessionsListResult,
 } from "../types.ts";
-import { generateUUID } from "../uuid.ts";
 import { SLASH_COMMANDS } from "./slash-commands.ts";
 
 export type SlashCommandResult = {
@@ -90,17 +89,18 @@ export async function executeSlashCommand(
 
 function executeHelp(): SlashCommandResult {
   const lines = ["**Available Commands**\n"];
-  let currentCategory = "";
-
+  const groups = new Map<string, typeof SLASH_COMMANDS>();
   for (const cmd of SLASH_COMMANDS) {
     const cat = cmd.category ?? "session";
-    if (cat !== currentCategory) {
-      currentCategory = cat;
-      lines.push(`**${cat.charAt(0).toUpperCase() + cat.slice(1)}**`);
+    groups.set(cat, [...(groups.get(cat) ?? []), cmd]);
+  }
+  for (const [cat, commands] of groups) {
+    lines.push(`**${cat.charAt(0).toUpperCase() + cat.slice(1)}**`);
+    for (const cmd of commands) {
+      const argStr = cmd.args ? ` ${cmd.args}` : "";
+      const local = cmd.executeLocal ? "" : " *(agent)*";
+      lines.push(`\`/${cmd.name}${argStr}\` — ${cmd.description}${local}`);
     }
-    const argStr = cmd.args ? ` ${cmd.args}` : "";
-    const local = cmd.executeLocal ? "" : " *(agent)*";
-    lines.push(`\`/${cmd.name}${argStr}\` — ${cmd.description}${local}`);
   }
 
   lines.push("\nType `/` to open the command menu.");
@@ -117,21 +117,22 @@ async function executeUsage(
     if (!session) {
       return { content: "No active session." };
     }
-    const input = session.inputTokens ?? 0;
-    const output = session.outputTokens ?? 0;
-    const total = session.totalTokens ?? input + output;
-    const ctx = session.contextTokens ?? 0;
-    const pct = ctx > 0 ? Math.round((input / ctx) * 100) : null;
-
+    const measured = (value: unknown): value is number =>
+      typeof value === "number" && Number.isFinite(value) && value >= 0;
+    const input = measured(session.inputTokens) ? session.inputTokens : null;
+    const output = measured(session.outputTokens) ? session.outputTokens : null;
+    const total = measured(session.totalTokens) ? session.totalTokens
+      : input !== null && output !== null ? input + output : null;
+    const format = (value: number | null) => value === null ? "不可用" : `**${fmtTokens(value)}** tokens`;
     const lines = [
       "**Session Usage**",
-      `Input: **${fmtTokens(input)}** tokens`,
-      `Output: **${fmtTokens(output)}** tokens`,
-      `Total: **${fmtTokens(total)}** tokens`,
+      `Input: ${format(input)}`,
+      `Output: ${format(output)}`,
+      `Total: ${format(total)}`,
+      // Cumulative input usage is not current context occupancy. REST does not
+      // currently expose a trustworthy occupancy measurement.
+      "Context: 不可用",
     ];
-    if (pct !== null) {
-      lines.push(`Context: **${pct}%** of ${fmtTokens(ctx)}`);
-    }
     if (session.model) {
       lines.push(`Model: \`${session.model}\``);
     }
@@ -298,8 +299,8 @@ function resolveSteerSubagent(
  * falls back to the current session key with the full args as message.
  *
  * Ended subagents are still resolved here so explicit `/steer <id> ...`
- * can surface the correct "No active run matched" message and `/redirect <id> ...`
- * can restart that specific session instead of silently steering the current one.
+ * can surface the correct no-active-run message instead of silently steering
+ * the current session.
  */
 async function resolveSteerTarget(
   client: DirectGatewayClient,
@@ -318,7 +319,7 @@ async function resolveSteerTarget(
   if (spaceIdx > 0) {
     const maybeTarget = trimmed.slice(0, spaceIdx);
     const rest = trimmed.slice(spaceIdx + 1).trim();
-    // Skip "all" — resolveKillTargets treats it as a wildcard, but steer/redirect
+    // Skip "all" — resolveKillTargets treats it as a wildcard, but steer
     // target a single session, so "all good now" should not match subagents.
     if (rest && normalizeLowercaseStringOrEmpty(maybeTarget) !== "all") {
       const sessions =
@@ -335,50 +336,33 @@ async function resolveSteerTarget(
   return { key: sessionKey, message: trimmed };
 }
 
-function isActiveSteerSession(session: GatewaySessionRow | undefined): boolean {
-  return session?.status === "running" && session.endedAt == null;
-}
-
-/** Soft inject — queues a message into the active run via chat.send (deliver: false). */
+/** The server selects and checks the active Run atomically with admission. */
 async function executeSteer(
   client: DirectGatewayClient,
   sessionKey: string,
   args: string,
   context: SlashCommandContext,
 ): Promise<SlashCommandResult> {
-  let sendAttempted = false;
+  let submitted = false;
   try {
     const resolved = await resolveSteerTarget(client, sessionKey, args, context);
     if ("error" in resolved) {
-      return {
-        content: resolved.error === "empty" ? "Usage: `/steer [id] <message>`" : resolved.error,
-        failure: "retryable",
-      };
+      return { content: resolved.error === "empty" ? "用法：`/steer [id] <message>`" : resolved.error, failure: "retryable" };
     }
-    const sessions =
-      resolved.sessions ?? (await client.request<SessionsListResult>("sessions.list", {}));
-    const targetSession = resolveCurrentSession(sessions, resolved.key);
-    if (!isActiveSteerSession(targetSession)) {
-      return {
-        failure: "retryable",
-        content: resolved.label
-          ? `No active run matched \`${resolved.label}\`. Use \`/redirect\` instead.`
-          : "No active run. Use the chat input or `/redirect` instead.",
-      };
-    }
-    sendAttempted = true;
-    await client.request("chat.send", {
+    submitted = true;
+    const result = await client.request<{ status: string; runId?: string }>("chat.steer", {
       sessionKey: resolved.key,
       message: resolved.message,
-      deliver: false,
-      idempotencyKey: generateUUID(),
     });
-    return {
-      content: resolved.label ? `Steered \`${resolved.label}\`.` : "Steered.",
-      pendingCurrentRun: resolved.key === sessionKey,
-    };
+    if (result.status === "no_active_run") {
+      return { content: "没有可调整的活动运行，请使用聊天输入框发送新消息。", failure: "retryable" };
+    }
+    if (result.status !== "queued" || !result.runId) {
+      return { content: "未能将消息加入运行，请先核对会话状态。", failure: ["invalid", "ambiguous", "queue_full"].includes(result.status) ? "retryable" : "unknown" };
+    }
+    return { content: resolved.label ? `已为 \`${resolved.label}\` 的活动运行排队。` : "已为活动运行排队。" };
   } catch (err) {
-    return { content: `Failed to steer: ${String(err)}`, failure: sendAttempted ? "unknown" : "retryable" };
+    return { content: `调整运行失败：${String(err)}`, failure: submitted ? "unknown" : "retryable" };
   }
 }
 
