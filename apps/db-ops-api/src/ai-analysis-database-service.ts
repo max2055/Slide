@@ -8,6 +8,7 @@ import type { EvidenceSnapshot } from './analysis/analysis-evidence.js';
 import { analysisAuthorizationVersion } from './analysis/analysis-identity.js';
 import { canReadResource } from './resources/resource-service.js';
 import { hasPermission } from './auth/require-permission.js';
+import { analysisAccessSql, canReadAnalysis } from './analysis/analysis-access.js';
 
 export interface AiAnalysisRecord {
   id: number;
@@ -378,13 +379,16 @@ class AiAnalysisDatabaseService {
    */
   async getAnalysisList(options?: {
     analysis_type?: string;
+    target_type?: string;
     instance_id?: number;
+    server_id?: number;
+    network_device_id?: number;
     status?: string;
     related_id?: number;
     cache_key?: string;
     limit?: number;
     offset?: number;
-  }): Promise<AiAnalysisRecord[]> {
+  }, actor?: ActorContext): Promise<AiAnalysisRecord[]> {
     const pool = this.getPool();
     if (!pool) {
       return [];
@@ -396,6 +400,19 @@ class AiAnalysisDatabaseService {
       `;
       const params: any[] = [];
 
+      // Actor-less callers are trusted internal workflows. HTTP callers must
+      // supply the current actor so unauthorized rows never consume a page.
+      if (actor) {
+        const access = analysisAccessSql(actor);
+        sql += ` AND ${access.sql}`;
+        params.push(...access.params);
+      }
+      for (const field of ['target_type', 'server_id', 'network_device_id'] as const) {
+        if (options?.[field] !== undefined) {
+          sql += ` AND ${field} = ?`;
+          params.push(options[field]);
+        }
+      }
       if (options?.analysis_type) {
         sql += ' AND analysis_type = ?';
         params.push(options.analysis_type);
@@ -417,7 +434,7 @@ class AiAnalysisDatabaseService {
         params.push(options.cache_key);
       }
 
-      sql += ' ORDER BY created_at DESC';
+      sql += ' ORDER BY created_at DESC, id DESC';
 
       if (options?.limit !== undefined) {
         sql += ` LIMIT ${Math.floor(options.limit)}`;
@@ -427,7 +444,8 @@ class AiAnalysisDatabaseService {
       }
 
       const [rows] = await pool.execute(sql, params) as any;
-      return rows.map((row: any) => this._parseRow(row));
+      return rows.filter((row: AiAnalysisRecord) => !actor || canReadAnalysis(actor, row))
+        .map((row: any) => this._parseRow(row));
     } catch (error) {
       console.error('获取分析列表失败:', error);
       return [];
