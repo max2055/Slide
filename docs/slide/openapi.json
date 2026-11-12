@@ -5799,7 +5799,15 @@
                             "values": {
                               "patternProperties": {
                                 "^(.*)$": {
-                                  "type": "number"
+                                  "anyOf": [
+                                    {
+                                      "type": "number"
+                                    },
+                                    {
+                                      "pattern": "^\\d+$",
+                                      "type": "string"
+                                    }
+                                  ]
                                 }
                               },
                               "type": "object"
@@ -15636,7 +15644,15 @@
               "values": {
                 "patternProperties": {
                   "^(.*)$": {
-                    "type": "number"
+                    "anyOf": [
+                      {
+                        "type": "number"
+                      },
+                      {
+                        "pattern": "^\\d+$",
+                        "type": "string"
+                      }
+                    ]
                   }
                 },
                 "type": "object"
