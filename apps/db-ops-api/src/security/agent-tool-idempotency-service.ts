@@ -8,6 +8,7 @@ export type ToolIdempotencyClaim =
   | { kind: 'completed'; argumentsHash: string; result: unknown }
   | { kind: 'in_progress'; argumentsHash: string }
   | { kind: 'unknown'; argumentsHash: string; checkpoint: unknown }
+  | { kind: 'identity_unverified'; argumentsHash: string }
   | { kind: 'conflict'; argumentsHash: string };
 
 function argumentsHash(value: unknown, compare: (a: string, b: string) => number): string {
@@ -74,7 +75,9 @@ export class AgentToolIdempotencyService {
     };
     let row = await read();
     if (row.arguments_hash !== hash && !(Number(row.hash_version) === 1 && matchesLegacyHash(args, row.arguments_hash))) {
-      return { kind: 'conflict', argumentsHash: hash };
+      // A legacy digest alone cannot distinguish changed parameters from a
+      // historical ICU ordering we cannot reconstruct. Never advise a new key.
+      return { kind: Number(row.hash_version) === 1 ? 'identity_unverified' : 'conflict', argumentsHash: hash };
     }
     if (row.state === 'running') {
       // Atomic expiry and heartbeat race on the same row. No ownership transfer.

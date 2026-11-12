@@ -95,7 +95,7 @@ try {
     const replay = await service.claim(7, 'legacy', 'tool', key, { z: 'y', aa: 'x' });
     assert.equal(replay.kind, 'completed');
     if (replay.kind === 'completed') assert.deepEqual(replay.result, { success: true, instanceId: 777 });
-    assert.equal((await service.claim(7, 'legacy', 'tool', key, { aa: 'x', z: 'changed' })).kind, 'conflict');
+    assert.equal((await service.claim(7, 'legacy', 'tool', key, { aa: 'x', z: 'changed' })).kind, 'identity_unverified');
   }
   console.log(JSON.stringify({ emptyInstall: 'pass', populatedUpgrade: 'pass', repeatMigration: 'pass', crossLocale: 'pass', legacyReplay: 'pass', changedArguments: 'pass' }));
   // Use real batch -> add_database -> instance service -> MySQL writes.
@@ -147,6 +147,34 @@ try {
     }
     console.log(JSON.stringify({ mode, itemResultsPreserved: result.data.results.length, errorCode: result.errorCode ?? null, success: true }));
   }
+  // MAX-458 Chief review: committed delayed started writes cannot reopen admission.
+  for (const mode of ['concurrent-checkpoint', 'concurrent-heartbeat']) {
+    const child = worker(mode);
+    const result = (await child.wait('result')).result;
+    await reap(child.child);
+    assert.equal(result.errorCode, 'IDEMPOTENCY_RESULT_UNCONFIRMED');
+    assert.equal(result.data.succeeded, 2);
+    assert.equal(result.data.results[1].errorCode, 'IDEMPOTENCY_NOT_STARTED');
+    assert.ok(result.data.results[0].instanceId);
+    assert.ok(result.data.results[2].instanceId);
+    const [effects] = await pool.query<any[]>('SELECT name FROM database_instances WHERE name IN (?, ?, ?) ORDER BY name', [0, 1, 2].map(i => `${mode}_${i}`));
+    assert.deepEqual(effects.map(row => row.name), [`${mode}_0`, `${mode}_2`]);
+    const [journal] = await pool.query<any[]>('SELECT checkpoint_json FROM agent_tool_idempotency WHERE idempotency_key = ?', [mode]);
+    assert.equal(journal[0].checkpoint_json.items['1'].state, 'started');
+    console.log(JSON.stringify({ mode, delayedStartedCommitted: true, startedAfterFailure: false, actualCreatedIndices: [0, 2], inFlightResultsPreserved: true }));
+  }
+  const unknownKey = 'legacy-unverified';
+  await pool.query(`INSERT INTO agent_tool_idempotency (actor_id, session_id, session_hash, tool_name, idempotency_key, arguments_hash, state, result_json)
+    VALUES (7, 'recovery-session', ?, 'slide_add_database_batch', ?, ?, 'completed', '{"success":true}')`, [stableArgumentsHash('recovery-session'), unknownKey, '0'.repeat(64)]);
+  const legacy = worker('normal', unknownKey);
+  const legacyResult = (await legacy.wait('result')).result;
+  await reap(legacy.child);
+  assert.equal(legacyResult.errorCode, 'IDEMPOTENCY_IDENTITY_UNVERIFIED');
+  assert.equal(legacyResult.details.retryable, false);
+  assert.ok(!legacyResult.next_actions.join('').includes('使用新的幂等键'));
+  const [legacyEffects] = await pool.query<any[]>('SELECT COUNT(*) n FROM database_instances WHERE name IN (?, ?)', [`${unknownKey}_0`, `${unknownKey}_1`]);
+  assert.equal(legacyEffects[0].n, 0);
+  console.log(JSON.stringify({ legacyIdentityUnverified: 'pass', newKeyGuidance: false, actualCreated: 0 }));
   const [columns] = await pool.query<any[]>('SHOW FULL COLUMNS FROM agent_tool_idempotency');
   assert.equal(columns.find(c => c.Field === 'hash_version').Default, '1');
   assert.ok(columns.every(c => c.Comment));

@@ -106,7 +106,7 @@ describe('interrupted execution and legacy identity', () => {
     finally { localeCompare.mockRestore(); }
   });
 
-  it('replays #566 historical Danish digests and rejects changed arguments', async () => {
+  it('replays #566 historical Danish digests and conservatively rejects unverified legacy arguments', async () => {
     const { createHash } = await import('node:crypto');
     const pool = new Pool();
     const service = new AgentToolIdempotencyService(() => pool);
@@ -114,6 +114,20 @@ describe('interrupted execution and legacy identity', () => {
     const digest = createHash('sha256').update(JSON.stringify(Object.fromEntries(Object.entries(args).sort(([a], [b]) => a.localeCompare(b, 'da-DK'))))).digest('hex');
     pool.row = { arguments_hash: digest, hash_version: 1, state: 'completed', result_json: '{"success":true}' };
     await expect(service.claim(7, 'session', 'tool', 'key', args)).resolves.toMatchObject({ kind: 'completed', result: { success: true } });
-    await expect(service.claim(7, 'session', 'tool', 'key', { ...args, z: 'changed' })).resolves.toMatchObject({ kind: 'conflict' });
+    await expect(service.claim(7, 'session', 'tool', 'key', { ...args, z: 'changed' })).resolves.toMatchObject({ kind: 'identity_unverified' });
+  });
+});
+
+// MAX-458 Chief review: unsupported historical ordering must not produce key-change guidance.
+describe('unverified historical identity', () => {
+  it('preserves an unmatched historical record without exposing its result or changing state', async () => {
+    const pool = new Pool();
+    const service = new AgentToolIdempotencyService(() => pool);
+    pool.row = { arguments_hash: '0'.repeat(64), hash_version: 1, state: 'running', result_json: { prior: 'result' }, expired: true };
+    const before = structuredClone(pool.row);
+    const result = await service.claim(7, 'legacy', 'tool', 'key', { aa: 'x', z: 'y' });
+    expect(result).toMatchObject({ kind: 'identity_unverified' });
+    expect(result).not.toHaveProperty('result');
+    expect(pool.row).toEqual(before);
   });
 });

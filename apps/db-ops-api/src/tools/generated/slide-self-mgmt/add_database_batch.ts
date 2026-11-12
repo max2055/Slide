@@ -107,6 +107,9 @@ export const addDatabaseBatchTool: AnyAgentTool = {
         if (claim.kind === 'conflict') {
           return { success: false, status: 'error', errorCode: 'IDEMPOTENCY_KEY_CONFLICT', error: '幂等键已用于不同的批量参数', next_actions: ['使用新的幂等键提交不同批量'] };
         }
+        if (claim.kind === 'identity_unverified') {
+          return { success: false, status: 'warning', errorCode: 'IDEMPOTENCY_IDENTITY_UNVERIFIED', error: '历史请求身份未确认：参数可能变化或历史摘要无法重建', details: { terminal: true, retryable: false, recoveryState: 'identity_unverified' }, next_actions: ['保留原幂等键和记录，核对原请求参数及逐项执行结果；禁止自动重试或换键重放，确认未执行的条目才可单独提交'] };
+        }
         if (claim.kind === 'in_progress') {
           return { success: false, status: 'warning', errorCode: 'IDEMPOTENCY_IN_PROGRESS', error: '相同批量请求正在执行', next_actions: ['等待原请求完成后查询结果，不要重复提交'] };
         }
@@ -177,7 +180,9 @@ export const addDatabaseBatchTool: AnyAgentTool = {
         }
 
         const itemArgs = item as BatchDatabaseArgs;
-        if (!await persist(index, { state: 'started' })) {
+        // Another worker or heartbeat can fail while this started write is awaiting
+        // acknowledgement. Recheck at admission, with no await before the handler.
+        if (!await persist(index, { state: 'started' }) || persistenceUnknown) {
           results[index] = { index, status: 'failed', errorCode: 'IDEMPOTENCY_NOT_STARTED', reason: '幂等记录未确认，条目未开始执行', retryable: false };
           await emitProgress(index, results[index]!);
           return;
