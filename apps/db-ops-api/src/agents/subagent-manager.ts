@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import { recordRuntimeEvent } from '../platform/runtime-events.js';
 import { resolveRuntimePolicy, runtimeSpec, type RuntimePolicy } from '../adapter/runtime-policy.js';
 /**
@@ -17,7 +18,7 @@ import { resolveRuntimePolicy, runtimeSpec, type RuntimePolicy } from '../adapte
 
 import type { AgentRunner, RuntimeResolution } from '@slide/agent-core';
 import { ToolRegistry, reserveChildBudget } from '@slide/agent-core';
-import { subagentRegistry, type SubagentRunRecord } from './subagent-registry.js';
+import { subagentRegistry, type SubagentRunRecord, type SubagentRegistry } from './subagent-registry.js';
 import type { ActorContext } from '../auth/actor-context.js';
 import { loadAgentRuntimeLimits } from '../security/agent-runtime-limits.js';
 import { redactSensitiveText } from '../security/log-redaction.js';
@@ -41,13 +42,14 @@ export class SubagentManager {
   private parentTools: ToolRegistry | null;
   private readonly toolsForActor?: (actor: ActorContext) => ToolRegistry;
   private readonly unsettled = new Set<string>();
-  private readonly owners = new Map<string, number>();
+  private readonly admissions = new Map<number, number>();
   private readonly limits = loadAgentRuntimeLimits();
 
   constructor(
     agentRunner: AgentRunner,
     parentTools?: ToolRegistry,
     toolsForActor?: (actor: ActorContext) => ToolRegistry,
+    private readonly registry: SubagentRegistry = subagentRegistry,
   ) {
     this.agentRunner = agentRunner;
     this.parentTools = parentTools || null;
@@ -76,30 +78,38 @@ export class SubagentManager {
     if (!actor) throw new Error('SUBAGENT_ACTOR_REQUIRED');
     if (!task.trim() || task.length > this.limits.maxMessageChars) throw new Error('SUBAGENT_TASK_INVALID');
     if (!/^[a-zA-Z0-9._-]{1,64}$/.test(agentId)) throw new Error('SUBAGENT_AGENT_ID_INVALID');
-    const activeForActor = [...this.owners.entries()].filter(([runId, ownerId]) => {
-      const status = subagentRegistry.getRun(runId)?.status;
-      return ownerId === actor.userId && (status === 'running' || this.unsettled.has(runId));
-    }).length;
+    const activeForActor = this.admissions.get(actor.userId) ?? 0;
     if (activeForActor >= this.limits.maxConcurrentRunsPerActor) {
       throw new Error('SUBAGENT_CONCURRENCY_LIMIT');
     }
-    const requested = resolveRuntimePolicy('subagent', { parentRemaining });
-    const allocation = await reserveChildBudget(requested);
-    const policy = allocation ? Object.freeze({ ...requested, ...allocation }) : requested;
-    // Reserving a child budget can await persistence; recheck admission afterward.
-    if ([...this.owners].filter(([id, owner]) => owner === actor.userId && (subagentRegistry.getRun(id)?.status === 'running' || this.unsettled.has(id))).length >= this.limits.maxConcurrentRunsPerActor) throw new Error('SUBAGENT_CONCURRENCY_LIMIT');
-    const run = subagentRegistry.register({
-      sessionKey: `subagent:${agentId}:${Date.now()}`,
-      task,
-      parentSessionKey,
-    });
-    this.owners.set(run.runId, actor.userId);
-
-    // Fire-and-forget: execute in background without awaiting
-    this._executeSubagent(run, actor, policy, allocation?.signal).catch((err) => {
-      console.error(`[SubagentManager] Subagent ${run.runId} failed:`, err);
-      subagentRegistry.updateRunStatus(run.runId, 'failed', undefined, err instanceof Error ? err.message : String(err));
-    });
+    // Claim synchronously before the first await, including durable allocation.
+    this.admissions.set(actor.userId, activeForActor + 1);
+    let released = false;
+    const release = () => {
+      if (released) return;
+      released = true;
+      const remaining = (this.admissions.get(actor.userId) ?? 1) - 1;
+      if (remaining === 0) this.admissions.delete(actor.userId);
+      else this.admissions.set(actor.userId, remaining);
+    };
+    let run: SubagentRunRecord;
+    try {
+      const requested = resolveRuntimePolicy('subagent', { parentRemaining });
+      const allocation = await reserveChildBudget(requested);
+      const policy = allocation ? Object.freeze({ ...requested, ...allocation }) : requested;
+      run = this.registry.register({
+        sessionKey: `subagent:${agentId}:${crypto.randomUUID()}`,
+        task,
+        parentSessionKey,
+        ownerId: actor.userId,
+        unsettled: true,
+      });
+      // Execution owns admission until every observed operation settles.
+      void this._executeSubagent(run, actor, policy, release, allocation?.signal);
+    } catch (err) {
+      release();
+      throw err;
+    }
 
     return run.runId;
   }
@@ -107,15 +117,12 @@ export class SubagentManager {
   /**
    * Access a subagent's status and result.
    */
-  async access(runId: string, actor?: ActorContext): Promise<{ status: SubagentStatus; result?: unknown; error?: string; resolution?: RuntimeResolution; cancellationPending?: boolean }> {
-    if (!actor || this.owners.get(runId) !== actor.userId) {
-      return { status: 'failed', error: 'Subagent run not found' };
+  async access(runId: string, actor?: ActorContext): Promise<{ found: boolean; status: SubagentStatus; result?: unknown; error?: string; resolution?: RuntimeResolution; cancellationPending?: boolean }> {
+    const run = this.registry.getRun(runId);
+    if (!actor || !run || run.ownerId !== actor.userId) {
+      return { found: false, status: 'failed', error: 'Subagent run not found' };
     }
-    const run = subagentRegistry.getRun(runId);
-    if (!run) {
-      return { status: 'failed', error: `Subagent run not found: ${runId}` };
-    }
-    return { status: run.status, result: run.result, error: run.error, ...(run.resolution ? { resolution: run.resolution } : {}), ...(this.unsettled.has(runId) && run.status !== 'running' ? { cancellationPending: true } : {}) };
+    return { found: true, status: run.status, result: run.result, error: run.error, ...(run.resolution ? { resolution: run.resolution } : {}), ...(this.unsettled.has(runId) && run.status !== 'running' ? { cancellationPending: true } : {}) };
   }
 
   /**
@@ -149,7 +156,7 @@ export class SubagentManager {
    * Creates a minimal run spec and updates the registry on completion.
    * This is fire-and-forget — no awaited call from spawn().
    */
-  private async _executeSubagent(run: SubagentRunRecord, actor: ActorContext, policy: RuntimePolicy, parentSignal?: AbortSignal): Promise<void> {
+  private async _executeSubagent(run: SubagentRunRecord, actor: ActorContext, policy: RuntimePolicy, releaseAdmission: () => void, parentSignal?: AbortSignal): Promise<void> {
     const controller = new AbortController();
     const cancel = () => controller.abort(parentSignal?.reason);
     parentSignal?.addEventListener('abort', cancel, { once: true });
@@ -158,14 +165,20 @@ export class SubagentManager {
     let pending = 0;
     let finished = false;
     this.unsettled.add(run.runId);
-    const release = () => { if (finished && pending === 0) this.unsettled.delete(run.runId); };
+    const release = () => {
+      if (finished && pending === 0) {
+        this.unsettled.delete(run.runId);
+        this.registry.markSettled(run.runId);
+        releaseAdmission();
+      }
+    };
     const observe = (operation: Promise<unknown>) => {
       pending++;
       const done = () => { pending--; release(); };
       operation.then(done, done);
     };
     try {
-      subagentRegistry.updateRunStatus(run.runId, 'running');
+      this.registry.updateRunStatus(run.runId, 'running');
 
       const result = await this.agentRunner.run({
         initialMessages: [
@@ -201,15 +214,17 @@ export class SubagentManager {
         && (!result.resolution || result.resolution.kind === 'response_ready');
       const reason = controller.signal.aborted ? (controller.signal.reason?.code ?? (/DEADLINE/.test(controller.signal.reason?.message ?? '') ? 'RUN_DEADLINE' : 'USER_CANCELLED'))
         : result.resolution?.reasonCode ?? result.stopReason ?? 'MISSING_STOP_REASON';
-      subagentRegistry.updateRunStatus(run.runId, completed ? 'completed' : 'failed',
+      this.registry.updateRunStatus(run.runId, completed ? 'completed' : reason === 'USER_CANCELLED' || result.stopReason === 'cancelled' ? 'cancelled' : 'failed',
         completed ? result.finalContent || undefined : result.resolution?.safePartialContent,
         completed ? undefined : redactSensitiveText(reason),
         controller.signal.aborted ? { kind: reason === 'RUN_DEADLINE' ? 'timed_out' : 'cancelled', reasonCode: reason, retryable: false }
           : result.resolution ?? { kind: completed ? 'response_ready' : result.stopReason === 'timed_out' ? 'timed_out' : result.stopReason === 'cancelled' ? 'cancelled' : result.stopReason === 'max_iterations' ? 'partial' : 'failed', reasonCode: completed ? 'COMPLETED' : reason, retryable: false });
     } catch (err) {
       const errorMessage = redactSensitiveText(err instanceof Error ? err.message : String(err));
-      subagentRegistry.updateRunStatus(run.runId, 'failed', undefined, errorMessage);
-      throw err;
+      const aborted = controller.signal.aborted;
+      const timedOut = /DEADLINE/.test(controller.signal.reason?.message ?? '');
+      this.registry.updateRunStatus(run.runId, aborted && !timedOut ? 'cancelled' : 'failed', undefined, errorMessage, { kind: aborted ? timedOut ? 'timed_out' : 'cancelled' : 'failed', reasonCode: aborted ? timedOut ? 'RUN_DEADLINE' : 'USER_CANCELLED' : 'SUBAGENT_EXECUTION_FAILED', retryable: false });
+      console.error(`[SubagentManager] Subagent ${run.runId} failed: ${errorMessage}`);
     } finally {
       clearTimeout(timeout);
       parentSignal?.removeEventListener('abort', cancel);
