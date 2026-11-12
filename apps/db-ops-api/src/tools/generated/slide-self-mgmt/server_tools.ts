@@ -176,7 +176,7 @@ export const getServerDiagnosticsTool: AnyAgentTool = {
       const diagnostics = await serverDiagnosticService.getDiagnostics(id, { refresh: args.refresh === true });
       const sectionName = args.section as string | undefined;
       const data = capDiagnosticRows(diagnostics, sectionName, maxRows!);
-      return { success: true, data, summary: `服务器 #${id} 诊断证据`, details: { server_id: id, freshness: diagnostics.expiresAt, gaps: diagnostics.gaps } };
+      return { success: true, data, summary: `服务器 #${id} 诊断证据`, details: { server_id: id, expiresAt: diagnostics.expiresAt, gaps: diagnostics.gaps } };
     } catch (error: any) {
       return { success: false, error: error.message, errorCode: error.message === 'SERVER_NOT_FOUND' ? 'SERVER_NOT_FOUND' : 'GET_DIAGNOSTICS_FAILED' };
     }
