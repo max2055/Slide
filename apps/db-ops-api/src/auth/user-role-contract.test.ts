@@ -119,11 +119,12 @@ describe('User ↔ Role Contract', () => {
     await rbacService.revokeRoleFromUser(42, 3);
 
     // Verify the SQL uses role_id (the second parameter), not user_roles.id
-    const callSql = mockExec.mock.calls[0][0] as string;
+    const mutation = mockExec.mock.calls.find(([sql]) => sql.startsWith('DELETE FROM user_roles'))!;
+    const callSql = mutation[0] as string;
     expect(callSql).toContain('DELETE FROM user_roles');
     expect(callSql).toContain('role_id = ?');
     // Parameters: [userId, roleId] — roleId should be 3, not a user_roles.id like 99
-    expect(mockExec.mock.calls[0][1]).toEqual([42, 3]);
+    expect(mutation[1]).toEqual([42, 3]);
   });
 
   // ─── Scenario 4: getUserRoles returns role_id field ───
