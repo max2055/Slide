@@ -55,6 +55,18 @@ describe('MAX-425 log analysis egress', () => {
     expect(analysis.completeAnalysis).not.toHaveBeenCalled();
   });
 
+  it.each([undefined, 12])('#323 review: masks Oracle and Bearer contexts in both fields (%s)', async (existingId) => {
+    const input = { ...log(), message: "SELECT q'[can' connection refused ]' FROM dual\nBearer deadlock",
+      raw_content: "SELECT q'!can' connection refused !' FROM dual\nbEaReR\tdeadlock" };
+    await databaseLogService.triggerLogAnalysis([input], 2, existingId);
+    expect(llmService.chatWithTracking).toHaveBeenCalledOnce();
+    const wire = JSON.stringify(vi.mocked(llmService.chatWithTracking).mock.calls[0]);
+    expect(wire).not.toMatch(/connection|refused|deadlock/i);
+    expect(wire).toContain('SELECT');
+    expect(wire).toContain('FROM');
+    expect(analysis.completeAnalysis).toHaveBeenCalledOnce();
+  });
+
   it('does not call the model without errors or when record creation fails', async () => {
     await databaseLogService.triggerLogAnalysis([{ ...log(), log_level: 'info' }], 2);
     vi.mocked(analysis.createAnalysis).mockResolvedValue({ success: false });

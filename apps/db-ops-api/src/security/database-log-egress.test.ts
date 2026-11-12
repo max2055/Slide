@@ -2,6 +2,38 @@ import { describe, expect, it } from 'vitest';
 import { projectDatabaseLogForModel as project } from './database-log-egress.js';
 
 describe('MAX-425 diagnostic-only log projection', () => {
+  // #323 independent review: allowed words are still private inside literals.
+  it.each([
+    ['[', ']'], ['(', ')'], ['{', '}'], ['<', '>'],
+    ['!', '!'], ['#', '#'], ['/', '/'], ['a', 'a'], ['Ω', 'Ω'],
+  ])('masks the complete Oracle alternative literal with %s/%s delimiters', (open, close) => {
+    for (const prefix of ['q', 'Q', 'nq', 'NQ']) {
+      const output = project(`SELECT ${prefix}'${open}can' connection refused $$deadlock$$ ${close}' FROM dual`);
+      expect(output).not.toMatch(/connection|refused|deadlock/i);
+      expect(output).toContain('SELECT');
+      expect(output).toContain('FROM');
+    }
+  });
+
+  it.each(["q'[can' connection refused", "q'!can' connection refused", "Q'<can' connection refused >", "nq'{can' connection refused"])(
+    'fails closed for an unterminated Oracle literal: %s', (literal) => {
+      expect(project(`SELECT ${literal}`)).not.toMatch(/connection|refused/i);
+    });
+
+  it.each(['Bearer connection', 'bearer\tconnection', 'bEaReR \t connection', 'Bearer\nconnection', 'Bearer\u00a0connection'])(
+    'masks an allowed-vocabulary bearer value: %s', (input) => {
+      const output = project(`MY-010584\n${input}\nORA-00060`);
+      expect(output).not.toMatch(/connection/i);
+      expect(output).toContain('MY-010584');
+      expect(output).toContain('ORA-00060');
+    });
+
+  it('does not interpret quote openers nested inside other literal contexts', () => {
+    for (const literal of ["'before q''[ connection refused after'", '$$q\'[ connection refused$$', "q'[before $tag$ ' connection refused]'" ]) {
+      expect(project(`SELECT ${literal} FROM dual`)).not.toMatch(/connection|refused/i);
+    }
+  });
+
   it.each([
     'password=canary425', 'PWD: canary425', 'clientSecret = canary425 with spaces',
     'x-api-key: canary425', 'subscription_key=canary425', 'unknownKey=canary425',
