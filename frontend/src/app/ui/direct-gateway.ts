@@ -156,6 +156,16 @@ export class DirectGatewayClient {
   private authenticated = false;
   private authenticatedAt: number | null = null;
   private readonly chatAcceptTimeoutMs: number;
+  private pendingSteers = new Map<string, { resolve: (value: unknown) => void; reject: (error: Error) => void; timer: ReturnType<typeof setTimeout> }>();
+
+  private rejectPendingSteers(): void {
+    for (const pending of this.pendingSteers.values()) {
+      clearTimeout(pending.timer);
+      pending.reject(new Error('调整运行回执未知；请核对会话，未自动重试。'));
+    }
+    this.pendingSteers.clear();
+  }
+
   private pendingChatAcknowledgements = new Map<string, PendingChatAcknowledgement>();
   // Retain only retry identity after expiry; these entries have no timers.
   private unconfirmedChats = new Map<string, { frame: Record<string, unknown>; accepted: boolean }>();
@@ -331,6 +341,24 @@ export class DirectGatewayClient {
    * instead of silently returning undefined.
    */
   async request<T = unknown>(method: string, params?: unknown): Promise<T> {
+    if (method === 'chat.steer') {
+      if (!this.isConnected() || !this.ws || this.ws.readyState !== WebSocket.OPEN) {
+        throw new Error('连接不可用，指令未发送。');
+      }
+      if (this.pendingSteers.size >= 16) throw new Error('待确认的调整指令过多。');
+      const requestId = generateUUID();
+      const p = params as { sessionKey: string; message: string };
+      // One send only. Reconnection must never replay an unacknowledged steer.
+      return new Promise<T>((resolve, reject) => {
+        const timer = setTimeout(() => {
+          this.pendingSteers.delete(requestId);
+          reject(new Error('调整运行回执未知；请核对会话，未自动重试。'));
+        }, 15_000);
+        this.pendingSteers.set(requestId, { resolve: value => resolve(value as T), reject, timer });
+        try { this.ws!.send(JSON.stringify({ type: 'chat.steer', requestId, sessionKey: p.sessionKey, message: p.message })); }
+        catch (error) { clearTimeout(timer); this.pendingSteers.delete(requestId); reject(error); }
+      });
+    }
     if (method === 'chat.send') {
       const p = params as Record<string, unknown> | undefined;
       const sessionKey = typeof p?.sessionKey === 'string' && p.sessionKey.trim()
@@ -535,6 +563,16 @@ export class DirectGatewayClient {
     }
     const msg = data as Record<string, unknown>;
     const type = msg.type;
+    if (type === 'steer.result') {
+      const requestId = typeof msg.requestId === 'string' ? msg.requestId : '';
+      const pending = this.pendingSteers.get(requestId);
+      if (pending) {
+        clearTimeout(pending.timer);
+        this.pendingSteers.delete(requestId);
+        pending.resolve(msg);
+      }
+      return;
+    }
 
     if (typeof type === 'string' && type.startsWith('investigation.')) {
       const id = typeof msg.investigationId === 'string' ? msg.investigationId
@@ -742,6 +780,7 @@ export class DirectGatewayClient {
   }
 
   private rejectPendingChatAcknowledgements(error: Error): void {
+    this.rejectPendingSteers();
     const pending = [...this.pendingChatAcknowledgements.values()];
     this.pendingChatAcknowledgements.clear();
     for (const acknowledgement of pending) {
@@ -752,6 +791,7 @@ export class DirectGatewayClient {
   }
 
   private pausePendingChatAcknowledgements(): void {
+    this.rejectPendingSteers();
     for (const acknowledgement of this.pendingChatAcknowledgements.values()) {
       if (acknowledgement.timer !== null) clearTimeout(acknowledgement.timer);
       acknowledgement.timer = null;
