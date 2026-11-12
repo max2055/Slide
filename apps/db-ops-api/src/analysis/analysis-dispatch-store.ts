@@ -38,9 +38,12 @@ export class AnalysisDispatchStore {
       LEFT JOIN analysis_dispatch_attempts a ON a.analysis_id = d.analysis_id LIMIT 0`);
     await this.pool().execute('SELECT scope_key FROM analysis_dispatch_keys LIMIT 0');
   }
-  private async transaction<T>(work: (connection: PoolConnection) => Promise<T>, reservedConnection?: PoolConnection): Promise<T> {
+  private async transaction<T>(work: (connection: PoolConnection) => Promise<T>, reservedConnection?: PoolConnection, isolation?: 'READ COMMITTED'): Promise<T> {
     const connection = reservedConnection ?? await this.pool().getConnection();
-    try { await connection.beginTransaction(); const result = await work(connection); await connection.commit(); return result; }
+    try {
+      if (isolation) await connection.query('SET TRANSACTION ISOLATION LEVEL READ COMMITTED');
+      await connection.beginTransaction(); const result = await work(connection); await connection.commit(); return result;
+    }
     catch (error) { await connection.rollback(); throw error; }
     finally { if (!reservedConnection) connection.release(); }
   }
@@ -54,6 +57,10 @@ export class AnalysisDispatchStore {
     // callers create their analysis in this transaction; legacy retry creates a new ID.
     if (input.existingAnalysisId !== undefined) throw new Error('ANALYSIS_LEGACY_BINDING_REQUIRES_CONFIRMATION');
     const scope = analysisHash([input.analysisType, request.subject, input.triggerType, request.actor?.userId ?? 'system', input.relatedId ?? null]);
+    // The scope-key row serializes matching admissions. Historical unknown
+    // scans must lock existing rows, not gaps shared by unrelated sources:
+    // under REPEATABLE READ those gaps deadlock concurrent analysis inserts.
+    // SET TRANSACTION applies only to this admission, never the pooled session.
     return this.transaction(async connection => {
       await connection.execute('INSERT INTO analysis_dispatch_keys (scope_key) VALUES (?) ON DUPLICATE KEY UPDATE scope_key = scope_key', [scope]);
       const [keys] = await connection.execute<any[]>('SELECT analysis_id FROM analysis_dispatch_keys WHERE scope_key = ? FOR UPDATE', [scope]);
@@ -136,7 +143,7 @@ export class AnalysisDispatchStore {
       await connection.execute("UPDATE ai_analysis SET status = 'pending', session_key = ?, started_at = NULL WHERE id = ?", [snapshot.sessionKey, id]);
       await connection.execute('UPDATE analysis_dispatch_keys SET analysis_id = ? WHERE scope_key = ?', [id, scope]);
       return { analysisId: id, cached: false, success: true, status: 'pending' };
-    }, reservedConnection);
+    }, reservedConnection, 'READ COMMITTED');
   }
 
   private async lock(connection: PoolConnection, id: number) {

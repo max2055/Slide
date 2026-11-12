@@ -77,7 +77,17 @@ describe.each(['memory', ...(port ? ['mysql'] : [])])('MAX-317 server credential
         return [{ affectedRows: 1 }, []];
       });
     }
-    vi.spyOn(dbConnection, 'getPool').mockReturnValue({ execute } as any);
+    vi.spyOn(dbConnection, 'getPool').mockReturnValue({
+      execute,
+      getConnection: async () => storage === 'mysql' ? pool.getConnection() : {
+        execute,
+        beginTransaction: async () => {},
+        commit: async () => {},
+        rollback: async () => {},
+        release() {},
+        destroy() {},
+      },
+    } as any);
     log = vi.spyOn(console, 'error').mockImplementation(() => {});
   });
 
