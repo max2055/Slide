@@ -4,6 +4,7 @@ import type { AnyAgentTool } from './types.js';
 import { canActorDiscoverTool, decideToolPolicy, executeToolWithPolicy } from './policy.js';
 import { projectContextBlocks } from '@slide/agent-core';
 import { agentExecutionConfigService } from '../security/agent-execution-config-service.js';
+import { dbConnection } from '../db-connection.js';
 import { instanceDatabaseService } from '../instance-database-service.js';
 
 const actor = (roles: string[], permissions: string[] = [], scopes: Record<number, 'read-only' | 'read-write' | 'admin'> = {}): ActorContext => Object.freeze({
@@ -26,6 +27,49 @@ const tool = (overrides: Partial<AnyAgentTool> = {}): AnyAgentTool => ({
 
 describe('actor tool policy', () => {
   afterEach(() => vi.restoreAllMocks());
+
+  // GitHub #624: use the default resolver and actual service, faulting only the pool.
+  it.each([
+    ['found', 'ALLOW'],
+    ['missing', 'RESOURCE_NOT_FOUND'],
+    ['query-failed', 'RESOURCE_LOOKUP_UNAVAILABLE'],
+    ['pool-unavailable', 'RESOURCE_LOOKUP_UNAVAILABLE'],
+    ['permission-denied', 'MISSING_PERMISSION'],
+    ['scope-denied', 'INSTANCE_SCOPE_DENIED'],
+  ] as const)('contains instance-name resolution at the execution boundary: %s', async (scenario, reasonCode) => {
+    vi.spyOn(agentExecutionConfigService, 'get').mockResolvedValue({
+      approvalEnabled: true, restrictedNetworkEnabled: false, reasonCode: 'EXECUTION_CONFIG_READY',
+    });
+    const execute = vi.fn().mockImplementation(async () => {
+      if (scenario === 'query-failed' || scenario === 'permission-denied') {
+        throw new Error('SQL failed: password=private-test-sentinel');
+      }
+      return [scenario === 'missing' ? [] : [{ id: 12, name: 'orders', environment: 'production' }]];
+    });
+    vi.spyOn(dbConnection, 'getPool').mockReturnValue(scenario === 'pool-unavailable' ? null : { execute } as any);
+    const handler = vi.fn().mockResolvedValue({ success: true });
+    const consume = vi.fn().mockResolvedValue(true);
+    const record = vi.fn().mockResolvedValue(undefined);
+    const outcome = await executeToolWithPolicy(
+      actor(['operator'], scenario === 'permission-denied' ? [] : ['instance:update'],
+        scenario === 'scope-denied' ? {} : { 12: 'read-write' }),
+      tool({ name: 'slide_update_db_config', requiresApproval: true, handler }),
+      { instance_name: ' orders ', approvalId: '42' },
+      undefined, { consume }, { record },
+    );
+    expect(outcome.decision).toMatchObject({ allow: scenario === 'found', reasonCode });
+    expect(outcome.result).toMatchObject(scenario === 'found'
+      ? { success: true } : { success: false, errorCode: reasonCode });
+    expect(handler).toHaveBeenCalledTimes(scenario === 'found' ? 1 : 0);
+    expect(consume).toHaveBeenCalledTimes(scenario === 'found' ? 1 : 0);
+    expect(record).toHaveBeenCalledWith(expect.objectContaining({
+      phase: 'decision', decision: expect.objectContaining({ reasonCode }),
+    }));
+    expect(JSON.stringify({ outcome, audit: record.mock.calls })).not.toContain('private-test-sentinel');
+    if (scenario !== 'pool-unavailable') {
+      expect(execute).toHaveBeenCalledExactlyOnceWith(expect.stringContaining('SELECT id, name, environment'), ['orders']);
+    }
+  });
 
   it.each(['permission', 'scope', 'audit'] as const)('does not spend an approval on %s failure', async (failure) => {
     vi.spyOn(agentExecutionConfigService, 'get').mockResolvedValue({

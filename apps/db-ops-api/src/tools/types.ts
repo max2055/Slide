@@ -180,6 +180,7 @@ export type ToolPolicyReasonCode =
   | 'AGENT_RESOURCE_DENIED'
   | 'RESOURCE_INVALID'
   | 'RESOURCE_NOT_FOUND'
+  | 'RESOURCE_LOOKUP_UNAVAILABLE'
   | 'AMBIGUOUS_INSTANCE_NAME'
   | 'INSTANCE_SCOPE_REQUIRED'
   | 'INSTANCE_SCOPE_DENIED'
@@ -210,7 +211,7 @@ export interface ToolPolicyResource {
   serverId?: number;
   networkDeviceId?: number;
   databaseTarget?: { host: string; port: number };
-  error?: 'RESOURCE_INVALID' | 'RESOURCE_NOT_FOUND' | 'AMBIGUOUS_INSTANCE_NAME';
+  error?: 'RESOURCE_INVALID' | 'RESOURCE_NOT_FOUND' | 'RESOURCE_LOOKUP_UNAVAILABLE' | 'AMBIGUOUS_INSTANCE_NAME';
 }
 
 // ============== 工具目录类型 ==============

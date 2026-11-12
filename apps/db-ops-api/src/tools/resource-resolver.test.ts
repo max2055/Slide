@@ -21,6 +21,21 @@ describe('Agent tool resource resolver', () => {
     expect(findInstanceIdByName).toHaveBeenCalledWith('orders-prod');
   });
 
+  // GitHub #624: storage failures must not escape the policy boundary.
+  it.each(['single-id', 'available-instances'])('contains %s lookup failures', async (path) => {
+    const failure = new Error('SELECT failed: password=private-test-sentinel');
+    const findInstanceIdByName = vi.fn().mockRejectedValue(failure);
+    const listAvailableInstancesByNormalizedName = vi.fn().mockRejectedValue(failure);
+    const resource = await resolveToolResource('slide_update_db_config', { instance_name: ' orders ' }, {
+      findInstanceIdByName,
+      ...(path === 'available-instances' ? { listAvailableInstancesByNormalizedName } : {}),
+    });
+    expect(resource).toEqual({ type: 'instance', error: 'RESOURCE_LOOKUP_UNAVAILABLE' });
+    expect(path === 'single-id' ? findInstanceIdByName : listAvailableInstancesByNormalizedName)
+      .toHaveBeenCalledExactlyOnceWith('orders');
+    if (path === 'available-instances') expect(findInstanceIdByName).not.toHaveBeenCalled();
+  });
+
   it('fails closed when a trimmed name is active in more than one environment', async () => {
     const actor = { username: 'dba', roles: ['dba'], permissions: ['instance:update'], instanceScopes: { 8: 'read-write', 9: 'admin' }, sessionVersion: 1, requestId: 'r' } as any;
     await expect(resolveToolResource('slide_update_db_config', { instance_name: ' orders ', environment: 'production' }, {
