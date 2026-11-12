@@ -17,10 +17,10 @@ import { resolveRuntimePolicy, runtimeSpec, type RuntimePolicy } from '../adapte
  */
 
 import type { AgentRunner, RuntimeResolution } from '@slide/agent-core';
-import { ToolRegistry, reserveChildBudget } from '@slide/agent-core';
+import { ToolRegistry, reserveChildBudget, cancellationError } from '@slide/agent-core';
 import { subagentRegistry, type SubagentRunRecord, type SubagentRegistry } from './subagent-registry.js';
 import type { ActorContext } from '../auth/actor-context.js';
-import { loadAgentRuntimeLimits } from '../security/agent-runtime-limits.js';
+import { ActorConcurrencyLimiter, loadAgentRuntimeLimits } from '../security/agent-runtime-limits.js';
 import { redactSensitiveText } from '../security/log-redaction.js';
 
 export type SubagentStatus = SubagentRunRecord['status'];
@@ -42,8 +42,8 @@ export class SubagentManager {
   private parentTools: ToolRegistry | null;
   private readonly toolsForActor?: (actor: ActorContext) => ToolRegistry;
   private readonly unsettled = new Set<string>();
-  private readonly admissions = new Map<number, number>();
   private readonly limits = loadAgentRuntimeLimits();
+  private readonly admissions = new ActorConcurrencyLimiter(this.limits.maxConcurrentRunsPerActor);
 
   constructor(
     agentRunner: AgentRunner,
@@ -78,19 +78,15 @@ export class SubagentManager {
     if (!actor) throw new Error('SUBAGENT_ACTOR_REQUIRED');
     if (!task.trim() || task.length > this.limits.maxMessageChars) throw new Error('SUBAGENT_TASK_INVALID');
     if (!/^[a-zA-Z0-9._-]{1,64}$/.test(agentId)) throw new Error('SUBAGENT_AGENT_ID_INVALID');
-    const activeForActor = this.admissions.get(actor.userId) ?? 0;
-    if (activeForActor >= this.limits.maxConcurrentRunsPerActor) {
+    // Claim synchronously before the first await, including durable allocation.
+    if (!this.admissions.acquire(actor.userId)) {
       throw new Error('SUBAGENT_CONCURRENCY_LIMIT');
     }
-    // Claim synchronously before the first await, including durable allocation.
-    this.admissions.set(actor.userId, activeForActor + 1);
     let released = false;
     const release = () => {
       if (released) return;
       released = true;
-      const remaining = (this.admissions.get(actor.userId) ?? 1) - 1;
-      if (remaining === 0) this.admissions.delete(actor.userId);
-      else this.admissions.set(actor.userId, remaining);
+      this.admissions.release(actor.userId);
     };
     let run: SubagentRunRecord;
     try {
@@ -212,7 +208,7 @@ export class SubagentManager {
 
       const completed = !controller.signal.aborted && result.stopReason === 'completed'
         && (!result.resolution || result.resolution.kind === 'response_ready');
-      const reason = controller.signal.aborted ? (controller.signal.reason?.code ?? (/DEADLINE/.test(controller.signal.reason?.message ?? '') ? 'RUN_DEADLINE' : 'USER_CANCELLED'))
+      const reason = controller.signal.aborted ? cancellationError(controller.signal).code
         : result.resolution?.reasonCode ?? result.stopReason ?? 'MISSING_STOP_REASON';
       this.registry.updateRunStatus(run.runId, completed ? 'completed' : reason === 'USER_CANCELLED' || result.stopReason === 'cancelled' ? 'cancelled' : 'failed',
         completed ? result.finalContent || undefined : result.resolution?.safePartialContent,
@@ -222,8 +218,9 @@ export class SubagentManager {
     } catch (err) {
       const errorMessage = redactSensitiveText(err instanceof Error ? err.message : String(err));
       const aborted = controller.signal.aborted;
-      const timedOut = /DEADLINE/.test(controller.signal.reason?.message ?? '');
-      this.registry.updateRunStatus(run.runId, aborted && !timedOut ? 'cancelled' : 'failed', undefined, errorMessage, { kind: aborted ? timedOut ? 'timed_out' : 'cancelled' : 'failed', reasonCode: aborted ? timedOut ? 'RUN_DEADLINE' : 'USER_CANCELLED' : 'SUBAGENT_EXECUTION_FAILED', retryable: false });
+      const abortCode = aborted ? cancellationError(controller.signal).code : undefined;
+      const timedOut = abortCode === 'RUN_DEADLINE';
+      this.registry.updateRunStatus(run.runId, aborted && !timedOut ? 'cancelled' : 'failed', undefined, errorMessage, { kind: aborted ? timedOut ? 'timed_out' : 'cancelled' : 'failed', reasonCode: abortCode ?? 'SUBAGENT_EXECUTION_FAILED', retryable: false });
       console.error(`[SubagentManager] Subagent ${run.runId} failed: ${errorMessage}`);
     } finally {
       clearTimeout(timeout);

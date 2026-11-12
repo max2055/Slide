@@ -100,6 +100,29 @@ it.each(['persistence failure', 'cancel before persistence', 'cancel during pers
   await expect(manager.spawn('agent', 'next', 'p', owner)).resolves.toBeTypeOf('string');
 });
 
+it.each(['cancel', 'deadline', 'throw after cancel'])('preserves %s when the runner settles after abort', async scenario => {
+  vi.useFakeTimers();
+  vi.spyOn(console, 'error').mockImplementation(() => {});
+  const controller = new AbortController();
+  const execution = deferred<any>();
+  const { manager } = setup(() => execution.promise);
+  const state = new RecoveryPolicy().state;
+  const id = await withBudgetContext(parent(controller.signal), state,
+    () => manager.spawn('agent', 'task', 'p', owner, { entry: 'subagent', source: 'test', longChat: false, maxIterations: 10, runTimeoutMs: 10 }), async () => {});
+  if (scenario === 'deadline') await vi.advanceTimersByTimeAsync(10);
+  else controller.abort(); // Default DOMException has a numeric code, not a reason string.
+  if (scenario === 'throw after cancel') execution.reject(new Error('password=fictional-cancel-secret'));
+  else execution.resolve(completed);
+  await vi.advanceTimersByTimeAsync(0);
+  const result = await manager.access(id, owner);
+  expect(result).toMatchObject({ status: scenario === 'deadline' ? 'failed' : 'cancelled', resolution: {
+    kind: scenario === 'deadline' ? 'timed_out' : 'cancelled', reasonCode: scenario === 'deadline' ? 'RUN_DEADLINE' : 'USER_CANCELLED',
+  } });
+  expect(result.result).toBeUndefined();
+  expect(JSON.stringify(result)).not.toContain('fictional-cancel-secret');
+  expect(result).not.toHaveProperty('cancellationPending');
+});
+
 it('redacts thrown errors once in registry, access tool and console (#308)', async () => {
   const log = vi.spyOn(console, 'error').mockImplementation(() => {});
   const { manager, registry } = setup(async () => { throw new Error('password=fictional-pass; api_key=fictional-key'); });
