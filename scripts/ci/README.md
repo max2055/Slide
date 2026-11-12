@@ -66,12 +66,28 @@ configured when the policy was introduced.
 
 ## Validation contract
 
-Scope: CI selection, duplicate execution and wrapper modes; no production code,
-test assertions, database schema or repository protection changes. No hard resource
-budget is imposed; no subagents are used. Actual token/cost telemetry is unavailable.
+Run `node --test scripts/ci/*.test.mjs` for selection, failure propagation,
+qualification wrapper modes and source-policy regression tests. Workflow changes
+also require syntax validation; a local policy test is not a full GitHub candidate.
+The final selected candidate must pass before merge, as required by the project
+[quality gates](../../docs/slide/development/quality-gates.md).
 
-Acceptance: policy tests, script syntax, actionlint, qualification matrix and a
-full GitHub candidate on the PR head pass. Routing and gates must reject missing
-or unsuccessful required results. Standalone wrapper behavior is preserved.
-Run focused checks during implementation and one complete gate for the final
-candidate; stop when the requested PR is reviewable with current-head evidence.
+## Incremental source policy
+
+`pnpm ci:source-policy` checks added lines relative to HEAD, including staged,
+unstaged and untracked source. To check committed work, run
+`pnpm ci:source-policy <base> <head>`; pass the merge base for a PR.
+The dependency-free Node entry point is `node scripts/ci/check-source-policy.mjs`.
+
+The plan job runs it before selecting expensive qualification. PRs check the full
+base/head merge-base range, pushes check before/head, and scheduled/manual runs
+check the latest commit. Missing refs fail planning; selected gates cannot silently
+skip this policy. Historical unchanged lines are not re-linted; renamed files are treated as
+deleted and added, so their destination is scanned in full.
+
+It rejects developer home/private credential paths and direct focused test
+declarations in JS/TS, shell and workflow code under apps, packages, frontend,
+tests, scripts and .github. Documentation and whole-line comments are excluded.
+Diagnostics contain location and rule only, never source text. This is a textual
+guard: dynamically assembled paths, aliased test APIs, schema correctness and
+fixture lifetimes still require review and their existing qualification checks.
