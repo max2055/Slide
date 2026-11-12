@@ -54,7 +54,7 @@
     <tr><td><code>INITIAL_ADMIN_USERNAME</code>、<code>INITIAL_ADMIN_PASSWORD</code></td><td>初始管理员</td><td><code>NODE_ENV=production</code> 时必需。</td></tr>
     <tr><td>目标地址策略</td><td>受管数据库、服务器和网络设备的目标校验</td><td>不通过环境变量配置网段或端口；阻止特殊/元数据地址并校验端口范围。</td></tr>
     <tr><td><code>CORS_ORIGINS</code></td><td>允许的前端来源</td><td>只设置生产域名。</td></tr>
-    <tr><td><code>SESSION_RETENTION_DAYS</code>、<code>SESSION_MAX_MESSAGES</code></td><td>Agent 会话保留与消息上限</td><td>默认分别为 30 天和 2000 条消息。</td></tr>
+    <tr><td><code>SESSION_RETENTION_DAYS</code>、<code>SESSION_MAX_MESSAGES</code></td><td>Agent 会话保留与消息上限</td><td>默认分别为 30 天和 2000 条消息。保留天数仅接受十进制正整数 1–36500；未设置或空字符串使用 30 天，其他非法值会在启动清理前报错。修改后重启生效。</td></tr>
   </tbody>
 </table>
 

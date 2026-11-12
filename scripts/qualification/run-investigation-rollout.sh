@@ -15,9 +15,32 @@ fi
 container="slide-t12-$$-$RANDOM"
 operations_container="${container}-operations"
 operations_port=''
+export T12_OUTPUT_DIR="${T12_OUTPUT_DIR:-$root/.qualification/t12}"
+mkdir -p "$T12_OUTPUT_DIR"
+startup="$root/scripts/qualification/t12-startup.mjs"
+primary_requested=0
+operations_requested=0
+started_at=$SECONDS
 cleanup() {
-  docker stop --timeout 10 "$operations_container" >/dev/null 2>&1 || true
-  docker stop --timeout 10 "$container" >/dev/null 2>&1 || true
+  local test_code=$? evidence_code=0 cleanup_code=0 name requested stop_code remove_code absent
+  trap - EXIT
+  set +e
+  for requested in "$primary_requested:$container" "$operations_requested:$operations_container"; do
+    [[ "$requested" == 1:* ]] || continue
+    name="${requested#1:}"
+    node "$startup" snapshot "$T12_OUTPUT_DIR" "$name" before-cleanup || evidence_code=1
+    docker stop --timeout 10 "$name" >/dev/null 2>&1; stop_code=$?
+    docker rm "$name" >/dev/null 2>&1; remove_code=$?
+    absent=0
+    # A daemon error is not proof of absence. A successful name listing is.
+    if remaining=$(docker ps -a --filter "name=^/${name}$" --format '{{.Names}}') && [[ -z "$remaining" ]]; then absent=1; fi
+    node "$startup" cleanup "$T12_OUTPUT_DIR" "$name" "$stop_code" "$remove_code" "$absent" || cleanup_code=1
+  done
+  node "$startup" stage "$T12_OUTPUT_DIR" test-exit "$test_code" "$((SECONDS-started_at))" || evidence_code=1
+  node "$startup" stage "$T12_OUTPUT_DIR" observation-exit "$evidence_code" "$((SECONDS-started_at))" || evidence_code=1
+  node "$startup" stage "$T12_OUTPUT_DIR" cleanup-exit "$cleanup_code" "$((SECONDS-started_at))" || evidence_code=1
+  if [[ "$test_code" == 0 && ( "$evidence_code" != 0 || "$cleanup_code" != 0 ) ]]; then test_code=1; fi
+  exit "$test_code"
 }
 trap cleanup EXIT
 trap 'exit 130' INT
@@ -33,34 +56,36 @@ if [[ "$mode" == --full || "$mode" == --api ]]; then
 fi
 # Start both disposable servers before waiting so their image pulls and
 # initialization overlap instead of adding two sequential startup costs.
-docker run --detach --rm --name "$container" --memory=768m --env MYSQL_ALLOW_EMPTY_PASSWORD=yes --publish 127.0.0.1::3306 mysql:8.4 --innodb-buffer-pool-size=67108864 --table-open-cache=128 --table-definition-cache=512 --mysqlx=0 >/dev/null &
+# Keep exited containers until the trap has captured their state and logs.
+# The same trap removes only these task-owned names, including successful runs.
+primary_requested=1
+docker run --detach --name "$container" --memory=768m --env MYSQL_ALLOW_EMPTY_PASSWORD=yes --publish 127.0.0.1::3306 mysql:8.4 --innodb-buffer-pool-size=67108864 --table-open-cache=128 --table-definition-cache=512 --mysqlx=0 >/dev/null &
 primary_start=$!
 if [[ "$needs_operations" == 1 ]]; then
-  docker run --detach --rm --name "$operations_container" --memory=768m --env MYSQL_ALLOW_EMPTY_PASSWORD=yes --publish 127.0.0.1::3306 mysql:9.6 --innodb-buffer-pool-size=67108864 --table-open-cache=128 --table-definition-cache=512 --mysqlx=0 >/dev/null &
+  operations_requested=1
+  docker run --detach --name "$operations_container" --memory=768m --env MYSQL_ALLOW_EMPTY_PASSWORD=yes --publish 127.0.0.1::3306 mysql:9.6 --innodb-buffer-pool-size=67108864 --table-open-cache=128 --table-definition-cache=512 --mysqlx=0 >/dev/null &
   operations_start=$!
 fi
-wait "$primary_start"
-if [[ "$needs_operations" == 1 ]]; then wait "$operations_start"; fi
+primary_code=0; wait "$primary_start" || primary_code=$?
+node "$startup" stage "$T12_OUTPUT_DIR" primary-start "$primary_code" "$((SECONDS-started_at))"
+operations_code=0
+if [[ "$needs_operations" == 1 ]]; then
+  wait "$operations_start" || operations_code=$?
+  node "$startup" stage "$T12_OUTPUT_DIR" operations-start "$operations_code" "$((SECONDS-started_at))"
+fi
+if [[ "$primary_code" != 0 || "$operations_code" != 0 ]]; then exit 1; fi
 port="$(docker port "$container" 3306/tcp | awk -F: 'NR==1 {print $NF}')"
 ready=0
-for _ in $(seq 1 60); do
-  if T06_TEST_MYSQL_PORT="$port" pnpm --filter slide-api exec node -e '
-    import("mysql2/promise").then(async ({default:mysql}) => {
-      const c=await mysql.createConnection({host:"127.0.0.1",port:Number(process.env.T06_TEST_MYSQL_PORT),user:"root",password:""});
-      await c.query("SELECT 1");await c.end();
-    }).catch(()=>process.exit(1));' >/dev/null 2>&1; then ready=1; break; fi
+for attempt in $(seq 1 60); do
+  if pnpm --filter slide-api exec node "$startup" probe "$T12_OUTPUT_DIR" "$port" primary "$attempt"; then ready=1; break; fi
   sleep 1
 done
 if [[ "$ready" != 1 ]]; then echo 'Isolated T12 MySQL unavailable' >&2; exit 1; fi
 if [[ "$needs_operations" == 1 ]]; then
   operations_port="$(docker port "$operations_container" 3306/tcp | awk -F: 'NR==1 {print $NF}')"
   operations_ready=0
-  for _ in $(seq 1 60); do
-    if OPERATIONS_TEST_MYSQL_PORT="$operations_port" pnpm --filter slide-api exec node -e '
-      import("mysql2/promise").then(async ({default:mysql}) => {
-        const c=await mysql.createConnection({host:"127.0.0.1",port:Number(process.env.OPERATIONS_TEST_MYSQL_PORT),user:"root",password:""});
-        await c.query("SELECT 1");await c.end();
-      }).catch(()=>process.exit(1));' >/dev/null 2>&1; then operations_ready=1; break; fi
+  for attempt in $(seq 1 60); do
+    if pnpm --filter slide-api exec node "$startup" probe "$T12_OUTPUT_DIR" "$operations_port" operations "$attempt"; then operations_ready=1; break; fi
     sleep 1
   done
   if [[ "$operations_ready" != 1 ]]; then echo 'Isolated Operations MySQL9.6 unavailable' >&2; exit 1; fi
@@ -86,11 +111,11 @@ if [[ "$mode" == --full || "$mode" == --api ]]; then
   done
 fi
 export JWT_SECRET_KEY="$(node -e 'process.stdout.write(require("node:crypto").randomBytes(32).toString("hex"))')"
-export T12_OUTPUT_DIR="${T12_OUTPUT_DIR:-$root/.qualification/t12}"
-mkdir -p "$T12_OUTPUT_DIR"
 run_gate() {
-  local name="$1"; shift
-  "$@" >"$T12_OUTPUT_DIR/$name.log" 2>&1 || { tail -60 "$T12_OUTPUT_DIR/$name.log"; return 1; }
+  local name="$1" code=0; shift
+  "$@" >"$T12_OUTPUT_DIR/$name.log" 2>&1 || code=$?
+  node "$startup" stage "$T12_OUTPUT_DIR" "gate-$name" "$code" "$((SECONDS-started_at))"
+  if [[ "$code" != 0 ]]; then tail -60 "$T12_OUTPUT_DIR/$name.log"; return "$code"; fi
   tail -8 "$T12_OUTPUT_DIR/$name.log"
 }
 if [[ "$mode" == --api ]]; then
