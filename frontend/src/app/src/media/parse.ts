@@ -143,7 +143,7 @@ export function splitMediaFromOutput(raw: string): {
   }
   const mayContainMediaToken = /media:/i.test(trimmedRaw);
   if (!mayContainMediaToken) {
-    return { text: trimmedRaw };
+    return { text: raw };
   }
 
   const media: string[] = [];
@@ -322,7 +322,7 @@ export function splitMediaFromOutput(raw: string): {
     .trim();
 
   if (media.length === 0) {
-    const parsedText = foundMediaToken ? cleanedText : trimmedRaw;
+    const parsedText = foundMediaToken ? cleanedText : raw;
     const result: ReturnType<typeof splitMediaFromOutput> = {
       text: parsedText,
       segments: parsedText ? [{ type: "text", text: parsedText }] : [],

@@ -7,6 +7,7 @@ import { icons } from "../../../icons.js";
 import { openExternalUrlSafe } from "../open-external-url.ts";
 import type { SidebarContent } from "../sidebar-content.ts";
 import { detectTextDirection } from "../text-direction.ts";
+import { stripReasoningTagsFromText } from "../../src/shared/text/reasoning-tags.ts";
 import type {
   MessageContentItem,
   MessageGroup,
@@ -15,10 +16,7 @@ import type {
 } from "../types/chat-types.ts";
 import { agentLogoUrl } from "../views/agents-utils.ts";
 import { renderCopyAsMarkdownButton } from "./copy-as-markdown.ts";
-import {
-  extractThinkingCached,
-  formatReasoningMarkdown,
-} from "./message-extract.ts";
+import { extractThinkingCached } from "./message-extract.ts";
 import {
   isToolResultMessage,
   normalizeMessage,
@@ -145,7 +143,7 @@ export function renderStreamingGroup(
   `;
 }
 
-function renderThinkingDisclosure(markdown: string, complete: boolean) {
+function renderThinkingDisclosure(text: string, complete: boolean) {
   return html`
     <details class="chat-thinking-disclosure" ?open=${!complete}>
       <summary>
@@ -153,9 +151,7 @@ function renderThinkingDisclosure(markdown: string, complete: boolean) {
         <span class="chat-thinking-disclosure__label">思考过程</span>
         <span class="chat-thinking-disclosure__status">${complete ? "已完成" : "思考中..."}</span>
       </summary>
-      <div class="chat-thinking-disclosure__body">
-        ${streamingMarkdown(markdown)}
-      </div>
+      <div class="chat-thinking-disclosure__body">${text}</div>
     </details>
   `;
 }
@@ -1027,7 +1023,7 @@ function renderGroupedMessage(
   const toolCards = (opts.showToolCalls ?? true) ? extractToolCards(message, messageKey) : [];
   const hasToolCards = toolCards.length > 0;
   const normalizedMessage = normalizeMessage(message);
-  const extractedText = normalizedMessage.content
+  const normalizedText = normalizedMessage.content
     .reduce<string[]>((lines, item) => {
       if (item.type === "text" && typeof item.text === "string") {
         lines.push(item.text);
@@ -1036,6 +1032,9 @@ function renderGroupedMessage(
     }, [])
     .join("\n")
     .trim();
+  const extractedText = normalizedRole === "assistant"
+    ? stripReasoningTagsFromText(normalizedText, { mode: "preserve" })
+    : normalizedText;
   const assistantAttachments = normalizedMessage.content.filter(
     (item): item is Extract<MessageContentItem, { type: "attachment" }> =>
       item.type === "attachment",
@@ -1049,12 +1048,9 @@ function renderGroupedMessage(
   const extractedThinking =
     opts.showReasoning && role === "assistant" ? extractThinkingCached(message) : null;
   const markdownBase = extractedText?.trim() ? extractedText : null;
-  const reasoningMarkdown = extractedThinking ? formatReasoningMarkdown(extractedThinking) : null;
-  const streamingThinkingMarkdown = opts.thinkingText?.trim()
-    ? formatReasoningMarkdown(opts.thinkingText)
-    : null;
-  const thinkingDisclosureMarkdown = streamingThinkingMarkdown ?? reasoningMarkdown;
-  const thinkingDisclosureComplete = streamingThinkingMarkdown
+  const streamingThinkingText = opts.thinkingText?.trim() ? opts.thinkingText : null;
+  const thinkingDisclosureText = streamingThinkingText ?? extractedThinking;
+  const thinkingDisclosureComplete = streamingThinkingText
     ? opts.thinkingComplete ?? false
     : true;
   const markdown = markdownBase;
@@ -1077,7 +1073,7 @@ function renderGroupedMessage(
     assistantAttachments.length === 0 &&
     assistantViewBlocks.length === 0 &&
     !normalizedMessage.replyTarget &&
-    !thinkingDisclosureMarkdown
+    !thinkingDisclosureText
   ) {
     return nothing;
   }
@@ -1143,8 +1139,8 @@ function renderGroupedMessage(
                         opts.assistantAttachmentAuthToken,
                         opts.onRequestUpdate,
                       )}
-                      ${thinkingDisclosureMarkdown
-                        ? renderThinkingDisclosure(thinkingDisclosureMarkdown, thinkingDisclosureComplete)
+                      ${thinkingDisclosureText
+                        ? renderThinkingDisclosure(thinkingDisclosureText, thinkingDisclosureComplete)
                         : nothing}
                       ${jsonResult
                         ? html`<details
@@ -1197,8 +1193,8 @@ function renderGroupedMessage(
               opts.assistantAttachmentAuthToken,
               opts.onRequestUpdate,
             )}
-            ${thinkingDisclosureMarkdown
-              ? renderThinkingDisclosure(thinkingDisclosureMarkdown, thinkingDisclosureComplete)
+            ${thinkingDisclosureText
+              ? renderThinkingDisclosure(thinkingDisclosureText, thinkingDisclosureComplete)
               : nothing}
             ${normalizedRole === "assistant" && assistantViewBlocks.length > 0
               ? html`${assistantViewBlocks.map(
