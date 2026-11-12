@@ -27,12 +27,12 @@ try {
   await admin.query(`CREATE DATABASE ${mysql.escapeId(database)}`);
   created = true;
   await admin.query(`USE ${mysql.escapeId(database)}`);
-  for (const migration of ['078_agent_tool_idempotency.sql', '079_agent_tool_idempotency_comments.sql']) {
+  for (const migration of ['078_agent_tool_idempotency.sql', '079_agent_tool_idempotency_comments.sql', '156_agent_tool_recovery.sql']) {
     await admin.query(await readFile(new URL(`../sql/migrations/${migration}`, import.meta.url), 'utf8'));
   }
   await admin.query('CREATE TABLE test_side_effects (request_key VARCHAR(128) NOT NULL)');
   for (const foundRows of [true, false]) {
-    const pool = mysql.createPool({ ...config, database, connectionLimit: 4, ...(foundRows ? {} : { flags: '-FOUND_ROWS' }) });
+    const pool = mysql.createPool({ ...config, database, connectionLimit: 4, ...(foundRows ? {} : { flags: ['-FOUND_ROWS'] }) });
     try {
       // Confirm driver semantics rather than assuming the requested flags took effect.
       await pool.query('INSERT INTO test_side_effects VALUES (?)', ['flag-probe']);
@@ -58,7 +58,16 @@ try {
         }
         assert.equal((await services[0].claim(7, 'session', 'slide_add_database_batch', key, { ...args, concurrency: 2 })).kind, 'conflict');
         const result = { success: true, data: { total: 1, succeeded: 1, failed: 0, results: [{ instanceId: 101 }] } };
-        await services[0].finish(7, 'session', 'slide_add_database_batch', key, claims[0].argumentsHash, 'completed', result);
+        const owner = claims.find(c => c.kind === 'claimed')!;
+        if (owner.kind !== 'claimed') throw new Error('missing owner');
+        await assert.rejects(services[1].heartbeat(7, 'session', 'slide_add_database_batch', key, { ...owner, ownerToken: 'foreign' }), /OWNERSHIP_LOST/);
+        await services[0].heartbeat(7, 'session', 'slide_add_database_batch', key, owner);
+        await Promise.all(Array.from({ length: 24 }, (_, index) => services[index % 2].checkpoint(7, 'session', 'slide_add_database_batch', key, owner, index, { state: 'completed', result: { index } })));
+        // Repeating the same checkpoint is valid even with FOUND_ROWS disabled.
+        await services[0].checkpoint(7, 'session', 'slide_add_database_batch', key, owner, 0, { state: 'completed', result: { index: 0 } });
+        const [checkpoint] = await pool.query<RowDataPacket[]>('SELECT checkpoint_json FROM agent_tool_idempotency WHERE idempotency_key = ?', [key]);
+        assert.equal(Object.keys(checkpoint[0].checkpoint_json.items).length, 24);
+        await services[0].finish(7, 'session', 'slide_add_database_batch', key, owner.argumentsHash, 'completed', result, owner.ownerToken);
         const replay = await Promise.all(Array.from({ length: 24 }, () => services[1].claim(7, 'session', 'slide_add_database_batch', key, args)));
         for (const claim of replay) assert.deepEqual(claim, { kind: 'completed', argumentsHash: claims[0].argumentsHash, result });
         assert.equal((await services[1].claim(7, 'session', 'slide_add_database_batch', key, {})).kind, 'conflict');
@@ -70,9 +79,10 @@ try {
       // A failed record must not be reclaimed implicitly (#372 is separate scope).
       const failedKey = `failed-${foundRows}`;
       const first = await services[0].claim(7, 'session', 'tool', failedKey, args);
-      await services[0].finish(7, 'session', 'tool', failedKey, first.argumentsHash, 'failed', { error: 'fixture' });
-      assert.equal((await services[1].claim(7, 'session', 'tool', failedKey, args)).kind, 'in_progress');
-      console.log(JSON.stringify({ foundRows, rounds: 5, concurrentRequestsPerRound: 24, claimedPerRound: 1, inProgressPerRound: 23, sideEffectsPerRound: 1, concurrentReplaysPerRound: 24, conflictRunning: 'pass', conflictCompleted: 'pass', failedNotReclaimed: 'pass' }));
+      if (first.kind !== 'claimed') throw new Error('missing owner');
+      await services[0].finish(7, 'session', 'tool', failedKey, first.argumentsHash, 'failed', { error: 'fixture' }, first.ownerToken);
+      assert.equal((await services[1].claim(7, 'session', 'tool', failedKey, args)).kind, 'unknown');
+      console.log(JSON.stringify({ foundRows, rounds: 5, concurrentRequestsPerRound: 24, claimedPerRound: 1, inProgressPerRound: 23, sideEffectsPerRound: 1, concurrentReplaysPerRound: 24, conflictRunning: 'pass', conflictCompleted: 'pass', failedNotReclaimed: 'pass', concurrentCheckpoints: 24, foreignOwnerFenced: 'pass', repeatedCheckpoint: 'pass' }));
     } finally {
       await pool.end();
     }
