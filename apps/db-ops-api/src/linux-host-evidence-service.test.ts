@@ -325,6 +325,50 @@ describe('LinuxHostEvidenceService lifecycle', () => {
     expect(execCommands.mock.calls.some((call) => call[1].includes('LC_ALL=C LANG=C cat /proc/net/dev'))).toBe(true);
   });
 
+  it.each([
+    ['9007199254740991', '0', 9007199254740991],
+    ['9007199254740991', '1', '9007199254740992'],
+    ['9007199254740993', '0', '9007199254740993'],
+    ['100', '10', 110],
+  ])('MAX-400 sums counters exactly across interfaces: %s + %s', async (rx, second, expected) => {
+    const execCommands = vi.fn(async (_client, commands: string[]) => commands.map(command => {
+      if (command.includes('/proc/net/dev')) return ok(
+        `eth0: ${rx} 0 2 3 0 0 0 0 9007199254740994 0 4 5 0 0 0 0\n` +
+        `eth1: ${second} 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0\n`);
+      if (command.includes('/proc/diskstats')) return ok('8 0 sda 1 0 17592186044417 0 1 0 3 0 0 4 0\n');
+      return successfulCommand(command);
+    }));
+    const { service } = createService(execCommands);
+    const evidence = await service.collectHostEvidence(9, { databaseType: 'mysql', services: [], paths: [] });
+    expect(evidence.metrics.values).toMatchObject({ network_rx_bytes: expected,
+      network_tx_bytes: '9007199254740994', disk_read_bytes: '9007199254741504', disk_write_bytes: 1536 });
+    expect(evidence.metrics.quality).toBe('good');
+    expect(JSON.parse(JSON.stringify(evidence)).metrics.values.network_rx_bytes).toBe(expected);
+  });
+
+  it.each([
+    ['17592186044415', 9007199254740480],
+    ['17592186044416', '9007199254740992'],
+    ['3', 1536],
+  ])('MAX-400 converts sectors exactly at the safe integer boundary: %s', async (sectors, expected) => {
+    const execCommands = vi.fn(async (_client, commands: string[]) => commands.map(command =>
+      command.includes('/proc/diskstats') ? ok(`8 0 sda 1 0 ${sectors} 0 1 0 3 0 0 4 0\n`) : successfulCommand(command)));
+    const { service } = createService(execCommands);
+    const evidence = await service.collectHostEvidence(9, { databaseType: 'mysql', services: [], paths: [] });
+    expect(evidence.metrics.values.disk_read_bytes).toBe(expected);
+    expect(evidence.metrics.quality).toBe('good');
+  });
+
+  it('MAX-403 reports malformed process samples instead of a misleading scalar maximum', async () => {
+    const execCommands = vi.fn(async (_client, commands: string[]) => commands.map(command =>
+      command.includes('ps -eo') ? ok('7 java worker 812.5 10.0\nbroken\n') : successfulCommand(command)));
+    const { service } = createService(execCommands);
+    const evidence = await service.collectHostEvidence(9, { databaseType: 'mysql', services: [], paths: [] });
+    expect(evidence.metrics.quality).toBe('partial');
+    expect(evidence.metrics.values).not.toHaveProperty('top_processes_cpu');
+    expect(evidence.gaps).toContainEqual({ section: 'metrics', reason: 'METRIC_PARSE_FAILED' });
+  });
+
   it.each(['other', 'empty batches', 'missing batch', 'all commands fail'])('never reports good evidence with unavailable metrics: %s', async (scenario) => {
     const batches = serverMetricProvider.getCollectionBatches('rhel');
     if (scenario === 'empty batches') vi.spyOn(serverMetricProvider, 'getCollectionBatches').mockReturnValue([]);
