@@ -201,8 +201,12 @@ export async function autoCompact(
     manager.summary = record;
   } catch (error) {
     // Successful lifecycle compaction is governed by cumulative request/token
-    // budgets. Only failed compaction attempts consume recovery allowance.
-    recovery.consume('context');
+    // budgets. Cancellation and the run deadline are interruptions, not
+    // summary failures. Classify the error so a concurrent abort does not
+    // hide a genuine persistence or provider failure.
+    if (!(error instanceof RuntimeError && (error.code === 'USER_CANCELLED' || error.code === 'RUN_DEADLINE'))) {
+      recovery.consume('context');
+    }
     throw error;
   }
 }

@@ -435,6 +435,28 @@ describe('DirectAdapter', () => {
       expect(send).toHaveBeenCalledWith(JSON.stringify({ type: 'auth_ok' }), expect.any(Function));
     });
 
+    it.each(['failed', 'closed'])('deduplicates delayed writes through the real WS ingress (%s, #303)', async outcome => {
+      const { socket, client, handle } = await connect();
+      await handle({ type: 'auth', token: 'test-token' });
+      const record = vi.spyOn(platformLogs, 'record');
+      const callbacks: Array<(error?: Error) => void> = [];
+      vi.spyOn(socket, 'send').mockImplementation((_data, callback: any) => { callbacks.push(callback); });
+      const terminate = vi.spyOn(socket, 'terminate');
+      for (let i = 0; i < 3; i++) client.send(JSON.stringify({ type: 'unknown' }));
+      await vi.waitFor(() => expect(callbacks).toHaveLength(3));
+      if (outcome === 'closed') {
+        const closed = new Promise<void>(resolve => socket.once('close', () => resolve()));
+        client.close(1000);
+        await closed;
+      }
+      callbacks.forEach(callback => callback(new Error('private-disconnect-detail')));
+      const failures = record.mock.calls.filter(([entry]) => entry.eventType === 'stream.delivery_failed');
+      expect(failures).toHaveLength(outcome === 'failed' ? 1 : 0);
+      expect(terminate).toHaveBeenCalledTimes(outcome === 'failed' ? 1 : 0);
+      if (outcome === 'failed') expect(failures[0][0]).toMatchObject({ errorCode: 'WS_WRITE_FAILED' });
+      expect(JSON.stringify(failures)).not.toContain('private-disconnect-detail');
+    });
+
     it.each(['unauthenticated', 'authenticating'])('expires %s connections and ignores late auth results', async state => {
       let resolveAuth!: (actor: any) => void;
       const authenticate = vi.fn(() => new Promise<any>(resolve => { resolveAuth = resolve; }));

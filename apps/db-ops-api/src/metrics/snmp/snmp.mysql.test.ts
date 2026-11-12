@@ -66,6 +66,8 @@ describe.skipIf(!port)('SNMP UDP → Worker → isolated MySQL → semantic quer
   it('applies cadence/revision, persists exact Counter64, separates directions and quarantines reboot', async () => {
     const resource: Resource = { type: ref.type, id: '1', attributes: { 'snmp.version': { value: 2, observed_at: new Date(now).toISOString(), source: 'isolated-simulator' } } };
     const policy = new PolicyService(new MysqlPolicyStore(() => pool), packages, { exists: async () => true, inventory: async () => resource }, () => new Date(now).toISOString());
+    // MAX-397: a new binding selects the current release; historical pins are tested separately.
+    expect(pin.version).toBe('1.0.1');
     await policy.changeBinding(admin, ref, { expected_revision: 0, package: pin }, true);
     const client = new SnmpClient(), discovery = new SnmpDiscovery(() => now);
     const transport = bindSnmp(client, { version: 2, host: '127.0.0.1', port: endpoint, community, retries: 0 });
@@ -108,7 +110,7 @@ describe.skipIf(!port)('SNMP UDP → Worker → isolated MySQL → semantic quer
         from: latest.observed_at, to: new Date(now + 1000).toISOString(), now: new Date(now + 1000).toISOString(),
         interval_ms: 60000, max_gap_ms: 300000, stale_after_ms: 120000, mode: 'last', space: 'none' });
       expect(result[0]).toMatchObject({ unit: 'bit/s', value: { value: fixture.expected_bits_per_second[direction] }, quality: { status: 'good' } });
-      expect(result[0].sources[0].versions).toMatchObject({ config_revision: 1, package_id: pin.id, package_version: '1.0.0', transform_version: '1.0.0' });
+      expect(result[0].sources[0].versions).toMatchObject({ config_revision: 1, package_id: pin.id, package_version: pin.version, transform_version: '1.0.0' });
     }
     expect((await policy.binding(admin, ref)).application).toMatchObject({ status: 'applied', applied_revision: 1 });
     now += 60000; agent.getMib().setScalarValue('uptime', 100);
