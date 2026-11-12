@@ -4,6 +4,7 @@
  * 纳管新的数据库实例到 Slide 平台
  */
 
+import { hasInstanceAccess } from '../../../auth/require-instance-access.js';
 import type { AnyAgentTool, ToolResult } from '../../types.js';
 import { toolCatalog } from '../../catalog.js';
 import { instanceDatabaseService } from '../../../instance-database-service.js';
@@ -112,40 +113,28 @@ export const addDatabaseTool: AnyAgentTool = {
     const unknownCreationError = `创建结果未知：先对账，确认未创建且修复原因后${typedArgs.credential_ref ? '申请新的 credential_ref ' : ''}再发起创建，不要直接重试`;
 
     try {
-      // 1. 生成实例名称（如果未提供）
-      const instanceName = typedArgs.name || generateInstanceName(typedArgs);
-
-      // 2. 检查实例是否已存在
-      const existing = await checkInstanceExists(instanceName);
-      if (existing) {
-        return {
-          success: false,
-          status: 'warning',
-          error: `实例 "${instanceName}" 已存在`,
-          errorCode: 'INSTANCE_EXISTS',
-          data: {
-            instanceId: existing.id,
-            name: existing.name,
-            connectionStatus: 'already_managed',
-          },
-          details: {
-            instanceId: existing.id,
-            terminal: true,
-            retryable: false,
-          },
-          next_actions: [`复用已有实例 ID ${existing.id}，不要重复纳管同一实例`],
-        };
+      // 1. 名称与环境跟 createInstance 使用同一规范化结果。空白名称已在校验中拒绝。
+      const instanceName = typeof typedArgs.name === 'string' ? typedArgs.name.trim() : generateInstanceName(typedArgs);
+      const environment = typedArgs.environment || 'development';
+      const actor = context?.actor;
+      if (!actor) {
+        return { success: false, status: 'error', error: '缺少认证执行上下文', errorCode: 'MISSING_ACTOR' };
       }
 
-      if (!context?.actor) {
-        return { success: false, status: 'error', error: '缺少认证执行上下文', errorCode: 'MISSING_ACTOR' };
+      // 2. 只拒绝同一环境的同名实例。其他环境的同名实例不在这里拦截。
+      // 看不见的占用只拒绝，不在响应里说明身份或是否存在；审计记录的是这份响应。
+      const existing = await checkInstanceExists(instanceName, environment);
+      if (existing) {
+        return hasInstanceAccess(actor, existing.id)
+          ? disclosedNameConflict(existing.id, existing.name)
+          : concealedOccupancyDenial();
       }
       let password = '';
       if (typedArgs.credential_ref) {
         credentialConsumptionAttempted = true;
         password = await credentialReferenceService.consume(
           typedArgs.credential_ref,
-          context.actor.userId,
+          actor.userId,
           addDatabaseTool.name,
         ) ?? '';
         if (!password) {
@@ -178,7 +167,7 @@ export const addDatabaseTool: AnyAgentTool = {
       creationSubmitted = true;
       const createResult = await instanceDatabaseService.createInstance({
         name: instanceName,
-        environment: typedArgs.environment || 'development',
+        environment,
         db_type: typedArgs.db_type,
         host: typedArgs.host,
         port: typedArgs.port,
@@ -186,24 +175,14 @@ export const addDatabaseTool: AnyAgentTool = {
         password,
         database_name: typedArgs.database_name,
         description: typedArgs.description,
-        created_by: context.actor.userId,
+        created_by: actor.userId,
       });
 
       if (!createResult.success) {
         if (createResult.instanceId) {
-          return {
-            success: false,
-            status: 'warning',
-            error: `该地址已被实例纳管，请复用已有实例 ID ${createResult.instanceId}`,
-            errorCode: 'INSTANCE_EXISTS',
-            data: {
-              instanceId: createResult.instanceId,
-              name: instanceName,
-              connectionStatus: 'already_managed',
-            },
-            details: { instanceId: createResult.instanceId, terminal: true, retryable: false },
-            next_actions: [`复用已有实例 ID ${createResult.instanceId}，不要重复纳管同一实例`],
-          };
+          return hasInstanceAccess(actor, createResult.instanceId)
+            ? disclosedAddressConflict(createResult.instanceId, instanceName)
+            : concealedOccupancyDenial();
         }
         return {
           success: false,
@@ -222,6 +201,7 @@ export const addDatabaseTool: AnyAgentTool = {
         instanceName,
         instanceId: realInstanceId,
         connectionTest: password ? connectionTest.success : null,
+        environment,
         args: typedArgs,
       });
 
@@ -242,7 +222,7 @@ export const addDatabaseTool: AnyAgentTool = {
           dbType: typedArgs.db_type,
           host: typedArgs.host,
           port: typedArgs.port,
-          environment: typedArgs.environment || 'development',
+          environment,
           message: content,
           terminal: false,
           retryable: false,
@@ -319,12 +299,66 @@ function generateInstanceName(args: AddDatabaseArgs): string {
   return `${args.db_type}_${args.host.replace(/\./g, '_')}_${args.port}`;
 }
 
+/** Visible same-environment name. The stored name may differ from the request by surrounding spaces. */
+function disclosedNameConflict(instanceId: number, name: string): ToolResult {
+  return {
+    success: false,
+    status: 'warning',
+    error: `实例 "${name}" 已存在`,
+    errorCode: 'INSTANCE_EXISTS',
+    data: {
+      instanceId,
+      name,
+      connectionStatus: 'already_managed',
+    },
+    details: {
+      instanceId,
+      terminal: true,
+      retryable: false,
+    },
+    next_actions: [`复用已有实例 ID ${instanceId}，不要重复纳管同一实例`],
+  };
+}
+
+/** Visible physical occupant. Copy stays specific to the address conflict. */
+function disclosedAddressConflict(instanceId: number, requestedName: string): ToolResult {
+  return {
+    success: false,
+    status: 'warning',
+    error: `该地址已被实例纳管，请复用已有实例 ID ${instanceId}`,
+    errorCode: 'INSTANCE_EXISTS',
+    data: {
+      instanceId,
+      name: requestedName,
+      connectionStatus: 'already_managed',
+    },
+    details: { instanceId, terminal: true, retryable: false },
+    next_actions: [`复用已有实例 ID ${instanceId}，不要重复纳管同一实例`],
+  };
+}
+
+/**
+ * Same rejection for a hidden name collision and a hidden physical occupant.
+ * No id, stored name, existence wording, or reuse hint: those would be copied
+ * into data, details, artifacts, next actions, and the result audit.
+ */
+function concealedOccupancyDenial(): ToolResult {
+  return {
+    success: false,
+    status: 'error',
+    error: '无法完成纳管',
+    errorCode: 'INSTANCE_CREATE_DENIED',
+    details: { terminal: true, retryable: false },
+    next_actions: ['请求已拒绝，不要重复提交本次请求'],
+  };
+}
+
 /**
  * 检查实例是否存在
  */
-async function checkInstanceExists(name: string): Promise<{ id: number; name: string } | null> {
-  const instances = await instanceDatabaseService.getAllInstances();
-  const instance = instances.find(inst => inst.name === name);
+async function checkInstanceExists(name: string, environment: string): Promise<{ id: number; name: string } | null> {
+  const matches = await instanceDatabaseService.listAvailableInstancesByNormalizedName(name);
+  const instance = matches.find((item) => item.environment === environment);
   return instance ? { id: instance.id, name: instance.name } : null;
 }
 
@@ -353,6 +387,7 @@ function buildAddDatabaseResponse(params: {
   instanceName: string;
   instanceId: number;
   connectionTest: boolean | null;
+  environment: string;
   args: AddDatabaseArgs;
 }): string {
   const lines: string[] = [];
@@ -363,7 +398,7 @@ function buildAddDatabaseResponse(params: {
   lines.push(`实例 ID: ${params.instanceId}`);
   lines.push(`类型：${params.args.db_type.toUpperCase()}`);
   lines.push(`地址：${params.args.host}:${params.args.port}`);
-  lines.push(`环境：${params.args.environment || 'development'}`);
+  lines.push(`环境：${params.environment}`);
 
   if (params.args.database_name) {
     lines.push(`数据库：${params.args.database_name}`);
