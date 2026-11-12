@@ -613,13 +613,31 @@ export class ResourceDiagnosticService {
   }
 }
 
+function hasResourceView(actor: ActorContext, type: 'server' | 'network_device'): boolean {
+  const permission = type === 'server' ? 'servers:view' : 'network_devices:view';
+  const resource = permission.slice(0, permission.indexOf(':'));
+  return actor.permissions.includes('*')
+    || actor.permissions.includes(permission)
+    || actor.permissions.includes(`${resource}:*`);
+}
+
+/** Query a type only when its view permission intersects at least one allowed id.
+ * A fixed id is not a proxy for the boundary: omitting id 1 must not hide id 2.
+ * Invalid ids never grant a read, so they do not open the inventory query. */
+function shouldQueryResourceType(actor: ActorContext, type: 'server' | 'network_device'): boolean {
+  if (!hasResourceView(actor, type)) return false;
+  if (!actor.resourceBoundary) return true;
+  const ids = type === 'server' ? actor.resourceBoundary.serverIds : actor.resourceBoundary.networkDeviceIds;
+  return ids.some((id) => Number.isInteger(id) && id > 0);
+}
+
 async function defaultList(actor: ActorContext): Promise<ResourceDetail[]> {
   const unavailableTypes: ResourceType[] = [];
   const failed = (type: ResourceType) => { unavailableTypes.push(type); return []; };
   const [instances, servers, devices] = await Promise.all([
     actor.permissions.includes('*') || actor.permissions.includes('instance:*') || Object.keys(actor.instanceScopes).length ? instanceDatabaseService.getManagedInstances().catch(() => failed('instance')) : Promise.resolve([]),
-    canReadResource(actor, { type: 'server', id: 1 }) ? serverDatabaseService.getAllServers({ strict: true }).catch(() => failed('server')) : Promise.resolve([]),
-    canReadResource(actor, { type: 'network_device', id: 1 }) ? networkDeviceDatabaseService.getAllDevices().catch(() => failed('network_device')) : Promise.resolve([]),
+    shouldQueryResourceType(actor, 'server') ? serverDatabaseService.getAllServers({ strict: true }).catch(() => failed('server')) : Promise.resolve([]),
+    shouldQueryResourceType(actor, 'network_device') ? networkDeviceDatabaseService.getAllDevices().catch(() => failed('network_device')) : Promise.resolve([]),
   ]);
   const result: ResourceDetail[] = [];
   for (const instance of instances) {

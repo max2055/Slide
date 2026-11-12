@@ -44,6 +44,8 @@
   margin-top: var(--space-xs);
   overflow-y: auto;
   color: var(--muted);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .chat-thinking-disclosure__body :where(p, ul, ol, pre, blockquote, table) {
@@ -119,8 +121,8 @@
   background: rgba(0, 0, 0, 0.15);
   padding: 0.15em 0.4em;
   border-radius: var(--radius-sm);
-  overflow-wrap: normal;
-  word-break: keep-all;
+  overflow-wrap: anywhere;
+  word-break: normal;
 }
 
 .chat-text :where(pre) {

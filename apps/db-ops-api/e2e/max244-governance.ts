@@ -113,7 +113,7 @@ try {
   );
   await pool.query('INSERT INTO user_roles(user_id,role_id) VALUES(701,701),(702,701)');
   await pool.query(
-    "INSERT INTO database_instances(id,name,environment,db_type,db_version,host,port,username,password_encrypted,status,lifecycle_state) VALUES(701,'灰度 A','testing','mysql','9.6','fixture.invalid',1,'fixture','','active','available'),(702,'灰度 B','testing','mysql','9.6','fixture.invalid',1,'fixture','','active','available'),(703,'无权 C','testing','mysql','9.6','fixture.invalid',1,'fixture','','active','available')",
+    "INSERT INTO database_instances(id,name,environment,db_type,db_version,host,port,database_name,username,password_encrypted,status,lifecycle_state) VALUES(701,'灰度 A','testing','mysql','9.6','fixture.invalid',1,'gov-701','fixture','','active','available'),(702,'灰度 B','testing','mysql','9.6','fixture.invalid',1,'gov-702','fixture','','active','available'),(703,'无权 C','testing','mysql','9.6','fixture.invalid',1,'gov-703','fixture','','active','available')",
   );
   await pool.query(
     "INSERT INTO instance_permissions(user_id,instance_id,access_level) VALUES(701,701,'read-write'),(701,702,'read-write')",

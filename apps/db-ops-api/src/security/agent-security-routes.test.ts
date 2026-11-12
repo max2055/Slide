@@ -129,6 +129,52 @@ describe('Agent security routes', () => {
     await app.close();
   });
 
+  // MAX-348 / #562: every submitted control must leave a failure record.
+  it.each([
+    { approvalEnabled: false },
+    { restrictedNetworkEnabled: false },
+    { approvalEnabled: false, restrictedNetworkEnabled: false },
+  ])('audits failed persistence for %j', async payload => {
+    vi.spyOn(agentExecutionConfigService, 'get').mockResolvedValue({
+      approvalEnabled: true, restrictedNetworkEnabled: true, reasonCode: 'EXECUTION_CONFIG_READY',
+    });
+    vi.spyOn(agentExecutionConfigService, 'set').mockRejectedValue(new Error('EXECUTION_CONFIG_UPDATE_FAILED'));
+    const audit = vi.spyOn(auditLogManager, 'logConfigChange').mockResolvedValue();
+    const app = await appFor(['admin:*']);
+    try {
+      const response = await app.inject({ method: 'PUT', url: '/api/agent/security/config', payload });
+      expect(response.statusCode).toBe(500);
+      expect(response.json()).toEqual({ reasonCode: 'EXECUTION_CONFIG_UPDATE_FAILED' });
+      expect(audit).toHaveBeenCalledTimes(Object.keys(payload).length);
+      for (const [field, configKey] of [
+        ['approvalEnabled', 'agent_tool_approval_enabled'],
+        ['restrictedNetworkEnabled', 'agent_sandbox_network_enabled'],
+      ] as const) {
+        if (field in payload) expect(audit).toHaveBeenCalledWith({
+          userId: '7', username: 'alice', configKey, oldValue: true, newValue: false,
+          clientIp: '127.0.0.1', result: 'failure', errorMessage: 'EXECUTION_CONFIG_UPDATE_FAILED',
+        });
+      }
+    } finally { await app.close(); }
+  });
+
+  it.each(['internal password=secret', 'PRIVATE_INTERNAL_SECRET'])('keeps errors safe when both audit writes fail (%s)', async message => {
+    vi.spyOn(agentExecutionConfigService, 'get').mockResolvedValue({
+      approvalEnabled: true, restrictedNetworkEnabled: true, reasonCode: 'EXECUTION_CONFIG_READY',
+    });
+    vi.spyOn(agentExecutionConfigService, 'set').mockRejectedValue(new Error(message));
+    const audit = vi.spyOn(auditLogManager, 'logConfigChange').mockRejectedValue(new Error('audit password=secret'));
+    const app = await appFor(['admin:*']);
+    try {
+      const response = await app.inject({ method: 'PUT', url: '/api/agent/security/config',
+        payload: { approvalEnabled: false, restrictedNetworkEnabled: false } });
+      expect(response.statusCode).toBe(500);
+      expect(response.json()).toEqual({ reasonCode: 'EXECUTION_CONFIG_UPDATE_FAILED' });
+      expect(audit).toHaveBeenCalledTimes(2);
+      expect(audit.mock.calls.every(([entry]) => entry.errorMessage === 'EXECUTION_CONFIG_UPDATE_FAILED')).toBe(true);
+    } finally { await app.close(); }
+  });
+
   it('rejects non-admin access to the execution controls', async () => {
     const app = await appFor(['ai:view']);
     expect((await app.inject({ method: 'GET', url: '/api/agent/security/config' })).statusCode).toBe(403);
