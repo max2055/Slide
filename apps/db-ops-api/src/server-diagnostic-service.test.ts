@@ -41,6 +41,17 @@ describe('ServerDiagnosticService', () => {
     });
   }
 
+  it('MAX-403/MAX-405 retains spaced high-CPU processes and marks malformed output partial', async () => {
+    const original = execCommands.getMockImplementation() as (...args: any[]) => any;
+    execCommands.mockImplementation(async (client, commands: string[]) => commands[0].includes('ps -eo')
+      ? [ok('7 java worker 812.5 10.0\n42 sshd 1.0 0.2\nbroken\n')]
+      : original(client, commands));
+    const result = await create().collectDiagnostics(3);
+    expect(result.topProcesses.items[0]).toEqual({ pid: 7, command: 'java worker', cpuPercent: 812.5, memoryPercent: 10 });
+    expect(result.topProcesses).toMatchObject({ quality: 'partial', reason: 'TOP_PROCESSES_MALFORMED' });
+    expect(result.gaps).toContainEqual({ section: 'topProcesses', reason: 'TOP_PROCESSES_MALFORMED' });
+  });
+
   it('collects only fixed commands and returns bounded five-minute sections', async () => {
     const service = create();
     const result = await service.collectDiagnostics(3);

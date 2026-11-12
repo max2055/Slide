@@ -1,5 +1,6 @@
 /**
- * CustomSQLProvider — executes user-defined SQL from metric_definitions.collection_sql
+ * CustomSQLProvider — executes user-defined SQL from collection_sqls[db_type],
+ * or the legacy collection_sql field when the typed map has no entry.
  *
  * Security:
  * - SQL validated via node-sql-parser AST (SELECT-only check)
@@ -15,17 +16,27 @@ import type { DatabaseConnection } from '../database-service.js';
 import type { MetricDefinition } from '../metric-registry.js';
 import { validateSqlIsSelectOnly } from '../sql-validator.js';
 
+function customCollectionSql(metricDef: MetricDefinition, dbType: string): string | null {
+  const mapped = metricDef.collection_sqls?.[dbType];
+  if (typeof mapped === 'string' && mapped.trim()) return mapped;
+  const direct = (metricDef as MetricDefinition & { collection_sql?: unknown }).collection_sql;
+  if (typeof direct === 'string' && direct.trim()) return direct;
+  return null;
+}
+
 export class CustomSQLProvider extends BaseMetricProvider {
   readonly name = 'Custom SQL Provider';
   readonly supportedDbTypes = ['mysql', 'postgresql', 'oracle', 'dameng'];
 
   async collect(instance: DatabaseConnection, metricDef: MetricDefinition): Promise<number | null> {
     if (!instance) return null;
-    const sql = (metricDef as any).collection_sql;
+    const dbType = instance.db_type ?? '';
+    const sql = customCollectionSql(metricDef, dbType);
     if (!sql) return null;
 
-    // Validate SELECT-only via AST (Plan 01 — node-sql-parser)
-    const validation = validateSqlIsSelectOnly(sql);
+    // The instance dialect is part of the read-only decision. An omitted or
+    // unknown db_type must not fall back to MySQL and admit another grammar.
+    const validation = validateSqlIsSelectOnly(sql, dbType);
     if (!validation.valid) {
       console.error(`[CustomSQLProvider] SQL validation failed for ${metricDef.id}: ${validation.error}`);
       return null;

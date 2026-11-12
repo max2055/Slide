@@ -1,4 +1,6 @@
 import { afterEach, expect, it, vi } from 'vitest';
+import { html } from 'lit';
+import { AppBadge } from './app-badge.js';
 const { authFetch } = vi.hoisted(() => ({ authFetch: vi.fn() }));
 vi.mock('../../../api/index.js', () => ({ authFetch }));
 // Historical study has its own authenticated component regressions and real Lit/MySQL harness.
@@ -231,6 +233,11 @@ it('renders non-scalar buckets as records instead of forcing a line or a gap', a
   expect(el.shadowRoot!.textContent).toContain('非标量记录 1');
 });
 it('bounds the observation detail: no bucket rows by default and at most 200 after opening', async () => {
+  // MAX-382 CI recovery: jsdom reassigns slots across the whole metrics shadow
+  // tree for each of 600 light-DOM badge style/slot renders. Keep real metrics,
+  // table, badge elements/attributes/text; omit only badge decoration here.
+  // Other tests and MAX-240-history.spec.ts retain the actual badge renderer.
+  vi.spyOn(AppBadge.prototype, 'render').mockReturnValue(html``);
   const buckets = Array.from({ length: 10_080 }, (_, i) => bucketAt(i));
   authFetch.mockResolvedValue(ok(withBuckets(buckets)));
   const el = await mount(); await el.updateComplete;
@@ -241,6 +248,12 @@ it('bounds the observation detail: no bucket rows by default and at most 200 aft
   details.open = true; details.dispatchEvent(new Event('toggle')); await el.updateComplete; await settle();
   expect(el.shadowRoot!.querySelectorAll('.bucket-row')).toHaveLength(200);
   expect(el.shadowRoot!.textContent).toContain('仅渲染最近 200 个时间桶');
+  const rows = [...el.shadowRoot!.querySelectorAll('.bucket-row')];
+  expect(rows[0].querySelector('strong')?.textContent).toBe('10089');
+  expect(rows.at(-1)!.querySelector('strong')?.textContent).toBe('9890');
+  expect(rows.flatMap(row => [...row.querySelectorAll('app-badge')])).toHaveLength(600);
+  expect([...rows[0].querySelectorAll('app-badge')].map(badge => [badge.getAttribute('variant'), badge.textContent]))
+    .toEqual([['muted', '良好'], ['warn', '过期'], ['muted', '精确']]);
 }, 20_000);
 it('discards a late response from an earlier window after a fast switch', async () => {
   let finish!: (value: unknown) => void;
