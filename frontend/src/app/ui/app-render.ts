@@ -908,6 +908,8 @@ export function renderApp(state: AppViewState) {
               sidebarOpen: state.sidebarOpen,
               sidebarContent: state.sidebarContent,
               sidebarError: state.sidebarError,
+              onOpenSidebar: (content) => state.handleOpenSidebar(content),
+              onCloseSidebar: () => state.handleCloseSidebar(),
               splitRatio: state.splitRatio,
               assistantName: state.assistantName,
               assistantAvatar: state.assistantAvatar,
