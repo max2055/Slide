@@ -149,14 +149,18 @@ class ToolCatalog {
   }
 
   /**
-   * 创建工具分组
+   * 创建或更新工具分组元数据，保留已注册成员
    */
   createGroup(group: ToolGroup): void {
     const normalizedName = normalizeToolName(group.name);
+    const existing = this.groups.get(normalizedName);
     this.groups.set(normalizedName, {
       ...group,
       name: normalizedName,
-      tools: normalizeToolList(group.tools),
+      tools: [...new Set([
+        ...(existing?.tools ?? []),
+        ...normalizeToolList(group.tools),
+      ])],
     });
   }
 

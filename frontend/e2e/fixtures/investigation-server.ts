@@ -82,6 +82,7 @@ export async function startInvestigationServer(optionsInput: { attentionPilot?: 
   let governanceAvailable = true;
   let exhaustProviderSteps = false;
   let holdTools = false, paused = false, toolCalls = 0, providerCalls = 0;
+  let toolCancellationGate: { arrived: () => void; wait: Promise<void>; release: () => void } | undefined;
   const workerErrors: string[] = [];
   const observationErrors: unknown[] = [];
   const promptObservations: Array<{ bytes:number; messages:number; roles:string[]; fields:unknown }> = [];
@@ -89,6 +90,7 @@ export async function startInvestigationServer(optionsInput: { attentionPilot?: 
   const workspace = resolve('.qualification/t06-workspace', schema);
   await mkdir(workspace, { recursive: true });
   const close = async () => {
+    toolCancellationGate?.release();
     if (timer) clearInterval(timer);
     await system?.close();
     await worker?.shutdown(); await current;
@@ -161,8 +163,15 @@ export async function startInvestigationServer(optionsInput: { attentionPilot?: 
       execute: async (_args: unknown, context: any) => {
         toolCalls++;
         if (holdTools) await new Promise<void>((done, reject) => {
-          if (context.signal?.aborted) reject(context.signal.reason);
-          else context.signal?.addEventListener('abort', () => reject(context.signal.reason), { once: true });
+          const aborted = () => {
+            const gate = toolCancellationGate;
+            if (gate) {
+              gate.arrived();
+              void gate.wait.then(() => reject(context.signal.reason));
+            } else reject(context.signal.reason);
+          };
+          if (context.signal?.aborted) aborted();
+          else context.signal?.addEventListener('abort', aborted, { once: true });
         });
         return { success: true, qps: 7, summary: '合成只读指标' };
       } });
@@ -340,6 +349,18 @@ export async function startInvestigationServer(optionsInput: { attentionPilot?: 
         return { started, release };
       },
       holdChat: (value: boolean) => holdChat = value,
+      // MAX-404: distinguish accepted cancellation from actual tool settlement.
+      delayToolCancellation: () => {
+        if (toolCancellationGate) throw new Error('Tool cancellation is already held');
+        let observed = false, release!: () => void;
+        const wait = new Promise<void>(resolve => release = resolve);
+        const gate = { arrived: () => { observed = true; }, wait, release: () => {
+          if (toolCancellationGate === gate) toolCancellationGate = undefined;
+          release();
+        } };
+        toolCancellationGate = gate;
+        return { observed: () => observed, release: gate.release };
+      },
       failProvider: (value: boolean) => providerUnavailable = value,
       hold: (value: boolean) => holdTools = value,
       exhaustProviderSteps: (value: boolean) => exhaustProviderSteps = value,

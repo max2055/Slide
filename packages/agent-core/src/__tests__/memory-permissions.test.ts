@@ -67,7 +67,10 @@ describe.skipIf(process.platform === 'win32')('private memory files on a real fi
         const rename = fs.rename.bind(fs);
         let publications = 0;
         fs.rename = async (from, to) => {
-          await privateFile(from);
+          if ((await fs.stat(from)).isDirectory()) {
+            assert.equal(await mode(from), 0o700, from);
+            for (const marker of await fs.readdir(from)) assert.equal(await mode(path.join(from, marker)), 0o700);
+          } else await privateFile(from);
           publications++;
           await rename(from, to);
         };

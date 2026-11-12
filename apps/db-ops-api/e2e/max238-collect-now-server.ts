@@ -105,7 +105,7 @@ async function main() {
     (id, name, environment, db_type, db_version, host, port, username, password_encrypted, database_name, status,
      lifecycle_state, max_connections, connection_timeout_ms, created_by, created_at, updated_at)
     SELECT 2, 'max238-collect-now-second', environment, db_type, db_version, host, port, username,
-      password_encrypted, database_name, status, lifecycle_state, max_connections, connection_timeout_ms,
+      password_encrypted, 'max238-second-only', status, lifecycle_state, max_connections, connection_timeout_ms,
       created_by, created_at, updated_at FROM database_instances WHERE id = ?`, [instanceId]);
   await pool.execute("INSERT IGNORE INTO instance_permissions (user_id, instance_id, access_level) VALUES (1, 2, 'admin')");
   if (!await databaseService.addConnection(instanceId, 'max238-collect-now', {

@@ -173,7 +173,7 @@ export class InstanceHostSummary extends LitElement {
       { label: 'CPU 使用率', value: evidence.metrics.values.cpu_usage, digits: 1, suffix: '%' },
       { label: '内存使用率', value: evidence.metrics.values.memory_usage, digits: 1, suffix: '%' },
       { label: '1 分钟负载', value: evidence.metrics.values.load_1min, digits: 2, suffix: '' },
-    ].filter((metric) => Number.isFinite(metric.value));
+    ].filter((metric): metric is typeof metric & { value: number } => typeof metric.value === 'number' && Number.isFinite(metric.value));
     return html`
       <div class="evidence-grid">
         ${metrics.length > 0 ? html`

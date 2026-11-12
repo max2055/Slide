@@ -28,9 +28,19 @@ export interface DatabaseLog {
   created_at: Date;
 }
 
+interface PostgreSQLLogStats {
+  xact_rollback: number;
+  deadlocks: number;
+  temp_files: number;
+  blk_read_time: number;
+  blk_write_time: number;
+  stats_reset: string | null;
+}
+
 class DatabaseLogService {
   private lastCollectTime = new Map<number, Date>();
-  private pgLastStats = new Map<number, Record<string, any>>();
+  private pgLastStats = new Map<number, Map<string, PostgreSQLLogStats>>();
+  private mysqlCollecting = new Set<number>();
 
   /**
    * 获取系统数据库连接池
@@ -68,97 +78,66 @@ class DatabaseLogService {
   }
 
   /**
-   * 采集 MySQL 错误日志（performance_schema.log_error）
+   * MySQL 8.0.22+ error_log 的 LOGGED 是微秒级主键。
+   * 用十进制字符串保留子毫秒顺序，并以已落库的连续前缀恢复水位。
    */
   private async collectMySQLErrorLogs(instance: any): Promise<void> {
     const conn = databaseService.getConnection(instance.id);
-    if (!conn || !conn.connected || !conn.pool) {
-      return;
-    }
+    if (!conn?.connected || !conn.pool || this.mysqlCollecting.has(instance.id)) return;
 
-    const lastTime = this.lastCollectTime.get(instance.id);
-
+    this.mysqlCollecting.add(instance.id);
+    const newLogs: DatabaseLog[] = [];
     try {
-      // 检查 performance_schema.log_error 是否可用
-      const [checkResult] = await (conn.pool as any).query(
+      const pool = this.getPool();
+      if (!pool) throw new Error('系统数据库未连接');
+      const [checkResult] = await (conn.pool as mysql.Pool).query<mysql.RowDataPacket[]>(
         `SELECT COUNT(*) as cnt FROM information_schema.TABLES
-         WHERE TABLE_SCHEMA = 'performance_schema' AND TABLE_NAME = 'log_error'`
+         WHERE TABLE_SCHEMA = 'performance_schema' AND TABLE_NAME = 'error_log'`
       );
-      const tableExists = checkResult[0]?.cnt > 0;
-      if (!tableExists) {
-        console.warn(`[日志] [${instance.name}] performance_schema.log_error 不可用，跳过`);
+      if (!checkResult[0]?.cnt) {
+        console.warn(`[日志] [${instance.name}] performance_schema.error_log 不可用，跳过`);
         return;
       }
 
-      // 采集新日志
-      let query = `
-        SELECT LOGGED, ERROR_NUMBER, ERROR_SEVERITY, ERROR_DATA
-        FROM performance_schema.log_error
-        ORDER BY LOGGED DESC
-        LIMIT 200
-      `;
-      const params: any[] = [];
-
-      if (lastTime) {
-        query = `
-          SELECT LOGGED, ERROR_NUMBER, ERROR_SEVERITY, ERROR_DATA
-          FROM performance_schema.log_error
-          WHERE LOGGED > ?
-          ORDER BY LOGGED DESC
-          LIMIT 200
-        `;
-        params.push(lastTime);
-      }
-
-      const [rows] = await (conn.pool as any).query(query, params);
-      if (!Array.isArray(rows) || rows.length === 0) {
-        return;
-      }
-
-      // 存储到系统数据库
-      let count = 0;
+      const [positions] = await pool.execute<mysql.RowDataPacket[]>(
+        `SELECT MAX(source_position) AS position FROM database_logs
+         WHERE instance_id = ? AND source = 'mysql_error'`, [instance.id]
+      );
+      const lastPosition = positions[0]?.position;
+      // 正序且只推进已确认的行；超过 200 条的尾部留给下一轮，不跳到最新行。
+      const [rows] = await (conn.pool as mysql.Pool).query<mysql.RowDataPacket[]>(
+        `SELECT CAST(UNIX_TIMESTAMP(LOGGED) AS CHAR) AS source_position,
+                ERROR_CODE AS ERROR_NUMBER, PRIO AS ERROR_SEVERITY, DATA AS ERROR_DATA
+         FROM performance_schema.error_log
+         ${lastPosition == null ? '' : 'WHERE LOGGED > FROM_UNIXTIME(CAST(? AS DECIMAL(20,6)))'}
+         ORDER BY LOGGED ASC LIMIT 200`, lastPosition == null ? [] : [lastPosition]
+      );
       for (const row of rows) {
-        const logLevel = this.mapMySQLSeverity(row.ERROR_SEVERITY);
-        const message = row.ERROR_DATA
-          ? String(row.ERROR_DATA).substring(0, 2000)
+        const position = row.source_position;
+        if (typeof position !== 'string' || !/^\d{1,14}\.\d{6}$/.test(position)) {
+          throw new Error('MySQL 日志源水位无效');
+        }
+        const message = row.ERROR_DATA ? String(row.ERROR_DATA).substring(0, 1000)
           : `[${row.ERROR_NUMBER}] ${row.ERROR_SEVERITY}`;
         const patterns = this.detectPatterns(message);
-        const collectedAt = row.LOGGED instanceof Date ? row.LOGGED : new Date(row.LOGGED);
-
-        await this.insertLog({
-          instance_id: instance.id,
-          log_level: logLevel,
-          source: 'mysql_error',
-          message: message.substring(0, 1000),
+        const log: DatabaseLog = {
+          id: 0, instance_id: instance.id, source: 'mysql_error',
+          log_level: this.mapMySQLSeverity(row.ERROR_SEVERITY), message,
           raw_content: String(row.ERROR_DATA || '').substring(0, 5000),
-          detected_patterns: patterns.length > 0 ? patterns : null,
-          collected_at: collectedAt,
-        });
-        count++;
+          detected_patterns: patterns.length ? patterns : null,
+          collected_at: new Date(Number(position) * 1000), created_at: new Date(),
+        };
+        if (await this.insertLog(log, position)) newLogs.push(log);
       }
-
-      this.lastCollectTime.set(instance.id, new Date());
-      console.log(`[日志] [${instance.name}] 采集 ${count} 条 MySQL 错误日志`);
-
-      // 触发 AI 分析（fire-and-forget）
-      if (count > 0) {
-        const newLogs = rows.slice(0, 20).map((row: any) => ({
-          id: 0,
-          instance_id: instance.id,
-          log_level: this.mapMySQLSeverity(row.ERROR_SEVERITY),
-          source: 'mysql_error' as const,
-          message: (row.ERROR_DATA ? String(row.ERROR_DATA).substring(0, 1000) : `[${row.ERROR_NUMBER}] ${row.ERROR_SEVERITY}`),
-          raw_content: row.ERROR_DATA ? String(row.ERROR_DATA).substring(0, 5000) : '',
-          detected_patterns: null as DetectedPattern[] | null,
-          collected_at: row.LOGGED instanceof Date ? row.LOGGED : new Date(row.LOGGED),
-          created_at: new Date(),
-        }));
+    } finally {
+      this.mysqlCollecting.delete(instance.id);
+      // 只分析已确认新插入的行；失败行及幂等重取不产生分析。
+      if (newLogs.length) {
+        console.log(`[日志] [${instance.name}] 采集 ${newLogs.length} 条 MySQL 错误日志`);
         this.triggerLogAnalysis(newLogs, instance.id).catch((err) => {
           console.error(`[日志] [${instance.name}] AI 分析触发失败:`, err);
         });
       }
-    } catch (error: any) {
-      console.error(`[日志] [${instance.name}] MySQL 错误日志采集异常:`, error.message);
     }
   }
 
@@ -172,18 +151,18 @@ class DatabaseLogService {
       return;
     }
 
-    const lastTime = this.lastCollectTime.get(instance.id);
-    const isFirstCollection = !lastTime;
+    const previousStats = this.pgLastStats.get(instance.id);
 
     try {
       const result = await conn.pgClient.query(`
         SELECT datname, xact_commit, xact_rollback, deadlocks,
-               temp_files, temp_bytes, blk_read_time, blk_write_time
+               temp_files, temp_bytes, blk_read_time, blk_write_time, stats_reset
         FROM pg_stat_database
         WHERE datname NOT IN ('template0', 'template1')
       `);
 
       const newLogs: DatabaseLog[] = [];
+      const statsCache = new Map<string, PostgreSQLLogStats>();
 
       for (const row of result.rows) {
         const rollbacks = Number(row.xact_rollback) || 0;
@@ -192,9 +171,27 @@ class DatabaseLogService {
         const blkReadTime = Number(row.blk_read_time) || 0;
         const blkWriteTime = Number(row.blk_write_time) || 0;
 
+        const currentStats: PostgreSQLLogStats = {
+          xact_rollback: rollbacks,
+          deadlocks,
+          temp_files: tempFiles,
+          blk_read_time: blkReadTime,
+          blk_write_time: blkWriteTime,
+          stats_reset: row.stats_reset instanceof Date ? row.stats_reset.toISOString() : row.stats_reset ?? null,
+        };
+        statsCache.set(row.datname, currentStats);
+        const previous = previousStats?.get(row.datname);
+        // 新数据库、统计重置或任一计数回退：只建立新基线，不比较不同统计周期。
+        if (!previous || previous.stats_reset !== currentStats.stats_reset ||
+            rollbacks < previous.xact_rollback || deadlocks < previous.deadlocks ||
+            tempFiles < previous.temp_files || blkReadTime < previous.blk_read_time ||
+            blkWriteTime < previous.blk_write_time) {
+          continue;
+        }
+
         // 事务回滚异常
-        if (rollbacks > 0 && !isFirstCollection) {
-          const lastRollbacks = lastTime ? this.pgLastStats.get(instance.id)?.[row.datname]?.xact_rollback || 0 : 0;
+        if (rollbacks > 0) {
+          const lastRollbacks = previous.xact_rollback;
           const delta = rollbacks - Number(lastRollbacks);
           if (delta > 10) {
             const msg = `[${row.datname}] 事务回滚异常增多：+${delta} 次`;
@@ -214,8 +211,8 @@ class DatabaseLogService {
         }
 
         // 死锁检测
-        if (deadlocks > 0 && !isFirstCollection) {
-          const lastDeadlocks = lastTime ? this.pgLastStats.get(instance.id)?.[row.datname]?.deadlocks || 0 : 0;
+        if (deadlocks > 0) {
+          const lastDeadlocks = previous.deadlocks;
           const delta = deadlocks - Number(lastDeadlocks);
           if (delta > 0) {
             const msg = `[${row.datname}] 检测到死锁：+${delta}`;
@@ -235,8 +232,8 @@ class DatabaseLogService {
         }
 
         // 临时文件异常
-        if (tempFiles > 100 && !isFirstCollection) {
-          const lastTempFiles = lastTime ? this.pgLastStats.get(instance.id)?.[row.datname]?.temp_files || 0 : 0;
+        if (tempFiles > 100) {
+          const lastTempFiles = previous.temp_files;
           const delta = tempFiles - Number(lastTempFiles);
           if (delta > 10) {
             const msg = `[${row.datname}] 临时文件使用异常：+${delta} 个`;
@@ -256,8 +253,8 @@ class DatabaseLogService {
         }
 
         // I/O 延迟升高
-        if ((blkReadTime > 1000 || blkWriteTime > 1000) && !isFirstCollection) {
-          const lastBlkRead = lastTime ? this.pgLastStats.get(instance.id)?.[row.datname]?.blk_read_time || 0 : 0;
+        if (blkReadTime > 1000 || blkWriteTime > 1000) {
+          const lastBlkRead = previous.blk_read_time;
           const deltaRead = blkReadTime - Number(lastBlkRead);
           if (deltaRead > 500) {
             const msg = `[${row.datname}] I/O 延迟升高：读 ${blkReadTime}ms`;
@@ -277,24 +274,23 @@ class DatabaseLogService {
         }
       }
 
-      // 更新缓存统计
-      const statsCache: Record<string, any> = {};
-      for (const row of result.rows) {
-        statsCache[row.datname] = {
-          xact_rollback: row.xact_rollback,
-          deadlocks: row.deadlocks,
-          temp_files: row.temp_files,
-          blk_read_time: row.blk_read_time,
-        };
-      }
-      this.pgLastStats.set(instance.id, statsCache);
-
-      // 存储日志
+      // 单条批量写入保证这一轮信号全部成功或全部失败；失败时保留旧基线。
       if (newLogs.length > 0) {
-        for (const log of newLogs) {
-          await this.insertLog(log);
-        }
-        this.lastCollectTime.set(instance.id, new Date());
+        const pool = this.getPool();
+        if (!pool) throw new Error('系统数据库未连接');
+        await pool.execute(
+          `INSERT INTO database_logs
+           (instance_id, log_level, source, message, raw_content, detected_patterns, collected_at)
+           VALUES ${newLogs.map(() => '(?, ?, ?, ?, ?, ?, ?)').join(', ')}`,
+          newLogs.flatMap(log => [log.instance_id, log.log_level, log.source, log.message,
+            log.raw_content, JSON.stringify(log.detected_patterns), log.collected_at])
+        );
+      }
+      // 无异常的成功采集也推进时间与计数基线。
+      this.pgLastStats.set(instance.id, statsCache);
+      this.lastCollectTime.set(instance.id, new Date());
+
+      if (newLogs.length > 0) {
         console.log(`[日志] [${instance.name}] 采集 ${newLogs.length} 条 PostgreSQL 异常信号`);
 
         // 触发 AI 分析（fire-and-forget）
@@ -310,35 +306,27 @@ class DatabaseLogService {
   /**
    * 插入日志到系统数据库
    */
-  private async insertLog(log: {
-    instance_id: number;
-    log_level: string;
-    source: string;
-    message: string;
-    raw_content: string;
-    detected_patterns: DetectedPattern[] | null;
-    collected_at: Date;
-  }): Promise<void> {
+  private async insertLog(log: DatabaseLog, position: string): Promise<boolean> {
     const pool = this.getPool();
-    if (!pool) return;
-
+    if (!pool) throw new Error('系统数据库未连接');
     try {
       await pool.execute(
         `INSERT INTO database_logs
-         (instance_id, log_level, source, message, raw_content, detected_patterns, collected_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
-        [
-          log.instance_id,
-          log.log_level,
-          log.source,
-          log.message,
-          log.raw_content,
-          log.detected_patterns ? JSON.stringify(log.detected_patterns) : null,
-          log.collected_at,
-        ]
+         (instance_id, log_level, source, message, raw_content, detected_patterns, collected_at, source_position)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        [log.instance_id, log.log_level, log.source, log.message, log.raw_content,
+          log.detected_patterns ? JSON.stringify(log.detected_patterns) : null, log.collected_at, position]
       );
-    } catch (error) {
-      console.error('[日志] 插入日志记录失败:', error);
+      return true;
+    } catch (error: any) {
+      // 并发收集或写入回执丢失后重取：只接受同一源事件的已持久化记录。
+      if (error.code !== 'ER_DUP_ENTRY') throw error;
+      const [existing] = await pool.execute<mysql.RowDataPacket[]>(
+        `SELECT id FROM database_logs WHERE instance_id = ? AND source = ? AND source_position = ?`,
+        [log.instance_id, log.source, position]
+      );
+      if (!existing.length) throw error;
+      return false;
     }
   }
 
