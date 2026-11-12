@@ -98,7 +98,10 @@ export function optionValue(words: string[], names: string[]): string | undefine
 
     if (lookup.has(token)) {
       const value = words[i + 1];
-      if (value && !value.startsWith("-")) {
+      if (
+        value &&
+        (!value.startsWith("-") || /^-\d+(?:\.\d+)?(?:[eE][+-]?\d+)?$/.test(value))
+      ) {
         return value;
       }
       continue;
@@ -176,13 +179,41 @@ export function trimLeadingEnv(words: string[]): string[] {
 
   let index = 0;
   if (binaryName(words[0]) === "env") {
+    // Work on a copy: -S inserts split words before the remaining arguments.
+    words = [...words];
     index = 1;
+    let optionsEnded = false;
     while (index < words.length) {
       const token = words[index];
       if (!token) {
         break;
       }
-      if (token.startsWith("-")) {
+      if (!optionsEnded && token === "--") {
+        optionsEnded = true;
+        index += 1;
+        continue;
+      }
+      if (
+        !optionsEnded &&
+        (token === "-u" || token === "--unset" || token === "-C" || token === "--chdir")
+      ) {
+        index += 2;
+        continue;
+      }
+      if (
+        !optionsEnded &&
+        (token.startsWith("-S") || token === "--split-string" || token.startsWith("--split-string="))
+      ) {
+        const separate = token === "-S" || token === "--split-string";
+        const value = separate
+          ? words[index + 1]
+          : token.startsWith("-S")
+            ? token.slice(2)
+            : token.slice("--split-string=".length);
+        words.splice(index, separate ? 2 : 1, ...splitShellWords(value));
+        continue;
+      }
+      if (!optionsEnded && token.startsWith("-")) {
         index += 1;
         continue;
       }
