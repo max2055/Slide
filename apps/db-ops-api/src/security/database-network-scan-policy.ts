@@ -27,7 +27,7 @@ function parseIpv4(value: string): number | undefined {
   return (((octets[0] * 256) + octets[1]) * 256 + octets[2]) * 256 + octets[3];
 }
 
-function parseCidr(value: unknown): Cidr {
+function parseCidr(value: unknown, minimumPrefix = 24): Cidr {
   if (typeof value !== 'string' || !/^\d{1,3}(?:\.\d{1,3}){3}\/(?:\d|[12]\d|3[0-2])$/.test(value)) {
     throw invalid('CIDR_INVALID');
   }
@@ -35,7 +35,7 @@ function parseCidr(value: unknown): Cidr {
   const parsed = parseIpv4(address);
   const prefix = Number(prefixText);
   if (parsed === undefined) throw invalid('CIDR_INVALID');
-  if (prefix < 24) throw invalid('CIDR_TOO_LARGE');
+  if (prefix < minimumPrefix) throw invalid('CIDR_TOO_LARGE');
   const blockSize = 2 ** (32 - prefix);
   const start = parsed - (parsed % blockSize);
   if (start !== parsed) throw invalid('CIDR_NOT_NETWORK');
@@ -52,6 +52,12 @@ function normalizeCidr(cidr: Cidr): string {
   return `${octets.join('.')}/${cidr.prefix}`;
 }
 
+/**
+ * Scan targets remain aligned IPv4 /24–/32 networks. Allowlist entries may be
+ * /0–/32 and must be aligned; one entry must contain the entire target.
+ * Empty lists deny all. Omission is allowed only outside production (defaults
+ * to NODE_ENV); malformed policy fails closed. This API adds no config source.
+ */
 export function authorizeDatabaseScanTarget(
   input: DatabaseScanRequest,
   options: { allowedCidrs?: readonly string[]; production?: boolean } = {},
@@ -59,6 +65,23 @@ export function authorizeDatabaseScanTarget(
   if (!input || typeof input !== 'object' || Array.isArray(input)) throw invalid('SCAN_INPUT_INVALID');
   const target = parseCidr(input.cidr);
   if (!Object.hasOwn(databaseScanProfiles, input.profile)) throw invalid('SCAN_PROFILE_INVALID');
+  const production = options.production ?? process.env.NODE_ENV === 'production';
+  // An omitted list is permitted only outside production; an explicit empty
+  // list grants nothing. Parse every entry before matching so bad policy fails closed.
+  if (options.allowedCidrs !== undefined) {
+    if (!Array.isArray(options.allowedCidrs)) throw invalid('SCAN_POLICY_NOT_CONFIGURED');
+    let allowed: Cidr[];
+    try {
+      allowed = options.allowedCidrs.map((cidr) => parseCidr(cidr, 0));
+    } catch {
+      throw invalid('SCAN_POLICY_NOT_CONFIGURED');
+    }
+    if (!allowed.some((cidr) => target.start >= cidr.start && target.end <= cidr.end)) {
+      throw invalid('SCAN_CIDR_DENIED');
+    }
+  } else if (production) {
+    throw invalid('SCAN_POLICY_NOT_CONFIGURED');
+  }
   const profile = input.profile as DatabaseScanProfile;
   return { cidr: normalizeCidr(target), profile, ports: databaseScanProfiles[profile] };
 }

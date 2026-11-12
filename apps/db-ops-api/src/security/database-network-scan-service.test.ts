@@ -33,6 +33,26 @@ describe('DatabaseNetworkScanService', () => {
     expect(controller.scanDatabaseEndpoints).toHaveBeenCalledWith({ cidr: '10.17.12.0/24', profile: 'common_databases' }, expect.any(AbortSignal));
   });
 
+  it.each([
+    { allowedCidrs: ['10.17.12.0/25'], production: true, reason: 'SCAN_CIDR_DENIED' },
+    { allowedCidrs: ['192.0.2.0/24'], production: false, reason: 'SCAN_CIDR_DENIED' },
+    { allowedCidrs: [], production: true, reason: 'SCAN_CIDR_DENIED' },
+    { production: true, reason: 'SCAN_POLICY_NOT_CONFIGURED' },
+    { allowedCidrs: ['invalid'], production: false, reason: 'SCAN_POLICY_NOT_CONFIGURED' },
+  ])('rejects policy before configuration reads or controller calls: $reason', async ({ reason, ...policy }) => {
+    const controller = sandbox();
+    const config = enabled();
+    const execution = networkEnabled();
+    const service = new DatabaseNetworkScanService(config, controller, execution, policy);
+    await expect(service.scan({ cidr: '10.17.12.0/24', profile: 'common_databases' }))
+      .resolves.toMatchObject({ success: false, errorCode: reason });
+    expect(config.get).not.toHaveBeenCalled();
+    expect(execution.get).not.toHaveBeenCalled();
+    expect(controller.configured).not.toHaveBeenCalled();
+    expect(controller.status).not.toHaveBeenCalled();
+    expect(controller.scanDatabaseEndpoints).not.toHaveBeenCalled();
+  });
+
   it('does not contact the controller when the sandbox or restricted network is disabled', async () => {
     const controller = sandbox();
     const disabled = new DatabaseNetworkScanService(enabled(), controller as any, { get: vi.fn().mockResolvedValue({ restrictedNetworkEnabled: false }) }, {
