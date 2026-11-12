@@ -27,7 +27,7 @@
 从仓库根目录使用 package.json 声明的 pnpm 版本执行：
 
 ```bash
-pnpm --filter slide-api exec vitest run src/database-log-service.test.ts src/security/database-log-egress.test.ts src/database-log-egress.integration.test.ts
+pnpm --filter slide-api exec vitest run src/database-log-analysis-egress.test.ts src/security/database-log-egress.test.ts src/database-log-egress.integration.test.ts
 pnpm --filter slide-api typecheck
 pnpm --filter slide-api test
 pnpm ci:source-policy
