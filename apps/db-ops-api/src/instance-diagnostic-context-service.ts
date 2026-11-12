@@ -11,7 +11,7 @@ import { metricsDatabaseService } from './metrics-database-service.js';
 import { internalMetricConsumerService as metricConsumerService } from './metrics/consumers/runtime.js';
 import { redactSensitiveText } from './security/log-redaction.js';
 import { instanceHostService, type InstanceHostDetail } from './resources/instance-host-service.js';
-import { serverDiagnosticService } from './server-diagnostic-service.js';
+import { serverDiagnosticService, type ServerDiagnostics, type DiagnosticSection } from './server-diagnostic-service.js';
 
 const SAFE_INSTANCE_METADATA_SQL = `
   SELECT id, name, environment, db_type, host, port, database_name,
@@ -107,7 +107,7 @@ export interface DiagnosticContextDependencies {
   discoverStorage(instanceId: number): Promise<StorageDiscoveryResult>;
   collectHostEvidence(serverId: number, request: HostEvidenceRequest): Promise<Record<string, unknown>>;
   /** Optional richer fixed-profile server diagnostics (kept optional for old integrations). */
-  collectServerDiagnostics?(serverId: number): Promise<Record<string, unknown>>;
+  collectServerDiagnostics?(serverId: number): Promise<ServerDiagnostics>;
 }
 
 export interface DiagnosticGap {
@@ -131,7 +131,7 @@ export interface InstanceDiagnosticContext {
     slowQueries: Array<Record<string, unknown>>;
   };
   storage: StorageDescriptor[];
-  hosts: Array<{ server: InstanceHostDetail; evidence: Record<string, unknown> | null }>;
+  hosts: Array<{ server: InstanceHostDetail; evidence: Record<string, unknown> | null; diagnostics?: ServerDiagnostics }>;
   gaps: DiagnosticGap[];
 }
 
@@ -317,6 +317,40 @@ function truncateLongStrings(value: unknown, maxBytes: number, ancestors = new W
   ancestors.delete(value);
 }
 
+const DIAGNOSTIC_ALIASES = {
+  services: 'serviceStatus', listeningPorts: 'listeningPorts',
+  topProcesses: 'topProcesses', systemLogs: 'recentSystemLogs',
+  interfaceErrors: 'interfaceErrors',
+} as const;
+
+function summarizeDiagnosticSection<T>(section: DiagnosticSection<T>): DiagnosticSection<T> {
+  return {
+    source: section.source, collectedAt: section.collectedAt, expiresAt: section.expiresAt,
+    validForMs: section.validForMs, quality: section.quality,
+    ...(section.reason ? { reason: section.reason } : {}),
+    truncated: true, items: [],
+  };
+}
+
+function hostDiagnosticsSummary(diagnostics: ServerDiagnostics): ServerDiagnostics {
+  const sections = {
+    services: summarizeDiagnosticSection(diagnostics.sections.services),
+    listeningPorts: summarizeDiagnosticSection(diagnostics.sections.listeningPorts),
+    topProcesses: summarizeDiagnosticSection(diagnostics.sections.topProcesses),
+    systemLogs: summarizeDiagnosticSection(diagnostics.sections.systemLogs),
+    interfaceErrors: summarizeDiagnosticSection(diagnostics.sections.interfaceErrors),
+  };
+  return {
+    schemaVersion: diagnostics.schemaVersion, serverId: diagnostics.serverId,
+    osType: diagnostics.osType, collectedAt: diagnostics.collectedAt,
+    expiresAt: diagnostics.expiresAt, validForMs: diagnostics.validForMs,
+    quality: diagnostics.quality, truncated: true, sections,
+    serviceStatus: sections.services, listeningPorts: sections.listeningPorts,
+    topProcesses: sections.topProcesses, recentSystemLogs: sections.systemLogs,
+    interfaceErrors: sections.interfaceErrors, gaps: diagnostics.gaps,
+  };
+}
+
 function boundEvidencePack(pack: InstanceDiagnosticContext, maxBytes: number): InstanceDiagnosticContext {
   if (serializedBytes(pack) <= maxBytes) return pack;
   if (!pack.gaps.some((gap) => gap.code === 'EVIDENCE_PACK_TRUNCATED')) {
@@ -326,13 +360,56 @@ function boundEvidencePack(pack: InstanceDiagnosticContext, maxBytes: number): I
     });
   }
 
-  const targets: Array<{ values: unknown[]; keepNewestAtEnd?: boolean }> = [
+  const targets: Array<{ values: unknown[]; keepNewestAtEnd?: boolean; onTruncate?: () => void }> = [];
+  const diagnosticGap = (serverId: number, source: string) => {
+    if (!pack.gaps.some(gap => gap.code === 'HOST_DIAGNOSTICS_TRUNCATED'
+      && gap.resource?.id === serverId && gap.source === source)) {
+      pack.gaps.push({
+        scope: 'host', section: 'hostEvidence', code: 'HOST_DIAGNOSTICS_TRUNCATED',
+        resource: { type: 'server', id: serverId }, source,
+      });
+    }
+  };
+  // Sanitization clones aliases. Reconnect them before trimming so serialized
+  // aliases cannot retain a second, unbounded copy of the same diagnostic rows.
+  for (const host of pack.hosts) {
+    const diagnostics = host.diagnostics;
+    if (!diagnostics) continue;
+    for (const [name, alias] of Object.entries(DIAGNOSTIC_ALIASES)) {
+      const section = diagnostics.sections[name as keyof typeof DIAGNOSTIC_ALIASES];
+      Object.assign(diagnostics, { [alias]: section });
+      targets.push({
+        values: section.items,
+        onTruncate: () => {
+          section.truncated = true;
+          diagnostics.truncated = true;
+          diagnosticGap(host.server.serverId, `server-diagnostics:${name}:${section.source.join(',')}`);
+        },
+      });
+    }
+  }
+  for (const target of targets) {
+    while (target.values.length > 0 && serializedBytes(pack) > maxBytes) {
+      halveArray(target.values);
+      target.onTruncate?.();
+    }
+  }
+  // Unknown or future payload fields must not consume the database budget.
+  for (const host of pack.hosts) {
+    if (serializedBytes(pack) <= maxBytes) break;
+    if (host.diagnostics) {
+      host.diagnostics = hostDiagnosticsSummary(host.diagnostics);
+      diagnosticGap(host.server.serverId, 'server-diagnostics:summary');
+    }
+  }
+  targets.length = 0;
+  targets.push(
     { values: pack.database.logs },
     { values: pack.database.alerts },
     { values: pack.database.slowQueries },
     { values: pack.database.metricHistory, keepNewestAtEnd: true },
     { values: pack.storage },
-  ];
+  );
   for (const host of pack.hosts) {
     const evidence = host.evidence as Record<string, any> | null;
     if (!evidence) continue;
@@ -343,12 +420,14 @@ function boundEvidencePack(pack: InstanceDiagnosticContext, maxBytes: number): I
   for (const target of targets) {
     while (target.values.length > 0 && serializedBytes(pack) > maxBytes) {
       halveArray(target.values, target.keepNewestAtEnd);
+      target.onTruncate?.();
     }
   }
 
   if (serializedBytes(pack) > maxBytes) {
     for (let index = pack.hosts.length - 1; index >= 0 && serializedBytes(pack) > maxBytes; index--) {
-      const evidence = pack.hosts[index].evidence;
+      const host = pack.hosts[index];
+      const evidence = host.evidence;
       if (evidence) pack.hosts[index].evidence = hostEvidenceSummary(evidence);
     }
   }
@@ -501,7 +580,7 @@ export class InstanceDiagnosticContextService {
             services: servicesForDatabaseType(databaseType),
             paths: mayInspectPhysicalPaths ? inspectablePaths : [],
           });
-          let diagnostics: Record<string, unknown> | undefined;
+          let diagnostics: ServerDiagnostics | undefined;
           if (this.dependencies.collectServerDiagnostics) {
             try {
               diagnostics = await this.dependencies.collectServerDiagnostics(server.serverId);
@@ -561,8 +640,8 @@ export class InstanceDiagnosticContextService {
 
 export const safeInstanceMetadataProvider = new SafeInstanceMetadataProvider();
 
-const instanceServerDiagnostic = async (serverId: number): Promise<Record<string, unknown>> => (
-  await serverDiagnosticService.getDiagnostics(serverId) as unknown as Record<string, unknown>
+const instanceServerDiagnostic = (serverId: number): Promise<ServerDiagnostics> => (
+  serverDiagnosticService.getDiagnostics(serverId)
 );
 const metricEvidenceActor = (id: number): ActorContext => ({userId:0,username:'instance-evidence',roles:[],permissions:['instance:view'],
   instanceScopes:{[id]:'read-only'},sessionVersion:0,requestId:`instance-evidence:${id}`});

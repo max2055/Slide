@@ -63,7 +63,7 @@ export function stripReasoningTagsFromText(
   THINKING_TAG_RE.lastIndex = 0;
   let result = "";
   let lastIndex = 0;
-  let inThinking = false;
+  let thinkingDepth = 0;
 
   for (const match of cleaned.matchAll(THINKING_TAG_RE)) {
     const idx = match.index ?? 0;
@@ -73,19 +73,16 @@ export function stripReasoningTagsFromText(
       continue;
     }
 
-    if (!inThinking) {
+    if (thinkingDepth === 0) {
       result += cleaned.slice(lastIndex, idx);
-      if (!isClose) {
-        inThinking = true;
-      }
-    } else if (isClose) {
-      inThinking = false;
     }
+    // An inner close must not expose the remainder of the outer block.
+    thinkingDepth = isClose ? Math.max(0, thinkingDepth - 1) : thinkingDepth + 1;
 
     lastIndex = idx + match[0].length;
   }
 
-  if (!inThinking || mode === "preserve") {
+  if (thinkingDepth === 0 || mode === "preserve") {
     result += cleaned.slice(lastIndex);
   }
 
