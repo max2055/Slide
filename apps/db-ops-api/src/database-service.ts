@@ -153,7 +153,10 @@ export interface SlowQuery {
   id: string;
   sql_text: string;
   avg_time_ms: number;
-  max_time_ms: number;
+  max_time_ms: number | null;
+  /** Missing source extrema are unknown, never inferred from averages. */
+  min_time_ms?: number | null;
+  total_time_ms?: number;
   execution_count: number;
   first_seen: string;
   last_seen: string;
@@ -1293,6 +1296,8 @@ class DatabaseService {
           DIGEST_TEXT as sql_text,
           AVG_TIMER_WAIT / 1000000000 as avg_time_ms,
           MAX_TIMER_WAIT / 1000000000 as max_time_ms,
+          MIN_TIMER_WAIT / 1000000000 as min_time_ms,
+          SUM_TIMER_WAIT / 1000000000 as total_time_ms,
           COUNT_STAR as execution_count,
           FIRST_SEEN,
           LAST_SEEN
@@ -1307,8 +1312,10 @@ class DatabaseService {
       return result.map((row: any) => ({
         id: `sq-${row.sql_text.substring(0, 10)}`,
         sql_text: row.sql_text,
-        avg_time_ms: row.avg_time_ms,
-        max_time_ms: row.max_time_ms,
+        avg_time_ms: Number(row.avg_time_ms),
+        max_time_ms: row.max_time_ms == null ? null : Number(row.max_time_ms),
+        min_time_ms: row.min_time_ms == null ? null : Number(row.min_time_ms),
+        total_time_ms: Number(row.total_time_ms),
         execution_count: row.execution_count,
         first_seen: row.FIRST_SEEN,
         last_seen: row.LAST_SEEN,
@@ -1318,15 +1325,17 @@ class DatabaseService {
       // 如果 performance_schema 不可用，尝试从 slow_log 表
       try {
         const [result] = await conn.pool.query<RowDataPacket[]>(
-          'SELECT * FROM mysql.slow_log ORDER BY start_time DESC LIMIT ?',
+          'SELECT *, TIME_TO_SEC(query_time) * 1000 as query_time_ms FROM mysql.slow_log ORDER BY start_time DESC LIMIT ?',
           [limit]
         );
         onSource?.('mysql-slow-log');
         return result.map((row: any) => ({
           id: `sq-${row.sql_text?.substring(0, 10) || 'unknown'}`,
           sql_text: row.sql_text || '',
-          avg_time_ms: row.query_time || 0,
-          max_time_ms: row.query_time || 0,
+          avg_time_ms: Number(row.query_time_ms),
+          max_time_ms: Number(row.query_time_ms),
+          min_time_ms: Number(row.query_time_ms),
+          total_time_ms: Number(row.query_time_ms),
           execution_count: 1,
           first_seen: row.start_time,
           last_seen: row.start_time,
@@ -1379,7 +1388,8 @@ class DatabaseService {
           ${hasQueryid ? 'queryid::text as queryid' : "NULL as queryid"},
           query as sql_text,
           ${timeCol} / NULLIF(${hasCalls ? 'calls' : '1'}, 0) as avg_time_ms,
-          ${maxTimeCol || timeCol} as max_time_ms,
+          ${maxTimeCol || 'NULL'} as max_time_ms,
+          ${timeCol} as total_time_ms,
           ${hasCalls ? 'calls as execution_count' : '1 as execution_count'},
           ${minTimeCol || 'NULL'} as min_time_ms,
           ${hasRowsExamined ? 'shared_blks_hit as rows_examined' : 'NULL as rows_examined'},
@@ -1395,8 +1405,10 @@ class DatabaseService {
       return result.rows.map((row: any) => ({
         id: `sq-${row.queryid || 'unknown'}`,
         sql_text: row.sql_text,
-        avg_time_ms: Math.round(row.avg_time_ms || 0),
-        max_time_ms: Math.round(row.max_time_ms || 0),
+        avg_time_ms: Number(row.avg_time_ms || 0),
+        max_time_ms: row.max_time_ms == null ? null : Number(row.max_time_ms),
+        min_time_ms: row.min_time_ms == null ? null : Number(row.min_time_ms),
+        total_time_ms: Number(row.total_time_ms),
         execution_count: row.execution_count || 1,
         first_seen: new Date().toISOString(),
         last_seen: new Date().toISOString(),
@@ -1438,8 +1450,11 @@ class DatabaseService {
       return result.rows.map((row: any) => ({
         id: `sq-${row[0] as string}`,
         sql_text: row[1] as string,
-        avg_time_ms: Math.round((row[2] as number) / 1000),
-        max_time_ms: Math.round((row[3] as number) / 1000),
+        // SQL aliases are already milliseconds; V$SQLAREA has no per-execution extrema.
+        avg_time_ms: Number(row[2]),
+        total_time_ms: Number(row[3]),
+        max_time_ms: null,
+        min_time_ms: null,
         execution_count: row[4] as number,
         first_seen: this._safeDate(row[5]),
         last_seen: this._safeDate(row[6]),
@@ -1478,7 +1493,9 @@ class DatabaseService {
         id: `sq-${row[0] as string}`,
         sql_text: row[1] as string,
         avg_time_ms: row[2] as number,
-        max_time_ms: row[3] as number,
+        max_time_ms: row[2] as number,
+        min_time_ms: row[2] as number,
+        total_time_ms: row[3] as number,
         execution_count: row[4] as number || 1,
         first_seen: this._safeDate(row[5]),
         last_seen: this._safeDate(row[6]),
