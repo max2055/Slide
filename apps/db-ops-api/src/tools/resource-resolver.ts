@@ -122,17 +122,22 @@ export async function resolveToolResource(
     }
     const normalized = args.instance_name.trim();
     // The new environment argument is the value to store, never the row selector.
-    if (lookup.listAvailableInstancesByNormalizedName) {
-      const matches = await lookup.listAvailableInstancesByNormalizedName(normalized);
-      if (matches.length === 1) return { ...resource, instanceId: matches[0].id };
-      const visible = actor ? matches.filter((match) => actorCanWriteInstance(actor, match.id)) : [];
-      if (matches.length > 1 && visible.length >= 2) return { ...resource, error: 'AMBIGUOUS_INSTANCE_NAME' };
-      return { ...resource, error: 'RESOURCE_NOT_FOUND' };
+    try {
+      if (lookup.listAvailableInstancesByNormalizedName) {
+        const matches = await lookup.listAvailableInstancesByNormalizedName(normalized);
+        if (matches.length === 1) return { ...resource, instanceId: matches[0].id };
+        const visible = actor ? matches.filter((match) => actorCanWriteInstance(actor, match.id)) : [];
+        if (matches.length > 1 && visible.length >= 2) return { ...resource, error: 'AMBIGUOUS_INSTANCE_NAME' };
+        return { ...resource, error: 'RESOURCE_NOT_FOUND' };
+      }
+      const instanceId = await lookup.findInstanceIdByName(normalized);
+      return instanceId
+        ? { ...resource, instanceId }
+        : { ...resource, error: 'RESOURCE_NOT_FOUND' };
+    } catch {
+      // Keep storage details (including SQL and credentials) out of policy/audit results.
+      return { ...resource, error: 'RESOURCE_LOOKUP_UNAVAILABLE' };
     }
-    const instanceId = await lookup.findInstanceIdByName(normalized);
-    return instanceId
-      ? { ...resource, instanceId }
-      : { ...resource, error: 'RESOURCE_NOT_FOUND' };
   }
 
   return resource;
