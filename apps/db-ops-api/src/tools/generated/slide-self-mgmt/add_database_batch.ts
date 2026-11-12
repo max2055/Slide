@@ -18,7 +18,7 @@ type BatchDatabaseArgs = Record<string, unknown>;
 
 type BatchItemResult = {
   index: number;
-  status: 'created' | 'pending_credentials' | 'already_managed' | 'failed';
+  status: 'created' | 'pending_credentials' | 'already_managed' | 'failed' | 'cancelled';
   instanceId?: number;
   name?: string;
   host?: string;
@@ -29,9 +29,17 @@ type BatchItemResult = {
   retryable: boolean;
 };
 
+type BatchData = {
+  total: number;
+  succeeded: number;
+  failed: number;
+  cancelled: number;
+  results: BatchItemResult[];
+};
+
 export const addDatabaseBatchTool: AnyAgentTool = {
   name: 'slide_add_database_batch',
-  description: '批量纳管数据库实例，逐项返回创建、已存在或失败结果；单项失败不会中断其他实例',
+  description: '批量纳管数据库实例，逐项返回创建、已存在、失败或尚未执行的取消结果；单项失败不会中断其他实例，未执行的取消不计入失败',
   parameters: {
     type: 'object',
     properties: {
@@ -64,7 +72,7 @@ export const addDatabaseBatchTool: AnyAgentTool = {
   },
   group: 'db_ops',
   requiresApproval: false,
-  handler: async (args, context): Promise<ToolResult<{ total: number; succeeded: number; failed: number; results: BatchItemResult[] }>> => {
+  handler: async (args, context): Promise<ToolResult<BatchData>> => {
     if (!context?.actor) {
       return { success: false, status: 'error', error: '缺少已认证的操作员上下文', errorCode: 'MISSING_ACTOR', next_actions: ['通过已认证的 Agent 会话调用此工具'] };
     }
@@ -95,7 +103,7 @@ export const addDatabaseBatchTool: AnyAgentTool = {
     if (idempotencyKey && context.sessionId) {
       try {
         const claim = await agentToolIdempotencyService.claim(context.actor.userId, context.sessionId, 'slide_add_database_batch', idempotencyKey, args);
-        if (claim.kind === 'completed') return claim.result as ToolResult<{ total: number; succeeded: number; failed: number; results: BatchItemResult[] }>;
+        if (claim.kind === 'completed') return claim.result as ToolResult<BatchData>;
         if (claim.kind === 'conflict') {
           return { success: false, status: 'error', errorCode: 'IDEMPOTENCY_KEY_CONFLICT', error: '幂等键已用于不同的批量参数', next_actions: ['使用新的幂等键提交不同批量'] };
         }
@@ -164,13 +172,23 @@ export const addDatabaseBatchTool: AnyAgentTool = {
       while (true) {
         const index = nextIndex++;
         if (index >= databases.length) return;
+        // This branch runs only before processOne. An in-flight handler keeps
+        // its own success, failure, or unknown write; never relabel it cancelled.
         if (context.signal?.aborted) {
+          const item = databases[index];
+          const itemArgs = item && typeof item === 'object' && !Array.isArray(item)
+            ? item as BatchDatabaseArgs
+            : {};
           const cancelled: BatchItemResult = {
             index,
-            status: 'failed',
+            status: 'cancelled',
+            ...(typeof itemArgs.host === 'string' ? { host: itemArgs.host } : {}),
+            ...(typeof itemArgs.port === 'number' ? { port: itemArgs.port } : {}),
+            ...(typeof itemArgs.db_type === 'string' ? { dbType: itemArgs.db_type } : {}),
+            ...(typeof itemArgs.name === 'string' ? { name: itemArgs.name } : {}),
             errorCode: 'BATCH_CANCELLED',
             reason: '批量操作已取消，条目尚未开始执行',
-            retryable: true,
+            retryable: false,
           };
           results[index] = cancelled;
           await emitProgress(index, cancelled);
@@ -183,30 +201,44 @@ export const addDatabaseBatchTool: AnyAgentTool = {
 
     const finalizedResults = results as BatchItemResult[];
     const failed = finalizedResults.filter((result) => result.status === 'failed');
-    const succeeded = finalizedResults.length - failed.length;
+    const cancelled = finalizedResults.filter((result) => result.status === 'cancelled');
+    const succeeded = finalizedResults.length - failed.length - cancelled.length;
+    // Cancellation is not a failure and must not make the batch look replayable.
     const retryable = failed.some((result) => result.retryable);
-    const finalResult: ToolResult<{ total: number; succeeded: number; failed: number; results: BatchItemResult[] }> = {
+    const nextActions: string[] = [];
+    if (failed.some((result) => result.retryable)) {
+      nextActions.push('仅重试 results 中 status=failed 且 retryable=true、且已修正原因的条目；不要重放已成功、已取消未执行或结果未知的条目');
+    } else if (failed.length > 0) {
+      nextActions.push('逐项处理 results 中 status=failed 的条目；这些失败不可重试，不要重放已成功或结果未知的条目');
+    }
+    if (cancelled.length > 0) {
+      nextActions.push('status=cancelled 的条目尚未执行，不计入失败，也不表示整批可重试；不要重放已成功或结果未知的写入。仅在仍需要时单独提交这些未执行条目');
+    }
+    const summary = cancelled.length === 0
+      ? `批量纳管完成：${succeeded} 项成功，${failed.length} 项失败`
+      : `批量纳管完成：${succeeded} 项成功，${failed.length} 项失败，${cancelled.length} 项已取消且尚未执行`;
+    const finalResult: ToolResult<BatchData> = {
       // A batch is a completed operation even when some items failed. Keep
       // partial results non-fatal so the Agent does not replay successful items.
       success: true,
-      status: failed.length === 0 ? 'success' : 'warning',
+      status: failed.length === 0 && cancelled.length === 0 ? 'success' : 'warning',
       data: {
         total: results.length,
         succeeded,
         failed: failed.length,
+        cancelled: cancelled.length,
         results: finalizedResults,
       },
-      summary: `批量纳管完成：${succeeded} 项成功，${failed.length} 项失败`,
+      summary,
       details: {
         terminal: !retryable,
         retryable,
         total: results.length,
         succeeded,
         failed: failed.length,
+        cancelled: cancelled.length,
       },
-      next_actions: failed.length > 0
-        ? ['逐项处理 results 中 status=failed 的条目；仅对 retryable=true 且已修正原因的条目重试']
-        : [],
+      next_actions: nextActions,
     };
     if (idempotencyKey && context.sessionId && idempotencyHash) {
       await agentToolIdempotencyService.finish(context.actor.userId, context.sessionId, 'slide_add_database_batch', idempotencyKey, idempotencyHash, 'completed', finalResult);

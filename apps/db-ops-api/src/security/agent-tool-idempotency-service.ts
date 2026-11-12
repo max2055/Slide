@@ -26,13 +26,18 @@ export class AgentToolIdempotencyService {
     const pool = this.requirePool();
     const argumentsHash = stableArgumentsHash(args);
     const sessionHash = stableArgumentsHash(sessionId);
-    const [insertOutcome] = await pool.query<{ affectedRows?: number }>(
-      `INSERT INTO agent_tool_idempotency
+    try {
+      // Only a successful INSERT owns the claim; affectedRows on an upsert depends on FOUND_ROWS.
+      await pool.query(
+        `INSERT INTO agent_tool_idempotency
         (actor_id, session_id, session_hash, tool_name, idempotency_key, arguments_hash, state)
-       VALUES (?, ?, ?, ?, ?, ?, 'running')
-       ON DUPLICATE KEY UPDATE idempotency_key = idempotency_key`,
-      [actorId, sessionId, sessionHash, toolName, key, argumentsHash],
-    );
+       VALUES (?, ?, ?, ?, ?, ?, 'running')`,
+        [actorId, sessionId, sessionHash, toolName, key, argumentsHash],
+      );
+      return { kind: 'claimed', argumentsHash };
+    } catch (error) {
+      if ((error as { code?: string } | null)?.code !== 'ER_DUP_ENTRY') throw error;
+    }
     const [rows] = await pool.query<any[]>(
       `SELECT arguments_hash, state, result_json
        FROM agent_tool_idempotency
@@ -44,10 +49,6 @@ export class AgentToolIdempotencyService {
     if (row.arguments_hash !== argumentsHash) return { kind: 'conflict', argumentsHash };
     if (row.state === 'completed') {
       return { kind: 'completed', argumentsHash, result: typeof row.result_json === 'string' ? JSON.parse(row.result_json) : row.result_json };
-    }
-    if (row.state === 'running') {
-      if (Number(insertOutcome?.affectedRows) === 1) return { kind: 'claimed', argumentsHash };
-      return { kind: 'in_progress', argumentsHash };
     }
     return { kind: 'in_progress', argumentsHash };
   }
