@@ -23,7 +23,7 @@ import { createInvestigationWorkflowHandler } from './workflow-handler.js';
 import { DirectAdapter } from '../adapter/direct-adapter.js';
 import { randomUUID } from 'node:crypto';
 import mysql, { type Pool, type RowDataPacket } from 'mysql2/promise';
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, onTestFinished } from 'vitest';
 import { MigrationRunner } from '../migrations/runner.js';
 import { INVESTIGATION_EFFECTIVE_BUDGET_KEY } from './effective-budget.js';
 import { ActorContextService, signAccessToken, type ActorContext } from '../auth/actor-context.js';
@@ -1286,12 +1286,21 @@ describe.skipIf(!port)('T04 investigation workflow execution / real MySQL', () =
     expect(providerCalls).toBe(1); expect(toolCalls).toBe(1);
   });
   it.each(['answer', 'tools'] as const)('persists the final attempt %s through the actual executor and fresh recovery without a ninth send', async mode => {
+    // MAX-461 / PR #887: eight durable provider rounds plus seven tool receipts
+    // and fresh SQL recovery exceeded the generic 5s budget on CI (5.58s).
+    // Retain stage/call evidence in api.json even if this case fails again.
+    const startedAt = performance.now();
+    const stages: Array<{ stage: string; elapsedMs: number; providerCalls: number; toolCalls: number }> = [];
+    const mark = (stage: string) => stages.push({ stage, elapsedMs: performance.now() - startedAt, providerCalls, toolCalls });
+    onTestFinished(({ task }) => { Object.assign(task.meta, { finalAttemptStages: [...stages] }); });
     const executor = fixture(), provider = await (executor as any).options.providerForPurpose('fault_diagnosis');
+    mark('start');
     // Exercise attempt exhaustion independently of the default 16k context
     // boundary; this verified fixture capacity does not change product limits.
     (executor as any).options.runtimeContext = { contextWindowTokens: 32768, maxTokens: 4096, summaryMaxTokens: 2048 };
     provider.chat = async (messages: any[], definitions: any[]) => {
       providerCalls++;
+      mark('provider-response');
       const final = providerCalls === 8;
       if (final) {
         expect(definitions).toEqual([]);
@@ -1305,6 +1314,7 @@ describe.skipIf(!port)('T04 investigation workflow execution / real MySQL', () =
         hasToolCalls: !answer, shouldExecuteTools: !answer, usage: { prompt_tokens: 20, completion_tokens: 10, cached_tokens: 5 } };
     };
     const result = await execute(executor);
+    mark('execution-terminal');
     expect(result.state).toBe(mode === 'answer' ? 'completed' : 'partial');
     if (mode === 'tools') expect(result.error).toMatchObject({ reasonCode: 'MAX_PROVIDER_ATTEMPTS' });
     expect(providerCalls).toBe(8); expect(toolCalls).toBe(7);
@@ -1314,13 +1324,17 @@ describe.skipIf(!port)('T04 investigation workflow execution / real MySQL', () =
     expect(evidence).toHaveLength(7);
     const [saved] = await rows('SELECT result_json FROM investigation_results WHERE run_id=?', [binding.runId]);
     expect(saved.result_json.claims).toHaveLength(mode === 'answer' ? 1 : 0);
-    await retainLengthEvidence('budget-final-' + mode, { result, allocation, evidence });
+    mark('verified-result');
+    await retainLengthEvidence('budget-final-' + mode, { result, allocation, evidence, stages });
     const restarted = fixture();
     await execute(restarted);
     expect(providerCalls).toBe(0); expect(toolCalls).toBe(0);
     expect((await rows('SELECT result_json FROM investigation_results WHERE run_id=?', [binding.runId]))[0]).toEqual(saved);
     expect((await rows('SELECT state,charged_tokens FROM investigation_budget_ledger'))[0]).toEqual(allocation);
-  });
+    mark('recovered-without-send');
+    // Bound this multi-round real-DB case only: 8 x 1.5s plus 3s for final
+    // persistence/recovery. Product deadlines and other test budgets are unchanged.
+  }, 15_000);
   it('freezes persisted effective runtime and profile limits for a new Run', async () => {
     const stored = { schemaVersion: 1, version: 1,
       runtime: { contextWindowTokens: 32768, outputTokens: 4096, summaryOutputTokens: 4096, maxExecutionTokens: 32768 },
