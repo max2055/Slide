@@ -356,7 +356,6 @@ class ServerDiagnosticService {
         } else {
           logsQuality = 'unknown';
           logsReason = 'SYSTEM_LOGS_UNAVAILABLE';
-          gaps.push({ section: 'systemLogs', reason: logsReason });
         }
       }
       const interfaceItems = interfaceResult && !commandFailed(interfaceResult) ? parseInterfaceErrors(interfaceResult.stdout) : [];
@@ -405,7 +404,8 @@ class ServerDiagnosticService {
         topProcesses: processSection,
         recentSystemLogs: logSection,
         interfaceErrors: interfaceSection,
-        gaps,
+        gaps: gaps.filter((gap, index) => gaps.findIndex(candidate =>
+          candidate.section === gap.section && candidate.reason === gap.reason) === index),
       };
       this.cache.set(serverId, diagnostics);
       return diagnostics;

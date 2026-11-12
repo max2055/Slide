@@ -68,6 +68,23 @@ describe('ServerDiagnosticService', () => {
     expect(closeConnection).not.toHaveBeenCalled();
   });
 
+  it.each(['exit', 'throw'])('MAX-406 deduplicates log failures (%s) while retaining other gaps', async mode => {
+    const original = execCommands.getMockImplementation()! as (client: unknown, commands: string[]) => Promise<ReturnType<typeof ok>[]>;
+    execCommands.mockImplementation(async (client: unknown, commands: string[]) => {
+      if (/journalctl|tail|systemctl/.test(commands[0])) {
+        if (mode === 'throw') throw new Error('COMMAND_UNAVAILABLE');
+        return [{ ...ok(), exitCode: 1 }];
+      }
+      return original(client, commands);
+    });
+    const result = await create().getDiagnostics(3);
+    expect(result.gaps.filter(g => g.section === 'systemLogs' && g.reason === 'SYSTEM_LOGS_UNAVAILABLE')).toHaveLength(1);
+    expect(new Set(result.gaps.map(g => JSON.stringify([g.section, g.reason]))).size).toBe(result.gaps.length);
+    expect(result.gaps).toContainEqual({ section: 'services', reason: 'SERVICE_STATUS_UNAVAILABLE' });
+    expect(result.sections.systemLogs).toMatchObject({ quality: 'unknown', reason: 'SYSTEM_LOGS_UNAVAILABLE' });
+    expect(releaseConnection).toHaveBeenCalledOnce();
+  });
+
   it('rejects unsupported OS before credentials or network use', async () => {
     getServerById.mockResolvedValue({ id: 3, os_type: 'Ubuntu 22.04' });
     await expect(create().collectDiagnostics(3)).rejects.toThrow('HOST_OS_UNSUPPORTED');
