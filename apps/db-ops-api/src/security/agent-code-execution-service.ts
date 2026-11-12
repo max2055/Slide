@@ -120,6 +120,11 @@ export class AgentCodeExecutionService {
     try {
       const status = await this.sandbox.status(AbortSignal.timeout(4000));
       if (!readyForRuntime(status, runtime, needsNetwork)) return failure('SANDBOX_UNAVAILABLE');
+    } catch {
+      return failure('SANDBOX_UNAVAILABLE');
+    }
+
+    try {
       const request: SandboxExecutionRequest = {
         runtime,
         command: runtimeSpec.command,
