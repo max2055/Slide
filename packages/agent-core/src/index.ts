@@ -43,6 +43,7 @@ export { migrateMessageParts, readMessageParts, restoreLegacyMessage, acknowledg
 export type { MessageParts, MessagePart, PartStatus, PartBoundary, AttachmentSource, AttachmentBudget, ProviderPartPolicy } from './message-parts.js';
 export { AgentRunner, NoopHook } from "./runner.js";
 export { AgentRuntime } from './runtime/agent-runtime.js';
+export { MAX_TIMEOUT_MS } from './runtime/timeout-policy.js';
 export { conservativePromptEstimate, conservativeTextTokens, estimateWithProvider, FamilyTokenCounter, tokenPayload } from './token-estimation.js';
 export type { PromptTokenEstimate, TokenMethod } from './token-estimation.js';
 export { resolveContextConfig, UNKNOWN_CONTEXT_WINDOW, openAIModelCapabilities, isNativeOpenAIEndpoint } from './model-context.js';

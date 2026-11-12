@@ -1,4 +1,4 @@
-import { compatibleMessageParts, acknowledgeMessageParts, statusForStopReason, type SessionEntry, type PartBoundary, type PartStatus } from '@slide/agent-core';
+import { compatibleMessageParts, acknowledgeMessageParts, readMessageParts, statusForStopReason, type SessionEntry, type PartBoundary, type PartStatus } from '@slide/agent-core';
 import { buildToolPreview, boundedToolValue } from '@slide/agent-core/tool-stream';
 
 export function persistedMessageParts(entry: SessionEntry, kind: 'mysql' | 'checkpoint' | 'jsonl' = 'mysql', requestedStatus?: PartStatus): SessionEntry {
@@ -69,13 +69,19 @@ export function recordMessageParts(row: { message_id: string; role: SessionEntry
   let metadata: Record<string, unknown> = {};
   try { metadata = typeof row.metadata === 'string' ? JSON.parse(row.metadata) : (row.metadata as Record<string, unknown>) ?? {}; } catch { /* legacy text remains readable */ }
   const candidate = metadata.messageParts as SessionEntry['messageParts'];
-  const doc = candidate?.version === 1 && candidate.id === row.message_id && candidate.role === row.role && candidate.legacy?.content === row.content ? candidate : undefined;
+  let doc: SessionEntry['messageParts'];
+  try {
+    if (candidate?.id === row.message_id && candidate.role === row.role && candidate.legacy?.content === row.content) doc = readMessageParts(candidate);
+  } catch { /* malformed/future documents use the legacy text projection */ }
   const prior = doc?.legacy ?? {};
-  return persistedMessageParts({ ...prior, id: row.message_id, role: row.role, content: row.content, source: 'fact',
+  const entry = { ...prior, id: row.message_id, role: row.role, content: row.content, source: 'fact',
     runId: typeof metadata.canonicalRunId === 'string' ? metadata.canonicalRunId : doc?.runId ?? fallback?.runId ?? `legacy_run_${row.message_id}`,
     turnId: typeof metadata.canonicalTurnId === 'string' ? metadata.canonicalTurnId : doc?.turnId ?? fallback?.turnId ?? `legacy_turn_${row.message_id}`,
     ...(row.created_at ? { timestamp: new Date(row.created_at as string).toISOString() } : {}),
     ...(metadata.stopReason ? { metadata: { stopReason: metadata.stopReason } } : {}),
     ...(doc ? { messageParts: doc } : {}),
-  } as SessionEntry);
+  } as SessionEntry;
+  // Reading is not a persistence acknowledgement. Keep validated document and
+  // per-part boundaries exactly as stored, including partial history.
+  return doc ? structuredClone(entry) : persistedMessageParts(entry);
 }
