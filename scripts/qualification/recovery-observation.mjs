@@ -24,15 +24,24 @@ export async function boundedCommand(file, argv, options = {}) {
   delete execOptions.retries;
   delete execOptions.deadlineMs;
   delete execOptions.timeout;
+  const attempts = [];
+  const started = performance.now();
   for (let attempt = 0; ; attempt += 1) {
     const remaining = deadline - performance.now();
-    if (remaining < 1) return { ok: false, code: 'DEADLINE_EXCEEDED', signal: null };
+    if (remaining < 1) return { ok: false, code: 'DEADLINE_EXCEEDED', signal: null, attempts, durationMs: performance.now() - started };
+    const timeoutMs = Math.max(1, Math.floor(Math.min(attemptTimeout, remaining)));
+    const attemptStarted = performance.now();
     try {
-      return { ok: true, stdout: (await execute(file, argv, { ...execOptions, timeout: Math.max(1, Math.floor(Math.min(attemptTimeout, remaining))) })).stdout.trim() };
+      const result = await execute(file, argv, { ...execOptions, timeout: timeoutMs });
+      attempts.push({ ok: true, timeoutMs, durationMs: performance.now() - attemptStarted });
+      return { ok: true, stdout: result.stdout.trim(), attempts, durationMs: performance.now() - started };
     } catch (error) {
       const failure = { ok: false, code: typeof error.code === 'number' ? error.code : 'EXECUTION_FAILED', signal: error.signal ?? null };
+      // Docker handles SIGTERM and can exit 143 with signal=null. Preserve the
+      // execFile kill flag and elapsed budget instead of losing timeout evidence.
+      attempts.push({ ...failure, timeoutMs, durationMs: performance.now() - attemptStarted, killed: error.killed === true });
       // `docker stats --no-stream` can be killed by SIGPIPE while the container is still readable.
-      if (error.signal !== 'SIGPIPE' || attempt >= retries || deadline - performance.now() < 1) return failure;
+      if (error.signal !== 'SIGPIPE' || attempt >= retries || deadline - performance.now() < 1) return { ...failure, attempts, durationMs: performance.now() - started };
     }
   }
 }
@@ -70,6 +79,8 @@ export async function runObservation(container, port, command, args) {
   const events = () => readdirSync(output).filter(f => /^hook-\d+\.jsonl$/.test(f)).flatMap(f => readFileSync(join(output, f), 'utf8').trim().split('\n').filter(Boolean).map(line => JSON.parse(line)));
   const sample = async final => {
     // One budget covers every stats attempt and the parallel process-list read.
+    // CI no-stream samples regularly take ~2s; use the existing 3.58s total
+    // window for its attempt too, rather than killing it at 2.5s under CI load.
     const sampleDeadline = performance.now() + STATS_RETRY_BUDGET_MS;
     try {
       const hookEvents = events();
@@ -82,7 +93,7 @@ export async function runObservation(container, port, command, args) {
       // Explicit columns exclude statement text, SQL bindings, connection credentials and business rows.
       const sql = `SELECT PROCESSLIST_ID,PROCESSLIST_DB,PROCESSLIST_COMMAND,PROCESSLIST_TIME,PROCESSLIST_STATE FROM performance_schema.threads WHERE ${predicate} LIMIT 100; SELECT t.PROCESSLIST_ID,w.EVENT_NAME,w.TIMER_WAIT,w.OPERATION FROM performance_schema.events_waits_current w JOIN performance_schema.threads t ON w.THREAD_ID=t.THREAD_ID WHERE ${predicate} LIMIT 100;`;
       const [stats, waits] = await Promise.all([
-        boundedCommand('docker', ['stats', '--no-stream', '--format', '{{.CPUPerc}}|{{.MemUsage}}|{{.BlockIO}}|{{.PIDs}}', container], { retries: 2, deadlineMs: sampleDeadline }),
+        boundedCommand('docker', ['stats', '--no-stream', '--format', '{{.CPUPerc}}|{{.MemUsage}}|{{.BlockIO}}|{{.PIDs}}', container], { retries: 2, timeout: STATS_RETRY_BUDGET_MS, deadlineMs: sampleDeadline }),
         boundedCommand('docker', ['exec', '--env', 'MYSQL_PWD=qualification-test-password', container, 'mysql', '-uroot', '--batch', '--skip-column-names', '-e', sql], { deadlineMs: sampleDeadline }),
       ]);
       record({ event: final ? 'final-snapshot' : 'sample', databases, connectionIds, pendingSql: pendingSql(hookEvents, process.hrtime.bigint()), stats, waits,

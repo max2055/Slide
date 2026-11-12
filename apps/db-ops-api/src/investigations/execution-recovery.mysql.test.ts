@@ -151,7 +151,7 @@ describe.skipIf(!port)('T04 investigation workflow execution / real MySQL', () =
       [roleId],
     );
     await pool.query(
-      "INSERT INTO database_instances (id, name, host, port, username, password_encrypted) VALUES (101, 'one', 'fixture.invalid', 3306, 'fixture', 'unused'), (103, 'two', 'fixture.invalid', 3306, 'fixture', 'unused')",
+      "INSERT INTO database_instances (id, name, host, port, database_name, username, password_encrypted) VALUES (101, 'one', 'fixture.invalid', 3306, 'recovery-101', 'fixture', 'unused'), (103, 'two', 'fixture.invalid', 3306, 'recovery-103', 'fixture', 'unused')",
     );
     canonical = new CanonicalStore(() => pool as never, new InvestigationAuthorization(contexts));
     bridge = new InvestigationSessionBridge(() => pool, new InvestigationAuthorization(contexts), {domain:'test-investigation',policy});
