@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { ToolRegistry, type LLMProvider as AgentProvider } from '@slide/agent-core';
 import { DirectAdapter } from '../adapter/direct-adapter.js';
+import type { IAgentEngine } from '../adapter/types.js';
 import { freezeEvidence } from './analysis-evidence.js';
 import { databaseService } from '../database-service.js';
 import { sqlExecutor } from '../sql-executor.js';
@@ -89,6 +90,91 @@ describe.skipIf(!port)('analysis durable recovery in isolated MySQL', () => {
     throw new Error('EXPECTED_ANALYSIS_JOB_NOT_CLAIMED');
   }
   const expire = () => pool.query('UPDATE workflow_jobs SET lease_expires_at = DATE_SUB(NOW(), INTERVAL 1 SECOND)');
+  // #488: exercise the real handler/registry/store and real MySQL transactions.
+  describe('completion write uncertainty (#488)', () => {
+    it.each([
+      ['before-commit', 'throw'], ['before-commit', 'error-result'], ['before-commit', 'completed-result'],
+      ['after-commit', 'throw'], ['after-commit', 'error-result'], ['after-commit', 'completed-result'],
+    ])('%s with engine exit %s preserves recovery state without replay', async (window, exit) => {
+      const queued = await enqueue();
+      const job = (await jobs.claim('completion-write', 30))!;
+      const context = { workerId: 'completion-write', fencingToken: job.fencingToken, signal: new AbortController().signal };
+      const registry = new JobRegistry();
+      let sends = 0;
+      const invoke: IAgentEngine['invoke'] = async (_s, _m, _p, options) => {
+        await options!.beforeProviderRequest!(); sends++;
+        const connection = await pool.getConnection();
+        const commit = connection.commit.bind(connection);
+        const commitSpy = vi.spyOn(connection, 'commit').mockImplementationOnce(async () => {
+          if (window === 'after-commit') await commit();
+          // Inject lost acknowledgement at the driver boundary, not at store.fail.
+          throw new Error('ECONNRESET');
+        });
+        const acquireSpy = vi.spyOn(pool, 'getConnection').mockResolvedValueOnce(connection);
+        try { await options!.completeAnalysis!(envelope); }
+        catch (error) { if (exit === 'throw') throw error; }
+        finally { acquireSpy.mockRestore(); commitSpy.mockRestore(); }
+        return { content: null, stopReason: exit === 'error-result' ? 'error' : 'completed' };
+      };
+      registerAnalysisDispatchHandler(registry, { store, authorize: async () => {}, configurationVersion: async () => 'c1', engine: async () => ({ invoke } as unknown as IAgentEngine) });
+      await expect(registry.execute(job, context)).rejects.toThrow(exit === 'throw' ? 'ECONNRESET' : 'ANALYSIS_COMPLETION_WRITE_UNCONFIRMED');
+      const analysis = (await rows('SELECT * FROM ai_analysis'))[0];
+      const dispatch = (await rows('SELECT * FROM analysis_dispatches'))[0];
+      const committed = window === 'after-commit';
+      expect(analysis).toMatchObject(committed
+        ? { status: 'completed', recovery_reason: null, error_message: null }
+        : { status: 'unknown', result: null, recovery_reason: 'ANALYSIS_COMPLETION_WRITE_UNCONFIRMED', error_message: 'ANALYSIS_COMPLETION_WRITE_UNCONFIRMED' });
+      expect(dispatch).toMatchObject(committed
+        ? { request_state: 'completed', reason: null }
+        : { request_state: 'unknown', reason: 'ANALYSIS_COMPLETION_WRITE_UNCONFIRMED' });
+      expect((await rows('SELECT * FROM analysis_dispatch_attempts'))[0].request_state).toBe(committed ? 'completed' : 'unknown');
+      if (committed) expect(analysis.analysis_envelope.conclusions).toEqual(envelope.conclusions);
+      await expire(); await store.recover();
+      await registry.execute(job, context); // Terminal claim returns without invoking the engine.
+      const reused = await enqueue();
+      expect(reused).toMatchObject({ analysisId: queued.analysisId, status: committed ? 'completed' : 'unknown', cached: committed });
+      expect(sends).toBe(1);
+      expect(await rows('SELECT * FROM ai_analysis')).toHaveLength(1);
+      expect((await rows('SELECT * FROM ai_analysis'))[0]).toEqual(analysis);
+    });
+
+    it('lost lease fences completion and failure writes; recovery never sends again', async () => {
+      await enqueue();
+      const job = (await jobs.claim('lost-completion-lease', 30))!;
+      const context = { workerId: 'lost-completion-lease', fencingToken: job.fencingToken, signal: new AbortController().signal };
+      const registry = new JobRegistry(); let sends = 0;
+      const invoke: IAgentEngine['invoke'] = async (_s, _m, _p, options) => {
+        await options!.beforeProviderRequest!(); sends++;
+        await expire();
+        await options!.completeAnalysis!(envelope);
+        throw new Error('UNREACHABLE');
+      };
+      registerAnalysisDispatchHandler(registry, { store, authorize: async () => {}, configurationVersion: async () => 'c1', engine: async () => ({ invoke } as unknown as IAgentEngine) });
+      await expect(registry.execute(job, context)).rejects.toThrow('ANALYSIS_LEASE_LOST');
+      expect((await rows('SELECT * FROM ai_analysis'))[0]).toMatchObject({ status: 'running', result: null, recovery_reason: null });
+      expect((await rows('SELECT * FROM analysis_dispatches'))[0]).toMatchObject({ request_state: 'sending', reason: null });
+      await store.recover(); await registry.execute(job, context);
+      expect((await enqueue()).status).toBe('unknown');
+      expect((await rows('SELECT * FROM ai_analysis'))[0]).toMatchObject({ status: 'unknown', result: null, recovery_reason: 'ANALYSIS_PROVIDER_RESULT_UNKNOWN' });
+      expect(sends).toBe(1);
+    });
+
+    it('completed is idempotent through the handler and preserves the first envelope', async () => {
+      await enqueue();
+      const job = (await jobs.claim('completed-idempotent', 30))!;
+      const context = { workerId: 'completed-idempotent', fencingToken: job.fencingToken, signal: new AbortController().signal };
+      const registry = new JobRegistry(); const invoke = vi.fn<IAgentEngine['invoke']>(async (_s, _m, _p, options) => {
+        await options!.beforeProviderRequest!();
+        expect(await options!.completeAnalysis!(envelope)).toEqual({ success: true });
+        expect(await options!.completeAnalysis!({ ...envelope, conclusions: ['overwrite'] })).toEqual({ success: false, error: 'ANALYSIS_ALREADY_TERMINAL' });
+        return { content: null, stopReason: 'completed' };
+      });
+      registerAnalysisDispatchHandler(registry, { store, authorize: async () => {}, configurationVersion: async () => 'c1', engine: async () => ({ invoke } as unknown as IAgentEngine) });
+      await registry.execute(job, context); await registry.execute(job, context);
+      expect(invoke).toHaveBeenCalledTimes(1);
+      expect((await rows('SELECT * FROM ai_analysis'))[0]).toMatchObject({ status: 'completed', recovery_reason: null, analysis_envelope: { conclusions: envelope.conclusions } });
+    });
+  });
   it('commits analysis, request, outbox and runnable job together; concurrent acceptance reuses it', async () => {
     const [a, b] = await Promise.all([enqueue(), enqueue()]); expect(a.analysisId).toBe(b.analysisId);
     for (const table of ['ai_analysis', 'analysis_dispatches', 'outbox_events', 'workflow_jobs']) expect(await rows(`SELECT * FROM ${table}`)).toHaveLength(1);
