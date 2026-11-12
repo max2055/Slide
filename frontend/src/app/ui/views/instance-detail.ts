@@ -26,7 +26,7 @@ import { authFetch } from "../../../api/index.js";
 import { currentHealthStatus, evidenceTime, evidenceTimeState } from './health-score-state.js';
 
 interface InstanceDetail { hasCredential?: boolean; db_version?: string | null; id: number; name: string; db_type: string; host: string; port: number; database_name: string; username: string; environment: string; description: string; health_status: "healthy"|"warning"|"critical"|"unknown"|"error"; health_score: number; status: string; created_at: string; updated_at: string; }
-interface SlowQuery { id: string; sql_text: string; avg_time_ms: number; max_time_ms: number; execution_count: number; first_seen: string; last_seen: string; }
+interface SlowQuery { id: string; sql_text: string; avg_time_ms: number; max_time_ms: number | null; execution_count: number; first_seen: string; last_seen: string; }
 interface Session { id: number; user: string; host: string; database: string; command: string; time_seconds: number; state: string; query: string | null; }
 type ReadStatus = 'idle' | 'loading' | 'success' | 'error' | 'forbidden' | 'unavailable';
 interface QueryRead { status: ReadStatus; instanceId: number | null; readAt?: number; source?: string; }
@@ -643,7 +643,7 @@ export class InstanceDetailPage extends LitElement {
             <tbody>${this.slowQueries.map(q => html`<tr>
               <td><div class="sql-code" title="${q.sql_text}">${q.sql_text.substring(0, 80)}${q.sql_text.length > 80 ? "..." : ""}</div></td>
               <td style="text-align:center;"><span style="color:${Number(q.avg_time_ms) > 1000 ? 'var(--danger)' : Number(q.avg_time_ms) > 100 ? 'var(--warn)' : 'var(--ok)'};font-weight:600;">${Number(q.avg_time_ms).toFixed(2)} ms</span></td>
-              <td style="text-align:center;">${Number(q.max_time_ms).toFixed(2)} ms</td>
+              <td style="text-align:center;">${q.max_time_ms == null ? '未知' : `${Number(q.max_time_ms).toFixed(2)} ms`}</td>
               <td style="text-align:center;">${Number(q.execution_count).toLocaleString()}</td>
               <td style="text-align:center;">${new Date(q.last_seen).toLocaleString("zh-CN")}</td>
             </tr>`)}</tbody>

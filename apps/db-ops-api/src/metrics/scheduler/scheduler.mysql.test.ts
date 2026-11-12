@@ -53,7 +53,7 @@ describe.skipIf(!port)('scheduler isolated MySQL + existing Worker', () => {
     policies = new PolicyService(new MysqlPolicyStore(() => pool), packages, { exists: async () => true, inventory: async r => resource(r.id) }, () => new Date(now).toISOString());
   });
   const create = async (id = 1, interval = 60000) => {
-    await pool.query("INSERT INTO database_instances (id,name,host,port,username,password_encrypted,db_type,status) VALUES (?,?,'127.0.0.1',3306,'root','fixture','mysql','active')",[id,`fixture-${id}`]);
+    await pool.query("INSERT INTO database_instances (id,name,host,port,database_name,username,password_encrypted,db_type,status) VALUES (?,?,'127.0.0.1',3306,?,'root','fixture','mysql','active')",[id,`fixture-${id}`,`sched-${id}`]);
     return (await policies.changeBinding(admin, { ...ref, id }, { expected_revision: 0, package: pin,
     overrides: { interval_ms: { mode: 'set', value: interval }, stale_after_ms: { mode: 'set', value: Math.max(interval, 120000) },
       max_counter_gap_ms: { mode: 'set', value: Math.max(interval, 300000) } } }, true)).resources[0];

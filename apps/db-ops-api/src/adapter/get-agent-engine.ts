@@ -18,7 +18,7 @@ import { DirectAdapter } from './direct-adapter.js';
 import { PlatformUnavailableError } from '../lifecycle/platform-unavailable.js';
 import type { ActorContext } from '../auth/actor-context.js';
 import { normalizeToolResult, type AnyAgentTool } from '../tools/types.js';
-import { canActorDiscoverTool, decideToolPolicy, executeToolWithPolicy } from '../tools/policy.js';
+import { canActorDiscoverTool, decideToolPolicy, executeToolWithPolicy, ToolPolicyDeniedError } from '../tools/policy.js';
 import {
   assertToolSecurityCatalogCoverage,
   getToolSecurityDefinition,
@@ -198,8 +198,8 @@ export async function createCronToolRegistry(authority: CronToolAuthority): Prom
           return result;
         }
         const { resolveToolResource } = await import('../tools/resource-resolver.js');
-        const resolveResource = async (name: string, args: Record<string, unknown>) => {
-          const resource = await resolveToolResource(name, args);
+        const resolveResource = async (name: string, args: Record<string, unknown>, current?: ActorContext) => {
+          const resource = await resolveToolResource(name, args, undefined, current);
           // query_metrics can name non-database resources despite its catalog type.
           return resource.serverId !== undefined || resource.networkDeviceId !== undefined
             ? { ...resource, error: 'RESOURCE_INVALID' as const } : resource;
@@ -212,11 +212,10 @@ export async function createCronToolRegistry(authority: CronToolAuthority): Prom
             authorityError = error instanceof Error ? error : new Error(String(error));
             throw authorityError;
           });
-          const decision = decideToolPolicy(current, anyTool, args, await resolveResource(anyTool.name, args), true, false);
+          const decision = decideToolPolicy(current, anyTool, args, await resolveResource(anyTool.name, args, current), true, false);
           if (!decision.allow) {
-            authorityError = new Error(decision.reasonCode);
             await audit.record({ phase: 'decision', actor: current, decision, args });
-            return { success: false, errorCode: decision.reasonCode, error: 'Tool access denied' };
+            throw new ToolPolicyDeniedError(current, decision);
           }
           if (context?.signal?.aborted) throw new Error('TOOL_EXECUTION_CANCELLED');
           return anyTool.handler(args, { ...toolContext, actor: current, userId: current.userId, policyDecision: decision });
