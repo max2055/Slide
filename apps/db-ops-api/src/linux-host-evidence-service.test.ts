@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   LinuxHostEvidenceService,
   buildPhysicalFileCommand,
@@ -10,6 +10,8 @@ import {
   resolveJournalUnits,
   validatePhysicalPaths,
 } from './linux-host-evidence-service.js';
+
+import serverMetricProvider from './server-metric-provider.js';
 
 describe('Linux host evidence parsers', () => {
   it('merges RHEL 7/8 byte, inode and findmnt output by decoded mount', () => {
@@ -190,10 +192,11 @@ Filesystem Inodes IUsed IFree IUse% Mounted on
 });
 
 describe('LinuxHostEvidenceService lifecycle', () => {
+  afterEach(() => vi.restoreAllMocks());
   const ok = (stdout = '') => ({ stdout, stderr: '', exitCode: 0, signal: null, truncated: false });
   const failed = () => ({ stdout: '', stderr: 'unavailable', exitCode: 1, signal: null, truncated: false });
 
-  function createService(execCommands: ReturnType<typeof vi.fn>) {
+  function createService(execCommands: ReturnType<typeof vi.fn>, osType = 'RHEL 8') {
     const client = {} as any;
     const releaseConnection = vi.fn();
     const closeConnection = vi.fn();
@@ -201,7 +204,7 @@ describe('LinuxHostEvidenceService lifecycle', () => {
       serverDatabaseService: {
         getServerById: vi.fn().mockResolvedValue({
           id: 9, host: 'db.internal', port: 22, credential_type: 'password',
-          host_key_fingerprint: 'SHA256:test', os_type: 'RHEL 8',
+          host_key_fingerprint: 'SHA256:test', os_type: osType,
         }),
         getDecryptedCredentials: vi.fn().mockResolvedValue({ username: 'ops', password: 'secret' }),
       } as any,
@@ -225,6 +228,10 @@ describe('LinuxHostEvidenceService lifecycle', () => {
     }
     if (command.includes('findmnt -rn')) return ok('/dev/sda1 / xfs\n');
     if (command.includes('journalctl')) return ok();
+    if (command.includes('/proc/meminfo')) return ok('MemTotal: 1000 kB\nMemAvailable: 250 kB\n');
+    if (command.includes('/proc/net/dev')) return ok('eth0: 100 0 2 3 0 0 0 0 200 0 4 5 0 0 0 0\neth1: 10 0 0 0 0 0 0 0 20 0 0 0 0 0 0 0\n');
+    if (command.includes('/proc/diskstats')) return ok('8 0 sda 1 0 2 0 1 0 3 0 0 4 0\n');
+    if (command.includes('ps -eo')) return ok('42 mysqld 12.5 3.5\n');
     return ok('1\n');
   }
 
@@ -259,37 +266,10 @@ describe('LinuxHostEvidenceService lifecycle', () => {
     expect(closeConnection).not.toHaveBeenCalled();
   });
 
-  it('returns good bounded evidence when every fixed Linux source succeeds', async () => {
-    const client = {} as any;
-    const ok = (stdout = '') => ({ stdout, stderr: '', exitCode: 0, signal: null, truncated: false });
-    const execCommands = vi.fn(async (_client: unknown, commands: string[]) => commands.map((command) => {
-      if (command.includes('uname -s')) return ok('Linux\n');
-      if (command.includes('systemctl list-unit-files')) return ok('mysqld.service enabled\n');
-      if (command === 'LC_ALL=C LANG=C df -P -B1') {
-        return ok('Filesystem 1-blocks Used Available Capacity Mounted on\n/dev/sda1 1000 400 600 40% /\n');
-      }
-      if (command === 'LC_ALL=C LANG=C df -Pi') {
-        return ok('Filesystem Inodes IUsed IFree IUse% Mounted on\n/dev/sda1 100 20 80 20% /\n');
-      }
-      if (command.includes('findmnt -rn')) return ok('/dev/sda1 / xfs\n');
-      if (command.includes('journalctl')) return ok();
-      return ok('1\n');
-    }));
-    const releaseConnection = vi.fn();
-    const service = new LinuxHostEvidenceService({
-      serverDatabaseService: {
-        getServerById: vi.fn().mockResolvedValue({
-          id: 9, host: 'db.internal', port: 22, credential_type: 'password',
-          host_key_fingerprint: 'SHA256:test', os_type: 'RHEL 8',
-        }),
-        getDecryptedCredentials: vi.fn().mockResolvedValue({ username: 'ops', password: 'secret' }),
-      } as any,
-      sshSessionPool: {
-        getConnection: vi.fn().mockResolvedValue(client), execCommands,
-        releaseConnection, closeConnection: vi.fn(),
-      } as any,
-      now: () => new Date('2026-08-10T00:00:00.000Z'),
-    });
+  // GitHub #277 / MAX-393: the real provider returns fresh definition objects.
+  it.each(['RHEL 8', 'CentOS 7', 'Kylin V10'])('collects concrete metric values and commands for %s', async (osType) => {
+    const execCommands = vi.fn(async (_client: unknown, commands: string[]) => commands.map(successfulCommand));
+    const { service, client, releaseConnection } = createService(execCommands, osType);
 
     const evidence = await service.collectHostEvidence(9, {
       databaseType: 'mysql', services: ['mysqld'], paths: [],
@@ -306,8 +286,66 @@ describe('LinuxHostEvidenceService lifecycle', () => {
       physicalFiles: { quality: 'good', items: [] },
       gaps: [],
     });
+    expect(evidence.metrics).toMatchObject({ quality: 'good', values: {
+      cpu_usage: 1, memory_usage: 75, memory_used: 1, memory_total: 1, swap_usage: 1,
+      load_1min: 1, load_5min: 1, load_15min: 1, uptime: 1,
+      network_rx_bytes: 110, network_tx_bytes: 220, network_rx_errors: 2,
+      network_tx_errors: 4, network_rx_drops: 3, network_tx_drops: 5,
+      disk_read_bytes: 1024, disk_write_bytes: 1536, disk_io_time_ms: 4,
+      process_count: 1, top_processes_cpu: 12.5, top_processes_memory: 3.5,
+    } });
+    expect(Object.keys(evidence.metrics.values)).toHaveLength(21);
+    expect(evidence.metrics.values).not.toHaveProperty('disk_usage');
+    expect(evidence.metrics.values).not.toHaveProperty('disk_detail');
+    const commands = execCommands.mock.calls.flatMap((call) => call[1] as string[]);
+    for (const batch of serverMetricProvider.getCollectionBatches(osType)) {
+      if (batch.definitions.every((definition) => definition.name === 'disk_usage' || definition.name === 'disk_detail')) continue;
+      expect(commands.filter((command) => command === batch.command)).toHaveLength(1);
+    }
+    expect(commands.filter((command) => command === 'LC_ALL=C LANG=C df -P -B1')).toHaveLength(1);
+    expect(commands).not.toContain(serverMetricProvider.getDefinitions(osType).find((definition) => definition.name === 'disk_usage')!.command);
     expect(evidence.filesystems.items[0]).toMatchObject({ mount: '/', fsType: 'xfs' });
     expect(releaseConnection).toHaveBeenCalledWith(client);
+  });
+
+  it.each([
+    ['command failure', failed(), 'METRIC_COMMAND_FAILED'],
+    ['missing rows', ok('malformed'), 'METRIC_PARSE_FAILED'],
+  ])('retains valid metrics and reports partial evidence on %s', async (_case, result, reason) => {
+    const execCommands = vi.fn(async (_client: unknown, commands: string[]) => commands.map((command) =>
+      command.includes('/proc/net/dev') ? result : successfulCommand(command)
+    ));
+    const { service } = createService(execCommands);
+    const evidence = await service.collectHostEvidence(9, { databaseType: 'mysql', services: [], paths: [] });
+    expect(evidence.metrics.values.memory_usage).toBe(75);
+    expect(evidence.metrics.values).not.toHaveProperty('network_rx_bytes');
+    expect(evidence.metrics.quality).toBe('partial');
+    expect(evidence.quality).toBe('partial');
+    expect(evidence.gaps).toContainEqual({ section: 'metrics', reason });
+    expect(execCommands.mock.calls.some((call) => call[1].includes('LC_ALL=C LANG=C cat /proc/net/dev'))).toBe(true);
+  });
+
+  it.each(['other', 'empty batches', 'missing batch', 'all commands fail'])('never reports good evidence with unavailable metrics: %s', async (scenario) => {
+    const batches = serverMetricProvider.getCollectionBatches('rhel');
+    if (scenario === 'empty batches') vi.spyOn(serverMetricProvider, 'getCollectionBatches').mockReturnValue([]);
+    if (scenario === 'missing batch') vi.spyOn(serverMetricProvider, 'getCollectionBatches').mockReturnValue(batches.filter((batch) => !batch.command.includes('/proc/meminfo')));
+    const metricCommands = new Set(batches.filter((batch) => batch.definitions.some((definition) => !['disk_usage', 'disk_detail'].includes(definition.name))).map((batch) => batch.command));
+    const execCommands = vi.fn(async (_client: unknown, commands: string[]) => commands.map((command) =>
+      scenario === 'all commands fail' && metricCommands.has(command) ? failed() : successfulCommand(command)
+    ));
+    const { service } = createService(execCommands, scenario === 'other' ? 'other' : 'rhel');
+    const evidence = await service.collectHostEvidence(9, { databaseType: 'mysql', services: [], paths: [] });
+    expect(evidence.quality).toBe('partial');
+    expect(evidence.gaps).toContainEqual({ section: 'metrics', reason: 'METRICS_UNAVAILABLE' });
+    if (scenario === 'missing batch') {
+      expect(evidence.metrics.quality).toBe('partial');
+      expect(evidence.metrics.values.cpu_usage).toBe(1);
+      expect(evidence.metrics.values).not.toHaveProperty('memory_usage');
+    } else {
+      expect(evidence.metrics.quality).toBe('unknown');
+      expect(evidence.metrics.values).toEqual({});
+    }
+    expect(evidence.filesystems.items[0].usagePercent).toBe(40);
   });
 
   it.each([

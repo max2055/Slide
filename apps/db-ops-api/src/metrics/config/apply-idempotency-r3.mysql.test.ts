@@ -59,8 +59,8 @@ describe.skipIf(!port)('MAX-238 R3 public-entry authorization on a disposable My
     for (const ref of refs) {
       await pool.execute(`INSERT INTO database_instances
         (id,name,environment,db_type,host,port,username,password_encrypted,database_name,db_version,status,lifecycle_state)
-        VALUES (?,?,?,?,?,3306,'fixture','','fixture','8.0.46','active','available')`,
-        [ref.id, `idempotency-r3-${ref.id}`, 'production', 'mysql', '127.0.0.1']);
+        VALUES (?,?,?,?,?,3306,'fixture','',?,'8.0.46','active','available')`,
+        [ref.id, `idempotency-r3-${ref.id}`, 'production', 'mysql', '127.0.0.1', `idempotency-r3-${ref.id}`]);
     }
     packages = createConfigurationRegistry();
     const policy = new PolicyService(new MysqlPolicyStore(() => pool), packages,
