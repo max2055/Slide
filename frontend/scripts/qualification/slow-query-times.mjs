@@ -32,7 +32,7 @@ try {
       await view.getByText('2000.00 ms', { exact: true }).waitFor();
       assert.equal(await view.locator('tbody td').nth(2).textContent(), '未知');
       assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
-      await page.screenshot({ path: resolve(output, `${width}x${height}.png`), fullPage: true });
+      await page.screenshot({ path: resolve(output, `${width}x${height}.png`), fullPage: true, animations: 'disabled' });
     }
     console.log('PASS: 3 desktop sizes, keyboard tab activation, 2000ms, unknown maximum, no horizontal page overflow');
   } finally { await page.close(); }
