@@ -55,8 +55,9 @@ function normalizeCidr(cidr: Cidr): string {
 /**
  * Scan targets remain aligned IPv4 /24–/32 networks. Allowlist entries may be
  * /0–/32 and must be aligned; one entry must contain the entire target.
- * Empty lists deny all. Omission is allowed only outside production (defaults
- * to NODE_ENV); malformed policy fails closed. This API adds no config source.
+ * Empty lists deny all. Only explicit production: true requires an allowlist;
+ * omission preserves existing callers regardless of NODE_ENV. Malformed policy
+ * fails closed. This API adds no config source.
  */
 export function authorizeDatabaseScanTarget(
   input: DatabaseScanRequest,
@@ -65,9 +66,8 @@ export function authorizeDatabaseScanTarget(
   if (!input || typeof input !== 'object' || Array.isArray(input)) throw invalid('SCAN_INPUT_INVALID');
   const target = parseCidr(input.cidr);
   if (!Object.hasOwn(databaseScanProfiles, input.profile)) throw invalid('SCAN_PROFILE_INVALID');
-  const production = options.production ?? process.env.NODE_ENV === 'production';
-  // An omitted list is permitted only outside production; an explicit empty
-  // list grants nothing. Parse every entry before matching so bad policy fails closed.
+  // An explicit empty list grants nothing. Parse every entry before matching
+  // so bad policy fails closed, even if an earlier entry contains the target.
   if (options.allowedCidrs !== undefined) {
     if (!Array.isArray(options.allowedCidrs)) throw invalid('SCAN_POLICY_NOT_CONFIGURED');
     let allowed: Cidr[];
@@ -79,7 +79,7 @@ export function authorizeDatabaseScanTarget(
     if (!allowed.some((cidr) => target.start >= cidr.start && target.end <= cidr.end)) {
       throw invalid('SCAN_CIDR_DENIED');
     }
-  } else if (production) {
+  } else if (options.production === true) {
     throw invalid('SCAN_POLICY_NOT_CONFIGURED');
   }
   const profile = input.profile as DatabaseScanProfile;

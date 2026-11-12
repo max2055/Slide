@@ -63,10 +63,11 @@ describe('database network scan policy', () => {
     })).toThrow('SCAN_POLICY_NOT_CONFIGURED');
   });
 
-  it('requires policy in production, including when inferred from NODE_ENV', () => {
+  it('requires an allowlist only for explicit strict mode, independent of NODE_ENV', () => {
     const input = { cidr: '10.17.12.0/24', profile: 'common_databases' };
     vi.stubEnv('NODE_ENV', 'production');
-    expect(() => authorizeDatabaseScanTarget(input)).toThrow('SCAN_POLICY_NOT_CONFIGURED');
+    expect(authorizeDatabaseScanTarget(input).cidr).toBe(input.cidr);
+    expect(authorizeDatabaseScanTarget(input, {}).cidr).toBe(input.cidr);
     expect(() => authorizeDatabaseScanTarget(input, { production: true })).toThrow('SCAN_POLICY_NOT_CONFIGURED');
     expect(authorizeDatabaseScanTarget(input, { production: false }).cidr).toBe(input.cidr);
     vi.stubEnv('NODE_ENV', 'test');
