@@ -1023,7 +1023,7 @@ CREATE TABLE IF NOT EXISTS `generated_skills` (
 CREATE TABLE IF NOT EXISTS `schema_snapshots` (
   `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   `instance_id` INT UNSIGNED NOT NULL,
-  `snapshot_time` DATETIME NOT NULL DEFAULT NOW(),
+  `snapshot_time` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) COMMENT '快照时间',
   `table_name` VARCHAR(128) NOT NULL,
   `column_name` VARCHAR(128) NOT NULL,
   `column_type` VARCHAR(128) NOT NULL,
