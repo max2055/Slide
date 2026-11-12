@@ -252,3 +252,38 @@ describe('slide_add_database_batch', () => {
     expect((result.data as any).results.filter((item: { status: string }) => item.status === 'cancelled')).toHaveLength(2);
   });
 });
+
+// #372 / OCR-0286: a completed side effect survives a finish failure in the response.
+describe('batch idempotency recovery', () => {
+  afterEach(() => vi.restoreAllMocks());
+  const args = { concurrency: 1, databases: [0, 1].map(i => ({ db_type: 'mysql', host: `db-${i}`, port: 3306, username: 'root' })) };
+  const context = { actor: { userId: 7 }, sessionId: 'recovery', idempotencyKey: 'key' } as any;
+  it('returns all executed results and a non-retryable unconfirmed state when finish rejects', async () => {
+    const { agentToolIdempotencyService: service } = await import('../../../security/agent-tool-idempotency-service.js');
+    vi.spyOn(service, 'claim').mockResolvedValue({ kind: 'claimed', argumentsHash: 'hash', ownerToken: 'owner' });
+    vi.spyOn(service, 'checkpoint').mockResolvedValue();
+    vi.spyOn(service, 'finish').mockRejectedValue(new Error('lost acknowledgement'));
+    const handler = vi.spyOn(addDatabaseTool, 'handler').mockResolvedValue({ success: true, data: { instanceId: 101 } });
+    const result = await addDatabaseBatchTool.handler(args, context);
+    expect(handler).toHaveBeenCalledTimes(2);
+    expect(result).toMatchObject({ success: true, errorCode: 'IDEMPOTENCY_RESULT_UNCONFIRMED', data: { succeeded: 2, results: [{ instanceId: 101 }, { instanceId: 101 }] }, details: { retryable: false, recoveryState: 'unknown' } });
+  });
+  it('does not start remaining items after a result checkpoint loses its acknowledgement', async () => {
+    const { agentToolIdempotencyService: service } = await import('../../../security/agent-tool-idempotency-service.js');
+    vi.spyOn(service, 'claim').mockResolvedValue({ kind: 'claimed', argumentsHash: 'hash', ownerToken: 'owner' });
+    vi.spyOn(service, 'checkpoint').mockResolvedValueOnce().mockRejectedValue(new Error('unknown checkpoint'));
+    const finish = vi.spyOn(service, 'finish');
+    const handler = vi.spyOn(addDatabaseTool, 'handler').mockResolvedValue({ success: true, data: { instanceId: 101 } });
+    const result = await addDatabaseBatchTool.handler(args, context);
+    expect(handler).toHaveBeenCalledTimes(1);
+    expect(finish).not.toHaveBeenCalled();
+    expect(result).toMatchObject({ errorCode: 'IDEMPOTENCY_RESULT_UNCONFIRMED', data: { results: [{ instanceId: 101 }, { errorCode: 'IDEMPOTENCY_NOT_STARTED', retryable: false }] } });
+  });
+  it('exposes the interrupted checkpoint without calling any side effects', async () => {
+    const { agentToolIdempotencyService: service } = await import('../../../security/agent-tool-idempotency-service.js');
+    vi.spyOn(service, 'claim').mockResolvedValue({ kind: 'unknown', argumentsHash: 'hash', checkpoint: { items: { 0: { state: 'started' } } } });
+    const handler = vi.spyOn(addDatabaseTool, 'handler');
+    await expect(addDatabaseBatchTool.handler(args, context)).resolves.toMatchObject({ errorCode: 'IDEMPOTENCY_OUTCOME_UNKNOWN', details: { retryable: false, checkpoint: { items: { 0: { state: 'started' } } } } });
+    expect(handler).not.toHaveBeenCalled();
+  });
+});
