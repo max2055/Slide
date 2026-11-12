@@ -87,22 +87,39 @@ export async function handleChatSend(
 
   const response = new ChatResponse();
   let result: ChatResult | undefined;
+  let chatFailed = false;
+  let chatError: unknown;
   try {
     result = await (engine.chat as any)(sessionKey, message, (event: ChatEvent) => {
       response.observe(event);
       onEvent?.(event);
     }, actor, undefined, undefined, undefined, userMessageId) as ChatResult;
+  } catch (error) {
+    chatFailed = true;
+    chatError = error;
+    throw error;
   } finally {
     // Also save the observed stream when the engine throws before returning.
     const assistant = response.message(result);
     if (assistant) {
-      await chatDatabaseService.addMessage(actor, sessionKey, {
-        messageId: assistantMessageId,
-        role: 'assistant',
-        ...assistant,
-        metadata: { ...assistant.metadata, canonicalRunId: userMessageId, canonicalTurnId: userMessageId },
-        parentId: userMessageId,
-      });
+      try {
+        await chatDatabaseService.addMessage(actor, sessionKey, {
+          messageId: assistantMessageId,
+          role: 'assistant',
+          ...assistant,
+          metadata: { ...assistant.metadata, canonicalRunId: userMessageId, canonicalTurnId: userMessageId },
+          parentId: userMessageId,
+        });
+      } catch (persistenceError) {
+        if (chatFailed) {
+          throw new AggregateError(
+            [chatError, persistenceError],
+            'Chat failed and assistant message could not be saved',
+            { cause: chatError },
+          );
+        }
+        throw persistenceError;
+      }
     }
   }
 

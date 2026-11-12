@@ -1,3 +1,5 @@
+import { parseFenceSpans } from "../../markdown/fences.js";
+
 export interface CodeRegion {
   start: number;
   end: number;
@@ -6,10 +8,8 @@ export interface CodeRegion {
 export function findCodeRegions(text: string): CodeRegion[] {
   const regions: CodeRegion[] = [];
 
-  const fencedRe = /(^|\n)(```|~~~)[^\n]*\n[\s\S]*?(?:\n\2|$)/g;
-  for (const match of text.matchAll(fencedRe)) {
-    const start = (match.index ?? 0) + match[1].length;
-    regions.push({ start, end: start + match[0].length - match[1].length });
+  for (const span of parseFenceSpans(text)) {
+    regions.push({ start: span.start, end: span.end });
   }
 
   const inlineRe = /`+[^`]+`+/g;
