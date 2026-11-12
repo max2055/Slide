@@ -210,6 +210,7 @@ export class ServersPage extends LitElement {
 
   `];
 
+  @state() private searchResultCount = 0;
   @state() private _servers: ServerRow[] = [];
   @state() private _searchQuery = restoredListState('server')?.state.search ?? "";
   @state() private _loading = true;
@@ -217,6 +218,8 @@ export class ServersPage extends LitElement {
   @state() private _editingId: number | null = null;
   @state() private _showDeleteDialog = false;
   @state() private _deletingServer: ServerRow | null = null;
+  @state() private _isDeleting = false;
+  @state() private _deleteError = "";
   @state() private _testingServerId: number | null = null;
   @state() private _testingConnection = false;
   @state() private _isSubmitting = false;
@@ -229,6 +232,14 @@ export class ServersPage extends LitElement {
     credential_username: "",
     credential_value: "",
   };
+  /** True only after the user changes the operating-system control. */
+  private _osTouched = false;
+  /**
+   * Unknown or empty os_type captured when this edit opened.
+   * Stays selectable after the user picks kylin, rhel, or centos, until the
+   * dialog closes or a supported type is saved.
+   */
+  @state() private _editOriginalOs: string | null = null;
   @state() private _testConnectionMessage = "";
   @state() private _testConnectionSuccess: boolean | null = null;
   @state() private _osFilter = restoredListState('server')?.state.os ?? "all";
@@ -291,6 +302,8 @@ export class ServersPage extends LitElement {
     this.editorTab = "basic";
     this.connectionPending = true;
     this._editingId = null;
+    this._osTouched = false;
+    this._editOriginalOs = null;
     this._form = {
       host: "",
       port: 22,
@@ -320,11 +333,17 @@ export class ServersPage extends LitElement {
       }
     } catch { /* fall back to empty */ }
 
+    const originalOsType = server.os_type ?? "";
+    const recognized = canonicalOsKey(originalOsType);
+    this._osTouched = false;
+    this._editOriginalOs = recognized === "unknown" ? originalOsType : null;
     this._form = {
       host: server.host,
       port: server.port,
       label: server.label || "",
-      os_type: canonicalOsKey(server.os_type) === "unknown" ? "centos" : canonicalOsKey(server.os_type),
+      // Recognized families keep their existing option. Unknown and empty
+      // values stay as stored so the control does not present CentOS.
+      os_type: recognized === "unknown" ? originalOsType : recognized,
       host_key_fingerprint: server.host_key_fingerprint || undefined,
       ssh_trust_mode: server.ssh_trust_mode || (server.host_key_fingerprint ? "pinned" : "pending"),
       credential_type: server.credential_type,
@@ -349,6 +368,7 @@ export class ServersPage extends LitElement {
     const id = this._editingId;
     this._showDialog = false;
     this._editingId = null;
+    this._editOriginalOs = null;
     this._testConnectionMessage = "";
     this._testConnectionSuccess = null;
     await this.updateComplete;
@@ -358,6 +378,20 @@ export class ServersPage extends LitElement {
     if (id) await table?.focusEditAction(id);
     else this.renderRoot.querySelector<HTMLElement>('.resource-action--add')?.focus();
   }
+
+  private _isCanonicalOs(value: string): boolean {
+    return CANONICAL_OS_OPTIONS.some((option) => option.value === value);
+  }
+
+  private _shouldSendEditedOsType(): boolean {
+    if (!this._osTouched) return false;
+    return this._isCanonicalOs(this._form.os_type);
+  }
+
+  private _onOsChange = (event: Event) => {
+    this._osTouched = true;
+    this._updateForm("os_type", (event.target as HTMLSelectElement).value);
+  };
 
   private _updateForm<K extends keyof ServerFormData>(field: K, value: ServerFormData[K]) {
     this.connectionPending = true;
@@ -385,6 +419,10 @@ export class ServersPage extends LitElement {
       if (isEdit) {
         if (!body.credential_value) delete body.credential_value;
         if (!body.credential_username) delete body.credential_username;
+        // Leave os_type out unless the user picked kylin, rhel, or centos.
+        // Sending the stored unknown value is rejected, and substituting
+        // centos would overwrite it.
+        if (!this._shouldSendEditedOsType()) delete body.os_type;
       }
 
       const res = await authFetch(url, {
@@ -399,6 +437,7 @@ export class ServersPage extends LitElement {
       }
 
       const savedId = isEdit ? this._editingId : Number((await res.json()).id);
+      if (isEdit && this._shouldSendEditedOsType()) this._editOriginalOs = null;
       if (configureCollection) {
         this._editingId = savedId;
         this.connectionPending = false;
@@ -414,31 +453,48 @@ export class ServersPage extends LitElement {
   }
 
   private _confirmDelete(server: ServerRow) {
+    if (this._isDeleting) return;
+    this._deleteError = "";
     this._deletingServer = server;
     this._showDeleteDialog = true;
   }
 
-  private _closeDeleteDialog() {
+  private _closeDeleteDialog(event?: Event) {
+    if (this._isDeleting) { event?.preventDefault(); return; }
     this._showDeleteDialog = false;
     this._deletingServer = null;
+    this._deleteError = "";
   }
 
   private async _handleDelete() {
-    if (!this._deletingServer) return;
+    if (!this._deletingServer || this._isDeleting) return;
+    const server = this._deletingServer;
+    this._isDeleting = true;
+    this._deleteError = "";
 
     try {
-      const res = await authFetch(`/api/servers/${this._deletingServer.id}`, {
+      const res = await authFetch(`/api/servers/${server.id}`, {
         method: "DELETE",
       });
       if (!res.ok) {
         const err = await res.json();
         throw new Error(err.error || "删除失败");
       }
-      this._closeDeleteDialog();
+      this._showDeleteDialog = false;
+      this._deletingServer = null;
       await this._loadServers();
       showToast("服务器已删除", "success");
-    } catch (err: any) {
-      showToast(`删除失败: ${err.message}`, "error");
+      await this.updateComplete;
+      this.renderRoot.querySelector<HTMLElement>('.search-input, .resource-action--add')?.focus();
+    } catch (err: unknown) {
+      this._deleteError = `删除失败：${err instanceof Error ? err.message : '请稍后重试'}。请刷新列表核对后再重试。`;
+      showToast(this._deleteError, "error");
+    } finally {
+      this._isDeleting = false;
+      if (this._showDeleteDialog) {
+        await this.updateComplete;
+        this.renderRoot.querySelector<HTMLElement>('app-dialog button.danger')?.focus();
+      }
     }
   }
 
@@ -684,13 +740,13 @@ export class ServersPage extends LitElement {
             </div>
           </div>
           <div class="resource-toolbar-meta" aria-live="polite">
-            <span class="resource-result-count">共 ${rows.length} 台服务器</span>
+            <span class="resource-result-count">共 ${rows.length ? this.searchResultCount : 0} 台服务器</span>
             ${this._activeFilterCount > 0
               ? html`<span class="resource-filter-state">已启用 ${this._activeFilterCount} 项筛选</span>`
               : nothing}
           </div>
           ${rows.length > 0
-            ? html`<resource-metrics-table resourceType="server" .refreshVersion=${this.metricRefreshVersion} @resource-metrics-loading=${(e: CustomEvent<boolean>) => { this.metricsLoading = e.detail; }} .search=${this._searchQuery} .columns=${columns} .entries=${rows} @resource-metric-open=${(e: CustomEvent<{ id: number }>) => this._navigateToDetail(e.detail.id)}></resource-metrics-table>`
+            ? html`<resource-metrics-table resourceType="server" @resource-results-changed=${(e: CustomEvent<number>) => { this.searchResultCount = e.detail; }} .refreshVersion=${this.metricRefreshVersion} @resource-metrics-loading=${(e: CustomEvent<boolean>) => { this.metricsLoading = e.detail; }} .search=${this._searchQuery} .columns=${columns} .entries=${rows} @resource-metric-open=${(e: CustomEvent<{ id: number }>) => this._navigateToDetail(e.detail.id)}></resource-metrics-table>`
             : html`<app-empty-state title="无匹配服务器" description="尝试更换搜索关键词" icon="search"></app-empty-state>`}
         </div>
 
@@ -707,6 +763,7 @@ export class ServersPage extends LitElement {
     if (!this._showDialog) return nothing;
 
     const title = this._editingId ? "编辑服务器" : "添加服务器";
+    const originalOs = this._editOriginalOs;
 
     return html`
       <resource-editor-shell .heading=${title} .caption=${`${this._form.label || this._form.host || '新资源'} · ${this._form.os_type} · ${this._form.host}:${this._form.port}`} .activeTab=${this.editorTab} .busy=${this._isSubmitting}
@@ -736,10 +793,11 @@ export class ServersPage extends LitElement {
           <div class="form-row">
             <app-form-field label="操作系统" .inline=${true}>
               <select class="form-select" .value=${this._form.os_type}
-                @change=${(e: any) => this._updateForm("os_type", e.target.value)}>
-                <option value="kylin">Kylin OS</option>
-                <option value="rhel">Red Hat Enterprise Linux</option>
-                <option value="centos">CentOS</option>
+                @change=${this._onOsChange}>
+                ${originalOs !== null
+                  ? html`<option .value=${originalOs} ?selected=${this._form.os_type === originalOs}>${originalOs.trim() ? originalOs : "未知"}</option>`
+                  : nothing}
+                ${CANONICAL_OS_OPTIONS.map((option) => html`<option value=${option.value} ?selected=${option.value === this._form.os_type}>${option.label}</option>`)}
               </select>
             </app-form-field>
 
@@ -817,7 +875,7 @@ export class ServersPage extends LitElement {
     if (!this._showDeleteDialog || !this._deletingServer) return nothing;
 
     return html`
-      <app-dialog .open=${true} size="sm" .closeOnOverlay=${false} title="确认删除" @app-dialog-close=${this._closeDeleteDialog}>
+      <app-dialog .open=${true} .closable=${!this._isDeleting} size="sm" .closeOnOverlay=${false} title="确认删除" @app-dialog-close=${this._closeDeleteDialog}>
         <div style="text-align:center;padding:var(--space-md) 0">
           <div style="margin-bottom:var(--space-md);color:var(--warn);display:flex;justify-content:center;">
             ${icons['triangle-alert']}
@@ -825,11 +883,12 @@ export class ServersPage extends LitElement {
           <div style="font-size:var(--text-md);color:var(--muted);">
             确定要删除服务器 ${this._deletingServer.host} 吗？此操作不可撤销。
           </div>
+          ${this._deleteError ? html`<p role="alert">${this._deleteError}</p>` : nothing}
         </div>
-        <div slot="footer" style="display:flex;justify-content:center;gap:var(--space-md);">
-          <button class="btn" @click=${this._closeDeleteDialog}>取消</button>
-          <button class="btn danger" @click=${this._handleDelete}
-            >确认删除</button>
+        <div slot="footer" aria-busy=${String(this._isDeleting)} style="display:flex;justify-content:center;gap:var(--space-md);">
+          <button class="btn" .disabled=${this._isDeleting} @click=${this._closeDeleteDialog}>取消</button>
+          <button class="btn danger" .disabled=${this._isDeleting} @click=${this._handleDelete}
+            >${this._isDeleting ? '删除中...' : '确认删除'}</button>
         </div>
       </app-dialog>
     `;
