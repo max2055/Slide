@@ -1,6 +1,6 @@
 # SNMP representative collector (MAX-73)
 
-`apps/db-ops-api/src/metrics-v2/snmp/package.ts` 的 `createSnmpPackage()` 返回含既有内置包和新包的 registry、release、pin。`snmp-standard@1.0.0` 独立于旧 `if-mib-basic@1.0.0`，不改变旧摘要或默认来源。将返回的 registry 提供给既有 PolicyService/MysqlScheduleStore/MetricScheduler；按资源显式发布新 pin。不得同时让旧来源与新来源作为同一指标的正式来源。
+`apps/db-ops-api/src/metrics-v2/snmp/package.ts` 的 `createSnmpPackage()` 返回含既有内置包和新包的 registry、release、pin。`snmp-standard@1.0.1`（默认版本）独立于旧 `if-mib-basic@1.0.0`，不改变旧摘要或默认来源。将返回的 registry 提供给既有 PolicyService/MysqlScheduleStore/MetricScheduler；按资源显式发布新 pin。不得同时让旧来源与新来源作为同一指标的正式来源。
 
 ## 宿主接入
 
@@ -19,7 +19,13 @@ return { resource, credential_ref, evidence: { snmp: discovery },
 
 同一设备连续采集复用 discovery；设备目标、授权配置变化或进程重启时新建，不能跨资源共享。目标安全策略与凭据授权仍由宿主负责；采集器不加载 `.env` 或持久化秘密。传输复用 `SnmpClient` 的 allowlist、响应大小约束、会话关闭及固定 get/table；不拼接用户输入 OID。runner 对每次 get/table 执行取消/fencing 检查；已在途 SNMP 请求不能被 abort 撤回，迟到结果由公共 scheduler 隔离。
 
-默认 60 秒、超时 5 秒、最大缺口 300 秒、最多 6 个接口；1 个资源观测 + 每接口 15 个观测，适配平台默认 100 series 预算。超过 6 个接口必须显式同时提升 `max_rows` 与 `max_series_per_resource`（标准包至少 `1 + 15 * max_rows`；厂商包再加 2），且不超过平台上限。接口表超限拒绝而不截断，避免误判接口消失。一次系统 GET 和一次接口逻辑采集共享所有该组指标；接口逻辑采集含 uptime GET、ifTable walk、ifXTable walk、uptime GET。walk 可有多个 UDP PDU；scheduler 的 logical_reads 不是 UDP 包数量。
+默认 60 秒、超时 5 秒、最大缺口 300 秒、最多 64 个接口：覆盖 48 个常见接入口，并预留 16 行用于上联、管理和逻辑接口（24 端口设备也在此范围内；逻辑接口较多的设备仍可能超过容量）。1 个资源观测 + 每接口 15 个观测，由 resolver 派生标准包默认 961 series 预算；厂商包再加 2，仍受每资源 10000 series 总上限约束。
+
+超过配置行数时，接口 attempt 为 `failed / parse_error`，附 `SNMP_INTERFACE_CAPACITY_EXCEEDED`（接口数量超过采集容量）；直接调用采集器的异常还包含调整提示。此时不会发布部分接口发现、删除旧接口状态或把未读到的接口判为消失，恢复后重新建立速率基线。ifNumber、ifTable 和 ifXTable 的超限均整轮拒绝，不截断。普通 ifXTable 不支持/传输失败仍按原有字段质量规则处理。
+
+调整办法：在现有指标采集策略中显式同时提升 `max_rows` 与 `max_series_per_resource`（标准包至少 `1 + 15 * max_rows`；厂商包再加 2）。例如 100 行需标准包至少 1501 series。平台硬上限仍为 100 行，超过时本版本不能靠继续增加配置采集完整接口表，需在设备端缩小授权 SNMP 视图范围；持久身份模式下 ifNumber 必须与该范围一致，否则完整性校验仍会拒绝。
+
+注册表保留原 `1.0.0` 的摘要与 6 行推荐值；新增 `1.0.1` pin 提供 64 行默认值。服务重新加载新版注册表后，新绑定选择新版包；已有绑定须通过原有配置发布流程显式升级至新版 pin 后生效，既有资源/分组显式覆盖值保留，若仍设置 6 行须调整或继承。不会自动改写历史绑定或放宽其预算。一次系统 GET 和一次接口逻辑采集共享所有该组指标；接口逻辑采集含 uptime GET、ifTable walk、ifXTable walk、uptime GET。walk 可有多个 UDP PDU；scheduler 的 logical_reads 不是 UDP 包数量。
 
 ## 指标与口径
 

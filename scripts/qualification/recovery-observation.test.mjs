@@ -181,6 +181,7 @@ case "$1" in
     n=$((n + 1)); echo "$n" > ${JSON.stringify(count)}
     ack="\${RECOVERY_OBSERVATION_DIR}/cleanup-123.ack"
     case "$RECOVERY_STATS_MODE" in
+      slow-success) if [ "$n" -eq 1 ]; then trap 'exit 143' TERM; sleep 2.7; fi;;
       delay-once) if [ "$n" -eq 1 ]; then sleep 0.25; trap - PIPE; kill -PIPE $$; fi;;
       delay-always) if [ ! -f "$ack" ]; then sleep 2.2; trap - PIPE; kill -PIPE $$; fi;;
     esac
@@ -215,6 +216,13 @@ writeFileSync(join(dir, 'timing.json'), JSON.stringify({ sawAck, elapsed: Date.n
       const timing = JSON.parse(readFileSync(join(output, 'timing.json'), 'utf8'));
       return { code, rows, timing, ack: readFileSync(join(output, 'cleanup-123.ack'), 'utf8') };
     };
+    // MAX-389 CI recovery: a successful 2.7s Docker snapshot fits the
+    // existing 3.58s budget, but the old per-attempt 2.5s limit killed it.
+    const slow = await observe('slow-success');
+    assert.equal(slow.code, 0);
+    assert.equal(slow.timing.sawAck, true);
+    assert.equal(slow.timing.snapshotBeforeAck, true);
+    assert.ok(slow.timing.elapsed < CLEANUP_WINDOW_MS);
     const recovered = await observe('delay-once');
     assert.equal(recovered.code, 0);
     assert.equal(recovered.ack, 'captured');
@@ -240,4 +248,19 @@ writeFileSync(join(dir, 'timing.json'), JSON.stringify({ sawAck, elapsed: Date.n
     }
     rmSync(directory, { recursive: true, force: true });
   }
+});
+
+test('MAX-389 records timeout termination even when a SIGTERM handler exits 143', async () => {
+  const timed = await boundedCommand('/bin/bash', ['-c', 'trap "exit 143" TERM; while :; do sleep 0.02; done'], { timeout: 150, retries: 2 });
+  assert.equal(timed.ok, false);
+  assert.equal(timed.code, 143);
+  assert.equal(timed.signal, null);
+  assert.equal(timed.attempts.length, 1); // A timeout is not a SIGPIPE retry.
+  assert.equal(timed.attempts[0].killed, true);
+  assert.ok(timed.attempts[0].durationMs >= 140);
+  const external = await boundedCommand('/bin/bash', ['-c', 'exit 143'], { timeout: 150, retries: 2 });
+  assert.equal(external.ok, false);
+  assert.equal(external.code, 143);
+  assert.equal(external.attempts[0].killed, false);
+  assert.equal(external.attempts.length, 1);
 });
