@@ -435,7 +435,7 @@ export interface LinuxHostEvidence {
   expiresAt: string;
   quality: EvidenceQuality;
   truncated: boolean;
-  metrics: EvidenceSection & { values: Record<string, number> };
+  metrics: EvidenceSection & { values: Record<string, number | string> };
   filesystems: EvidenceSection & { items: FilesystemEvidence[] };
   systemLogs: EvidenceSection & { entries: JournalEvidence[] };
   physicalFiles: EvidenceSection & { items: PhysicalFileEvidence[] };

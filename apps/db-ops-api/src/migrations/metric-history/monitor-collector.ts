@@ -417,9 +417,9 @@ class MonitorCollector {
                 sql_hash: sqlHash,
                 avg_time_ms: query.avg_time_ms,
                 max_time_ms: query.max_time_ms,
-                min_time_ms: query.avg_time_ms,
+                min_time_ms: query.min_time_ms ?? null,
                 execution_count: query.execution_count,
-                total_time_ms: query.avg_time_ms * query.execution_count,
+                total_time_ms: query.total_time_ms ?? query.avg_time_ms * query.execution_count,
               });
             }
             console.log(`📊 [${instance.name}] 采集 ${slowQueries.length} 条慢查询`);
