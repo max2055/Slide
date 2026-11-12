@@ -523,9 +523,10 @@ export class LinuxHostEvidenceService {
       const metricValues: Record<string, number> = {};
       const metricDefinitions = serverMetricProvider.getDefinitions(server.os_type)
         .filter((definition) => definition.name !== 'disk_usage' && definition.name !== 'disk_detail');
+      const metricNames = new Set(metricDefinitions.map((definition) => definition.name));
       let metricGap = false;
       const metricBatches = serverMetricProvider.getCollectionBatches(server.os_type)
-        .filter((batch) => batch.definitions.some((definition) => metricDefinitions.includes(definition)));
+        .filter((batch) => batch.definitions.some((definition) => metricNames.has(definition.name)));
       for (const batch of metricBatches) {
         const result = (await this.dependencies.sshSessionPool.execCommands(client, [batch.command]))[0];
         if (result.exitCode !== 0) {
@@ -533,7 +534,7 @@ export class LinuxHostEvidenceService {
           gaps.push({ section: 'metrics', reason: 'METRIC_COMMAND_FAILED' });
           continue;
         }
-        const activeDefinitions = batch.definitions.filter((definition) => metricDefinitions.includes(definition));
+        const activeDefinitions = batch.definitions.filter((definition) => metricNames.has(definition.name));
         const samples = activeDefinitions[0]?.parseRows?.(result.stdout) ?? [];
         for (const definition of activeDefinitions) {
           if (definition.parseRows && !definition.parseProcesses) {
@@ -551,6 +552,12 @@ export class LinuxHostEvidenceService {
             gaps.push({ section: 'metrics', reason: 'METRIC_PARSE_FAILED' });
           } else metricValues[definition.name] = value;
         }
+      }
+      // Empty definitions/batches and omitted metrics must also degrade overall evidence.
+      if (Object.keys(metricValues).length === 0
+        || metricDefinitions.some((definition) => metricValues[definition.name] === undefined)) {
+        metricGap = true;
+        gaps.push({ section: 'metrics', reason: 'METRICS_UNAVAILABLE' });
       }
 
       const dfBytes = (await this.dependencies.sshSessionPool.execCommands(
