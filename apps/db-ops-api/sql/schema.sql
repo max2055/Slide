@@ -687,6 +687,8 @@ CREATE TABLE IF NOT EXISTS `database_logs` (
   `raw_content` TEXT COMMENT '原始日志内容',
   `detected_patterns` JSON DEFAULT NULL COMMENT '检测到的错误模式: [{pattern, severity, message}]',
   `collected_at` DATETIME NOT NULL COMMENT '日志在原数据库中的时间',
+  `source_position` DECIMAL(20,6) DEFAULT NULL COMMENT 'MySQL 源日志 UTC epoch 微秒水位；历史及其他来源为空',
+  UNIQUE KEY `uq_database_log_source_position` (`instance_id`, `source`, `source_position`),
   `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),
   INDEX `idx_instance_id` (`instance_id`),
@@ -1146,7 +1148,7 @@ ALTER TABLE ai_analysis ADD COLUMN cache_ttl_minutes INT DEFAULT NULL;
 CREATE TABLE IF NOT EXISTS `approval_events` (
   `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   `request_id` BIGINT UNSIGNED NOT NULL,
-  `event_type` ENUM('submitted','ai_reviewed','claimed','approved','rejected','executed','execution_failed','notified') NOT NULL,
+  `event_type` ENUM('submitted','ai_reviewed','claimed','approved','rejected','executed','execution_failed','notified','reconciliation_required') NOT NULL,
   `event_data` JSON DEFAULT NULL COMMENT 'Event-specific payload (risk_level for ai_reviewed, {rows,duration} for executed)',
   `created_by` INT UNSIGNED DEFAULT NULL,
   `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,

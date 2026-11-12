@@ -1,5 +1,11 @@
 import { expect, test } from '@playwright/test';
 
+// Explicit authorized fixture session; restricted settings never rely on cache.
+test.beforeEach(async ({ page }) => {
+  await page.addInitScript(() => localStorage.setItem('token', 'settings-fixture-token'));
+  await page.route('**/api/auth/permissions', route => route.fulfill({ json: ['llm:view'] }));
+});
+
 for (const width of [1440, 390]) {
   for (const [name, result] of [
     ['success', { success: true, message: '连接成功' }],

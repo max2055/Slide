@@ -594,7 +594,7 @@ export const LinuxHostEvidenceSchema = Type.Object({
     collectedAt: Type.String(),
     quality: EvidenceQualityValueSchema,
     reason: Type.Optional(Type.String()),
-    values: Type.Record(Type.String(), Type.Number()),
+    values: Type.Record(Type.String(), Type.Union([Type.Number(), Type.String({ pattern: '^\\d+$' })])),
   }, { additionalProperties: false }),
   filesystems: Type.Object({
     source: Type.Array(Type.String()),

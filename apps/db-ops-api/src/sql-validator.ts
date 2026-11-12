@@ -31,51 +31,293 @@ const TYPE_MAP: Record<string, SqlCommandType> = {
   call: 'procedure', execute: 'procedure',
 };
 
-function hasDangerousSelectShape(node: any, sql: string): SqlReasonCode | null {
-  const normalized = sql.replace(/--[^\n]*(?:\n|$)|\/\*[\s\S]*?\*\//g, ' ').toLowerCase();
-  if (/\bfor\s+(update|share)\b/.test(normalized)) return 'LOCKING_READ';
-  if (/\bselect\b[\s\S]*\binto\b/.test(normalized)) return 'SELECT_INTO';
-  if (/(?:^|[^a-z0-9_])(load_file|benchmark|get_lock|release_lock|sleep)\s*\(/.test(normalized)) return 'DANGEROUS_FUNCTION';
-  const functionViolation = checkUnsafeFunctions(node);
-  return functionViolation ? 'DANGEROUS_FUNCTION' : null;
+function isSqlWhitespace(ch: string | undefined): boolean {
+  return ch === ' ' || ch === '\n' || ch === '\r' || ch === '\t' || ch === '\f' || ch === '\v';
 }
 
-/** AST-first classifier. Parser failure is deliberately unknown rather than a heuristic allow. */
-export function classifySql(sql: string, dialect: string = 'mysql'): SqlClassification {
-  if (!DIALECTS.has(dialect) || !sql.trim()) return { commandType: 'unknown', reasonCode: 'UNCLASSIFIED', dialect };
-  if (Buffer.byteLength(sql, 'utf8') > 64 * 1024) return { commandType: 'unknown', reasonCode: 'SQL_TOO_LARGE', dialect };
+interface ScannedSql {
+  expanded: string;
+  skeleton: string;
+  /** Parser input whose literals cannot be re-tokenized by default escapes. */
+  canonical: string;
+}
+
+/**
+ * Separate executable MySQL comments from text that cannot change statement
+ * shape. Versioned comments are always inlined: the classifier does not know
+ * the server version, and dropping a future-version body would hide the
+ * statement a newer server would run. `backslashEscapes` follows one sql_mode
+ * interpretation; callers scan each closed interpretation. Returns null when a
+ * comment or literal is unclosed in that interpretation.
+ *
+ * `canonical` keeps keywords, operators and quoted identifiers, replaces
+ * string bodies with `''`, and drops ordinary comments. The parser always
+ * uses its own default escape rules, so it must not see the original literal
+ * text or it will reassemble a different statement than this mode executes.
+ */
+function scanSqlTokens(sql: string, dialect: string, backslashEscapes = true): ScannedSql | null {
+  const mysql = dialect === 'mysql';
+  const expanded: string[] = [];
+  const skeleton: string[] = [];
+  const canonical: string[] = [];
+  let index = 0;
+  let inliningExecutable = false;
+
+  const pushCode = (text: string) => {
+    expanded.push(text);
+    skeleton.push(text);
+    canonical.push(text);
+  };
+  const pushMasked = (original: string, skeletonMask: string, canonicalMask: string) => {
+    expanded.push(original);
+    skeleton.push(skeletonMask);
+    canonical.push(canonicalMask);
+  };
+
+  while (index < sql.length) {
+    const current = sql[index];
+    const next = sql[index + 1];
+
+    if (current === '\'' || current === '"') {
+      let cursor = index + 1;
+      let closed = false;
+      while (cursor < sql.length) {
+        if (backslashEscapes && sql[cursor] === '\\') {
+          cursor += 2;
+          continue;
+        }
+        if (sql[cursor] === current) {
+          if (sql[cursor + 1] === current) {
+            cursor += 2;
+            continue;
+          }
+          cursor += 1;
+          closed = true;
+          break;
+        }
+        cursor += 1;
+      }
+      if (!closed) return null;
+      pushMasked(sql.slice(index, cursor), current === '\'' ? "''" : '""', "''");
+      index = cursor;
+      continue;
+    }
+
+    if (current === '`') {
+      let cursor = index + 1;
+      let closed = false;
+      while (cursor < sql.length) {
+        if (sql[cursor] === '`' && sql[cursor + 1] === '`') {
+          cursor += 2;
+          continue;
+        }
+        if (sql[cursor] === '`') {
+          cursor += 1;
+          closed = true;
+          break;
+        }
+        cursor += 1;
+      }
+      if (!closed) return null;
+      // Keep the identifier in the parser input. Masking it in the skeleton
+      // avoids keyword false positives; the function whitelist reads the AST.
+      pushMasked(sql.slice(index, cursor), '``', sql.slice(index, cursor));
+      index = cursor;
+      continue;
+    }
+
+    const dollar = /^\$[A-Za-z0-9_]*\$/.exec(sql.slice(index));
+    if (dollar) {
+      const closer = sql.indexOf(dollar[0], index + dollar[0].length);
+      if (closer < 0) return null;
+      const end = closer + dollar[0].length;
+      // MySQL has no dollar literals. Keep the original text in the parser
+      // input so SELECT $$sleep(0)$$ still fails closed, and mask the skeleton
+      // so the keyword scan does not reclassify that parser failure.
+      pushMasked(sql.slice(index, end), "''", mysql ? sql.slice(index, end) : "''");
+      index = end;
+      continue;
+    }
+
+    if (inliningExecutable && current === '*' && next === '/') {
+      inliningExecutable = false;
+      pushCode(' ');
+      index += 2;
+      continue;
+    }
+
+    const afterDash = sql[index + 2];
+    const lineComment = (sql.startsWith('--', index) && (!mysql || afterDash === undefined || isSqlWhitespace(afterDash)))
+      || (mysql && current === '#');
+    if (lineComment) {
+      let cursor = index;
+      while (cursor < sql.length && sql[cursor] !== '\n') cursor += 1;
+      if (sql[cursor] === '\n') cursor += 1;
+      pushMasked(sql.slice(index, cursor), ' ', ' ');
+      index = cursor;
+      continue;
+    }
+
+    if (current === '/' && next === '*') {
+      const executable = mysql && sql[index + 2] === '!' && !inliningExecutable;
+      if (executable) {
+        let cursor = index + 3;
+        if (/^\d{5}/.test(sql.slice(cursor))) {
+          const sixth = sql[cursor + 5];
+          const seventh = sql[cursor + 6];
+          cursor += sixth !== undefined && sixth >= '0' && sixth <= '9' && isSqlWhitespace(seventh) ? 6 : 5;
+        }
+        inliningExecutable = true;
+        pushCode(' ');
+        index = cursor;
+        continue;
+      }
+      let cursor = index + 2;
+      let closed = false;
+      while (cursor < sql.length) {
+        if (sql[cursor] === '*' && sql[cursor + 1] === '/') {
+          cursor += 2;
+          closed = true;
+          break;
+        }
+        cursor += 1;
+      }
+      if (!closed) return null;
+      pushMasked(sql.slice(index, cursor), ' ', ' ');
+      index = cursor;
+      continue;
+    }
+
+    pushCode(current);
+    index += 1;
+  }
+
+  if (inliningExecutable) return null;
+  return {
+    expanded: expanded.join(''),
+    skeleton: skeleton.join(''),
+    canonical: canonical.join(''),
+  };
+}
+
+function dangerousSelectText(skeleton: string): SqlReasonCode | null {
+  const normalized = skeleton.toLowerCase();
+  if (/\bfor\s+(?:update|share|no\s+key\s+update|key\s+share)\b/.test(normalized)) return 'LOCKING_READ';
+  if (/\block\s+in\s+share\s+mode\b/.test(normalized)) return 'LOCKING_READ';
+  if (/\binto\s+(?:outfile|dumpfile)\b/.test(normalized) || /\bselect\b[\s\S]*\binto\b/.test(normalized)) return 'SELECT_INTO';
+  if (/(?:^|[^a-z0-9_])(?:load_file|benchmark|get_lock|release_lock|sleep)\s*\(/.test(normalized)) return 'DANGEROUS_FUNCTION';
+  return null;
+}
+
+function astHasLockingRead(node: any, seen = new WeakSet<object>()): boolean {
+  if (!node || typeof node !== 'object' || seen.has(node)) return false;
+  seen.add(node);
+  if (node.locking_read) return true;
+  for (const value of Object.values(node)) {
+    if (astHasLockingRead(value, seen)) return true;
+  }
+  return false;
+}
+
+const CHANGING_STATEMENT_TYPES = new Set([
+  'insert', 'update', 'delete', 'replace', 'merge',
+  'create', 'alter', 'drop', 'truncate', 'rename', 'grant', 'revoke',
+  'call', 'execute',
+  'begin', 'start', 'commit', 'rollback', 'savepoint',
+  'set', 'use', 'pragma',
+]);
+
+function nestedChangingStatement(node: any, seen = new WeakSet<object>()): boolean {
+  if (!node || typeof node !== 'object' || seen.has(node)) return false;
+  seen.add(node);
+  if (Array.isArray(node)) return node.some((item) => nestedChangingStatement(item, seen));
+  const type = String(node.type ?? '').toLowerCase();
+  if (type !== 'select' && CHANGING_STATEMENT_TYPES.has(type)) return true;
+  return Object.values(node).some((value) => nestedChangingStatement(value, seen));
+}
+
+function hasDangerousSelectShape(node: any, skeleton: string): SqlReasonCode | null {
+  const fromText = dangerousSelectText(skeleton);
+  if (fromText) return fromText;
+  if (astHasLockingRead(node)) return 'LOCKING_READ';
+  if (nestedChangingStatement(node)) return 'UNCLASSIFIED';
+  return checkUnsafeFunctions(node) ? 'DANGEROUS_FUNCTION' : null;
+}
+
+function unclassified(dialect: string): SqlClassification {
+  return { commandType: 'unknown', reasonCode: 'UNCLASSIFIED', dialect };
+}
+
+function isReadOnly(result: SqlClassification): boolean {
+  return result.commandType === 'read' && result.reasonCode === 'READ_ONLY';
+}
+
+/** A read is allowed only when every closed interpretation is a read. */
+function stricterClassification(primary: SqlClassification, alternate: SqlClassification): SqlClassification {
+  const primaryDenies = !isReadOnly(primary);
+  const alternateDenies = !isReadOnly(alternate);
+  if (primaryDenies && alternateDenies) {
+    if (primary.reasonCode === 'UNCLASSIFIED' && alternate.reasonCode !== 'UNCLASSIFIED') return alternate;
+    return primary;
+  }
+  return alternateDenies ? alternate : primary;
+}
+
+function classifyScanned(sql: string, dialect: string, scanned: ScannedSql): SqlClassification {
+  // MySQL parses the mode-specific canonical statement so default backslash
+  // rules cannot pull code back into a literal. Other dialects parse the
+  // original text; their scan only builds the skeleton.
+  const source = dialect === 'mysql' ? scanned.canonical : sql;
   const parser = new Parser();
   let ast: any;
   try {
     // node-sql-parser does not fully model Dameng, so try its Oracle grammar
     // first and fall back to the shared MySQL subset below when unavailable.
     const parserDialect = dialect === 'dameng' ? 'oracle' : dialect;
-    ast = parser.astify(sql, { database: parserDialect });
+    ast = parser.astify(source, { database: parserDialect });
   } catch {
-    if (dialect !== 'oracle' && dialect !== 'dameng') {
-      return { commandType: 'unknown', reasonCode: 'UNCLASSIFIED', dialect };
-    }
+    const dangerous = dangerousSelectText(scanned.skeleton);
+    if (dangerous) return { commandType: 'unknown', reasonCode: dangerous, dialect };
+    if (dialect !== 'oracle' && dialect !== 'dameng') return unclassified(dialect);
     try {
-      ast = parser.astify(sql, { database: 'mysql' });
+      ast = parser.astify(source, { database: 'mysql' });
     } catch {
-      return { commandType: 'unknown', reasonCode: 'UNCLASSIFIED', dialect };
+      return unclassified(dialect);
     }
   }
   const statements = Array.isArray(ast) ? ast : [ast];
   if (statements.length !== 1) return { commandType: 'unknown', reasonCode: 'MULTI_STATEMENT', dialect, ast };
   const rawType = String(statements[0]?.type ?? '').toLowerCase();
-  const firstKeyword = sql.trim().replace(/^(?:--[^\n]*\n|\/\*[\s\S]*?\*\/\s*)*/g, '').split(/\s+/)[0]?.toLowerCase();
+  const firstKeyword = scanned.skeleton.trim().split(/\s+/)[0]?.toLowerCase();
   const type = TYPE_MAP[rawType] ?? TYPE_MAP[firstKeyword] ?? 'unknown';
   // User-submitted read paths deliberately accept SELECT only. SHOW,
   // DESCRIBE and EXPLAIN have separate application-owned implementations.
-  if (type === 'read' && rawType !== 'select') {
-    return { commandType: 'unknown', reasonCode: 'UNCLASSIFIED', dialect, ast };
-  }
+  if (type === 'read' && rawType !== 'select') return { commandType: 'unknown', reasonCode: 'UNCLASSIFIED', dialect, ast };
   if (type === 'read') {
-    const dangerous = hasDangerousSelectShape(statements[0], sql);
+    const dangerous = hasDangerousSelectShape(statements[0], scanned.skeleton);
     if (dangerous) return { commandType: 'unknown', reasonCode: dangerous, dialect, ast };
   }
   return { commandType: type, reasonCode: type === 'read' ? 'READ_ONLY' : 'UNCLASSIFIED', dialect, ast };
+}
+
+/** AST-first classifier. Parser failure is deliberately unknown rather than a heuristic allow. */
+export function classifySql(sql: string, dialect: string = 'mysql'): SqlClassification {
+  if (!DIALECTS.has(dialect) || !sql.trim()) return unclassified(dialect);
+  if (Buffer.byteLength(sql, 'utf8') > 64 * 1024) return { commandType: 'unknown', reasonCode: 'SQL_TOO_LARGE', dialect };
+  const escaped = scanSqlTokens(sql, dialect, true);
+  if (dialect !== 'mysql') return escaped ? classifyScanned(sql, dialect, escaped) : unclassified(dialect);
+  // The session sql_mode is not known here. An unclosed literal cannot run.
+  // Every closed reading must parse to the same whitelist decision: the
+  // alternate text skeleton is not a function allow-list.
+  const literal = scanSqlTokens(sql, dialect, false);
+  const closed = [escaped, literal].filter((scan): scan is ScannedSql => scan !== null);
+  if (closed.length === 0) return unclassified(dialect);
+  let result = classifyScanned(sql, dialect, closed[0]);
+  for (const scan of closed.slice(1)) {
+    if (scan.canonical === closed[0].canonical) continue;
+    result = stricterClassification(result, classifyScanned(sql, dialect, scan));
+  }
+  return result;
 }
 
 export function isSingleReadOnlySql(sql: string, dialect?: string): SqlClassification {
@@ -83,12 +325,14 @@ export function isSingleReadOnlySql(sql: string, dialect?: string): SqlClassific
 }
 
 /**
- * 验证 SQL 是否为纯 SELECT 查询
+ * 验证 SQL 是否为纯 SELECT 查询。
+ * 省略方言时保持 MySQL，与既有调用方兼容。显式传入未知方言时拒绝，而不是退回 MySQL。
  * @param sql 用户输入的 SQL 语句
+ * @param dialect 实例 db_type；仅 mysql、postgresql、oracle、dameng 可被分类
  * @returns { valid: true } 或 { valid: false, error: string }
  */
-export function validateSqlIsSelectOnly(sql: string): ValidationResult {
-  const classification = classifySql(sql);
+export function validateSqlIsSelectOnly(sql: string, dialect: string = 'mysql'): ValidationResult {
+  const classification = classifySql(sql, dialect);
   return classification.commandType === 'read'
     ? { valid: true }
     : { valid: false, error: `仅允许单条只读 SQL（${classification.reasonCode}）` };
