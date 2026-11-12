@@ -545,6 +545,7 @@ const FilesystemEvidenceProperties = {
   inodeUsed: Type.Union([Type.Number({ minimum: 0 }), Type.Null()]),
   inodeAvailable: Type.Union([Type.Number({ minimum: 0 }), Type.Null()]),
   inodeUsagePercent: Type.Union([Type.Number({ minimum: 0 }), Type.Null()]),
+  inodeSupported: Type.Optional(Type.Boolean()),
 };
 const FilesystemEvidenceValueSchema = Type.Object(FilesystemEvidenceProperties, { additionalProperties: false });
 export const FilesystemEvidenceSchema = Type.Object(FilesystemEvidenceProperties, {
@@ -665,6 +666,7 @@ export const InstanceHostEvidenceResponseSchema = Type.Object({
   hosts: Type.Array(Type.Object({
     server: InstanceHostSchema,
     evidence: Type.Union([LinuxHostEvidenceSchema, Type.Null()]),
+    diagnostics: Type.Optional(ServerDiagnosticsSchema),
   }, { additionalProperties: false })),
   gaps: Type.Array(DiagnosticGapSchema),
 }, { $id: 'InstanceHostEvidenceResponse', additionalProperties: false });
