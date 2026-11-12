@@ -60,7 +60,7 @@ export interface DecodedRow {
 }
 export class AdapterError extends Error {
   constructor(readonly code: 'permission_denied' | 'timeout' | 'connection_error' | 'parse_error',
-    readonly evidenceCode?: 'HOST_INTERFACE_LIFECYCLE_UNAVAILABLE' | 'MYSQL_COUNTER_LIFECYCLE_UNAVAILABLE') { super(code); }
+    readonly evidenceCode?: 'HOST_INTERFACE_LIFECYCLE_UNAVAILABLE' | 'MYSQL_COUNTER_LIFECYCLE_UNAVAILABLE' | 'SNMP_INTERFACE_CAPACITY_EXCEEDED') { super(code); }
 }
 export function classifyError(error: unknown): AdapterError['code'] {
   if (error instanceof AdapterError) return error.code;

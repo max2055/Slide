@@ -324,6 +324,16 @@ const serve = (query: unknown, status: unknown, attempts: unknown) => authFetch.
   return { ok: false, status: 404 };
 });
 const cell = (el: SemanticMetrics, index: number) => el.shadowRoot!.querySelectorAll('.latest-cell')[index];
+it('MAX-397 explains SNMP capacity failures and how to adjust both budgets', async () => {
+  serve(withBuckets([bucketAt(0)]), statusPayload(), [attemptAt({ status: 'failed', error: 'parse_error', evidence_code: 'SNMP_INTERFACE_CAPACITY_EXCEEDED' })]);
+  const el = await mount();
+  const text = el.shadowRoot!.textContent!;
+  expect(text).toContain('接口数量超过采集容量');
+  expect(text).toContain('max_rows');
+  expect(text).toContain('max_series_per_resource');
+  expect(text).toContain('100 行');
+});
+
 it('shows collection state, the last attempt, both formal success times and the window value together', async () => {
   const data = withBuckets([bucketAt(0), bucketAt(1)]);
   Object.assign(data.metrics[0].series[0].buckets[1], { freshness: 'fresh', observed_at: '2026-10-14T01:03:03.000Z',
