@@ -27,9 +27,18 @@ export interface DatabaseLog {
   created_at: Date;
 }
 
+interface PostgreSQLLogStats {
+  xact_rollback: number;
+  deadlocks: number;
+  temp_files: number;
+  blk_read_time: number;
+  blk_write_time: number;
+  stats_reset: string | null;
+}
+
 class DatabaseLogService {
   private lastCollectTime = new Map<number, Date>();
-  private pgLastStats = new Map<number, Record<string, any>>();
+  private pgLastStats = new Map<number, Map<string, PostgreSQLLogStats>>();
 
   /**
    * 获取系统数据库连接池
@@ -171,18 +180,18 @@ class DatabaseLogService {
       return;
     }
 
-    const lastTime = this.lastCollectTime.get(instance.id);
-    const isFirstCollection = !lastTime;
+    const previousStats = this.pgLastStats.get(instance.id);
 
     try {
       const result = await conn.pgClient.query(`
         SELECT datname, xact_commit, xact_rollback, deadlocks,
-               temp_files, temp_bytes, blk_read_time, blk_write_time
+               temp_files, temp_bytes, blk_read_time, blk_write_time, stats_reset
         FROM pg_stat_database
         WHERE datname NOT IN ('template0', 'template1')
       `);
 
       const newLogs: DatabaseLog[] = [];
+      const statsCache = new Map<string, PostgreSQLLogStats>();
 
       for (const row of result.rows) {
         const rollbacks = Number(row.xact_rollback) || 0;
@@ -191,9 +200,27 @@ class DatabaseLogService {
         const blkReadTime = Number(row.blk_read_time) || 0;
         const blkWriteTime = Number(row.blk_write_time) || 0;
 
+        const currentStats: PostgreSQLLogStats = {
+          xact_rollback: rollbacks,
+          deadlocks,
+          temp_files: tempFiles,
+          blk_read_time: blkReadTime,
+          blk_write_time: blkWriteTime,
+          stats_reset: row.stats_reset instanceof Date ? row.stats_reset.toISOString() : row.stats_reset ?? null,
+        };
+        statsCache.set(row.datname, currentStats);
+        const previous = previousStats?.get(row.datname);
+        // 新数据库、统计重置或任一计数回退：只建立新基线，不比较不同统计周期。
+        if (!previous || previous.stats_reset !== currentStats.stats_reset ||
+            rollbacks < previous.xact_rollback || deadlocks < previous.deadlocks ||
+            tempFiles < previous.temp_files || blkReadTime < previous.blk_read_time ||
+            blkWriteTime < previous.blk_write_time) {
+          continue;
+        }
+
         // 事务回滚异常
-        if (rollbacks > 0 && !isFirstCollection) {
-          const lastRollbacks = lastTime ? this.pgLastStats.get(instance.id)?.[row.datname]?.xact_rollback || 0 : 0;
+        if (rollbacks > 0) {
+          const lastRollbacks = previous.xact_rollback;
           const delta = rollbacks - Number(lastRollbacks);
           if (delta > 10) {
             const msg = `[${row.datname}] 事务回滚异常增多：+${delta} 次`;
@@ -213,8 +240,8 @@ class DatabaseLogService {
         }
 
         // 死锁检测
-        if (deadlocks > 0 && !isFirstCollection) {
-          const lastDeadlocks = lastTime ? this.pgLastStats.get(instance.id)?.[row.datname]?.deadlocks || 0 : 0;
+        if (deadlocks > 0) {
+          const lastDeadlocks = previous.deadlocks;
           const delta = deadlocks - Number(lastDeadlocks);
           if (delta > 0) {
             const msg = `[${row.datname}] 检测到死锁：+${delta}`;
@@ -234,8 +261,8 @@ class DatabaseLogService {
         }
 
         // 临时文件异常
-        if (tempFiles > 100 && !isFirstCollection) {
-          const lastTempFiles = lastTime ? this.pgLastStats.get(instance.id)?.[row.datname]?.temp_files || 0 : 0;
+        if (tempFiles > 100) {
+          const lastTempFiles = previous.temp_files;
           const delta = tempFiles - Number(lastTempFiles);
           if (delta > 10) {
             const msg = `[${row.datname}] 临时文件使用异常：+${delta} 个`;
@@ -255,8 +282,8 @@ class DatabaseLogService {
         }
 
         // I/O 延迟升高
-        if ((blkReadTime > 1000 || blkWriteTime > 1000) && !isFirstCollection) {
-          const lastBlkRead = lastTime ? this.pgLastStats.get(instance.id)?.[row.datname]?.blk_read_time || 0 : 0;
+        if (blkReadTime > 1000 || blkWriteTime > 1000) {
+          const lastBlkRead = previous.blk_read_time;
           const deltaRead = blkReadTime - Number(lastBlkRead);
           if (deltaRead > 500) {
             const msg = `[${row.datname}] I/O 延迟升高：读 ${blkReadTime}ms`;
@@ -276,24 +303,23 @@ class DatabaseLogService {
         }
       }
 
-      // 更新缓存统计
-      const statsCache: Record<string, any> = {};
-      for (const row of result.rows) {
-        statsCache[row.datname] = {
-          xact_rollback: row.xact_rollback,
-          deadlocks: row.deadlocks,
-          temp_files: row.temp_files,
-          blk_read_time: row.blk_read_time,
-        };
-      }
-      this.pgLastStats.set(instance.id, statsCache);
-
-      // 存储日志
+      // 单条批量写入保证这一轮信号全部成功或全部失败；失败时保留旧基线。
       if (newLogs.length > 0) {
-        for (const log of newLogs) {
-          await this.insertLog(log);
-        }
-        this.lastCollectTime.set(instance.id, new Date());
+        const pool = this.getPool();
+        if (!pool) throw new Error('系统数据库未连接');
+        await pool.execute(
+          `INSERT INTO database_logs
+           (instance_id, log_level, source, message, raw_content, detected_patterns, collected_at)
+           VALUES ${newLogs.map(() => '(?, ?, ?, ?, ?, ?, ?)').join(', ')}`,
+          newLogs.flatMap(log => [log.instance_id, log.log_level, log.source, log.message,
+            log.raw_content, JSON.stringify(log.detected_patterns), log.collected_at])
+        );
+      }
+      // 无异常的成功采集也推进时间与计数基线。
+      this.pgLastStats.set(instance.id, statsCache);
+      this.lastCollectTime.set(instance.id, new Date());
+
+      if (newLogs.length > 0) {
         console.log(`[日志] [${instance.name}] 采集 ${newLogs.length} 条 PostgreSQL 异常信号`);
 
         // 触发 AI 分析（fire-and-forget）
