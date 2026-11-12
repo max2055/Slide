@@ -37,7 +37,7 @@ export async function startFeedbackFixture(port: number) {
     await rows("INSERT INTO roles (id,name) VALUES (101,'t11-readonly')");
     await rows("INSERT INTO role_permissions (role_id,permission_id) SELECT 101,id FROM permissions WHERE code IN ('chat:view','instance:view','metric:view','alert:view')");
     await rows('INSERT INTO user_roles (user_id,role_id) VALUES (101,101),(102,101),(103,101)');
-    await rows("INSERT INTO database_instances (id,name,host,port,username,password_encrypted) VALUES (101,'fixture','fixture.invalid',3306,'fixture','unused'),(102,'related','fixture.invalid',3306,'fixture','unused')");
+    await rows("INSERT INTO database_instances (id,name,host,port,database_name,username,password_encrypted) VALUES (101,'fixture','fixture.invalid',3306,'feedback-101','fixture','unused'),(102,'related','fixture.invalid',3306,'feedback-102','fixture','unused')");
     await rows("INSERT INTO instance_permissions (user_id,instance_id,access_level) VALUES (101,101,'read-only'),(101,102,'read-only'),(102,101,'read-only'),(102,102,'read-only'),(103,101,'read-only'),(103,102,'read-only')");
     const contexts = new ActorContextService(() => pool as never);
     const owner = await contexts.loadActiveActor(101), viewer = await contexts.loadActiveActor(102), operator = await contexts.loadActiveActor(103);

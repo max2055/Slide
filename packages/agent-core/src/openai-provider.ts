@@ -241,6 +241,7 @@ export class OpenAIProvider implements LLMProvider {
         // ── <think> tag stripping for models that embed reasoning in content ──
         // Accumulate into a buffer so we can detect partial tags across chunks.
         thinkTagBuffer += deltaContent;
+        if (!inThinkTag) deltaContent = thinkTagBuffer;
 
         if (inThinkTag) {
           const closeIdx = thinkTagBuffer.search(THINK_CLOSE);
@@ -253,7 +254,6 @@ export class OpenAIProvider implements LLMProvider {
             inThinkTag = false;
             // « fall through » — process any remaining content after </think>
             deltaContent = thinkTagBuffer;
-            thinkTagBuffer = "";
           } else {
             // Still inside think tag, no close yet — buffer more
             deltaContent = "";
@@ -313,10 +313,15 @@ export class OpenAIProvider implements LLMProvider {
         }
       }
 
-      // Flush any trailing think tag content as reasoning
-      if (thinkTagBuffer.trim()) {
-        reasoningContent += thinkTagBuffer;
-        await callbacks.onThinkingDelta?.(thinkTagBuffer);
+      // An unfinished opening tag outside reasoning is ordinary answer text.
+      if (thinkTagBuffer) {
+        if (inThinkTag) {
+          reasoningContent += thinkTagBuffer;
+          await callbacks.onThinkingDelta?.(thinkTagBuffer);
+        } else {
+          content += thinkTagBuffer;
+          await callbacks.onContentDelta(thinkTagBuffer);
+        }
       }
 
       const parsedToolCalls = Object.values(toolCalls).map((tc) => ({

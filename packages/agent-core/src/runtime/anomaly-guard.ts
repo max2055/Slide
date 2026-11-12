@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { progressValue, rememberEvidence } from './progress-evidence.js';
 import { detectTextRepetition, normalizeText, repetitionRequested, structuredText } from './text-repetition.js';
 
 /** Current-run evidence only. New tool evidence or a user injection advances the epoch. */
@@ -7,8 +8,8 @@ export class AnomalyGuard {
   private epoch = 0;
   progress(results: unknown[]): number {
     for (const result of results) {
-      const hash = createHash("sha256").update((JSON.stringify(result) ?? '').slice(0, 100_000)).digest("hex");
-      if (!this.evidence.has(hash) && this.evidence.size < 256) { this.evidence.add(hash); this.epoch++; }
+      const hash = createHash('sha256').update(progressValue(result)).digest('hex');
+      if (rememberEvidence(this.evidence, hash)) this.epoch++;
     }
     return this.epoch;
   }
