@@ -687,6 +687,8 @@ CREATE TABLE IF NOT EXISTS `database_logs` (
   `raw_content` TEXT COMMENT '原始日志内容',
   `detected_patterns` JSON DEFAULT NULL COMMENT '检测到的错误模式: [{pattern, severity, message}]',
   `collected_at` DATETIME NOT NULL COMMENT '日志在原数据库中的时间',
+  `source_position` DECIMAL(20,6) DEFAULT NULL COMMENT 'MySQL 源日志 UTC epoch 微秒水位；历史及其他来源为空',
+  UNIQUE KEY `uq_database_log_source_position` (`instance_id`, `source`, `source_position`),
   `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),
   INDEX `idx_instance_id` (`instance_id`),
