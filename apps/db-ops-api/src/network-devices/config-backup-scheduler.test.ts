@@ -24,6 +24,40 @@ function fixture() {
 afterEach(() => vi.useRealTimers());
 
 describe('daily configuration backups', () => {
+  it('MAX-604 retries only result persistence after a transient failure', async () => {
+    const f = fixture();
+    vi.mocked(f.store.finish).mockRejectedValueOnce(new Error('temporary SQL failure'));
+    const scheduler = f.create();
+    await scheduler.tick();
+    await f.create().tick();
+    expect(f.collect).toHaveBeenCalledOnce();
+    expect(f.store.finish).toHaveBeenCalledTimes(2);
+    expect(f.store.finish).toHaveBeenLastCalledWith(7, '2026-09-14', null);
+  });
+
+  it('MAX-604 retains known outcomes across ticks when the retry budget is exhausted', async () => {
+    const f = fixture();
+    vi.mocked(f.store.finish).mockRejectedValueOnce(new Error('temporary SQL failure'))
+      .mockRejectedValueOnce(new Error('temporary SQL failure')).mockRejectedValueOnce(new Error('temporary SQL failure'));
+    f.setTime('2026-09-14T15:30:00Z');
+    const scheduler = f.create();
+    await scheduler.tick();
+    expect(f.store.finish).toHaveBeenCalledTimes(3);
+    f.setTime('2026-09-14T15:50:00Z');
+    await scheduler.tick();
+    expect(f.collect).toHaveBeenCalledOnce();
+    expect(f.store.finish).toHaveBeenCalledTimes(4);
+  });
+
+  it('MAX-606 preserves the saved-but-unaudited outcome without same-day SSH replay', async () => {
+    const f = fixture();
+    f.collect.mockRejectedValueOnce(new ConfigBackupError('CONFIG_BACKUP_SAVED_AUDIT_FAILED'));
+    await f.create().tick();
+    await f.create().tick();
+    expect(f.store.finish).toHaveBeenCalledWith(7, '2026-09-14', 'CONFIG_BACKUP_SAVED_AUDIT_FAILED');
+    expect(f.collect).toHaveBeenCalledOnce();
+  });
+
   it('uses Beijing dates across UTC day/year boundaries', () => {
     expect(beijingDateTime(new Date('2026-12-31T16:00:00Z'))).toEqual({ date: '2027-01-01', time: '00:00' });
   });

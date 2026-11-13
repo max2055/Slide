@@ -74,13 +74,22 @@ export class MysqlBackupScheduleStore implements BackupScheduleStore {
     return result.affectedRows === 1;
   }
   async finish(deviceId: number, date: string, errorCode: string | null): Promise<void> {
-    await this.pool().execute(`UPDATE network_config_backup_runs SET status = ?, error_code = ?, finished_at = CURRENT_TIMESTAMP
-      WHERE device_id = ? AND scheduled_date = ? AND status = 'running'`, [errorCode ? 'failed' : 'success', errorCode, deviceId, date]);
+    // finished_at marks a durably known result while status is still running.
+    // A late known outcome can also correct an interruption inferred by another worker.
+    // Both statements are idempotent: a lost response never causes another SSH operation.
+    await this.pool().execute(`UPDATE network_config_backup_runs SET status = 'running', error_code = ?, finished_at = CURRENT_TIMESTAMP
+      WHERE device_id = ? AND scheduled_date = ?
+      AND ((status = 'running' AND finished_at IS NULL) OR (status = 'failed' AND error_code = 'CONFIG_BACKUP_INTERRUPTED'))`, [errorCode, deviceId, date]);
+    await this.pool().execute(`UPDATE network_config_backup_runs SET status = IF(error_code IS NULL, 'success', 'failed')
+      WHERE device_id = ? AND scheduled_date = ? AND status = 'running' AND finished_at IS NOT NULL`, [deviceId, date]);
   }
   async expire(): Promise<void> {
-    // Do not retry an uncertain SSH operation after process termination.
+    // Recover known outcomes immediately after restart, before expiring uncertain captures.
+    await this.pool().execute(`UPDATE network_config_backup_runs SET status = IF(error_code IS NULL, 'success', 'failed')
+      WHERE status = 'running' AND finished_at IS NOT NULL`);
+    // No durable result means the SSH outcome is uncertain. Do not recollect.
     await this.pool().execute(`UPDATE network_config_backup_runs SET status = 'failed', error_code = 'CONFIG_BACKUP_INTERRUPTED', finished_at = CURRENT_TIMESTAMP
-      WHERE status = 'running' AND started_at < DATE_SUB(CURRENT_TIMESTAMP, INTERVAL 10 MINUTE)`);
+      WHERE status = 'running' AND finished_at IS NULL AND started_at < DATE_SUB(CURRENT_TIMESTAMP, INTERVAL 10 MINUTE)`);
   }
 }
 
@@ -88,6 +97,7 @@ export class ConfigBackupScheduler {
   private timer: ReturnType<typeof setInterval> | null = null;
   private running: Promise<void> | null = null;
   private stopped = false;
+  private readonly pending = new Map<string, { deviceId: number; date: string; errorCode: string | null }>();
   constructor(
     private readonly store: BackupScheduleStore,
     private readonly collect: (deviceId: number) => Promise<unknown>,
@@ -111,7 +121,21 @@ export class ConfigBackupScheduler {
     this.running = this.run().finally(() => { this.running = null; });
     return this.running;
   }
+  private async flushResults(): Promise<void> {
+    for (const [key, result] of this.pending) {
+      for (let attempt = 0; attempt < 3; attempt++) {
+        try {
+          await this.store.finish(result.deviceId, result.date, result.errorCode);
+          this.pending.delete(key);
+          break;
+        } catch {
+          if (attempt === 2) console.error(`[ConfigBackupScheduler] device #${result.deviceId}: CONFIG_BACKUP_RESULT_PERSIST_FAILED`);
+        }
+      }
+    }
+  }
   private async run(): Promise<void> {
+    await this.flushResults();
     await this.store.expire();
     for (const target of await this.store.targets()) {
       if (this.stopped) break;
@@ -122,7 +146,8 @@ export class ConfigBackupScheduler {
         let errorCode: string | null = null;
         try { await this.collect(target.deviceId); }
         catch (error) { errorCode = error instanceof ConfigBackupError ? error.code : 'CONFIG_BACKUP_FAILED'; }
-        await this.store.finish(target.deviceId, local.date, errorCode);
+        this.pending.set(`${target.deviceId}:${local.date}`, { deviceId: target.deviceId, date: local.date, errorCode });
+        await this.flushResults();
       } catch {
         console.error(`[ConfigBackupScheduler] device #${target.deviceId}: CONFIG_BACKUP_SCHEDULE_FAILED`);
       }
