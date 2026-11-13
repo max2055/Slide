@@ -79,6 +79,16 @@ describe.each(mysqlConfig ? ['mock', 'mysql'] : ['mock'])('Cron lock ownership (
     owner = manager.executeRun('owner');
     await vi.waitFor(() => expect(service.updateRunResult).toHaveBeenCalled());
     expect(borrowed).toBe(1);
+    if (realPool) {
+      const contender = await realPool.getConnection();
+      try {
+        const [rows] = await contender.query<any[]>('SELECT GET_LOCK(?, 0) AS acquired', [`slide:cron:${jobId}`]);
+        expect(rows[0].acquired).toBe(0);
+      } finally {
+        await contender.query('SELECT RELEASE_LOCK(?)', [`slide:cron:${jobId}`]);
+        contender.release();
+      }
+    }
   }
 
   it('returns every busy connection before the timed-out owner settles, then permits rescheduling', async () => {
