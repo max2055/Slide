@@ -34,7 +34,7 @@ it('summary accepts exactly one JSON code fence but rejects prose around it', ()
 
 import { autoCompact } from '../runtime/auto-compact.js';
 import { ContextManager } from '../runtime/context-manager.js';
-import { RecoveryPolicy } from '../runtime/recovery-policy.js';
+import { RecoveryPolicy, RuntimeError } from '../runtime/recovery-policy.js';
 import { ToolRegistry } from '../tool-registry.js';
 import { AgentRunner, NoopHook } from '../runner.js';
 import type { AgentRunSpec, LLMProvider, LLMResponse, Message } from '../types.js';
@@ -156,6 +156,71 @@ it.each(['invalid', 'save', 'cancel', 'source'])('does not publish a summary on 
   expect(f.manager.summary).toBeUndefined();
   expect(f.tracker.snapshot().successfulCompacts).toBe(0);
   expect(f.recovery.snapshot().providerAttempts).toBe(1);
+  expect(f.recovery.snapshot()).toMatchObject({ total: mode === 'cancel' ? 0 : 1, counts: { context: mode === 'cancel' ? 0 : 1 } });
+});
+// GitHub #724: interruption is not a failed summary, at any async boundary.
+it.each(['USER_CANCELLED', 'RUN_DEADLINE'] as const)('%s preserves recovery allowance at every compaction boundary', async code => {
+  for (const stage of ['reservation', 'provider', 'response', 'summary']) {
+    const controller = new AbortController();
+    const f = fixture({ signal: controller.signal });
+    let saves = 0;
+    const abort = () => controller.abort(new RuntimeError(code, code));
+    f.provider.chatStream = async () => { if (stage === 'provider') abort(); return reply(); };
+    await expect(autoCompact(f.manager, f.raw, f.provider, f.recovery, f.tracker, async record => {
+      saves++;
+      if ((stage === 'reservation' && saves === 1) || (stage === 'response' && saves === 2) || (stage === 'summary' && record)) abort();
+    })).rejects.toMatchObject({ code });
+    expect(f.recovery.snapshot()).toMatchObject({ total: 0, counts: { context: 0 }, providerAttempts: 1 });
+    // Unknown request accounting remains conservative even on cancellation.
+    expect(f.recovery.state.unknownRequests).toBe(stage === 'reservation' || stage === 'provider' ? 1 : 0);
+    expect(f.manager.summary).toBeUndefined();
+    expect(f.tracker.snapshot().successfulCompacts).toBe(0);
+  }
+});
+it.each(['USER_CANCELLED', 'RUN_DEADLINE'] as const)('%s checkpoints survive four interruptions and still recover a real overflow', async code => {
+  const f = fixture({ contextPolicy: { watermark: 0.6 } });
+  let checkpoint: Record<string, unknown> = {};
+  f.spec.checkpointCallback = async p => { checkpoint = structuredClone(p); };
+  let summaries = 0;
+  for (let i = 0; i < 4; i++) {
+    const controller = new AbortController();
+    f.provider.chatStream = async () => { summaries++; controller.abort(new RuntimeError(code, code)); return reply(); };
+    const result = await new AgentRunner(f.provider).run({ ...f.spec, signal: controller.signal, ...(i ? { resumeCheckpoint: checkpoint } : {}) });
+    expect(result.runtimeError?.code).toBe(code);
+    expect(result.runtimeState).toMatchObject({ total: 0, counts: { context: 0 }, providerAttempts: i + 1 });
+    expect(checkpoint.runtime_state_v1).toEqual(result.runtimeState);
+    expect(new RecoveryPolicy(JSON.parse(JSON.stringify(checkpoint.runtime_state_v1))).state.counts.context).toBe(0);
+    expect(checkpoint.context_summary_v1).toBeUndefined();
+  }
+  f.provider.chatStream = async () => { summaries++; return reply(); };
+  let ordinary = 0;
+  f.provider.chat = async () => ++ordinary === 1 ? { ...reply(''), finishReason: 'error', error: 'context window exceeded' } : reply('recovered');
+  const result = await new AgentRunner(f.provider).run({ ...f.spec, contextPolicy: { ...f.spec.contextPolicy, watermark: 0.99 }, resumeCheckpoint: checkpoint });
+  expect(result.stopReason).toBe('completed');
+  expect(summaries).toBe(5); expect(ordinary).toBe(2);
+  expect(result.runtimeState).toMatchObject({ total: 0, counts: { context: 0 } });
+  expect(checkpoint.context_summary_v1).toBeDefined();
+});
+it.each(['invalid', 'save'] as const)('persists the consumed allowance after a genuine %s failure', async mode => {
+  const f = fixture({ contextPolicy: { watermark: 0.6 } });
+  let checkpoint: Record<string, unknown> = {};
+  f.provider.chatStream = async () => reply(mode === 'invalid' ? '{}' : JSON.stringify(valid));
+  f.spec.checkpointCallback = async p => {
+    if (mode === 'save' && p.context_summary_v1) throw new Error('storage unavailable');
+    checkpoint = structuredClone(p);
+  };
+  const result = await new AgentRunner(f.provider).run(f.spec);
+  expect(result.stopReason).toBe('error');
+  expect(result.runtimeState).toMatchObject({ total: 1, counts: { context: 1 } });
+  expect(checkpoint.runtime_state_v1).toEqual(result.runtimeState);
+});
+it('still charges a storage failure when cancellation happens concurrently', async () => {
+  const controller = new AbortController();
+  const f = fixture({ signal: controller.signal });
+  await expect(autoCompact(f.manager, f.raw, f.provider, f.recovery, f.tracker, async record => {
+    if (record) { controller.abort(); throw new Error('storage unavailable'); }
+  })).rejects.toThrow('storage unavailable');
+  expect(f.recovery.snapshot()).toMatchObject({ total: 1, counts: { context: 1 } });
 });
 it('new user suffix arriving during save survives the committed projection', async () => {
   const f = fixture();
@@ -187,6 +252,7 @@ it('summary request timeout observes the actual pending request and cannot dispa
   const result = await new AgentRunner(f.provider).run(f.spec);
   expect(result.runtimeError?.code).toBe('MODEL_REQUEST_TIMEOUT');
   expect(result.stopReason).toBe('timed_out');
+  expect(result.runtimeState).toMatchObject({ total: 1, counts: { context: 1 } });
   expect(normal).toBe(0); expect(result.runtimeState?.unknownRequests).toBe(1);
   finish(reply()); await observed;
 });

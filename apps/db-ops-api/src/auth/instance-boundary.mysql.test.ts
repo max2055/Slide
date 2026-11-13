@@ -8,7 +8,7 @@ import { splitSqlStatements } from '../migrations/runner.js';
 import { canReadResource } from '../resources/resource-service.js';
 import type { ResourceRef } from '../resources/types.js';
 import { ActorContextService, applyActorSecuritySchema, signAccessToken, type ActorContext } from './actor-context.js';
-import { getAccessibleInstanceIds, hasInstanceAccess, requireInstanceAccess } from './require-instance-access.js';
+import { getAccessibleInstanceIds, hasInstanceAccess, requireInstanceAccess, requireUnrestrictedInstanceAccess } from './require-instance-access.js';
 import { requirePermission } from './require-permission.js';
 
 const port = Number(process.env.AUTH_TEST_MYSQL_PORT);
@@ -49,13 +49,13 @@ describe.skipIf(!port)('bounded actors with real JWT and isolated MySQL grants',
     } finally { connection.release(); }
     await applyActorSecuritySchema(pool);
     await pool.execute("INSERT INTO users (id, username, password_hash) VALUES (7, 'bounded-worker', 'not-a-login-hash')");
-    await pool.execute("INSERT INTO roles (id, name) VALUES (1, 'diagnostic-reader'), (2, 'admin')");
-    for (const [id, code] of [[1, 'instance:view'], [2, 'servers:view'], [3, 'network_devices:view'], [4, '*']] as const) {
+    await pool.execute("INSERT INTO roles (id, name) VALUES (1, 'diagnostic-reader'), (2, 'admin'), (3, 'global-instance-manager')");
+    for (const [id, code] of [[1, 'instance:view'], [2, 'servers:view'], [3, 'network_devices:view'], [4, '*'], [5, 'instance:*']] as const) {
       const [resource, action] = code.split(':');
       await pool.execute('INSERT INTO permissions (id, code, name, resource, action) VALUES (?, ?, ?, ?, ?)',
         [id, code, code, resource, action ?? '*']);
     }
-    await pool.execute('INSERT INTO role_permissions (role_id, permission_id) VALUES (1, 1), (1, 2), (1, 3), (2, 4)');
+    await pool.execute('INSERT INTO role_permissions (role_id, permission_id) VALUES (1, 1), (1, 2), (1, 3), (2, 4), (3, 5)');
     for (const id of [1, 2]) {
       await pool.execute(`INSERT INTO database_instances
         (id, name, host, port, username, password_encrypted) VALUES (?, ?, 'fixture.invalid', 3306, 'fixture', 'unused')`, [id, `fixture-${id}`]);
@@ -77,6 +77,7 @@ describe.skipIf(!port)('bounded actors with real JWT and isolated MySQL grants',
       async (request) => ({ id: Number((request.params as { id: string }).id), content: 'protected fixture' }));
     app.post('/fixtures/instances/:id', { preHandler: [requirePermission('instance:view'), requireInstanceAccess('read-write')] },
       async () => ({ accepted: true }));
+    app.post('/fixtures/global', { preHandler: requireUnrestrictedInstanceAccess() }, async () => ({ accepted: true }));
     await app.ready();
   });
   beforeEach(async () => {
@@ -127,18 +128,54 @@ describe.skipIf(!port)('bounded actors with real JWT and isolated MySQL grants',
     expect(reply.statusCode).toBe(403);
   });
 
-  it('later admin promotion cannot erase a retained ceiling or admit an instance without a live grant', async () => {
+  it('later admin promotion allows boundary instances without explicit grants while retaining the ceiling', async () => {
     const retained = await bounded();
     await pool.execute('INSERT INTO user_roles (user_id, role_id) VALUES (7, 2)');
     await pool.execute('DELETE FROM instance_permissions WHERE user_id = 7 AND instance_id = 1');
     const current = await contexts.revalidateActor(retained);
     expect(current.permissions).toContain('*');
     expect(current.resourceBoundary).toEqual(boundary);
-    expect(getAccessibleInstanceIds(current)).toEqual([]);
-    expect(hasInstanceAccess(current, 1)).toBe(false);
+    expect(getAccessibleInstanceIds(current)).toEqual([1]);
+    expect(hasInstanceAccess(current, 1, 'admin')).toBe(true);
     expect(hasInstanceAccess(current, 2)).toBe(false);
+    expect((await app.inject({ url: '/fixtures/instances', headers })).json()).toEqual({ items: [{ id: 1, name: 'fixture-1' }], count: 1 });
+    expect((await app.inject({ url: '/fixtures/instances/1', headers })).statusCode).toBe(200);
+    expect((await app.inject({ method: 'POST', url: '/fixtures/instances/1', headers })).statusCode).toBe(200);
     expect((await app.inject({ url: '/fixtures/instances/2', headers })).statusCode).toBe(403);
+    expect((await app.inject({ method: 'POST', url: '/fixtures/global', headers })).statusCode).toBe(403);
   });
+
+  it.each([[3, 'role-delete'], [3, 'role-expire'], [3, 'permission-delete'], [2, 'role-delete'], [2, 'role-expire']] as const)(
+    'same JWT and retained actor lose global role %s access immediately after %s', async (roleId, mode) => {
+      await pool.execute('INSERT INTO user_roles (user_id, role_id) VALUES (7, ?)', [roleId]);
+      await pool.execute('DELETE FROM instance_permissions WHERE user_id = 7');
+      const retained = await bounded();
+      expect(getAccessibleInstanceIds(retained)).toEqual([1]);
+      expect((await app.inject({ url: '/fixtures/instances/1', headers })).statusCode).toBe(200);
+      expect((await app.inject({ url: '/fixtures/instances/2', headers })).statusCode).toBe(403);
+      if (mode === 'role-delete') await pool.execute('DELETE FROM user_roles WHERE user_id = 7 AND role_id = ?', [roleId]);
+      else if (mode === 'role-expire') await pool.execute('UPDATE user_roles SET grant_expiry = DATE_SUB(NOW(), INTERVAL 1 SECOND) WHERE user_id = 7 AND role_id = ?', [roleId]);
+      else await pool.execute('DELETE FROM role_permissions WHERE role_id = 3 AND permission_id = 5');
+      try {
+        const current = await contexts.revalidateActor(retained);
+        expect(current.resourceBoundary).toEqual(boundary);
+        expect(current.permissions).not.toContain('instance:*');
+        expect(current.permissions).not.toContain('*');
+        expect(current.roles).not.toContain('admin');
+        expect(getAccessibleInstanceIds(current)).toEqual([]);
+        expect(hasInstanceAccess(current, 1)).toBe(false);
+        expect(hasInstanceAccess(current, 2)).toBe(false);
+        const list = await app.inject({ url: '/fixtures/instances', headers });
+        expect(list.statusCode).toBe(200);
+        expect(list.json()).toEqual({ items: [], count: 0 });
+        expect((await app.inject({ url: '/fixtures/instances/1', headers })).statusCode).toBe(403);
+        expect((await app.inject({ url: '/fixtures/instances/2', headers })).statusCode).toBe(403);
+        expect((await app.inject({ method: 'POST', url: '/fixtures/global', headers })).statusCode).toBe(403);
+      } finally {
+        if (mode === 'permission-delete') await pool.execute('INSERT INTO role_permissions (role_id, permission_id) VALUES (3, 5)');
+      }
+    },
+  );
 
   it('requires every instance/server/network scope and rejects each excluded scope after refresh', async () => {
     const current = await contexts.revalidateActor(await bounded());
