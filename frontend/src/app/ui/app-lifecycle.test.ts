@@ -39,3 +39,17 @@ it('disconnect invalidates pending connects and releases listeners, client and o
   expect(observerDisconnect).toHaveBeenCalledOnce();
   expect(mocks.detach).toHaveBeenCalledWith(host);
 });
+
+it('MAX-654: a late preferences response cannot update a disconnected generation', async () => {
+  let finish!: (value: any) => void;
+  let started!: () => void;
+  const ready = new Promise<void>(resolve => { started = resolve; });
+  mocks.sync.mockImplementation(() => { started(); return new Promise(resolve => { finish = resolve; }); });
+  const host = { settings: { theme: 'claw' }, connectGeneration: 1 } as any;
+  const pending = syncUserPreferences(host);
+  await ready;
+  host.connectGeneration++;
+  finish({ theme: 'knot' });
+  await pending;
+  expect(mocks.apply).not.toHaveBeenCalled();
+});

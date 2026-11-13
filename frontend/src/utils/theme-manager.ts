@@ -28,20 +28,22 @@ export function prefersDarkScheme(): boolean {
  * 解析当前主题模式
  */
 export function getThemeMode(): ThemeMode {
-  const stored = localStorage.getItem(THEME_STORAGE_KEY) as ThemeMode | null;
+  let stored: string | null = null;
+  try { stored = localStorage.getItem(THEME_STORAGE_KEY); } catch { return 'light'; }
   if (stored && ['system', 'light', 'dark'].includes(stored)) {
-    return stored;
+    return stored as ThemeMode;
   }
-  return 'system';
+  return 'light';
 }
 
 /**
  * 解析当前圆度设置
  */
 export function getRoundness(): Roundness {
-  const stored = localStorage.getItem(ROUNDNESS_STORAGE_KEY) as Roundness | null;
+  let stored: string | null = null;
+  try { stored = localStorage.getItem(ROUNDNESS_STORAGE_KEY); } catch { return 'default'; }
   if (stored && ['none', 'slight', 'default', 'round', 'full'].includes(stored)) {
-    return stored;
+    return stored as Roundness;
   }
   return 'default';
 }
@@ -50,7 +52,7 @@ export function getRoundness(): Roundness {
  * 设置主题模式
  */
 export function setThemeMode(mode: ThemeMode): void {
-  localStorage.setItem(THEME_STORAGE_KEY, mode);
+  try { localStorage.setItem(THEME_STORAGE_KEY, mode); } catch { /* Persistence is best effort. */ }
   applyThemeMode(mode);
 }
 
@@ -58,7 +60,7 @@ export function setThemeMode(mode: ThemeMode): void {
  * 设置圆度
  */
 export function setRoundness(roundness: Roundness): void {
-  localStorage.setItem(ROUNDNESS_STORAGE_KEY, roundness);
+  try { localStorage.setItem(ROUNDNESS_STORAGE_KEY, roundness); } catch { /* Persistence is best effort. */ }
   applyRoundness(roundness);
 }
 

@@ -76,24 +76,26 @@ import {
 
 // Lazy-loaded view modules – deferred so the initial bundle stays small.
 // Each loader resolves once; subsequent calls return the cached module.
-type LazyState<T> = { mod: T | null; promise: Promise<T> | null };
+type LazyState<T> = { mod: T | null; pending: boolean; failed: boolean };
 
 let _pendingUpdate: (() => void) | undefined;
 
-function createLazy<T>(loader: () => Promise<T>): () => T | null {
-  const s: LazyState<T> = { mod: null, promise: null };
-  return () => {
-    if (s.mod) {
-      return s.mod;
-    }
-    if (!s.promise) {
-      s.promise = loader().then((m) => {
-        s.mod = m;
-        _pendingUpdate?.();
-        return m;
-      });
-    }
+export function createLazy<T>(loader: () => Promise<T>) {
+  const state: LazyState<T> = { mod: null, pending: false, failed: false };
+  const read = () => {
+    if (state.mod !== null || state.pending || state.failed) return state.mod;
+    state.pending = true;
+    // Also handle synchronous loader errors; failed reads stay idle until explicit retry.
+    void Promise.resolve().then(loader).then(
+      mod => { state.mod = mod; state.pending = false; _pendingUpdate?.(); },
+      () => { state.failed = true; state.pending = false; _pendingUpdate?.(); },
+    );
     return null;
+  };
+  return {
+    read,
+    get failed() { return state.failed; },
+    retry() { state.failed = false; read(); _pendingUpdate?.(); },
   };
 }
 
@@ -110,15 +112,29 @@ const heavyViewLoaders: Partial<Record<AppViewState["tab"], () => Promise<unknow
   "operations-knowledge": () => import("./views/operations-knowledge.ts"),
   "operations-actions": () => import("./views/operations-actions.ts"),
 };
-const heavyViewPromises = new Map<AppViewState["tab"], Promise<unknown>>();
+const heavyViews = new Map<AppViewState["tab"], ReturnType<typeof createLazy<unknown>>>();
 
-function loadHeavyView(tab: AppViewState["tab"]): void {
+function loadHeavyView(tab: AppViewState["tab"]) {
   const loader = heavyViewLoaders[tab];
-  if (loader && !heavyViewPromises.has(tab)) heavyViewPromises.set(tab, loader());
+  if (!loader) return;
+  let view = heavyViews.get(tab);
+  if (!view) { view = createLazy(loader); heavyViews.set(tab, view); }
+  return view;
 }
-function lazyRender<M>(getter: () => M | null, render: (mod: M) => unknown) {
-  const mod = getter();
-  return mod ? render(mod) : nothing;
+
+function lazyStatus(view: ReturnType<typeof createLazy<unknown>>) {
+  return view.failed
+    ? html`<div role="alert">
+        <p>页面加载失败，请重试。</p>
+        <button class="btn" @click=${() => view.retry()}>重试加载</button>
+        <button class="btn-ghost" @click=${() => window.location.reload()}>重新加载页面</button>
+      </div>`
+    : html`<p role="status">正在加载页面…</p>`;
+}
+
+function lazyRender<M>(view: ReturnType<typeof createLazy<M>>, render: (mod: M) => unknown) {
+  const mod = view.read();
+  return mod !== null ? render(mod) : lazyStatus(view);
 }
 
 const UPDATE_BANNER_DISMISS_KEY = "slide:control-ui:update-banner-dismissed:v1";
@@ -209,17 +225,19 @@ function loadPermissionsFromStorage(): Set<string> | null {
 }
 
 export function renderApp(state: AppViewState) {
-  loadHeavyView(state.tab);
   const updatableState = state as AppViewState & { requestUpdate?: () => void };
   const requestHostUpdate =
     typeof updatableState.requestUpdate === "function"
       ? () => updatableState.requestUpdate?.()
       : undefined;
   _pendingUpdate = requestHostUpdate;
+  const heavyView = loadHeavyView(state.tab);
+  const heavyModule = heavyView?.read();
 
   // Transport startup/reconnect is not an authentication failure. Keep the
   // current route mounted while a stored JWT is being authenticated.
-  const authToken = getSafeLocalStorage()?.getItem('token');
+  let authToken: string | null = null;
+  try { authToken = getSafeLocalStorage()?.getItem('token') ?? null; } catch { /* Treat inaccessible credentials as signed out. */ }
   if (shouldRenderLoginGate(state.connected, authToken)) {
     return html` ${renderLoginGate(state)} ${renderGatewayUrlConfirmation(state)} `;
   }
@@ -513,6 +531,7 @@ export function renderApp(state: AppViewState) {
         </aside>
       </${navTag}>`}
       <main class="content ${isChat ? "content--chat" : ""}">
+        ${heavyView && heavyModule === null ? lazyStatus(heavyView) : nothing}
         ${renderPermissionsError(state)}
         ${state.updateAvailable &&
         state.updateAvailable.latestVersion !== state.updateAvailable.currentVersion &&
