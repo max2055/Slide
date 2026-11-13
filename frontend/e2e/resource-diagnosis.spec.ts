@@ -420,7 +420,7 @@ for (const viewport of [{ width: 1440, height: 900 }, { width: 375, height: 812 
 }
 
 for (const viewport of [{ width: 1440, height: 900 }, { width: 1366, height: 768 }, { width: 1920, height: 1080 }]) for (const navigation of ['select', 'back']) {
-  test(`MAX-432 MAX-442 delayed receipt survives ${navigation} at ${viewport.width}`, async ({ page }) => {
+  test(`MAX-432 MAX-442 delayed receipt survives ${navigation} at ${viewport.width}`, async ({ page }, testInfo) => {
     await page.setViewportSize(viewport);
     const state = await diagnosisFixture(page); state.status = 'unknown';
     await page.route('**/api/resources', route => route.fulfill({ json: { items: [
@@ -452,6 +452,8 @@ for (const viewport of [{ width: 1440, height: 900 }, { width: 1366, height: 768
     await view.getByRole('button', { name: '刷新', exact: true }).click();
     await expect(view.locator('[data-task-status]')).toContainText('结果未知');
     expect(posts).toBe(1); expect(state.posts).toHaveLength(0);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    if (navigation === 'back') await page.screenshot({ path: testInfo.outputPath(`receipt-${viewport.width}.png`), fullPage: true });
   });
 }
 for (const status of [403, 409, 503]) {
@@ -468,7 +470,7 @@ for (const status of [403, 409, 503]) {
   }
 }
 
-test('MAX-432 MAX-442 receipt follows real SPA departure and history return', async ({ page }) => {
+test('MAX-432 MAX-442 receipt follows real SPA departure and re-entry', async ({ page }) => {
   const state = await diagnosisFixture(page); state.status = 'unknown';
   await page.goto('/resource-diagnosis?resourceType=instance&resourceId=1');
   let release!: () => void; const pending = new Promise<void>(resolve => { release = resolve; });
@@ -477,9 +479,9 @@ test('MAX-432 MAX-442 receipt follows real SPA departure and history return', as
   const view = page.locator('resource-diagnosis-page');
   await view.getByRole('button', { name: '开始只读诊断', exact: true }).click();
   await expect.poll(() => posts).toBe(1);
-  await page.evaluate(() => { history.pushState({}, '', '/dashboard'); window.dispatchEvent(new PopStateEvent('popstate')); });
+  await page.evaluate(() => window.dispatchEvent(new CustomEvent('slide-navigate', { detail: { tab: 'dashboard' } })));
   await expect(view).toHaveCount(0);
-  await page.goBack();
+  await page.evaluate(() => window.dispatchEvent(new CustomEvent('slide-navigate', { detail: { tab: 'resource-diagnosis' } })));
   await expect(view.getByRole('button', { name: '开始只读诊断', exact: true })).toBeDisabled();
   release();
   await expect(page).toHaveURL(/analysisId=42/);
