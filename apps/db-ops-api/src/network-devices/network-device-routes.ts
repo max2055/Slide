@@ -211,7 +211,7 @@ export async function registerNetworkDeviceRoutes(
 
   fastify.post('/api/network-devices', { preHandler: manage }, async (request, reply) => {
     try {
-      const check = strictBody(request.body as Record<string, unknown>, ['name', 'label', 'host', 'site', 'vendor', 'model', 'osVersion', 'os_version', 'serialNumber', 'serial_number', 'snmpPort', 'snmp_port', 'sshPort', 'ssh_port', 'collectionEnabled', 'snmpv3', 'snmpv2c', 'snmpv2', 'snmp', 'ssh'], 'POST /api/network-devices');
+      const check = strictBody(request.body as Record<string, unknown>, ['name', 'label', 'host', 'site', 'vendor', 'model', 'osVersion', 'os_version', 'serialNumber', 'serial_number', 'snmpPort', 'snmp_port', 'sshPort', 'ssh_port', 'collectionEnabled', 'version', 'snmpv3', 'snmpv2c', 'snmpv2', 'snmp', 'ssh'], 'POST /api/network-devices');
       if (check.error) return reply.code(400).send(check.error);
       await recordSshTrustRequest(Number((request as any).user?.userId), 'network_device', String((check.body as any).host), (check.body as any).ssh?.credentialType === 'key' ? (check.body as any).ssh?.sshTrustMode : undefined);
       const result = await networkDeviceDatabaseService.createDevice(check.body);
@@ -225,7 +225,7 @@ export async function registerNetworkDeviceRoutes(
     const id = routeId(request);
     if (id === null) return reply.code(400).send({ error: '资源 ID 无效' });
     try {
-      const check = strictBody(request.body as Record<string, unknown>, ['name', 'label', 'host', 'site', 'vendor', 'model', 'osVersion', 'os_version', 'serialNumber', 'serial_number', 'snmpPort', 'snmp_port', 'sshPort', 'ssh_port', 'collectionEnabled', 'snmpv3', 'snmpv2c', 'snmpv2', 'snmp', 'ssh', 'sshTrust'], 'PUT /api/network-devices/:id');
+      const check = strictBody(request.body as Record<string, unknown>, ['name', 'label', 'host', 'site', 'vendor', 'model', 'osVersion', 'os_version', 'serialNumber', 'serial_number', 'snmpPort', 'snmp_port', 'sshPort', 'ssh_port', 'collectionEnabled', 'version', 'snmpv3', 'snmpv2c', 'snmpv2', 'snmp', 'ssh', 'sshTrust'], 'PUT /api/network-devices/:id');
       if (check.error) return reply.code(400).send(check.error);
       await recordSshTrustRequest(Number((request as any).user?.userId), 'network_device', String(id), (check.body as any).sshTrust?.mode ?? ((check.body as any).ssh?.credentialType === 'key' ? (check.body as any).ssh?.sshTrustMode : undefined));
       const result = await networkDeviceDatabaseService.updateDevice(id, check.body);
