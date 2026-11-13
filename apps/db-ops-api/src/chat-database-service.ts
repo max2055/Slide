@@ -9,6 +9,7 @@ import type { ActorContext } from './auth/actor-context.js';
 import { recordMessageParts, persistedMessageParts } from './adapter/message-parts.js';
 import { investigationAuthorization, type AuthorityExecutor, type InvestigationAuthorization } from './investigations/authorization.js';
 import { InvestigationStoreError } from './investigations/store.js';
+import { assertSessionRetentionDays } from './session-retention.js';
 
 export type ChatAction =
   | 'read'
@@ -26,6 +27,13 @@ export class ChatSessionNotFoundError extends Error {
   constructor() {
     super('Chat session not found');
     this.name = 'ChatSessionNotFoundError';
+  }
+}
+
+export class ChatRetentionDeniedError extends Error {
+  constructor(readonly code: 'UNSETTLED_INTENT_RETENTION_DENIED' | 'RETENTION_AUDIT_CAPACITY_EXCEEDED' | 'INVESTIGATION_RETENTION_DENIED') {
+    super(code);
+    this.name = 'ChatRetentionDeniedError';
   }
 }
 
@@ -194,12 +202,14 @@ export class ChatDatabaseService {
     return visible;
   }
 
-  async getSessionsForMaintenance(limit: number): Promise<ChatSessionRecord[]> {
+  async getSessionsForMaintenance(limit: number, beforeId?: number): Promise<ChatSessionRecord[]> {
+    if (!Number.isSafeInteger(limit) || limit < 1) throw new TypeError('Maintenance batch size must be a positive integer');
     const [rows] = await this.getPool().query<RowDataPacket[]>(
       `SELECT cs.* FROM chat_sessions cs
-       ORDER BY cs.last_message_at DESC, cs.created_at DESC
+       ${beforeId === undefined ? '' : 'WHERE cs.id < ?'}
+       ORDER BY cs.id DESC
        LIMIT ?`,
-      [limit],
+      [...(beforeId === undefined ? [] : [beforeId]), limit],
     );
     return rows.map((row) => this.mapSessionRow(row));
   }
@@ -550,6 +560,9 @@ export class ChatDatabaseService {
           [sessionId],
         );
         if (!rows[0]) throw new ChatSessionNotFoundError();
+        const [bindings] = await connection.query<RowDataPacket[]>(
+          'SELECT id FROM investigations WHERE session_id = ?', [sessionId]);
+        if (bindings.length) throw new ChatRetentionDeniedError('INVESTIGATION_RETENTION_DENIED');
       }
 
       const [countRows] = await connection.query<RowDataPacket[]>(
@@ -563,7 +576,7 @@ export class ChatDatabaseService {
 
       const [active] = await connection.query<RowDataPacket[]>(
         "SELECT id FROM agent_runs WHERE session_id = ? AND state = 'running' LIMIT 1", [sessionId]);
-      if (active.length) throw new Error('UNSETTLED_INTENT_RETENTION_DENIED');
+      if (active.length) throw new ChatRetentionDeniedError('UNSETTLED_INTENT_RETENTION_DENIED');
       // Move the requested count boundary backwards to its complete user turn.
       const [boundaries] = await connection.query<RowDataPacket[]>(
         `SELECT MAX(id) AS boundary FROM chat_messages WHERE session_id = ? AND role = 'user' AND id <= (
@@ -575,9 +588,9 @@ export class ChatDatabaseService {
         "SELECT metadata FROM chat_sessions WHERE session_id = ?", [sessionId]);
       const metadata = typeof checkpointRows[0]?.metadata === 'string' ? JSON.parse(checkpointRows[0].metadata) : checkpointRows[0]?.metadata;
       const cp = metadata?.canonicalRuntimeCheckpoint;
-      if ((cp?.pendingToolCalls ?? cp?.pending_tool_calls ?? []).length) throw new Error('UNSETTLED_INTENT_RETENTION_DENIED');
+      if ((cp?.pendingToolCalls ?? cp?.pending_tool_calls ?? []).length) throw new ChatRetentionDeniedError('UNSETTLED_INTENT_RETENTION_DENIED');
       const prior = metadata?.canonicalRetentionBoundaries ?? [];
-      if (prior.length >= 1000) throw new Error('RETENTION_AUDIT_CAPACITY_EXCEEDED');
+      if (prior.length >= 1000) throw new ChatRetentionDeniedError('RETENTION_AUDIT_CAPACITY_EXCEEDED');
       await connection.query(
         "UPDATE chat_sessions SET metadata = JSON_SET(COALESCE(metadata, JSON_OBJECT()), '$.canonicalRetentionBoundaries', CAST(? AS JSON)) WHERE session_id = ?",
         [JSON.stringify([...prior, { beforeSequence: boundary, at: new Date().toISOString(), requestedMaxMessages: maxMessages, reason: 'explicit_message_cap' }]), sessionId]);
@@ -601,6 +614,7 @@ export class ChatDatabaseService {
   }
 
   async deleteOldSessionsForMaintenance(retentionDays: number): Promise<number> {
+    assertSessionRetentionDays(retentionDays);
     const pool = this.getPool();
     const [result] = await pool.query<ResultSetHeader>(
       `DELETE FROM chat_sessions

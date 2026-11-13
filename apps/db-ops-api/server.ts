@@ -105,6 +105,7 @@ import { registerChatRoutes } from './src/chat-routes.js';
 import { reportService } from './src/report-service.js';
 import { reportDatabaseService } from './src/report-database-service.js';
 import { reportConfigService } from './src/report-config-database-service.js';
+import { InvalidReportCronError } from './src/report-cron.js';
 import { ReportType } from './src/report-database-service.js';
 import { reportExporter } from './src/report-exporter.js';
 import { alertEngine } from './src/alert-engine.js';
@@ -134,6 +135,7 @@ import { alertEventService } from './src/alert-event-service.js';
 import { eventAggregator } from './src/event-aggregator.js';
 import { capacityPredictor } from './src/capacity-predictor.js';
 import { aiAnalysisDatabaseService } from './src/ai-analysis-database-service.js';
+import { analysisAccessSql, canReadAnalysis } from './src/analysis/analysis-access.js';
 import { aiAnalysisConfigService } from './src/ai-analysis-config-service.js';
 import { getAgentGreeting } from './src/agent-service.js';
 import { scoringConfigService } from './src/scoring-config-service.js';
@@ -190,7 +192,7 @@ import { startSessionCleanup, stopSessionCleanup } from './src/session-cleanup.j
 import { loadPredefinedSkills, skillRegistry } from './src/skills/loader.js';
 import { promptManager } from './src/prompts/prompt-manager.js';
 import { optimizePromptContent } from './src/prompts/optimize.js';
-import { serverDatabaseService } from './src/server-database-service.js';
+import { SERVER_HAS_HISTORICAL_REPORTS, SERVER_HISTORICAL_REPORT_DELETE_ERROR, serverDatabaseService } from './src/server-database-service.js';
 import { serverReportService } from './src/server-report-service.js';
 import serverCollector from './src/server-collector.js';
 import { serverDiagnosticService } from './src/server-diagnostic-service.js';
@@ -1592,6 +1594,12 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
         if (result.error === 'SERVER_HAS_INSTANCE_RELATIONS') {
           return reply.code(409).send({ error: result.error });
         }
+        if (result.error === SERVER_HAS_HISTORICAL_REPORTS) {
+          return reply.code(409).send({
+            error: SERVER_HISTORICAL_REPORT_DELETE_ERROR,
+            code: SERVER_HAS_HISTORICAL_REPORTS,
+          });
+        }
         reply.code(400).send({ error: result.error });
       }
     } catch (error: any) {
@@ -1851,7 +1859,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
   // SQL 审批
   fastify.post('/api/approval/submit', {
     config: { rateLimit: sensitiveOperationRateLimitConfig },
-    preHandler: [verifyToken, requirePermission('approval:approve')],
+    preHandler: [verifyToken, requirePermission('instance:query')],
   }, async (request, reply) => {
     try {
       const check = strictBody(request.body as Record<string, unknown>,
@@ -2588,12 +2596,8 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
       const pool = dbConnection.getPool();
       if (!pool) return reply.code(500).send({ error: '数据库未连接' });
 
-      const allowedInstanceIds = getAccessibleInstanceIds((request as any).user);
-      const scopeSql = allowedInstanceIds === null
-        ? ''
-        : allowedInstanceIds.length > 0
-          ? ` AND instance_id IN (${allowedInstanceIds.map(() => '?').join(', ')})`
-          : ' AND 1 = 0';
+      const access = analysisAccessSql((request as any).user);
+      const scopeSql = ` AND ${access.sql}`;
 
       const [rows] = await pool.execute(
         `SELECT COUNT(*) as cnt, analysis_type
@@ -2606,7 +2610,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
          FROM ai_analysis
          WHERE created_at >= CURDATE()
          ${scopeSql}`,
-        [...(allowedInstanceIds ?? []), ...(allowedInstanceIds ?? [])],
+        [...access.params, ...access.params],
       ) as any;
 
       let today_total = 0;
@@ -2854,6 +2858,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
 
         reply.send({ id: result.id, message: '创建成功' });
       } catch (error: any) {
+        if (error instanceof InvalidReportCronError) return reply.code(400).send({ error: error.message });
         reply.code(500).send({ error: error.message });
       }
     }
@@ -2924,6 +2929,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
 
         reply.send({ message: '更新成功' });
       } catch (error: any) {
+        if (error instanceof InvalidReportCronError) return reply.code(400).send({ error: error.message });
         reply.code(500).send({ error: error.message });
       }
     }
@@ -3760,8 +3766,8 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
             if (!diagnosisResult.success) {
               return reply.code(diagnosisResult.status === 'unknown' ? 409 : 500).send(diagnosisResult);
             }
-            analysisId = diagnosisResult.analysisId!;
-            break;
+            return reply.send({ id: diagnosisResult.analysisId, status: diagnosisResult.status, cached: diagnosisResult.cached,
+              session_key: `diagnosis-${diagnosisResult.analysisId}` });
 
           case 'capacity_prediction': {
             const body = request.body as any;
@@ -3800,7 +3806,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
         if (!record) {
           return reply.code(404).send({ ok: false, error: '分析记录不存在' });
         }
-        if (record.instance_id && !hasInstanceAccess((request as any).user, Number(record.instance_id), 'read-only')) {
+        if (!canReadAnalysis((request as any).user, record)) {
           return reply.code(404).send({ ok: false, error: '分析记录不存在' });
         }
         reply.send({
@@ -3828,17 +3834,23 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
     preHandler: [verifyToken, requirePermission('ai:view')],
     handler: async (request, reply) => {
       try {
-        const { instance_id, analysis_type, limit } = request.query as {
+        const { instance_id, analysis_type, target_type, server_id, network_device_id, limit } = request.query as {
           instance_id?: string;
           analysis_type?: string;
+          target_type?: string;
+          server_id?: string;
+          network_device_id?: string;
           limit?: string;
         };
         const filters: Record<string, any> = {};
         if (instance_id) filters.instance_id = parseInt(instance_id);
         if (analysis_type) filters.analysis_type = analysis_type;
+        if (target_type) filters.target_type = target_type;
+        if (server_id) filters.server_id = Number(server_id);
+        if (network_device_id) filters.network_device_id = Number(network_device_id);
         if (limit) filters.limit = parseInt(limit);
-        const records = await aiAnalysisDatabaseService.getAnalysisList(filters);
-        return { ok: true, records: filterByInstanceAccess((request as any).user, records, (record: any) => record.instance_id) };
+        const records = await aiAnalysisDatabaseService.getAnalysisList(filters, (request as any).user);
+        return { ok: true, records };
       } catch (error: any) {
         reply.code(500).send({ error: error.message });
       }
@@ -3855,7 +3867,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
         if (!analysis) {
           return reply.code(404).send({ error: '分析记录不存在' });
         }
-        if (analysis.instance_id && !hasInstanceAccess((request as any).user, Number(analysis.instance_id), 'read-only')) {
+        if (!canReadAnalysis((request as any).user, analysis)) {
           return reply.code(404).send({ error: '分析记录不存在' });
         }
         reply.send({
@@ -3890,7 +3902,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
           analysis_type,
           status: 'completed',
           limit: Number(limit),
-        });
+        }, (request as any).user);
         reply.send(analyses);
       } catch (error: any) {
         reply.code(500).send({ error: error.message });
@@ -3918,7 +3930,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
         if (!analysis) {
           return reply.code(404).send({ error: '分析记录不存在' });
         }
-        if (analysis.instance_id && !hasInstanceAccess((request as any).user, Number(analysis.instance_id), 'read-only')) {
+        if (!canReadAnalysis((request as any).user, analysis)) {
           return reply.code(404).send({ error: '分析记录不存在' });
         }
         reply.send(analysis);
@@ -3933,16 +3945,19 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
     preHandler: [verifyToken, requirePermission('ai:view')],
     handler: async (request, reply) => {
       try {
-        const { analysis_type, instance_id, status, related_id, page = '1', limit = '20' } = request.query as any;
+        const { analysis_type, target_type, instance_id, server_id, network_device_id, status, related_id, page = '1', limit = '20' } = request.query as any;
         const analyses = await aiAnalysisDatabaseService.getAnalysisList({
           analysis_type: analysis_type || undefined,
+          target_type: target_type || undefined,
           instance_id: instance_id ? Number(instance_id) : undefined,
+          server_id: server_id ? Number(server_id) : undefined,
+          network_device_id: network_device_id ? Number(network_device_id) : undefined,
           status: status || undefined,
           related_id: related_id ? Number(related_id) : undefined,
           limit: Number(limit),
           offset: (Number(page) - 1) * Number(limit),
-        });
-        reply.send(filterByInstanceAccess((request as any).user, analyses, (analysis: any) => analysis.instance_id));
+        }, (request as any).user);
+        reply.send(analyses);
       } catch (error: any) {
         reply.code(500).send({ error: error.message });
       }
@@ -4008,9 +4023,9 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
         } else if (existing.analysis_type === 'fault_diagnosis') {
           const diagnosisResult = await faultDiagnosisService.diagnoseInstance((request as any).user, faultInstanceId, existing.status === 'unknown' ? existing.id : undefined);
           if (!diagnosisResult.success) {
-            return reply.code(500).send({ error: diagnosisResult.error });
+            return reply.code(diagnosisResult.status === 'unknown' ? 409 : 500).send(diagnosisResult);
           }
-          reply.send({ id: diagnosisResult.analysisId, status: 'pending', message: '重新分析任务已提交' });
+          reply.send({ id: diagnosisResult.analysisId, status: diagnosisResult.status, cached: diagnosisResult.cached, message: diagnosisResult.cached ? '已复用完成的分析' : '重新分析任务已提交' });
         } else {
           return reply.code(400).send({ error: '不支持重新分析该类型' });
         }

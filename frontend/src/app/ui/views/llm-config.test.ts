@@ -398,3 +398,67 @@ describe('save outcome separates persistence from runtime application', () => {
     expect(confirmed(element).textContent).toContain('已应用到运行时');
   });
 });
+
+describe('provider refresh ordering (#665)', () => {
+  function pending() {
+    let resolve!: (value: any) => void;
+    let reject!: (error: Error) => void;
+    const promise = new Promise((yes, no) => { resolve = yes; reject = no; });
+    return { promise, resolve, reject };
+  }
+  beforeEach(() => { get.mockReset(); get.mockResolvedValue([]); });
+  it.each(['resolve', 'reject'])('ignores an old %s after a newer refresh and preserves scene drafts', async outcome => {
+    const el = document.createElement('llm-config-page') as any;
+    const old = pending();
+    const current = { id: 1, name: 'primary', enabled: true, is_default: true };
+    el._selectProvider(current);
+    get.mockReturnValueOnce(old.promise).mockResolvedValueOnce([current]);
+    const first = el._load();
+    await el._load(true);
+    el.sceneDrafts = { chat: { provider_id: 1, model: 'unsaved' } };
+    const draft = el.sceneDrafts;
+    if (outcome === 'resolve') old.resolve([{ ...current, enabled: false, is_default: false }]);
+    else old.reject(new Error('stale failure'));
+    await first;
+    expect(el.providers).toEqual([current]);
+    expect(el.editing).toEqual(current);
+    expect(el.form.enabled).toBe(true);
+    expect(el.form.is_default).toBe(true);
+    expect(el.sceneDrafts).toBe(draft);
+    expect(el.error).toBeNull();
+    expect(el.loading).toBe(false);
+  });
+  it('does not apply scene results from a superseded provider refresh', async () => {
+    const el = document.createElement('llm-config-page') as any;
+    const scenes = pending();
+    get.mockResolvedValueOnce([{ id: 1, name: 'old' }]).mockReturnValueOnce(scenes.promise);
+    const first = el._load();
+    await Promise.resolve();
+    get.mockResolvedValueOnce([{ id: 2, name: 'new' }]).mockResolvedValueOnce([]);
+    await el._load(true);
+    scenes.resolve([{ scene: 'chat', binding: { provider_id: 1, model: 'old' } }]);
+    await first;
+    expect(el.providers[0].id).toBe(2);
+    expect(el.editing.id).toBe(2);
+    expect(el.sceneDrafts).toEqual({});
+  });
+});
+
+describe('unsupported historical protocol (#471)', () => {
+  it('keeps the historical value visible and requires explicit migration before saving', async () => {
+    put.mockReset(); get.mockResolvedValue([]);
+    const el = document.createElement('llm-config-page') as any;
+    document.body.append(el); await el._load();
+    el._selectProvider({ id: 1, name: 'google', api_format: 'google-generative-ai', enabled: true,
+      context_window: 64000, max_tokens: 2048, default_model: 'gemini' });
+    await el.updateComplete;
+    const select = el.shadowRoot.querySelector('#api-format');
+    expect(select.value).toBe('google-generative-ai');
+    expect(select.selectedOptions[0].disabled).toBe(true);
+    expect(el.shadowRoot.textContent).toContain('迁移');
+    await el._save();
+    expect(put).not.toHaveBeenCalled();
+    expect(el.form.api_format).toBe('google-generative-ai');
+    el.remove();
+  });
+});
