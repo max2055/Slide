@@ -35,7 +35,7 @@ describe.each(mysqlConfig ? ['mock', 'mysql'] : ['mock'])('Cron lock ownership (
   let executor: { execute: ReturnType<typeof vi.fn> };
   let service: any;
   let owner: Promise<void> | undefined;
-  const jobId = 275;
+  const jobId = 275_000_000 + process.pid;
 
   beforeEach(async () => {
     vi.clearAllMocks();
@@ -135,11 +135,11 @@ describe.each(mysqlConfig ? ['mock', 'mysql'] : ['mock'])('Cron lock ownership (
       import { once } from 'node:events';
       const connection = await mysql.createConnection(JSON.parse(process.env.CRON_LOCK_MYSQL_CONFIG));
       try {
-        const [rows] = await connection.query('SELECT GET_LOCK(?, 0) AS acquired', ['slide:cron:275']);
+        const [rows] = await connection.query('SELECT GET_LOCK(?, 0) AS acquired', [${JSON.stringify(`slide:cron:${jobId}`)}]);
         if (!rows[0].acquired) throw new Error('Test lock already occupied');
         process.stdout.write('ready');
         await once(process.stdin, 'data');
-        await connection.query('SELECT RELEASE_LOCK(?)', ['slide:cron:275']);
+        await connection.query('SELECT RELEASE_LOCK(?)', [${JSON.stringify(`slide:cron:${jobId}`)}]);
       } finally { await connection.end(); }
     `], { stdio: ['pipe', 'pipe', 'pipe'] }) : undefined;
     const exited = other ? once(other, 'exit') : undefined;
