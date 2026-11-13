@@ -4,6 +4,7 @@ import { TurnLoop } from './turn-loop.js';
 import type { ToolExecutor } from './tool-executor.js';
 import { resolveContextConfig } from '../model-context.js';
 import { summaryOutputAllocation } from './auto-compact.js';
+import { MAX_TIMEOUT_MS } from './timeout-policy.js';
 
 export class AgentRuntime {
   constructor(
@@ -27,15 +28,17 @@ export class AgentRuntime {
     const restored = spec.resumeCheckpoint?.runtime_state_v1;
     const previousDeadline = restored ? validateRecoverySnapshot(restored).deadlineAt : undefined;
     if (spec.runTimeoutMs === undefined && previousDeadline === undefined) return new TurnLoop(this.getProvider, this.executor).run(spec);
-    if (spec.runTimeoutMs !== undefined && (!Number.isSafeInteger(spec.runTimeoutMs) || spec.runTimeoutMs <= 0)) throw new RuntimeError('INVALID_POLICY', 'Run timeout must be a positive integer');
+    if (spec.runTimeoutMs !== undefined && (!Number.isSafeInteger(spec.runTimeoutMs) || spec.runTimeoutMs <= 0 || spec.runTimeoutMs > MAX_TIMEOUT_MS)) throw new RuntimeError('INVALID_POLICY', `Run timeout must be an integer between 1 and ${MAX_TIMEOUT_MS}ms`);
     const deadline = Math.min(previousDeadline ?? Infinity, spec.runTimeoutMs === undefined ? Infinity : Date.now() + spec.runTimeoutMs);
+    const remainingMs = deadline - Date.now();
+    if (remainingMs > MAX_TIMEOUT_MS) throw new RuntimeError('INVALID_POLICY', `Remaining run deadline must not exceed ${MAX_TIMEOUT_MS}ms`);
     const controller = new AbortController();
     const cancel = () => controller.abort(spec.signal?.reason);
     spec.signal?.addEventListener('abort', cancel, { once: true });
     if (spec.signal?.aborted) cancel();
     const expire = () => controller.abort(new RuntimeError('RUN_DEADLINE', 'Run deadline exceeded'));
     if (deadline <= Date.now()) expire();
-    const timer = setTimeout(expire, Math.max(0, deadline - Date.now()));
+    const timer = setTimeout(expire, Math.max(0, remainingMs));
     try {
       return await new TurnLoop(this.getProvider, this.executor).run({ ...spec, signal: controller.signal,
         runTimeoutMs: Math.max(1, deadline - Date.now()),

@@ -61,6 +61,7 @@ function responseBody(response: Response): Promise<Record<string, unknown>> {
 export class NetworkDevicesPage extends LitElement {
   createRenderRoot() { return this; }
 
+  @state() private searchResultCount = 0;
   @state() private devices: NetworkDevice[] = [];
   @state() private loading = true;
   @state() private error: string | null = null;
@@ -565,10 +566,10 @@ export class NetworkDevicesPage extends LitElement {
           </div>
         </div>
         <div class="resource-toolbar-meta" aria-live="polite">
-          <span class="resource-result-count">共 ${filtered.length} 台网络设备</span>
+          <span class="resource-result-count">共 ${filtered.length ? this.searchResultCount : 0} 台网络设备</span>
           ${this.activeFilterCount > 0 ? html`<span class="resource-filter-state">已启用 ${this.activeFilterCount} 项筛选</span>` : html`<span>指标由后台按计划自动采集</span>`}
         </div>
-        ${filtered.length ? html`<resource-metrics-table resourceType="network_device" .refreshVersion=${this.metricRefreshVersion} @resource-metrics-loading=${(e: CustomEvent<boolean>) => { this.metricsLoading = e.detail; }} .search=${this.search} .columns=${this.columns()} .entries=${this.rows()} @resource-metric-open=${(e: CustomEvent<{ id: number }>) => this.navigate(e.detail.id)}></resource-metrics-table>` : html`<app-empty-state title="暂无网络设备" description="添加网络设备以开始只读采集。" icon="globe"></app-empty-state>`}
+        ${filtered.length ? html`<resource-metrics-table resourceType="network_device" @resource-results-changed=${(e: CustomEvent<number>) => { this.searchResultCount = e.detail; }} .refreshVersion=${this.metricRefreshVersion} @resource-metrics-loading=${(e: CustomEvent<boolean>) => { this.metricsLoading = e.detail; }} .search=${this.search} .columns=${this.columns()} .entries=${this.rows()} @resource-metric-open=${(e: CustomEvent<{ id: number }>) => this.navigate(e.detail.id)}></resource-metrics-table>` : html`<app-empty-state title="暂无网络设备" description="添加网络设备以开始只读采集。" icon="globe"></app-empty-state>`}
       </app-card>`}
       ${this.renderDeleteDialog()}`}`;
   }

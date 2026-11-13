@@ -4,10 +4,12 @@
  * 更新已纳管数据库实例的配置信息
  */
 
+import type { ActorContext } from '../../../auth/actor-context.js';
 import { encryptData } from '../../../db-connection.js';
 import { authorizeDatabaseTarget } from '../../../security/database-target-policy.js';
-import type { AnyAgentTool } from '../../types.js';
+import type { AnyAgentTool, ToolResult } from '../../types.js';
 import { toolCatalog } from '../../catalog.js';
+import { actorCanWriteInstance } from '../../resource-resolver.js';
 import { instanceDatabaseService } from '../../../instance-database-service.js';
 import { credentialReferenceService } from '../../../security/credential-reference-service.js';
 
@@ -135,23 +137,31 @@ export const updateDbConfigTool: AnyAgentTool = {
 
     let updateSubmitted = false;
     let configCommitted = false;
+    let credentialCommitted = false;
+    let instanceId = 0;
+    let updatedFields: string[] = [];
+    let verificationStage: 'decrypt' | 'connect' | undefined;
     try {
-      // 1. 查找实例
-      const instanceId = typedArgs.instance_id ?? await findInstanceIdByName(typedArgs.instance_name!);
-
-      if (!instanceId) {
+      // 1. 显式 ID 只更新该行。名称必须在 trim 后唯一确定一个可用实例。
+      // environment 是要写入的新环境，不能用来挑选现有行。
+      const resolved = typedArgs.instance_id !== undefined
+        ? { id: typedArgs.instance_id }
+        : await resolveInstanceIdByName(typedArgs.instance_name!, context?.actor);
+      if ('error' in resolved) return resolved.error;
+      instanceId = resolved.id;
+      if (context?.instanceId !== undefined && context.instanceId !== instanceId) {
         return {
           success: false,
           status: 'error',
-          error: `未找到实例：${typedArgs.instance_name ? `"${typedArgs.instance_name}"` : `ID=${typedArgs.instance_id}`}`,
+          error: '名称已不能唯一对应原实例，未更新任何实例',
           errorCode: 'INSTANCE_NOT_FOUND',
-          next_actions: ['先调用 list_database_instances 确认实例 ID 或名称'],
+          next_actions: ['使用 instance_id 指定要更新的实例'],
         };
       }
 
       // 2. 构建更新数据
       const updateData: Record<string, unknown> = {};
-      if (typedArgs.name !== undefined) updateData.name = typedArgs.name;
+      if (typedArgs.name !== undefined) updateData.name = typedArgs.name.trim();
       if (typedArgs.host !== undefined) updateData.host = typedArgs.host;
       if (typedArgs.port !== undefined) updateData.port = typedArgs.port;
       if (typedArgs.username !== undefined) updateData.username = typedArgs.username;
@@ -204,17 +214,23 @@ export const updateDbConfigTool: AnyAgentTool = {
           return { success: false, status: 'error', error: '更新结果未确认，请先核对实例配置', errorCode: 'UPDATE_FAILED', details: { instanceId, retryable: false }, next_actions: ['先对账确认更新结果，再决定后续操作；不要盲目重试'] };
         }
       }
+      updatedFields = Object.keys(updateData);
+      credentialCommitted = typedArgs.credential_ref !== undefined;
       configCommitted = true;
 
-      // 4. 如果需要，测试新连接的连通性
+      // 4. 只有连接字段变更才验证。取回 null 时测试没有执行，不能记成测试失败。
       let connectionTested = false;
       let connectionSuccess = false;
+      let connectionTestOutcome: 'not_required' | 'unavailable' | 'failed' | 'passed' = 'not_required';
 
       if (typedArgs.host !== undefined || typedArgs.port !== undefined || typedArgs.username !== undefined || typedArgs.credential_ref !== undefined) {
-        connectionTested = true;
-        // 获取更新后的实例信息进行连接测试
+        verificationStage = 'decrypt';
         const decrypted = await instanceDatabaseService.getInstanceWithDecryptedPassword(instanceId);
-        if (decrypted) {
+        if (!decrypted) {
+          connectionTestOutcome = 'unavailable';
+        } else {
+          verificationStage = 'connect';
+          connectionTested = true;
           const testResult = await instanceDatabaseService.testConnection({
             db_type: decrypted.db_type,
             host: typedArgs.host ?? decrypted.host,
@@ -223,42 +239,55 @@ export const updateDbConfigTool: AnyAgentTool = {
             password: decrypted.password,
             database: decrypted.database_name || undefined,
           });
-          connectionSuccess = testResult.success;
+          connectionSuccess = testResult.success === true;
+          connectionTestOutcome = connectionSuccess ? 'passed' : 'failed';
         }
       }
 
-      // 5. 构建响应
-      const updatedFields = Object.keys(updateData);
+      const warning = connectionTestOutcome === 'failed'
+        ? '配置已保存，但新连接测试失败'
+        : connectionTestOutcome === 'unavailable'
+          ? '配置已保存，但未能执行连接测试'
+          : undefined;
 
       return {
         success: true,
-        status: connectionTested && !connectionSuccess ? 'warning' : 'success',
+        status: warning ? 'warning' : 'success',
         data: {
           instanceId,
           updatedFields,
+          configSaved: true,
           connectionTested,
           connectionSuccess,
-          ...(connectionTested && !connectionSuccess ? { warning: '配置已保存，但新连接测试失败' } : {}),
+          connectionTestOutcome,
+          ...(warning ? { warning } : {}),
         },
-        next_actions: connectionTested && !connectionSuccess
-          ? ['检查网络、端口和凭据；配置已保存，修复后调用 slide_test_connection 验证']
-          : [],
-        summary: `✅ 成功更新实例配置：${updatedFields.join(', ')}`,
+        next_actions: connectionTestOutcome === 'failed'
+          ? ['配置已保存，不要再次提交本次更新；调用 slide_test_connection 单独验证连接']
+          : connectionTestOutcome === 'unavailable'
+            ? ['配置已保存，不要再次提交本次更新；连接测试未执行，调用 slide_test_connection 单独验证连接']
+            : [],
+        summary: warning ?? `✅ 成功更新实例配置：${updatedFields.join(', ')}`,
         details: {
           instanceId,
           updatedFields,
           connectionTested,
           connectionSuccess,
+          connectionTestOutcome,
         },
       };
     } catch {
+      // 异常原文可能含已保存的凭据，不能进入结果、审计或下一步建议。
+      if (configCommitted) {
+        return savedConfigVerificationWarning(instanceId, updatedFields, verificationStage ?? 'decrypt', credentialCommitted);
+      }
       return {
-        success: configCommitted,
-        status: configCommitted ? 'warning' : 'error',
-        error: configCommitted ? '配置已提交，连接测试未完成' : updateSubmitted ? '更新结果未知，必须先对账' : '更新失败，尚未提交配置',
-        errorCode: configCommitted ? 'CONNECTION_TEST_FAILED' : updateSubmitted ? 'UPDATE_OUTCOME_UNKNOWN' : 'UPDATE_CONFIG_FAILED',
-        details: { configCommitted, retryable: false },
-        next_actions: [configCommitted ? '配置已保存，不要重放更新；调用 slide_test_connection 验证' : '先核对实例配置及引用状态，确认结果前不要重放写请求'],
+        success: false,
+        status: 'error',
+        error: updateSubmitted ? '更新结果未知，必须先对账' : '更新失败，尚未提交配置',
+        errorCode: updateSubmitted ? 'UPDATE_OUTCOME_UNKNOWN' : 'UPDATE_CONFIG_FAILED',
+        details: { configCommitted: false, retryable: false },
+        next_actions: ['先核对实例配置及引用状态，确认结果前不要重放写请求'],
       };
     }
   },
@@ -266,13 +295,76 @@ export const updateDbConfigTool: AnyAgentTool = {
 
 // ============== 辅助函数 ==============
 
+/** 持久化已经完成。验证异常单独标出，不把更新说成失败，也不建议重放。 */
+function savedConfigVerificationWarning(
+  instanceId: number,
+  updatedFields: string[],
+  stage: 'decrypt' | 'connect',
+  credentialConsumed: boolean,
+): ToolResult {
+  const verificationText = stage === 'connect'
+    ? '连接验证异常'
+    : '读取已保存配置以验证连接时发生异常';
+  const warning = `配置已保存。${verificationText}，与配置是否已保存无关。不要再次提交本次更新。`;
+  return {
+    success: true,
+    status: 'warning',
+    summary: warning,
+    data: {
+      instanceId,
+      updatedFields,
+      configSaved: true,
+      connectionTested: stage === 'connect',
+      connectionSuccess: false,
+      verification: { status: 'error', stage },
+      warning,
+    },
+    details: {
+      instanceId,
+      updatedFields,
+      configCommitted: true,
+      configSaved: true,
+      retryable: false,
+      credentialConsumed,
+    },
+    next_actions: [
+      '配置已保存，不要再次提交本次更新，不要申请新凭据重放同一更新',
+      '调用 slide_test_connection 单独验证连接',
+    ],
+  };
+}
+
 /**
- * 根据名称查找实例 ID
+ * 按 trim 后的名称选择唯一可用实例。多环境同名不取第一条。
+ * 调用者看不到至少两个可写匹配时，返回与不存在相同的结果，避免暴露无权限实例。
  */
-async function findInstanceIdByName(name: string): Promise<number | null> {
-  const instances = await instanceDatabaseService.getAllInstances();
-  const instance = instances.find(inst => inst.name === name);
-  return instance?.id || null;
+async function resolveInstanceIdByName(
+  name: string,
+  actor: ActorContext | undefined,
+): Promise<{ id: number } | { error: ToolResult }> {
+  const normalized = name.trim();
+  const matches = await instanceDatabaseService.listAvailableInstancesByNormalizedName(normalized);
+  const notFound: ToolResult = {
+    success: false,
+    status: 'error',
+    error: `未找到实例："${normalized}"`,
+    errorCode: 'INSTANCE_NOT_FOUND',
+    next_actions: ['先调用 list_database_instances 确认实例 ID 或名称'],
+  };
+  if (matches.length === 1 && actor && actorCanWriteInstance(actor, matches[0].id)) return { id: matches[0].id };
+  const visible = actor ? matches.filter((match) => actorCanWriteInstance(actor, match.id)) : [];
+  if (matches.length > 1 && visible.length >= 2) {
+    return {
+      error: {
+        success: false,
+        status: 'error',
+        error: '同名实例存在于多个环境，请改用实例 ID',
+        errorCode: 'AMBIGUOUS_INSTANCE_NAME',
+        next_actions: ['使用 instance_id 指定要更新的实例，不要用新的 environment 选择现有实例'],
+      },
+    };
+  }
+  return { error: notFound };
 }
 
 // 注册工具到全局目录

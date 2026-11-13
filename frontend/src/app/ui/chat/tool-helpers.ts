@@ -14,7 +14,11 @@ export function formatToolOutputForSidebar(text: string): string {
   if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
     try {
       const parsed = JSON.parse(trimmed);
-      return "```json\n" + JSON.stringify(parsed, null, 2) + "\n```";
+      const json = JSON.stringify(parsed, null, 2);
+      let longestRun = 0;
+      for (const run of json.match(/`+/g) ?? []) longestRun = Math.max(longestRun, run.length);
+      const fence = '`'.repeat(Math.max(3, longestRun + 1));
+      return fence + "json\n" + json + "\n" + fence;
     } catch {
       // Not valid JSON, return as-is
     }
