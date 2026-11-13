@@ -21,6 +21,7 @@ import { execFileSync } from 'node:child_process';
 import { JobRegistry } from '../workflows/job-registry.js';
 import { CONTROL_MAINTENANCE } from './script-policy.js';
 import { splitSqlStatements } from '../migrations/runner.js';
+import { sqlExecutor } from '../sql-executor.js';
 
 // Opt-in, dedicated disposable localhost MySQL only; never reads application .env.
 const port = Number(process.env.CRON_TEST_MYSQL_PORT);
@@ -135,6 +136,63 @@ describe.skipIf(!port)('Cron API + isolated MySQL security', () => {
   });
 
   // GitHub #305: real RBAC reload and persistent audits across the audit I/O race.
+  it.each(['revalidation', 'executor'] as const)('preserves script authorization after %s throws (#509)', async failure => {
+    const scriptId = await createScript();
+    const id = await createJob(scriptId, { target_instance_id: 9 });
+    const binding = (await cronJobService.getJobById(id))!.script_binding!;
+    const record = cronJobService.recordScriptAuthorization.bind(cronJobService);
+    const audit = vi.spyOn(cronJobService, 'recordScriptAuthorization').mockImplementation(async (logId, value) => {
+      const saved = await record(logId, value);
+      if (failure === 'revalidation') await pool.query("UPDATE users SET status='disabled' WHERE id=7");
+      return saved;
+    });
+    const execute = vi.spyOn(sqlExecutor, 'executeSql').mockRejectedValue(new Error('CONTROLLED_EXECUTOR_FAILURE'));
+    try {
+      const response = await runJob(id);
+      expect(response.statusCode).toBe(202);
+      const log = await lastLog(id);
+      expect(log.status).toBe('error');
+      expect(log.structured_result).toEqual({ script_id: scriptId, sha256: binding.sha256,
+        capability: binding.capability, authorized_by: binding.authorizedBy });
+      expect(log.error_trace).toContain(log.error_message);
+      if (failure === 'revalidation') expect(execute).not.toHaveBeenCalled();
+      else {
+        expect(execute).toHaveBeenCalledTimes(1);
+        expect(log.error_message).toBe('CONTROLLED_EXECUTOR_FAILURE');
+      }
+      const run = await cronRunStore.get(response.json().runId);
+      expect(run).toMatchObject({ status: 'failed', logId: log.id });
+    } finally { audit.mockRestore(); execute.mockRestore(); }
+  });
+
+  it.each(['second-update', 'commit'] as const)('rolls back both log bindings after %s fails (#510)', async failure => {
+    const id = await createJob(await createScript());
+    const run = await cronRunStore.enqueue(id, 7, `binding-${failure}`, {}, null);
+    const logId = await cronJobService.startLog(id);
+    const connection = await pool.getConnection();
+    const commit = vi.spyOn(connection, 'commit');
+    if (failure === 'commit') commit.mockRejectedValueOnce(new Error('CONTROLLED_COMMIT_FAILURE'));
+    else await pool.query(`CREATE TRIGGER reject_log_binding BEFORE UPDATE ON cron_job_logs FOR EACH ROW
+      BEGIN IF NEW.run_id IS NOT NULL THEN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'CONTROLLED_BINDING_FAILURE'; END IF; END`);
+    const acquire = vi.spyOn(pool, 'getConnection').mockResolvedValueOnce(connection);
+    try {
+      await expect(cronRunStore.bindLog(run.runId, logId)).rejects.toThrow(
+        failure === 'commit' ? 'CONTROLLED_COMMIT_FAILURE' : 'CONTROLLED_BINDING_FAILURE');
+      expect((await cronRunStore.get(run.runId))!.logId).toBeNull();
+      const [logs] = await pool.query<any[]>('SELECT run_id FROM cron_job_logs WHERE id=?', [logId]);
+      expect(logs[0].run_id).toBeNull();
+    } finally {
+      acquire.mockRestore(); commit.mockRestore();
+      if (failure === 'second-update') await pool.query('DROP TRIGGER reject_log_binding');
+    }
+    await cronRunStore.start(run.runId);
+    await cronRunStore.bindLog(run.runId, logId);
+    expect((await cronRunStore.get(run.runId))!.logId).toBe(logId);
+    await new CronRunStore().recover();
+    const [logs] = await pool.query<any[]>('SELECT run_id, status FROM cron_job_logs WHERE id=?', [logId]);
+    expect(logs[0]).toEqual({ run_id: run.runId, status: 'unknown' });
+  });
+
   it.each(['scope', 'permission', 'unchanged'] as const)(
     'persists the refreshed %s decision and returns the same Cron result', async change => {
       const id = await createJob(await createScript());
@@ -487,7 +545,7 @@ describe.skipIf(!port)('Cron API + isolated MySQL security', () => {
     try {
       expect((await runJob(id)).statusCode).toBe(202);
       expect((await lastLog(id)).status).toBe('error');
-      expect((await lastLog(id)).structured_result).toEqual(expect.objectContaining({ error_trace: expect.any(String) }));
+      expect((await lastLog(id)).error_trace).toEqual(expect.any(String));
     } finally { await pool.query('DROP TRIGGER reject_authority'); }
   });
 
