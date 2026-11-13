@@ -1,3 +1,4 @@
+import { cronStorageError, validateCronPagination } from './cron-storage-error.js';
 /**
  * Cron 任务数据库服务
  * 提供 cron_jobs / cron_job_logs / cron_job_params 三表的 CRUD 操作
@@ -29,7 +30,7 @@ export class CronJobDatabaseService {
    */
   async getJobs(allowedInstanceIds: readonly number[] | null = null): Promise<CronJobConfig[]> {
     const pool = this.getPool();
-    if (!pool) return [];
+    if (!pool) throw cronStorageError('getJobs');
 
     try {
       const scopeSql = allowedInstanceIds === null
@@ -48,8 +49,7 @@ export class CronJobDatabaseService {
       ) as any;
       return (rows as any[]).map((r: any) => ({ ...r, enabled: Boolean(r.enabled) })) as CronJobConfig[];
     } catch (error) {
-      console.error('查询定时任务列表失败:', error);
-      return [];
+      throw cronStorageError('getJobs', error);
     }
   }
 
@@ -58,7 +58,7 @@ export class CronJobDatabaseService {
    */
   async getEnabledJobs(): Promise<CronJobConfig[]> {
     const pool = this.getPool();
-    if (!pool) return [];
+    if (!pool) throw cronStorageError('getEnabledJobs');
 
     try {
       const [rows] = await pool.execute(
@@ -71,8 +71,7 @@ export class CronJobDatabaseService {
       ) as any;
       return (rows as any[]).map((r: any) => ({ ...r, enabled: Boolean(r.enabled) })) as CronJobConfig[];
     } catch (error) {
-      console.error('查询已启用定时任务失败:', error);
-      return [];
+      throw cronStorageError('getEnabledJobs', error);
     }
   }
 
@@ -81,7 +80,7 @@ export class CronJobDatabaseService {
    */
   async getJobById(id: number): Promise<CronJobConfig | null> {
     const pool = this.getPool();
-    if (!pool) return null;
+    if (!pool) throw cronStorageError('getJobById');
 
     try {
       const [rows] = await pool.execute(
@@ -99,8 +98,7 @@ export class CronJobDatabaseService {
       }
       return null;
     } catch (error) {
-      console.error('查询定时任务失败:', error);
-      return null;
+      throw cronStorageError('getJobById', error);
     }
   }
 
@@ -405,6 +403,7 @@ export class CronJobDatabaseService {
 
   /**
    * 完成执行日志（更新状态、结束时间、结果摘要、Agent 迹数据）
+   * 未提供新结果时保留已落库的脚本授权；异常堆栈使用 trace.error_trace。
    */
   async completeLog(
     logId: number,
@@ -430,7 +429,7 @@ export class CronJobDatabaseService {
         `UPDATE cron_job_logs
          SET finished_at = NOW(), status = ?, result_summary = ?,
              error_message = ?,
-             structured_result = ?,
+             structured_result = COALESCE(?, structured_result),
              tools_used = ?,
              tool_events = ?,
              \`usage\` = ?,
@@ -466,8 +465,9 @@ export class CronJobDatabaseService {
    * 获取任务执行日志（按时间倒序）
    */
   async getLogs(jobId: number, limit: number = 20, offset: number = 0): Promise<{ logs: CronJobLog[]; total: number }> {
+    validateCronPagination(limit, offset);
     const pool = this.getPool();
-    if (!pool) return { logs: [], total: 0 };
+    if (!pool) throw cronStorageError('getLogs');
 
     try {
       const [countResult] = await pool.execute(
@@ -488,8 +488,7 @@ export class CronJobDatabaseService {
 
       return { logs: rows as CronJobLog[], total };
     } catch (error) {
-      console.error('查询执行日志失败:', error);
-      return { logs: [], total: 0 };
+      throw cronStorageError('getLogs', error);
     }
   }
 

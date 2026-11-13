@@ -105,6 +105,7 @@ import { registerChatRoutes } from './src/chat-routes.js';
 import { reportService } from './src/report-service.js';
 import { reportDatabaseService } from './src/report-database-service.js';
 import { reportConfigService } from './src/report-config-database-service.js';
+import { InvalidReportCronError } from './src/report-cron.js';
 import { ReportType } from './src/report-database-service.js';
 import { reportExporter } from './src/report-exporter.js';
 import { alertEngine } from './src/alert-engine.js';
@@ -2857,6 +2858,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
 
         reply.send({ id: result.id, message: '创建成功' });
       } catch (error: any) {
+        if (error instanceof InvalidReportCronError) return reply.code(400).send({ error: error.message });
         reply.code(500).send({ error: error.message });
       }
     }
@@ -2927,6 +2929,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
 
         reply.send({ message: '更新成功' });
       } catch (error: any) {
+        if (error instanceof InvalidReportCronError) return reply.code(400).send({ error: error.message });
         reply.code(500).send({ error: error.message });
       }
     }
