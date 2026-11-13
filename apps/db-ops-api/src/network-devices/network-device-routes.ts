@@ -274,6 +274,9 @@ export async function registerNetworkDeviceRoutes(
       const result = await backups.capture!(id, Number((request as any).user?.userId ?? 0) || null);
       if (!result.success) {
         const error = result.error ?? 'CONFIG_BACKUP_FAILED';
+        if (error === 'CONFIG_BACKUP_SAVED_AUDIT_FAILED' && result.backupSaved === true) {
+          return reply.code(409).send({ error, backupSaved: true, retryable: false, backup: serializeBackup(result.backup), duplicate: result.duplicate === true });
+        }
         const status = error === 'NETWORK_DEVICE_NOT_FOUND'
           ? 404
           : ['SSH_CREDENTIAL_REQUIRED', 'SSH_HOST_KEY_FINGERPRINT_REQUIRED'].includes(error) ? 400 : 502;
