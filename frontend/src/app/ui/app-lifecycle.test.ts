@@ -1,7 +1,7 @@
 import { afterEach, expect, it, vi } from 'vitest';
 const mocks = vi.hoisted(() => ({ sync: vi.fn(), apply: vi.fn(), detach: vi.fn() }));
 vi.mock('./storage.ts', () => ({ syncPreferencesFromServer: mocks.sync }));
-vi.mock('./app-settings.ts', () => ({ applySettings: mocks.apply, detachThemeListener: mocks.detach }));
+vi.mock('./app-settings.ts', () => ({ applySettings: mocks.apply, detachThemeListener: mocks.detach, getTabSelectionRevision: () => 0 }));
 import { syncUserPreferences, handleDisconnected } from './app-lifecycle.ts';
 afterEach(() => vi.clearAllMocks());
 it.each([false, true])('applies bootstrap settings only before a local edit (edited=%s)', async edited => {

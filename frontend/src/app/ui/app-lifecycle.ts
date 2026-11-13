@@ -6,12 +6,15 @@ import {
   applySettingsFromUrl,
   detachThemeListener,
   inferBasePath,
-  setTab,
+  getTabSelectionRevision,
+  setTabFromRoute,
+  syncUrlWithTab,
   syncTabWithLocation,
   syncThemeWithSettings,
 } from "./app-settings.ts";
 import { loadControlUiBootstrapConfig } from "./controllers/control-ui-bootstrap.ts";
 import { DEFAULT_TAB_OPTIONS, type Tab } from "./navigation.ts";
+import type { UiSettings } from "./storage.ts";
 
 type LifecycleHost = {
   basePath: string;
@@ -42,13 +45,17 @@ export function handleConnected(host: LifecycleHost) {
   const connectGeneration = ++host.connectGeneration;
   host.basePath = inferBasePath();
   applySettingsFromUrl(host as unknown as Parameters<typeof applySettingsFromUrl>[0]);
+  // Capture the entry route before syncTabWithLocation canonicalizes the root URL.
+  const url = new URL(window.location.href);
+  const applyLandingDefault = (url.pathname === "/" || url.pathname === host.basePath || url.pathname === host.basePath + "/")
+    && !url.searchParams.has("tab") && !url.searchParams.has("session");
   const bootstrapReady = loadControlUiBootstrapConfig(host);
   syncTabWithLocation(host as unknown as Parameters<typeof syncTabWithLocation>[0], true);
   // Apply user's default landing page if on root path
-  applyDefaultTab(host);
+  if (applyLandingDefault) applyDefaultTab(host);
   syncThemeWithSettings(host as unknown as Parameters<typeof syncThemeWithSettings>[0]);
   // Sync user preferences with server (login migration + cross-device sync)
-  syncUserPreferences(host as unknown as { settings: import('./storage.ts').UiSettings });
+  void syncUserPreferences(host as unknown as PreferenceHost, applyLandingDefault);
   // Fetch Slide version from backend
   fetch("/api/version").then(r => r.json()).then(d => {
     (host as any).slideVersion = `Slide v${d.version}`;
@@ -66,26 +73,32 @@ export function handleConnected(host: LifecycleHost) {
   });
 }
 
-function applyDefaultTab(host: LifecycleHost) {
+type PreferenceHost = { settings: UiSettings; connectGeneration?: number; tab?: Tab };
+
+function applyDefaultTab(host: { settings?: { defaultTab?: string }; tab?: Tab }) {
   const defaultTab = host.settings?.defaultTab;
-  if (!defaultTab || defaultTab === "dashboard") return;
-  // Only override if on root path
-  if (window.location.pathname === "/" || window.location.pathname === host.basePath || window.location.pathname === host.basePath + "/") {
-    if ((DEFAULT_TAB_OPTIONS as readonly string[]).includes(defaultTab)) {
-      setTab(host as unknown as Parameters<typeof setTab>[0], defaultTab as Tab);
-    }
-  }
+  if (!defaultTab || defaultTab === host.tab || !(DEFAULT_TAB_OPTIONS as readonly string[]).includes(defaultTab)) return;
+  // Automatic landing resolution replaces the startup entry, preserving Back behavior.
+  const settingsHost = host as Parameters<typeof setTabFromRoute>[0];
+  setTabFromRoute(settingsHost, defaultTab as Tab);
+  syncUrlWithTab(settingsHost, defaultTab as Tab, true);
 }
 
-export async function syncUserPreferences(host: { settings: import('./storage.ts').UiSettings; connectGeneration?: number }) {
+export async function syncUserPreferences(host: PreferenceHost, applyLandingDefault = false) {
   const initial = host.settings;
   const generation = host.connectGeneration;
+  const selectionRevision = getTabSelectionRevision(host);
+  const initialUrl = window.location.href;
   const { syncPreferencesFromServer } = await import('./storage.ts');
   const merged = await syncPreferencesFromServer(initial);
   // Apply server-synced preferences
   const { applySettings } = await import('./app-settings.ts');
   // A late bootstrap response must not overwrite edits made while it was loading.
-  if (host.settings === initial && host.connectGeneration === generation) applySettings(host as Parameters<typeof applySettings>[0], merged);
+  if (host.settings !== initial || host.connectGeneration !== generation) return;
+  const canApplyDefault = applyLandingDefault && getTabSelectionRevision(host) === selectionRevision
+    && window.location.href === initialUrl;
+  applySettings(host as Parameters<typeof applySettings>[0], merged);
+  if (canApplyDefault) applyDefaultTab(host);
 }
 
 export function handleFirstUpdated(host: LifecycleHost) {
