@@ -418,3 +418,52 @@ for (const viewport of [{ width: 1440, height: 900 }, { width: 375, height: 812 
     expect(state.posts).toEqual([]);
   });
 }
+
+for (const viewport of [{ width: 1440, height: 900 }, { width: 1366, height: 768 }, { width: 1920, height: 1080 }]) for (const navigation of ['select', 'back']) {
+  test(`MAX-432 MAX-442 delayed receipt survives ${navigation} at ${viewport.width}`, async ({ page }) => {
+    await page.setViewportSize(viewport);
+    const state = await diagnosisFixture(page); state.status = 'unknown';
+    await page.route('**/api/resources', route => route.fulfill({ json: { items: [
+      { resource: { type: 'instance', id: 1 }, label: '订单数据库', status: 'online', attributes: {} },
+      { resource: { type: 'server', id: 2 }, label: '测试服务器', status: 'online', attributes: {} },
+    ] } }));
+    let release!: () => void;
+    const pending = new Promise<void>(resolve => { release = resolve; });
+    let posts = 0;
+    await page.route('**/api/resources/instance/1/diagnose-agent', async route => {
+      posts++; await pending; await route.fulfill({ json: { analysisId: 42, status: 'queued' } });
+    });
+    await page.goto('/resource-diagnosis?resourceType=server&resourceId=2');
+    const view = page.locator('resource-diagnosis-page');
+    const picker = view.getByRole('combobox', { name: '资源', exact: true });
+    await picker.selectOption('instance:1');
+    await view.getByRole('button', { name: '开始只读诊断', exact: true }).click();
+    await expect.poll(() => posts).toBe(1);
+    if (navigation === 'back') await page.goBack(); else await picker.selectOption('server:2');
+    await expect(page).toHaveURL(/resourceType=server/);
+    release();
+    await expect(view).toContainText('任务 #42');
+    await expect(page).not.toHaveURL(/analysisId=42/);
+    await view.getByRole('button', { name: '查看原诊断任务' }).click();
+    await expect(page).toHaveURL(/analysisId=42/);
+    await view.getByRole('tab', { name: /^分析结果/ }).click();
+    await expect(view.locator('[data-task-status]')).toContainText('结果未知');
+    await expect(view.getByRole('button', { name: '开始只读诊断', exact: true })).toBeDisabled();
+    await view.getByRole('button', { name: '刷新', exact: true }).click();
+    await expect(view.locator('[data-task-status]')).toContainText('结果未知');
+    expect(posts).toBe(1); expect(state.posts).toHaveLength(0);
+  });
+}
+for (const status of [403, 409, 503]) {
+  for (const body of ['', '<html>proxy error</html>']) {
+    test(`MAX-432 status ${status} with ${body ? 'HTML' : 'empty'} body`, async ({ page }) => {
+      await diagnosisFixture(page);
+      await page.route('**/diagnose-agent', route => route.fulfill({ status, contentType: 'text/html', body }));
+      await page.goto('/resource-diagnosis?resourceType=instance&resourceId=1');
+      const view = page.locator('resource-diagnosis-page');
+      await view.getByRole('button', { name: '开始只读诊断', exact: true }).click();
+      await expect(view.getByRole('alert')).toContainText(({ 403: '无诊断权限', 409: '结果未知', 503: '暂不可用' } as Record<number, string>)[status]);
+      if (status !== 403) await expect(view.getByRole('button', { name: '开始只读诊断', exact: true })).toBeDisabled();
+    });
+  }
+}

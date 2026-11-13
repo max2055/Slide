@@ -163,3 +163,76 @@ describe('tracked read-only diagnosis', () => {
     element.statusTimer = setTimeout(() => {}, 3000); element.remove(); expect(element.statusTimer).toBeNull();
   });
 });
+
+describe('MAX-432 error responses and MAX-442 navigation receipts', () => {
+  async function mount() {
+    await import('./resource-diagnosis.js');
+    localStorage.setItem('permissions', '["*"]');
+    history.replaceState({}, '', '/resource-diagnosis?resourceType=instance&resourceId=1');
+    authFetch.mockImplementation(async (url: string) => ({ ok: !url.endsWith('/evaluation'), json: async () => url === '/api/resources' ? { items: [] } : { facts: [], inferences: [], hypotheses: [], gaps: [], truncated: false } }));
+    const element = document.createElement('resource-diagnosis-page') as any;
+    document.body.append(element);
+    await vi.waitFor(() => expect(element.loading).toBe(false));
+    return element;
+  }
+  it.each([403, 409, 503])('maps empty/non-JSON %s before parsing and retains a submission guard', async status => {
+    const element = await mount();
+    authFetch.mockResolvedValue({ ok: false, status, json: async () => { throw new SyntaxError('Unexpected token'); } });
+    await element.diagnose(true);
+    expect(element.error).toContain(({ 403: '无诊断权限', 409: '结果未知', 503: '暂不可用' } as Record<number, string>)[status]);
+    expect(element.error).not.toContain('SyntaxError');
+    if (status !== 403) {
+      await element.diagnose(true);
+      expect(authFetch.mock.calls.filter(([url]) => url.endsWith('/diagnose-agent'))).toHaveLength(1);
+    }
+    expect(element.busy).toBe(false);
+  });
+  it.each(['select', 'popstate'])('retains an in-flight receipt across %s and queries it on return', async navigation => {
+    const element = await mount();
+    let resolve!: (value: unknown) => void;
+    const pending = new Promise(done => { resolve = done; });
+    authFetch.mockImplementation(async (url: string) => url.endsWith('/diagnose-agent') ? pending : { ok: true, json: async () => url.includes('/analyses/') ? { analysisId: 42, status: 'unknown' } : { facts: [], inferences: [], hypotheses: [], gaps: [], truncated: false } });
+    const submission = element.diagnose(true);
+    if (navigation === 'select') element.selectResource('server:2');
+    else {
+      history.replaceState({}, '', '/resource-diagnosis?resourceType=server&resourceId=2');
+      window.dispatchEvent(new PopStateEvent('popstate'));
+    }
+    resolve({ ok: true, json: async () => ({ analysisId: 42, status: 'queued' }) });
+    await submission;
+    expect(location.search).not.toContain('analysisId=42');
+    element.selectResource('instance:1');
+    await vi.waitFor(() => expect(element.agentResult?.status).toBe('unknown'));
+    expect(location.search).toContain('analysisId=42');
+    expect(authFetch).toHaveBeenCalledWith('/api/resources/instance/1/analyses/42', expect.anything());
+    await element.diagnose(true);
+    expect(authFetch.mock.calls.filter(([url]) => url.endsWith('/diagnose-agent'))).toHaveLength(1);
+  });
+  it('rejects malformed successful packs without rendering them', async () => {
+    const element = await mount();
+    authFetch.mockResolvedValue({ ok: true, json: async () => null });
+    await element.diagnose(false);
+    expect(element.pack).toBeNull();
+    expect(element.error).toContain('响应结构');
+  });
+});
+
+it('MAX-442 reconnects the same session to a receipt that arrived after leaving the page', async () => {
+  await import('./resource-diagnosis.js');
+  localStorage.setItem('permissions', '["*"]');
+  localStorage.setItem('token', 'max442-reconnect');
+  history.replaceState({}, '', '/resource-diagnosis?resourceType=instance&resourceId=1');
+  let release!: (value: unknown) => void;
+  const pending = new Promise(resolve => { release = resolve; });
+  authFetch.mockImplementation(async (url: string) => url.endsWith('/diagnose-agent') ? pending : { ok: true, json: async () => url === '/api/resources' ? { items: [] } : url.includes('/analyses/') ? { analysisId: 99, status: 'unknown' } : { facts: [], inferences: [], hypotheses: [], gaps: [], truncated: false } });
+  const first = document.createElement('resource-diagnosis-page') as any;
+  document.body.append(first); await vi.waitFor(() => expect(first.loading).toBe(false));
+  const submission = first.diagnose(true); first.remove();
+  const second = document.createElement('resource-diagnosis-page') as any;
+  document.body.append(second); await vi.waitFor(() => expect(second.busy).toBe(true));
+  await second.diagnose(true);
+  release({ ok: true, json: async () => ({ analysisId: 99, status: 'queued' }) }); await submission;
+  await vi.waitFor(() => expect(second.agentResult?.status).toBe('unknown'));
+  expect(location.search).toContain('analysisId=99');
+  expect(authFetch.mock.calls.filter(([url]) => url.endsWith('/diagnose-agent'))).toHaveLength(1);
+});
