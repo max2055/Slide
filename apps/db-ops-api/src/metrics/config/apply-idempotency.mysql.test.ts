@@ -94,8 +94,8 @@ describe.skipIf(!port)('MAX-238 operation keys bind one intent and replay withou
     for (const [id, name] of [[ref1.id, 'apply-idempotency-1'], [ref2.id, 'apply-idempotency-2']] as const) {
       await pool.execute(`INSERT INTO database_instances
         (id,name,environment,db_type,host,port,username,password_encrypted,database_name,db_version,status,lifecycle_state)
-        VALUES (?,?,?,?,?,3306,'fixture','','fixture','8.0.46','active','available')`,
-        [id, name, 'production', 'mysql', '127.0.0.1']);
+        VALUES (?,?,?,?,?,3306,'fixture','',?,'8.0.46','active','available')`,
+        [id, name, 'production', 'mysql', '127.0.0.1', name]);
     }
     packages = createConfigurationRegistry();
     policies = new PolicyService(new MysqlPolicyStore(() => pool), packages,
