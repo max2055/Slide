@@ -189,6 +189,12 @@ export function setTab(host: SettingsHost, next: Tab) {
   applyTabSelection(host, next, { refreshPolicy: "always", syncUrl: true });
 }
 
+// Count selections rather than comparing tabs: navigating away and back is still intent.
+const tabSelectionRevisions = new WeakMap<object, number>();
+export function getTabSelectionRevision(host: object): number {
+  return tabSelectionRevisions.get(host) ?? 0;
+}
+
 function applyThemeTransition(
   host: SettingsHost,
   nextTheme: ResolvedTheme,
@@ -472,6 +478,7 @@ function applyTabSelection(
   next: Tab,
   options: { refreshPolicy: "always" | "connected"; syncUrl?: boolean },
 ) {
+  tabSelectionRevisions.set(host, getTabSelectionRevision(host) + 1);
   const prev = host.tab;
   host.tab = next;
 
