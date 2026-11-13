@@ -12,8 +12,10 @@ import { actorContextService } from '../auth/actor-context.js';
 import { dbConnection } from '../db-connection.js';
 import { assertCronActorAccess } from './cron-authority.js';
 import { expensiveOperationRateLimitConfig } from '../security/http-security.js';
+import { validateCronTimeoutSeconds } from '../adapter/runtime-policy.js';
 
 function cronErrorStatus(error: Error): number {
+  if (error.message?.startsWith('Invalid cron timeout:')) return 400;
   if (error.message?.startsWith('WORKER_LEASE') || error.message === 'WORKER_STOPPED') return 503;
   if (error.message === 'CRON_IDEMPOTENCY_CONFLICT') return 409;
   if (['CRON_RUN_STORE_UNAVAILABLE', 'CRON_AUDIT_UNAVAILABLE', 'CRON_AUTHORITY_UNAVAILABLE', 'WORKFLOW_RUNTIME_UNAVAILABLE'].includes(error.message)) return 503;
@@ -139,6 +141,7 @@ export function registerCronRoutes(fastify: FastifyInstance, verifyToken: preHan
           return reply.code(400).send({ error: '无效的 cron 表达式' });
         }
 
+        if (body.timeout_seconds !== undefined) validateCronTimeoutSeconds(body.timeout_seconds);
         const identity = await bindJobIdentity(request, body);
         const scriptBinding = await bindJobScript(request, body);
         const id = await cronJobService.createJob({
@@ -193,6 +196,7 @@ export function registerCronRoutes(fastify: FastifyInstance, verifyToken: preHan
           }
         }
 
+        if (body.timeout_seconds !== undefined) validateCronTimeoutSeconds(body.timeout_seconds);
         const identity = await bindJobIdentity(request, body, existing);
         const scriptBinding = await bindJobScript(request, body, existing);
         const updated = await cronJobService.updateJob(Number(id), {

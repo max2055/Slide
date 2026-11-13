@@ -108,4 +108,35 @@ describe('FeedbackService', () => {
     })).rejects.toThrow('FEEDBACK_PAYLOAD_INVALID');
     expect(execute).not.toHaveBeenCalled();
   });
+
+  // GitHub #517: a content edit must never write a previously read status.
+  it.each([actor(), actor({ roles: ['admin'] })])('omits status from content-only updates for $roles', async (currentActor) => {
+    const execute = vi.fn()
+      .mockResolvedValueOnce([[row()], []])
+      .mockResolvedValueOnce([{ affectedRows: 1 }, []])
+      .mockResolvedValueOnce([[{ ...row(), status: 'resolved' }], []]);
+    const service = new FeedbackService(() => ({ execute } as any));
+    await expect(service.update(currentActor, 3, { title: '新标题', description: '新描述' }))
+      .resolves.toMatchObject({ status: 'resolved' });
+    expect(execute.mock.calls[1][0]).not.toContain('status =');
+    expect(execute.mock.calls[1][1]).not.toContain('pending');
+  });
+
+  it('does not write invisible feedback', async () => {
+    const execute = vi.fn().mockResolvedValue([[], []]);
+    const service = new FeedbackService(() => ({ execute } as any));
+    await expect(service.update(actor(), 3, { title: '标题', description: '描述' }))
+      .rejects.toThrow('FEEDBACK_NOT_FOUND');
+    expect(execute).toHaveBeenCalledTimes(1);
+  });
+
+  it('reports not found when feedback is deleted between the visibility check and update', async () => {
+    const execute = vi.fn()
+      .mockResolvedValueOnce([[row()], []])
+      .mockResolvedValueOnce([{ affectedRows: 0 }, []])
+      .mockResolvedValueOnce([[], []]);
+    const service = new FeedbackService(() => ({ execute } as any));
+    await expect(service.update(actor(), 3, { title: '标题', description: '描述' }))
+      .rejects.toThrow('FEEDBACK_NOT_FOUND');
+  });
 });

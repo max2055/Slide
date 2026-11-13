@@ -339,3 +339,22 @@ test('empty resources and named resource selector', async ({ page }) => {
   await fixture(page, '<network-devices-page></network-devices-page>', 'views/network-devices-page'); await expect(page.getByText('暂无网络设备', { exact: true })).toBeVisible();
   await fixture(page, '<metric-settings view="policies"></metric-settings>', 'views/metric-settings'); await expect(page.getByLabel('资源', { exact: true }).locator('option')).toHaveText(['请选择资源', '订单数据库 · 数据库实例']); await expect(page.getByLabel('资源 ID')).toHaveCount(0);
 });
+
+for (const width of [1366, 1440, 1920]) test(`MAX-397 SNMP capacity guidance stays readable at ${width}px`, async ({ page }) => {
+  await page.setViewportSize({ width, height: width === 1366 ? 768 : width === 1440 ? 900 : 1080 });
+  await page.route('**/api/**', route => {
+    const path = new URL(route.request().url()).pathname;
+    if (!path.startsWith('/api/')) return route.fallback();
+    if (path.endsWith('/status')) return route.fulfill({ json: collectionStatus() });
+    if (path.endsWith('/attempts')) return route.fulfill({ json: [{ status: 'failed', started_at: '2026-11-12T00:00:00Z', error: 'parse_error', evidence_code: 'SNMP_INTERFACE_CAPACITY_EXCEEDED' }] });
+    return route.fulfill({ json: { profile: { columns: [] }, window: { from: '2026-11-12T00:00:00Z', to: '2026-11-12T01:00:00Z' }, metrics: [] } });
+  });
+  await fixture(page, '<semantic-metrics resourceid="1" resourcetype="network_device"></semantic-metrics>', 'components/semantic-metrics');
+  const guidance = page.getByText('接口数量超过采集容量', { exact: false });
+  await expect(guidance).toBeVisible();
+  await expect(guidance).toContainText('max_rows');
+  await expect(guidance).toContainText('max_series_per_resource');
+  await expect(guidance).toContainText('100 行');
+  expect(await guidance.evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+});
