@@ -205,7 +205,11 @@ export class MetricSettings extends LitElement {
     catch (e) { if (generation === this.accessGeneration) this.catalogError = metricError(e); }
   }
   private async group(operation: 'load' | 'preview' | 'publish') {
-    if (!/^[A-Za-z0-9_-]{1,64}$/.test(this.groupId) || this.busy) return;
+    if (this.busy) return;
+    if (!/^[A-Za-z0-9_-]{1,64}$/.test(this.groupId)) {
+      this.error = this.groupId ? '策略组标识仅支持 1–64 位字母、数字、下划线或连字符' : '请先选择策略组';
+      return;
+    }
     if (operation !== 'load' && (!this.canEditGroup() || operation === 'publish' && !this.groupPreview)) return;
     this.busy = true; this.error = '';
     const generation = this.accessGeneration;

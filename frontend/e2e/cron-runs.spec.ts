@@ -51,3 +51,63 @@ test('tracks concurrent exact Cron runs, keeps queued distinct from legacy succe
   expect(polls).toHaveLength(count);
   expect(errors).toEqual([]);
 });
+
+// #422: real HTTP transport with an isolated protocol endpoint; no business DB/executor.
+test('aborts a pending trigger without cancelling server execution and reconciles its original request key', async ({ page }) => {
+  const { createServer } = await import('vite');
+  const posts: string[] = []; const gets: string[] = [];
+  let postDisconnected = false;
+  const pendingResponses = new Set<import('node:http').ServerResponse>();
+  const server = await createServer({
+    configFile: false, root: process.cwd(), logLevel: 'error',
+    server: { host: '127.0.0.1', port: 0 },
+    plugins: [{ name: 'cron-ownership-endpoint', configureServer(vite) {
+      vite.middlewares.use((req, res, next) => {
+        if (req.url === '/ownership-fixture') {
+          res.setHeader('Content-Type', 'text/html');
+          res.end('<!doctype html><html><body><script type="module">import { CronRunTracker } from "/src/app/ui/controllers/cron-run-tracker.ts"; window.CronRunTracker = CronRunTracker;</script></body></html>');
+        } else if (req.url === '/api/cron/jobs/42/run') {
+          posts.push(String(req.headers['idempotency-key']));
+          // Server accepted this key; deliberately leave the response pending.
+          pendingResponses.add(res);
+          res.on('close', () => { postDisconnected = !res.writableEnded; pendingResponses.delete(res); });
+        } else if (req.url?.startsWith('/api/cron/jobs/42/runs?')) {
+          gets.push(req.url);
+          res.setHeader('Content-Type', 'application/json');
+          res.end(JSON.stringify({ jobId: 42, runId: 'accepted-before-disconnect', status: 'succeeded', completion: { summary: '服务端已完成' } }));
+        } else next();
+      });
+    } }],
+  });
+  try {
+    await server.listen();
+    const address = server.httpServer!.address() as import('node:net').AddressInfo;
+    await page.goto(`http://127.0.0.1:${address.port}/ownership-fixture`);
+    await page.waitForFunction(() => Boolean((window as any).CronRunTracker));
+    await page.clock.install();
+    await page.evaluate(() => {
+      const w = window as any;
+      localStorage.setItem('slide:cron-runs:session', JSON.stringify([{ jobId: 42, requestKey: 'http-original-key', status: 'unconfirmed' }]));
+      w.tracker = new w.CronRunTracker(() => {}); w.tracker.start();
+      w.pending = w.tracker.trigger(42).catch((error: Error) => { w.observationError = error.name; });
+    });
+    await expect.poll(() => posts.length).toBe(1);
+    await page.clock.fastForward(3500);
+    expect(gets).toEqual([]);
+    await page.evaluate(async () => { const w = window as any; w.tracker.stop(); await w.pending; });
+    await expect.poll(() => postDisconnected).toBe(true);
+    expect(await page.evaluate(() => (window as any).observationError)).toBe('AbortError');
+    expect(await page.evaluate(() => (window as any).tracker.runs.get(42))).toMatchObject({ requestKey: 'http-original-key', status: 'unconfirmed' });
+    await page.evaluate(() => (window as any).tracker.start());
+    await page.clock.fastForward(3000);
+    await expect.poll(() => page.evaluate(() => (window as any).tracker.runs.get(42)?.status)).toBe('succeeded');
+    expect(gets).toEqual(['/api/cron/jobs/42/runs?requestKey=http-original-key']);
+    expect(posts).toEqual(['http-original-key']);
+  } finally {
+    try { await page.close(); }
+    finally {
+      for (const res of pendingResponses) res.destroy();
+      await server.close();
+    }
+  }
+});

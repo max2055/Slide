@@ -1,8 +1,9 @@
-import { mkdtempSync, rmSync, readFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, readFileSync, readdirSync, copyFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { ToolRegistry, type LLMProvider as AgentProvider } from '@slide/agent-core';
 import { DirectAdapter } from '../adapter/direct-adapter.js';
+import type { IAgentEngine } from '../adapter/types.js';
 import { freezeEvidence } from './analysis-evidence.js';
 import { databaseService } from '../database-service.js';
 import { sqlExecutor } from '../sql-executor.js';
@@ -21,6 +22,7 @@ import { AnalysisDispatchStore, type AnalysisRequest } from './analysis-dispatch
 import { registerAnalysisDispatchHandler } from './analysis-dispatch-handler.js';
 import { JobRegistry } from '../workflows/job-registry.js';
 import { dbConnection } from '../db-connection.js';
+import { aiAnalysisConfigService, DEFAULT_CONFIG } from '../ai-analysis-config-service.js';
 import { aiAnalysisDatabaseService } from '../ai-analysis-database-service.js';
 import { analysisRecoveryInventory } from './analysis-recovery-inventory.js';
 import { actorContextService } from '../auth/actor-context.js';
@@ -40,10 +42,10 @@ describe.skipIf(!port)('analysis durable recovery in isolated MySQL', () => {
     const options = { host: '127.0.0.1', port, user: 'root', password: process.env.ANALYSIS_TEST_MYSQL_PASSWORD ?? '', timezone: 'Z' };
     admin = mysql.createPool(options); await admin.query(`CREATE DATABASE ${database}`);
     pool = mysql.createPool({ ...options, database }); store = new AnalysisDispatchStore(() => pool); jobs = new MysqlWorkflowStore(() => pool as any);
-    await pool.query(`CREATE TABLE ai_analysis (id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY, analysis_type VARCHAR(32), target_type VARCHAR(32), instance_id INT, server_id INT, network_device_id INT, related_id INT, status ENUM('pending','running','completed','failed') DEFAULT 'pending', trigger_type VARCHAR(16), cache_key VARCHAR(255), session_key VARCHAR(255), result JSON, analysis_envelope JSON, envelope_backfill_status VARCHAR(32), execution_trace JSON, \`usage\` JSON, error_message TEXT, duration_ms INT, ttl_minutes INT DEFAULT 1440, cache_ttl_minutes INT, started_at DATETIME, completed_at DATETIME, created_at DATETIME DEFAULT CURRENT_TIMESTAMP, updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP)`);
+    await pool.query(`CREATE TABLE ai_analysis (id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY, analysis_type VARCHAR(32), target_type VARCHAR(32), instance_id INT, server_id INT, network_device_id INT, related_id INT, status ENUM('pending','running','completed','failed') DEFAULT 'pending', trigger_type VARCHAR(16), cache_key VARCHAR(255), session_key VARCHAR(255), result JSON, analysis_envelope JSON, envelope_backfill_status VARCHAR(32), execution_trace JSON, \`usage\` JSON, error_message TEXT, duration_ms INT, ttl_minutes INT DEFAULT 1440, cache_ttl_minutes INT, started_at DATETIME, completed_at DATETIME, created_at DATETIME DEFAULT CURRENT_TIMESTAMP, updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP)`);
     // Shared queue recovery ordering requires the real delivery-state migration.
     await pool.query('CREATE TABLE report_configs (id INT PRIMARY KEY, format VARCHAR(32))');
-    for (const file of ['032_workflow_outbox_jobs.sql', '036_notification_delivery_audit.sql', '041_report_notification_delivery.sql', '093_delivery_recovery.sql', '109_analysis_dispatch_recovery.sql']) {
+    for (const file of ['032_workflow_outbox_jobs.sql', '036_notification_delivery_audit.sql', '041_report_notification_delivery.sql', '093_delivery_recovery.sql', '109_analysis_dispatch_recovery.sql', '157_analysis_dispatch_id_range.sql']) {
       for (const sql of splitSqlStatements(readFileSync(new URL(`../../sql/migrations/${file}`, import.meta.url), 'utf8'))) await pool.query(sql);
     }
     for (const sql of [
@@ -64,6 +66,7 @@ describe.skipIf(!port)('analysis durable recovery in isolated MySQL', () => {
     await pool.query('DROP TRIGGER IF EXISTS fail_analysis_intent');
     await pool.query('DROP TRIGGER IF EXISTS delay_completion');
     for (const table of ['analysis_dispatch_keys', 'analysis_dispatch_attempts', 'analysis_dispatches', 'ai_analysis', 'outbox_events', 'workflow_jobs']) await pool.query(`DELETE FROM ${table}`);
+    await pool.query('ALTER TABLE ai_analysis AUTO_INCREMENT = 1');
     await pool.query('UPDATE users SET session_version = 1');
     for (const table of ['user_roles', 'role_permissions', 'instance_permissions']) await pool.query(`DELETE FROM ${table}`);
     await pool.query('INSERT INTO user_roles VALUES (7,1,NULL)');
@@ -89,6 +92,203 @@ describe.skipIf(!port)('analysis durable recovery in isolated MySQL', () => {
     throw new Error('EXPECTED_ANALYSIS_JOB_NOT_CLAIMED');
   }
   const expire = () => pool.query('UPDATE workflow_jobs SET lease_expires_at = DATE_SUB(NOW(), INTERVAL 1 SECOND)');
+  async function assertIdSchema(target: Pool) {
+    const [columns] = await target.query<any[]>(`SELECT TABLE_NAME, COLUMN_NAME, COLUMN_TYPE, IS_NULLABLE, COLUMN_COMMENT
+      FROM information_schema.columns WHERE table_schema = DATABASE() AND
+      ((table_name IN ('analysis_dispatches','analysis_dispatch_attempts','analysis_dispatch_keys') AND column_name = 'analysis_id')
+        OR (table_name = 'analysis_dispatches' AND column_name = 'retry_of')) ORDER BY TABLE_NAME, COLUMN_NAME`);
+    expect(columns).toHaveLength(4);
+    for (const column of columns) {
+      expect(column.COLUMN_TYPE).toBe('bigint unsigned');
+      expect(column.IS_NULLABLE).toBe(column.TABLE_NAME === 'analysis_dispatch_keys' || column.COLUMN_NAME === 'retry_of' ? 'YES' : 'NO');
+      expect(column.COLUMN_COMMENT).toBe(column.COLUMN_NAME === 'retry_of' ? 'Explicitly confirmed unknown analysis predecessor' : 'Analysis record identity');
+    }
+  }
+  it('#309 preserves metadata across repeated config saves and defines JSON type', async () => {
+    await pool.query("CREATE TABLE system_config (id INT AUTO_INCREMENT PRIMARY KEY, config_key VARCHAR(100) UNIQUE, config_value TEXT, value_type ENUM('string','json') DEFAULT 'string', description TEXT, updated_by INT)");
+    const spy = vi.spyOn(dbConnection, 'getPool').mockReturnValue(pool);
+    try {
+      await pool.query("INSERT INTO system_config VALUES (71,'auto_analysis_config','{}','string','retain description',19)");
+      for (const enabled of [false, true]) {
+        expect(await aiAnalysisConfigService.saveConfig({ ...DEFAULT_CONFIG, enabled })).toEqual({ success: true });
+        const [row] = await rows('SELECT * FROM system_config');
+        expect(row).toMatchObject({ id: 71, description: 'retain description', updated_by: 19, value_type: 'json' });
+        expect(JSON.parse(row.config_value).enabled).toBe(enabled);
+      }
+      await pool.query('DELETE FROM system_config');
+      expect((await aiAnalysisConfigService.saveConfig(DEFAULT_CONFIG)).success).toBe(true);
+      expect((await rows('SELECT value_type FROM system_config'))[0].value_type).toBe('json');
+    } finally { spy.mockRestore(); await pool.query('DROP TABLE system_config'); }
+  });
+  it.each(['completed', 'failed', 'pending', 'running', 'unknown'])('#310 deletion contract for %s', async status => {
+    const created = await enqueue();
+    await pool.query('UPDATE ai_analysis SET status = ? WHERE id = ?', [status, created.analysisId]);
+    await pool.query("INSERT INTO analysis_dispatch_attempts (analysis_id,attempt_number,job_id,owner_id,fencing_token,runtime_run_id) SELECT analysis_id,1,job_id,'owner',1,'run' FROM analysis_dispatches");
+    const spy = vi.spyOn(dbConnection, 'getPool').mockReturnValue(pool);
+    try {
+      const allowed = ['completed', 'failed'].includes(status);
+      expect((await aiAnalysisDatabaseService.deleteAnalysis(created.analysisId)).success).toBe(allowed);
+      for (const table of ['ai_analysis', 'analysis_dispatches', 'analysis_dispatch_attempts', 'analysis_dispatch_keys']) {
+        expect(await rows('SELECT * FROM ' + table)).toHaveLength(allowed ? 0 : 1);
+      }
+    } finally { spy.mockRestore(); }
+  });
+  it('#310 rolls back every deletion when a later statement fails', async () => {
+    const created = await enqueue();
+    await pool.query("UPDATE ai_analysis SET status = 'completed'");
+    await pool.query("CREATE TRIGGER fail_delete BEFORE DELETE ON ai_analysis FOR EACH ROW SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'injected delete failure'");
+    const spy = vi.spyOn(dbConnection, 'getPool').mockReturnValue(pool);
+    try {
+      expect((await aiAnalysisDatabaseService.deleteAnalysis(created.analysisId)).success).toBe(false);
+      for (const table of ['ai_analysis', 'analysis_dispatches', 'analysis_dispatch_keys']) expect(await rows('SELECT * FROM ' + table)).toHaveLength(1);
+    } finally { spy.mockRestore(); await pool.query('DROP TRIGGER fail_delete'); }
+  });
+  it('#310 rechecks status after a concurrent lifecycle writer commits', async () => {
+    const created = await enqueue();
+    const writer = await pool.getConnection();
+    const spy = vi.spyOn(dbConnection, 'getPool').mockReturnValue(pool);
+    try {
+      await writer.beginTransaction();
+      await writer.query("UPDATE ai_analysis SET status = 'running' WHERE id = ?", [created.analysisId]);
+      const deletion = aiAnalysisDatabaseService.deleteAnalysis(created.analysisId);
+      await writer.commit();
+      expect((await deletion).success).toBe(false);
+      expect(await rows('SELECT * FROM analysis_dispatches')).toHaveLength(1);
+    } finally { await writer.rollback(); writer.release(); spy.mockRestore(); }
+  });
+  it('#302 upgrades populated INT references without losing data and can repeat the widening', async () => {
+    for (const table of ['analysis_dispatches', 'analysis_dispatch_attempts', 'analysis_dispatch_keys']) {
+      await pool.query(`ALTER TABLE ${table} MODIFY COLUMN analysis_id INT UNSIGNED ${table === 'analysis_dispatch_keys' ? 'NULL' : 'NOT NULL'} COMMENT 'Analysis record identity'`);
+    }
+    await pool.query("ALTER TABLE analysis_dispatches MODIFY COLUMN retry_of INT UNSIGNED NULL COMMENT 'Explicitly confirmed unknown analysis predecessor'");
+    const first = await enqueue(); const owned = await claim(first.analysisId);
+    await store.beforeSend(owned); await store.fail(owned, 'ANALYSIS_PROVIDER_RESULT_UNKNOWN');
+    const retry = await enqueue({ retryOf: first.analysisId });
+    expect(retry.analysisId).toBe(2);
+    await pool.query('ALTER TABLE ai_analysis AUTO_INCREMENT = 4294967296');
+    await expect(enqueue({ request: { ...request, subject: { type: 'instance', id: 43 } } })).rejects.toThrow(/range/i);
+    const tables = ['ai_analysis', 'analysis_dispatches', 'analysis_dispatch_attempts', 'analysis_dispatch_keys'];
+    const before = await Promise.all(tables.map(table => rows(`SELECT * FROM ${table}`)));
+    const migration = readFileSync(new URL('../../sql/migrations/157_analysis_dispatch_id_range.sql', import.meta.url), 'utf8');
+    for (let pass = 0; pass < 2; pass++) {
+      for (const sql of splitSqlStatements(migration)) await pool.query(sql);
+      await assertIdSchema(pool);
+      expect(await Promise.all(tables.map(table => rows(`SELECT * FROM ${table}`)))).toEqual(before);
+    }
+  });
+  it.each([4294967295, 4294967296])('#302 creates, dispatches and queries retry_of across INT boundary %s', async id => {
+    await pool.query(`ALTER TABLE ai_analysis AUTO_INCREMENT = ${id}`);
+    const first = await enqueue(); expect(first.analysisId).toBe(id);
+    expect((await enqueue()).analysisId).toBe(id); // persistent admission-key lookup
+    const owned = await claim(id); await store.beforeSend(owned);
+    await store.fail(owned, 'ANALYSIS_PROVIDER_RESULT_UNKNOWN');
+    const retry = await enqueue({ retryOf: id }); expect(retry.analysisId).toBe(id + 1);
+    expect((await rows(`SELECT retry_of FROM analysis_dispatches WHERE analysis_id = ${retry.analysisId}`))[0].retry_of).toBe(id);
+    expect((await rows(`SELECT analysis_id FROM analysis_dispatch_attempts WHERE analysis_id = ${id}`))[0].analysis_id).toBe(id);
+    const retryOwned = await claim(retry.analysisId); await store.beforeSend(retryOwned);
+    expect(await store.completeEnvelope(retryOwned, envelope)).toEqual({ success: true });
+    expect((await rows(`SELECT status FROM ai_analysis WHERE id = ${retry.analysisId}`))[0].status).toBe('completed');
+    await assertIdSchema(pool);
+  });
+  it('#302 accepts MAX_SAFE_INTEGER and rolls back creation beyond the number API range', async () => {
+    await pool.query(`ALTER TABLE ai_analysis AUTO_INCREMENT = ${Number.MAX_SAFE_INTEGER}`);
+    const first = await enqueue(); expect(first.analysisId).toBe(Number.MAX_SAFE_INTEGER);
+    expect((await enqueue()).analysisId).toBe(Number.MAX_SAFE_INTEGER);
+    const owned = await claim(first.analysisId); await store.beforeSend(owned);
+    await store.fail(owned, 'ANALYSIS_PROVIDER_RESULT_UNKNOWN');
+    await expect(enqueue({ retryOf: first.analysisId })).rejects.toThrow('ANALYSIS_ID_OUT_OF_SAFE_RANGE');
+    expect(await rows('SELECT id FROM ai_analysis')).toHaveLength(1);
+    expect(await rows('SELECT analysis_id FROM analysis_dispatches')).toHaveLength(1);
+    expect(await rows('SELECT id FROM workflow_jobs')).toHaveLength(1);
+    // A historical BIGINT outside the API range must never be rounded on lookup.
+    await pool.query("UPDATE analysis_dispatch_keys SET analysis_id = 9007199254740993");
+    await expect(enqueue()).rejects.toThrow('ANALYSIS_ID_OUT_OF_SAFE_RANGE');
+  });
+  // #488: exercise the real handler/registry/store and real MySQL transactions.
+  describe('completion write uncertainty (#488)', () => {
+    it.each([
+      ['before-commit', 'throw'], ['before-commit', 'error-result'], ['before-commit', 'completed-result'],
+      ['after-commit', 'throw'], ['after-commit', 'error-result'], ['after-commit', 'completed-result'],
+    ])('%s with engine exit %s preserves recovery state without replay', async (window, exit) => {
+      const queued = await enqueue();
+      const job = (await jobs.claim('completion-write', 30))!;
+      const context = { workerId: 'completion-write', fencingToken: job.fencingToken, signal: new AbortController().signal };
+      const registry = new JobRegistry();
+      let sends = 0;
+      const invoke: IAgentEngine['invoke'] = async (_s, _m, _p, options) => {
+        await options!.beforeProviderRequest!(); sends++;
+        const connection = await pool.getConnection();
+        const commit = connection.commit.bind(connection);
+        const commitSpy = vi.spyOn(connection, 'commit').mockImplementationOnce(async () => {
+          if (window === 'after-commit') await commit();
+          // Inject lost acknowledgement at the driver boundary, not at store.fail.
+          throw new Error('ECONNRESET');
+        });
+        const acquireSpy = vi.spyOn(pool, 'getConnection').mockResolvedValueOnce(connection);
+        try { await options!.completeAnalysis!(envelope); }
+        catch (error) { if (exit === 'throw') throw error; }
+        finally { acquireSpy.mockRestore(); commitSpy.mockRestore(); }
+        return { content: null, stopReason: exit === 'error-result' ? 'error' : 'completed' };
+      };
+      registerAnalysisDispatchHandler(registry, { store, authorize: async () => {}, configurationVersion: async () => 'c1', engine: async () => ({ invoke } as unknown as IAgentEngine) });
+      await expect(registry.execute(job, context)).rejects.toThrow(exit === 'throw' ? 'ECONNRESET' : 'ANALYSIS_COMPLETION_WRITE_UNCONFIRMED');
+      const analysis = (await rows('SELECT * FROM ai_analysis'))[0];
+      const dispatch = (await rows('SELECT * FROM analysis_dispatches'))[0];
+      const committed = window === 'after-commit';
+      expect(analysis).toMatchObject(committed
+        ? { status: 'completed', recovery_reason: null, error_message: null }
+        : { status: 'unknown', result: null, recovery_reason: 'ANALYSIS_COMPLETION_WRITE_UNCONFIRMED', error_message: 'ANALYSIS_COMPLETION_WRITE_UNCONFIRMED' });
+      expect(dispatch).toMatchObject(committed
+        ? { request_state: 'completed', reason: null }
+        : { request_state: 'unknown', reason: 'ANALYSIS_COMPLETION_WRITE_UNCONFIRMED' });
+      expect((await rows('SELECT * FROM analysis_dispatch_attempts'))[0].request_state).toBe(committed ? 'completed' : 'unknown');
+      if (committed) expect(analysis.analysis_envelope.conclusions).toEqual(envelope.conclusions);
+      await expire(); await store.recover();
+      await registry.execute(job, context); // Terminal claim returns without invoking the engine.
+      const reused = await enqueue();
+      expect(reused).toMatchObject({ analysisId: queued.analysisId, status: committed ? 'completed' : 'unknown', cached: committed });
+      expect(sends).toBe(1);
+      expect(await rows('SELECT * FROM ai_analysis')).toHaveLength(1);
+      expect((await rows('SELECT * FROM ai_analysis'))[0]).toEqual(analysis);
+    });
+
+    it('lost lease fences completion and failure writes; recovery never sends again', async () => {
+      await enqueue();
+      const job = (await jobs.claim('lost-completion-lease', 30))!;
+      const context = { workerId: 'lost-completion-lease', fencingToken: job.fencingToken, signal: new AbortController().signal };
+      const registry = new JobRegistry(); let sends = 0;
+      const invoke: IAgentEngine['invoke'] = async (_s, _m, _p, options) => {
+        await options!.beforeProviderRequest!(); sends++;
+        await expire();
+        await options!.completeAnalysis!(envelope);
+        throw new Error('UNREACHABLE');
+      };
+      registerAnalysisDispatchHandler(registry, { store, authorize: async () => {}, configurationVersion: async () => 'c1', engine: async () => ({ invoke } as unknown as IAgentEngine) });
+      await expect(registry.execute(job, context)).rejects.toThrow('ANALYSIS_LEASE_LOST');
+      expect((await rows('SELECT * FROM ai_analysis'))[0]).toMatchObject({ status: 'running', result: null, recovery_reason: null });
+      expect((await rows('SELECT * FROM analysis_dispatches'))[0]).toMatchObject({ request_state: 'sending', reason: null });
+      await store.recover(); await registry.execute(job, context);
+      expect((await enqueue()).status).toBe('unknown');
+      expect((await rows('SELECT * FROM ai_analysis'))[0]).toMatchObject({ status: 'unknown', result: null, recovery_reason: 'ANALYSIS_PROVIDER_RESULT_UNKNOWN' });
+      expect(sends).toBe(1);
+    });
+
+    it('completed is idempotent through the handler and preserves the first envelope', async () => {
+      await enqueue();
+      const job = (await jobs.claim('completed-idempotent', 30))!;
+      const context = { workerId: 'completed-idempotent', fencingToken: job.fencingToken, signal: new AbortController().signal };
+      const registry = new JobRegistry(); const invoke = vi.fn<IAgentEngine['invoke']>(async (_s, _m, _p, options) => {
+        await options!.beforeProviderRequest!();
+        expect(await options!.completeAnalysis!(envelope)).toEqual({ success: true });
+        expect(await options!.completeAnalysis!({ ...envelope, conclusions: ['overwrite'] })).toEqual({ success: false, error: 'ANALYSIS_ALREADY_TERMINAL' });
+        return { content: null, stopReason: 'completed' };
+      });
+      registerAnalysisDispatchHandler(registry, { store, authorize: async () => {}, configurationVersion: async () => 'c1', engine: async () => ({ invoke } as unknown as IAgentEngine) });
+      await registry.execute(job, context); await registry.execute(job, context);
+      expect(invoke).toHaveBeenCalledTimes(1);
+      expect((await rows('SELECT * FROM ai_analysis'))[0]).toMatchObject({ status: 'completed', recovery_reason: null, analysis_envelope: { conclusions: envelope.conclusions } });
+    });
+  });
   it('commits analysis, request, outbox and runnable job together; concurrent acceptance reuses it', async () => {
     const [a, b] = await Promise.all([enqueue(), enqueue()]); expect(a.analysisId).toBe(b.analysisId);
     for (const table of ['ai_analysis', 'analysis_dispatches', 'outbox_events', 'workflow_jobs']) expect(await rows(`SELECT * FROM ${table}`)).toHaveLength(1);
@@ -321,8 +521,39 @@ describe.skipIf(!port)('analysis durable recovery in isolated MySQL', () => {
       const runner = new MigrationRunner(fresh as any);
       await runner.run(); await runner.run();
       await new AnalysisDispatchStore(() => fresh).assertSchema();
+      await assertIdSchema(fresh);
       expect((await runner.inspect()).find(row => row.migration_id === '109_analysis_dispatch_recovery.sql')?.status).toBe('completed');
     } finally { await fresh.end(); await admin.query(`DROP DATABASE ${schema}`); }
+  }, 30_000);
+  it('#302 upgrades the old migration ledger and preserves populated references and checksum', async () => {
+    const schema = `${database}_upgrade`;
+    const directory = mkdtempSync(join(tmpdir(), 'analysis-id-upgrade-'));
+    const source = fileURLToPath(new URL('../../sql/migrations/', import.meta.url));
+    for (const name of readdirSync(source).filter(name => name.endsWith('.sql') && name !== '157_analysis_dispatch_id_range.sql')) {
+      copyFileSync(join(source, name), join(directory, name));
+    }
+    await admin.query(`CREATE DATABASE ${schema}`);
+    const upgrade = mysql.createPool({ host: '127.0.0.1', port, user: 'root', password: process.env.ANALYSIS_TEST_MYSQL_PASSWORD ?? '', database: schema });
+    try {
+      const old = new MigrationRunner(upgrade as any, directory);
+      await old.run();
+      const checksum = (await old.inspect()).find(row => row.migration_id === '109_analysis_dispatch_recovery.sql')!.checksum;
+      await upgrade.query(`INSERT INTO ai_analysis (id, analysis_type, status, result) VALUES (4294967295, 'fault_diagnosis', 'unknown', '"retained result"')`);
+      await upgrade.query(`INSERT INTO analysis_dispatches (analysis_id, job_id, request_snapshot, evidence_version, config_version, authorization_version, retry_of)
+        VALUES (4294967295, 'old-job', '{}', 'e1', 'c1', 'a1', 1)`);
+      await upgrade.query(`INSERT INTO analysis_dispatch_attempts (analysis_id, attempt_number, job_id, owner_id, fencing_token, runtime_run_id)
+        VALUES (4294967295, 1, 'old-job', 'old-owner', 1, 'old-run')`);
+      await upgrade.query("INSERT INTO analysis_dispatch_keys (scope_key, analysis_id) VALUES ('old-scope',4294967295),('empty-scope',NULL)");
+      const snapshot = async () => Promise.all(['ai_analysis', 'analysis_dispatches', 'analysis_dispatch_attempts', 'analysis_dispatch_keys'].map(async table => (await upgrade.query(`SELECT * FROM ${table}`))[0]));
+      const before = await snapshot();
+      const runner = new MigrationRunner(upgrade as any);
+      await runner.run(); await runner.run();
+      await assertIdSchema(upgrade);
+      expect(await snapshot()).toEqual(before);
+      const ledger = await runner.inspect();
+      expect(ledger.find(row => row.migration_id === '109_analysis_dispatch_recovery.sql')?.checksum).toBe(checksum);
+      expect(ledger.find(row => row.migration_id === '157_analysis_dispatch_id_range.sql')?.status).toBe('completed');
+    } finally { await upgrade.end(); await admin.query(`DROP DATABASE ${schema}`); rmSync(directory, { recursive: true, force: true }); }
   }, 30_000);
   it('legacy TopSQL keys cannot bypass unknown admission and explicit automatic retry creates a linked manual request', async () => {
     await pool.query("INSERT INTO ai_analysis (analysis_type,target_type,instance_id,related_id,trigger_type,cache_key,status) VALUES ('topsql_analysis','instance',42,99,'manual','old-sql-hash:42','running')");

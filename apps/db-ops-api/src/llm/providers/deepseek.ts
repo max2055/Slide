@@ -1,3 +1,4 @@
+import { isNativeEndpoint } from './native-endpoint.js';
 /**
  * DeepSeek LLM 提供商配置
  *
@@ -64,8 +65,7 @@ export const DEEPSEEK_MODEL_CATALOG = [
  * 判断是否是 DeepSeek 的原生 Base URL
  */
 export function isNativeDeepSeekBaseUrl(baseUrl: string | undefined): boolean {
-  if (!baseUrl) return false;
-  return baseUrl.includes('api.deepseek.com');
+  return isNativeEndpoint(baseUrl, ['api.deepseek.com']);
 }
 
 /**

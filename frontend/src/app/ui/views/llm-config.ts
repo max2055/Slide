@@ -47,7 +47,7 @@ const API_FORMATS = [
   { value: "", label: "自动检测" },
   { value: "openai-completions", label: "OpenAI Completions" },
   { value: "anthropic-messages", label: "Anthropic Messages" },
-  { value: "google-generative-ai", label: "Google Generative AI" },
+  { value: "ollama", label: "Ollama" },
 ];
 
 const DEPLOY_TYPES = [
@@ -71,7 +71,6 @@ const PROVIDER_TEMPLATES: ProviderTemplate[] = [
   { id: "anthropic", name: "anthropic", displayName: "Anthropic Claude", color: "#d97706", bg: "rgba(217,119,6,0.12)", baseUrl: "https://api.anthropic.com/v1", defaultModel: "claude-sonnet-4-6", deploymentType: "api", description: "Claude Sonnet / Opus / Haiku", models: ["claude-opus-4-7", "claude-sonnet-4-6", "claude-haiku-4-5", "claude-opus-4-5", "claude-sonnet-4-5", "claude-3.5-sonnet", "claude-3.5-haiku"] },
   { id: "openai", name: "openai", displayName: "OpenAI", color: "#10a37f", bg: "rgba(16,163,127,0.12)", baseUrl: "https://api.openai.com/v1", defaultModel: "gpt-4.1", deploymentType: "api", description: "GPT-4.1 / GPT-4o / o4-mini", models: ["gpt-4.1", "gpt-4.1-mini", "gpt-4.1-nano", "gpt-4o", "gpt-4o-mini", "o4-mini", "o3-mini", "gpt-4-turbo"] },
   { id: "deepseek", name: "deepseek", displayName: "DeepSeek", color: "#4f46e5", bg: "rgba(79,70,229,0.12)", baseUrl: "https://api.deepseek.com/v1", defaultModel: "deepseek-v4-pro", deploymentType: "api", description: "DeepSeek V4 Pro / Flash", models: ["deepseek-v4-pro", "deepseek-v4-flash", "deepseek-reasoner", "deepseek-chat", "deepseek-coder"] },
-  { id: "google", name: "google", displayName: "Google Gemini", color: "#4285f4", bg: "rgba(66,133,244,0.12)", baseUrl: "https://generativelanguage.googleapis.com/v1beta", defaultModel: "gemini-2.5-pro", deploymentType: "api", description: "Gemini 2.5 Pro / Flash", models: ["gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-pro", "gemini-1.5-flash"] },
   { id: "ollama", name: "ollama", displayName: "Ollama", color: "#374151", bg: "rgba(55,65,81,0.12)", baseUrl: "http://localhost:11434/v1", defaultModel: "qwen2.5-coder:32b", deploymentType: "local", description: "本地部署 · 开源模型", models: ["qwen2.5-coder:32b", "qwen2.5:72b", "llama3.3:70b", "deepseek-r1:70b", "codellama:70b", "mistral:7b", "gemma3:27b", "phi4:14b"] },
 ];
 
@@ -133,6 +132,8 @@ export class LLMConfigPage extends LitElement {
   private pendingNavigation: (() => void) | null = null;
   private savedForm = '';
   private _modelRequestVersion = 0;
+  private _loadRequestVersion = 0;
+  private _sceneRequestVersion = 0;
   private _testRequestVersion = 0;
   private _savedOkTimer: ReturnType<typeof setTimeout> | null = null;
   static styles = [sharedFieldStyles, sharedBtnStyles, css`
@@ -262,6 +263,8 @@ export class LLMConfigPage extends LitElement {
 
   override disconnectedCallback() {
     super.disconnectedCallback();
+    this._loadRequestVersion++;
+    this._sceneRequestVersion++;
     if (this._savedOkTimer) clearTimeout(this._savedOkTimer);
     this._modelRequestVersion++;
     this._resetTest();
@@ -270,12 +273,15 @@ export class LLMConfigPage extends LitElement {
   // ── Data ─────────────────────────────────────────────────────────────────
 
   private async _load(silent = false) {
+    const version = ++this._loadRequestVersion;
     if (!silent) { this.loading = true; }
     this.error = null;
     try {
       const data = await apiClient.get<LLMProvider[]>("/llm/configs");
+      if (version !== this._loadRequestVersion) return;
       this.providers = Array.isArray(data) ? data : [];
-      await this._loadScenes();
+      await this._loadScenes(version);
+      if (version !== this._loadRequestVersion) return;
       if (this.selectedId && !this.providers.find(p => p.id === this.selectedId)) {
         this.selectedId = null;
         this.editing = null;
@@ -305,8 +311,8 @@ export class LLMConfigPage extends LitElement {
           ?? this.providers[0],
         );
       }
-    } catch (e: any) { this.error = e.message || "加载失败"; }
-    finally { if (!silent) { this.loading = false; } }
+    } catch (e: any) { if (version === this._loadRequestVersion) this.error = e.message || "加载失败"; }
+    finally { if (version === this._loadRequestVersion) this.loading = false; }
   }
 
   // ── Sidebar actions ──────────────────────────────────────────────────────
@@ -429,6 +435,10 @@ export class LLMConfigPage extends LitElement {
     if (this.saving || this.modelSaving) return;
     this.saving = true; this._beginMutation();
     try {
+      if (!API_FORMATS.some(format => format.value === this.form.api_format)) {
+        throw new Error('LLM_API_FORMAT_UNSUPPORTED：此历史协议不受支持，请迁移到服务商支持的协议及对应端点后保存');
+      }
+      if ([...this.form.display_name].length > 100) throw new Error('显示名称最多 100 个字符');
       const window = this.form.context_window;
       const output = this.form.max_tokens;
       const selected = this.form.models.find(m => m.id === this.form.default_model);
@@ -748,13 +758,18 @@ export class LLMConfigPage extends LitElement {
     `;
   }
 
-  private async _loadScenes() {
+  private async _loadScenes(providerVersion?: number) {
+    const version = ++this._sceneRequestVersion;
+    const current = () => version === this._sceneRequestVersion
+      && (providerVersion === undefined || providerVersion === this._loadRequestVersion);
     try {
-      this.scenes = await apiClient.get<SceneConfig[]>('/llm/scenes');
+      const scenes = await apiClient.get<SceneConfig[]>('/llm/scenes');
+      if (!current()) return;
+      this.scenes = scenes;
       this.sceneDrafts = Object.fromEntries(this.scenes.map(row => [row.scene,
         row.binding ? { ...row.binding } : { provider_id: null, model: '' }]));
       this.sceneMessage = '';
-    } catch (error: any) { this.sceneMessage = error.message || '场景配置加载失败'; }
+    } catch (error: any) { if (current()) this.sceneMessage = error.message || '场景配置加载失败'; }
   }
 
   private async _saveScene(scene: string) {
@@ -773,7 +788,7 @@ export class LLMConfigPage extends LitElement {
     return html`
       <p class="form-hint">未单独分配的场景跟随全局默认。全局默认在提供商详情中设置。健康检查的规则评分不调用模型。</p>
       ${this.sceneMessage ? html`<p role="alert" class="msg msg-err">${this.sceneMessage}</p>
-        <button class="btn" @click=${this._loadScenes}>重新加载</button>` : ''}
+        <button class="btn" @click=${() => this._loadScenes()}>重新加载</button>` : ''}
       ${this.scenes.map(row => {
         const draft = this.sceneDrafts[row.scene];
         const provider = this.providers.find(p => p.id === draft?.provider_id);
@@ -889,16 +904,21 @@ export class LLMConfigPage extends LitElement {
         </div>
         <div class="form-group">
           <label class="form-label" for="provider-display">显示名称</label>
-          <input id="provider-display" class="form-input" .value=${this.form.display_name} @input=${(e: any) => this.form.display_name = e.target.value} placeholder="Anthropic Claude" />
+          <input id="provider-display" class="form-input" .value=${this.form.display_name} @input=${(e: any) => this.form.display_name = e.target.value} aria-describedby="provider-display-hint" placeholder="Anthropic Claude" />
+          <span id="provider-display-hint" class="muted">最多 100 个字符</span>
         </div>
 
       <div class="form-group">
         <label class="form-label" for="api-format">API 兼容格式</label>
         <select id="api-format" class="form-select" .value=${this.form.api_format} @change=${(e: any) => this.form.api_format = e.target.value}>
+          ${!API_FORMATS.some(f => f.value === this.form.api_format)
+            ? html`<option .value=${this.form.api_format} selected disabled>${this.form.api_format}（历史配置，不支持）</option>` : ''}
           ${API_FORMATS.map(f => html`<option value=${f.value} .selected=${f.value === this.form.api_format}>${f.label}</option>`)}
         </select>
       </div>
       </div>
+      ${!API_FORMATS.some(f => f.value === this.form.api_format)
+        ? html`<p role="alert" class="msg msg-err">此历史协议不受运行时支持。请迁移到服务商支持的协议及对应端点后保存；原值已保留，不会自动转换。</p>` : ''}
       <p class="form-hint connection-hint">自定义提供商需指定 API 格式，预置模板可自动检测</p>
 
             <app-form-field label="Base URL"><input class="form-input" aria-label="Base URL" .value=${this.form.api_base_url}

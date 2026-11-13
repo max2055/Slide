@@ -5,6 +5,8 @@ import { sharedFieldStyles } from "../../styles/shared-field-styles.ts";
  * 管理定时采集和分析任务的启用/停用、表达式编辑、手动触发和运行日志查看
  */
 import { LitElement, html, css, nothing } from "lit";
+import { readCachedPermissions } from "../permissions.js";
+import { hasSlidePermission } from "../app-settings.js";
 import { sharedBtnStyles } from '../../styles/shared-btn-styles.ts';
 import { customElement, state } from "lit/decorators.js";
 import "../components/app-dialog.js";
@@ -184,9 +186,21 @@ export class CronJobsSettings extends LitElement {
 
   @state() private filterMode: "all" | "script" | "agent" = "all";
 
+  @state() private permissions = readCachedPermissions();
+  private formGeneration = 0;
+  private readonly permissionsChanged = () => {
+    this.permissions = readCachedPermissions();
+    if (!this.canManage) this.closeFormDialog();
+  };
+  private readonly sessionExpired = () => {
+    this.permissions = new Set<string>();
+    this.closeFormDialog();
+  };
+  private get canManage() { return hasSlidePermission(this.permissions, "cron:manage"); }
+
   private get filteredJobs(): CronJobConfig[] {
     if (this.filterMode === "all") return this.jobs;
-    return this.jobs.filter(j => j.task_type === this.filterMode);
+    return this.jobs.filter(j => (j.task_type === "script" ? "script" : "agent") === this.filterMode);
   }
 
   static styles = [sharedFieldStyles, sharedBtnStyles, css`
@@ -290,6 +304,8 @@ export class CronJobsSettings extends LitElement {
 
   override connectedCallback() {
     super.connectedCallback();
+    window.addEventListener("slide-permissions-loaded", this.permissionsChanged);
+    window.addEventListener("slide-session-expired", this.sessionExpired);
     this.runTracker.start();
     this.loadCronJobs();
     this._refreshInterval = setInterval(() => this.refreshCronJobs(), 15000);
@@ -297,6 +313,9 @@ export class CronJobsSettings extends LitElement {
 
   override disconnectedCallback() {
     super.disconnectedCallback();
+    window.removeEventListener("slide-permissions-loaded", this.permissionsChanged);
+    window.removeEventListener("slide-session-expired", this.sessionExpired);
+    this.formGeneration++;
     this.runTracker.stop();
     if (this._refreshInterval) {
       clearInterval(this._refreshInterval);
@@ -350,6 +369,9 @@ export class CronJobsSettings extends LitElement {
   }
 
   private async openCreateDialog() {
+    if (!this.canManage) return;
+    this.formGeneration++;
+    this.testRunning = false;
     this.formName = "";
     this.formDescription = "";
     this.formTaskDescription = "";
@@ -383,6 +405,8 @@ export class CronJobsSettings extends LitElement {
   }
 
   private openEditDialog(job: CronJobConfig) {
+    this.formGeneration++;
+    this.testRunning = false;
     this.formName = job.name;
     this.formDescription = job.description || "";
     this.formTaskDescription = job.task_description;
@@ -417,6 +441,8 @@ export class CronJobsSettings extends LitElement {
   }
 
   private closeFormDialog() {
+    this.formGeneration++;
+    this.testRunning = false;
     this.showCreateDialog = false;
     this.editingJob = null;
     this.formName = "";
@@ -431,6 +457,7 @@ export class CronJobsSettings extends LitElement {
   }
 
   private async saveTask() {
+    if (!this.canManage || this.formSaving || this.testRunning) return;
     if (!this.formName.trim()) { this.formError = "任务名称不能为空"; return; }
     if (this.formTaskType === "agent" && this.formTaskDescription.trim().length < 10) { this.formError = "任务内容至少需要10个字符"; return; }
     if (this.formTaskType === "script") {
@@ -531,62 +558,36 @@ export class CronJobsSettings extends LitElement {
   private async onTestExecute() {
     if (!this.formTargetInstanceId) { this.testResult = "请先选择目标实例"; return; }
     if (!this.scriptEditorContent.trim()) { this.testResult = "请先编写 SQL 脚本内容"; return; }
-    this.testResult = "准备中...";
-    let scriptId = this.formScriptId;
-    try {
-      if (scriptId) {
-        this.testResult = "正在更新脚本...";
-        const updateRes = await authFetch(`/api/cron/scripts/${scriptId}`, {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            content: this.scriptEditorContent,
-            target_db_type: this.scriptEditorDbType || "mysql",
-          }),
-        });
-        if (!updateRes.ok) throw new Error((await updateRes.json().catch(() => ({}))).error || "更新脚本失败");
-      } else {
-        this.testResult = "正在创建脚本...";
-        const createRes = await authFetch("/api/cron/scripts", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            name: `test_${Date.now()}`,
-            content: this.scriptEditorContent,
-            target_db_type: this.scriptEditorDbType || "mysql",
-          }),
-        });
-        if (!createRes.ok) throw new Error((await createRes.json().catch(() => ({}))).error || "创建脚本失败");
-        const created = await createRes.json();
-        scriptId = created.id;
-        this.formScriptId = scriptId;
-      }
-    } catch (e: any) {
-      this.testResult = `错误：${e.message || "未知错误"}`;
-      return;
-    }
-    if (!scriptId) return;
+    if (!this.canManage || this.testRunning || this.formSaving) return;
+    const generation = this.formGeneration;
+    const scriptId = this.formScriptId;
+    const content = this.scriptEditorContent;
+    const targetDbType = this.scriptEditorDbType || "mysql";
+    const target = { instance_id: this.formTargetInstanceId, database: this.formTargetDatabase || null };
     this.testRunning = true;
     this.testResult = "执行中...";
     try {
-      const res = await authFetch(`/api/cron/scripts/${scriptId}/test`, {
+      if (scriptId) {
+        const updateRes = await authFetch(`/api/cron/scripts/${scriptId}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ content, target_db_type: targetDbType }),
+        });
+        if (!updateRes.ok) throw new Error((await updateRes.json().catch(() => ({}))).error || "更新脚本失败");
+        if (generation !== this.formGeneration) return;
+      }
+      const res = await authFetch(scriptId ? `/api/cron/scripts/${scriptId}/test` : "/api/cron/scripts/test", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          instance_id: this.formTargetInstanceId,
-          database: this.formTargetDatabase || null,
-        }),
+        body: JSON.stringify(scriptId ? target : { ...target, content }),
       });
-      if (!res.ok) {
-        const errBody = await res.json().catch(() => ({}));
-        throw new Error(errBody.error || "测试执行失败");
-      }
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || "测试执行失败");
       const data = await res.json();
-      this.testResult = typeof data === "string" ? data : JSON.stringify(data, null, 2);
+      if (generation === this.formGeneration) this.testResult = typeof data === "string" ? data : JSON.stringify(data, null, 2);
     } catch (e: any) {
-      this.testResult = `错误：${e.message || "未知错误"}`;
+      if (generation === this.formGeneration) this.testResult = `错误：${e.message || "未知错误"}`;
     } finally {
-      this.testRunning = false;
+      if (generation === this.formGeneration) this.testRunning = false;
     }
   }
 
@@ -693,7 +694,7 @@ export class CronJobsSettings extends LitElement {
     // Agent mode format: { instances, failures, coverage_rate }
     const instances = sr.instances as Record<string, unknown> | undefined;
     const failures = sr.failures as Array<Record<string, unknown>> | undefined;
-    const cov = typeof sr.coverage_rate === 'number' ? sr.coverage_rate : null;
+    const cov = typeof sr.coverage_rate === 'number' && Number.isFinite(sr.coverage_rate) && sr.coverage_rate >= 0 && sr.coverage_rate <= 1 ? sr.coverage_rate : null;
 
     return html`
       <div class="sr-card">
@@ -711,12 +712,12 @@ export class CronJobsSettings extends LitElement {
               <span class="sr-stat-value">${instances.failed ?? '—'}</span>
               <span class="sr-stat-label">失败</span>
             </div>
-            ${cov !== null ? html`
-              <div class="sr-stat ${cov < 0.8 ? 'warn' : cov < 0.5 ? 'danger' : 'ok'}">
-                <span class="sr-stat-value">${Math.round(cov * 100)}%</span>
+            ${html`
+              <div class="sr-stat ${cov === null ? '' : cov < 0.5 ? 'danger' : cov < 0.8 ? 'warn' : 'ok'}">
+                <span class="sr-stat-value">${cov === null ? '未知' : `${Math.round(cov * 100)}%`}</span>
                 <span class="sr-stat-label">覆盖率</span>
               </div>
-            ` : nothing}
+            `}
           </div>
         ` : nothing}
         ${failures && failures.length > 0 ? html`
@@ -783,7 +784,6 @@ export class CronJobsSettings extends LitElement {
   override render() {
     if (this.loading) return html`<div class="loading">加载中...</div>`;
     if (this.error) return html`<div class="error-state"><h3>加载定时任务失败</h3><p>${this.error}</p><button class="btn" @click=${this.loadCronJobs}>重试</button></div>`;
-    if (this.jobs.length === 0) return html`<app-empty-state title="暂无定时任务"></app-empty-state>`;
 
     return html`
       <div class="page-header">
@@ -791,7 +791,7 @@ export class CronJobsSettings extends LitElement {
           <h1>定时任务</h1>
           <p>管理定时采集和分析任务的调度与监控</p>
         </div>
-        <button class="btn" @click=${this.openCreateDialog}>+ 新建任务</button>
+        <button class="btn-primary" @click=${this.openCreateDialog} ?disabled=${!this.canManage}>+ 新建任务</button>
       </div>
       <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px;">
         <label style="font-size:12px;color:var(--muted);">筛选模式：</label>
@@ -802,6 +802,7 @@ export class CronJobsSettings extends LitElement {
         </select>
         <span style="font-size:12px;color:var(--muted);">共 ${this.filteredJobs.length} 个任务</span>
       </div>
+      ${this.jobs.length === 0 ? html`<app-empty-state title="暂无定时任务"></app-empty-state>` : html`
       <app-card variant="default" style="overflow-x:auto;">
         <div class="table-head">
           <div class="table-head-cell cell-index">#</div>
@@ -860,7 +861,7 @@ export class CronJobsSettings extends LitElement {
             </div>
           </div>
         `)}
-      </app-card>
+      </app-card>`}
 
       <!-- Log Viewer Dialog -->
       ${this.logViewerJob ? html`
@@ -890,15 +891,15 @@ export class CronJobsSettings extends LitElement {
           ${this.formError ? html`<div style="font-size:12px;margin-bottom:12px;padding:8px 12px;color:var(--danger);background:var(--danger-subtle, rgba(220,38,38,0.08));border-radius:var(--radius-sm);">${this.formError}</div>` : nothing}
           <div class="form-group">
             <label class="form-label">任务名称</label>
-            <input class="form-input" .value=${this.formName} @input=${this.onNameInput} placeholder="例如：每日慢查询检查" />
+            <input aria-label="任务名称" class="form-input" .value=${this.formName} @input=${this.onNameInput} placeholder="例如：每日慢查询检查" />
           </div>
           <div class="form-group">
             <label class="form-label">描述</label>
-            <input class="form-input" .value=${this.formDescription} @input=${this.onDescInput} placeholder="简要描述这个任务的用途" />
+            <input aria-label="描述" class="form-input" .value=${this.formDescription} @input=${this.onDescInput} placeholder="简要描述这个任务的用途" />
           </div>
           <div class="form-group">
             <label class="form-label">执行模式</label>
-            <select class="form-input" .value=${this.formTaskType} @change=${this.onTaskTypeChange}>
+            <select aria-label="执行模式" class="form-input" .value=${this.formTaskType} @change=${this.onTaskTypeChange}>
               <option value="agent">Agent 模式（AI 自然语言驱动）</option>
               <option value="script">Script 模式（SQL 脚本执行）</option>
             </select>
@@ -906,7 +907,7 @@ export class CronJobsSettings extends LitElement {
           ${this.formTaskType === "agent" ? html`
             <div class="form-group">
               <label class="form-label">任务内容（自然语言）</label>
-              <textarea class="form-input form-textarea" .value=${this.formTaskDescription} @input=${this.onTaskDescInput} placeholder="例如：每天早上9点检查生产环境的慢查询并生成摘要报告"></textarea>
+              <textarea aria-label="任务内容（自然语言）" class="form-input form-textarea" .value=${this.formTaskDescription} @input=${this.onTaskDescInput} placeholder="例如：每天早上9点检查生产环境的慢查询并生成摘要报告"></textarea>
               <div class="form-hint">告诉 AI 要做什么，用自然语言描述即可</div>
             </div>
           ` : html`
@@ -921,7 +922,7 @@ export class CronJobsSettings extends LitElement {
             <div class="form-group" style="display:flex;flex-direction:row;gap:var(--space-md);align-items:flex-end;">
               <div style="flex:1;">
                 <label class="form-label">目标实例</label>
-                <select class="form-input" @change=${this.onInstanceChange}>
+                <select aria-label="目标实例" class="form-input" @change=${this.onInstanceChange}>
                   <option value="">— 选择实例 —</option>
                   ${this.instances.map((i) => html`
                     <option value=${i.id} .selected=${this.formTargetInstanceId === i.id}>${i.name} (${i.db_type})</option>
@@ -929,7 +930,7 @@ export class CronJobsSettings extends LitElement {
                 </select>
               </div>
               ${this.formTargetInstanceId ? html`
-                <button class="btn" @click=${this.onTestExecute} ?disabled=${this.testRunning}>
+                <button class="btn" @click=${this.onTestExecute} ?disabled=${this.testRunning || this.formSaving || !this.canManage}>
                   ${this.testRunning ? "执行中..." : "测试执行"}
                 </button>
               ` : nothing}
@@ -949,7 +950,7 @@ export class CronJobsSettings extends LitElement {
           `}
           <div class="form-group">
             <label class="form-label">Cron 表达式</label>
-            <input class="form-input form-mono" .value=${this.formCronExpr} @input=${this.onCronExprInput} placeholder="0 9 * * *" />
+            <input aria-label="Cron 表达式" class="form-input form-mono" .value=${this.formCronExpr} @input=${this.onCronExprInput} placeholder="0 9 * * *" />
             <div class="cron-presets">
               ${CRON_PRESETS.map(p => html`
                 <button class="cron-preset-chip ${this.formCronExpr === p.value ? 'active' : ''}" @click=${() => { this.formCronExpr = p.value; this.requestUpdate(); }}>
@@ -963,7 +964,7 @@ export class CronJobsSettings extends LitElement {
           </div>
           <div slot="footer">
             <button class="btn" @click=${this.closeFormDialog} ?disabled=${this.formSaving}>取消</button>
-            <button class="btn-primary" @click=${this.saveTask} ?disabled=${this.formSaving}>
+            <button class="btn-primary" @click=${this.saveTask} ?disabled=${this.formSaving || this.testRunning || !this.canManage}>
               ${this.formSaving ? '保存中...' : this.editingJob ? '保存修改' : '创建任务'}
             </button>
           </div>
