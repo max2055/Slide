@@ -111,7 +111,7 @@ No probes were defined or required by any Plan in Phase 102. Probes were not app
 
 ### 1. Login Page Rendering
 
-**Test:** Open http://localhost:5173, log in with admin/Tpam1234
+**Test:** Open http://localhost:5173, log in with admin/REDACTED
 **Expected:** Login page loads without any errors. Eye/eyeOff toggle icons on password field render correctly. No console errors.
 **Why human:** Visual rendering + JS runtime behavior only testable in browser.
 

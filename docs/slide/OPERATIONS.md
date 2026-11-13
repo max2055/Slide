@@ -259,7 +259,7 @@ cd frontend && npm run dev
 #### 第 8 步：登录
 
 - 用户名: `admin`
-- 密码: `Tpam1234`
+- 密码: `REDACTED`
 
 首次登录后建议在用户管理中修改默认密码。
 
@@ -399,7 +399,7 @@ curl http://localhost:3000/api/health
 | 后端启动失败："端口被占用" | 端口 3000 已被其他进程占用 | `lsof -ti:3000 \| xargs kill -9` |
 | Gateway 启动失败 | 端口 28789 被占用 | `lsof -ti:28789 \| xargs kill -9` |
 | 前端白屏或接口报错 | 后端未启动或 CORS 配置错误 | 先启动后端（:3000），再启动前端（:5173） |
-| 登录失败 | 密码错误或数据库未初始化 | 确认已执行 `npx tsx init-db.ts`；默认账号 admin / Tpam1234 |
+| 登录失败 | 密码错误或数据库未初始化 | 确认已执行 `npx tsx init-db.ts`；默认账号 admin / REDACTED |
 | Chat AI 无响应 | LLM API Key 未配置或 Key 无效 | 检查 `.env` 中 `ANTHROPIC_API_KEY` 或 `OPENAI_API_KEY` 配置 |
 | Gateway WebSocket 连接失败 | Gateway 未启动或端口错误 | 确认 server.ts 启动日志中有 "OpenClaw Gateway 已启动" |
 | 告警未触发 | 告警引擎未运行或规则未配置 | 检查日志中 "告警引擎已启动"；到 UI 告警设置页检查规则 |

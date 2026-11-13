@@ -51,6 +51,15 @@ jobs:
           base="${POLICY_BASE:-HEAD^}"
           if [[ "$POLICY_PR" == true ]]; then base="$(git merge-base "$base" "$POLICY_HEAD")"; fi
           node scripts/ci/check-source-policy.mjs "$base" "$POLICY_HEAD"
+      - name: Reject newly introduced secrets in all text files
+        env:
+          POLICY_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+          POLICY_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+          POLICY_PR: ${{ github.event_name == 'pull_request' }}
+        run: |
+          base="${POLICY_BASE:-HEAD^}"
+          if [[ "$POLICY_PR" == true ]]; then base="$(git merge-base "$base" "$POLICY_HEAD")"; fi
+          node scripts/ci/check-secrets.mjs --base "$base" --head "$POLICY_HEAD"
       - name: Select required qualification
         id: select
         run: node scripts/ci/plan.mjs
