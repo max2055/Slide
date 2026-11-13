@@ -164,17 +164,26 @@ describe('RbacService - Permissions', () => {
   });
 
   it('should delete a permission', async () => {
-    mockExecute.mockResolvedValueOnce([[{ cnt: 0 }]]);
-    mockExecute.mockResolvedValueOnce([{ affectedRows: 1 }]);
+    const connection = useTransaction(mockExecute);
+    mockExecute.mockResolvedValueOnce([[{ id: 5 }]])
+      .mockResolvedValueOnce([[]])
+      .mockResolvedValueOnce([{ affectedRows: 1 }]);
     const result = await service.deletePermission(5);
     expect(result.success).toBe(true);
+    expect(connection.commit).toHaveBeenCalledOnce();
+    expect(connection.release).toHaveBeenCalledOnce();
   });
 
   it('should reject delete for referenced permission', async () => {
-    mockExecute.mockResolvedValueOnce([[{ cnt: 2 }]]);
+    const connection = useTransaction(mockExecute);
+    mockExecute.mockResolvedValueOnce([[{ id: 5 }]])
+      .mockResolvedValueOnce([[{ role_id: 1 }, { role_id: 2 }]]);
     const result = await service.deletePermission(5);
     expect(result.success).toBe(false);
     expect(result.error).toContain('2 个角色引用');
+    expect(connection.rollback).toHaveBeenCalledOnce();
+    expect(connection.commit).not.toHaveBeenCalled();
+    expect(connection.release).toHaveBeenCalledOnce();
   });
 });
 
@@ -190,6 +199,7 @@ describe('RbacService - Role-Permission assignments', () => {
 
   it('should assign a permission to a role', async () => {
     const transactionExecute = vi.fn()
+      .mockResolvedValueOnce([[{ id: 2 }]])
       .mockResolvedValueOnce([[]])
       .mockResolvedValueOnce([{ affectedRows: 1 }]);
     useTransaction(transactionExecute);
@@ -243,6 +253,29 @@ describe('RbacService - User-Role assignments', () => {
     expect(result.success).toBe(true);
   });
 
+  it('#496 renews an expired duplicate and invalidates sessions in the same transaction', async () => {
+    const execute = vi.fn()
+      .mockResolvedValueOnce([[{ id: 1 }]])
+      .mockResolvedValueOnce([{ affectedRows: 0 }])
+      .mockResolvedValueOnce([{ affectedRows: 1 }])
+      .mockResolvedValue([{ affectedRows: 1 }]);
+    const connection = useTransaction(execute);
+    expect(await service.assignRoleToUser(1, 2)).toEqual({ success: true });
+    expect(execute).toHaveBeenNthCalledWith(3, expect.stringMatching(/UPDATE user_roles SET grant_expiry = NULL[\s\S]*grant_expiry <= NOW\(\)/), [1, 2]);
+    expect(execute).toHaveBeenNthCalledWith(4, expect.stringContaining('UPDATE users SET session_version'), [1]);
+    expect(execute).toHaveBeenNthCalledWith(5, expect.stringContaining('UPDATE refresh_tokens SET revoked'), [1]);
+    expect(connection.commit).toHaveBeenCalledOnce();
+    expect(connection.release).toHaveBeenCalledOnce();
+  });
+
+  it('#496 leaves an active duplicate and its sessions unchanged', async () => {
+    const execute = vi.fn().mockResolvedValue([{ affectedRows: 0 }]);
+    const connection = useTransaction(execute);
+    expect(await service.assignRoleToUser(1, 2)).toEqual({ success: true });
+    expect(execute).toHaveBeenCalledTimes(3);
+    expect(connection.commit).toHaveBeenCalledOnce();
+  });
+
   it('should revoke a role from a user', async () => {
     useTransaction(vi.fn().mockResolvedValue([{ affectedRows: 1 }]));
     const result = await service.revokeRoleFromUser(1, 2);
@@ -277,44 +310,12 @@ describe('RbacService - Instance permissions', () => {
     (dbConnection.getPool as any).mockReturnValue({ execute: mockExecute });
   });
 
-  it('should grant instance access to a user (new insert)', async () => {
-    // First call: SELECT to check existing -> no existing row
-    mockExecute.mockResolvedValueOnce([[]]);
-    // Second call: INSERT
-    mockExecute.mockResolvedValueOnce([{ affectedRows: 1 }]);
-    const result = await service.grantInstanceAccess(1, 5, 'read-write');
-    expect(result.success).toBe(true);
-    expect(mockExecute).toHaveBeenNthCalledWith(1,
-      'SELECT id FROM instance_permissions WHERE user_id = ? AND instance_id = ?',
-      [1, 5]
-    );
-    expect(mockExecute).toHaveBeenNthCalledWith(2,
-      'INSERT INTO instance_permissions (user_id, instance_id, access_level) VALUES (?, ?, ?)',
-      [1, 5, 'read-write']
-    );
-  });
-
-  it('should grant instance access defaults to read-only', async () => {
-    mockExecute.mockResolvedValueOnce([[]]);
-    mockExecute.mockResolvedValueOnce([{ affectedRows: 1 }]);
-    const result = await service.grantInstanceAccess(1, 5);
-    expect(result.success).toBe(true);
-    expect(mockExecute).toHaveBeenNthCalledWith(2,
-      'INSERT INTO instance_permissions (user_id, instance_id, access_level) VALUES (?, ?, ?)',
-      [1, 5, 'read-only']
-    );
-  });
-
-  it('should update access_level when grant already exists', async () => {
-    // First call: existing row found
-    mockExecute.mockResolvedValueOnce([[{ id: 10 }]]);
-    // Second call: UPDATE
-    mockExecute.mockResolvedValueOnce([{ affectedRows: 1 }]);
-    const result = await service.grantInstanceAccess(1, 5, 'admin');
-    expect(result.success).toBe(true);
-    expect(mockExecute).toHaveBeenNthCalledWith(2,
-      'UPDATE instance_permissions SET access_level = COALESCE(?, access_level) WHERE user_id = ? AND instance_id = ?',
-      ['admin', 1, 5]
+  it.each(['read-write', 'admin', undefined])('#317 atomically grants or updates level %s', async (level) => {
+    mockExecute.mockResolvedValue([{ affectedRows: 1 }]);
+    expect(await service.grantInstanceAccess(1, 5, level)).toEqual({ success: true });
+    expect(mockExecute).toHaveBeenCalledExactlyOnceWith(
+      'INSERT INTO instance_permissions (user_id, instance_id, access_level) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE access_level = ?',
+      [1, 5, level || 'read-only', level || 'read-only']
     );
   });
 
@@ -407,5 +408,30 @@ describe('RbacService - Permission lookup', () => {
     expect(perms.has('instance:view')).toBe(true);
     expect(perms.has('alert:view')).toBe(true);
     expect(perms.has('config:view')).toBe(true);
+  });
+});
+
+describe('MAX-340 atomic role replacement', () => {
+  for (const failure of ['DELETE FROM user_roles', 'INSERT INTO user_roles', 'UPDATE refresh_tokens']) {
+    it(`rolls back on ${failure} failure`, async () => {
+      const execute = vi.fn(async (sql: string) => {
+        if (sql.startsWith(failure)) throw new Error('injected failure');
+        if (sql.startsWith('SELECT role_id')) return [[{ role_id: 2 }]];
+        return [[{ id: 1 }]];
+      });
+      const connection = useTransaction(execute);
+      const result = await new RbacService().replaceUserRoles(7, [3], [2]);
+      expect(result.success).toBe(false);
+      expect(connection.rollback).toHaveBeenCalledOnce();
+      expect(connection.commit).not.toHaveBeenCalled();
+      expect(connection.release).toHaveBeenCalledOnce();
+    });
+  }
+  it('rejects stale snapshots before writes', async () => {
+    const execute = vi.fn(async (sql: string) => sql.startsWith('SELECT role_id') ? [[{ role_id: 4 }]] : [[{ id: 7 }]]);
+    const connection = useTransaction(execute);
+    expect(await new RbacService().replaceUserRoles(7, [3], [2])).toMatchObject({ success: false, conflict: true });
+    expect(execute.mock.calls.every(([sql]) => sql.startsWith('SELECT'))).toBe(true);
+    expect(connection.rollback).toHaveBeenCalledOnce();
   });
 });

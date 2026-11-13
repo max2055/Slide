@@ -21,6 +21,29 @@ function snapshot(cold = false, truncated = false): DisplayStreamEvent {
 }
 
 describe('DirectGateway recovery notices', () => {
+  it('#711 preserves lost-tail severity for the same run, including after full replay', () => {
+    const state = host(); state.chatRunId = 'run';
+    markChatRecoveryInterruption(state);
+    handleDirectAdapterEvent(state, snapshot(true, true));
+    const warning = state.chatRecoveryNotice;
+    handleDirectAdapterEvent(state, snapshot(false, true));
+    expect(state.chatRecoveryNotice).toBe(warning);
+    handleDirectAdapterEvent(state, snapshot());
+    handleDirectAdapterEvent(state, { ...snapshot(false, true), stream: { ...snapshot().stream, streamEpoch: 'later' } });
+    expect(state.chatRecoveryNotice).toBe(warning);
+    dismissChatRecoveryNotice(state);
+    handleDirectAdapterEvent(state, snapshot(false, true));
+    expect(state.chatRecoveryNotice).toContain('完整已保存内容');
+  });
+  it('#711 allows another run to show a bounded preview', () => {
+    const state = host(); state.chatRunId = 'run';
+    markChatRecoveryInterruption(state);
+    handleDirectAdapterEvent(state, snapshot(true, true));
+    state.chatRunId = 'next-run';
+    const next = snapshot(false, true);
+    handleDirectAdapterEvent(state, { ...next, stream: { ...next.stream, runId: 'next-run' }, snapshot: createMessageProjection('next-run') });
+    expect(state.chatRecoveryNotice).toContain('完整已保存内容');
+  });
   it('cold after an execution interruption warns once and dismissal survives repeated snapshots', async () => {
     const state = host(); state.chatRunId = 'run';
     markChatRecoveryInterruption(state);

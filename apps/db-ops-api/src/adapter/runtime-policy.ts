@@ -1,4 +1,5 @@
 import type { AgentRunSpec, RuntimeBudgetLimits } from '@slide/agent-core';
+import { MAX_TIMEOUT_MS } from '@slide/agent-core';
 import { loadAgentRuntimeLimits } from '../security/agent-runtime-limits.js';
 
 export type RuntimeEntry = 'chat' | 'invoke' | 'subagent' | 'cron';
@@ -20,6 +21,13 @@ function positive(env: NodeJS.ProcessEnv, name: string): number | undefined {
   if (!/^\d+$/.test(env[name]!) || !Number.isSafeInteger(value) || value <= 0 || value > 2_147_483_647) throw new Error(`Invalid runtime configuration: ${name} must be a positive integer`);
   return value;
 }
+/** Shared by persistence and dispatch so Cron never arms an overflowing timer. */
+export function validateCronTimeoutSeconds(seconds: number): void {
+  const milliseconds = seconds * 1000;
+  if (!Number.isFinite(seconds) || !Number.isSafeInteger(milliseconds) || milliseconds <= 0 || milliseconds > MAX_TIMEOUT_MS) {
+    throw new Error(`Invalid cron timeout: expected positive milliseconds, at most ${MAX_TIMEOUT_MS / 1000}s`);
+  }
+}
 export function resolveRuntimePolicy(entry: RuntimeEntry, options: { env?: NodeJS.ProcessEnv; cronTimeoutSeconds?: number; maxIterations?: number; parentRemaining?: RuntimePolicy } = {}): Readonly<RuntimePolicy> {
   const env = options.env ?? process.env;
   const legacy = loadAgentRuntimeLimits(env);
@@ -38,8 +46,8 @@ export function resolveRuntimePolicy(entry: RuntimeEntry, options: { env?: NodeJ
   let timeout = entry === 'chat' ? chatTimeout ?? oldTimeout : enabled ? oldTimeout ?? 120_000 : legacy.runTimeoutMs;
   if (entry === 'subagent') timeout = Math.min(timeout ?? 120_000, 120_000);
   if (entry === 'cron') {
-    const seconds = options.cronTimeoutSeconds ?? 300;
-    if (!Number.isFinite(seconds) || seconds <= 0) throw new Error('Invalid cron timeout');
+    const seconds = options.cronTimeoutSeconds === undefined ? 300 : options.cronTimeoutSeconds;
+    validateCronTimeoutSeconds(seconds);
     // job.timeout_seconds remains the authoritative Cron deadline, as before.
     timeout = seconds * 1000;
   } else if (entry !== 'chat' && enabled && oldTimeout !== undefined) timeout = Math.min(timeout ?? oldTimeout, oldTimeout);

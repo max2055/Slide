@@ -25,7 +25,7 @@ interface SqlConnection extends SqlExecutor {
 }
 
 interface SqlPool extends SqlExecutor {
-  getConnection?(): Promise<SqlConnection>;
+  getConnection(): Promise<SqlConnection>;
 }
 
 export interface NetworkDeviceCredentials {
@@ -54,6 +54,7 @@ export class NetworkDeviceDatabaseService {
     const [rows] = await pool.execute<Array<any>>(
       `SELECT ${DEVICE_COLUMNS},
               EXISTS (SELECT 1 FROM network_device_credentials c WHERE c.device_id = d.id AND c.protocol IN ('snmpv2c','snmpv3')) AS has_snmp_credential,
+              (SELECT c.protocol FROM network_device_credentials c WHERE c.device_id=d.id AND c.protocol IN ('snmpv2c','snmpv3') ORDER BY c.protocol LIMIT 1) AS snmp_protocol,
               EXISTS (SELECT 1 FROM network_device_credentials c WHERE c.device_id = d.id AND c.protocol = 'ssh') AS has_ssh_credential,
               (SELECT c.credential_type FROM network_device_credentials c WHERE c.device_id=d.id AND c.protocol='ssh') AS ssh_credential_type,
               (SELECT c.ssh_trust_mode FROM network_device_credentials c WHERE c.device_id=d.id AND c.protocol='ssh') AS ssh_trust_mode,
@@ -68,6 +69,7 @@ export class NetworkDeviceDatabaseService {
     const [rows] = await pool.execute<Array<any>>(
       `SELECT ${DEVICE_COLUMNS},
               EXISTS (SELECT 1 FROM network_device_credentials c WHERE c.device_id = d.id AND c.protocol IN ('snmpv2c','snmpv3')) AS has_snmp_credential,
+              (SELECT c.protocol FROM network_device_credentials c WHERE c.device_id=d.id AND c.protocol IN ('snmpv2c','snmpv3') ORDER BY c.protocol LIMIT 1) AS snmp_protocol,
               EXISTS (SELECT 1 FROM network_device_credentials c WHERE c.device_id = d.id AND c.protocol = 'ssh') AS has_ssh_credential,
               (SELECT c.credential_type FROM network_device_credentials c WHERE c.device_id=d.id AND c.protocol='ssh') AS ssh_credential_type,
               (SELECT c.ssh_trust_mode FROM network_device_credentials c WHERE c.device_id=d.id AND c.protocol='ssh') AS ssh_trust_mode,
@@ -81,7 +83,7 @@ export class NetworkDeviceDatabaseService {
   async getCredentials(id: number, protocol?: NetworkDeviceCredentialProtocol): Promise<NetworkDeviceCredentials | null> {
     const pool = this.pool();
     const values: unknown[] = [id];
-    const where = protocol ? ' AND protocol = ?' : '';
+    const where = protocol ? ' AND protocol = ?' : " AND protocol IN ('snmpv2c','snmpv3')";
     if (protocol) values.push(protocol);
     const [rows] = await pool.execute<Array<any>>(
       `SELECT protocol, username, security_level, auth_protocol, privacy_protocol,
@@ -116,8 +118,8 @@ export class NetworkDeviceDatabaseService {
     try {
       const input = parseNetworkDeviceCreateInput(raw);
       const pool = this.pool();
-      const executor: SqlExecutor = pool.getConnection ? (connection = await pool.getConnection()) : pool;
-      if (connection) await connection.beginTransaction();
+      const executor = connection = await pool.getConnection();
+      await connection.beginTransaction();
       const [result] = await executor.execute<any>(
         `INSERT INTO network_devices
           (name, label, host, site, vendor, model, os_version, serial_number, snmp_port, ssh_port, collection_enabled)
@@ -143,8 +145,11 @@ export class NetworkDeviceDatabaseService {
     try {
       const input = parseNetworkDeviceUpdateInput(raw);
       const pool = this.pool();
-      const executor: SqlExecutor = pool.getConnection ? (connection = await pool.getConnection()) : pool;
-      if (connection) await connection.beginTransaction();
+      const executor = connection = await pool.getConnection();
+      await connection.beginTransaction();
+      // Lock the parent even for credential-only updates: concurrent switches must serialize.
+      const [devices] = await executor.execute<Array<{ id: number }>>('SELECT id FROM network_devices WHERE id = ? FOR UPDATE', [id]);
+      if (!devices.length) { await connection.rollback(); return { success: false, error: '网络设备不存在' }; }
       const updates: string[] = [];
       const values: unknown[] = [];
       const fields: Array<[keyof NetworkDeviceUpdateInput, string]> = [
@@ -157,17 +162,7 @@ export class NetworkDeviceDatabaseService {
       if (input.collectionEnabled !== undefined) { updates.push('collection_enabled = ?'); values.push(input.collectionEnabled ? 1 : 0); }
       if (updates.length > 0) {
         values.push(id);
-        const [result] = await executor.execute<any>(`UPDATE network_devices SET ${updates.join(', ')} WHERE id = ?`, values);
-        if (!Number(result.affectedRows)) {
-          if (connection) await connection.rollback();
-          return { success: false, error: '网络设备不存在' };
-        }
-      } else {
-        const [rows] = await executor.execute<Array<{ id: number }>>('SELECT id FROM network_devices WHERE id = ? LIMIT 1', [id]);
-        if (!rows.length) {
-          if (connection) await connection.rollback();
-          return { success: false, error: '网络设备不存在' };
-        }
+        await executor.execute(`UPDATE network_devices SET ${updates.join(', ')} WHERE id = ?`, values);
       }
       if (input.snmpv3) await this.saveSnmpCredentials(executor, id, input.snmpv3);
       if (input.snmpv2c) await this.saveSnmpV2Credentials(executor, id, input.snmpv2c);
@@ -231,6 +226,7 @@ export class NetworkDeviceDatabaseService {
       [id, input.securityLevel, input.username, input.authProtocol ?? null, input.privacyProtocol ?? null,
         input.authSecret ? encryptData(input.authSecret) : null, input.privacySecret ? encryptData(input.privacySecret) : null],
     );
+    await pool.execute("DELETE FROM network_device_credentials WHERE device_id = ? AND protocol = 'snmpv2c'", [id]);
   }
 
   private async saveSnmpV2Credentials(pool: SqlExecutor, id: number, input: SnmpV2CredentialInput): Promise<void> {
@@ -242,6 +238,7 @@ export class NetworkDeviceDatabaseService {
          security_level = NULL, auth_protocol = NULL, privacy_protocol = NULL, auth_secret_encrypted = NULL, privacy_secret_encrypted = NULL`,
       [id, encryptData(input.community)],
     );
+    await pool.execute("DELETE FROM network_device_credentials WHERE device_id = ? AND protocol = 'snmpv3'", [id]);
   }
 
   private async saveSshCredentials(pool: SqlExecutor, id: number, input: SshCredentialInput): Promise<void> {
@@ -274,6 +271,7 @@ export class NetworkDeviceDatabaseService {
       last_check_at: row.last_check_at ?? null, collection_enabled: Boolean(row.collection_enabled),
       created_at: row.created_at, updated_at: row.updated_at,
       sshCredentialType: row.ssh_credential_type ?? null, sshTrustMode: row.ssh_trust_mode ?? null, hostKeyFingerprint: row.ssh_host_key_fingerprint ?? null,
+      snmpVersion: row.snmp_protocol === 'snmpv2c' ? 2 : row.snmp_protocol === 'snmpv3' ? 3 : null,
       hasSnmpCredential: Boolean(row.has_snmp_credential), hasSshCredential: Boolean(row.has_ssh_credential),
     };
   }

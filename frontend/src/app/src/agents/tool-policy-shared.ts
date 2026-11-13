@@ -17,9 +17,12 @@ const TOOL_NAME_ALIASES: Record<string, string> = {
 
 export const TOOL_GROUPS: Record<string, string[]> = { ...CORE_TOOL_GROUPS };
 
-export function normalizeToolName(name: string) {
+export function normalizeToolName(name: string): string {
   const normalized = normalizeLowercaseStringOrEmpty(name);
-  return TOOL_NAME_ALIASES[normalized] ?? normalized;
+  return Object.hasOwn(TOOL_NAME_ALIASES, normalized) &&
+    typeof TOOL_NAME_ALIASES[normalized] === "string"
+    ? TOOL_NAME_ALIASES[normalized]
+    : normalized;
 }
 
 export function normalizeToolList(list?: string[]) {
@@ -33,7 +36,7 @@ export function expandToolGroups(list?: string[]) {
   const normalized = normalizeToolList(list);
   const expanded: string[] = [];
   for (const value of normalized) {
-    const group = TOOL_GROUPS[value];
+    const group = Object.hasOwn(TOOL_GROUPS, value) ? TOOL_GROUPS[value] : undefined;
     if (group) {
       expanded.push(...group);
       continue;

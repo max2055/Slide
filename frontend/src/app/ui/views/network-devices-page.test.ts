@@ -199,3 +199,53 @@ describe("network-devices-page", () => {
     expect(body.snmpv3).toBeUndefined();
   });
 });
+
+// MAX-603 / #435: a visible credential edit must never become a successful no-op.
+describe('SNMP editor credential intent', () => {
+  beforeEach(() => { authFetch.mockReset(); showToast.mockReset(); authFetch.mockResolvedValue(response([])); });
+  afterEach(() => document.body.replaceChildren());
+  const device = { id: 7, name: 'switch', host: '192.0.2.7', vendor: 'huawei', snmp_port: 161, ssh_port: 22,
+    collection_enabled: true, hasSnmpCredential: true, snmpVersion: 3 };
+  async function editor() {
+    const element = document.createElement('network-devices-page') as any;
+    document.body.append(element); await settle(element); await element.openEdit(device); return element;
+  }
+  it('loads the saved protocol and leaves all credentials blank to retain them', async () => {
+    const element = await editor();
+    expect(element.form.snmpVersion).toBe(3);
+    expect(element.requestPayload().snmpv3).toBeUndefined();
+  });
+  it.each([
+    { snmpVersion: 3, authSecret: 'auth-secret' },
+    { snmpVersion: 3, privacySecret: 'priv-secret' },
+    { snmpVersion: 3, username: 'monitor' },
+    { snmpVersion: 2 },
+    { snmpVersion: 3, securityLevel: 'authNoPriv' },
+    { snmpVersion: 3, authProtocol: 'MD5' },
+  ])('blocks incomplete modification %j before PUT', async changes => {
+    const element = await editor(); element.form = { ...element.form, ...changes };
+    element.editorTab = 'collection';
+    await element.saveDevice();
+    expect(element.editorTab).toBe('basic');
+    expect(element.formError).toMatch(/SNMP/);
+    expect(authFetch.mock.calls.some(([, init]) => init?.method === 'PUT')).toBe(false);
+  });
+  it('retains credentials after saving nondefault security settings in the same editor', async () => {
+    const element = await editor();
+    element.form = { ...element.form, username: 'monitor', securityLevel: 'noAuthNoPriv' };
+    await element.saveDevice(true);
+    element.form = { ...element.form, username: '', authSecret: '', privacySecret: '' };
+    await element.saveDevice(true);
+    expect(element.formError).toBeNull();
+    const writes = authFetch.mock.calls.filter(([, init]) => init?.method === 'PUT');
+    expect(writes).toHaveLength(2);
+    expect(JSON.parse(writes[1][1].body).snmpv3).toBeUndefined();
+  });
+  it('submits complete replacement credentials, preserving secret whitespace', async () => {
+    const element = await editor();
+    element.form = { ...element.form, username: 'monitor', authSecret: '  auth-secret  ', privacySecret: 'priv-secret' };
+    const payload = element.requestPayload();
+    expect(payload.snmpv3).toMatchObject({ username: 'monitor', authSecret: '  auth-secret  ', privacySecret: 'priv-secret' });
+    expect(payload.snmpv2c).toBeUndefined();
+  });
+});

@@ -16,6 +16,7 @@ import { classifySql } from './sql-validator.js';
 import { ensureOracleClientReady, formatOracleConnectionError, initializeOracleClient } from './oracle-client.js';
 import { collectDamengMemoryUsage } from './collectors/dameng-memory.js';
 import { calculateCounterRate } from './collectors/base-provider.js';
+import { withInstanceExecutionLock } from './instance-execution-lock.js';
 
 initializeOracleClient();
 
@@ -152,7 +153,10 @@ export interface SlowQuery {
   id: string;
   sql_text: string;
   avg_time_ms: number;
-  max_time_ms: number;
+  max_time_ms: number | null;
+  /** Missing source extrema are unknown, never inferred from averages. */
+  min_time_ms?: number | null;
+  total_time_ms?: number;
   execution_count: number;
   first_seen: string;
   last_seen: string;
@@ -1292,6 +1296,8 @@ class DatabaseService {
           DIGEST_TEXT as sql_text,
           AVG_TIMER_WAIT / 1000000000 as avg_time_ms,
           MAX_TIMER_WAIT / 1000000000 as max_time_ms,
+          MIN_TIMER_WAIT / 1000000000 as min_time_ms,
+          SUM_TIMER_WAIT / 1000000000 as total_time_ms,
           COUNT_STAR as execution_count,
           FIRST_SEEN,
           LAST_SEEN
@@ -1306,8 +1312,10 @@ class DatabaseService {
       return result.map((row: any) => ({
         id: `sq-${row.sql_text.substring(0, 10)}`,
         sql_text: row.sql_text,
-        avg_time_ms: row.avg_time_ms,
-        max_time_ms: row.max_time_ms,
+        avg_time_ms: Number(row.avg_time_ms),
+        max_time_ms: row.max_time_ms == null ? null : Number(row.max_time_ms),
+        min_time_ms: row.min_time_ms == null ? null : Number(row.min_time_ms),
+        total_time_ms: Number(row.total_time_ms),
         execution_count: row.execution_count,
         first_seen: row.FIRST_SEEN,
         last_seen: row.LAST_SEEN,
@@ -1317,15 +1325,17 @@ class DatabaseService {
       // 如果 performance_schema 不可用，尝试从 slow_log 表
       try {
         const [result] = await conn.pool.query<RowDataPacket[]>(
-          'SELECT * FROM mysql.slow_log ORDER BY start_time DESC LIMIT ?',
+          'SELECT *, TIME_TO_SEC(query_time) * 1000 as query_time_ms FROM mysql.slow_log ORDER BY start_time DESC LIMIT ?',
           [limit]
         );
         onSource?.('mysql-slow-log');
         return result.map((row: any) => ({
           id: `sq-${row.sql_text?.substring(0, 10) || 'unknown'}`,
           sql_text: row.sql_text || '',
-          avg_time_ms: row.query_time || 0,
-          max_time_ms: row.query_time || 0,
+          avg_time_ms: Number(row.query_time_ms),
+          max_time_ms: Number(row.query_time_ms),
+          min_time_ms: Number(row.query_time_ms),
+          total_time_ms: Number(row.query_time_ms),
           execution_count: 1,
           first_seen: row.start_time,
           last_seen: row.start_time,
@@ -1378,7 +1388,8 @@ class DatabaseService {
           ${hasQueryid ? 'queryid::text as queryid' : "NULL as queryid"},
           query as sql_text,
           ${timeCol} / NULLIF(${hasCalls ? 'calls' : '1'}, 0) as avg_time_ms,
-          ${maxTimeCol || timeCol} as max_time_ms,
+          ${maxTimeCol || 'NULL'} as max_time_ms,
+          ${timeCol} as total_time_ms,
           ${hasCalls ? 'calls as execution_count' : '1 as execution_count'},
           ${minTimeCol || 'NULL'} as min_time_ms,
           ${hasRowsExamined ? 'shared_blks_hit as rows_examined' : 'NULL as rows_examined'},
@@ -1394,8 +1405,10 @@ class DatabaseService {
       return result.rows.map((row: any) => ({
         id: `sq-${row.queryid || 'unknown'}`,
         sql_text: row.sql_text,
-        avg_time_ms: Math.round(row.avg_time_ms || 0),
-        max_time_ms: Math.round(row.max_time_ms || 0),
+        avg_time_ms: Number(row.avg_time_ms || 0),
+        max_time_ms: row.max_time_ms == null ? null : Number(row.max_time_ms),
+        min_time_ms: row.min_time_ms == null ? null : Number(row.min_time_ms),
+        total_time_ms: Number(row.total_time_ms),
         execution_count: row.execution_count || 1,
         first_seen: new Date().toISOString(),
         last_seen: new Date().toISOString(),
@@ -1437,8 +1450,11 @@ class DatabaseService {
       return result.rows.map((row: any) => ({
         id: `sq-${row[0] as string}`,
         sql_text: row[1] as string,
-        avg_time_ms: Math.round((row[2] as number) / 1000),
-        max_time_ms: Math.round((row[3] as number) / 1000),
+        // SQL aliases are already milliseconds; V$SQLAREA has no per-execution extrema.
+        avg_time_ms: Number(row[2]),
+        total_time_ms: Number(row[3]),
+        max_time_ms: null,
+        min_time_ms: null,
         execution_count: row[4] as number,
         first_seen: this._safeDate(row[5]),
         last_seen: this._safeDate(row[6]),
@@ -1477,7 +1493,9 @@ class DatabaseService {
         id: `sq-${row[0] as string}`,
         sql_text: row[1] as string,
         avg_time_ms: row[2] as number,
-        max_time_ms: row[3] as number,
+        max_time_ms: row[2] as number,
+        min_time_ms: row[2] as number,
+        total_time_ms: row[3] as number,
         execution_count: row[4] as number || 1,
         first_seen: this._safeDate(row[5]),
         last_seen: this._safeDate(row[6]),
@@ -3175,6 +3193,11 @@ class DatabaseService {
     try { await instanceAccessLifecycle.assertAvailable(id); } catch { return false; }
     const conn = this.connections.get(id);
     if (!conn) return false;
+    // Dameng has one shared session. A disconnected flag, a failed probe and the
+    // rebuild that follows stay in one ownership so a waiter cannot enter between them.
+    if (conn.db_type === 'dameng') {
+      return withInstanceExecutionLock(id, () => this.ensureDamengSession(id));
+    }
     if (!conn.connected) {
       return this.reconnect(id);
     }
@@ -3183,6 +3206,29 @@ class DatabaseService {
     if (alive) return true;
     // 连接标记为 alive 但实际已死，尝试重连
     return this.reconnect(id);
+  }
+
+  private async ensureDamengSession(id: number): Promise<boolean> {
+    const conn = this.connections.get(id);
+    if (!conn || conn.db_type !== 'dameng') return false;
+    if (conn.connected && conn.dmConnection) {
+      if (await this.probeDamengSession(id)) return true;
+    }
+    return this.reconnect(id);
+  }
+
+  private async probeDamengSession(id: number): Promise<boolean> {
+    const current = this.connections.get(id);
+    if (!current?.dmConnection || current.db_type !== 'dameng') return false;
+    try {
+      await current.dmConnection.execute('SELECT 1 FROM DUAL');
+      current.connected = true;
+      return true;
+    } catch (error) {
+      current.connected = false;
+      console.error(`[checkConnectionAlive] 实例 ${id} (${current.name}) 连接不可用:`, error);
+      return false;
+    }
   }
 
   /**
@@ -3206,7 +3252,9 @@ class DatabaseService {
       } else if (conn.db_type === 'oracle' && conn.oracleConnection) {
         await conn.oracleConnection.execute('SELECT 1 FROM DUAL');
       } else if (conn.db_type === 'dameng' && conn.dmConnection) {
-        await conn.dmConnection.execute('SELECT 1 FROM DUAL');
+        // The shared session's default autoCommit commits an open transaction.
+        // Wait for the SQL owner, then probe whatever session is current.
+        return withInstanceExecutionLock(id, () => this.probeDamengSession(id));
       } else {
         return false;
       }
@@ -3225,6 +3273,23 @@ class DatabaseService {
    * 当不存在旧连接 entry 时，可通过 fallbackName + fallbackConfig 从头建连
    */
   async reconnect(id: number, fallbackName?: string, fallbackConfig?: DatabaseConfig): Promise<boolean> {
+    try { await instanceAccessLifecycle.assertAvailable(id); } catch { return false; }
+    // removeConnection drops the entry before addConnection installs the new session.
+    // Monitor tryReconnect then calls back with fallbackConfig while that entry is gone.
+    // Locking only when an entry is already Dameng lets that fallback close the session
+    // the owner still holds. A live non-Dameng entry stays on the unlocked path.
+    if (this.damengRebuildOwnsSession(fallbackConfig, this.connections.get(id))) {
+      return withInstanceExecutionLock(id, () => this.replaceConnection(id, fallbackName, fallbackConfig));
+    }
+    return this.replaceConnection(id, fallbackName, fallbackConfig);
+  }
+
+  private damengRebuildOwnsSession(fallbackConfig: DatabaseConfig | undefined, current: DatabaseConnection | undefined): boolean {
+    if (current) return current.db_type === 'dameng';
+    return fallbackConfig?.db_type === 'dameng';
+  }
+
+  private async replaceConnection(id: number, fallbackName?: string, fallbackConfig?: DatabaseConfig): Promise<boolean> {
     try { await instanceAccessLifecycle.assertAvailable(id); } catch { return false; }
     const oldConn = this.connections.get(id);
 
