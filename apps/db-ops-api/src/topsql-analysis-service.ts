@@ -267,8 +267,8 @@ ${slowQuery.sql_text}
 
 ## 执行统计
 - 平均执行时间: ${slowQuery.avg_time_ms}ms
-- 最大执行时间: ${slowQuery.max_time_ms}ms
-- 最小执行时间: ${slowQuery.min_time_ms}ms
+- 最大执行时间: ${slowQuery.max_time_ms == null ? '未知' : `${slowQuery.max_time_ms}ms`}
+- 最小执行时间: ${slowQuery.min_time_ms == null ? '未知' : `${slowQuery.min_time_ms}ms`}
 - 扫描行数: ${slowQuery.rows_examined}
 - 返回行数: ${slowQuery.rows_sent}
 - 执行次数: ${slowQuery.execution_count}
