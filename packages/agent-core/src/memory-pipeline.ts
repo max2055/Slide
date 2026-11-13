@@ -30,16 +30,26 @@ function extractionMessages(inputs: readonly MemoryInput[], maxCandidates: numbe
   return [{ role: 'system', content: instruction + ` Maximum ${maxCandidates} items.` },
     { role: 'user', content: JSON.stringify({ untrusted_sources: inputs }) }];
 }
+// Only the adapter's preparation boundary can certify that chat was never invoked.
+class MemoryNotSentError extends Error {}
 export class ProviderMemoryExtractor implements MemoryExtractor {
   constructor(private provider: () => Promise<LLMProvider>) {}
   async extract(inputs: readonly MemoryInput[], options: { signal: AbortSignal; maxOutputTokens: number; maxCandidates: number; deadlineAt: number }) {
-    options.signal.throwIfAborted();
-    const provider = await this.provider();
-    options.signal.throwIfAborted();
-    const messages = extractionMessages(inputs, options.maxCandidates);
-    const model = provider.getDefaultModel();
-    const config = resolveContextConfig({ model, maxTokens: options.maxOutputTokens }, provider);
-    if (estimateWithProvider(messages, [], model, provider).tokens > config.contextWindowTokens - config.maxTokens - 1024) throw new Error('MEMORY_CONTEXT_LIMIT');
+    let provider: LLMProvider;
+    let messages: Message[];
+    let model: string;
+    try {
+      options.signal.throwIfAborted();
+      provider = await this.provider();
+      options.signal.throwIfAborted();
+      messages = extractionMessages(inputs, options.maxCandidates);
+      model = provider.getDefaultModel();
+      const config = resolveContextConfig({ model, maxTokens: options.maxOutputTokens }, provider);
+      if (estimateWithProvider(messages, [], model, provider).tokens > config.contextWindowTokens - config.maxTokens - 1024) throw new Error('MEMORY_CONTEXT_LIMIT');
+    } catch (error) {
+      throw new MemoryNotSentError(error instanceof Error && error.message === 'MEMORY_CONTEXT_LIMIT'
+        ? 'MEMORY_CONTEXT_LIMIT' : 'MEMORY_PROVIDER_PREPARATION_FAILED');
+    }
     const response = await provider.chat(messages, [], { model, temperature: 0, maxTokens: options.maxOutputTokens,
       timeoutS: Math.max(0.001, (options.deadlineAt - Date.now()) / 1000), signal: options.signal });
     // Settle usage even when output is malformed; parsing belongs to the pipeline.
@@ -79,10 +89,22 @@ export class MemoryPipeline {
       || this.limits.maxMessages > 100 || this.limits.maxCandidates > 100 || this.limits.maxInputBytes > 64000
       || this.limits.maxOutputTokens > 4096 || this.limits.maxProviderAttempts > 3 || this.limits.deadlineMs > 60000) throw new Error('MEMORY_LIMITS_INVALID');
   }
-  run(snapshot: CommittedMemorySnapshot, signal?: AbortSignal): Promise<MemoryJob | null> {
+  async run(snapshot: CommittedMemorySnapshot, signal?: AbortSignal): Promise<MemoryJob | null> {
+    return (await this.dispatch(snapshot, signal)).job;
+  }
+  async retry(snapshot: CommittedMemorySnapshot) {
+    const result = await this.dispatch(snapshot);
+    return { retried: result.execution.attempts > 0, reason: result.execution.reason, state: result.job?.state, jobId: result.job?.id };
+  }
+  private async dispatch(snapshot: CommittedMemorySnapshot, signal?: AbortSignal) {
+    const execution = { attempts: 0, reason: 'disabled' };
+    const job = await this.start(snapshot, execution, signal);
+    return { job, execution };
+  }
+  private start(snapshot: CommittedMemorySnapshot, execution: { attempts: number; reason: string }, signal?: AbortSignal): Promise<MemoryJob | null> {
     if (!this.enabled) return Promise.resolve(null);
     if (this.closing) return Promise.reject(new Error('MEMORY_PIPELINE_CLOSED'));
-    const task = this.execute(structuredClone(snapshot), signal).then(job =>
+    const task = this.execute(structuredClone(snapshot), execution, signal).then(job =>
       this.store.transaction(state => state.jobs.find(j => j.id === job.id)!));
     this.active.add(task);
     void task.then(() => this.active.delete(task), () => this.active.delete(task));
@@ -118,7 +140,7 @@ export class MemoryPipeline {
     for (const owner of scopes.values()) await this.reconcile(owner);
     return this.store.list(scope);
   }
-  private async execute(snapshot: CommittedMemorySnapshot, signal?: AbortSignal): Promise<MemoryJob> {
+  private async execute(snapshot: CommittedMemorySnapshot, execution: { attempts: number; reason: string }, signal?: AbortSignal): Promise<MemoryJob> {
     assertMemoryScope(snapshot.scope);
     if (snapshot.completed !== true || typeof snapshot.boundary !== 'string' || !snapshot.boundary.trim()) throw new Error('MEMORY_SNAPSHOT_NOT_COMMITTED');
     const inputs: MemoryInput[] = [];
@@ -135,14 +157,19 @@ export class MemoryPipeline {
     let claimed = false;
     let job = await this.store.transaction(s => {
       let j = s.jobs.find(j => j.id === id);
-      if (j && memoryHash(j.inputs) !== memoryHash(inputs)) { j.state = 'obsolete'; j.errorCode = 'MEMORY_SOURCE_CHANGED'; return j; }
+      if (j && memoryHash(j.inputs) !== memoryHash(inputs)) { execution.reason = 'obsolete'; j.state = 'obsolete'; j.errorCode = 'MEMORY_SOURCE_CHANGED'; return j; }
       if (!j) {
         const now = Date.now();
         j = { schemaVersion: 1, id, scope: snapshot.scope, boundary: snapshot.boundary, inputs, limits: this.limits,
           createdAt: now, deadlineAt: now + this.limits.deadlineMs, state: 'pending', attempts: 0, usage: {}, reservedTokens: 0, requests: [] };
         s.jobs.push(j);
       }
-      if (['succeeded', 'cancelled', 'timed_out', 'budget_exhausted', 'obsolete'].includes(j.state) || ownerAlive(j.owner)) return j;
+      if (['succeeded', 'cancelled', 'timed_out', 'budget_exhausted', 'obsolete'].includes(j.state)) { execution.reason = j.state; return j; }
+      if (ownerAlive(j.owner)) { execution.reason = 'in_progress'; return j; }
+      // A crash or incomplete receipt is not evidence that a paid request failed.
+      if (j.reservedTokens > 0) {
+        execution.reason = 'unknown_request'; j.state = 'failed'; j.errorCode = 'MEMORY_REQUEST_UNRESOLVED'; delete j.owner; return j;
+      }
       claimed = true; j.owner = { pid: process.pid, host: os.hostname(), token }; j.state = 'running'; return j;
     });
     if (!claimed) return job;
@@ -160,10 +187,11 @@ export class MemoryPipeline {
       });
     };
     try {
-      if (!job.inputs.length) { await mutate(j => { j.state = 'succeeded'; }); return job; }
+      if (!job.inputs.length) { execution.reason = 'no_inputs'; await mutate(j => { j.state = 'succeeded'; }); return job; }
       while (true) {
         const live = await this.reader(job.scope, job.inputs.map(s => s.id));
         if (job.inputs.some(src => live.find(s => s.id === src.id)?.hash !== src.hash)) {
+          execution.reason = 'obsolete';
           await this.store.invalidate(job.scope, new Map(live.map(s => [s.id, s.hash])), job.inputs.map(s => s.id));
           return await this.store.transaction(s => s.jobs.find(j => j.id === id)!);
         }
@@ -177,10 +205,11 @@ export class MemoryPipeline {
           if (j.attempts >= j.limits.maxProviderAttempts || spent + reservation > j.limits.maxTotalTokens
             || budget.attempts >= this.sessionBudget.maxProviderAttempts || budget.tokens + reservation > this.sessionBudget.maxTotalTokens) throw new Error('MEMORY_BUDGET');
           j.attempts++; j.reservedTokens += reservation; budget.attempts++; budget.tokens += reservation;
-          j.requests.push({ attempt: j.attempts, usage: {}, reservation, outcome: 'pending' });
+          j.requests.push({ attempt: (j.requests.at(-1)?.attempt ?? 0) + 1, usage: {}, reservation, outcome: 'pending' });
         });
         try {
-          const attempt = job.attempts;
+          const attempt = job.requests.at(-1)!.attempt;
+          execution.attempts++; execution.reason = 'attempted';
           const request = this.extractor.extract(structuredClone(job.inputs), { signal: controller.signal, maxOutputTokens: job.limits.maxOutputTokens,
             maxCandidates: job.limits.maxCandidates, deadlineAt: job.deadlineAt }).then(async result => {
             // This owned settlement also runs after deadline/Stop. Late output has
@@ -199,6 +228,21 @@ export class MemoryPipeline {
               if (actual !== null) { j.reservedTokens -= item.reservation; s.budgets[scopeKey(j.scope)].tokens += actual - item.reservation; item.reservation = 0; }
             });
             return result;
+          }, async error => {
+            if (error instanceof MemoryNotSentError) {
+              // Settle even if Stop/deadline already released the job owner.
+              await this.store.transaction(s => {
+                const j = s.jobs.find(j => j.id === id)!;
+                const item = j.requests.find(r => r.attempt === attempt)!;
+                if (item.outcome === 'not_sent') return;
+                j.reservedTokens -= item.reservation;
+                s.budgets[scopeKey(j.scope)].tokens -= item.reservation;
+                j.attempts--; s.budgets[scopeKey(j.scope)].attempts--;
+                item.reservation = 0; item.outcome = 'not_sent'; item.errorCode = error.message;
+              });
+              execution.attempts--; execution.reason = 'not_sent';
+            }
+            throw error;
           });
           this.requests.add(request);
           void request.then(() => this.requests.delete(request), () => this.requests.delete(request));
@@ -218,12 +262,16 @@ export class MemoryPipeline {
         } catch (error) {
           const code = error instanceof Error ? error.message : '';
           if (controller.signal.aborted || code === 'MEMORY_JOB_CANCELLED' || code === 'MEMORY_BUDGET' || code === 'MEMORY_SOURCE_CHANGED' || code === 'MEMORY_DEADLINE') throw error;
+          if (error instanceof MemoryNotSentError) {
+            await mutate(j => { j.state = 'failed'; j.errorCode = error.message; }); return job;
+          }
           await mutate(j => { j.requests.at(-1)!.outcome = 'failed'; j.errorCode = j.requests.at(-1)?.errorCode ?? 'MEMORY_EXTRACTION_FAILED'; });
-          if (job.attempts >= job.limits.maxProviderAttempts) { await mutate(j => { j.state = 'failed'; }); return job; }
+          if (job.reservedTokens > 0 || job.attempts >= job.limits.maxProviderAttempts) { await mutate(j => { j.state = 'failed'; }); return job; }
         }
       }
     } catch (error) {
       const code = controller.signal.aborted ? controller.signal.reason?.message : error instanceof Error ? error.message : '';
+      if (execution.attempts === 0) execution.reason = code === 'MEMORY_BUDGET' ? 'budget_exhausted' : code === 'MEMORY_DEADLINE' ? 'timed_out' : 'not_admitted';
       await mutate(j => {
         if (j.state === 'obsolete') return;
         j.state = code === 'MEMORY_DEADLINE' || Date.now() >= j.deadlineAt ? 'timed_out'

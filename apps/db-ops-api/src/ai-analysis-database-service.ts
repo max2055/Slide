@@ -8,6 +8,7 @@ import type { EvidenceSnapshot } from './analysis/analysis-evidence.js';
 import { analysisAuthorizationVersion } from './analysis/analysis-identity.js';
 import { canReadResource } from './resources/resource-service.js';
 import { hasPermission } from './auth/require-permission.js';
+import { analysisAccessSql, canReadAnalysis } from './analysis/analysis-access.js';
 
 export interface AiAnalysisRecord {
   id: number;
@@ -378,13 +379,16 @@ class AiAnalysisDatabaseService {
    */
   async getAnalysisList(options?: {
     analysis_type?: string;
+    target_type?: string;
     instance_id?: number;
+    server_id?: number;
+    network_device_id?: number;
     status?: string;
     related_id?: number;
     cache_key?: string;
     limit?: number;
     offset?: number;
-  }): Promise<AiAnalysisRecord[]> {
+  }, actor?: ActorContext): Promise<AiAnalysisRecord[]> {
     const pool = this.getPool();
     if (!pool) {
       return [];
@@ -396,6 +400,19 @@ class AiAnalysisDatabaseService {
       `;
       const params: any[] = [];
 
+      // Actor-less callers are trusted internal workflows. HTTP callers must
+      // supply the current actor so unauthorized rows never consume a page.
+      if (actor) {
+        const access = analysisAccessSql(actor);
+        sql += ` AND ${access.sql}`;
+        params.push(...access.params);
+      }
+      for (const field of ['target_type', 'server_id', 'network_device_id'] as const) {
+        if (options?.[field] !== undefined) {
+          sql += ` AND ${field} = ?`;
+          params.push(options[field]);
+        }
+      }
       if (options?.analysis_type) {
         sql += ' AND analysis_type = ?';
         params.push(options.analysis_type);
@@ -417,7 +434,7 @@ class AiAnalysisDatabaseService {
         params.push(options.cache_key);
       }
 
-      sql += ' ORDER BY created_at DESC';
+      sql += ' ORDER BY created_at DESC, id DESC';
 
       if (options?.limit !== undefined) {
         sql += ` LIMIT ${Math.floor(options.limit)}`;
@@ -427,7 +444,8 @@ class AiAnalysisDatabaseService {
       }
 
       const [rows] = await pool.execute(sql, params) as any;
-      return rows.map((row: any) => this._parseRow(row));
+      return rows.filter((row: AiAnalysisRecord) => !actor || canReadAnalysis(actor, row))
+        .map((row: any) => this._parseRow(row));
     } catch (error) {
       console.error('获取分析列表失败:', error);
       return [];
@@ -454,16 +472,50 @@ class AiAnalysisDatabaseService {
       return { success: false, error: '数据库未连接' };
     }
 
+    let connection: mysql.PoolConnection | undefined;
+    let discardConnection = false;
     try {
-      const [result] = await pool.execute(`DELETE FROM ai_analysis WHERE id = ? AND NOT (status IN ('pending','running','unknown')
-        AND EXISTS (SELECT 1 FROM analysis_dispatches d WHERE d.analysis_id = ai_analysis.id))`, [analysisId]) as any;
-      if (result.affectedRows === 0) {
+      connection = await pool.getConnection();
+      await connection.beginTransaction();
+      // Serialize with dispatch lifecycle writers before deciding whether deletion is safe.
+      const [rows] = await connection.execute<mysql.RowDataPacket[]>(
+        'SELECT status FROM ai_analysis WHERE id = ? FOR UPDATE', [analysisId]);
+      if (!rows.length) {
+        await connection.rollback();
         return { success: false, error: '分析记录不存在' };
       }
+      const [dispatches] = await connection.execute<mysql.RowDataPacket[]>(
+        'SELECT analysis_id FROM analysis_dispatches WHERE analysis_id = ? FOR UPDATE', [analysisId]);
+      if (dispatches.length && ['pending', 'running', 'unknown'].includes(rows[0].status)) {
+        await connection.rollback();
+        return { success: false, error: '分析记录仍在处理中或结果未知，不能删除' };
+      }
+      // Explicit deletion is the retention boundary for request snapshots and attempts.
+      // Queue/outbox records contain only the analysis identity and remain for queue audit.
+      await connection.execute('DELETE FROM analysis_dispatch_keys WHERE analysis_id = ?', [analysisId]);
+      await connection.execute('DELETE FROM analysis_dispatch_attempts WHERE analysis_id = ?', [analysisId]);
+      await connection.execute('DELETE FROM analysis_dispatches WHERE analysis_id = ?', [analysisId]);
+      await connection.execute('DELETE FROM ai_analysis WHERE id = ?', [analysisId]);
+      // A rejected COMMIT can mean its acknowledgement was lost after persistence.
+      discardConnection = true;
+      await connection.commit();
+      discardConnection = false;
       return { success: true };
     } catch (error: any) {
+      if (connection) {
+        if (discardConnection) console.error('删除分析记录提交结果未确认，不自动重放:', error);
+        try {
+          await connection.rollback();
+        } catch (rollbackError) {
+          discardConnection = true;
+          console.error('删除分析记录回滚失败，事务结果未确认:', rollbackError);
+        }
+      }
       console.error('删除分析记录失败:', error);
       return { success: false, error: error.message };
+    } finally {
+      if (discardConnection) connection?.destroy();
+      else connection?.release();
     }
   }
 

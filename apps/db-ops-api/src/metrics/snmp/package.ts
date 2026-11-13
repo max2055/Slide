@@ -54,9 +54,14 @@ export function createSnmpPackage(vendor?: HuaweiMibCatalog) {
     recommendations: { interval_ms: 60000, timeout_ms: 5000, stale_after_ms: 120000, max_counter_gap_ms: 300000, max_rows: 6, enabled: true },
     documentation: specs.map((s, i) => ({ collector_id: ['snmp-system', 'snmp-interfaces', 'snmp-vendor'][i], permissions: s.permissions, discovery: s.discovery })),
   });
+  // Keep the immutable 1.0.0 pin available to existing bindings. New bindings
+  // use 64 interfaces: 48 access ports plus 16 uplink/management/logical rows.
+  const current = sealRelease({ ...release, package: { ...release.package, version: '1.0.1' },
+    recommendations: { ...release.recommendations, max_rows: 64 } });
   const registry = new PackageRegistry(canonicalDefinitions, [...implementationSpecs, ...specs]);
   builtinReleases().forEach(r => registry.install(r));
   registry.install(release);
-  const pin = { id: release.package.id, version: release.package.version, digest: release.package.digest };
-  return { registry, release, pin, specs };
+  registry.install(current);
+  const pin = { id: current.package.id, version: current.package.version, digest: current.package.digest };
+  return { registry, release: current, legacyRelease: release, pin, specs };
 }

@@ -3,7 +3,7 @@ import { sharedFieldStyles } from "../../styles/shared-field-styles.ts";
 import { LitElement, html, css, nothing } from 'lit';
 import { keyed } from 'lit/directives/keyed.js';
 import { customElement, state } from 'lit/decorators.js';
-import { authFetch } from '../../../api/index.js';
+import { apiClient, authFetch } from '../../../api/index.js';
 import { safeDashboardReturn } from './dashboard-model.js';
 import { icons } from '../../../icons.js';
 import { sharedBtnStyles } from '../../styles/shared-btn-styles.js';
@@ -32,6 +32,20 @@ const resourceLabels: Record<ResourceType, string> = { instance: '数据库', se
 const key = (ref: ResourceRef) => `${ref.type}:${ref.id}`;
 const evidenceLabels: Record<string, string> = { good: '有效', degraded: '质量降级', partial: '部分可用', invalid: '无效', unknown: '未知', fact: '事实', inference: '推论', hypothesis: '假设', online: '在线', offline: '离线', active: '配置启用', unreachable: '不可达', error: '异常', NO_EVIDENCE_IN_WINDOW: '有效窗口内没有证据', EVIDENCE_QUALITY_UNKNOWN: '证据质量未知', OBSERVATIONS_EMPTY: '缺少观测', OBSERVATIONS_STALE: '观测已过期', OBSERVATIONS_UNAVAILABLE: '观测读取失败', RELATIONS_EMPTY: '未建立关系', ALERTS_EMPTY: '未读取到告警', EVIDENCE_PACK_TRUNCATED: '证据包已截断' };
 
+type DiagnosisTask = { analysisId: number; status: string; result?: unknown; resource?: ResourceRef; createdAt?: string; completedAt?: string; error?: string };
+const newTracking = () => ({ revoked: false, tasks: new Map<string, DiagnosisTask>(), pending: new Set<string>(), unconfirmed: new Set<string>() });
+let trackedSession: { context: number; tracking: ReturnType<typeof newTracking> } | undefined;
+function sessionTracking(context: number) {
+  if (!localStorage.getItem('token')) return newTracking();
+  if (trackedSession?.context !== context || trackedSession.tracking.revoked) trackedSession = { context, tracking: newTracking() };
+  return trackedSession.tracking;
+}
+function validResourceRef(value: unknown): value is ResourceRef {
+  if (!value || typeof value !== 'object') return false;
+  const ref = value as ResourceRef;
+  return Object.hasOwn(resourceLabels, ref.type) && Number.isSafeInteger(ref.id) && ref.id > 0;
+}
+
 @customElement('resource-diagnosis-page')
 export class ResourceDiagnosisPage extends LitElement {
   @state() private resources: ResourceDetail[] = [];
@@ -41,7 +55,7 @@ export class ResourceDiagnosisPage extends LitElement {
   @state() private loading = false;
   @state() private busy = false;
   @state() private error = '';
-  @state() private agentResult: { analysisId: number; status: string; result?: unknown; resource?: ResourceRef; createdAt?: string; completedAt?: string; error?: string } | null = null;
+  @state() private agentResult: DiagnosisTask | null = null;
   @state() private taskMessage = '';
   @state() private retryDialogOpen = false;
   @state() private statusUnconfirmed = false;
@@ -56,6 +70,17 @@ export class ResourceDiagnosisPage extends LitElement {
   @state() private permissions: Set<string> = new Set();
   private requestVersion = 0;
   private submissionVersion = 0;
+  // Navigation changes evidence, never the lifetime of a billable request.
+  private readonly sessionContext = apiClient.getSessionContext();
+  private readonly tracking = sessionTracking(this.sessionContext);
+  private ownsSession() { return !this.tracking.revoked && this.sessionContext === apiClient.getSessionContext(); }
+  private readonly tasks = this.tracking.tasks;
+  private readonly pendingSubmissions = this.tracking.pending;
+  private readonly unconfirmedSubmissions = this.tracking.unconfirmed;
+  private readonly onReceipt = (event: Event) => {
+    if (!this.ownsSession() || (event as CustomEvent).detail !== this.tracking || !this.selected) return;
+    void this.loadEvidence();
+  };
   private submitting = false;
   @state() private contextReady = false;
   private readonly onPopState = () => { this.readSelection(); void this.loadEvidence(); };
@@ -66,6 +91,7 @@ export class ResourceDiagnosisPage extends LitElement {
     this.requestVersion++; this.stopStatus(); this.contextReady = false;
     this.resources = []; this.evidence = null; this.pack = null;
     this.dialog = ''; this.selectedEvidence = null; this.retryDialogOpen = false;
+    for (const [resourceKey, task] of this.tasks) this.tasks.set(resourceKey, { analysisId: task.analysisId, status: task.status });
     if (this.agentResult) this.agentResult = { analysisId: this.agentResult.analysisId, status: this.agentResult.status };
     this.busy = this.submitting;
     this.statusUnconfirmed = this.agentResult !== null || this.submitting;
@@ -74,7 +100,12 @@ export class ResourceDiagnosisPage extends LitElement {
   private clearSensitive() {
     this.invalidateFacts(); this.listVersion++; this.error = ''; this.loading = false;
   }
-  private readonly onExpired = () => { this.permissions = new Set(); this.clearSensitive(); };
+  private readonly onExpired = () => {
+    this.tracking.revoked = true; trackedSession = undefined;
+    this.tasks.clear(); this.pendingSubmissions.clear(); this.unconfirmedSubmissions.clear();
+    this.agentResult = null; this.submitting = false;
+    this.permissions = new Set(); this.clearSensitive();
+  };
   private readonly onPermissions = (event: Event) => {
     this.clearSensitive();
     const codes = (event as CustomEvent<{ permissions?: string[] }>).detail?.permissions;
@@ -91,12 +122,14 @@ export class ResourceDiagnosisPage extends LitElement {
   override connectedCallback() {
     super.connectedCallback();
     this.readPermissions(); this.readSelection();
+    window.addEventListener('slide-diagnosis-receipt', this.onReceipt);
     window.addEventListener('popstate', this.onPopState); window.addEventListener('slide-session-expired', this.onExpired);
     window.addEventListener('slide-permissions-loaded', this.onPermissions);
     void this.load();
   }
   override disconnectedCallback() {
     this.requestVersion++; this.submissionVersion++; this.listVersion++; this.stopStatus();
+    window.removeEventListener('slide-diagnosis-receipt', this.onReceipt);
     window.removeEventListener('popstate', this.onPopState); window.removeEventListener('slide-session-expired', this.onExpired);
     window.removeEventListener('slide-permissions-loaded', this.onPermissions);
     super.disconnectedCallback();
@@ -126,7 +159,15 @@ export class ResourceDiagnosisPage extends LitElement {
   private async loadEvidence(preserveTask = false) {
     const version = ++this.requestVersion;
     this.stopStatus(); this.retryDialogOpen = false;
-    if (!preserveTask) { this.submissionVersion++; this.taskMessage = ''; this.statusUnconfirmed = false; this.agentResult = null; this.submitting = false; this.busy = false; }
+    if (!preserveTask || (!this.agentResult && this.selected && (this.tasks.has(key(this.selected)) || this.pendingSubmissions.has(key(this.selected)) || this.unconfirmedSubmissions.has(key(this.selected))))) {
+      const resourceKey = this.selected ? key(this.selected) : '';
+      this.agentResult = this.tasks.get(resourceKey) ?? null;
+      this.submitting = this.pendingSubmissions.has(resourceKey);
+      this.busy = this.submitting;
+      this.statusUnconfirmed = this.unconfirmedSubmissions.has(resourceKey);
+      this.taskMessage = this.statusUnconfirmed ? '诊断请求回执待确认，请核对分析历史，不要重复提交' : '';
+      if (this.agentResult) this.persistAnalysisId(this.agentResult.analysisId);
+    }
     this.dialog = ''; this.selectedEvidence = null; this.evidence = null; this.pack = null; this.error = '';
     if (!this.selected) { this.loading = false; return; }
     this.loading = true;
@@ -149,28 +190,72 @@ export class ResourceDiagnosisPage extends LitElement {
     history.pushState({}, '', url); this.readSelection(); void this.loadEvidence();
   }
   private async diagnose(agent = false, retryOf?: number) {
+    if (!this.ownsSession()) return;
     if (agent && !permissionMatches(this.permissions, 'ai:manage')) return;
     if (!this.selected || this.busy || (agent && this.taskActive() && retryOf === undefined)) return;
-    const version = agent ? this.submissionVersion : this.requestVersion;
-    const isCurrent = () => version === (agent ? this.submissionVersion : this.requestVersion);
+    const resource = { ...this.selected };
+    const resourceKey = key(resource);
+    if (agent && (this.pendingSubmissions.has(resourceKey) || this.unconfirmedSubmissions.has(resourceKey))) return;
+    const version = this.requestVersion;
+    const isCurrent = () => this.ownsSession() && this.isConnected && (agent ? this.selected !== null && key(this.selected) === resourceKey : version === this.requestVersion);
+    if (agent) { this.pendingSubmissions.add(resourceKey); this.unconfirmedSubmissions.add(resourceKey); }
+    const retainReceipt = (result: Record<string, unknown>) => {
+      if (!this.ownsSession() || !agent || !Number.isSafeInteger(result.analysisId) || Number(result.analysisId) <= 0) return false;
+      const receipt = { analysisId: Number(result.analysisId), status: typeof result.status === 'string' ? result.status : 'unconfirmed', resource };
+      this.tasks.set(resourceKey, receipt);
+      this.unconfirmedSubmissions.delete(resourceKey);
+      if (isCurrent()) { this.agentResult = receipt; this.persistAnalysisId(receipt.analysisId); }
+      return true;
+    };
     this.busy = true; this.submitting = agent; this.error = ''; this.switchTab(agent ? 'result' : 'relations');
     try {
-      const response = await authFetch(`/api/resources/${this.selected.type}/${this.selected.id}/${agent ? 'diagnose-agent' : 'diagnose'}`, { method: 'POST', ...(retryOf !== undefined ? { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ retryOf, confirmUnknownRetry: true }) } : {}) });
-      const result = await response.json();
+      const response = await authFetch(`/api/resources/${resource.type}/${resource.id}/${agent ? 'diagnose-agent' : 'diagnose'}`, { method: 'POST', ...(retryOf !== undefined ? { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ retryOf, confirmUnknownRetry: true }) } : {}) });
+      // Error bodies may be empty or supplied by a proxy; HTTP status still
+      // determines the actionable message. A parseable receipt survives errors.
+      let result: Record<string, unknown> | null = null;
+      try {
+        const body: unknown = await response.json();
+        if (body !== null && typeof body === 'object' && !Array.isArray(body)) result = body as Record<string, unknown>;
+      } catch { /* Status mapping and uncertain-submission protection below. */ }
+      const hasReceipt = result !== null && retainReceipt(result);
       if (!response.ok) {
-        if (agent && Number.isSafeInteger(result.analysisId) && result.analysisId > 0 && isCurrent()) { this.agentResult = { analysisId: result.analysisId, status: result.status === 'unknown' ? 'unknown' : 'unconfirmed' }; this.persistAnalysisId(result.analysisId); this.followReceipt(); }
+        if (agent && !hasReceipt && [400, 401, 403, 404, 422].includes(response.status)) this.unconfirmedSubmissions.delete(resourceKey);
+        if (hasReceipt && isCurrent()) this.followReceipt();
         throw new Error(response.status === 409 ? '供应商可能已经执行，结果未知；重试可能再次计费，需要明确确认' : response.status === 403 ? '无诊断权限，资源与证据浏览仍可用' : response.status === 503 ? 'Agent 或模型暂不可用，请检查配置；已创建的任务可查询状态' : `诊断请求失败 (${response.status})`);
       }
       if (!isCurrent()) return;
       if (agent) {
-        if (!Number.isSafeInteger(result.analysisId) || result.analysisId <= 0) throw new Error('未取得有效任务 ID，请检查服务状态');
-        this.agentResult = { analysisId: result.analysisId, status: 'pending' };
-        this.persistAnalysisId(result.analysisId);
-        this.taskMessage = result.status === 'cached' ? '已复用任务，正在查询真实状态' : '已受理，正在查询真实状态';
+        if (!hasReceipt) throw new Error('诊断响应结构无效，未取得有效任务 ID；请核对分析历史，不要重复提交');
+        if (!['pending', 'queued', 'running', 'completed', 'cached', 'unknown', 'failed'].includes(String(result?.status))) {
+          this.agentResult = { ...this.agentResult!, status: 'unconfirmed' };
+          this.followReceipt();
+          throw new Error('诊断响应结构无效，已保留任务 ID，请查询任务状态');
+        }
+        this.taskMessage = result?.status === 'cached' || result?.cached === true ? '已复用任务，正在查询真实状态' : '已受理，正在查询真实状态';
         this.followReceipt();
-      } else this.pack = result;
+      } else {
+        if (!result || !Array.isArray(result.relations) || !Array.isArray(result.relatedEvidence) || !Array.isArray(result.gaps) || typeof result.truncated !== 'boolean'
+          || !result.relatedEvidence.every(item => item && typeof item === 'object' && validResourceRef(item.resource?.resource) && typeof item.resource.label === 'string')
+          || !result.relations.every(item => item && typeof item === 'object' && validResourceRef(item.source) && validResourceRef(item.target) && typeof item.relationType === 'string')
+          || !result.gaps.every(item => item && typeof item === 'object' && typeof item.code === 'string')) throw new Error('诊断响应结构无效，请检查服务状态');
+        this.pack = result as unknown as DiagnosticPack;
+      }
     } catch (error) { if (isCurrent()) this.error = String(error); }
-    finally { if (isCurrent()) { this.busy = false; if (agent) this.submitting = false; } }
+    finally {
+      if (agent) {
+        this.pendingSubmissions.delete(resourceKey);
+        if (!this.isConnected) window.dispatchEvent(new CustomEvent('slide-diagnosis-receipt', { detail: this.tracking }));
+      }
+      if (isCurrent()) {
+        this.busy = false;
+        if (agent) {
+          this.submitting = false;
+          this.statusUnconfirmed = this.statusUnconfirmed || this.unconfirmedSubmissions.has(resourceKey);
+          if (this.unconfirmedSubmissions.has(resourceKey)) this.taskMessage = '诊断请求回执待确认，请核对分析历史，不要重复提交';
+        }
+      }
+      this.requestUpdate();
+    }
   }
   private followReceipt() {
     if (this.contextReady) this.startStatus();
@@ -184,7 +269,7 @@ export class ResourceDiagnosisPage extends LitElement {
   }
   private startStatus() { this.stopStatus(); this.statusDeadline = Date.now() + 120_000; void this.checkStatus(); }
   private async checkStatus() {
-    if (!this.selected || !this.agentResult || !this.contextReady) return;
+    if (!this.ownsSession() || !this.selected || !this.agentResult || !this.contextReady) return;
     if (Date.now() >= this.statusDeadline) { this.statusUnconfirmed = true; this.taskMessage = '等待超时，任务状态待确认'; this.stopStatus(); return; }
     const version = this.requestVersion;
     const analysisId = this.agentResult.analysisId;
@@ -194,14 +279,15 @@ export class ResourceDiagnosisPage extends LitElement {
       const response = await authFetch(`/api/resources/${this.selected.type}/${this.selected.id}/analyses/${analysisId}`, { signal: controller.signal });
       if (!response.ok) throw new Error(response.status === 409 ? '供应商可能已经执行，结果未知；重试可能再次计费，需要明确确认' : response.status === 403 ? '无分析结果查看权限，需要 ai:view' : response.status === 404 ? '任务不存在或不属于当前账号与资源权限范围' : '任务状态暂不可用，可重试查询');
       const result = await response.json();
-      if (version !== this.requestVersion || !this.isConnected || controller.signal.aborted) return;
+      if (!this.ownsSession() || version !== this.requestVersion || !this.isConnected || controller.signal.aborted) return;
       if (result.analysisId !== analysisId || !['pending', 'running', 'completed', 'failed', 'unknown'].includes(result.status)) throw new Error('任务状态暂不可用，可重试查询');
       this.agentResult = result;
+      this.tasks.set(key(this.selected!), result);
       this.statusUnconfirmed = false;
       this.taskMessage = ({ pending: '排队中，等待执行', running: '运行中，尚无最终结论', completed: '执行完成', failed: '执行失败', unknown: '结果未知，已停止自动重试' } as Record<string, string>)[result.status];
       if (['pending', 'running'].includes(result.status)) this.statusTimer = setTimeout(() => { this.statusTimer = null; void this.checkStatus(); }, 3000);
     } catch (error) {
-      if (version === this.requestVersion && this.isConnected) { this.statusUnconfirmed = true; this.taskMessage = controller.signal.aborted ? '等待超时，任务状态待确认' : error instanceof Error ? error.message : '任务状态暂不可用'; }
+      if (this.ownsSession() && version === this.requestVersion && this.isConnected) { this.statusUnconfirmed = true; this.taskMessage = controller.signal.aborted ? '等待超时，任务状态待确认' : error instanceof Error ? error.message : '任务状态暂不可用'; }
     } finally { clearTimeout(timeout); if (this.statusController === controller) this.statusController = null; this.requestUpdate(); }
   }
   private renderAgentResult() {
@@ -295,6 +381,11 @@ export class ResourceDiagnosisPage extends LitElement {
       <div class="page-header"><div><h1>跨资源诊断</h1><p class="muted small">围绕资源核对当前证据、关联关系与只读分析结果。</p></div><button aria-busy=${String(this.loading)} class="btn btn-refresh" title="刷新" aria-label="刷新" .disabled=${this.loading} @click=${this.load}>刷新</button></div>
       <app-card .compact=${true}><div class="diagnosis-picker"><app-form-field label="搜索资源"><input aria-label="搜索资源" type="search" placeholder="搜索名称或资源标识" .value=${this.search} @input=${(event: Event) => { this.search = (event.target as HTMLInputElement).value; }}></app-form-field><app-form-field label="诊断对象"><select aria-label="资源" .value=${this.selected ? key(this.selected) : ''} @change=${(event: Event) => this.selectResource((event.target as HTMLSelectElement).value)}><option value="" .disabled=${true}>选择资源</option>${this.selected && !selectedListed ? html`<option .selected=${true} value=${key(this.selected)}>${resourceLabels[this.selected.type]} #${this.selected.id}</option>` : nothing}${Object.entries(resourceLabels).map(([type,label]) => html`<optgroup label=${label}>${filtered.filter(item => item.resource.type === type).map(item => html`<option .selected=${this.selected !== null && key(item.resource) === key(this.selected)} value=${key(item.resource)}>${item.label || `${resourceLabels[item.resource.type]} #${item.resource.id}`} · #${item.resource.id}</option>`)}</optgroup>`)}</select></app-form-field><span class="caption">支持数据库、服务器及网络设备</span></div></app-card>
       ${returnResource && /^(instance|server|network_device):[1-9]\d*$/.test(returnResource) ? html`<button class="btn-ghost diagnosis-return" @click=${() => { const url = new URL(location.href); url.searchParams.delete('returnResource'); history.replaceState({},'',url); this.selectResource(returnResource); }}>← 返回 ${this.resourceName({type:returnResource.split(':')[0] as ResourceType,id:Number(returnResource.split(':')[1])})}</button>` : nothing}
+      ${[...new Set([...this.tasks.keys(), ...this.pendingSubmissions, ...this.unconfirmedSubmissions])].filter(resourceKey => !this.selected || resourceKey !== key(this.selected)).map(resourceKey => html`<p role="status">
+        ${resourceKey} ${this.tasks.has(resourceKey) ? `任务 #${this.tasks.get(resourceKey)!.analysisId}` : '诊断请求回执待确认'}
+        <button class="btn-ghost" @click=${() => this.selectResource(resourceKey)}>查看原诊断任务</button>
+      </p>`)}
+      ${this.statusUnconfirmed && !this.agentResult ? html`<p role="status">${this.taskMessage}</p>` : nothing}
       ${this.renderOverview()}${this.error ? html`<p class="error" role="alert">${this.error}</p>` : nothing}
       ${this.evidence?.truncated || this.pack?.truncated ? html`<div class="notice" role="status"><div><strong>返回证据已截断</strong>当前列表不代表完整证据，请核对缺口与采集范围。</div></div>` : nothing}
       ${!this.selected ? this.loading ? html`<div class="skeleton" role="status" aria-label="加载证据"></div>` : html`<app-empty-state title="选择诊断资源" icon="search"></app-empty-state>` : html`
