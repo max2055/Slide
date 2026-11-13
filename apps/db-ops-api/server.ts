@@ -3763,8 +3763,8 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
             if (!diagnosisResult.success) {
               return reply.code(diagnosisResult.status === 'unknown' ? 409 : 500).send(diagnosisResult);
             }
-            analysisId = diagnosisResult.analysisId!;
-            break;
+            return reply.send({ id: diagnosisResult.analysisId, status: diagnosisResult.status, cached: diagnosisResult.cached,
+              session_key: `diagnosis-${diagnosisResult.analysisId}` });
 
           case 'capacity_prediction': {
             const body = request.body as any;
@@ -4020,9 +4020,9 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
         } else if (existing.analysis_type === 'fault_diagnosis') {
           const diagnosisResult = await faultDiagnosisService.diagnoseInstance((request as any).user, faultInstanceId, existing.status === 'unknown' ? existing.id : undefined);
           if (!diagnosisResult.success) {
-            return reply.code(500).send({ error: diagnosisResult.error });
+            return reply.code(diagnosisResult.status === 'unknown' ? 409 : 500).send(diagnosisResult);
           }
-          reply.send({ id: diagnosisResult.analysisId, status: 'pending', message: '重新分析任务已提交' });
+          reply.send({ id: diagnosisResult.analysisId, status: diagnosisResult.status, cached: diagnosisResult.cached, message: diagnosisResult.cached ? '已复用完成的分析' : '重新分析任务已提交' });
         } else {
           return reply.code(400).send({ error: '不支持重新分析该类型' });
         }
