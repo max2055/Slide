@@ -427,8 +427,9 @@ export class SchemaManagementPage extends LitElement {
       }
     } catch (err: any) {
       this.error = err.message;
+    } finally {
+      this.collecting = false;
     }
-    this.collecting = false;
   }
 
   private async handleDetect() {

@@ -21,9 +21,25 @@ const label = (value: string) => typeof value === 'string' && /^[A-Za-z0-9_.:-]{
 
 export class StructuredLogEvidenceAdapter {
   private entries: PlatformLogEntry[] = [];
-  private droppedAt: number | null = null;
+  // FIFO evictions form an event-time interval. Keep constant-size metadata,
+  // rather than retaining one marker per dropped log.
+  private droppedWindow: { from: number; to: number } | null = null;
   private readonly startedAt: number;
-  constructor(private readonly now: () => number = Date.now, private readonly capacity = 10_000) { this.startedAt = now(); }
+  constructor(private readonly now: () => number = Date.now, private readonly capacity = 10_000) {
+    if (!Number.isSafeInteger(capacity) || capacity < 1) throw new Error('PLATFORM_LOG_CAPACITY_INVALID');
+    this.startedAt = now();
+  }
+
+  private prune(now: number): void {
+    const cutoff = now - HOUR;
+    this.entries = this.entries.filter(entry => Date.parse(entry.timestamp) >= cutoff);
+    if (this.droppedWindow && this.droppedWindow.to < cutoff) this.droppedWindow = null;
+    else if (this.droppedWindow) this.droppedWindow.from = Math.max(this.droppedWindow.from, cutoff);
+  }
+
+  private hasDroppedLogs(from: number, to: number): boolean {
+    return this.droppedWindow !== null && this.droppedWindow.from <= to && this.droppedWindow.to >= from;
+  }
 
   record(input: PlatformLogInput): void {
     if (!label(input.component) || !label(input.eventType) || !['ok', 'failed', 'unknown'].includes(input.status)
@@ -46,20 +62,30 @@ export class StructuredLogEvidenceAdapter {
       ...(input.runtimeCounters && runtimeCounterKeys.every(k => Number.isSafeInteger(input.runtimeCounters![k]) && input.runtimeCounters![k] >= 0)
         ? { runtimeCounters: Object.fromEntries(runtimeCounterKeys.map(k => [k, input.runtimeCounters![k]])) as unknown as RuntimeLogCounters } : {}),
     };
-    this.entries = this.entries.filter(entry => Date.parse(entry.timestamp) >= this.now() - HOUR);
+    this.prune(this.now());
     this.entries.push(entry);
-    if (this.entries.length > this.capacity) { this.droppedAt = this.now(); this.entries.splice(0, this.entries.length - this.capacity); }
+    if (this.entries.length > this.capacity) {
+      const dropped = this.entries.splice(0, this.entries.length - this.capacity);
+      for (const row of dropped) {
+        const timestamp = Date.parse(row.timestamp);
+        this.droppedWindow = {
+          from: Math.min(this.droppedWindow?.from ?? timestamp, timestamp),
+          to: Math.max(this.droppedWindow?.to ?? timestamp, timestamp),
+        };
+      }
+    }
   }
 
   /** Server-owned exact failure comparison, never arbitrary log or URL replay. */
   verifyFailure(event: { occurredAt: string; callsite: string; releaseId?: string; commitSha?: string; correlationId?: string }, enabled: boolean) {
     const now = this.now(), from = Date.parse(event.occurredAt);
+    this.prune(now);
     const gaps: string[] = [];
     if (!enabled) gaps.push('SYSTEM_COLLECTION_DISABLED');
     if (!event.releaseId || !event.commitSha) gaps.push('SOURCE_EVENT_VERSION_MISSING');
     if (!Number.isFinite(from) || from > now || from < now - HOUR) gaps.push('LOG_WINDOW_UNAVAILABLE');
     if (from < this.startedAt) gaps.push('LOG_WINDOW_PRECEDES_PROCESS');
-    if (this.droppedAt !== null && this.droppedAt >= from) gaps.push('LOG_BUFFER_TRUNCATED');
+    if (this.hasDroppedLogs(from, now)) gaps.push('LOG_BUFFER_TRUNCATED');
     const originals = this.entries.filter(row => row.component === 'api' && row.eventType === 'request.completed'
       && row.status === 'failed' && row.correlationId === event.correlationId && row.callsite === event.callsite
       && row.releaseId === event.releaseId && row.commitSha === event.commitSha);
@@ -84,6 +110,7 @@ export class StructuredLogEvidenceAdapter {
     const now = this.now(); const to = options.to ? Date.parse(options.to) : now; const from = options.from ? Date.parse(options.from) : to - 300_000;
     if (!Number.isFinite(from) || !Number.isFinite(to) || (options.component !== undefined && !label(options.component))) throw new Error('PLATFORM_LOG_QUERY_INVALID');
     if (from > to || to > now || from < now - HOUR || to - from > HOUR) throw new Error('PLATFORM_LOG_WINDOW_INVALID');
+    this.prune(now);
     const rows = this.entries.filter(entry => Date.parse(entry.timestamp) >= from && Date.parse(entry.timestamp) <= to && (!options.component || entry.component === options.component));
     const groups = new Map<string, { component: string; eventType: string; jobType?: string; errorCode?: string; count: number; failures: number; durationMs: number; durationSamples: number; maxDurationMs: number | null; lastObservedAt: string; correlationIds: string[]; traceIds?: string[]; latestRuntimeCounters?: RuntimeLogCounters; latestStreamBoundary?: PlatformLogInput['streamBoundary'] }>();
     let omittedGroups = false;
@@ -109,7 +136,7 @@ export class StructuredLogEvidenceAdapter {
     if (omittedGroups) gaps.push('LOG_GROUPS_TRUNCATED');
     if (!rows.length) gaps.push('LOG_EVIDENCE_MISSING');
     if (from < this.startedAt) gaps.push('LOG_WINDOW_PRECEDES_PROCESS');
-    if (this.droppedAt !== null && this.droppedAt >= from) gaps.push('LOG_BUFFER_TRUNCATED');
+    if (this.hasDroppedLogs(from, to)) gaps.push('LOG_BUFFER_TRUNCATED');
     if (rows.some(row => row.status === 'unknown')) gaps.push('LOG_STATUS_UNKNOWN');
     if (rows.length && now - Date.parse(rows.at(-1)!.timestamp) > 300_000) gaps.push('LOG_EVIDENCE_STALE');
     return { schemaVersion: 1, generatedAt: new Date(now).toISOString(), from: new Date(from).toISOString(), to: new Date(to).toISOString(),
