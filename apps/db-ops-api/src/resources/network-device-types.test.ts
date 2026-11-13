@@ -81,3 +81,23 @@ describe('SNMP create/update compatibility', () => {
     expect(parseNetworkDeviceUpdateInput({ name: 'renamed' }).snmpv2c).toBeUndefined();
   });
 });
+
+// MAX-609 / #552: omission, assignment, clearing and alias ambiguity are distinct.
+describe('nullable metadata aliases', () => {
+  it('omits absent metadata updates', () => {
+    expect(parseNetworkDeviceUpdateInput({})).toEqual({});
+  });
+  it.each([['osVersion', 'os_version'], ['serialNumber', 'serial_number']])('handles both spellings of %s', (camel, snake) => {
+    for (const parse of [parseNetworkDeviceUpdateInput, parseNetworkDeviceCreateInput]) {
+      const base = { name: 'edge', host: '192.0.2.10' };
+      for (const value of [null, '', 'new-value']) {
+        for (const input of [{ [camel]: value }, { [snake]: value }, { [camel]: value, [snake]: value }, { [camel]: undefined, [snake]: value }]) {
+          expect(parse({ ...base, ...input })[camel]).toBe(value === '' ? undefined : value);
+        }
+      }
+      for (const [a, b] of [[null, 'old'], ['new', null], ['one', 'two'], ['', null]]) {
+        expect(() => parse({ ...base, [camel]: a, [snake]: b })).toThrow('NETWORK_DEVICE_ALIAS_CONFLICT');
+      }
+    }
+  });
+});

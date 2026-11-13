@@ -27,8 +27,8 @@ type DeviceForm = {
   model: string;
   osVersion: string;
   serialNumber: string;
-  snmpPort: number;
-  sshPort: number;
+  snmpPort: string;
+  sshPort: string;
   collectionEnabled: boolean;
   vendor: NetworkDeviceVendor;
   snmpVersion: 2 | 3;
@@ -48,7 +48,7 @@ type DeviceForm = {
 
 const EMPTY_FORM: DeviceForm = {
   name: "", label: "", host: "", site: "", model: "", osVersion: "", serialNumber: "",
-  snmpPort: 161, sshPort: 22, collectionEnabled: true, vendor: "huawei", snmpVersion: 2, username: "", community: "", securityLevel: "authPriv",
+  snmpPort: "161", sshPort: "22", collectionEnabled: true, vendor: "huawei", snmpVersion: 2, username: "", community: "", securityLevel: "authPriv",
   authProtocol: "SHA", authSecret: "", privacyProtocol: "AES", privacySecret: "", sshCredentialType: "password",
   sshUsername: "", sshCredentialValue: "",
 };
@@ -187,8 +187,8 @@ export class NetworkDevicesPage extends LitElement {
       osVersion: device.os_version ?? "",
       serialNumber: device.serial_number ?? "",
       snmpVersion: device.snmpVersion ?? 2,
-      snmpPort: device.snmp_port,
-      sshPort: device.ssh_port,
+      snmpPort: String(device.snmp_port),
+      sshPort: String(device.ssh_port),
       sshCredentialType: device.sshCredentialType === "key" ? "key" : "password",
       sshTrustMode: device.sshTrustMode || (device.hostKeyFingerprint ? "pinned" : "pending"),
       hostKeyFingerprint: device.hostKeyFingerprint || undefined,
@@ -281,6 +281,16 @@ export class NetworkDevicesPage extends LitElement {
     };
   }
 
+  private portValidationError(keys: Array<"snmpPort" | "sshPort"> = ["snmpPort", "sshPort"]): string | null {
+    for (const key of keys) {
+      const value = this.form[key].trim();
+      if (!/^\d+$/.test(value) || !Number.isInteger(Number(value)) || Number(value) < 1 || Number(value) > 65535) {
+        return `${key === "snmpPort" ? "SNMP" : "SSH"} 端口必须是 1–65535 之间的整数`;
+      }
+    }
+    return null;
+  }
+
   private requestPayload() {
     const credential = this.credentialPayload();
     const ssh = this.sshPayload();
@@ -301,6 +311,8 @@ export class NetworkDevicesPage extends LitElement {
       this.formError = "名称和主机不能为空";
       return;
     }
+    const portError = this.portValidationError();
+    if (portError) { this.formError = portError; return; }
     const snmpError = this.snmpValidationError();
     if (snmpError) { this.formError = snmpError; return; }
     const ssh = this.sshPayload();
@@ -339,6 +351,8 @@ export class NetworkDevicesPage extends LitElement {
 
   private async testConnection() {
     if (this.testing) return;
+    const portError = this.portValidationError();
+    if (portError) { this.formError = portError; return; }
     const snmpError = this.snmpValidationError(true);
     if (!this.form.host.trim() || snmpError) {
       this.formError = snmpError || "探测需要填写主机";
@@ -368,6 +382,8 @@ export class NetworkDevicesPage extends LitElement {
 
   private async testSshConnection() {
     if (this.testingSsh) return;
+    const portError = this.portValidationError(["sshPort"]);
+    if (portError) { this.formError = portError; return; }
     const ssh = this.sshPayload();
     if (!this.form.host.trim() || !ssh?.username || !ssh.credentialValue) {
       this.formError = "SSH 测试需要填写主机、用户名和凭据";
@@ -481,8 +497,8 @@ export class NetworkDevicesPage extends LitElement {
           <div class="device-form-row"><app-form-field label="厂商" .inline=${true}><select class="field" .value=${this.form.vendor} @change=${(e: Event) => this.updateForm("vendor", (e.target as HTMLSelectElement).value as NetworkDeviceVendor)}><option value="huawei">Huawei</option><option value="cisco">Cisco</option></select></app-form-field>
           <app-form-field label="型号（可选）" .inline=${true}><input class="field" .value=${this.form.model} @input=${(e: Event) => this.updateForm("model", (e.target as HTMLInputElement).value)}></app-form-field></div>
           <div class="device-form-row"><app-form-field label="OS 版本（可选）" .inline=${true}><input class="field" .value=${this.form.osVersion} @input=${(e: Event) => this.updateForm("osVersion", (e.target as HTMLInputElement).value)}></app-form-field></div>
-          <div class="device-form-row"><app-form-field label="SNMP 端口" .inline=${true}><input class="field" type="number" .value=${String(this.form.snmpPort)} @input=${(e: Event) => this.updateForm("snmpPort", Number((e.target as HTMLInputElement).value) || 161)}></app-form-field>
-          <app-form-field label="SSH 端口" .inline=${true}><input class="field" type="number" .value=${String(this.form.sshPort)} @input=${(e: Event) => this.updateForm("sshPort", Number((e.target as HTMLInputElement).value) || 22)}></app-form-field></div>
+          <div class="device-form-row"><app-form-field label="SNMP 端口" .inline=${true}><input class="field" type="number" min="1" max="65535" step="1" .value=${this.form.snmpPort} @input=${(e: Event) => this.updateForm("snmpPort", (e.target as HTMLInputElement).value)}></app-form-field>
+          <app-form-field label="SSH 端口" .inline=${true}><input class="field" type="number" min="1" max="65535" step="1" .value=${this.form.sshPort} @input=${(e: Event) => this.updateForm("sshPort", (e.target as HTMLInputElement).value)}></app-form-field></div>
         </section>
         <section class="device-form-section">
           <div class="section-heading">

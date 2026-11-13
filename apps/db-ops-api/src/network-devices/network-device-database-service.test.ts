@@ -97,7 +97,7 @@ describe('NetworkDeviceDatabaseService', () => {
     const execute = vi.fn().mockRejectedValue(duplicate);
     const service = new NetworkDeviceDatabaseService(() => poolFor(execute));
     await expect(service.createDevice({ name: 'edge-1', host: '192.0.2.10', snmpv3: { username: 'm', securityLevel: 'noAuthNoPriv' } }))
-      .resolves.toMatchObject({ success: false, error: expect.stringContaining('已被纳管') });
+      .resolves.toMatchObject({ success: false, error: expect.stringContaining('已被纳管'), errorCode: 'NETWORK_DEVICE_EXISTS' });
   });
 
   it('refuses deleting devices that still have active resource relations', async () => {
@@ -140,5 +140,17 @@ describe('SNMP replacement transaction', () => {
     const execute = vi.fn().mockResolvedValue([[]]);
     await new NetworkDeviceDatabaseService(() => poolFor(execute)).getCredentials(7);
     expect(execute.mock.calls[0][0]).toContain("AND protocol IN ('snmpv2c','snmpv3')");
+  });
+});
+
+// MAX-609 / #552: assert generated SQL preserves null, including snake_case.
+describe('nullable network device metadata SQL', () => {
+  it.each([{ osVersion: null, serialNumber: null }, { os_version: null, serial_number: null }])('clears both columns for %j', async input => {
+    const execute = vi.fn().mockResolvedValue([[{ id: 7 }]]);
+    const service = new NetworkDeviceDatabaseService(() => poolFor(execute));
+    expect(await service.updateDevice(7, input)).toEqual({ success: true });
+    expect(execute.mock.calls.find(([sql]) => String(sql).startsWith('UPDATE network_devices'))).toEqual([
+      'UPDATE network_devices SET os_version = ?, serial_number = ? WHERE id = ?', [null, null, 7],
+    ]);
   });
 });

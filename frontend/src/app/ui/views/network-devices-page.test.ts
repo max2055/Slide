@@ -249,3 +249,46 @@ describe('SNMP editor credential intent', () => {
     expect(payload.snmpv2c).toBeUndefined();
   });
 });
+
+// MAX-613 / #720: test input events, not just hand-built request bodies.
+describe('network device port editing', () => {
+  beforeEach(() => { authFetch.mockReset(); showToast.mockReset(); });
+  afterEach(() => document.body.replaceChildren());
+  async function editor(editing: boolean) {
+    authFetch.mockImplementation(async (_url: string, init?: RequestInit) => response(init?.method === 'POST' ? { id: 7 } : []));
+    const element = document.createElement('network-devices-page') as any;
+    document.body.append(element); await settle(element);
+    if (editing) await element.openEdit({ id: 7, name: 'edge', host: '192.0.2.10', snmp_port: 1161, ssh_port: 2222, vendor: 'huawei', snmpVersion: 2 });
+    else { element.openCreate(); element.form = { ...element.form, name: 'edge', host: '192.0.2.10', community: 'readonly' }; }
+    await settle(element); return element;
+  }
+  async function fill(element: any, label: string, value: string) {
+    const input = element.querySelector(`app-form-field[label="${label} 端口"] input`) as HTMLInputElement;
+    input.value = value; input.dispatchEvent(new Event('input', { bubbles: true }));
+    await settle(element); return input;
+  }
+  it.each([true, false])('preserves empty/zero/intermediate values and blocks invalid saves (editing=%s)', async editing => {
+    const element = await editor(editing);
+    for (const label of ['SNMP', 'SSH']) {
+      for (const value of ['', '0', '70000', '-1', '1.5']) {
+        const input = await fill(element, label, value);
+        expect(input.value).toBe(value);
+        await element.saveDevice();
+        expect(element.formError).toContain(`${label} 端口`);
+        expect(authFetch.mock.calls.filter(([, init]) => ['POST', 'PUT'].includes(init?.method))).toHaveLength(0);
+      }
+      await fill(element, label, label === 'SNMP' ? '1161' : '2222');
+    }
+    await element.saveDevice();
+    const writes = authFetch.mock.calls.filter(([, init]) => ['POST', 'PUT'].includes(init?.method));
+    expect(writes).toHaveLength(1);
+    expect(JSON.parse(writes[0][1].body)).toMatchObject({ snmpPort: 1161, sshPort: 2222 });
+  });
+  it.each(['1', '65535'])('saves valid boundary port %s as a number', async value => {
+    const element = await editor(true);
+    await fill(element, 'SNMP', value); await fill(element, 'SSH', value);
+    await element.saveDevice();
+    const write = authFetch.mock.calls.find(([, init]) => init?.method === 'PUT');
+    expect(JSON.parse(write?.[1].body)).toMatchObject({ snmpPort: Number(value), sshPort: Number(value) });
+  });
+});
