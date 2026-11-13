@@ -356,6 +356,9 @@ class LLMDatabaseService {
    * 配置提供商
    */
   async configureProvider(config: LLMProviderConfig): Promise<{ success: boolean; error?: string; providerId?: number }> {
+    if (config.displayName !== undefined && (typeof config.displayName !== 'string' || [...config.displayName].length > 100)) {
+      return { success: false, error: 'LLM_DISPLAY_NAME_INVALID：显示名称最多 100 个字符' };
+    }
     if (config.apiFormat !== undefined && config.apiFormat !== '' && !isSupportedApiFormat(config.apiFormat)) {
       return { success: false, error: API_FORMAT_MIGRATION_MESSAGE };
     }
@@ -484,7 +487,7 @@ class LLMDatabaseService {
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
             config.name,
-            config.displayName || config.name.toUpperCase(),
+            config.displayName ?? config.name.toUpperCase(),
             config.deploymentType || 'api',
             config.apiFormat || null,
             config.apiKey ? encryptData(config.apiKey) : null,

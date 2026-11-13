@@ -39,6 +39,23 @@ describe('model loading and parameter selection', () => {
     expect(put.mock.calls[0][1].apiKey).toBe('draft-key');
     expect(element.form.api_key).toBe('');
   });
+  it.each(['名'.repeat(51), '名'.repeat(100), '😀'.repeat(100)])('#300 saves the full supported display name', async displayName => {
+    const element = await page();
+    element.form = { ...element.form, display_name: displayName };
+    await element.updateComplete;
+    expect(element.shadowRoot.querySelector('#provider-display').value).toBe(displayName);
+    expect(element.shadowRoot.querySelector('#provider-display-hint').textContent).toContain('100');
+    await element._save();
+    expect(put).toHaveBeenCalledWith('/llm/configs/11', expect.objectContaining({ displayName }));
+  });
+  it('#300 blocks overlong names before the API call and keeps the draft', async () => {
+    const element = await page();
+    element.form = { ...element.form, display_name: '名'.repeat(101) };
+    await element._save(); await element.updateComplete;
+    expect(put).not.toHaveBeenCalled();
+    expect(element.form.display_name).toHaveLength(101);
+    expect(element.shadowRoot.textContent).toContain('显示名称最多 100 个字符');
+  });
   it('surfaces load failures and keeps existing model parameters', async () => {
     const element = await page();
     element.form = { ...element.form, api_base_url: 'https://api.stepfun.com/v1', models: [model], api_key: 'draft-key' };

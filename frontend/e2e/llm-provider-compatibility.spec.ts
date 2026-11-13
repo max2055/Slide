@@ -105,3 +105,38 @@ for (const action of ['toggle', 'default'] as const) {
     }
   });
 }
+
+test('#300 display name keeps 100 characters and rejects 101 in the browser', async ({ page }, testInfo) => {
+  const writes: any[] = [];
+  let saved = { ...provider, name: 'custom', api_format: 'openai-completions', display_name: '名'.repeat(100) };
+  await page.route('**/api/llm/**', async route => {
+    if (route.request().method() === 'PUT') {
+      const body = route.request().postDataJSON(); writes.push(body); saved = { ...saved, display_name: body.displayName };
+      return route.fulfill({ json: { success: true, applied: true } });
+    }
+    return route.fulfill({ json: new URL(route.request().url()).pathname.endsWith('/configs') ? [saved] : [] });
+  });
+  await page.route('**/name-contract-fixture', route => route.fulfill({ contentType: 'text/html',
+    body: '<llm-config-page></llm-config-page><script type="module">import "/src/app/styles.css";import "/src/app/ui/views/llm-config.ts";</script>' }));
+  await page.goto('/name-contract-fixture');
+  const input = page.getByLabel('显示名称', { exact: true });
+  const save = page.getByRole('button', { name: '保存配置', exact: true });
+  await expect(input).toHaveValue('名'.repeat(100));
+  await expect(input).toHaveAccessibleDescription('最多 100 个字符');
+  for (const [width, height] of [[1440,900],[1366,768],[1920,1080]]) {
+    await page.setViewportSize({ width,height }); await input.scrollIntoViewIfNeeded();
+    await input.focus(); await expect(input).toBeFocused();
+    await input.press('Tab'); await expect(input).not.toBeFocused();
+    await save.scrollIntoViewIfNeeded(); await expect(save).toBeInViewport();
+    await input.scrollIntoViewIfNeeded(); await page.screenshot({path:testInfo.outputPath(`name-${width}.png`)});
+  }
+  for (const name of ['名'.repeat(51), '名'.repeat(100), '😀'.repeat(100)]) {
+    await input.fill(name); await save.click();
+    await expect.poll(() => writes.at(-1)?.displayName).toBe(name);
+    await page.waitForFunction(() => !(document.querySelector('llm-config-page') as any).saving);
+    await expect(input).toHaveValue(name);
+  }
+  await input.fill('名'.repeat(101)); await save.click();
+  await expect(page.getByText('显示名称最多 100 个字符', { exact: true })).toBeVisible();
+  expect(writes).toHaveLength(3); await expect(input).toHaveValue('名'.repeat(101));
+});

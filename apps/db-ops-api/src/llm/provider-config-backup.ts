@@ -434,7 +434,7 @@ function validateProvider(raw: unknown, index: number): ProviderBackupEntry {
   const name = requireString(entry.name, `providers[${index}].name`, 50);
   if (name !== name.trim()) invalid(`invalid providers[${index}].name`);
   const displayName = entry.display_name;
-  if (typeof displayName !== 'string' || displayName.length > 100) invalid(`invalid providers[${index}].display_name`);
+  if (typeof displayName !== 'string' || [...displayName].length > 100) invalid(`invalid providers[${index}].display_name`);
   const deploymentType = entry.deployment_type;
   if (!DEPLOYMENT_TYPES.includes(deploymentType as DeploymentType)) invalid(`invalid providers[${index}].deployment_type`);
   const apiFormat = entry.api_format;
