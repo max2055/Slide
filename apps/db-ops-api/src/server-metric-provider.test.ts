@@ -6,6 +6,7 @@ import serverMetricProvider, {
   parseNetworkInterfaceStats,
   parseProcessCount,
   parseTopProcesses,
+  parseTopProcessesWithDiagnostics,
 } from './server-metric-provider.js';
 import { classifyCollectionFailure } from './migrations/metric-history/server-collector.js';
 
@@ -41,6 +42,18 @@ describe('server metric provider fixed parsers', () => {
     const rows = parseTopProcesses(Array.from({ length: 30 }, (_, i) => `${i + 1} proc${i} ${i}.5 1.0`).join('\n'));
     expect(rows).toHaveLength(20);
     expect(rows[0]).toMatchObject({ pid: 1, command: 'proc0', cpuPercent: 0.5 });
+  });
+
+  it('MAX-403/MAX-405 preserves spaced comm and multi-core pcpu and reports malformed rows', () => {
+    const output = '123 my worker 250.5 3.0\n7 java 812.5 10.0\n42 sshd 1.0 0.2\nbad row\n8 invalid 20 100.1\n';
+    expect(parseTopProcessesWithDiagnostics(output)).toEqual({ items: [
+      { pid: 123, command: 'my worker', cpuPercent: 250.5, memoryPercent: 3 },
+      { pid: 7, command: 'java', cpuPercent: 812.5, memoryPercent: 10 },
+      { pid: 42, command: 'sshd', cpuPercent: 1, memoryPercent: 0.2 },
+    ], malformedLines: 2 });
+    expect(serverMetricProvider.parseMetric('top_processes_cpu', output)).toBeNull();
+    expect(serverMetricProvider.parseMetric('top_processes_cpu', '7 java worker 812.5 10.0')).toBe(812.5);
+    expect(serverMetricProvider.parseMetric('top_processes_memory', '7 java worker 812.5 100')).toBe(100);
   });
 
   it('rejects arbitrary dimension keys and unsupported OS labels', () => {

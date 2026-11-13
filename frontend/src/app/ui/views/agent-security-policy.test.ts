@@ -10,6 +10,7 @@ vi.mock('../../../api/index.js', () => ({ apiClient: { get: mocks.get, put: mock
 vi.mock('../components/app-toast-container.js', () => ({ showToast: mocks.toast }));
 
 import './agent-security-policy.js';
+import '../components/app-empty-state.js';
 
 type Page = HTMLElement & { updateComplete: Promise<unknown> };
 
@@ -50,5 +51,25 @@ describe('Agent security execution controls', () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
     await page.updateComplete;
     expect(mocks.put).toHaveBeenCalledWith('/agent/security/config', { approvalEnabled: false, restrictedNetworkEnabled: false });
+  });
+});
+
+describe('MAX-446 history failure recovery', () => {
+  afterEach(() => { document.body.replaceChildren(); localStorage.clear(); vi.clearAllMocks(); });
+  it.each(['403', '500', 'network'])('distinguishes %s failure from successful empty history and retries', async reason => {
+    localStorage.setItem('permissions', '["audit:view"]');
+    let fail = true;
+    mocks.get.mockImplementation(async (path: string) => {
+      if (path.endsWith('/history')) { if (fail) throw new Error(reason); return { records: [] }; }
+      return { agents: [{ id: 'a', name: 'A' }], policies: [{ agentId: 'a', allowedEffects: ['read'], resourceScope: { instanceIds: null, serverIds: null, networkDeviceIds: null }, version: 1 }], tools: [], skills: [] };
+    });
+    const page = document.createElement('agent-security-policy-page') as Page;
+    document.body.append(page);
+    await vi.waitFor(() => expect(page.shadowRoot!.textContent).toContain('策略变更记录加载失败'));
+    expect(page.shadowRoot!.textContent).not.toContain('暂无策略变更');
+    fail = false;
+    [...page.shadowRoot!.querySelectorAll('button')].find(b => b.textContent === '重试加载变更记录')!.click();
+    await vi.waitFor(() => expect(page.shadowRoot!.querySelector('app-data-table')?.textContent).toContain('暂无策略变更'));
+    expect(page.shadowRoot!.querySelector('[role="alert"]')).toBeNull();
   });
 });
