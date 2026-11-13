@@ -1,10 +1,9 @@
 import { getSafeLocalStorage } from "../../ui/local-storage.ts";
-import { en } from "../locales/en.ts";
 import {
+  BUNDLED_TRANSLATIONS,
   DEFAULT_LOCALE,
   SUPPORTED_LOCALES,
   isSupportedLocale,
-  loadLazyLocaleTranslation,
   resolveNavigatorLocale,
 } from "./registry.ts";
 import type { Locale, TranslationMap } from "./types.ts";
@@ -15,11 +14,11 @@ export { SUPPORTED_LOCALES, isSupportedLocale };
 
 class I18nManager {
   private locale: Locale = DEFAULT_LOCALE;
-  private translations: Partial<Record<Locale, TranslationMap>> = { [DEFAULT_LOCALE]: en };
+  private translations: Partial<Record<Locale, TranslationMap>> = { ...BUNDLED_TRANSLATIONS };
   private subscribers: Set<Subscriber> = new Set();
 
   constructor() {
-    this.loadLocale();
+    this.locale = this.resolveInitialLocale();
   }
 
   private readStoredLocale(): string | null {
@@ -56,38 +55,13 @@ class I18nManager {
     return resolveNavigatorLocale(language ?? "");
   }
 
-  private loadLocale() {
-    const initialLocale = this.resolveInitialLocale();
-    if (initialLocale === DEFAULT_LOCALE) {
-      this.locale = DEFAULT_LOCALE;
-      return;
-    }
-    // Use the normal locale setter so startup locale loading follows the same
-    // translation-loading + notify path as manual locale changes.
-    void this.setLocale(initialLocale);
-  }
-
   public getLocale(): Locale {
     return this.locale;
   }
 
   public async setLocale(locale: Locale) {
-    const needsTranslationLoad = locale !== DEFAULT_LOCALE && !this.translations[locale];
-    if (this.locale === locale && !needsTranslationLoad) {
+    if (this.locale === locale || !this.translations[locale]) {
       return;
-    }
-
-    if (needsTranslationLoad) {
-      try {
-        const translation = await loadLazyLocaleTranslation(locale);
-        if (!translation) {
-          return;
-        }
-        this.translations[locale] = translation;
-      } catch (e) {
-        console.error(`Failed to load locale: ${locale}`, e);
-        return;
-      }
     }
 
     this.locale = locale;
