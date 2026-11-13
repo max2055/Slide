@@ -1,3 +1,6 @@
+import { randomUUID } from 'node:crypto';
+import { createVerifyToken } from '../auth-middleware.js';
+import { signAccessToken } from '../auth/actor-context.js';
 import { readFileSync } from 'node:fs';
 import mysql, { type Pool } from 'mysql2/promise';
 import Fastify, { type FastifyInstance } from 'fastify';
@@ -31,6 +34,8 @@ describe.skipIf(!port)('Cron API + isolated MySQL security', () => {
   let app: FastifyInstance;
   let manager: CronManager;
   const database = `cron_security_${process.pid}`;
+  const secret = randomUUID();
+  const tokens: Record<string, string> = {};
   const actors = {
     global: { userId: 7, username: 'global-manager', permissions: ['cron:manage', 'cron:view', 'instance:*'], instanceScopes: {} },
     scoped: { userId: 8, username: 'scoped-manager', permissions: ['cron:manage', 'cron:view'], instanceScopes: { 9: 'read-write' } },
@@ -39,7 +44,7 @@ describe.skipIf(!port)('Cron API + isolated MySQL security', () => {
   const authorityMigration = splitSqlStatements(readFileSync(new URL('../../sql/migrations/105_cron_execution_authority.sql', import.meta.url), 'utf8'));
   const migration = splitSqlStatements(readFileSync(new URL('../../sql/migrations/092_cron_script_binding.sql', import.meta.url), 'utf8'));
   const request = (method: 'GET' | 'POST' | 'PUT' | 'DELETE', url: string, payload?: any, actor = 'global', key?: string) =>
-    app.inject({ method, url: `/api/cron/${url}`, payload, headers: { 'x-test-actor': actor, ...(key ? { 'idempotency-key': key } : {}) } });
+    app.inject({ method, url: `/api/cron/${url}`, payload, headers: { authorization: 'Bearer ' + (tokens[actor] ?? 'invalid'), ...(key ? { 'idempotency-key': key } : {}) } });
   async function runJob(id: number, actor = 'global') {
     const response = await request('POST', `jobs/${id}/run`, {}, actor);
     if (response.statusCode === 202) await manager.executeRun(response.json().runId).catch(() => {});
@@ -109,11 +114,10 @@ describe.skipIf(!port)('Cron API + isolated MySQL security', () => {
     vi.spyOn(dbConnection, 'getPool').mockReturnValue(pool);
     manager = new CronManager(cronJobService, {} as any);
     app = Fastify();
-    registerCronRoutes(app, async (req, reply) => {
-      const actor = actors[req.headers['x-test-actor'] as keyof typeof actors];
-      if (!actor) return reply.code(401).send({ error: 'Unauthorized' });
-      (req as any).user = await actorContextService.loadActiveActor(actor.userId);
-    }, () => manager);
+    for (const [name, actor] of Object.entries(actors)) {
+      tokens[name] = signAccessToken(await actorContextService.loadActiveActor(actor.userId), secret);
+    }
+    registerCronRoutes(app, createVerifyToken(secret), () => manager);
     await app.ready();
   });
 
@@ -133,6 +137,73 @@ describe.skipIf(!port)('Cron API + isolated MySQL security', () => {
     vi.restoreAllMocks();
     await pool?.end();
     if (admin) { await admin.query(`DROP DATABASE ${database}`); await admin.end(); }
+  });
+
+  it('returns 503 for real missing-table reads and recovers (#507/#511)', async () => {
+    for (const table of ['cron_jobs', 'cron_scripts']) {
+      await pool.query(`RENAME TABLE ${table} TO ${table}_unavailable`);
+      try {
+        for (const url of table === 'cron_jobs' ? ['jobs', 'jobs/1'] : ['scripts', 'scripts/1']) {
+          const response = await request('GET', url);
+          expect(response.statusCode).toBe(503);
+          expect(response.json()).toEqual({ error: 'CRON_STORAGE_UNAVAILABLE' });
+        }
+        if (table === 'cron_scripts') {
+          expect((await request('POST', 'jobs', jobBody(1))).statusCode).toBe(503);
+        }
+        if (table === 'cron_jobs') await expect(cronJobService.getEnabledJobs()).rejects.toThrow('CRON_STORAGE_UNAVAILABLE');
+      } finally { await pool.query(`RENAME TABLE ${table}_unavailable TO ${table}`); }
+    }
+    expect((await request('GET', 'jobs')).json()).toEqual([]);
+    expect((await request('GET', 'scripts')).json()).toEqual([]);
+  });
+
+  it('restores real schedules through reload after a database fault (Chief R1)', async () => {
+    await createJob(await createScript());
+    await manager.start();
+    expect(manager.getStatus()).toEqual({ running: true, scheduledJobs: 1 });
+    await pool.query('RENAME TABLE cron_jobs TO cron_jobs_unavailable');
+    try {
+      await expect(manager.reload()).rejects.toThrow('CRON_STORAGE_UNAVAILABLE');
+      expect(manager.getStatus().scheduledJobs).toBe(0);
+    } finally { await pool.query('RENAME TABLE cron_jobs_unavailable TO cron_jobs'); }
+    await manager.reload();
+    expect(manager.getStatus()).toEqual({ running: true, scheduledJobs: 1 });
+    const [runs] = await pool.query<any[]>('SELECT run_id FROM cron_runs');
+    expect(runs).toHaveLength(0);
+    await manager.stop();
+    await manager.reload();
+    expect(manager.getStatus()).toEqual({ running: false, scheduledJobs: 0 });
+  });
+
+  it('preserves real pagination and rejects illegal inputs (#508)', async () => {
+    const id = await createJob(await createScript());
+    const logId = await cronJobService.startLog(id);
+    const response = await request('GET', `jobs/${id}/logs?limit=1&offset=0`);
+    expect(response.statusCode).toBe(200);
+    expect(response.json().logs[0].id).toBe(logId);
+    expect((await request('GET', `jobs/${id}/logs?offset=1`)).json().logs).toEqual([]);
+    for (const input of ['limit=1.5', 'offset=Infinity', 'offset=9007199254740992', 'limit=101']) {
+      expect((await request('GET', `jobs/${id}/logs?${input}`)).statusCode).toBe(400);
+    }
+    await pool.query('RENAME TABLE cron_job_logs TO cron_job_logs_unavailable');
+    try {
+      expect((await request('GET', `jobs/${id}/logs`)).statusCode).toBe(503);
+    } finally { await pool.query('RENAME TABLE cron_job_logs_unavailable TO cron_job_logs'); }
+  });
+
+  it('does not claim success on real DELETE constraint failure (#512)', async () => {
+    const id = await createScript();
+    await pool.query('CREATE TABLE delete_guard (script_id INT UNSIGNED, FOREIGN KEY (script_id) REFERENCES cron_scripts(id))');
+    try {
+      await pool.query('INSERT INTO delete_guard VALUES (?)', [id]);
+      const response = await request('DELETE', `scripts/${id}`);
+      expect(response.statusCode).toBe(503);
+      expect(response.json()).toEqual({ error: 'CRON_STORAGE_UNAVAILABLE' });
+      expect((await request('GET', `scripts/${id}`)).statusCode).toBe(200);
+    } finally { await pool.query('DROP TABLE delete_guard'); }
+    expect((await request('DELETE', `scripts/${id}`)).statusCode).toBe(200);
+    expect((await request('DELETE', `scripts/${id}`)).statusCode).toBe(404);
   });
 
   // GitHub #305: real RBAC reload and persistent audits across the audit I/O race.
