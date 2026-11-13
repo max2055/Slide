@@ -405,6 +405,7 @@ export class CronJobDatabaseService {
 
   /**
    * 完成执行日志（更新状态、结束时间、结果摘要、Agent 迹数据）
+   * 未提供新结果时保留已落库的脚本授权；异常堆栈使用 trace.error_trace。
    */
   async completeLog(
     logId: number,
@@ -430,7 +431,7 @@ export class CronJobDatabaseService {
         `UPDATE cron_job_logs
          SET finished_at = NOW(), status = ?, result_summary = ?,
              error_message = ?,
-             structured_result = ?,
+             structured_result = COALESCE(?, structured_result),
              tools_used = ?,
              tool_events = ?,
              \`usage\` = ?,

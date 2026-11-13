@@ -349,7 +349,7 @@ export class CronManager {
       console.error(`CronManager: 任务 #${config.id} "${config.name}" 执行失败:`, error.message);
 
       if (logId !== null) {
-        await this.jobService.completeLog(logId, 'error', `执行失败`, error.message, {
+        await this.jobService.completeLog(logId, 'error', `执行失败`, error.message, null, {
           error_trace: error.stack,
         });
       }
