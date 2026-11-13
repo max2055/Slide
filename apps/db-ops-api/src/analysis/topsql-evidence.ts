@@ -15,7 +15,7 @@ export async function collectTopSqlEvidence(instanceId: number, query: SlowQuery
   const dialect = databaseService.getConnection(instanceId)?.db_type ?? 'mysql';
   const data: { dialect: string; sql: string | null; metrics: Record<string, unknown>; schema: unknown; indexes: unknown; explain: unknown; gaps: typeof gaps } = {
     dialect,
-    sql: query.sql_text, metrics: { avg_time_ms: query.avg_time_ms, max_time_ms: query.max_time_ms, execution_count: query.execution_count,
+    sql: query.sql_text, metrics: { avg_time_ms: query.avg_time_ms, max_time_ms: query.max_time_ms, min_time_ms: query.min_time_ms, total_time_ms: query.total_time_ms, execution_count: query.execution_count,
       rows_examined: query.rows_examined, rows_sent: query.rows_sent, schema_name: query.schema_name, first_seen: query.first_seen ?? null, last_seen: query.last_seen ?? null },
     schema: null, indexes: null, explain: null, gaps,
   };

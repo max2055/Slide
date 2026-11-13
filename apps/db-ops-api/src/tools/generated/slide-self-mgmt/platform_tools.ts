@@ -27,6 +27,11 @@ platformTools.push({
     if (!context?.actor) return { success: false, error: 'MISSING_ACTOR', errorCode: 'MISSING_ACTOR' };
     try {
       requireSourceReader(context.actor);
+    } catch (error) {
+      const code = error instanceof Error && error.message === 'SOURCE_READ_FORBIDDEN' ? 'SOURCE_READ_FORBIDDEN' : 'PLATFORM_OBSERVATION_UNAVAILABLE';
+      return { success: false, error: code, errorCode: code };
+    }
+    try {
       return { success: true, data: platformLogs.query({ from: args.from as string, to: args.to as string, component: args.component as string }) };
     } catch { return { success: false, error: 'PLATFORM_OBSERVATION_UNAVAILABLE', errorCode: 'PLATFORM_OBSERVATION_UNAVAILABLE' }; }
   },
