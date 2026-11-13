@@ -12,6 +12,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
+import { randomUUID } from 'node:crypto';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const BUNDLED_VERSIONS_DIR = path.resolve(__dirname, 'versions');
@@ -39,6 +40,8 @@ export class PromptManager {
   private activeVersion: number = 2;
   private abTest = false;
   private watcher: fs.FSWatcher | null = null;
+  private reloadTimer: ReturnType<typeof setTimeout> | null = null;
+  private pendingUpdate: Promise<unknown> = Promise.resolve();
   private readonly versionsDir: string;
   private readonly bundledVersionsDir: string;
 
@@ -64,6 +67,12 @@ export class PromptManager {
     await this.prepareVersionsDirectory();
 
     await this.reloadAll();
+    if (version !== undefined) {
+      const missing = [...this.prompts].filter(([, versions]) => !versions.some(entry => entry.version === this.activeVersion));
+      if (this.prompts.size === 0 || missing.length > 0) {
+        throw new Error(`配置的提示词版本 v${this.activeVersion} 不存在于全部已加载类型中`);
+      }
+    }
     console.log(`[PromptManager] 已加载 ${this.countEntries()} 个提示词文件，${this.prompts.size} 种类型，当前版本：v${this.activeVersion}${this.abTest ? '（A/B 测试模式）' : ''}`);
   }
 
@@ -71,14 +80,24 @@ export class PromptManager {
    * 重新加载所有提示词文件
    */
   private async reloadAll(): Promise<void> {
-    this.prompts.clear();
-    await this.loadDirectory(this.bundledVersionsDir);
-    if (this.versionsDir !== this.bundledVersionsDir) {
-      await this.loadDirectory(this.versionsDir);
-    }
+    return this.enqueueUpdate(async () => {
+      const snapshot = new Map<string, PromptVersion[]>();
+      await this.loadDirectory(this.bundledVersionsDir, snapshot);
+      if (this.versionsDir !== this.bundledVersionsDir) {
+        await this.loadDirectory(this.versionsDir, snapshot);
+      }
+      this.prompts = snapshot;
+    });
   }
 
-  private async loadDirectory(directory: string): Promise<void> {
+  // Serialize reloads and local writes so an older reload cannot discard a successful edit.
+  private enqueueUpdate<T>(update: () => Promise<T>): Promise<T> {
+    const result = this.pendingUpdate.then(update);
+    this.pendingUpdate = result.catch(() => undefined);
+    return result;
+  }
+
+  private async loadDirectory(directory: string, snapshot: Map<string, PromptVersion[]>): Promise<void> {
     const files = await fs.promises.readdir(directory);
 
     for (const file of files) {
@@ -89,22 +108,19 @@ export class PromptManager {
 
       const type = match[1];
       const version = parseInt(match[2], 10);
+      if (!Number.isSafeInteger(version) || version < 1) continue;
 
-      try {
-        const content = await fs.promises.readFile(path.join(directory, file), 'utf-8');
-        if (!this.prompts.has(type)) {
-          this.prompts.set(type, []);
-        }
-        const versions = this.prompts.get(type)!;
-        const existingIndex = versions.findIndex(entry => entry.version === version);
-        const entry = { version, content, length: content.length, fileName: file };
-        if (existingIndex === -1) {
-          versions.push(entry);
-        } else {
-          versions[existingIndex] = entry;
-        }
-      } catch (err) {
-        console.warn(`[PromptManager] 读取失败：${file}`, err);
+      const content = await fs.promises.readFile(path.join(directory, file), 'utf-8');
+      if (!snapshot.has(type)) {
+        snapshot.set(type, []);
+      }
+      const versions = snapshot.get(type)!;
+      const existingIndex = versions.findIndex(entry => entry.version === version);
+      const entry = { version, content, length: content.length, fileName: file };
+      if (existingIndex === -1) {
+        versions.push(entry);
+      } else {
+        versions[existingIndex] = entry;
       }
     }
   }
@@ -144,7 +160,12 @@ export class PromptManager {
 
     const version = overrideVersion ?? this.activeVersion;
 
-    if (this.abTest) {
+    const entry = versions.find(e => e.version === version);
+    if (!entry) {
+      console.warn(`[PromptManager] 请求的提示词版本 v${version} 不存在，未返回其他版本`);
+      return '';
+    }
+    if (this.abTest && overrideVersion === undefined) {
       const v1 = versions.find(e => e.version === 1);
       const v2 = versions.find(e => e.version === 2);
       if (v1 && v2) {
@@ -153,8 +174,6 @@ export class PromptManager {
       }
     }
 
-    const entry = versions.find(e => e.version === version)
-      ?? versions.reduce((a, b) => a.version > b.version ? a : b);
     return entry.content;
   }
 
@@ -214,17 +233,19 @@ export class PromptManager {
    * 更新指定版本的提示词内容，并写回文件
    */
   async setVersionContent(type: string, version: number, content: string): Promise<boolean> {
-    const versions = this.prompts.get(type);
-    if (!versions) return false;
+    return this.enqueueUpdate(async () => {
+      const versions = this.prompts.get(type);
+      if (!versions) return false;
 
-    const entry = versions.find(e => e.version === version);
-    if (!entry) return false;
+      const entry = versions.find(e => e.version === version);
+      if (!entry) return false;
 
-    await fs.promises.writeFile(path.join(this.versionsDir, entry.fileName), content, 'utf-8');
-    entry.content = content;
-    entry.length = content.length;
-    console.log(`[PromptManager] 已保存 ${entry.fileName} (${content.length} chars)`);
-    return true;
+      await fs.promises.writeFile(path.join(this.versionsDir, entry.fileName), content, 'utf-8');
+      entry.content = content;
+      entry.length = content.length;
+      console.log(`[PromptManager] 已保存 ${entry.fileName} (${content.length} chars)`);
+      return true;
+    });
   }
 
   /**
@@ -232,20 +253,41 @@ export class PromptManager {
    */
   async createVersion(type: string, content: string): Promise<{ version: number; fileName: string }> {
     if (!/^[a-z0-9][a-z0-9-]*$/.test(type)) throw new Error('提示词类型无效');
-    const versions = this.prompts.get(type);
-    const maxVersion = versions ? Math.max(...versions.map(v => v.version)) : 0;
-    const newVersion = maxVersion + 1;
-    const fileName = `${type}-v${newVersion}.md`;
-
-    const fullPath = path.join(this.versionsDir, fileName);
-    await fs.promises.writeFile(fullPath, content, 'utf-8');
-    const entry: PromptVersion = { version: newVersion, content, length: content.length, fileName };
-    if (!this.prompts.has(type)) {
-      this.prompts.set(type, []);
-    }
-    this.prompts.get(type)!.push(entry);
-    console.log(`[PromptManager] 已创建 ${fileName} (${content.length} chars)`);
-    return { version: newVersion, fileName };
+    return this.enqueueUpdate(async () => {
+      const versions = this.prompts.get(type) ?? [];
+      const files = await fs.promises.readdir(this.versionsDir);
+      const diskVersions = files.flatMap(file => {
+        const match = file.match(/^(.+)-v(\d+)\.md$/);
+        const version = match ? Number(match[2]) : 0;
+        return match?.[1] === type && Number.isSafeInteger(version) ? [version] : [];
+      });
+      let newVersion = Math.max(0, ...versions.map(v => v.version), ...diskVersions) + 1;
+      const temporaryPath = path.join(this.versionsDir, `.${randomUUID()}.tmp`);
+      const temporaryFile = await fs.promises.open(temporaryPath, 'wx');
+      try {
+        await temporaryFile.writeFile(content, 'utf-8');
+        await temporaryFile.close();
+        while (Number.isSafeInteger(newVersion)) {
+          const fileName = `${type}-v${newVersion}.md`;
+          try {
+            // link publishes a complete file and fails exclusively if another process won.
+            await fs.promises.link(temporaryPath, path.join(this.versionsDir, fileName));
+          } catch (error) {
+            if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+            newVersion++;
+            continue;
+          }
+          versions.push({ version: newVersion, content, length: content.length, fileName });
+          this.prompts.set(type, versions);
+          console.log(`[PromptManager] 已创建 ${fileName} (${content.length} chars)`);
+          return { version: newVersion, fileName };
+        }
+        throw new Error('提示词版本号超出安全整数范围');
+      } finally {
+        await temporaryFile.close();
+        await fs.promises.unlink(temporaryPath);
+      }
+    });
   }
 
   // ══════════════ 热重载 ══════════════
@@ -257,21 +299,20 @@ export class PromptManager {
     if (this.watcher) return;
 
     try {
-      this.watcher = fs.watch(this.versionsDir, (eventType, fileName) => {
+      this.watcher = fs.watch(this.versionsDir, (_eventType, fileName) => {
         if (!fileName || !fileName.endsWith('.md')) return;
-        // 延迟一小段等文件写入完成
-        setTimeout(async () => {
-          const oldCount = this.countEntries();
-          await this.reloadAll();
-          const newCount = this.countEntries();
-          if (oldCount !== newCount || eventType === 'change') {
-            console.log(`[PromptManager] 热重载：${fileName} (${eventType})`);
-          }
+        if (this.reloadTimer) clearTimeout(this.reloadTimer);
+        this.reloadTimer = setTimeout(() => {
+          this.reloadTimer = null;
+          void this.reloadAll().then(() => {
+            console.log('[PromptManager] 热重载完成');
+          }).catch(error => this.logWatchFailure(error));
         }, 200);
       });
+      this.watcher.on('error', error => this.logWatchFailure(error));
       console.log(`[PromptManager] 文件监听已启动：${this.versionsDir}`);
     } catch (err) {
-      console.warn(`[PromptManager] 文件监听启动失败：`, err);
+      this.logWatchFailure(err);
     }
   }
 
@@ -279,11 +320,20 @@ export class PromptManager {
    * 停止文件监听
    */
   stopWatch(): void {
+    if (this.reloadTimer) {
+      clearTimeout(this.reloadTimer);
+      this.reloadTimer = null;
+    }
     if (this.watcher) {
       this.watcher.close();
       this.watcher = null;
       console.log(`[PromptManager] 文件监听已停止`);
     }
+  }
+
+  private logWatchFailure(error: unknown): void {
+    const code = (error as NodeJS.ErrnoException | null)?.code;
+    console.warn(`[PromptManager] 文件监听或热重载失败，保留原快照 (${typeof code === 'string' && /^E[A-Z0-9]+$/.test(code) ? code : 'UNKNOWN'})`);
   }
 }
 
