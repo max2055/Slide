@@ -164,7 +164,7 @@ export function loadSettings(): UiSettings {
     sessionKey: "",
     lastActiveSessionKey: "",
     theme: "claw",
-    themeMode: "system",
+    themeMode: "light",
     chatFocusMode: false,
     chatShowThinking: true,
     chatShowToolCalls: true,

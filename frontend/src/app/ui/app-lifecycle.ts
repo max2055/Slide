@@ -1,3 +1,4 @@
+import { getSafeLocalStorage } from "./local-storage.ts";
 import { initChatClient } from "./direct-gateway.ts";
 import type { DirectGatewayClient } from "./direct-gateway.ts";
 import { observeTopbar, scheduleChatScroll } from "./app-scroll.ts";
@@ -57,6 +58,10 @@ export function handleConnected(host: LifecycleHost) {
     if (host.connectGeneration !== connectGeneration) {
       return;
     }
+    // Storage denial means signed out; do not enter JWT transport initialization.
+    try {
+      if (!getSafeLocalStorage()?.getItem('token')) { host.connected = false; return; }
+    } catch { host.connected = false; return; }
     initChatClient(host as unknown as Parameters<typeof initChatClient>[0]);
   });
 }
@@ -72,14 +77,15 @@ function applyDefaultTab(host: LifecycleHost) {
   }
 }
 
-export async function syncUserPreferences(host: { settings: import('./storage.ts').UiSettings }) {
-  const { syncPreferencesFromServer } = await import('./storage.ts');
+export async function syncUserPreferences(host: { settings: import('./storage.ts').UiSettings; connectGeneration?: number }) {
   const initial = host.settings;
+  const generation = host.connectGeneration;
+  const { syncPreferencesFromServer } = await import('./storage.ts');
   const merged = await syncPreferencesFromServer(initial);
   // Apply server-synced preferences
   const { applySettings } = await import('./app-settings.ts');
   // A late bootstrap response must not overwrite edits made while it was loading.
-  if (host.settings === initial) applySettings(host as Parameters<typeof applySettings>[0], merged);
+  if (host.settings === initial && host.connectGeneration === generation) applySettings(host as Parameters<typeof applySettings>[0], merged);
 }
 
 export function handleFirstUpdated(host: LifecycleHost) {

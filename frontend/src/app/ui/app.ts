@@ -425,16 +425,87 @@ export class SlideApp extends LitElement {
     return this;
   }
 
+  private readonly navigateHandler = (e: Event) => {
+    const connectionGeneration = this.connectGeneration;
+    const { tab, id, session, serverId, networkDeviceId, investigationId, editResourceId } = (e as CustomEvent).detail;
+    const effectiveServerId = serverId ?? (tab === "server-detail" ? id : undefined);
+    const effectiveNetworkDeviceId = networkDeviceId ?? (tab === "network-device-detail" ? id : undefined);
+    if (tab) {
+      if (tab === "chat" && session) {
+        switchChatSession(this as unknown as AppViewState, session);
+      }
+      this.setTab(tab as Tab, true);
+      // Keep server and network-device context IDs independent.
+      if (tab === "server-detail" && effectiveServerId != null) {
+        (this as any).serverId = Number(effectiveServerId);
+        (this as any).networkDeviceId = undefined;
+      } else if (tab === "network-device-detail" && effectiveNetworkDeviceId != null) {
+        (this as any).networkDeviceId = Number(effectiveNetworkDeviceId);
+        (this as any).serverId = undefined;
+      } else if (tab !== "server-detail" && tab !== "network-device-detail") {
+        (this as any).serverId = undefined;
+        (this as any).networkDeviceId = undefined;
+      }
+      // Handle pending chat message from diagnosis "继续分析"
+      const pendingMsg = (window as any).__pendingChatMessage;
+      if (tab === "chat" && pendingMsg) {
+        // First create new session via /new, then send the diagnosis context
+        // Don't delete pendingMsg yet — dispatchSlashCommand checks it for key prefix
+        Promise.resolve().then(async () => {
+          if (!this.isConnected || this.connectGeneration !== connectionGeneration) return;
+          await handleSendChatInternal(this as any, "/new");
+          if (!this.isConnected || this.connectGeneration !== connectionGeneration) return;
+          // Now safe to delete — /new has consumed the flag
+          const msg = (window as any).__pendingChatMessage;
+          delete (window as any).__pendingChatMessage;
+          if (msg) await handleSendChatInternal(this as any, msg.text);
+        });
+      }
+      // Update URL
+      const url = buildNavigationUrl(window.location.href, tab as Tab, {
+        id,
+        session,
+        serverId: effectiveServerId,
+        networkDeviceId: effectiveNetworkDeviceId,
+        investigationId,
+        editResourceId,
+      });
+      // setTab already created this history entry; enrich it with view context.
+      window.history.replaceState({}, "", url);
+    }
+  };
+
+  private readonly permissionsLoadedHandler = (e: Event) => {
+    clearChatViewCaches();
+    this.userPermissions = new Set((e as CustomEvent).detail.permissions);
+    this.permissionsError = null;
+    this.requestUpdate();
+  };
+
+  private readonly settingsChangeHandler = (event: Event) => {
+    const e = event as CustomEvent;
+    if (e.detail && typeof e.detail === 'object') {
+      applySettingsInternal(this as unknown as Parameters<typeof applySettingsInternal>[0], {
+        ...this.settings,
+        ...e.detail,
+      });
+    }
+  };
+
   connectedCallback() {
     super.connectedCallback();
+    window.addEventListener("slide-navigate", this.navigateHandler);
+    window.addEventListener("slide-permissions-loaded", this.permissionsLoadedHandler);
+    window.addEventListener("slide-settings-change", this.settingsChangeHandler);
     window.addEventListener(SESSION_EXPIRED_EVENT, this.sessionExpiredHandler);
     if (isSessionExpiryInProgress()) this.lastError = '登录已超时，请重新登录。';
 
     // DirectAdapter authenticates with the persisted JWT. The legacy control
     // session token is no longer issued and must not block refresh recovery.
-    const hasJwt = Boolean(apiClient.getToken());
+    let hasJwt = false;
+    try { hasJwt = Boolean(apiClient.getToken()); } catch { /* Storage can be denied at startup. */ }
     if (!hasJwt) {
-      localStorage.removeItem('slide.control.session_token.v1');
+      try { localStorage.removeItem('slide.control.session_token.v1'); } catch { /* Storage can be denied at startup. */ }
     }
 
     this.onSlashAction = (action: string) => {
@@ -458,6 +529,7 @@ export class SlideApp extends LitElement {
     };
     document.addEventListener("keydown", this.globalKeydownHandler);
     handleConnected(this as unknown as Parameters<typeof handleConnected>[0]);
+    if (this.hasUpdated) handleFirstUpdated(this as unknown as Parameters<typeof handleFirstUpdated>[0]);
 
     // Initialize permissions from localStorage cache (AUTH-05)
     try {
@@ -478,73 +550,12 @@ export class SlideApp extends LitElement {
       if (tabParam === "network-device-detail" && initialNetworkId) (this as any).networkDeviceId = Number(initialNetworkId);
       this.setTab(tabParam as Tab, true);
     }
-
-    // Listen for navigation events
-    window.addEventListener("slide-navigate", (e: any) => {
-      const { tab, id, session, serverId, networkDeviceId, investigationId, editResourceId } = e.detail;
-      const effectiveServerId = serverId ?? (tab === "server-detail" ? id : undefined);
-      const effectiveNetworkDeviceId = networkDeviceId ?? (tab === "network-device-detail" ? id : undefined);
-      if (tab) {
-        if (tab === "chat" && session) {
-          switchChatSession(this as unknown as AppViewState, session);
-        }
-        this.setTab(tab as Tab, true);
-        // Keep server and network-device context IDs independent.
-        if (tab === "server-detail" && effectiveServerId != null) {
-          (this as any).serverId = Number(effectiveServerId);
-          (this as any).networkDeviceId = undefined;
-        } else if (tab === "network-device-detail" && effectiveNetworkDeviceId != null) {
-          (this as any).networkDeviceId = Number(effectiveNetworkDeviceId);
-          (this as any).serverId = undefined;
-        } else if (tab !== "server-detail" && tab !== "network-device-detail") {
-          (this as any).serverId = undefined;
-          (this as any).networkDeviceId = undefined;
-        }
-        // Handle pending chat message from diagnosis "继续分析"
-        const pendingMsg = (window as any).__pendingChatMessage;
-        if (tab === "chat" && pendingMsg) {
-          // First create new session via /new, then send the diagnosis context
-          // Don't delete pendingMsg yet — dispatchSlashCommand checks it for key prefix
-          Promise.resolve().then(async () => {
-            await handleSendChatInternal(this as any, "/new");
-            // Now safe to delete — /new has consumed the flag
-            const msg = (window as any).__pendingChatMessage;
-            delete (window as any).__pendingChatMessage;
-            if (msg) await handleSendChatInternal(this as any, msg.text);
-          });
-        }
-        // Update URL
-        const url = buildNavigationUrl(window.location.href, tab as Tab, {
-          id,
-          session,
-          serverId: effectiveServerId,
-          networkDeviceId: effectiveNetworkDeviceId,
-          investigationId,
-          editResourceId,
-        });
-        // setTab already created this history entry; enrich it with view context.
-        window.history.replaceState({}, "", url);
-      }
-    });
-
-    // Listen for permissions being loaded after login (AUTH-05)
-    window.addEventListener('slide-permissions-loaded', ((e: CustomEvent) => {
-      clearChatViewCaches();
-      this.userPermissions = new Set(e.detail.permissions);
-      this.permissionsError = null;
-      this.requestUpdate();
-    }) as EventListener);
-    window.addEventListener('slide-settings-change', ((e: CustomEvent) => {
-      if (e.detail && typeof e.detail === 'object') {
-        applySettingsInternal(this as unknown as Parameters<typeof applySettingsInternal>[0], {
-          ...this.settings,
-          ...e.detail,
-        });
-      }
-    }) as EventListener);
   }
 
   disconnectedCallback() {
+    window.removeEventListener("slide-navigate", this.navigateHandler);
+    window.removeEventListener("slide-permissions-loaded", this.permissionsLoadedHandler);
+    window.removeEventListener("slide-settings-change", this.settingsChangeHandler);
     document.removeEventListener("keydown", this.globalKeydownHandler);
     window.removeEventListener(SESSION_EXPIRED_EVENT, this.sessionExpiredHandler);
     handleDisconnected(this as unknown as Parameters<typeof handleDisconnected>[0]);
