@@ -40,6 +40,7 @@ function isNotFound(error: unknown): error is ChatSessionNotFoundError {
 
 const MAX_HISTORY_LIMIT = 500;
 const MAX_SESSION_MESSAGES = 10_000;
+const MAX_ACTIVE_MINUTES = 365 * 24 * 60;
 
 function parseBoundedPositiveInteger(value: unknown, maximum: number): number | null {
   if (typeof value !== 'string' && typeof value !== 'number') return null;
@@ -121,15 +122,21 @@ export async function registerChatRoutes(
 
   fastify.get('/api/sessions', { preHandler }, async (request, reply) => {
     try {
-      const { activeMinutes } = request.query as { activeMinutes?: string };
+      const { activeMinutes: activeMinutesText } = request.query as { activeMinutes?: string };
+      const activeMinutes = activeMinutesText === undefined
+        ? undefined
+        : parseBoundedPositiveInteger(activeMinutesText, MAX_ACTIVE_MINUTES);
+      if (activeMinutes === null) {
+        return reply.code(400).send({ error: `activeMinutes must be a positive integer up to ${MAX_ACTIVE_MINUTES}` });
+      }
       const sessions = await deps.service.getSessions(authenticatedActor(request as any));
       const now = Date.now();
-      const filtered = activeMinutes
+      const filtered = activeMinutes !== undefined
         ? sessions.filter((session) => {
             const lastMessage = session.last_message_at
               ? new Date(session.last_message_at).getTime()
               : 0;
-            return now - lastMessage < Number.parseInt(activeMinutes, 10) * 60 * 1000;
+            return now - lastMessage < activeMinutes * 60 * 1000;
           })
         : sessions;
       return reply.send({

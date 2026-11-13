@@ -38,7 +38,7 @@ describe('SandboxClient status', () => {
     const client = new SandboxClient('http://sandbox-controller:3010', 's'.repeat(32));
 
     await expect(client.execute({ runtime: 'node', command: ['node', 'main.mjs'] }))
-      .rejects.toThrow('SANDBOX_RESPONSE_INVALID');
+      .rejects.toThrow('SANDBOX_REQUEST_FAILED:502');
   });
 
   it('returns only the status code for rejected JSON responses', async () => {
@@ -50,6 +50,16 @@ describe('SandboxClient status', () => {
 
     await expect(client.execute({ runtime: 'node', command: ['node', 'main.mjs'] }))
       .rejects.toThrow('SANDBOX_REQUEST_FAILED:429');
+  });
+
+  it.each([false, true])('discards HTTP error bodies even when cancellation fails (%s)', async (rejectCancellation) => {
+    const cancel = vi.fn(() => rejectCancellation ? Promise.reject(new Error('private stream detail')) : undefined);
+    const body = new ReadableStream({ cancel });
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(body, { status: 502 })));
+    const client = new SandboxClient('http://sandbox-controller:3010', 's'.repeat(32));
+
+    await expect(client.status()).rejects.toEqual(new Error('SANDBOX_STATUS_FAILED:502'));
+    expect(cancel).toHaveBeenCalledTimes(1);
   });
 
   it('preserves abort errors for fail-closed timeout mapping', async () => {

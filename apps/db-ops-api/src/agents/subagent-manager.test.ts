@@ -29,6 +29,7 @@ describe('SubagentManager security boundary', () => {
     const runId = await manager.spawn('slide-default', 'inspect metrics', 'parent-session', owner);
 
     expect(await manager.access(runId, actor(11))).toEqual({
+      found: false,
       status: 'failed',
       error: 'Subagent run not found',
     });
@@ -55,5 +56,5 @@ describe('SubagentManager security boundary', () => {
   const manager = new SubagentManager(runner(async () => ({ finalContent: 'unsafe', stopReason, resolution: { kind: 'failed', reasonCode: 'PRECISE_REASON', safePartialContent: '' } })));
   const owner = actor(25);
   const id = await manager.spawn('slide-default', 'diagnose', 'parent-session', owner);
-  await vi.waitFor(async () => expect(await manager.access(id, owner)).toMatchObject({ status: 'failed', error: 'PRECISE_REASON' }));
+  await vi.waitFor(async () => expect(await manager.access(id, owner)).toMatchObject({ status: stopReason === 'cancelled' ? 'cancelled' : 'failed', error: 'PRECISE_REASON' }));
 });

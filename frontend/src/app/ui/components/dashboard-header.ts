@@ -10,7 +10,7 @@ export class DashboardHeader extends LitElement {
     return this;
   }
 
-  @property() tab: Tab = "overview";
+  @property() tab: Tab = "dashboard";
 
   override render() {
     const label = titleForTab(this.tab);
@@ -18,15 +18,16 @@ export class DashboardHeader extends LitElement {
     return html`
       <div class="dashboard-header">
         <div class="dashboard-header__breadcrumb">
-          <span
-            class="dashboard-header__breadcrumb-link"
+          <button
+            type="button"
+            class="btn btn-ghost dashboard-header__breadcrumb-link"
             @click=${() =>
               this.dispatchEvent(
-                new CustomEvent("navigate", { detail: "overview", bubbles: true, composed: true }),
+                new CustomEvent("slide-navigate", { detail: { tab: "dashboard" }, bubbles: true, composed: true }),
               )}
           >
             Slide
-          </span>
+          </button>
           <span class="dashboard-header__breadcrumb-sep">›</span>
           <span class="dashboard-header__breadcrumb-current">${label}</span>
         </div>

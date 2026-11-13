@@ -37,7 +37,7 @@ class SchemaDatabaseService {
   }
 
   /**
-   * 保存表结构快照（幂等：先删后插）
+   * 保存表结构快照：实例行锁串行分配批次时间，整批事务提交
    */
   async saveSnapshot(
     instanceId: number,
@@ -52,13 +52,25 @@ class SchemaDatabaseService {
       return { success: false, count: 0, error: '快照数据为空' };
     }
 
+    let connection: mysql.PoolConnection | undefined;
     try {
-      // 先删除该实例当前的旧记录（同一 snapshot_time 幂等）
-      const snapshotTime = new Date();
-      await pool.execute(
-        'DELETE FROM schema_snapshots WHERE instance_id = ? AND snapshot_time = ?',
-        [instanceId, snapshotTime]
+      connection = await pool.getConnection();
+      await connection.beginTransaction();
+      // The first read is a locking read, so the following consistent read sees
+      // the previous writer's commit even under MySQL REPEATABLE READ.
+      const [instances] = await connection.execute<mysql.RowDataPacket[]>(
+        'SELECT id FROM database_instances WHERE id = ? FOR UPDATE', [instanceId]
       );
+      if (instances.length === 0) throw new Error('实例不存在');
+      const [previous] = await connection.execute<mysql.RowDataPacket[]>(
+        'SELECT MAX(snapshot_time) AS snapshot_time FROM schema_snapshots WHERE instance_id = ?',
+        [instanceId]
+      );
+      // DATETIME(3) is also the public Date precision. Keep the historical API
+      // while making its timestamp a unique, monotonic batch key per instance.
+      // The lock covers allocation AND insertion, across pools and processes.
+      const lastTime = previous[0]?.snapshot_time;
+      const snapshotTime = new Date(Math.max(Date.now(), lastTime ? new Date(lastTime).getTime() + 1 : 0));
 
       // 批量插入
       const values = tableSchema.map((row) => [
@@ -77,22 +89,31 @@ class SchemaDatabaseService {
         row.data_length || 0,
       ]);
 
-      const placeholders = values.map(() => '(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').join(', ');
-      const flatValues = values.flat();
+      for (let offset = 0; offset < values.length; offset += 500) {
+        const chunk = values.slice(offset, offset + 500);
+        const placeholders = chunk.map(() => '(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').join(', ');
+        const flatValues = chunk.flat();
 
-      await pool.execute(
-        `INSERT INTO schema_snapshots
-         (instance_id, snapshot_time, table_name, column_name, column_type,
-          is_nullable, column_default, column_key, extra, column_comment,
-          table_comment, table_rows, data_length)
-         VALUES ${placeholders}`,
-        flatValues
-      );
-
+        await connection.execute(
+          `INSERT INTO schema_snapshots
+           (instance_id, snapshot_time, table_name, column_name, column_type,
+            is_nullable, column_default, column_key, extra, column_comment,
+            table_comment, table_rows, data_length)
+           VALUES ${placeholders}`,
+          flatValues
+        );
+      }
+      await connection.commit();
       return { success: true, count: tableSchema.length };
     } catch (error: any) {
+      if (connection) {
+        try { await connection.rollback(); }
+        catch { connection.destroy(); connection = undefined; }
+      }
       console.error('保存表结构快照失败:', error);
       return { success: false, count: 0, error: error.message };
+    } finally {
+      connection?.release();
     }
   }
 
@@ -289,10 +310,10 @@ class SchemaDatabaseService {
          WHERE instance_id = ? AND table_name = ?
            AND snapshot_time = (
              SELECT MAX(snapshot_time) FROM schema_snapshots
-             WHERE instance_id = ? AND table_name = ?
+             WHERE instance_id = ?
            )
          ORDER BY column_name`,
-        [instanceId, tableName, instanceId, tableName]
+        [instanceId, tableName, instanceId]
       ) as any;
 
       return rows as TableSchemaRow[];

@@ -27,6 +27,8 @@ export interface SubagentRunRecord {
   /** 状态 */
   status: 'running' | 'completed' | 'failed' | 'cancelled';
   resolution?: RuntimeResolution;
+  /** Owner follows the same retention lifecycle as the run. */
+  ownerId?: number;
   /** 结果 */
   result?: unknown;
   /** 错误信息 */
@@ -60,6 +62,41 @@ export class SubagentRegistry {
   private runs: Map<string, SubagentRunRecord> = new Map();
   private sessions: Map<string, SubagentSessionRecord> = new Map();
 
+  private readonly unsettled = new Set<string>();
+  private readonly terminal = new Map<string, number>();
+
+  constructor(private readonly retention = { ttlMs: 3_600_000, maxRecords: 1000 }) {
+    if (!Number.isSafeInteger(retention.ttlMs) || retention.ttlMs < 1
+      || !Number.isSafeInteger(retention.maxRecords) || retention.maxRecords < 1) {
+      throw new Error('Invalid subagent retention');
+    }
+  }
+
+  /** Only terminal, settled records enter this bounded FIFO. No activity timer
+   * is needed: reads and writes lazily expire the retained history. */
+  prune(): void {
+    const now = Date.now();
+    for (const [id, settledAt] of this.terminal) {
+      if (this.terminal.size <= this.retention.maxRecords && now - settledAt < this.retention.ttlMs) break;
+      this.terminal.delete(id);
+      const run = this.runs.get(id);
+      this.runs.delete(id);
+      if (!run) continue;
+      const session = this.sessions.get(run.sessionKey);
+      if (session) {
+        session.runs = session.runs.filter(item => item.runId !== id);
+        if (session.runs.length === 0) this.sessions.delete(run.sessionKey);
+      }
+    }
+  }
+
+  markSettled(runId: string): void {
+    this.unsettled.delete(runId);
+    const run = this.runs.get(runId);
+    if (run && run.status !== 'running' && !this.terminal.has(runId)) this.terminal.set(runId, Date.now());
+    this.prune();
+  }
+
   /**
    * 注册子 Agent 运行
    */
@@ -68,7 +105,10 @@ export class SubagentRegistry {
     task: string;
     label?: string;
     parentSessionKey?: string;
+    ownerId?: number;
+    unsettled?: boolean;
   }): SubagentRunRecord {
+    this.prune();
     const runId = this.generateRunId();
     const sessionKey = params.sessionKey;
 
@@ -76,12 +116,14 @@ export class SubagentRegistry {
       runId,
       sessionKey,
       task: params.task,
+      ownerId: params.ownerId,
       label: params.label,
       createdAt: Date.now(),
       status: 'running',
     };
 
     this.runs.set(runId, run);
+    if (params.unsettled) this.unsettled.add(runId);
 
     // 更新或创建会话记录
     let session = this.sessions.get(sessionKey);
@@ -118,6 +160,8 @@ export class SubagentRegistry {
     }
 
     run.status = status;
+    if (status === 'running') this.terminal.delete(runId);
+    else if (!this.unsettled.has(runId) && !this.terminal.has(runId)) this.terminal.set(runId, Date.now());
     if (resolution) run.resolution = resolution;
     if (result !== undefined) {
       run.result = result;
@@ -135,6 +179,7 @@ export class SubagentRegistry {
       this.sessions.set(run.sessionKey, session);
     }
 
+    this.prune();
     return run;
   }
 
@@ -142,6 +187,7 @@ export class SubagentRegistry {
    * 获取运行记录
    */
   getRun(runId: string): SubagentRunRecord | undefined {
+    this.prune();
     return this.runs.get(runId);
   }
 
@@ -149,6 +195,7 @@ export class SubagentRegistry {
    * 获取会话记录
    */
   getSession(sessionKey: string): SubagentSessionRecord | undefined {
+    this.prune();
     return this.sessions.get(sessionKey);
   }
 
@@ -156,6 +203,7 @@ export class SubagentRegistry {
    * 获取指定会话的活跃运行数
    */
   countActiveRunsForSession(sessionKey: string): number {
+    this.prune();
     const session = this.sessions.get(sessionKey);
     if (!session) {
       return 0;
@@ -171,6 +219,7 @@ export class SubagentRegistry {
     status?: SubagentRunRecord['status'];
     sessionKey?: string;
   }): SubagentRunRecord[] {
+    this.prune();
     let runs = Array.from(this.runs.values());
 
     if (filter?.status) {
@@ -190,6 +239,7 @@ export class SubagentRegistry {
   listSessions(filter?: {
     parentSessionKey?: string;
   }): SubagentSessionRecord[] {
+    this.prune();
     let sessions = Array.from(this.sessions.values());
 
     if (filter?.parentSessionKey) {
@@ -205,6 +255,8 @@ export class SubagentRegistry {
    * 清除所有记录（用于测试）
    */
   clear(): void {
+    this.unsettled.clear();
+    this.terminal.clear();
     this.runs.clear();
     this.sessions.clear();
   }

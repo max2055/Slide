@@ -58,15 +58,32 @@ async function create(page: Page, title: string) {
 test('create → real tool process → cancel → different Run → versions and refresh', async ({ page }) => {
   await login(page); await page.goto(`${env.url}/investigations`);
   await expect(page.getByText('共享浏览器场景', { exact: false })).toBeVisible();
+  const previousToolCalls = env.counts().toolCalls;
   env.hold(true); const manualId = await create(page, '手动只读调查');
-  await expect.poll(() => env.counts().toolCalls).toBeGreaterThan(0);
+  await expect.poll(() => env.counts().toolCalls).toBeGreaterThan(previousToolCalls);
   await expect(page.locator('investigations-page .investigation-messages')).toContainText('get_instance_summary');
   const [before] = await env.pool.query('SELECT id FROM agent_runs WHERE session_id=(SELECT session_id FROM investigations WHERE id=?)', [manualId]);
-  await page.getByRole('button', { name: '取消本次执行', exact: true }).click();
-  await expect(page.getByRole('button', { name: '等待取消确认', exact: true })).toBeVisible();
+  // MAX-404 / CI43251717607: cancellation may finish before the next browser
+  // poll. Hold real tool settlement to assert pending UI, then release it.
+  const cancellation = env.delayToolCancellation();
+  try {
+    const [accepted] = await Promise.all([
+      page.waitForResponse(response => response.request().method() === 'POST'
+        && response.url().includes(`/investigations/${manualId}/requests/`) && response.url().endsWith('/cancel')),
+      page.getByRole('button', { name: '取消本次执行', exact: true }).click(),
+    ]);
+    expect(accepted.status()).toBe(202);
+    await expect.poll(cancellation.observed).toBe(true);
+    await expect(page.getByRole('button', { name: '等待取消确认', exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: '等待取消确认', exact: true })).toBeDisabled();
+    const [pending] = await env.pool.query(`SELECT r.cancel_requested_at, run.state FROM investigation_requests r
+      JOIN agent_runs run ON run.message_id=r.message_id WHERE run.id=?`, [before[0].id]);
+    expect(pending[0].cancel_requested_at).not.toBeNull();
+    expect(pending[0].state).toBe('running');
+  } finally { cancellation.release(); env.hold(false); }
   await expect(page.locator('.investigation-states')).toContainText('已取消');
   await expect(page.locator('.investigation-states')).toContainText('未确认');
-  env.hold(false);
+  await expect(page.getByRole('button', { name: '等待取消确认', exact: true })).toHaveCount(0);
   await page.getByRole('textbox', { name: '继续调查', exact: true }).fill('再次读取合成指标');
   await page.getByRole('button', { name: '提交新 Run', exact: true }).click();
   await expect(page.locator('.investigation-states')).toContainText('执行完成');
