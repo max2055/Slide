@@ -1,4 +1,5 @@
 import { StreamBoundary } from './stream-boundary.js';
+import { progressValue, rememberEvidence } from './progress-evidence.js';
 import { currentTime, projectContextBlocks, runtimeBlock } from '../context-block.js';
 import { runtimeEvents } from './events.js';
 import { createHmac, randomBytes, randomUUID } from 'node:crypto';
@@ -478,8 +479,7 @@ export class TurnLoop {
           for (let i = 0; i < results.length; i++) {
             if (events[i]?.status !== 'ok') continue;
             const hash = progressFingerprint({ tool: response.toolCalls[i]?.name, arguments: response.toolCalls[i]?.arguments, result: results[i] }, runProgressKey);
-            if (!evidence.has(hash) && evidence.size < 256) {
-              evidence.add(hash);
+            if (rememberEvidence(evidence, hash)) {
               if (!needsProgressBaseline) recovery.state.noProgressSteps = 0;
               needsProgressBaseline = false;
             }
@@ -877,35 +877,9 @@ function appendInjectedMessages(messages: Message[], injections: Message[]): voi
   }
 }
 
-const VOLATILE_PROGRESS_KEY = /^(?:time(?:stamp)?|created[-_]?at|updated[-_]?at|request[-_]?id|trace[-_]?id|span[-_]?id|correlation[-_]?id)$/i;
-
 /** Hash bounded semantic evidence without persisting raw tool or candidate text. */
 function progressFingerprint(value: unknown, key: Buffer): string {
-  return createHmac('sha256', key).update(stableProgressValue(value).slice(0, 100_000)).digest('hex');
-}
-
-function stableProgressValue(value: unknown, depth = 0, seen = new WeakSet<object>()): string {
-  if (depth > 12) return '"[depth-limit]"';
-  if (typeof value === 'string') {
-    const trimmed = value.trim();
-    if ((trimmed.startsWith('{') || trimmed.startsWith('[')) && trimmed.length <= 100_000) {
-      try { return stableProgressValue(JSON.parse(trimmed), depth + 1, seen); } catch { /* keep text */ }
-    }
-    return JSON.stringify(trimmed.replace(/\b\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z\b/giu, '[timestamp]'));
-  }
-  if (value === null || typeof value !== 'object') return JSON.stringify(value);
-  if (seen.has(value)) return '"[circular]"';
-  seen.add(value);
-  const result = Array.isArray(value)
-    ? `[${value.slice(0, 512).map(item => stableProgressValue(item, depth + 1, seen)).join(',')}]`
-    : `{${Object.entries(value as Record<string, unknown>)
-      .filter(([name]) => !VOLATILE_PROGRESS_KEY.test(name))
-      .sort(([a], [b]) => a.localeCompare(b))
-      .slice(0, 512)
-      .map(([name, child]) => `${JSON.stringify(name)}:${stableProgressValue(child, depth + 1, seen)}`)
-      .join(',')}}`;
-  seen.delete(value);
-  return result;
+  return createHmac('sha256', key).update(progressValue(value, true)).digest('hex');
 }
 
 function buildAssistantMessage(
