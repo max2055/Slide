@@ -54,3 +54,13 @@ test('invalid refs fail closed and never print source or native errors', () => {
   assert.match(result.stderr, /^SECRET_SCAN_FAILED:/);
   assert.ok(!result.stderr.includes(api));
 });
+
+test('required Bash injection is an expression; defaults and single quotes remain audited', () => {
+  const reference = '${QUALIFICATION_MYSQL_PASSWORD:?must be injected}';
+  const field = ['pass', 'word'].join('');
+  assert.equal(inspectSecrets('entry.sh', `${field}="${reference}"`).length, 0);
+  assert.ok(inspectSecrets('entry.sh', `${field}='${reference}'`).length > 0);
+  assert.ok(inspectSecrets('entry.sh', field + '="${DB_PASSWORD:-public-fixture-default}"').length > 0);
+  assert.ok(inspectSecrets('entry.sh', `${field}="prefix-${reference}"`).length > 0);
+  assert.ok(inspectSecrets('entry.sh', `${field}="${api}"`).some(f => f.rule === 'api-key'));
+});

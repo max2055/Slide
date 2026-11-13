@@ -36,6 +36,11 @@ export function inspectSecrets(file, text) {
     for (const [rule, pattern] of rules) {
       pattern.lastIndex = 0;
       for (const match of view.text.matchAll(pattern)) {
+        // In Bash, a double-quoted required/pure parameter expansion reads an
+        // injected value. Defaults (:-), single quotes and mixed text remain
+        // literals to audit; other secret-format rules still scan this text.
+        if (rule === 'credential-field' && /\.sh$/i.test(file) && match[0].endsWith('"')
+          && /^\$\{[A-Z_][A-Z0-9_]*(?::?\?[^}]*)?\}$/.test(match[1])) continue;
         const offset = view.offsets?.[match.index] ?? match.index;
         const line = text.slice(0, offset).split('\n').length;
         const fingerprint = createHash('sha256').update(JSON.stringify([file, rule, match[0]])).digest('hex');

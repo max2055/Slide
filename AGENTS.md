@@ -44,42 +44,24 @@ pnpm ci:source-policy # 检查相对 HEAD 的已暂存、未暂存和未跟踪�
 - 模型配置以 [llm-provider-factory.ts](apps/db-ops-api/src/adapter/llm-provider-factory.ts) 和场景路由为准，不通过旧环境变量绕过已停用的 Provider。配置示例与实际加载、校验代码冲突时以代码为准。
 - 排查运行行为或停止服务前，核对 **PID → 端口 → cwd → 启动命令 → 分支/Commit → 日志文件**。确认进程属于当前任务后优先优雅停止，不按端口直接强杀其他工作树的服务。
 
-### 2.1 共享测试资源与认证（2026-11-10）
+### 2.1 共享测试资源与认证
 
-以下地址以运行 Multica 的本机宿主环境为基准；容器或异机执行时需核对网络可达性。资源按本节约定使用，开工前检查当前状态及其他任务占用。
+- 真实资源通过执行环境私下注入的 `SLIDE_TEST_RESOURCE_MANIFEST` 获取。manifest 和秘密引用保存在仓库外，当前执行身份所有且无组/其他用户权限；禁止把实际端点、账号、凭据路径、密码或带认证的连接串复制到公开材料。
+- 逻辑资源名：`slide-platform`（平台持久化）、`mysql-test`、`pg-test`、`oracle-test`、`dameng-test`（独立开发验收）、`linux-test`（受控 VM）、`model-test`（模型配置与共享预算引用）。端点、容器、账号、owner 和最近验证均以私有 manifest 及运行时为准，不从历史文档恢复默认值。
+- 显式检查入口：`node scripts/qualification/test-resource-manifest.mjs --real --resource <逻辑名>`。此命令仅验证引用可读性，不代替真实连接或业务验收。默认测试收集不能读取私有环境；缺注入时明确失败，由资源 owner 完成私下交接，不回退到公开账号或默认密码。
+- 资源使用前登记任务占用，核对容器身份和当前状态。平台库保持可用；测试库按需启停。普通查询、管理员操作和故障注入权限分别选择，测试对象按任务隔离，清理只处理本任务对象。
+- VM 连接前重新核实 DHCP 租约和主机身份；异机/容器必须单独验证安全注入，不能直接套用宿主机文件位置。
+- 网络设备继续使用用户已确认的受控 SNMP/SSH 协议端点和测试样本，本批免真实设备测试；厂商兼容性结论仍需对应实测证据。
+- 私有入口尚未覆盖所有历史脚本；迁移和验证范围见[凭据治理检查点](docs/slide/development/public-repository-security.md)。历史曾公开的配置值在真实轮换前仍属暴露风险，删除当前文件不能使其失效。
 
-| 用途 | 地址 | 容器 / 服务 | 认证账号与数据库 | 凭据引用 |
-|---|---|---|---|---|
-| Linux 测试 VM | `172.16.51.128:22` | VMware NAT 虚拟机 | SSH 用户 `root`，密码认证 | 下述 VM 密码文件 |
-| Slide 自身 MySQL | `127.0.0.1:3306` | `mysql` | `root`，数据库 `db_ops_ai` | `slide-platform` |
-| MySQL 测试库 | `127.0.0.1:3308` | `mysql3308` | `root`，按任务使用独立测试库 | `mysql-test` |
-| PostgreSQL 测试库 | `127.0.0.1:5432` | `slide-pg-test` | `slide_test`，数据库 `slide_test` | `pg-test` |
-| Oracle 测试库 | `127.0.0.1:1521` | `oracle19c` | `SYSTEM`，服务名 `ORCLPDB1` | `oracle-test` |
-| 达梦测试库 | `127.0.0.1:5236` | `dameng` | `SYSDBA` | `dameng-test` |
+### 2.2 LLM 测试入口与累计预算
 
-- 数据库认证信息保存在 `/Users/max/.config/slide-test-access/connection-profiles.json`（权限 `0600`）。表中凭据引用对应 JSON 顶层键，包含实际主机、端口、用户、密码及适用的数据库或服务名。执行者按键读取，禁止打印完整文件、密码或带密码的连接串。
-- VM 密码保存在 `/Users/max/.config/slide-test-access/linux-192.168.49.130.password`（权限 `0600`）；文件名沿用历史地址，当前连接地址使用 `172.16.51.128`。该地址来自 DHCP，连接前核实当前租约。已于 2026-11-10 从本机宿主环境通过 SSH 密码认证成功登录，执行 `hostname`、`id`、`uname -m` 和网卡地址查询，确认 `uid=0(root)`、`aarch64` 及当前地址。外部 SSH 登录验证通过。
-- 上述凭据路径位于仓库外，仅供获授权的本机执行者读取；异机执行需由资源负责人安全交接。真实密码、密钥不复制进规则、任务、日志、附件或版本库。
-- `3306` 用于 Slide 自身持久化与配置，按应用运行需要保持可用。数据库开发测试使用 `3308`，并与 PG、Oracle、达梦一起按需启停。先检查任务占用与容器身份，再按目标执行 `docker start <容器名>` 或 `docker stop <容器名>`；测试清理只处理本任务对象，保留共享配置及其他任务数据。
-- 四种测试库及 Slide `3306` 已于 2026-11-10 从宿主机通过项目实际驱动完成认证和只读 SQL 查询。后续验收仍需覆盖各任务要求的事务、权限、采集或恢复场景。
-- 网络设备按用户决定继续使用受控 SNMP/SSH 协议端点和测试样本，当前批次免除真实设备测试。证据注明协议端点与样本范围；厂商实机兼容性结论须有对应实测依据。
-
-### 2.2 LLM 测试入口与累计预算（2026-11-10）
-
-| 配置项 | 已验证值 |
-|---|---|
-| 配置来源 | Slide `3306/db_ops_ai` 的 `llm_providers`，Provider `deepseek`（ID `5`） |
-| 模型 | `deepseek-flash` |
-| 协议与地址 | `openai-completions`，Base URL `https://api.deepseek.com/v1`，生成接口 `POST /chat/completions` |
-| 路由 | 核验时为启用的全局默认，`llm_scene_bindings` 为空；执行时重新读取实际场景绑定和默认配置 |
-| 认证引用 | `llm_providers.api_key_encrypted`，通过 `llmDatabaseService.getProviderApiKey(provider.name, provider)` 读取；解密使用后端 `.env` 中的 `ENCRYPTION_KEY` |
-| 验证结果 | 凭据和 `GET /models` 通过；一次非流式文本生成返回 `OK`，服务端 usage 为输入 `34`、输出 `11`，合计 `45` token |
-
-- 正常 Agent 调用沿用 `createConfiguredAgentProvider(llmDatabaseService, purpose)` 和场景路由。单独连接测试复用 `resolveSceneModel`、上述凭据读取方法及 `createServiceProviderClient(provider, apiKey, true)`，通过返回的 OpenAI SDK client 调用 `chat.completions.create`；明确限制输出，关闭自动重试，不把结果未知的请求重发。API Key 仅在内存中使用，禁止另写明文配置或输出到日志。
-- 本次验证覆盖认证、模型存在及短文本生成；流式、工具调用等能力仍按各任务验收。其他 Provider 按当前配置及相应任务另行核验。
-- 用户确认本批此前已用、预留和未结算 token 均为零，并授权沿用累计 **10,000,000** token 总额度。共享账本位于 `/Users/max/Coding/40-Slide/outputs/llm-test-budget/ledger.json`，全部父子任务、worktree、场景、重试和恢复共用，禁止按任务重新清零或另开额度；Multica 编码消耗单独核算。本文记录的首次测试已结算 `45` token，后续余额以账本实时值为准。
-- 每次发送前独占创建同目录 `ledger.lock`，核对 `usedTokens + reservedTokens` 与剩余额度，记录唯一请求条目并预留输入和最大输出；按服务端实际 usage 结算，更新账本采用临时文件原子替换。输入含缓存部分只计一次，输出含推理 token 时也只计一次；缓存子项分别留存用于核对。缺失 usage、超时或未知回执保留预留，先对账再恢复，不自动重放；账本或锁异常时先核实归属与未决请求。
-- 累计达到额度的 50% 时报告，80% 时收敛，达到上限停发并保留检查点；追加预算需用户批准。初次调用证据位于 `outputs/llm-readiness-2026-11-10/deepseek-generation.json`。
+- 模型及 Provider 从平台库实时场景绑定和默认配置解析，不在公开规则固定内部资源位置、Provider ID 或认证值。正常调用复用 `createConfiguredAgentProvider(llmDatabaseService, purpose)`；单独测试复用 `resolveSceneModel`、`llmDatabaseService.getProviderApiKey` 和 `createServiceProviderClient(provider, apiKey, true)`。
+- 模型配置/加密环境及唯一共享预算账本入口通过 `model-test` 私有引用交接。API Key 仅在内存使用，不另写明文配置或输出到日志；不因迁移交接重置、另开或复制预算。
+- 用户已授权本批累计输入＋输出 **10,000,000** token，全部父子任务、worktree、场景、重试和恢复共用；Multica 编码消耗单独核算。本文最初验证已结算 45 token，当前余额以原账本为准，不按任务清零。
+- 每次发送前独占创建原账本同目录的 `ledger.lock`，核对 `usedTokens + reservedTokens` 与余额，唯一请求条目预留输入和最大输出；按服务端实际 usage 结算，以临时文件原子替换并保持受限权限。缓存输入及推理输出各只计一次，保留缓存子项核对。
+- 缺 usage、超时或未知回执保留预留，先对账再恢复，不自动重放；锁或账本异常先核实归属和未决请求。累计 50% 报告，80% 收敛，达到上限停发保留检查点；追加预算需用户批准。
+- 单独生成测试明确限制输出、关闭自动重试，不重发结果未知的请求。认证、模型存在、短文本生成的历史验证不代替当前场景要求的流式或工具调用验收。
 
 ## 3. 执行、澄清与授权
 

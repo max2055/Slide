@@ -8,6 +8,7 @@
  */
 
 const BASE_URL = process.env.SMOKE_BASE_URL || "http://localhost:3000";
+if (!process.env.SMOKE_PASSWORD) throw new Error("SMOKE_PASSWORD must be explicitly injected");
 const CREDS = {
   username: process.env.SMOKE_USER || "admin",
   password: process.env.SMOKE_PASS || "Tpam1234",
