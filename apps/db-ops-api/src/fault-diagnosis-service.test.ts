@@ -14,7 +14,7 @@ afterEach(() => vi.restoreAllMocks());
 describe('fault diagnosis durable admission', () => {
   it('collects under the actor before atomically admitting evidence and dispatch', async () => {
     const { deps, service } = fixture();
-    expect(await service.diagnoseInstance(actor, 42)).toEqual({ success: true, analysisId: 73, status: 'queued' });
+    expect(await service.diagnoseInstance(actor, 42)).toEqual({ success: true, analysisId: 73, status: 'pending', cached: false });
     expect(deps.contextCollector.collect).toHaveBeenCalledWith(actor, 42);
     expect(deps.dispatch).toHaveBeenCalledWith(expect.objectContaining({ actor, diagnosticContext: evidence, instanceId: 42, triggerType: 'manual' }));
     expect(deps.contextCollector.collect.mock.invocationCallOrder[0]).toBeLessThan(deps.dispatch.mock.invocationCallOrder[0]);
@@ -47,5 +47,13 @@ describe('fault diagnosis durable admission', () => {
     const controller = new AbortController(); deps.listActiveInstances.mockImplementation(async () => { controller.abort(new Error('WORKFLOW_LEASE_LOST')); return [{ id: 42 }]; });
     await expect(workflowExecution.run({ signal: controller.signal, workerId: 'a', fencingToken: 1 }, () => service.diagnoseUnhealthyInstances())).rejects.toThrow('WORKFLOW_LEASE_LOST');
     expect(deps.checkHealth).not.toHaveBeenCalled(); expect(deps.dispatch).not.toHaveBeenCalled();
+  });
+});
+
+describe('MAX-438 acceptance state preservation', () => {
+  for (const cached of [false, true]) it.each(['pending', 'running', 'completed', 'unknown'] as const)('preserves %s and cached=' + cached + ' with the original ID', async status => {
+    const { deps, service } = fixture();
+    deps.dispatch.mockResolvedValue({ analysisId: 73, status, success: status !== 'unknown', cached });
+    expect(await service.diagnoseInstance(actor, 42)).toMatchObject({ analysisId: 73, status, success: status !== 'unknown', cached });
   });
 });

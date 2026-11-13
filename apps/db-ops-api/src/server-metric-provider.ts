@@ -35,6 +35,8 @@ export interface MetricDefinition {
   parse: (stdout: string) => number | null;
   /** Parse one command into bounded, dimensioned samples. */
   parseRows?: (stdout: string) => MetricSample[];
+  /** Exact cumulative counters for diagnostic evidence; legacy numeric rows stay unchanged. */
+  parseExactRows?: (stdout: string) => ExactMetricSample[];
   /** Parse structured process evidence; not persisted as unbounded rows. */
   parseProcesses?: (stdout: string) => ProcessSample[];
   dimensions?: readonly ServerDimension[];
@@ -208,29 +210,39 @@ export function parseProcessCount(stdout: string): number | null {
 }
 
 /** Parse the fixed ps projection, never returning more than 20 processes. */
-export function parseTopProcesses(stdout: string): ProcessSample[] {
+export function parseTopProcessesWithDiagnostics(stdout: string): { items: ProcessSample[]; malformedLines: number } {
   const result: ProcessSample[] = [];
+  let malformedLines = 0;
   for (const line of stdout.split(/\r?\n/).slice(0, MAX_PROCESSES)) {
-    const match = /^\s*(\d+)\s+(\S+)\s+([\d.]+)\s+([\d.]+)\s*$/.exec(line);
-    if (!match) continue;
+    if (!line.trim()) continue;
+    // comm may contain spaces and numbers; pcpu/pmem are the last two columns.
+    const match = /^\s*(\d+)\s+(.+?)\s+([\d.]+)\s+([\d.]+)\s*$/.exec(line);
+    if (!match) { malformedLines++; continue; }
     const pid = finiteInteger(match[1]);
     const cpu = finiteNumber(match[3]);
     const memory = finiteNumber(match[4]);
     const command = boundedToken(match[2]);
-    if (pid === null || cpu === null || memory === null || !command || cpu < 0 || memory < 0) continue;
-    result.push({ pid, command, cpuPercent: Math.min(cpu, 100), memoryPercent: Math.min(memory, 100) });
+    if (pid === null || cpu === null || memory === null || !command || cpu < 0 || memory < 0 || memory > 100) {
+      malformedLines++;
+      continue;
+    }
+    result.push({ pid, command, cpuPercent: cpu, memoryPercent: memory });
   }
-  return result;
+  return { items: result, malformedLines };
+}
+
+export function parseTopProcesses(stdout: string): ProcessSample[] {
+  return parseTopProcessesWithDiagnostics(stdout).items;
 }
 
 function maxProcessCpu(stdout: string): number | null {
-  const rows = parseTopProcesses(stdout);
-  return rows.length ? Math.max(...rows.map((row) => row.cpuPercent)) : null;
+  const { items, malformedLines } = parseTopProcessesWithDiagnostics(stdout);
+  return items.length && !malformedLines ? Math.max(...items.map((row) => row.cpuPercent)) : null;
 }
 
 function maxProcessMemory(stdout: string): number | null {
-  const rows = parseTopProcesses(stdout);
-  return rows.length ? Math.max(...rows.map((row) => row.memoryPercent)) : null;
+  const { items, malformedLines } = parseTopProcessesWithDiagnostics(stdout);
+  return items.length && !malformedLines ? Math.max(...items.map((row) => row.memoryPercent)) : null;
 }
 
 /** Linux memory pressure uses MemAvailable; absent fields are unknown, never free(1) fallbacks. */
@@ -292,6 +304,7 @@ const baseDefinitions = (osType: string): MetricDefinition[] => [
     command: NETWORK_COMMAND,
     parse: () => null,
     parseRows: parseProcNetDev,
+    parseExactRows: parseProcNetDevExact,
     dimensions: ['interface', 'direction'] as const,
     osType,
     unit: name.endsWith('bytes') ? 'bytes' : 'count',
@@ -303,6 +316,7 @@ const baseDefinitions = (osType: string): MetricDefinition[] => [
     command: DISKSTATS_COMMAND,
     parse: () => null,
     parseRows: parseProcDiskstats,
+    parseExactRows: parseProcDiskstatsExact,
     dimensions: ['device'] as const,
     osType,
     unit: name === 'disk_io_time_ms' ? 'ms' : 'bytes',

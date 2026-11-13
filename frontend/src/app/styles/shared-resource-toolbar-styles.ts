@@ -44,6 +44,7 @@ export const sharedResourceToolbarStyles = css`
   }
 
   .resource-toolbar .search-icon {
+    pointer-events: none;
     position: absolute;
     left: 10px;
     top: 50%;

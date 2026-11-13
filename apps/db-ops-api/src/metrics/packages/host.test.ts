@@ -5,7 +5,7 @@ import type { NormalizedObservation } from '../../contracts/metrics/index.js';
 import { SemanticQueryService } from '../query.js';
 import { builtinReleases, canonicalDefinitions, createBuiltinRegistry } from './builtins.js';
 import { runPackage, type PackageExecution } from './runner.js';
-import type { DriverEvidence, Transport } from './adapters.js';
+import { collectFixed, type DriverEvidence, type Transport } from './adapters.js';
 
 const fixture = JSON.parse(readFileSync(new URL('../../../../../docs/slide/metrics-v2/host/fixtures.json', import.meta.url), 'utf8'));
 const hostRelease = () => builtinReleases().find(release => release.package.id === 'linux-host')!;
@@ -45,6 +45,19 @@ const metric = (rows: NormalizedObservation[], id: string, dimensions: Record<st
   row.metric.id === id && JSON.stringify(row.dimensions) === JSON.stringify(dimensions))!;
 
 describe('Linux host unified package', () => {
+  it('MAX-403/MAX-405 preserves spaced multi-core pcpu in the official diagnostic adapter', async () => {
+    const value: Transport = { method: 'ssh', client: {} as Client, pool: { execCommands: async (_client, commands) =>
+      commands.map(command => ok(command.includes('ps -eo') ? '7 java worker 812.5 10.0\n42 sshd 1.0 0.2\n' : '1')) } };
+    const rows = await collectFixed('builtin:linux.diagnostic-gauges.v1', value, {}, 5000, 100);
+    expect(rows[0].fields.top_processes_cpu).toEqual({ encoding: 'float64', value: 812.5 });
+    expect(rows[0].fields.top_processes_memory).toEqual({ encoding: 'float64', value: 10 });
+    value.pool.execCommands = async (_client, commands) => commands.map(command =>
+      ok(command.includes('ps -eo') ? '42 sshd 1.0 0.2\nmalformed\n' : '1'));
+    const partial = await collectFixed('builtin:linux.diagnostic-gauges.v1', value, {}, 5000, 100);
+    expect(partial[0].fields).not.toHaveProperty('top_processes_cpu');
+    expect(partial[0].fields).not.toHaveProperty('top_processes_memory');
+  });
+
   it('normalizes Canonical and Extension observations through one versioned path without spatial sums', async () => {
     const { result, execCommands } = await collect(0, fixture.epochs.first);
     const rows = result.observations.map(output => output.observation);

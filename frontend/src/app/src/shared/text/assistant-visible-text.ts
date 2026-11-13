@@ -448,7 +448,7 @@ function stripRelevantMemoriesTags(text: string): string {
   const codeRegions = findCodeRegions(text);
   let result = "";
   let lastIndex = 0;
-  let inMemoryBlock = false;
+  let openTag: { start: number; end: number } | undefined;
 
   for (const match of text.matchAll(MEMORY_TAG_RE)) {
     const idx = match.index ?? 0;
@@ -456,20 +456,22 @@ function stripRelevantMemoriesTags(text: string): string {
       continue;
     }
 
+    const end = idx + match[0].length;
     const isClose = match[1] === "/";
-    if (!inMemoryBlock) {
-      result += text.slice(lastIndex, idx);
-      if (!isClose) {
-        inMemoryBlock = true;
-      }
-    } else if (isClose) {
-      inMemoryBlock = false;
+    if (!isClose) {
+      openTag ??= { start: idx, end };
+    } else {
+      result += text.slice(lastIndex, openTag?.start ?? idx);
+      lastIndex = end;
+      openTag = undefined;
     }
-
-    lastIndex = idx + match[0].length;
   }
 
-  if (!inMemoryBlock) {
+  // An unpaired opener is not evidence that the rest of the reply is memory.
+  // Remove its scaffolding tag, preserving code examples and subsequent prose.
+  if (openTag) {
+    result += text.slice(lastIndex, openTag.start) + text.slice(openTag.end);
+  } else {
     result += text.slice(lastIndex);
   }
 
