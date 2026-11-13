@@ -3309,6 +3309,35 @@
           }
         ]
       },
+      "CronDraftTestRequest": {
+        "$id": "CronDraftTestRequest",
+        "additionalProperties": false,
+        "properties": {
+          "content": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "database": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "instance_id": {
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "instance_id",
+          "content"
+        ],
+        "type": "object"
+      },
       "CronJobIdentity": {
         "$id": "CronJobIdentity",
         "additionalProperties": true,
@@ -50582,6 +50611,47 @@
           },
           "404": {
             "description": "Run/job absent or inaccessible"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/cron/scripts/test": {
+      "post": {
+        "description": "Requires cron:manage and current read access to the target instance. Tests draft SQL through the existing executor without creating a library script. Returns at most 100 rows; this request must not be automatically replayed after an unknown response.",
+        "operationId": "testCronDraftScript",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CronDraftTestRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "SQL execution result (success/error, rows and duration), at most 100 rows"
+          },
+          "400": {
+            "description": "Invalid draft or target"
+          },
+          "401": {
+            "description": "Unauthenticated"
+          },
+          "403": {
+            "description": "Permission or target access denied"
+          },
+          "429": {
+            "description": "Rate limit exceeded"
+          },
+          "500": {
+            "description": "Execution failure"
           }
         },
         "security": [
