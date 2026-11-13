@@ -12,7 +12,7 @@ function harness(work) {
   writeFileSync(trace, '');
   const stubs = {
     docker: '#!/bin/sh\nprintf "docker %s\\n" "$*" >> "$CI_TRACE"\ncase "$1" in port) echo 127.0.0.1:33306;; inspect) echo \'{"status":"running","running":true,"oomKilled":false,"exitCode":0,"memoryBytes":805306368}\';; rm) exit "${CI_STUB_CLEANUP_EXIT:-0}";; esac\n',
-    pnpm: '#!/bin/sh\nprintf "pnpm %s\\n" "$*" >> "$CI_TRACE"\ncase "$*" in *"exec node -e"*|*"t12-startup.mjs probe "*) exit 0 ;; esac\nexit "${CI_STUB_EXIT:-0}"\n',
+    pnpm: '#!/bin/sh\nprintf "pnpm %s\\n" "$*" >> "$CI_TRACE"\ncase "$*" in *"exec node -e"*|*"exec node --input-type=module -e"*|*"t12-startup.mjs probe "*) exit 0 ;; esac\nexit "${CI_STUB_EXIT:-0}"\n',
   };
   stubs.sleep = '#!/bin/sh\nexit 0\n';
   for (const [name, content] of Object.entries(stubs)) {
@@ -117,4 +117,24 @@ test('retention qualification preserves test failures and fails closed on cleanu
   const cleanupFailed = run('scripts/qualification/run-metric-retention.sh', [], { CI_STUB_CLEANUP_EXIT: '24' });
   assert.equal(cleanupFailed.status, 24);
   assert.match(cleanupFailed.stdout, /test_exit=0 cleanup_exit=24/);
+}));
+
+// MAX-413: source fixtures share an instance-level migration lock across schemas.
+test('source qualification serializes files and retains all source SQL suites', () => harness(run => {
+  const result = run('scripts/qualification/run-v23-source.sh', []);
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.trace, /vitest run --no-file-parallelism/);
+  for (const file of ['control', 'runtime', 'authorization']) {
+    assert.ok(result.trace.includes(`src/operations/source-package/${file}.mysql.test.ts`), file);
+  }
+  assert.equal((result.trace.match(/pnpm .*exec vitest run/g) ?? []).length, 1);
+  assert.doesNotMatch(result.trace, /--retry|--testTimeout|--hookTimeout|--exclude|--testNamePattern/);
+  assert.match(result.trace, /docker stop slide-v23-source-ci-/);
+}));
+
+test('source qualification propagates test failure and still cleans up its container', () => harness(run => {
+  const result = run('scripts/qualification/run-v23-source.sh', [], { CI_STUB_EXIT: '23' });
+  assert.equal(result.status, 23, result.stderr);
+  assert.match(result.trace, /vitest run --no-file-parallelism/);
+  assert.match(result.trace, /docker stop slide-v23-source-ci-/);
 }));

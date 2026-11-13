@@ -220,6 +220,13 @@ export function buildOpenApiDocument() {
           '503': { description: 'Starting, standby, dependency unavailable or lease lost', content: { 'application/json': { schema: refSchema(PublicApiSchemas.InfrastructureReadiness) } } },
         },
       } },
+      '/api/cron/scripts/test': {
+        post: { operationId: 'testCronDraftScript', security: [{ bearerAuth: [] }],
+          description: 'Requires cron:manage and current read access to the target instance. Tests draft SQL through the existing executor without creating a library script. Returns at most 100 rows; this request must not be automatically replayed after an unknown response.',
+          requestBody: { required: true, content: { 'application/json': { schema: refSchema(PublicApiSchemas.CronDraftTestRequest) } } },
+          responses: { '200': { description: 'SQL execution result (success/error, rows and duration), at most 100 rows' }, '400': { description: 'Invalid draft or target' }, '401': { description: 'Unauthenticated' }, '403': { description: 'Permission or target access denied' }, '429': { description: 'Rate limit exceeded' }, '500': { description: 'Execution failure' } },
+        },
+      },
       '/api/cron/jobs/{id}': {
         get: { operationId: 'getCronJob', security: [{ bearerAuth: [] }], parameters: [pathId('id')], responses: {
           '200': { description: 'Job configuration including persisted identity and resource ceiling. owner-required tasks stay paused until admin rebinding.', content: { 'application/json': { schema: refSchema(PublicApiSchemas.CronJobIdentity) } } },

@@ -676,6 +676,11 @@ export const OkResponseSchema = Type.Object({
 }, { $id: 'OkResponse', additionalProperties: false });
 
 export const PublicApiSchemas = {
+  CronDraftTestRequest: Type.Object({
+    instance_id: Type.Integer({ minimum: 1 }),
+    content: Type.String({ minLength: 1 }),
+    database: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+  }, { $id: 'CronDraftTestRequest', additionalProperties: false }),
   ...InvestigationProfileSchemas,
   ...InvestigationGovernanceSchemas,
   ...InvestigationSchemas, ...InvestigationObservationSchemas,
