@@ -16,13 +16,26 @@ describe.skipIf(!port)('Metrics isolated MySQL', () => {
   let admin: Pool, pool: Pool, upgrade: Pool, fault: Pool;
   let storage: MysqlMetricStorage;
   let directory: string, faultDirectory: string;
+  let legacyRowsBefore: RowDataPacket[];
   const database = `max65_${process.pid}`;
   const upgradeDatabase = `${database}_upgrade`;
   const faultDatabase = `${database}_fault`;
   let now = new Date('2026-09-01T00:02:00Z');
   const runner = (p: Pool, dir?: string) => new MigrationRunner(p as unknown as MigrationPool, dir);
+  const phase = async <T>(name: string, action: () => Promise<T>): Promise<T> => {
+    const started = performance.now();
+    let status = 'failed';
+    process.stdout.write(JSON.stringify({ fixture: 'metrics-storage', phase: name, status: 'started' }) + '\n');
+    try {
+      const result = await action();
+      status = 'passed';
+      return result;
+    } finally {
+      process.stdout.write(JSON.stringify({ fixture: 'metrics-storage', phase: name, status, durationMs: Math.round(performance.now() - started) }) + '\n');
+    }
+  };
 
-  beforeAll(async () => {
+  beforeAll(() => phase('initialization', async () => {
     admin = mysql.createPool({ host: '127.0.0.1', port, user: 'root', password: '' });
     await admin.query(`CREATE DATABASE ${database}`);
     await admin.query(`CREATE DATABASE ${upgradeDatabase}`);
@@ -34,18 +47,26 @@ describe.skipIf(!port)('Metrics isolated MySQL', () => {
     directory = await mkdtemp(join(tmpdir(), 'max65-migrations-'));
     faultDirectory = await mkdtemp(join(tmpdir(), 'max189-historical-repair-'));
     // Full empty-install migration chain, not a mock or manually fabricated schema.
-    await runner(pool).run();
+    await phase('fresh-migrations', () => runner(pool).run());
     for (const migration of (await loadMigrations()).filter(m => m.id < '098_')) {
       await writeFile(join(directory, migration.id), migration.sql);
       await writeFile(join(faultDirectory, migration.id), migration.sql);
     }
-    await runner(upgrade, directory).run();
+    await phase('legacy-initialization', () => runner(upgrade, directory).run());
     // A complete pre-098 install is fixture setup, not the repair assertion.
     // Keep its real DDL under this hook budget, outside the default 5s test window.
-    await runner(fault, faultDirectory).run();
-  }, 120000);
+    await phase('repair-initialization', () => runner(fault, faultDirectory).run());
+    // MAX-408 CI gate: a populated pre-098 -> current upgrade includes many DDL
+    // statements. Prepare it under the existing initialization budget, like the
+    // empty/repair installs above; keep data preservation and compatibility
+    // assertions in the normal 5s business test below.
+    await upgrade.query("INSERT INTO database_instances (name, db_type, host, port, username, password_encrypted) VALUES ('fixture', 'mysql', 'localhost', 3306, 'fixture', 'not-a-secret')");
+    await upgrade.query("INSERT INTO metrics_history (instance_id, cpu_usage, recorded_at) VALUES (1, 12.5, '2026-09-01 00:00:00')");
+    [legacyRowsBefore] = await upgrade.query<RowDataPacket[]>('SELECT * FROM metrics_history');
+    await phase('populated-legacy-upgrade', () => runner(upgrade).run());
+  }), 120000);
 
-  afterAll(async () => {
+  afterAll(() => phase('cleanup', async () => {
     await pool?.end(); await upgrade?.end(); await fault?.end();
     if (admin) {
       await admin.query(`DROP DATABASE IF EXISTS ${database}`);
@@ -55,7 +76,7 @@ describe.skipIf(!port)('Metrics isolated MySQL', () => {
     }
     if (directory) await rm(directory, { recursive: true, force: true });
     if (faultDirectory) await rm(faultDirectory, { recursive: true, force: true });
-  });
+  }));
 
   beforeEach(async () => {
     for (const table of ['metric_observations', 'metric_attempts', 'metric_inventory']) await pool.query(`DELETE FROM ${table}`);
@@ -70,12 +91,8 @@ describe.skipIf(!port)('Metrics isolated MySQL', () => {
     expect(await runner(pool).inspect()).toEqual(before);
   });
 
-  it('upgrades populated legacy tables without changing values; legacy API and explicit fallback stay usable', async () => {
-    await upgrade.query("INSERT INTO database_instances (name, db_type, host, port, username, password_encrypted) VALUES ('fixture', 'mysql', 'localhost', 3306, 'fixture', 'not-a-secret')");
-    await upgrade.query("INSERT INTO metrics_history (instance_id, cpu_usage, recorded_at) VALUES (1, 12.5, '2026-09-01 00:00:00')");
-    const [before] = await upgrade.query('SELECT * FROM metrics_history');
-    await runner(upgrade).run();
-    expect((await upgrade.query('SELECT * FROM metrics_history'))[0]).toEqual(before);
+  it('upgrades populated legacy tables without changing values; legacy API and explicit fallback stay usable', () => phase('legacy-compatibility', async () => {
+    expect((await upgrade.query('SELECT * FROM metrics_history'))[0]).toEqual(legacyRowsBefore);
     const oldStore = new MysqlObservationStore(() => upgrade as never);
     const oldRead = () => oldStore.latestInstanceMetric(1, 'cpu_usage');
     expect((await oldRead())?.value).toBe(12.5);
@@ -101,7 +118,7 @@ describe.skipIf(!port)('Metrics isolated MySQL', () => {
     expect(await legacy.range(observations[0], '2026-09-01T00:00:00Z', '2026-09-01T00:02:00Z',
       () => oldStore.rangeInstanceMetric(1, 'cpu_usage', new Date('2026-09-01T00:00:00Z'), now, 200), 'metrics_history')).toMatchObject([{ value: 12.5, provenance: { contract: 'legacy' } }]);
     expect(await v2.range(observations[0], '2026-09-01T00:00:00Z', '2026-09-01T00:02:00Z', async () => [], 'metrics_history')).toHaveLength(1);
-  });
+  }));
 
   it('partial historical DDL failure blocks rerun; checksum-bound repair remains valid before neutral rename', async () => {
     const migrations=await loadMigrations(),migration=migrations.find(m=>m.id==='098_metric_v2_storage.sql')!;
