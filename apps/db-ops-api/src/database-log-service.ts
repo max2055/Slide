@@ -8,6 +8,7 @@ import { instanceDatabaseService } from './instance-database-service.js';
 import { llmService } from './llm-service.js';
 import { aiAnalysisDatabaseService } from './ai-analysis-database-service.js';
 import mysql from 'mysql2/promise';
+import { projectDatabaseLogForModel } from './security/database-log-egress.js';
 
 export interface DetectedPattern {
   pattern: string;
@@ -417,13 +418,13 @@ class DatabaseLogService {
       const logContent = errorLogs
         .slice(0, 20)
         .map((log) => {
-          let line = `[${log.log_level}] [${log.source}] ${log.message}`;
+          let line = `[${projectDatabaseLogForModel(log.log_level)}] [${projectDatabaseLogForModel(log.source)}] ${projectDatabaseLogForModel(log.message)}`;
           if (log.detected_patterns && log.detected_patterns.length > 0) {
-            line += `\n  检测模式: ${log.detected_patterns.map((p) => `${p.pattern}(${p.severity})`).join(', ')}`;
+            line += `\n  检测模式: ${log.detected_patterns.map((p) => `${projectDatabaseLogForModel(p.pattern)}(${projectDatabaseLogForModel(p.severity)})`).join(', ')}`;
           }
-          // 脱敏：只截取 raw_content 前 500 字符
+          // 外发仅使用诊断投影；原始日志在本地按现有审计策略保留。
           if (log.raw_content) {
-            line += `\n  原始内容: ${log.raw_content.substring(0, 500)}`;
+            line += `\n  日志诊断投影: ${projectDatabaseLogForModel(log.raw_content, 500)}`;
           }
           return line;
         })
@@ -432,6 +433,8 @@ class DatabaseLogService {
       const prompt = `请分析以下数据库错误日志，给出根因分析和处理建议：
 
 ## 错误日志（共 ${errorLogs.length} 条，展示前 20 条）
+
+日志已执行保守脱敏：仅保留诊断词、标准错误码及 SQL 结构，标识符、字面量和自由文本已遮蔽。请勿猜测被遮蔽的值；信息不足时说明限制。
 
 ${logContent}
 
