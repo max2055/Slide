@@ -1,4 +1,10 @@
 import { expect, test } from '@playwright/test';
+
+// Explicit authorized fixture session; restricted settings never rely on cache.
+test.beforeEach(async ({ page }) => {
+  await page.addInitScript(() => localStorage.setItem('token', 'settings-fixture-token'));
+  await page.route('**/api/auth/permissions', route => route.fulfill({ json: ['llm:view'] }));
+});
 import { createCredentialProbeFixture } from '../../apps/db-ops-api/tests/fixtures/llm-credential-probe.js';
 
 for (const [name, modelId] of [['deepseek', 'deepseek-flash'], ['stepfun', 'step-3.5-flash-2603'], ['mimo', 'mimo-v2-flash']]) {

@@ -1,3 +1,4 @@
+import { isNativeEndpoint } from './native-endpoint.js';
 /**
  * GLM (智谱 AI) LLM 提供商配置
  *
@@ -107,8 +108,7 @@ export const GLM_MODEL_CATALOG = [
  * 判断是否是 GLM 的原生 Base URL
  */
 export function isNativeGlmBaseUrl(baseUrl: string | undefined): boolean {
-  if (!baseUrl) return false;
-  return baseUrl.includes('open.bigmodel.cn');
+  return isNativeEndpoint(baseUrl, ['open.bigmodel.cn']);
 }
 
 /**

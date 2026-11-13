@@ -173,11 +173,10 @@ export class InstanceHostField extends LitElement {
                   <span>节点角色</span>
                   <select
                     data-server-id=${server.id}
-                    .value=${mapping.role}
                     .disabled=${this.disabled}
                     @change=${(event: Event) => this.onRoleChange(server.id, (event.target as HTMLSelectElement).value as InstanceHostRole)}
                   >
-                    ${HOST_ROLES.map((role) => html`<option value=${role.value}>${role.label}</option>`)}
+                    ${HOST_ROLES.map((role) => html`<option value=${role.value} .selected=${role.value === mapping.role}>${role.label}</option>`)}
                   </select>
                 </label>
               ` : nothing}

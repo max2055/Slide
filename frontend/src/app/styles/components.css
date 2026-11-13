@@ -1244,7 +1244,7 @@
   background: transparent;
 }
 
-:root[data-theme-mode="light"] .btn--ghost:hover {
+:root[data-theme-mode="light"] .btn--ghost:hover:not(:disabled) {
   background: var(--bg-hover);
 }
 

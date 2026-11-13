@@ -94,6 +94,7 @@ export const NetworkDeviceSchema = Type.Object({
   collection_enabled: Type.Boolean(),
   created_at: Type.String(),
   updated_at: Type.String(),
+  snmpVersion: Type.Optional(Type.Union([Type.Literal(2), Type.Literal(3), Type.Null()])),
   hasSnmpCredential: Type.Boolean(),
   hasSshCredential: Type.Boolean(),
   sshCredentialType: Type.Optional(Type.Union([Type.String(), Type.Null()])),
@@ -545,6 +546,7 @@ const FilesystemEvidenceProperties = {
   inodeUsed: Type.Union([Type.Number({ minimum: 0 }), Type.Null()]),
   inodeAvailable: Type.Union([Type.Number({ minimum: 0 }), Type.Null()]),
   inodeUsagePercent: Type.Union([Type.Number({ minimum: 0 }), Type.Null()]),
+  inodeSupported: Type.Optional(Type.Boolean()),
 };
 const FilesystemEvidenceValueSchema = Type.Object(FilesystemEvidenceProperties, { additionalProperties: false });
 export const FilesystemEvidenceSchema = Type.Object(FilesystemEvidenceProperties, {
@@ -594,7 +596,7 @@ export const LinuxHostEvidenceSchema = Type.Object({
     collectedAt: Type.String(),
     quality: EvidenceQualityValueSchema,
     reason: Type.Optional(Type.String()),
-    values: Type.Record(Type.String(), Type.Number()),
+    values: Type.Record(Type.String(), Type.Union([Type.Number(), Type.String({ pattern: '^\\d+$' })])),
   }, { additionalProperties: false }),
   filesystems: Type.Object({
     source: Type.Array(Type.String()),
@@ -665,6 +667,7 @@ export const InstanceHostEvidenceResponseSchema = Type.Object({
   hosts: Type.Array(Type.Object({
     server: InstanceHostSchema,
     evidence: Type.Union([LinuxHostEvidenceSchema, Type.Null()]),
+    diagnostics: Type.Optional(ServerDiagnosticsSchema),
   }, { additionalProperties: false })),
   gaps: Type.Array(DiagnosticGapSchema),
 }, { $id: 'InstanceHostEvidenceResponse', additionalProperties: false });
@@ -674,6 +677,11 @@ export const OkResponseSchema = Type.Object({
 }, { $id: 'OkResponse', additionalProperties: false });
 
 export const PublicApiSchemas = {
+  CronDraftTestRequest: Type.Object({
+    instance_id: Type.Integer({ minimum: 1 }),
+    content: Type.String({ minLength: 1 }),
+    database: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+  }, { $id: 'CronDraftTestRequest', additionalProperties: false }),
   ...InvestigationProfileSchemas,
   ...InvestigationGovernanceSchemas,
   ...InvestigationSchemas, ...InvestigationObservationSchemas,

@@ -172,6 +172,7 @@ function evidencePack(gaps: InstanceDiagnosticContext['gaps'] = []): InstanceDia
           mount: '/data', device: '/dev/mapper/data', fsType: 'xfs', sizeBytes: 1000,
           usedBytes: 750, availableBytes: 250, usagePercent: 75,
           inodeTotal: 100, inodeUsed: 20, inodeAvailable: 80, inodeUsagePercent: 20,
+          inodeSupported: false,
         }] },
         systemLogs: { source: ['journald'], collectedAt, quality: 'partial', entries: [{
           timestamp: collectedAt, severity: 'warning', unit: 'mysqld.service', identifier: 'mysqld',

@@ -197,12 +197,8 @@ export async function registerNetworkDeviceRoutes(
         const value = await capabilityService.get(actor(request), { type: 'network_device', id }, key);
         return reply.send({ deviceId: id, capabilities: value ? [serializeCapability(value)] : [] });
       }
-      const pool = dbConnection.getPool();
-      if (!pool) return reply.code(500).send({ error: '数据库未连接' });
-      const [rows] = await pool.execute<any[]>(
-        `SELECT capability_key AS capabilityKey, state, evidence, reason, checked_at AS checkedAt, valid_until AS validUntil
-         FROM resource_capabilities WHERE resource_type = 'network_device' AND resource_id = ? ORDER BY capability_key`, [id]);
-      return reply.send({ deviceId: id, capabilities: rows.map(serializeCapabilityRow) });
+      const values = await capabilityService.list(actor(request), { type: 'network_device', id });
+      return reply.send({ deviceId: id, capabilities: values.map(serializeCapability) });
     } catch (error) {
       const failure = safeNetworkError(error);
       return reply.code(failure.status).send({ error: failure.error });
@@ -211,7 +207,7 @@ export async function registerNetworkDeviceRoutes(
 
   fastify.post('/api/network-devices', { preHandler: manage }, async (request, reply) => {
     try {
-      const check = strictBody(request.body as Record<string, unknown>, ['name', 'label', 'host', 'site', 'vendor', 'model', 'osVersion', 'os_version', 'serialNumber', 'serial_number', 'snmpPort', 'snmp_port', 'sshPort', 'ssh_port', 'collectionEnabled', 'snmpv3', 'snmpv2c', 'snmpv2', 'snmp', 'ssh'], 'POST /api/network-devices');
+      const check = strictBody(request.body as Record<string, unknown>, ['name', 'label', 'host', 'site', 'vendor', 'model', 'osVersion', 'os_version', 'serialNumber', 'serial_number', 'snmpPort', 'snmp_port', 'sshPort', 'ssh_port', 'collectionEnabled', 'version', 'snmpv3', 'snmpv2c', 'snmpv2', 'snmp', 'ssh'], 'POST /api/network-devices');
       if (check.error) return reply.code(400).send(check.error);
       await recordSshTrustRequest(Number((request as any).user?.userId), 'network_device', String((check.body as any).host), (check.body as any).ssh?.credentialType === 'key' ? (check.body as any).ssh?.sshTrustMode : undefined);
       const result = await networkDeviceDatabaseService.createDevice(check.body);
@@ -225,7 +221,7 @@ export async function registerNetworkDeviceRoutes(
     const id = routeId(request);
     if (id === null) return reply.code(400).send({ error: '资源 ID 无效' });
     try {
-      const check = strictBody(request.body as Record<string, unknown>, ['name', 'label', 'host', 'site', 'vendor', 'model', 'osVersion', 'os_version', 'serialNumber', 'serial_number', 'snmpPort', 'snmp_port', 'sshPort', 'ssh_port', 'collectionEnabled', 'snmpv3', 'snmpv2c', 'snmpv2', 'snmp', 'ssh', 'sshTrust'], 'PUT /api/network-devices/:id');
+      const check = strictBody(request.body as Record<string, unknown>, ['name', 'label', 'host', 'site', 'vendor', 'model', 'osVersion', 'os_version', 'serialNumber', 'serial_number', 'snmpPort', 'snmp_port', 'sshPort', 'ssh_port', 'collectionEnabled', 'version', 'snmpv3', 'snmpv2c', 'snmpv2', 'snmp', 'ssh', 'sshTrust'], 'PUT /api/network-devices/:id');
       if (check.error) return reply.code(400).send(check.error);
       await recordSshTrustRequest(Number((request as any).user?.userId), 'network_device', String(id), (check.body as any).sshTrust?.mode ?? ((check.body as any).ssh?.credentialType === 'key' ? (check.body as any).ssh?.sshTrustMode : undefined));
       const result = await networkDeviceDatabaseService.updateDevice(id, check.body);
@@ -274,6 +270,9 @@ export async function registerNetworkDeviceRoutes(
       const result = await backups.capture!(id, Number((request as any).user?.userId ?? 0) || null);
       if (!result.success) {
         const error = result.error ?? 'CONFIG_BACKUP_FAILED';
+        if (error === 'CONFIG_BACKUP_SAVED_AUDIT_FAILED' && result.backupSaved === true) {
+          return reply.code(409).send({ error, backupSaved: true, retryable: false, backup: serializeBackup(result.backup), duplicate: result.duplicate === true });
+        }
         const status = error === 'NETWORK_DEVICE_NOT_FOUND'
           ? 404
           : ['SSH_CREDENTIAL_REQUIRED', 'SSH_HOST_KEY_FINGERPRINT_REQUIRED'].includes(error) ? 400 : 502;

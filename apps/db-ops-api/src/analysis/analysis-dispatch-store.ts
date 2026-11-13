@@ -30,6 +30,13 @@ export type AnalysisAcceptance = { analysisId: number; cached: boolean; status: 
 export const analysisHash = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const parse = <T>(value: T | string): T => typeof value === 'string' ? JSON.parse(value) : value;
 
+// Public analysis IDs remain numbers; never round a BIGINT into another record.
+function analysisIdNumber(value: unknown): number {
+  const id = typeof value === 'number' || (typeof value === 'string' && /^[1-9]\d*$/.test(value)) ? Number(value) : NaN;
+  if (!Number.isSafeInteger(id) || id <= 0) throw new Error('ANALYSIS_ID_OUT_OF_SAFE_RANGE');
+  return id;
+}
+
 export class AnalysisDispatchStore {
   constructor(private readonly poolProvider: () => Pool | null) {}
   private pool() { const pool = this.poolProvider(); if (!pool) throw new Error('ANALYSIS_STORE_UNAVAILABLE'); return pool; }
@@ -38,15 +45,19 @@ export class AnalysisDispatchStore {
       LEFT JOIN analysis_dispatch_attempts a ON a.analysis_id = d.analysis_id LIMIT 0`);
     await this.pool().execute('SELECT scope_key FROM analysis_dispatch_keys LIMIT 0');
   }
-  private async transaction<T>(work: (connection: PoolConnection) => Promise<T>, reservedConnection?: PoolConnection): Promise<T> {
+  private async transaction<T>(work: (connection: PoolConnection) => Promise<T>, reservedConnection?: PoolConnection, isolation?: 'READ COMMITTED'): Promise<T> {
     const connection = reservedConnection ?? await this.pool().getConnection();
-    try { await connection.beginTransaction(); const result = await work(connection); await connection.commit(); return result; }
+    try {
+      if (isolation) await connection.query('SET TRANSACTION ISOLATION LEVEL READ COMMITTED');
+      await connection.beginTransaction(); const result = await work(connection); await connection.commit(); return result;
+    }
     catch (error) { await connection.rollback(); throw error; }
     finally { if (!reservedConnection) connection.release(); }
   }
 
   async enqueue(input: AnalysisEnqueueInput, reservedConnection?: PoolConnection): Promise<AnalysisAcceptance> {
     const { request } = input;
+    if (input.retryOf !== undefined) analysisIdNumber(input.retryOf);
     if (!Number.isSafeInteger(request.subject.id) || request.subject.id <= 0
       || !['instance', 'server', 'network_device'].includes(request.subject.type)
       || JSON.stringify(request).length > 1_000_000) throw new Error('ANALYSIS_REQUEST_INVALID');
@@ -54,9 +65,14 @@ export class AnalysisDispatchStore {
     // callers create their analysis in this transaction; legacy retry creates a new ID.
     if (input.existingAnalysisId !== undefined) throw new Error('ANALYSIS_LEGACY_BINDING_REQUIRES_CONFIRMATION');
     const scope = analysisHash([input.analysisType, request.subject, input.triggerType, request.actor?.userId ?? 'system', input.relatedId ?? null]);
+    // The scope-key row serializes matching admissions. Historical unknown
+    // scans must lock existing rows, not gaps shared by unrelated sources:
+    // under REPEATABLE READ those gaps deadlock concurrent analysis inserts.
+    // SET TRANSACTION applies only to this admission, never the pooled session.
     return this.transaction(async connection => {
       await connection.execute('INSERT INTO analysis_dispatch_keys (scope_key) VALUES (?) ON DUPLICATE KEY UPDATE scope_key = scope_key', [scope]);
       const [keys] = await connection.execute<any[]>('SELECT analysis_id FROM analysis_dispatch_keys WHERE scope_key = ? FOR UPDATE', [scope]);
+      if (keys[0]?.analysis_id != null) keys[0].analysis_id = analysisIdNumber(keys[0].analysis_id);
       // Explicit operator reconciliation may adopt an automatic unknown into a
       // manual scope. It never grants access to another user's manual request.
       if (input.retryOf !== undefined && !keys[0]?.analysis_id) {
@@ -87,29 +103,29 @@ export class AnalysisDispatchStore {
           input.analysisType === 'fault_diagnosis' && request.subject.type === 'instance'
             ? `fault:${request.subject.id}:%:${input.triggerType}:user:${request.actor?.userId ?? 0}:session:%` : pattern, input.relatedId ?? null]);
         if (legacy.length && !keys[0]?.analysis_id) {
-          keys[0].analysis_id = Number(legacy[0].id);
+          keys[0].analysis_id = analysisIdNumber(legacy[0].id);
           await connection.execute('UPDATE analysis_dispatch_keys SET analysis_id = ? WHERE scope_key = ?', [keys[0].analysis_id, scope]);
         }
-        if (legacy.length && Number(keys[0]?.analysis_id) === Number(legacy[0].id) && input.retryOf !== Number(legacy[0].id)) {
-          return { analysisId: Number(legacy[0].id), cached: false, success: false, status: 'unknown' };
+        if (legacy.length && Number(keys[0]?.analysis_id) === analysisIdNumber(legacy[0].id) && input.retryOf !== analysisIdNumber(legacy[0].id)) {
+          return { analysisId: analysisIdNumber(legacy[0].id), cached: false, success: false, status: 'unknown' };
         }
       }
       if (keys[0]?.analysis_id) {
         const row = await this.lock(connection, keys[0].analysis_id);
         if (row) {
           await this.reconcile(connection, row);
-          if (row.status === 'unknown' && input.retryOf !== Number(row.analysis_id)) {
-            return { analysisId: Number(row.analysis_id), cached: false, success: false, status: 'unknown' };
+          if (row.status === 'unknown' && input.retryOf !== analysisIdNumber(row.analysis_id)) {
+            return { analysisId: analysisIdNumber(row.analysis_id), cached: false, success: false, status: 'unknown' };
           }
           if (['pending', 'running'].includes(row.status) && ['queued', 'retry', 'running'].includes(row.job_state)) {
             // A queued durable intent is admission reuse, not an active-result cache.
-            return { analysisId: Number(row.analysis_id), cached: false, success: true, status: row.status };
+            return { analysisId: analysisIdNumber(row.analysis_id), cached: false, success: true, status: row.status };
           }
           if (input.retryOf === undefined && row.status === 'completed'
             && row.evidence_version === request.evidenceVersion && row.config_version === request.configVersion
             && row.authorization_version === request.authorizationVersion
             && row.completed_at && Date.now() - new Date(row.completed_at).getTime() < (input.ttlMs ?? 1_800_000)) {
-            return { analysisId: Number(row.analysis_id), cached: true, success: true, status: 'completed' };
+            return { analysisId: analysisIdNumber(row.analysis_id), cached: true, success: true, status: 'completed' };
           }
         }
       }
@@ -120,7 +136,7 @@ export class AnalysisDispatchStore {
       [input.analysisType, request.subject.type, request.subject.type === 'instance' ? request.subject.id : null,
         request.subject.type === 'server' ? request.subject.id : null, request.subject.type === 'network_device' ? request.subject.id : null,
         input.relatedId ?? null, input.triggerType, input.cacheKey]);
-      const id = Number(insert.insertId);
+      const id = analysisIdNumber(insert.insertId);
       const jobId = randomUUID();
       const snapshot = { ...request, message: request.message.replaceAll('__ANALYSIS_ID__', String(id)), sessionKey: `${request.sessionKey ?? 'analysis'}-${id}` };
       const payload = JSON.stringify({ analysisId: id });
@@ -136,10 +152,11 @@ export class AnalysisDispatchStore {
       await connection.execute("UPDATE ai_analysis SET status = 'pending', session_key = ?, started_at = NULL WHERE id = ?", [snapshot.sessionKey, id]);
       await connection.execute('UPDATE analysis_dispatch_keys SET analysis_id = ? WHERE scope_key = ?', [id, scope]);
       return { analysisId: id, cached: false, success: true, status: 'pending' };
-    }, reservedConnection);
+    }, reservedConnection, 'READ COMMITTED');
   }
 
   private async lock(connection: PoolConnection, id: number) {
+    id = analysisIdNumber(id);
     const [rows] = await connection.execute<any[]>(`SELECT d.*, a.status, a.completed_at, a.execution_trace, a.analysis_envelope, j.state AS job_state,
       j.lease_owner, j.fencing_token AS job_fence, j.attempts AS job_attempts, j.lease_expires_at > NOW() AS live_lease
       FROM analysis_dispatches d JOIN ai_analysis a ON a.id = d.analysis_id JOIN workflow_jobs j ON j.id = d.job_id
@@ -151,10 +168,10 @@ export class AnalysisDispatchStore {
     const lost = !row.live_lease || row.job_state !== 'running' || row.owner_id !== row.lease_owner
       || Number(row.fencing_token) !== Number(row.job_fence) || Number(row.attempt_number) !== Number(row.job_attempts);
     if (['sending', 'responded'].includes(row.request_state) && lost) {
-      await this.terminal(connection, Number(row.analysis_id), 'unknown', 'ANALYSIS_PROVIDER_RESULT_UNKNOWN');
+      await this.terminal(connection, analysisIdNumber(row.analysis_id), 'unknown', 'ANALYSIS_PROVIDER_RESULT_UNKNOWN');
       row.status = 'unknown'; row.request_state = 'unknown';
     } else if (row.request_state === 'unsent' && ['dead_letter', 'cancelled', 'completed'].includes(row.job_state)) {
-      await this.terminal(connection, Number(row.analysis_id), 'failed', 'ANALYSIS_UNSENT_JOB_TERMINAL'); row.status = 'failed';
+      await this.terminal(connection, analysisIdNumber(row.analysis_id), 'failed', 'ANALYSIS_UNSENT_JOB_TERMINAL'); row.status = 'failed';
     } else if (row.request_state === 'unsent' && lost && row.status === 'running') {
       await connection.execute("UPDATE ai_analysis SET status = 'pending', recovery_reason = 'ANALYSIS_UNSENT_LEASE_EXPIRED' WHERE id = ?", [row.analysis_id]);
       row.status = 'pending';
@@ -306,7 +323,7 @@ export class AnalysisDispatchStore {
           OR d.fencing_token <> j.fencing_token OR d.attempt_number <> j.attempts))
         OR (d.request_state = 'unsent' AND j.state IN ('dead_letter','completed','cancelled')))
       ORDER BY d.updated_at LIMIT 100`);
-    for (const row of rows) await this.transaction(async connection => { const locked = await this.lock(connection, Number(row.analysis_id)); if (locked) await this.reconcile(connection, locked); });
+    for (const row of rows) await this.transaction(async connection => { const locked = await this.lock(connection, analysisIdNumber(row.analysis_id)); if (locked) await this.reconcile(connection, locked); });
   }
   async recoverLegacy(): Promise<void> {
     // No absence of a session marker proves an old request was not sent. Preserve all results.
