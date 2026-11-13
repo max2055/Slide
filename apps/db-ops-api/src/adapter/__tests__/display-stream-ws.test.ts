@@ -252,6 +252,34 @@ it('real WS receive fault injection makes Gateway drop duplicates/old subscripti
   } finally { release?.(); handleDirectAdapterEvent(host, { type: 'thinking_end' }); gateway.disconnect(); socket?.close(); await adapter.dispose(); dom.window.close(); rmSync(workspace, { recursive: true, force: true }); }
 }, 20_000);
 
+it('MAX-454 real WS publishes only reducer-accepted frames and agrees with fresh history snapshots', async () => {
+  mockBoundaries();
+  const workspace = mkdtempSync(join(tmpdir(), 'display-authority-ws-'));
+  const provider: LLMProvider = { getDefaultModel: () => 'fixture', chat: async () => final, chatStream: async () => final };
+  const adapter = new DirectAdapter({ workspace, tools: new ToolRegistry(), llmProvider: provider,
+    actorContextService: { authenticateAccessToken: vi.fn().mockResolvedValue(actor), revalidateActor: vi.fn().mockResolvedValue(actor) } });
+  const sockets: WebSocket[] = [];
+  try {
+    await adapter.start(); const server = (adapter as any).wsServer; if (!server.address()) await once(server, 'listening');
+    const live = await peer(server.address().port, 'live'); sockets.push(live.socket); live.watch();
+    await live.wait(() => live.events.some(e => e.type === 'stream.snapshot'));
+    const hub = (adapter as any).displayStreams;
+    hub.start('fixture', 'run', 'turn', () => createMessageProjection('run'));
+    const frame: ProjectionFrame = { version: 1, runId: 'run', attempt: 2, sequence: 1, operations: [{ type: 'run.status', phase: 'preparing' }] };
+    hub.publish('fixture', frame);
+    hub.publish('fixture', { ...frame, attempt: 1, sequence: 2, operations: [{ type: 'run.status', phase: 'saving' }] });
+    hub.publish('fixture', { ...frame, sequence: 3, operations: [{ type: 'unknown' }] } as unknown as ProjectionFrame);
+    // A subsequent accepted frame is an ordered transport barrier, with no sleep.
+    hub.publish('fixture', { ...frame, sequence: 2, operations: [{ type: 'run.status', phase: 'generating' }] });
+    await live.wait(() => live.events.some(e => e.projection?.sequence === 2 && e.projection.attempt === 2));
+    const fresh = await peer(server.address().port, 'fresh'); sockets.push(fresh.socket); fresh.watch();
+    await fresh.wait(() => fresh.events.some(e => e.snapshot?.runId === 'run'));
+    expect(live.events.filter(e => e.type === 'stream.delta').map(e => e.projection.sequence)).toEqual([2]);
+    expect(fold(live.events, 'live').projection).toEqual(fold(fresh.events, 'fresh').projection);
+    expect(fresh.events.find(e => e.snapshot?.runId === 'run').stream.toSeq).toBe(1);
+  } finally { for (const socket of sockets) socket.close(); await adapter.dispose(); rmSync(workspace, { recursive: true, force: true }); }
+}, 15_000);
+
 it('real WS isolates a stalled write callback peer, evicts cache epochs and still delivers normal terminal', async () => {
   mockBoundaries();
   const workspace = mkdtempSync(join(tmpdir(), 'display-slow-ws-'));

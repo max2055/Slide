@@ -99,6 +99,9 @@ export class AgentSecurityPolicyPage extends LitElement {
   @state() private networkDeviceIds = '';
   @state() private changeNote = '';
   @state() private history: PolicyHistoryRecord[] = [];
+  @state() private historyLoading = false;
+  @state() private historyError = '';
+  private historyRequest = 0;
   @state() private executionConfig: AgentExecutionConfig | null = null;
   @state() private executionConfigSaving = false;
   @state() private loading = true;
@@ -241,15 +244,19 @@ export class AgentSecurityPolicyPage extends LitElement {
   }
 
   private async loadHistory(): Promise<void> {
-    if (!this.selectedAgentId || !hasPermission('audit:view')) {
-      this.history = [];
-      return;
-    }
+    const request = ++this.historyRequest;
+    this.history = [];
+    this.historyError = '';
+    this.historyLoading = false;
+    if (!this.selectedAgentId || !hasPermission('audit:view')) return;
+    this.historyLoading = true;
     try {
       const response = await apiClient.get<{ records: PolicyHistoryRecord[] }>(`/agent/security/policies/${encodeURIComponent(this.selectedAgentId)}/history`);
-      this.history = response.records;
+      if (request === this.historyRequest) this.history = response.records;
     } catch {
-      this.history = [];
+      if (request === this.historyRequest) this.historyError = '策略变更记录加载失败，请重试';
+    } finally {
+      if (request === this.historyRequest) this.historyLoading = false;
     }
   }
 
@@ -378,7 +385,7 @@ export class AgentSecurityPolicyPage extends LitElement {
             </section>
             ${isAdmin ? html`<section class="section"><app-form-field label="变更说明" hint="将写入不可变策略历史" required><textarea maxlength="500" .value=${this.changeNote} @input=${(event: Event) => { this.changeNote = (event.target as HTMLTextAreaElement).value; }}></textarea></app-form-field><div class="footer-actions"><button class="btn-primary" @click=${this.save} .disabled=${this.saving || !this.changeNote.trim()}>${icons.save} ${this.saving ? '保存中' : '保存策略'}</button></div></section>` : html`<section class="section"><app-badge variant="muted">只读</app-badge> <span class="subtle">仅管理员可修改策略</span></section>`}
           </app-card>
-          ${hasPermission('audit:view') ? html`<app-card><span slot="header" class="card-title">${icons.activity} 策略变更记录</span><app-data-table .columns=${[{ key: 'version', label: '版本' }, { key: 'changeNote', label: '变更说明' }, { key: 'actor', label: '操作者' }, { key: 'createdAt', label: '时间' }]} .rows=${this.historyRows()} .loading=${false} emptyMessage="暂无策略变更"></app-data-table></app-card>` : nothing}
+          ${hasPermission('audit:view') ? html`<app-card><span slot="header" class="card-title">${icons.activity} 策略变更记录</span>${this.historyError ? html`<div role="alert">${this.historyError}</div><button class="btn" @click=${() => this.loadHistory()}>重试加载变更记录</button>` : html`${this.historyLoading ? html`<p role="status">正在加载策略变更记录…</p>` : nothing}<app-data-table .columns=${[{ key: 'version', label: '版本' }, { key: 'changeNote', label: '变更说明' }, { key: 'actor', label: '操作者' }, { key: 'createdAt', label: '时间' }]} .rows=${this.historyRows()} .loading=${this.historyLoading} emptyMessage="暂无策略变更"></app-data-table>`}</app-card>` : nothing}
         </div>
       `}
     `;

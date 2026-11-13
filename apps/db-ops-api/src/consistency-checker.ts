@@ -557,11 +557,14 @@ export class ConsistencyChecker {
     const [orphanRows] = await pool.execute(
       `SELECT ar.id FROM approval_requests ar
        WHERE ar.status IN (?, ?)
-       AND NOT EXISTS (
+       AND (NOT EXISTS (
          SELECT 1 FROM approval_events ae
-         WHERE ae.request_id = ar.id AND ae.event_type IN (?, ?)
-       )`,
-      ['approved', 'executed', 'approved', 'executed'],
+         WHERE ae.request_id = ar.id AND ae.event_type = ?
+       ) OR (ar.status = ? AND NOT EXISTS (
+         SELECT 1 FROM approval_events ae
+         WHERE ae.request_id = ar.id AND ae.event_type = ?
+       )))`,
+      ['approved', 'executed', 'approved', 'executed', 'executed'],
     ) as any;
 
     const [oldPendingRows] = await pool.execute(

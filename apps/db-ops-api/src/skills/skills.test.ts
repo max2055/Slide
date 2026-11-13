@@ -6,7 +6,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, it, expect, beforeEach } from 'vitest';
-import { parseSkillFrontmatter, normalizeFrontmatter } from './frontmatter.js';
+import { parseSkillFrontmatter, normalizeFrontmatter, extractSlideSkillMetadata } from './frontmatter.js';
 import { loadSkillFromFile, loadSkillsFromDirectory, PREDEFINED_SKILL_DIRS, skillRegistry } from './loader.js';
 import type { SkillEntry } from './types.js';
 
@@ -92,6 +92,45 @@ os: [linux, macos]
       const result = parseSkillFrontmatter(content);
       expect(result.valid).toBe(true);
       expect(result.frontmatter.os).toEqual(['linux', 'macos']);
+    });
+
+    // Regression: #382 / OCR-0274, including the production metadata path.
+    it.each([
+      'os: [linux,\n  macos]',
+      'os: [\n  linux,\n  macos,\n]',
+      'os: [linux, macos]',
+      'os:\n  - linux\n  - macos',
+      'os: [linux, # first platform\n  macos] # platforms',
+    ])('preserves all platforms and subsequent keys: %s', (yaml) => {
+      const result = parseSkillFrontmatter(`---\nname: test-skill\ndescription: Test\n${yaml}\nalways: true\ncommand-tool: next_tool\n---\nBody`);
+      expect(result.valid).toBe(true);
+      expect(extractSlideSkillMetadata(result.frontmatter).os).toEqual(['linux', 'macos']);
+      expect(result.frontmatter.always).toBe(true);
+      expect(result.frontmatter['command-tool']).toBe('next_tool');
+      expect(result.body).toBe('Body');
+    });
+
+    it.each([
+      `os: ["linux,gnu", 'mac]os', "say \\"hi\\"", 'it''s unix']`,
+      `os: ["linux,gnu",\n  'mac]os',\n  "say \\"hi\\"", 'it''s unix',\n]`,
+    ])('preserves quoted commas, brackets and escaped quotes: %s', (yaml) => {
+      const result = parseSkillFrontmatter(`---\nname: test\ndescription: Test\n${yaml}\nalways: false\n---\nBody`);
+      expect(result.valid).toBe(true);
+      expect(result.frontmatter.os).toEqual(['linux,gnu', 'mac]os', 'say "hi"', "it's unix"]);
+      expect(result.frontmatter.always).toBe(false);
+    });
+
+    it.each([
+      'os: [linux,\n  macos',
+      'os: ["linux, macos]',
+      'os: [linux, macos] trailing',
+      'os: [linux,\nalways: true',
+      '- name: test\n- description: Test',
+    ])('returns an identifiable error for malformed YAML: %s', (yaml) => {
+      const result = parseSkillFrontmatter(`---\nname: test\ndescription: Test\n${yaml}\n---\nBody`);
+      expect(result.valid).toBe(false);
+      expect(result.error).toContain('YAML');
+      expect(result.body).toBe('Body');
     });
 
     it('应该解析布尔值', () => {
@@ -316,5 +355,41 @@ describe('Skill code isolation', () => {
   it('packages the external bundled skills directory in the API image', () => {
     const dockerfile = fs.readFileSync(new URL('../../Dockerfile', import.meta.url), 'utf8');
     expect(dockerfile).toContain('COPY apps/db-ops-skills ./apps/db-ops-skills');
+  });
+});
+
+// Exercise the real loader with task-owned files, without a database or Provider.
+describe('#382 frontmatter loader regression', () => {
+  it('loads multiline flow arrays and rejects an unterminated array', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'slide-flow-array-'));
+    tempDirs.push(root);
+    const file = path.join(root, 'SKILL.md');
+    fs.writeFileSync(file, '---\nname: flow-test\ndescription: Test\nos: [linux,\n  macos]\nalways: true\n---\nBody');
+    const entry = await loadSkillFromFile(file);
+    expect(entry?.metadata?.os).toEqual(['linux', 'macos']);
+    expect(entry?.metadata?.always).toBe(true);
+    expect(entry?.skill.source).toBe('Body');
+    fs.writeFileSync(file, '---\nname: flow-test\ndescription: Test\nos: [linux,\n  macos\n---\nBody');
+    expect(await loadSkillFromFile(file)).toBeNull();
+  });
+
+  it('loads every checked-in bundled SKILL.md through the production loader', async () => {
+    const files: string[] = [];
+    const scan = (dir: string) => {
+      for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+        const fullPath = path.join(dir, entry.name);
+        if (entry.isDirectory() && !entry.name.startsWith('.')) scan(fullPath);
+        else if (entry.isFile() && entry.name === 'SKILL.md') files.push(fullPath);
+      }
+    };
+    for (const dir of PREDEFINED_SKILL_DIRS) if (fs.existsSync(dir)) scan(dir);
+    expect(files.length).toBeGreaterThan(0);
+    for (const file of files) {
+      const entry = await loadSkillFromFile(file, { source: 'bundled' });
+      expect(entry, file).not.toBeNull();
+      expect(entry?.skill.name).toBeTruthy();
+      expect(entry?.skill.description).toBeTruthy();
+      expect(entry?.security?.trusted).toBe(true);
+    }
   });
 });
