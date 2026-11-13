@@ -24,6 +24,7 @@ import "./components/app-select-field.ts";
 import "./components/app-option-group.ts";
 import "./components/app-badge.ts";
 import "./components/app-empty-state.ts";
+import "./components/app-notice.ts";
 import "./components/app-toast-container.ts";
 import "./views/instances-db.ts";
 import "./views/servers-page.ts";
@@ -124,11 +125,11 @@ function loadHeavyView(tab: AppViewState["tab"]) {
 
 function lazyStatus(view: ReturnType<typeof createLazy<unknown>>) {
   return view.failed
-    ? html`<div role="alert">
+    ? html`<app-notice role="alert" severity="error">
         <p>页面加载失败，请重试。</p>
         <button class="btn" @click=${() => view.retry()}>重试加载</button>
         <button class="btn-ghost" @click=${() => window.location.reload()}>重新加载页面</button>
-      </div>`
+      </app-notice>`
     : html`<p role="status">正在加载页面…</p>`;
 }
 
@@ -225,10 +226,10 @@ function loadPermissionsFromStorage(): Set<string> | null {
 }
 
 export function renderApp(state: AppViewState) {
-  const updatableState = state as AppViewState & { requestUpdate?: () => void };
+  const updatableState = state as AppViewState & { requestUpdate?: () => void; isConnected?: boolean };
   const requestHostUpdate =
     typeof updatableState.requestUpdate === "function"
-      ? () => updatableState.requestUpdate?.()
+      ? () => { if (updatableState.isConnected !== false) updatableState.requestUpdate?.(); }
       : undefined;
   _pendingUpdate = requestHostUpdate;
   const heavyView = loadHeavyView(state.tab);
