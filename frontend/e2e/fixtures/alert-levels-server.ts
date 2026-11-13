@@ -41,7 +41,7 @@ export async function startAlertLevelsServer() {
     await pool.query("INSERT INTO roles (id,name) VALUES (101,'max164-reader')");
     await pool.query("INSERT INTO role_permissions (role_id,permission_id) SELECT 101,id FROM permissions WHERE code IN ('alert:view','alert:manage','instance:view','config:view')");
     await pool.query('INSERT INTO user_roles (user_id,role_id) VALUES (101,101)');
-    await pool.query("INSERT INTO database_instances (id,name,host,port,username,password_encrypted) VALUES (101,'可见测试资源','fixture.invalid',3306,'fixture','unused'),(102,'不可见测试资源','fixture.invalid',3306,'fixture','unused')");
+    await pool.query("INSERT INTO database_instances (id,name,host,port,database_name,username,password_encrypted) VALUES (101,'可见测试资源','fixture.invalid',3306,'levels-101','fixture','unused'),(102,'不可见测试资源','fixture.invalid',3306,'levels-102','fixture','unused')");
     await pool.query("INSERT INTO instance_permissions (user_id,instance_id,access_level) VALUES (101,101,'read-write')");
     const contexts = new ActorContextService(() => pool);
     const owner = await contexts.loadActiveActor(101);

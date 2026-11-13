@@ -21,6 +21,43 @@ describe('Agent tool resource resolver', () => {
     expect(findInstanceIdByName).toHaveBeenCalledWith('orders-prod');
   });
 
+  // GitHub #624: storage failures must not escape the policy boundary.
+  it.each(['single-id', 'available-instances'])('contains %s lookup failures', async (path) => {
+    const failure = new Error('SELECT failed: password=private-test-sentinel');
+    const findInstanceIdByName = vi.fn().mockRejectedValue(failure);
+    const listAvailableInstancesByNormalizedName = vi.fn().mockRejectedValue(failure);
+    const resource = await resolveToolResource('slide_update_db_config', { instance_name: ' orders ' }, {
+      findInstanceIdByName,
+      ...(path === 'available-instances' ? { listAvailableInstancesByNormalizedName } : {}),
+    });
+    expect(resource).toEqual({ type: 'instance', error: 'RESOURCE_LOOKUP_UNAVAILABLE' });
+    expect(path === 'single-id' ? findInstanceIdByName : listAvailableInstancesByNormalizedName)
+      .toHaveBeenCalledExactlyOnceWith('orders');
+    if (path === 'available-instances') expect(findInstanceIdByName).not.toHaveBeenCalled();
+  });
+
+  it('fails closed when a trimmed name is active in more than one environment', async () => {
+    const actor = { username: 'dba', roles: ['dba'], permissions: ['instance:update'], instanceScopes: { 8: 'read-write', 9: 'admin' }, sessionVersion: 1, requestId: 'r' } as any;
+    await expect(resolveToolResource('slide_update_db_config', { instance_name: ' orders ', environment: 'production' }, {
+      findInstanceIdByName: async () => 8,
+      listAvailableInstancesByNormalizedName: async () => [
+        { id: 8, name: 'orders', environment: 'development' },
+        { id: 9, name: 'orders', environment: 'staging' },
+      ],
+    }, actor)).resolves.toMatchObject({ type: 'instance', error: 'AMBIGUOUS_INSTANCE_NAME' });
+  });
+
+  it('does not reveal a second environment to a caller who can write only one', async () => {
+    const actor = { username: 'dba', roles: ['dba'], permissions: ['instance:update'], instanceScopes: { 8: 'read-write' }, sessionVersion: 1, requestId: 'r' } as any;
+    await expect(resolveToolResource('slide_update_db_config', { instance_name: 'orders' }, {
+      findInstanceIdByName: async () => 8,
+      listAvailableInstancesByNormalizedName: async () => [
+        { id: 8, name: 'orders', environment: 'development' },
+        { id: 9, name: 'orders', environment: 'staging' },
+      ],
+    }, actor)).resolves.toMatchObject({ type: 'instance', error: 'RESOURCE_NOT_FOUND' });
+  });
+
   it('marks invalid and unknown resource references as resolution failures', async () => {
     expect(resolveToolResourceFromArgs('query_metrics', { instance_id: -1 }))
       .toMatchObject({ error: 'RESOURCE_INVALID' });
@@ -44,5 +81,22 @@ describe('Agent tool resource resolver', () => {
       .toMatchObject({ type: 'network_device', networkDeviceId: 17 });
     expect(resolveToolResourceFromArgs('diagnose_resource', { resourceType: 'server', resourceId: 0 }))
       .toMatchObject({ type: 'none', error: 'RESOURCE_INVALID' });
+  });
+});
+
+// GitHub #623 / OCR-1364: evidence reads must carry a concrete policy subject.
+describe.each(['get_evidence_bundle', 'get_evidence_item'])('%s resource scope', (toolName) => {
+  it.each([
+    ['instance', 'instanceId'], ['server', 'serverId'], ['network_device', 'networkDeviceId'],
+  ])('resolves %s', (resourceType, key) => {
+    expect(resolveToolResourceFromArgs(toolName, { resourceType, resourceId: 12 }))
+      .toEqual({ type: resourceType, [key]: 12 });
+  });
+  it.each([
+    {}, { resourceId: 12 }, { resourceType: 'server' },
+    { resourceType: 'unknown', resourceId: 12 },
+    ...[0, -1, 1.5, '12', null, Number.MAX_SAFE_INTEGER + 1].map(resourceId => ({ resourceType: 'server', resourceId })),
+  ])('rejects invalid or missing reference %j', (args) => {
+    expect(resolveToolResourceFromArgs(toolName, args)).toMatchObject({ error: 'RESOURCE_INVALID' });
   });
 });

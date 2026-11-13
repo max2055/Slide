@@ -7,6 +7,7 @@
  * - 验证 frontmatter 字段
  */
 
+import { isMap, parseDocument } from 'yaml';
 import type { ParsedSkillFrontmatter, Skill } from './types.js';
 
 // ============== Frontmatter 解析 ==============
@@ -49,7 +50,17 @@ export function parseSkillFrontmatter(content: string): {
   const [, frontmatterStr, body] = match;
 
   // 解析 YAML
-  const frontmatter = parseYaml(frontmatterStr);
+  let frontmatter: ParsedSkillFrontmatter;
+  try {
+    frontmatter = parseYaml(frontmatterStr);
+  } catch (error) {
+    return {
+      frontmatter: {},
+      body,
+      valid: false,
+      error: `YAML 解析失败：${error instanceof Error ? error.message : String(error)}`,
+    };
+  }
 
   // 验证必要字段
   if (!frontmatter.name) {
@@ -78,119 +89,16 @@ export function parseSkillFrontmatter(content: string): {
 }
 
 /**
- * 简易 YAML 解析器
- *
- * 支持常见的 YAML 语法：
- * - 键值对：key: value
- * - 数组：[item1, item2] 或 - item1
- * - 布尔值：true/false
- * - 数字：123
- * - 字符串："quoted" 或 unquoted
+ * 使用标准 YAML 解析器处理 flow/block 列表及引号，禁止将语法错误当成部分成功。
  */
 function parseYaml(yaml: string): ParsedSkillFrontmatter {
-  const result: ParsedSkillFrontmatter = {};
-
-  const lines = yaml.split('\n');
-  let currentKey: string | null = null;
-  let arrayValue: string[] | null = null;
-
-  for (const line of lines) {
-    // 跳过空行和注释
-    const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith('#')) {
-      continue;
-    }
-
-    // 检查是否是数组项
-    if (trimmed.startsWith('- ')) {
-      if (currentKey && arrayValue) {
-        const item = trimmed.slice(2).trim();
-        arrayValue.push(parseYamlValue(item) as string);
-      }
-      continue;
-    }
-
-    // 检查是否是行内数组结束
-    if (trimmed.startsWith(']')) {
-      if (currentKey && arrayValue) {
-        // 处理行内数组的剩余部分
-        const remaining = trimmed.replace(']', '').trim();
-        if (remaining) {
-          arrayValue.push(parseYamlValue(remaining) as string);
-        }
-        result[currentKey] = arrayValue;
-      }
-      currentKey = null;
-      arrayValue = null;
-      continue;
-    }
-
-    // 解析键值对
-    const colonIndex = trimmed.indexOf(':');
-    if (colonIndex === -1) {
-      continue;
-    }
-
-    const key = trimmed.slice(0, colonIndex).trim();
-    const valueStr = trimmed.slice(colonIndex + 1).trim();
-
-    // 检查是否是行内数组开始
-    if (valueStr.startsWith('[')) {
-      const arrayContent = valueStr.slice(1);
-      if (arrayContent.includes(']')) {
-        // 行内数组在同一行结束
-        const items = arrayContent.replace(']', '').split(',').map(s => s.trim()).filter(s => s);
-        result[key] = items.map(item => parseYamlValue(item)) as string[];
-      } else {
-        // 多行数组
-        arrayValue = arrayContent ? [parseYamlValue(arrayContent) as string] : [];
-        currentKey = key;
-        result[key] = arrayValue;
-      }
-      continue;
-    }
-
-    // 普通键值对
-    if (valueStr) {
-      result[key] = parseYamlValue(valueStr);
-      currentKey = null;
-      arrayValue = null;
-    } else {
-      // 值在下一行（多行数组）
-      currentKey = key;
-      arrayValue = [];
-      result[key] = arrayValue;
-    }
+  const document = parseDocument(yaml);
+  const issue = document.errors[0] ?? document.warnings[0];
+  if (issue) throw issue;
+  if (!isMap(document.contents)) {
+    throw new Error('frontmatter 必须是 YAML 映射');
   }
-
-  return result;
-}
-
-/**
- * 解析 YAML 值
- */
-function parseYamlValue(value: string): string | boolean | number {
-  const trimmed = value.trim();
-
-  // 去除引号
-  if ((trimmed.startsWith('"') && trimmed.endsWith('"')) ||
-      (trimmed.startsWith("'") && trimmed.endsWith("'"))) {
-    return trimmed.slice(1, -1);
-  }
-
-  // 布尔值
-  if (trimmed === 'true') return true;
-  if (trimmed === 'false') return false;
-
-  // 数字（支持整数和小数）
-  const num = Number(trimmed);
-  if (!isNaN(num) && /^-?\d+(\.\d+)?$/.test(trimmed)) {
-    // 如果是小数，返回浮点数；如果是整数，返回整数
-    return trimmed.includes('.') ? num : Math.floor(num);
-  }
-
-  // 字符串
-  return trimmed;
+  return document.toJS({ maxAliasCount: 100 }) as ParsedSkillFrontmatter;
 }
 
 // ============== Frontmatter 规范化 ==============

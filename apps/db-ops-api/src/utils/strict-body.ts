@@ -10,17 +10,26 @@
  *   if (check.error) return reply.code(400).send(check.error);
  *   const { username, password, email } = check.body;
  *
- * warnUnknown: 非阻塞模式 — 只打印 warning 日志，不拒绝请求。
- *   用于透传到 service 层的端点，监控前端是否发送了多余字段。
+ * warnUnknown: 对象中的未知字段只打印 warning；非对象返回错误，由调用方响应 400。
+ *   在透传到 service 层前调用，避免非法请求体触发业务代码异常。
  */
 
 const WARNED = new Set<string>(); // deduplicate warnings
 
+function isPlainObject(body: unknown): body is Record<string, unknown> {
+  if (body === null || typeof body !== 'object') return false;
+  const prototype = Object.getPrototypeOf(body);
+  return prototype === Object.prototype || prototype === null;
+}
+
+const INVALID_BODY = '请求体必须是 JSON 对象，不能为 null、数组或原始值；请提供对象请求体';
+
 export function warnUnknown(
-  body: Record<string, unknown>,
+  body: unknown,
   allowedFields: string[],
   endpoint: string
-): void {
+): { error: string } | null {
+  if (!isPlainObject(body)) return { error: INVALID_BODY };
   const unknown = Object.keys(body).filter(k => !allowedFields.includes(k));
   if (unknown.length > 0) {
     const key = `${endpoint}:${unknown.sort().join(',')}`;
@@ -29,6 +38,7 @@ export function warnUnknown(
       console.warn(`[strict-body] ${endpoint} 收到未知字段: ${unknown.join(', ')}。允许的字段: ${allowedFields.join(', ')}`);
     }
   }
+  return null;
 }
 
 export type StrictBodyResult<T extends Record<string, unknown>> = {
@@ -48,11 +58,12 @@ export type StrictBodyResult<T extends Record<string, unknown>> = {
  * @param guidance - 可选：特定字段的引导说明，如 { role: '角色分配请使用 POST /api/v1/rbac/users/{userId}/roles' }
  */
 export function strictBody<T extends Record<string, unknown>>(
-  rawBody: Record<string, unknown>,
+  rawBody: unknown,
   allowedFields: string[],
   endpoint: string,
   guidance?: Record<string, string>
 ): StrictBodyResult<T> {
+  if (!isPlainObject(rawBody)) return { body: null, error: { error: INVALID_BODY } };
   const unknown = Object.keys(rawBody).filter(k => !allowedFields.includes(k));
   if (unknown.length > 0) {
     const guidedFields = unknown.filter(k => guidance?.[k]);
@@ -77,7 +88,7 @@ export function strictBody<T extends Record<string, unknown>>(
  * 用于不想重构解构语句的端点。
  */
 export function rejectUnknown(
-  body: Record<string, unknown>,
+  body: unknown,
   allowedFields: string[],
   endpoint: string,
   guidance?: Record<string, string>

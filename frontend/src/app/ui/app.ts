@@ -131,6 +131,15 @@ export class SlideApp extends LitElement {
   private toolStreamSyncTimer: number | null = null;
   private sidebarCloseTimer: number | null = null;
   private globalKeydownHandler: ((e: KeyboardEvent) => void) | null = null;
+  readonly popStateHandler = () => {
+    const params = new URLSearchParams(window.location.search);
+    const tab = params.get("tab");
+    const id = params.get("id");
+    const networkId = params.get("networkDeviceId") ?? (tab === "network-device-detail" ? id : null);
+    if (tab === "server-detail") (this as any).serverId = id ? Number(id) : undefined;
+    if (tab === "network-device-detail") (this as any).networkDeviceId = networkId ? Number(networkId) : undefined;
+    onPopStateInternal(this as unknown as Parameters<typeof onPopStateInternal>[0]);
+  };
   private readonly sessionExpiredHandler = () => {
     this.logout();
     this.lastError = '登录已超时，请重新登录。';
@@ -513,20 +522,8 @@ export class SlideApp extends LitElement {
           investigationId,
           editResourceId,
         });
-        window.history.pushState({}, "", url);
-      }
-    });
-
-    // Listen for popstate (browser back/forward)
-    window.addEventListener("popstate", () => {
-      const urlParams = new URLSearchParams(window.location.search);
-      const tabParam = urlParams.get("tab");
-      if (tabParam && ["dashboard", "instances-db", "instance-detail", "alerts", "reports", "metric-registry", "events", "llm-config", "docs", "health-center", "feedback", "servers", "server-detail", "network-devices", "network-device-detail"].includes(tabParam)) {
-        const id = urlParams.get("id");
-        const networkId = urlParams.get("networkDeviceId") ?? (tabParam === "network-device-detail" ? id : null);
-        if (tabParam === "server-detail") (this as any).serverId = id ? Number(id) : undefined;
-        if (tabParam === "network-device-detail") (this as any).networkDeviceId = networkId ? Number(networkId) : undefined;
-        this.setTab(tabParam as Tab, true);
+        // setTab already created this history entry; enrich it with view context.
+        window.history.replaceState({}, "", url);
       }
     });
 
