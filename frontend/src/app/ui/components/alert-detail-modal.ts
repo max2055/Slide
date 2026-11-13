@@ -130,7 +130,7 @@ export class AlertDetailModal extends LitElement {
                     <span><span style="color:var(--muted);">${new Date(r.created_at).toLocaleString('zh-CN')}</span>
                       ${r.status === 'completed' ? html`<span style="color:var(--ok);margin-left:var(--space-sm);">已完成</span>`
                         : r.status === 'failed' ? html`<span style="color:var(--danger);margin-left:var(--space-sm);">失败</span>`
-                        : html`<span style="color:var(--muted);margin-left:var(--space-sm);">${r.status}</span>`}
+                        : html`<span style="color:var(--muted);margin-left:var(--space-sm);">${this._analysisStatusLabel(r.status)}</span>`}
                     </span>
                     ${r.session_key ? html`<a href="#" @click=${(e: Event) => { e.preventDefault(); this._emit('alert-navigate-chat', { sessionKey: r.session_key }); }} style="color:var(--accent-text);font-size:var(--text-xs);">查看 →</a>` : ''}
                   </div>
@@ -141,6 +141,14 @@ export class AlertDetailModal extends LitElement {
         </div>
       </app-dialog>
     `;
+  }
+
+  private _analysisStatusLabel(status: string): string {
+    switch (status) {
+      case 'pending': return '等待中';
+      case 'running': return '进行中';
+      default: return '状态未知';
+    }
   }
 
   private _renderAnalysisSummary() {
