@@ -519,15 +519,40 @@ class LLMDatabaseService {
       return { success: false, error: '数据库未连接' };
     }
 
+    let connection: mysql.PoolConnection | undefined;
     try {
-      // 先取消所有默认
-      await pool.execute('UPDATE llm_providers SET is_default = FALSE');
-      // 设置新的默认
-      await pool.execute('UPDATE llm_providers SET is_default = TRUE WHERE name = ?', [name]);
+      connection = await pool.getConnection();
+      await connection.beginTransaction();
+      // 所有切换按相同主键顺序锁定集合，避免先锁各自目标再互相等待。
+      // 锁同时阻止目标在校验与提交之间被删除；全程只使用本连接。
+      await connection.execute('SELECT id FROM llm_providers ORDER BY id FOR UPDATE');
+      const [targets] = await connection.execute<mysql.RowDataPacket[]>(
+        'SELECT id FROM llm_providers WHERE name = ?', [name],
+      );
+      if (targets.length !== 1) throw new Error('提供商不存在');
+
+      await connection.execute('UPDATE llm_providers SET is_default = FALSE');
+      const [result] = await connection.execute<mysql.ResultSetHeader>(
+        // 复用已锁定主键，避免与按 name 删除时持有的二级索引锁形成逆序。
+        'UPDATE llm_providers SET is_default = TRUE WHERE id = ?', [targets[0].id],
+      );
+      if (result.affectedRows !== 1) throw new Error('提供商不存在');
+      await connection.commit();
       return { success: true };
     } catch (error: any) {
+      if (connection) {
+        try {
+          await connection.rollback();
+        } catch {
+          // 不把回滚状态未知的事务连接交回池，也不自动重放切换请求。
+          connection.destroy();
+          connection = undefined;
+        }
+      }
       console.error('设置默认提供商失败:', error);
       return { success: false, error: error.message };
+    } finally {
+      connection?.release();
     }
   }
 
