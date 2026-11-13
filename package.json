@@ -6,6 +6,7 @@
   "packageManager": "pnpm@11.19.0",
   "description": "Slide — AI-Powered Database Operations Platform",
   "scripts": {
+    "ci:source-policy": "node scripts/ci/check-source-policy.mjs",
     "dev": "pnpm --filter slide-api dev & pnpm --filter slide-frontend dev",
     "start": "pnpm --filter slide-api start",
     "build": "pnpm --filter slide-frontend build",
