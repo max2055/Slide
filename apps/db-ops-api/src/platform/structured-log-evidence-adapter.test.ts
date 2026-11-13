@@ -62,6 +62,13 @@ describe('evicted event windows', () => {
     adapter.record({ component: 'api', eventType: 'request', status: 'ok' });
     expect(adapter.query({ from: iso(5), to: iso(65) }).gaps).not.toContain('LOG_BUFFER_TRUNCATED');
     expect(adapter.query({ from: iso(65), to: iso(65) }).quality).toBe('good');
+    for (const minute of [66, 67]) {
+      now = origin + minute * 60000;
+      adapter.record({ component: 'api', eventType: 'request', status: 'ok' });
+    }
+    // New loss must not bridge back across the already expired interval.
+    expect(adapter.query({ from: iso(64), to: iso(64.5) }).gaps).not.toContain('LOG_BUFFER_TRUNCATED');
+    expect(adapter.query({ from: iso(65), to: iso(65) }).gaps).toContain('LOG_BUFFER_TRUNCATED');
   });
   it('shares the event-time boundary with failure verification', () => {
     let now = origin;
