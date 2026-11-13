@@ -2,6 +2,7 @@
  * LLM 配置数据库服务 - 重构版
  * 支持完整的 Provider 配置、用量追踪、成本统计
  */
+import { isSupportedApiFormat, API_FORMAT_MIGRATION_MESSAGE } from './llm/provider-api-format.js';
 import mysql from 'mysql2/promise';
 import type { LLMScene, SceneBinding } from './llm/scene-routing.js';
 import { dbConnection, encryptData, decryptData, needsEncryptionMigration } from './db-connection';
@@ -355,6 +356,9 @@ class LLMDatabaseService {
    * 配置提供商
    */
   async configureProvider(config: LLMProviderConfig): Promise<{ success: boolean; error?: string; providerId?: number }> {
+    if (config.apiFormat !== undefined && config.apiFormat !== '' && !isSupportedApiFormat(config.apiFormat)) {
+      return { success: false, error: API_FORMAT_MIGRATION_MESSAGE };
+    }
     const invalid = () => ({ success: false, error: 'LLM_MODEL_PARAMETERS_INVALID：上下文和输出必须为正整数，且 Max Tokens + 1024 必须小于上下文窗口' });
     const positive = (n: unknown) => Number.isSafeInteger(n) && Number(n) > 0;
     if ((config.contextWindow !== undefined && (!positive(config.contextWindow) || config.contextWindow <= 1025))
