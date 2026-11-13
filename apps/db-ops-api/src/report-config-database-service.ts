@@ -3,6 +3,7 @@
  */
 import mysql from 'mysql2/promise';
 import { dbConnection } from './db-connection';
+import { assertReportCron } from './report-cron.js';
 
 export interface ReportConfig {
   id: number;
@@ -124,6 +125,7 @@ class ReportConfigDatabaseService {
    * 创建报表配置
    */
   async createConfig(data: CreateReportConfigData): Promise<ReportConfig> {
+    assertReportCron(data.cron);
     const pool = this.getPool();
     if (!pool) {
       throw new Error('数据库未连接');
@@ -157,6 +159,7 @@ class ReportConfigDatabaseService {
    * 更新报表配置
    */
   async updateConfig(id: number, data: UpdateReportConfigData): Promise<boolean> {
+    if (data.cron !== undefined) assertReportCron(data.cron);
     const pool = this.getPool();
     if (!pool) {
       throw new Error('数据库未连接');
@@ -165,6 +168,8 @@ class ReportConfigDatabaseService {
     try {
       const current = await this.getConfigById(id);
       if (!current) return false;
+      // Historical bad rows may still be disabled or repaired; never re-enable one.
+      if (data.enabled) assertReportCron(data.cron ?? current.cron);
       this.assertSingleTarget(
         data.instance_id === undefined ? current.instance_id : data.instance_id,
         data.server_id === undefined ? current.server_id : data.server_id,
@@ -258,7 +263,7 @@ class ReportConfigDatabaseService {
   async getEnabledConfigs(): Promise<ReportConfig[]> {
     const pool = this.getPool();
     if (!pool) {
-      return [];
+      throw new Error('REPORT_SCHEDULE_STORE_UNAVAILABLE');
     }
 
     try {
@@ -272,7 +277,7 @@ class ReportConfigDatabaseService {
       return rows.map((row: any) => ({ ...row, notification_channel_ids: this.channelIds(row.notification_channel_ids) })) as ReportConfig[];
     } catch (error) {
       console.error('查询已启用报表配置失败:', error);
-      return [];
+      throw error;
     }
   }
 }

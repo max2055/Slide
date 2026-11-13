@@ -99,10 +99,15 @@ describe('MAX-176 sessions and skills', () => {
   });
   it('hides management without permission and does not mutate', async () => {
     localStorage.setItem('permissions', '["ai:view"]');
-    const request = vi.spyOn(apiClient, 'fetchResponseWithAuth').mockResolvedValue(response({ skills: [skill()] }));
+    // #415 now loads the authorized extension list for ai:view as well.
+    const request = vi.spyOn(apiClient, 'fetchResponseWithAuth').mockImplementation(async url =>
+      response(String(url).includes('/agent/extensions') ? { extensions: [] } : { skills: [skill()] }));
     const element = new AgentSkillsPage(); document.body.append(element); await settled(element);
     expect(element.shadowRoot!.querySelector('tbody')!.textContent).toContain('需配置管理权限');
-    await element.toggleSkill(skill()); expect(request).toHaveBeenCalledTimes(1);
+    expect(request).toHaveBeenCalledTimes(2);
+    expect(request.mock.calls.map(([url]) => { const parsed = new URL(url, window.location.origin); return parsed.pathname + parsed.search; })).toContain('/api/agent/extensions?kind=skill');
+    await element.toggleSkill(skill()); expect(request).toHaveBeenCalledTimes(2);
+    expect(request.mock.calls.every(([, options]) => (options?.method ?? 'GET') === 'GET')).toBe(true);
     localStorage.removeItem('permissions');
   });
 });

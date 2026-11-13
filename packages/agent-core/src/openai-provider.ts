@@ -18,18 +18,13 @@ import type {
   StreamCallbacks,
 } from "./types.js";
 
-const THINK_OPEN_TAG_PREFIXES = [
-  '<', '<t', '<th', '<thi', '<thin', '<think', '<thinki', '<thinkin', '<thinking',
-];
-
 /** Keep only a suffix that can still become a split <think> opening tag. */
 export function retainPartialThinkOpenTag(value: string): string {
-  const lower = value.toLowerCase();
-  for (let length = Math.min(THINK_OPEN_TAG_PREFIXES.at(-1)!.length, value.length); length > 0; length -= 1) {
-    const suffix = lower.slice(-length);
-    if (THINK_OPEN_TAG_PREFIXES.includes(suffix)) return value.slice(-length);
-  }
-  return '';
+  const start = value.lastIndexOf('<');
+  if (start === -1) return '';
+  const suffix = value.slice(start);
+  return /^<\s*(?:t|th|thi|thin|think|thinki|thinkin|thinking)?$/i.test(suffix)
+    || /^<\s*think(?:ing)?\s*$/i.test(suffix) ? suffix : '';
 }
 
 export interface NormalizedProviderError {
@@ -220,7 +215,7 @@ export class OpenAIProvider implements LLMProvider {
           if (rc && callbacks.onThinkingDelta) await callbacks.onThinkingDelta(rc);
         }
 
-        let deltaContent = delta?.content || '';
+        const deltaContent = delta?.content || '';
         if (!deltaContent) {
           // Still check tool calls even without content
           if (delta?.tool_calls) {
@@ -242,60 +237,32 @@ export class OpenAIProvider implements LLMProvider {
         // Accumulate into a buffer so we can detect partial tags across chunks.
         thinkTagBuffer += deltaContent;
 
-        if (inThinkTag) {
-          const closeIdx = thinkTagBuffer.search(THINK_CLOSE);
-          if (closeIdx !== -1) {
-            // Found closing tag — extract reasoning text, keep remaining content
-            const reasoningText = thinkTagBuffer.slice(0, closeIdx);
+        // Always parse the accumulated buffer, including any previous tag prefix.
+        // Loop so adjacent reasoning blocks in one delta cannot reach the answer.
+        while (thinkTagBuffer) {
+          if (inThinkTag) {
+            const closeMatch = THINK_CLOSE.exec(thinkTagBuffer);
+            if (!closeMatch) break;
+            const reasoningText = thinkTagBuffer.slice(0, closeMatch.index);
             reasoningContent += reasoningText;
-            if (callbacks.onThinkingDelta) await callbacks.onThinkingDelta(reasoningText);
-            thinkTagBuffer = thinkTagBuffer.slice(closeIdx + (thinkTagBuffer.match(THINK_CLOSE)?.[0]?.length || 0));
+            if (reasoningText) await callbacks.onThinkingDelta?.(reasoningText);
+            thinkTagBuffer = thinkTagBuffer.slice(closeMatch.index + closeMatch[0].length);
             inThinkTag = false;
-            // « fall through » — process any remaining content after </think>
-            deltaContent = thinkTagBuffer;
-            thinkTagBuffer = "";
           } else {
-            // Still inside think tag, no close yet — buffer more
-            deltaContent = "";
-          }
-        }
-
-        if (!inThinkTag && deltaContent) {
-          const openMatch = THINK_OPEN.exec(deltaContent);
-          if (openMatch) {
-            // Content before <think> is real content
-            const beforeThink = deltaContent.slice(0, openMatch.index);
-            if (beforeThink.trim()) {
-              content += beforeThink;
-              await callbacks.onContentDelta(beforeThink);
-            }
-            // Everything after <think> goes to reasoning (may include close tag later)
-            thinkTagBuffer = deltaContent.slice(openMatch.index + openMatch[0].length);
-            inThinkTag = true;
-
-            // Check if close tag is in the same chunk
-            const closeIdx = thinkTagBuffer.search(THINK_CLOSE);
-            if (closeIdx !== -1) {
-              const reasoningText = thinkTagBuffer.slice(0, closeIdx);
-              reasoningContent += reasoningText;
-              if (callbacks.onThinkingDelta) await callbacks.onThinkingDelta(reasoningText);
-              const afterClose = thinkTagBuffer.slice(closeIdx + (thinkTagBuffer.match(THINK_CLOSE)?.[0]?.length || 0));
-              thinkTagBuffer = "";
-              inThinkTag = false;
-              if (afterClose.trim()) {
-                content += afterClose;
-                await callbacks.onContentDelta(afterClose);
-              }
-            }
-          } else {
-            // Regular content, no <think> tags
-            const partial = retainPartialThinkOpenTag(thinkTagBuffer);
-            const safeContent = partial ? thinkTagBuffer.slice(0, -partial.length) : thinkTagBuffer;
+            const openMatch = THINK_OPEN.exec(thinkTagBuffer);
+            const partial = openMatch ? '' : retainPartialThinkOpenTag(thinkTagBuffer);
+            const end = openMatch ? openMatch.index : thinkTagBuffer.length - partial.length;
+            const safeContent = thinkTagBuffer.slice(0, end);
             if (safeContent) {
               content += safeContent;
               await callbacks.onContentDelta(safeContent);
             }
-            thinkTagBuffer = partial;
+            if (!openMatch) {
+              thinkTagBuffer = partial;
+              break;
+            }
+            thinkTagBuffer = thinkTagBuffer.slice(openMatch.index + openMatch[0].length);
+            inThinkTag = true;
           }
         }
 
@@ -313,10 +280,15 @@ export class OpenAIProvider implements LLMProvider {
         }
       }
 
-      // Flush any trailing think tag content as reasoning
-      if (thinkTagBuffer.trim()) {
-        reasoningContent += thinkTagBuffer;
-        await callbacks.onThinkingDelta?.(thinkTagBuffer);
+      // An unfinished opening tag outside reasoning is ordinary answer text.
+      if (thinkTagBuffer) {
+        if (inThinkTag) {
+          reasoningContent += thinkTagBuffer;
+          await callbacks.onThinkingDelta?.(thinkTagBuffer);
+        } else {
+          content += thinkTagBuffer;
+          await callbacks.onContentDelta(thinkTagBuffer);
+        }
       }
 
       const parsedToolCalls = Object.values(toolCalls).map((tc) => ({

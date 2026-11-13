@@ -10,6 +10,7 @@
  * is preserved by provider name, so a same-environment restore keeps working
  * credentials, while a cross-environment restore must re-enter them.
  */
+import { SUPPORTED_API_FORMATS, isSupportedApiFormat, API_FORMAT_MIGRATION_MESSAGE, type SupportedApiFormat } from './provider-api-format.js';
 import { createHash } from 'node:crypto';
 import type { LLMProvider, ModelInfo } from '../llm-database-service.js';
 import { LLM_SCENES, LLMConfigurationError, selectSceneModel, type LLMScene, type SceneBinding } from './scene-routing.js';
@@ -18,7 +19,8 @@ export const PROVIDER_CONFIG_BACKUP_FORMAT = 'slide.llm-provider-config';
 export const PROVIDER_CONFIG_BACKUP_VERSION = 1;
 
 export type DeploymentType = 'local' | 'cloud' | 'api';
-export type ApiFormat = 'openai-completions' | 'anthropic-messages' | 'google-generative-ai';
+// The legacy value remains readable for lossless backup of historical records.
+export type ApiFormat = SupportedApiFormat | 'google-generative-ai';
 export type RedactionReason = 'url_userinfo' | 'url_query_credential';
 
 export class ProviderConfigBackupError extends Error {
@@ -107,7 +109,7 @@ export interface ProviderConfigBackupDocument {
 }
 
 const DEPLOYMENT_TYPES: DeploymentType[] = ['local', 'cloud', 'api'];
-const API_FORMATS: ApiFormat[] = ['openai-completions', 'anthropic-messages', 'google-generative-ai'];
+const API_FORMATS: ApiFormat[] = [...SUPPORTED_API_FORMATS, 'google-generative-ai'];
 const SENSITIVE_NAME_SEGMENTS = new Set([
   'key', 'token', 'secret', 'password', 'passwd', 'auth', 'authorization',
   'credential', 'credentials', 'signature', 'sig',
@@ -611,6 +613,9 @@ export function buildRestorePlan(
   };
   for (const entry of document.providers) {
     const current = currentByName.get(entry.name);
+    if (entry.api_format && !isSupportedApiFormat(entry.api_format) && current?.api_format !== entry.api_format) {
+      throw new ProviderConfigBackupError('LLM_API_FORMAT_UNSUPPORTED', API_FORMAT_MIGRATION_MESSAGE);
+    }
     if (!current) {
       plan.create.push(entry.name);
     } else {
@@ -708,6 +713,10 @@ export function verifyRestoredConfiguration(
       continue;
     }
     present++;
+    if (entry.api_format && !isSupportedApiFormat(entry.api_format)) {
+      issues.push({ code: 'LLM_API_FORMAT_UNSUPPORTED', severity: 'warning', provider: entry.name,
+        message: API_FORMAT_MIGRATION_MESSAGE });
+    }
     const changed = changedProviderFields(current, entry);
     if (changed.length) {
       issues.push({ code: 'PROVIDER_FIELD_MISMATCH', severity: 'error', provider: entry.name, fields: changed,
