@@ -142,27 +142,75 @@ it('restart retains unknown reservation, attempt count and session budget', asyn
   await store.transaction(s => { const j = s.jobs[0]; j.state = 'running'; j.owner = { pid: 2147483647, host: os.hostname(), token: 'crashed' }; });
   const restarted = make(fake(inputs => inputs.map(i => candidate(i))));
   const recovered = (await restarted.run(snapshot(input)))!;
-  expect(recovered.state).toBe('budget_exhausted'); expect(recovered.attempts).toBe(1); expect(recovered.reservedTokens).toBe(old.reservedTokens);
+  expect(recovered.state).toBe('failed'); expect(recovered.errorCode).toBe('MEMORY_REQUEST_UNRESOLVED'); expect(recovered.attempts).toBe(1); expect(recovered.reservedTokens).toBe(old.reservedTokens);
   const budget = await store.transaction(s => s.budgets[scopeKey(scope)]); expect(budget.attempts).toBe(1); expect(budget.tokens).toBe(old.reservedTokens);
 });
-it('recovers a crash after reservation with a remaining attempt; settlement is complete', async () => {
+it('MAX-465: crash reservation blocks replay even with a remaining attempt', async () => {
   const input = source('I prefer blue.'); const p = make(fake(inputs => inputs.map(i => candidate(i)))); await p.run(snapshot(input));
   await store.transaction(s => { const j = s.jobs[0]; s.records = []; j.state = 'running'; j.attempts = 1; j.usage = {}; j.reservedTokens = 3000; j.requests = [{ attempt: 1, usage: {}, reservation: 3000, outcome: 'pending' }]; j.owner = { pid: 2147483647, host: os.hostname(), token: 'crashed' }; s.budgets[scopeKey(scope)] = { attempts: 1, tokens: 3000 }; });
   const recovered = (await make(fake(inputs => inputs.map(i => candidate(i)))).run(snapshot(input)))!;
-  expect(recovered.state).toBe('succeeded'); expect(recovered.attempts).toBe(2); expect(recovered.reservedTokens).toBe(3000); expect(recovered.usage).toMatchObject({ prompt_tokens: 20, completion_tokens: 10 });
-  expect((await store.transaction(s => s.budgets[scopeKey(scope)])).tokens).toBe(3030);
+  expect(recovered.state).toBe('failed'); expect(recovered.attempts).toBe(1); expect(recovered.reservedTokens).toBe(3000); expect(recovered.usage).toEqual({});
+  expect((await store.transaction(s => s.budgets[scopeKey(scope)])).tokens).toBe(3000);
 });
-it('cancellation, deadline and shutdown have terminal records and drain provider ownership', async () => {
+// MAX-437 / PR #890 CI: filesystem work may exhaust a deadline before extract.
+// Test each in-flight terminal path independently, after observing admission.
+it.each(['deadline', 'cancellation', 'shutdown'] as const)('%s has a terminal record and drains provider ownership after admission', async mode => {
+  vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
+  let entered!: () => void;
+  const ready = new Promise<void>(resolve => { entered = resolve; });
   const aborting: MemoryExtractor = { extract: vi.fn(async (_inputs, options) => {
+    entered();
     await new Promise<void>((_resolve, reject) => { if (options.signal.aborted) reject(new Error('aborted')); else options.signal.addEventListener('abort', () => reject(new Error('aborted')), { once: true }); });
     return { candidates: [], usage: {} };
   }) };
-  const deadline = make(aborting, true, { deadlineMs: 30 }); expect((await deadline.run(snapshot(source('I prefer blue.', 'timeout'))))?.state).toBe('timed_out');
-  const stop = make(aborting); const controller = new AbortController(); const pending = stop.run(snapshot(source('I prefer blue.', 'stop')), controller.signal);
-  await vi.waitFor(() => expect(aborting.extract).toHaveBeenCalledTimes(2)); controller.abort(); expect((await pending)?.state).toBe('cancelled');
-  const shutdown = make(aborting); const active = shutdown.run(snapshot(source('I prefer blue.', 'shutdown')));
-  await vi.waitFor(() => expect(aborting.extract).toHaveBeenCalledTimes(3)); await shutdown.close(); expect((await active)?.state).toBe('cancelled');
-  const jobs = await store.transaction(s => s.jobs); expect(jobs.every(j => !j.owner && j.reservedTokens > 0)).toBe(true);
+  const pipeline = make(aborting, true, { deadlineMs: 30 });
+  const controller = new AbortController();
+  try {
+    const pending = pipeline.run(snapshot(source('I prefer blue.')), controller.signal);
+    await Promise.race([ready, pending.then(() => { throw new Error('Expected provider admission before completion'); })]);
+    expect(aborting.extract).toHaveBeenCalledTimes(1);
+    if (mode === 'deadline') await vi.advanceTimersByTimeAsync(30);
+    else if (mode === 'cancellation') controller.abort();
+    else await pipeline.close();
+    expect((await pending)?.state).toBe(mode === 'deadline' ? 'timed_out' : 'cancelled');
+    await pipeline.close();
+    const jobs = await store.transaction(s => s.jobs);
+    expect(jobs).toHaveLength(1);
+    expect(jobs[0].owner).toBeUndefined();
+    expect(jobs[0].attempts).toBe(1);
+    expect(jobs[0].reservedTokens).toBeGreaterThan(0);
+  } finally {
+    try { await pipeline.close(); }
+    finally { vi.useRealTimers(); }
+  }
+});
+it('MAX-437: deadline before admission has no provider attempt or reservation', async () => {
+  vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
+  const extractor = fake(inputs => inputs.map(input => candidate(input)));
+  let entered!: () => void;
+  let release!: () => void;
+  const ready = new Promise<void>(resolve => { entered = resolve; });
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  const pipeline = new MemoryPipeline(store, extractor, async (_scope, ids) => {
+    entered(); await gate;
+    return ids.flatMap(id => live.get(id) ? [live.get(id)!] : []);
+  }, true, { deadlineMs: 30 });
+  pipelines.push(pipeline);
+  try {
+    const pending = pipeline.run(snapshot(source('I prefer blue.')));
+    await Promise.race([ready, pending.then(() => { throw new Error('Expected source read before completion'); })]);
+    await vi.advanceTimersByTimeAsync(30);
+    release();
+    const job = await pending;
+    expect(job).toMatchObject({ state: 'timed_out', attempts: 0, reservedTokens: 0, requests: [] });
+    expect(job?.owner).toBeUndefined();
+    expect(extractor.extract).not.toHaveBeenCalled();
+    expect(await store.list(scope)).toEqual([]);
+  } finally {
+    release();
+    try { await pipeline.close(); }
+    finally { vi.useRealTimers(); }
+  }
 });
 it('expired restart does not clear deadline or incur another paid attempt', async () => {
   const input = source('I prefer blue.'); const e = fake(inputs => inputs.map(i => candidate(i))); const p = make(e); await p.run(snapshot(input));
@@ -192,7 +240,7 @@ it('provider extraction has zero tools, bounded options, data isolation and full
   expect(chat.mock.calls[0][1]).toEqual([]); expect(chat.mock.calls[0][2]).toMatchObject({ maxTokens: 2048, temperature: 0 });
 });
 
-it('a real process exits inside extraction; restart recovers persisted job ownership without refunding unknown usage', async () => {
+it('MAX-465: real process exit retains unknown usage and forbids restart replay', async () => {
   const input = source('I prefer blue.');
   const corePath = fileURLToPath(new URL('../index.ts', import.meta.url));
   const loader = fileURLToPath(new URL('../../../../apps/db-ops-api/node_modules/tsx/dist/loader.mjs', import.meta.url));
@@ -206,8 +254,8 @@ await pipeline.run({ scope, boundary: input.id, completed: true, messages: [{...
   catch (error) { expect((error as any).status).toBe(77); }
   const before = await store.transaction(s => s.jobs[0]); expect(before.state).toBe('running'); expect(before.attempts).toBe(1); expect(before.reservedTokens).toBeGreaterThan(0);
   const p = make(fake(inputs => inputs.map(i => candidate(i)))); const result = await p.run(snapshot(input));
-  expect(result?.state).toBe('succeeded'); expect(result?.attempts).toBe(2); expect(result?.reservedTokens).toBe(before.reservedTokens);
-  expect((await store.transaction(s => s.jobs[0])).owner).toBeUndefined(); expect(await p.list(scope)).toHaveLength(1);
+  expect(result?.state).toBe('failed'); expect(result?.attempts).toBe(1); expect(result?.reservedTokens).toBe(before.reservedTokens);
+  expect((await store.transaction(s => s.jobs[0])).owner).toBeUndefined(); expect(await p.list(scope)).toEqual([]);
 });
 it('late output after deadline is fenced from memory, settled and drained', async () => {
   let release!: () => void;
@@ -252,4 +300,55 @@ it('pipeline list with unchanged sources, including shared owners, performs no w
   expect(await p.list({ ...scope, actorId: 'B' })).toHaveLength(1);
   expect(transaction).not.toHaveBeenCalled();
   expect((await fs.stat(store.file)).mtimeMs).toBe(before.mtimeMs);
+});
+
+// MAX-465 / #449: only adapter-certified preparation failures are refundable.
+it.each(['configuration', 'context'])('refunds %s failure before chat, then safely retries without resetting measured usage', async mode => {
+  const input = source('I prefer blue.');
+  const chat = vi.fn(async () => ({ content: '[]', usage: { prompt_tokens: 20, completion_tokens: 10 }, finishReason: 'stop', hasToolCalls: false, toolCalls: [] }));
+  let broken = true;
+  const provider = { getDefaultModel: () => 'fake', chat,
+    countPromptTokens: () => broken && mode === 'context' ? 100000 : 100 } as unknown as LLMProvider;
+  const p = make(new ProviderMemoryExtractor(async () => {
+    if (broken && mode === 'configuration') throw new Error('PROVIDER_CONFIG_UNAVAILABLE');
+    return provider;
+  }));
+  const first = await p.run(snapshot(input));
+  expect(first).toMatchObject({ state: 'failed', attempts: 0, reservedTokens: 0, requests: [{ outcome: 'not_sent', reservation: 0 }] });
+  expect(chat).not.toHaveBeenCalled();
+  expect(await store.transaction(s => s.budgets[scopeKey(scope)])).toEqual({ attempts: 0, tokens: 0 });
+  broken = false;
+  expect(await p.retry(snapshot(input))).toMatchObject({ retried: true, state: 'succeeded' });
+  const job = await store.transaction(s => s.jobs[0]);
+  expect(job).toMatchObject({ attempts: 1, reservedTokens: 0, usage: { prompt_tokens: 20, completion_tokens: 10 } });
+  expect(job.requests.map(r => r.attempt)).toEqual([1, 2]);
+  expect(await store.transaction(s => s.budgets[scopeKey(scope)])).toEqual({ attempts: 1, tokens: 30 });
+});
+it.each(['network', 'partial_usage'])('retains %s reservation and forbids automatic, explicit and restarted replay', async mode => {
+  const input = source('I prefer blue.');
+  const chat = vi.fn(async () => {
+    if (mode === 'network') throw new Error('MEMORY_CONTEXT_LIMIT'); // Message alone cannot prove non-dispatch.
+    return { content: 'invalid JSON', usage: { prompt_tokens: 20 }, finishReason: 'stop', hasToolCalls: false, toolCalls: [] };
+  });
+  const e = new ProviderMemoryExtractor(async () => ({ getDefaultModel: () => 'fake', chat } as unknown as LLMProvider));
+  const p = make(e);
+  const job = await p.run(snapshot(input));
+  expect(job).toMatchObject({ state: 'failed', attempts: 1 }); expect(job!.reservedTokens).toBeGreaterThan(0);
+  expect(await p.retry(snapshot(input))).toMatchObject({ retried: false, reason: 'unknown_request' });
+  expect(await make(e).retry(snapshot(input))).toMatchObject({ retried: false, reason: 'unknown_request' });
+  expect(chat).toHaveBeenCalledTimes(1);
+  expect(await store.transaction(s => s.budgets[scopeKey(scope)])).toEqual({ attempts: 1, tokens: job!.reservedTokens });
+});
+it('refunds proven late preparation failure after deadline without refunding other session usage', async () => {
+  const input = source('I prefer blue.');
+  await make(fake(() => [])).run(snapshot(input, 'measured'));
+  let reject!: (error: Error) => void;
+  let entered!: () => void; const ready = new Promise<void>(r => { entered = r; });
+  const p = make(new ProviderMemoryExtractor(() => { entered(); return new Promise((_resolve, r) => { reject = r; }); }));
+  const controller = new AbortController(); const pending = p.run(snapshot(input), controller.signal);
+  await ready; controller.abort(new Error('MEMORY_DEADLINE'));
+  expect((await pending)?.state).toBe('timed_out');
+  reject(new Error('PROVIDER_CONFIG_UNAVAILABLE')); await p.close();
+  expect(await store.transaction(s => s.jobs.find(j => j.boundary === input.id))).toMatchObject({ state: 'timed_out', attempts: 0, reservedTokens: 0 });
+  expect(await store.transaction(s => s.budgets[scopeKey(scope)])).toEqual({ attempts: 1, tokens: 30 });
 });

@@ -1,5 +1,11 @@
 import { expect, test } from '@playwright/test';
 
+// Explicit authorized fixture session; restricted settings never rely on cache.
+test.beforeEach(async ({ page }) => {
+  await page.addInitScript(() => localStorage.setItem('token', 'settings-fixture-token'));
+  await page.route('**/api/auth/permissions', route => route.fulfill({ json: ['llm:view'] }));
+});
+
 /**
  * Provider saves are persisted before they reach the runtime. The backend
  * responses here are fixtures: they exercise the real page, not a real provider.
