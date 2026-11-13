@@ -46,13 +46,16 @@ export function registerAnalysisDispatchHandler(registry: JobRegistry, deps: Ana
         },
       });
       const result = await (targetId === undefined ? invoke() : instanceAccessLifecycle.track(targetId, invoke));
+      // Tool execution may report the write error as an ordinary engine result.
+      if (completionWriteFailed) throw new Error('ANALYSIS_COMPLETION_WRITE_UNCONFIRMED');
       const known = result.stopReason === 'completed' && !result.error;
       if (known) await deps.store.responded(owned);
       const settled = await deps.store.fail(owned, known ? 'ANALYSIS_ENVELOPE_NOT_SAVED' : 'ANALYSIS_PROVIDER_RESULT_UNKNOWN', known);
       if (!settled) throw new Error('ANALYSIS_UNSENT_RETRY');
     } catch (error) {
       // Expired owners cannot write. The wired scan/new claimant reconciles their intent.
-      const reason = error instanceof Error && /^ANALYSIS_[A-Z_]+$/.test(error.message) ? error.message : 'ANALYSIS_EXECUTION_INTERRUPTED';
+      const reason = completionWriteFailed ? 'ANALYSIS_COMPLETION_WRITE_UNCONFIRMED'
+        : error instanceof Error && /^ANALYSIS_[A-Z_]+$/.test(error.message) ? error.message : 'ANALYSIS_EXECUTION_INTERRUPTED';
       await deps.store.fail(owned, reason, false, /^ANALYSIS_(AUTHORITY_REVOKED|CONFIGURATION_CHANGED|SUBJECT_DELETED|AUTOMATION_DISABLED)$/.test(reason)).catch(() => {});
       throw error;
     }

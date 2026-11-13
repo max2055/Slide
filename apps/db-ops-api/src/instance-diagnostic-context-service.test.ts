@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
+import Fastify from 'fastify';
+import { registerInstanceHostRoutes } from './instance-host-routes.js';
 import type { ActorContext } from './auth/actor-context.js';
 import {
+  EVIDENCE_PACK_MAX_BYTES,
   InstanceDiagnosticContextService,
   SafeInstanceMetadataProvider,
   instanceDiagnosticContextService,
@@ -468,4 +471,140 @@ it('rejects the full instance pack if a section swallows a read-time revocation'
     live = { ...actor, instanceScopes: {} }; throw new Error('revoked');
   } }), { reloadActor: async () => live });
   await expect(service.collect(actor, 7)).rejects.toThrow('POLICY_FORBIDDEN');
+});
+
+describe('MAX-402 host diagnostics budget', () => {
+  const collectedAt = '2026-08-10T00:00:00.000Z';
+  function diagnostics(serverId: number) {
+    const section = (source: string) => ({
+      source: [source], collectedAt, expiresAt: '2026-08-10T00:05:00.000Z',
+      validForMs: 300000, quality: 'good' as const, truncated: false, items: [],
+    });
+    const systemLogs = {
+      ...section('journald'),
+      items: Array.from({ length: 200 }, (_, id) => ({
+        timestamp: collectedAt, severity: 'warning', unit: null, identifier: null,
+        message: String(id) + '数据库警告'.repeat(27),
+      })),
+    };
+    const sections = {
+      services: section('systemctl'), listeningPorts: section('ss'),
+      topProcesses: section('ps'), systemLogs, interfaceErrors: section('/proc/net/dev'),
+    };
+    return {
+      schemaVersion: 1 as const, serverId, osType: 'rhel', collectedAt,
+      expiresAt: systemLogs.expiresAt, validForMs: 300000, quality: 'good' as const,
+      truncated: false, sections, serviceStatus: sections.services,
+      listeningPorts: sections.listeningPorts, topProcesses: sections.topProcesses,
+      recentSystemLogs: systemLogs, interfaceErrors: sections.interfaceErrors, gaps: [],
+    };
+  }
+
+  it('retains database facts and all 16 hosts when duplicated diagnostic logs exceed the default budget', async () => {
+    const base = dependencies();
+    const host = (await base.listHosts(actor, 7))[0];
+    const original = diagnostics(20);
+    const service = new InstanceDiagnosticContextService(dependencies({
+      listHosts: async () => Array.from({ length: 16 }, (_, i) => ({ ...host, serverId: i + 20 })),
+      collectServerDiagnostics: async id => id === 20 ? original : diagnostics(id),
+    }));
+    const result = await service.collect(actor, 7, new Date(collectedAt));
+    expect(Buffer.byteLength(JSON.stringify(result))).toBeLessThanOrEqual(EVIDENCE_PACK_MAX_BYTES);
+    expect(result.database.instance).toMatchObject({ id: 7, name: 'orders' });
+    expect(result.database.realtimeMetrics).toMatchObject({ qps: 120 });
+    expect(result.database.alerts).toHaveLength(1);
+    expect(result.database.logs).toHaveLength(1);
+    expect(result.hosts).toHaveLength(16);
+    for (const host of result.hosts) {
+      const diag = host.diagnostics!;
+      expect(diag).toMatchObject({ serverId: host.server.serverId, collectedAt, quality: 'good' });
+      expect(diag.sections.systemLogs).toMatchObject({ source: ['journald'], collectedAt });
+      expect(diag.recentSystemLogs).toEqual(diag.sections.systemLogs);
+      if (diag.sections.systemLogs.items.length < 200) {
+        expect(diag.truncated).toBe(true);
+        expect(diag.sections.systemLogs.truncated).toBe(true);
+        expect(result.gaps).toContainEqual(expect.objectContaining({
+          scope: 'host', code: 'HOST_DIAGNOSTICS_TRUNCATED',
+          resource: { type: 'server', id: host.server.serverId },
+          source: expect.stringContaining('systemLogs'),
+        }));
+      }
+    }
+    expect(result.gaps).toContainEqual(expect.objectContaining({ code: 'EVIDENCE_PACK_TRUNCATED' }));
+    expect(original.sections.systemLogs.items).toHaveLength(200);
+    expect(original.truncated).toBe(false);
+    expect(await service.collect(actor, 7, new Date(collectedAt))).toEqual(result);
+  });
+
+  it('preserves host and database evidence on diagnostic failure and recovers on the next collection', async () => {
+    const collectServerDiagnostics = vi.fn()
+      .mockRejectedValueOnce(new Error('SSH_COMMAND_TIMEOUT'))
+      .mockResolvedValue(diagnostics(20));
+    const service = new InstanceDiagnosticContextService(dependencies({ collectServerDiagnostics }));
+    const failed = await service.collect(actor, 7);
+    expect(failed.hosts[0].evidence).not.toBeNull();
+    expect(failed.database.instance).toMatchObject({ id: 7 });
+    expect(failed.gaps).toContainEqual(expect.objectContaining({
+      scope: 'host', code: 'SSH_COMMAND_TIMEOUT', resource: { type: 'server', id: 20 },
+    }));
+    const recovered = await service.collect(actor, 7);
+    expect(recovered.hosts[0].diagnostics?.serverId).toBe(20);
+    expect(recovered.gaps.some(g => g.code === 'SSH_COMMAND_TIMEOUT')).toBe(false);
+  });
+
+  it('serializes bounded diagnostics through the real host-evidence HTTP route', async () => {
+    const app = Fastify();
+    const base = dependencies();
+    const host = (await base.listHosts(actor, 7))[0];
+    const evidenceService = new InstanceDiagnosticContextService(dependencies({
+      listHosts: async () => Array.from({ length: 16 }, (_, i) => ({ ...host, serverId: i + 20 })),
+      collectServerDiagnostics: async id => diagnostics(id),
+      collectHostEvidence: async serverId => ({
+        schemaVersion: 1, serverId, collectedAt, expiresAt: '2026-08-10T00:05:00.000Z',
+        quality: 'good', truncated: false,
+        metrics: { source: ['procfs'], collectedAt, quality: 'good', values: {} },
+        filesystems: { source: ['df'], collectedAt, quality: 'good', items: [] },
+        systemLogs: { source: ['journald'], collectedAt, quality: 'good', entries: [] },
+        physicalFiles: { source: ['stat'], collectedAt, quality: 'good', items: [] }, gaps: [],
+      }),
+    }));
+    await registerInstanceHostRoutes(app, {
+      verifyToken: async request => { (request as any).user = actor; },
+      service: {} as any, serverLookup: { getServerById: async () => null }, evidenceService,
+    });
+    try {
+      const response = await app.inject({ method: 'GET', url: '/api/database/instances/7/host-evidence' });
+      expect(response.statusCode).toBe(200);
+      expect(Buffer.byteLength(response.body)).toBeLessThanOrEqual(EVIDENCE_PACK_MAX_BYTES);
+      const result = response.json();
+      expect(result.hosts).toHaveLength(16);
+      expect(result.database.instance).toMatchObject({ id: 7 });
+      expect(result.database.realtimeMetrics).toMatchObject({ qps: 120 });
+      for (const host of result.hosts) {
+        expect(host.diagnostics).toMatchObject({ serverId: host.server.serverId });
+        expect(host.diagnostics.recentSystemLogs).toEqual(host.diagnostics.sections.systemLogs);
+      }
+    } finally {
+      await app.close();
+    }
+  });
+
+  it('summarizes unexpected section payloads without erasing database identity or hosts', async () => {
+    const service = new InstanceDiagnosticContextService(dependencies({
+      collectServerDiagnostics: async id => ({
+        ...diagnostics(id),
+        unexpected: Array.from({ length: 1000 }, () => 'x'.repeat(400)),
+      }),
+    }));
+    const result = await service.collect(actor, 7, new Date(collectedAt));
+    expect(Buffer.byteLength(JSON.stringify(result))).toBeLessThanOrEqual(EVIDENCE_PACK_MAX_BYTES);
+    expect(result.database.instance).toMatchObject({ id: 7 });
+    expect(result.database.realtimeMetrics).toMatchObject({ qps: 120 });
+    expect(result.hosts).toHaveLength(1);
+    expect(result.database.logs).toHaveLength(1);
+    expect(result.database.alerts).toHaveLength(1);
+    expect(result.hosts[0].diagnostics).toMatchObject({
+      truncated: true, sections: { systemLogs: { source: ['journald'], items: [] } },
+    });
+  });
 });

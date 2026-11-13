@@ -19,15 +19,30 @@ class DbConnectionManager {
   private pool: mysql.Pool | null = null;
   private config: DbConfig | null = null;
   private connected: boolean = false;
+  private initializing: Promise<boolean> | null = null;
 
   /**
    * 初始化数据库连接
    */
   async initialize(config?: DbConfig): Promise<boolean> {
-    if (this.pool) {
-      return this.connected;
+    if (this.pool && this.connected) {
+      return true;
+    }
+    if (this.initializing) {
+      return this.initializing;
     }
 
+    // Publish the in-flight attempt before the first await so concurrent
+    // callers share one pool instead of observing a half-open failure.
+    let attempt!: Promise<boolean>;
+    attempt = this.open(config).finally(() => {
+      if (this.initializing === attempt) this.initializing = null;
+    });
+    this.initializing = attempt;
+    return attempt;
+  }
+
+  private async open(config?: DbConfig): Promise<boolean> {
     const dbConfig = config || {
       host: process.env.DB_HOST || 'localhost',
       port: parseInt(process.env.DB_PORT || '3306'),
@@ -37,9 +52,17 @@ class DbConnectionManager {
     };
 
     this.config = dbConfig;
+    if (this.pool && !this.connected) {
+      const stale = this.pool;
+      this.pool = null;
+      await this.endPool(stale);
+    }
 
+    let created: mysql.Pool | null = null;
+    let held: mysql.PoolConnection | null = null;
+    let ready = false;
     try {
-      this.pool = mysql.createPool({
+      created = mysql.createPool({
         host: dbConfig.host,
         port: dbConfig.port,
         user: dbConfig.user,
@@ -55,29 +78,52 @@ class DbConnectionManager {
         timezone: 'Z',
         decimalNumbers: true,
       });
+      this.pool = created;
       // `timezone: 'Z'` controls mysql2 value conversion only. MySQL NOW()
       // still follows the server session timezone unless we set it explicitly.
       // Keep persisted schedule and lease timestamps on the same UTC timeline.
-      this.pool.on('connection', (connection) => {
+      created.on('connection', (connection) => {
         (connection as any).query("SET time_zone = '+00:00'", (error: unknown) => {
           if (error) console.error('Failed to set MySQL session timezone:', error);
         });
       });
 
-      // 测试连接
-      const connection = await this.pool.getConnection();
-      try {
-        await connection.query("SET time_zone = '+00:00'");
-        await connection.ping();
-      } finally { connection.release(); }
-
-      this.connected = true;
-      console.log(`✅ 系统数据库连接成功：${dbConfig.host}:${dbConfig.port}/${dbConfig.database}`);
-      return true;
+      held = await created.getConnection();
+      await held.query("SET time_zone = '+00:00'");
+      await held.ping();
+      ready = true;
     } catch (error) {
       console.error('❌ 系统数据库连接失败:', error);
-      this.connected = false;
-      return false;
+      ready = false;
+    } finally {
+      if (held) {
+        try {
+          held.release();
+        } catch (releaseError) {
+          console.error('释放初始化连接失败:', releaseError);
+          ready = false;
+        }
+      }
+      // End only the pool created by this attempt. A different live pool must
+      // stay open when this probe fails or its cleanup throws.
+      if (created && !(ready && this.pool === created)) {
+        if (this.pool === created) this.pool = null;
+        await this.endPool(created);
+      }
+    }
+
+    this.connected = ready && this.pool === created && created !== null;
+    if (this.connected) {
+      console.log(`✅ 系统数据库连接成功：${dbConfig.host}:${dbConfig.port}/${dbConfig.database}`);
+    }
+    return this.connected;
+  }
+
+  private async endPool(pool: mysql.Pool): Promise<void> {
+    try {
+      await pool.end();
+    } catch (error) {
+      console.error('关闭失败连接池失败:', error);
     }
   }
 
@@ -110,11 +156,11 @@ class DbConnectionManager {
    * 关闭连接
    */
   async close(): Promise<void> {
-    if (this.pool) {
-      await this.pool.end();
-      this.pool = null;
-      this.connected = false;
-    }
+    const pool = this.pool;
+    if (!pool) return;
+    this.pool = null;
+    this.connected = false;
+    await pool.end();
   }
 }
 

@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect, type Page } from '@playwright/test';
 import { randomUUID } from 'node:crypto';
 import { createRequire } from 'node:module';
 import { spawnSync } from 'node:child_process';
@@ -10,7 +10,23 @@ import { ToolRegistry, type LLMProvider } from '../../packages/agent-core/src/in
 import { DirectAdapter } from '../../apps/db-ops-api/src/adapter/direct-adapter';
 import { chatDatabaseService } from '../../apps/db-ops-api/src/chat-database-service';
 import { dbConnection } from '../../apps/db-ops-api/src/db-connection';
+import { canonicalStore } from '../../apps/db-ops-api/src/adapter/canonical-store';
 import { registerChatRoutes } from '../../apps/db-ops-api/src/chat-routes';
+
+// Stop browser timers/WS, then await route.fetch while its backend still lives.
+async function closeStreamingPage(page: Page) {
+  if (page.isClosed()) return;
+  try {
+    await page.evaluate(() => (window as any).live?.gateway.disconnect());
+    await page.goto('about:blank');
+    await page.unrouteAll({ behavior: 'wait' });
+  } finally { await page.close(); }
+}
+
+function combinedFailure(primary: unknown, cleanup: unknown[]) {
+  return cleanup.length ? new AggregateError([primary, ...cleanup].filter(e => e !== undefined),
+    'Live stream test or cleanup failed', { cause: primary ?? cleanup[0] }) : primary;
+}
 
 test('MAX-129 real MySQL → Adapter → WS → Gateway → reducer → UI, refresh and unique completion', async ({ page, browser }) => {
   const require = createRequire(new URL('../../apps/db-ops-api/package.json', import.meta.url));
@@ -31,17 +47,20 @@ test('MAX-129 real MySQL → Adapter → WS → Gateway → reducer → UI, refr
   let startupUsage: object | undefined;
   let failure: unknown; let cleanupFailure: unknown;
   const service = chatDatabaseService as any;
-  const originals = new Map<string, any>();
-  for (const method of ['addMessage', 'getMessages']) {
-    const original = service[method]; originals.set(method, original);
-    service[method] = async function (...args: any[]) {
-      const span = startupStart !== undefined && startupEnd === undefined
-        ? { stage: method, start: performance.now(), end: undefined as number | undefined } : undefined;
-      if (span) stages.push(span);
-      try { return await original.apply(this, args); }
-      finally { if (span) span.end = performance.now(); }
-    };
-  }
+  const originals: Array<() => void> = [];
+  const observeCalls = (target: any, methods: string[]) => {
+    for (const method of methods) {
+      const original = target[method]; originals.push(() => { target[method] = original; });
+      target[method] = async function (...args: any[]) {
+        const span = startupStart !== undefined && startupEnd === undefined
+          ? { stage: method, start: performance.now(), end: undefined as number | undefined } : undefined;
+        if (span) stages.push(span);
+        try { return await original.apply(this, args); }
+        finally { if (span) span.end = performance.now(); }
+      };
+    }
+  };
+  observeCalls(service, ['addMessage', 'getMessages', 'authorizeSession', 'getSessionMetadata']);
   try {
     await connection.query(`CREATE DATABASE \`${schema}\``);
     Object.assign(process.env, { DB_NAME: schema, AGENT_WS_PORT: '0', AGENT_WS_HOST: '127.0.0.1',
@@ -91,6 +110,9 @@ test('MAX-129 real MySQL → Adapter → WS → Gateway → reducer → UI, refr
       } };
     adapter = new DirectAdapter({ workspace, concurrentTools: true, tools, toolsForActor: () => tools, llmProvider: provider,
       actorContextService: { authenticateAccessToken: async () => actor, revalidateActor: async () => actor } });
+    observeCalls(canonicalStore, ['getPage', 'saveCheckpoint']);
+    observeCalls((adapter as any).contextBuilder, ['buildMessages']);
+    observeCalls((adapter as any).sessionManager, ['save']);
     await adapter.start(); const server = (adapter as any).wsServer;
     if (!server.address()) await once(server, 'listening'); const port = server.address().port;
     // Observe both modes on the same run, including actual server writer bytes.
@@ -216,41 +238,79 @@ test('MAX-129 real MySQL → Adapter → WS → Gateway → reducer → UI, refr
     await page.evaluate(() => (window as any).live.gateway.disconnect());
   } catch (error) {
     failure = error; cleanup.push({ stage: 'assertion-or-test-failed', at: performance.now() });
-    await writeFile(test.info().outputPath('MAX-129-failure-wire.json'), JSON.stringify(raw));
-    console.log('MAX-129 failure boundary', await page.evaluate(() => {
-      const live = (window as any).live;
-      return { lastError: live?.host.lastError, runId: live?.host.chatRunId,
-        phase: live?.host.chatMessageProjection?.phase, terminal: live?.host.chatMessageProjection?.terminal,
-        received: live?.received.slice(-8).map((r: any) => ({ type: r.event.type, run: r.event.run?.state, operations: r.event.projection?.operations.map((op: any) => op.type), terminal: r.event.snapshot?.terminal })) };
-    }));
-    console.log('MAX-129 server terminal', raw.legacy.filter((e: any) => ['complete','error','cancelled','run.snapshot'].includes(e.type)).map((e: any) => ({ type: e.type, state: e.run?.state, error: e.error, operations: e.projection?.operations.map((op: any) => op.type) })));
+    try {
+      await writeFile(test.info().outputPath('MAX-129-failure-wire.json'), JSON.stringify(raw));
+      console.log('MAX-129 failure boundary', await page.evaluate(() => {
+        const live = (window as any).live;
+        return { lastError: live?.host.lastError, runId: live?.host.chatRunId,
+          phase: live?.host.chatMessageProjection?.phase, terminal: live?.host.chatMessageProjection?.terminal };
+      }));
+    } catch (diagnosticError) { cleanupFailure = diagnosticError; }
     throw error;
   } finally {
-    try {
-      cleanup.push({ stage: 'cleanup-start', at: performance.now() });
-      releaseTool?.(); legacy?.close(); await adapter?.dispose();
-      cleanup.push({ stage: 'rest-close-start', at: performance.now() });
-      await rest?.close();
-      cleanup.push({ stage: 'rest-close-end', at: performance.now() });
-      await dbConnection.close();
-      await connection.query(`DROP DATABASE IF EXISTS \`${schema}\``); await connection.end(); await rm(workspace, { recursive: true, force: true });
-      cleanup.push({ stage: 'cleanup-end', at: performance.now() });
-    } catch (error) {
-      cleanupFailure = error;
-      throw error;
-    } finally {
-      for (const [method, original] of originals) service[method] = original;
-      // Persist even when an assertion, browser evaluation or cleanup fails.
-      try {
-        await writeFile(test.info().outputPath('MAX-279-startup-diagnostics.json'), JSON.stringify({
-          environment, loadAfter: loadavg(), startupStart, startupEnd,
-          startupMs: startupStart !== undefined && startupEnd !== undefined ? startupEnd - startupStart : null,
-          startupUsage, stages, cleanup, serverFrames: serverTimings.filter((s: any) => s.type === 'run.started' || s.phase === 'waiting_model'),
-          failed: failure !== undefined, cleanupFailed: cleanupFailure !== undefined,
-        }, null, 2));
-      } catch (error) {
-        throw new AggregateError([failure, cleanupFailure, error].filter(value => value !== undefined), 'Could not persist startup diagnostics');
+    const errors: unknown[] = cleanupFailure === undefined ? [] : [cleanupFailure];
+    const step = async (stage: string, task: () => Promise<unknown>) => {
+      cleanup.push({ stage: `${stage}-start`, at: performance.now() });
+      try { await task(); }
+      catch (error) { errors.push(error); }
+      finally { cleanup.push({ stage: `${stage}-end`, at: performance.now() }); }
+    };
+    // Every stage still runs after a failure; closing a backend must never race
+    // a live browser poll or an in-flight forwarded request.
+    await step('browser-close', () => closeStreamingPage(page));
+    releaseTool?.();
+    await step('legacy-close', async () => {
+      if (legacy && legacy.readyState !== legacy.CLOSED) {
+        const closed = once(legacy, 'close'); legacy.close(); await closed;
       }
-    }
+    });
+    await step('adapter-close', async () => { await adapter?.dispose(); });
+    await step('rest-close', async () => { await rest?.close(); });
+    await step('database-close', () => dbConnection.close());
+    await step('schema-drop', () => connection.query(`DROP DATABASE IF EXISTS \`${schema}\``));
+    await step('connection-close', () => connection.end());
+    await step('workspace-remove', () => rm(workspace, { recursive: true, force: true }));
+    for (const restore of originals.reverse()) restore();
+    const describe = (error: unknown) => error instanceof Error ? { name: error.name, message: error.message } : String(error);
+    try {
+      await writeFile(test.info().outputPath('MAX-279-startup-diagnostics.json'), JSON.stringify({
+        environment, loadAfter: loadavg(), startupStart, startupEnd,
+        startupMs: startupStart !== undefined && startupEnd !== undefined ? startupEnd - startupStart : null,
+        startupUsage, stages, cleanup, serverFrames: serverTimings.filter((s: any) => s.type === 'run.started' || s.phase === 'waiting_model'),
+        failed: failure !== undefined, primaryFailure: failure === undefined ? undefined : describe(failure),
+        cleanupFailed: errors.length > 0, cleanupFailures: errors.map(describe),
+      }, null, 2));
+    } catch (error) { errors.push(error); }
+    if (errors.length) throw combinedFailure(failure, errors);
   }
+});
+
+test('MAX-626 drains browser API routes before closing REST and preserves the primary failure', async ({ page }) => {
+  const require = createRequire(new URL('../../apps/db-ops-api/package.json', import.meta.url));
+  const rest = require('fastify')();
+  let arrived!: () => void, release!: () => void;
+  const pending = new Promise<void>(r => { arrived = r; });
+  const gate = new Promise<void>(r => { release = r; });
+  rest.get('/api/health/ready', async () => { arrived(); await gate; return { ready: true }; });
+  await rest.listen({ host: '127.0.0.1', port: 0 });
+  const failures: unknown[] = [];
+  await page.route('**/api/**', async route => {
+    try { await route.fulfill({ response: await route.fetch({ url: `http://127.0.0.1:${rest.server.address().port}/api/health/ready` }) }); }
+    catch (error) { failures.push(error); }
+  });
+  try {
+    await page.route('**/lifecycle-client', route => route.fulfill({ contentType: 'text/html', body: '<!doctype html><title>lifecycle</title>' }));
+    await page.goto('/lifecycle-client');
+    await page.evaluate(() => { void fetch('/api/health/ready'); });
+    await pending;
+    const closing = closeStreamingPage(page);
+    release(); await closing;
+    await rest.close();
+    expect(failures).toEqual([]);
+    const primary = new Error('original 100ms boundary assertion');
+    expect(combinedFailure(primary, [])).toBe(primary);
+    const cleanup = new Error('cleanup failure');
+    const both = combinedFailure(primary, [cleanup]) as AggregateError;
+    expect(both.cause).toBe(primary); expect(both.errors).toEqual([primary, cleanup]);
+  } finally { release(); await page.close(); await rest.close(); }
 });

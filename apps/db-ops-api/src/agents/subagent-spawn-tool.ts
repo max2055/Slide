@@ -120,10 +120,14 @@ export function createSubagentAccessTool(): AnyAgentTool {
         return { success: false, error: 'Subagent runtime unavailable', errorCode: 'SUBAGENT_RUNTIME_UNAVAILABLE' };
       }
       const result = await _subagentManager.access(params.runId, context.actor);
-      if (result.error) return { success: false, error: result.error, errorCode: 'SUBAGENT_NOT_FOUND' };
+      const { found, ...state } = result;
+      if (!found) return { success: false, error: 'Subagent run not found', errorCode: 'SUBAGENT_NOT_FOUND' };
+      if (state.status === 'failed' || state.status === 'cancelled') {
+        return { success: false, error: state.error ?? 'Subagent execution failed', errorCode: 'SUBAGENT_RUN_FAILED', data: { runId: params.runId, ...state } };
+      }
       return {
         success: true,
-        data: { runId: params.runId, ...result },
+        data: { runId: params.runId, ...state },
         summary: `Subagent ${params.runId}: ${result.status}`,
       };
     },

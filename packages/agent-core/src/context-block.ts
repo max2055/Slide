@@ -28,17 +28,18 @@ export function referenceMessages(kind: string, value: unknown, key: string, sco
 }
 
 export function projectContextBlocks(blocks: ContextBlock[]): Message[] {
-  return blocks.flatMap(block => {
+  return blocks.flatMap((block, blockIndex) => {
     if (block.authority === 'reference') {
       const key = createHash('sha256').update(JSON.stringify([block.sourceIds, block.value ?? block.messages])).digest('hex');
       return referenceMessages(block.kind, block.value ?? block.messages, key);
     }
     if (block.authority === 'policy') return structuredClone(block.messages ?? []).map(m => ({ ...m, source: 'runtime' as const, contextAuthority: 'policy' as const }));
     if (block.authority === 'runtime') return [{ role: 'user' as const, content: String(block.value), source: 'runtime' as const }];
-    return structuredClone(block.messages ?? []).map(message => {
+    return structuredClone(block.messages ?? []).map((message, messageIndex) => {
       // Derived system text can never regain policy authority via a legacy entry.
       if (message.role === 'system' && message.source && message.source !== 'fact' && !(message.source === 'runtime' && message.contextAuthority === 'policy')) {
-        return referenceMessages('summary', { provenance: 'legacy/unknown', text: message.content }, 'legacy');
+        const key = JSON.stringify(['legacy', blockIndex, messageIndex, block.sourceIds, message.id, message.content]);
+        return referenceMessages('summary', { provenance: 'legacy/unknown', text: message.content }, key);
       }
       return [message];
     }).flat();
