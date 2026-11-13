@@ -152,17 +152,65 @@ it('MAX-465: crash reservation blocks replay even with a remaining attempt', asy
   expect(recovered.state).toBe('failed'); expect(recovered.attempts).toBe(1); expect(recovered.reservedTokens).toBe(3000); expect(recovered.usage).toEqual({});
   expect((await store.transaction(s => s.budgets[scopeKey(scope)])).tokens).toBe(3000);
 });
-it('cancellation, deadline and shutdown have terminal records and drain provider ownership', async () => {
+// MAX-437 / PR #890 CI: filesystem work may exhaust a deadline before extract.
+// Test each in-flight terminal path independently, after observing admission.
+it.each(['deadline', 'cancellation', 'shutdown'] as const)('%s has a terminal record and drains provider ownership after admission', async mode => {
+  vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
+  let entered!: () => void;
+  const ready = new Promise<void>(resolve => { entered = resolve; });
   const aborting: MemoryExtractor = { extract: vi.fn(async (_inputs, options) => {
+    entered();
     await new Promise<void>((_resolve, reject) => { if (options.signal.aborted) reject(new Error('aborted')); else options.signal.addEventListener('abort', () => reject(new Error('aborted')), { once: true }); });
     return { candidates: [], usage: {} };
   }) };
-  const deadline = make(aborting, true, { deadlineMs: 30 }); expect((await deadline.run(snapshot(source('I prefer blue.', 'timeout'))))?.state).toBe('timed_out');
-  const stop = make(aborting); const controller = new AbortController(); const pending = stop.run(snapshot(source('I prefer blue.', 'stop')), controller.signal);
-  await vi.waitFor(() => expect(aborting.extract).toHaveBeenCalledTimes(2)); controller.abort(); expect((await pending)?.state).toBe('cancelled');
-  const shutdown = make(aborting); const active = shutdown.run(snapshot(source('I prefer blue.', 'shutdown')));
-  await vi.waitFor(() => expect(aborting.extract).toHaveBeenCalledTimes(3)); await shutdown.close(); expect((await active)?.state).toBe('cancelled');
-  const jobs = await store.transaction(s => s.jobs); expect(jobs.every(j => !j.owner && j.reservedTokens > 0)).toBe(true);
+  const pipeline = make(aborting, true, { deadlineMs: 30 });
+  const controller = new AbortController();
+  try {
+    const pending = pipeline.run(snapshot(source('I prefer blue.')), controller.signal);
+    await Promise.race([ready, pending.then(() => { throw new Error('Expected provider admission before completion'); })]);
+    expect(aborting.extract).toHaveBeenCalledTimes(1);
+    if (mode === 'deadline') await vi.advanceTimersByTimeAsync(30);
+    else if (mode === 'cancellation') controller.abort();
+    else await pipeline.close();
+    expect((await pending)?.state).toBe(mode === 'deadline' ? 'timed_out' : 'cancelled');
+    await pipeline.close();
+    const jobs = await store.transaction(s => s.jobs);
+    expect(jobs).toHaveLength(1);
+    expect(jobs[0].owner).toBeUndefined();
+    expect(jobs[0].attempts).toBe(1);
+    expect(jobs[0].reservedTokens).toBeGreaterThan(0);
+  } finally {
+    try { await pipeline.close(); }
+    finally { vi.useRealTimers(); }
+  }
+});
+it('MAX-437: deadline before admission has no provider attempt or reservation', async () => {
+  vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
+  const extractor = fake(inputs => inputs.map(input => candidate(input)));
+  let entered!: () => void;
+  let release!: () => void;
+  const ready = new Promise<void>(resolve => { entered = resolve; });
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  const pipeline = new MemoryPipeline(store, extractor, async (_scope, ids) => {
+    entered(); await gate;
+    return ids.flatMap(id => live.get(id) ? [live.get(id)!] : []);
+  }, true, { deadlineMs: 30 });
+  pipelines.push(pipeline);
+  try {
+    const pending = pipeline.run(snapshot(source('I prefer blue.')));
+    await Promise.race([ready, pending.then(() => { throw new Error('Expected source read before completion'); })]);
+    await vi.advanceTimersByTimeAsync(30);
+    release();
+    const job = await pending;
+    expect(job).toMatchObject({ state: 'timed_out', attempts: 0, reservedTokens: 0, requests: [] });
+    expect(job?.owner).toBeUndefined();
+    expect(extractor.extract).not.toHaveBeenCalled();
+    expect(await store.list(scope)).toEqual([]);
+  } finally {
+    release();
+    try { await pipeline.close(); }
+    finally { vi.useRealTimers(); }
+  }
 });
 it('expired restart does not clear deadline or incur another paid attempt', async () => {
   const input = source('I prefer blue.'); const e = fake(inputs => inputs.map(i => candidate(i))); const p = make(e); await p.run(snapshot(input));
