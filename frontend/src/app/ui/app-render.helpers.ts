@@ -741,6 +741,10 @@ function renderChatThinkingSelect(state: AppViewState) {
   `;
 }
 
+// Per-host, per-session ownership also distinguishes returning to the same value (ABA).
+const modelSwitchRequests = new WeakMap<AppViewState, Map<string, symbol>>();
+const thinkingSwitchRequests = new WeakMap<AppViewState, Map<string, symbol>>();
+
 async function switchChatModel(state: AppViewState, nextModel: string) {
   if (!state.client || !state.connected) {
     return;
@@ -751,11 +755,16 @@ async function switchChatModel(state: AppViewState, nextModel: string) {
   }
   const targetSessionKey = state.sessionKey;
   const prevOverride = state.chatModelOverrides[targetSessionKey];
+  const nextOverride = createChatModelOverride(nextModel);
+  const requests = modelSwitchRequests.get(state) ?? new Map<string, symbol>();
+  modelSwitchRequests.set(state, requests);
+  const request = Symbol();
+  requests.set(targetSessionKey, request);
   state.lastError = null;
   // Write the override cache immediately so the picker stays in sync during the RPC round-trip.
   state.chatModelOverrides = {
     ...state.chatModelOverrides,
-    [targetSessionKey]: createChatModelOverride(nextModel),
+    [targetSessionKey]: nextOverride,
   };
   try {
     await state.client.request("sessions.patch", {
@@ -764,9 +773,15 @@ async function switchChatModel(state: AppViewState, nextModel: string) {
     });
     await refreshSessionOptions(state);
   } catch (err) {
-    // Roll back so the picker reflects the actual server model.
-    state.chatModelOverrides = { ...state.chatModelOverrides, [targetSessionKey]: prevOverride };
+    if (
+      requests.get(targetSessionKey) === request &&
+      state.chatModelOverrides[targetSessionKey] === nextOverride
+    ) {
+      state.chatModelOverrides = { ...state.chatModelOverrides, [targetSessionKey]: prevOverride };
+    }
     state.lastError = `Failed to set model: ${String(err)}`;
+  } finally {
+    if (requests.get(targetSessionKey) === request) requests.delete(targetSessionKey);
   }
 }
 
@@ -808,6 +823,10 @@ async function switchChatThinkingLevel(state: AppViewState, nextThinkingLevel: s
   if ((normalizedPrev ?? "") === (normalizedNext ?? "")) {
     return;
   }
+  const requests = thinkingSwitchRequests.get(state) ?? new Map<string, symbol>();
+  thinkingSwitchRequests.set(state, requests);
+  const request = Symbol();
+  requests.set(targetSessionKey, request);
   state.lastError = null;
   patchSessionThinkingLevel(state, targetSessionKey, normalizedNext);
   state.chatThinkingLevel = normalizedNext ?? null;
@@ -818,9 +837,22 @@ async function switchChatThinkingLevel(state: AppViewState, nextThinkingLevel: s
     });
     await refreshSessionOptions(state);
   } catch (err) {
-    patchSessionThinkingLevel(state, targetSessionKey, previousThinkingLevel);
-    state.chatThinkingLevel = normalizedPrev ?? null;
+    const currentRow = state.sessionsResult?.sessions?.find((row) => row.key === targetSessionKey);
+    if (
+      requests.get(targetSessionKey) === request &&
+      currentRow?.thinkingLevel === normalizedNext
+    ) {
+      patchSessionThinkingLevel(state, targetSessionKey, previousThinkingLevel);
+      if (
+        state.sessionKey === targetSessionKey &&
+        state.chatThinkingLevel === (normalizedNext ?? null)
+      ) {
+        state.chatThinkingLevel = normalizedPrev ?? null;
+      }
+    }
     state.lastError = `Failed to set thinking level: ${String(err)}`;
+  } finally {
+    if (requests.get(targetSessionKey) === request) requests.delete(targetSessionKey);
   }
 }
 

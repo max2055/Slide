@@ -259,7 +259,7 @@ export class SourceManagementService {
       await auditLogManager.logToolCall({ ...audit, toolParams: source, result: 'success' });
       return result;
     } catch (error) {
-      await auditLogManager.logToolCall({ ...audit, result: 'failure', errorMessage: 'SOURCE_READ_FAILED' });
+      await auditLogManager.logToolCall({ ...audit, result: 'failure', errorMessage: safeSourceErrorCode(error) });
       throw error;
     } finally { this.readsInFlight--; }
   }

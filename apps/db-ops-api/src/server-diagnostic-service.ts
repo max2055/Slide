@@ -10,7 +10,7 @@ import { isFatalSshCommandError } from './linux-host-evidence-service.js';
 import { parseJournalJson } from './linux-host-evidence-service.js';
 import {
   parseProcNetDev,
-  parseTopProcesses,
+  parseTopProcessesWithDiagnostics,
   type ProcessSample,
 } from './server-metric-provider.js';
 import { isSupportedServerOs, normalizeServerOs } from './server-os-profile.js';
@@ -321,7 +321,10 @@ class ServerDiagnosticService {
 
       const serviceItems = serviceResult && !commandFailed(serviceResult) ? parseServices(serviceResult.stdout) : [];
       const portItems = portsResult && !commandFailed(portsResult) ? parsePorts(portsResult.stdout) : [];
-      const processItems = processResult && !commandFailed(processResult) ? parseTopProcesses(processResult.stdout) : [];
+      const parsedProcesses = processResult && !commandFailed(processResult)
+        ? parseTopProcessesWithDiagnostics(processResult.stdout) : { items: [], malformedLines: 0 };
+      const processItems = parsedProcesses.items;
+      if (parsedProcesses.malformedLines > 0) gaps.push({ section: 'topProcesses', reason: 'TOP_PROCESSES_MALFORMED' });
       let logs: DiagnosticLogEntry[] = [];
       let logsQuality: DiagnosticQuality = 'good';
       let logsReason: string | undefined;
@@ -353,7 +356,6 @@ class ServerDiagnosticService {
         } else {
           logsQuality = 'unknown';
           logsReason = 'SYSTEM_LOGS_UNAVAILABLE';
-          gaps.push({ section: 'systemLogs', reason: logsReason });
         }
       }
       const interfaceItems = interfaceResult && !commandFailed(interfaceResult) ? parseInterfaceErrors(interfaceResult.stdout) : [];
@@ -365,7 +367,8 @@ class ServerDiagnosticService {
         ? section(['ss'], now, portItems, portItems.length ? 'good' : 'partial', portItems.length ? undefined : 'LISTENING_PORTS_EMPTY', Boolean(portsResult.truncated))
         : section(['ss'], now, [], 'unknown', 'LISTENING_PORTS_UNAVAILABLE', Boolean(portsResult?.truncated));
       const processSection = processResult && !commandFailed(processResult)
-        ? section(['ps'], now, processItems, processItems.length ? 'good' : 'partial', processItems.length ? undefined : 'TOP_PROCESSES_EMPTY', Boolean(processResult.truncated))
+        ? section(['ps'], now, processItems, processItems.length && !parsedProcesses.malformedLines ? 'good' : 'partial',
+          parsedProcesses.malformedLines ? 'TOP_PROCESSES_MALFORMED' : processItems.length ? undefined : 'TOP_PROCESSES_EMPTY', Boolean(processResult.truncated))
         : section(['ps'], now, [], 'unknown', 'TOP_PROCESSES_UNAVAILABLE', Boolean(processResult?.truncated));
       const logSection = section(['journald', 'messages'], now, logs, logsQuality, logsReason, logsTruncated);
       const interfaceSection = interfaceResult && !commandFailed(interfaceResult)
@@ -401,7 +404,8 @@ class ServerDiagnosticService {
         topProcesses: processSection,
         recentSystemLogs: logSection,
         interfaceErrors: interfaceSection,
-        gaps,
+        gaps: gaps.filter((gap, index) => gaps.findIndex(candidate =>
+          candidate.section === gap.section && candidate.reason === gap.reason) === index),
       };
       this.cache.set(serverId, diagnostics);
       return diagnostics;

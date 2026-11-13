@@ -178,11 +178,23 @@ describe('durable mutation boundary', () => {
     expect(mocks.auditSql).toHaveBeenCalledOnce();
     expect(query).not.toHaveBeenCalledWith(expect.stringContaining('max_execution_time'));
   });
-  it('reports acknowledged SQL with failed audit as uncertain and never retryable', async () => {
+  it('keeps an acknowledged mutation succeeded when the audit log fails', async () => {
     mocks.auditSql.mockRejectedValue(new Error('audit down'));
     const result = await sqlExecutor.executeSql(1, 'DELETE FROM users', { approvalGrant: grant });
     expect(query).toHaveBeenCalledWith('DELETE FROM users');
-    expect(result).toMatchObject({ success: false, executionState: 'unknown', retryable: false, operationId: grant.operationId });
+    expect(result).toMatchObject({
+      success: true,
+      executionState: 'succeeded',
+      retryable: false,
+      operationId: grant.operationId,
+      auditStatus: 'failed',
+      auditError: 'AUDIT_LOG_FAILED',
+    });
+    expect(mocks.finishIntent).toHaveBeenCalledWith(grant.operationId, 'succeeded', expect.objectContaining({
+      targetAcknowledged: true,
+      auditStatus: 'failed',
+      auditError: 'AUDIT_LOG_FAILED',
+    }));
   });
   it('reports a lost result write as uncertain', async () => {
     mocks.finishIntent.mockRejectedValue(new Error('control down'));

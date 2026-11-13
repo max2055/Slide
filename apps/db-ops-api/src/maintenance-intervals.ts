@@ -16,14 +16,17 @@ export const MaintenanceInput = z.strictObject({
  try { new Intl.DateTimeFormat('en',{timeZone:v.timezone}); } catch { c.addIssue({code:'custom',message:'MAINTENANCE_TIMEZONE'}); }
  if(v.resources && new Set(v.resources.map(r=>`${r.type}:${r.id}`)).size!==v.resources.length) c.addIssue({code:'custom',message:'MAINTENANCE_DUPLICATE_RESOURCE'});
 });
-export const WeeklyInput = z.strictObject({
- name:z.string().trim().min(1).max(100), reason:z.string().max(1000),
- resources:z.array(RefSchema).length(1).nullable(), timezone:z.string().max(50),
+export const WeeklyScheduleInput = z.object({
  day_of_week:z.string().max(50).transform(v=>v.split(',').map(d=>d.trim()).join(',')).pipe(z.string().regex(/^(\*|[1-7](,[1-7])*)$/)),
  start_time:z.string().regex(/^([01]\d|2[0-3]):[0-5]\d(:[0-5]\d)?$/),
  end_time:z.string().regex(/^([01]\d|2[0-3]):[0-5]\d(:[0-5]\d)?$/),
+ timezone:z.string().min(1).max(50).refine(v=>{try{new Intl.DateTimeFormat('en',{timeZone:v});return true;}catch{return false;}}, 'MAINTENANCE_TIMEZONE'),
+});
+export const WeeklyInput = z.strictObject({
+ name:z.string().trim().min(1).max(100), reason:z.string().max(1000),
+ resources:z.array(RefSchema).length(1).nullable(),
+ ...WeeklyScheduleInput.shape,
 }).superRefine((v,c)=>{
- try{new Intl.DateTimeFormat('en',{timeZone:v.timezone});}catch{c.addIssue({code:'custom',message:'MAINTENANCE_TIMEZONE'});}
  if(v.resources?.some(r=>r.type!=='instance'))c.addIssue({code:'custom',message:'MAINTENANCE_WEEKLY_INSTANCE'});
  if(v.start_time.padEnd(8,':00')===v.end_time.padEnd(8,':00'))c.addIssue({code:'custom',message:'MAINTENANCE_DURATION'});
 });
