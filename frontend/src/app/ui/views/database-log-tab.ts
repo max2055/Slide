@@ -7,6 +7,9 @@ import "./ai-analysis-result.js";
 import { authFetch } from '../../../api/index.js';
 
 const API_BASE = "";
+const OBSERVATION_WINDOW_MS = 5 * 60_000;
+const POLL_INTERVAL_MS = 3000;
+const MAX_ERROR_DELAY_MS = 30_000;
 
 function getToken(): string | null {
   return localStorage.getItem("token");
@@ -302,7 +305,12 @@ export class DatabaseLogTab extends LitElement {
   @state() private analysisStatus: "pending" | "running" | "completed" | "failed" = "pending";
   @state() private analysisResult: any = null;
   @state() private analysisError: string | null = null;
-  private pollTimer: ReturnType<typeof setInterval> | null = null;
+  @state() private observationPaused = false;
+  @state() private observationMessage: string | null = null;
+  private pollTimer: ReturnType<typeof setTimeout> | null = null;
+  private pollDeadline: ReturnType<typeof setTimeout> | null = null;
+  private pollController: AbortController | null = null;
+  private pollVersion = 0;
 
   private logRequest = 0;
   private statsRequest = 0;
@@ -455,7 +463,7 @@ export class DatabaseLogTab extends LitElement {
   }
 
   private async _triggerAnalysis() {
-    if (this.selectedIds.size === 0 || !this.instanceId) return;
+    if (this.selectedIds.size === 0 || !this.instanceId || this.analysisLoading || this.observationPaused || this.accessInvalidated) return;
 
     const context = this.contextVersion, instanceId = this.instanceId;
     this.analysisLoading = true;
@@ -497,17 +505,51 @@ export class DatabaseLogTab extends LitElement {
 
   private _startPolling(id: number) {
     this._stopPolling();
-    const context = this.contextVersion, instanceId = this.instanceId;
-    this.pollTimer = setInterval(async () => {
+    const context = this.contextVersion, instanceId = this.instanceId, version = this.pollVersion;
+    const deadline = performance.now() + OBSERVATION_WINDOW_MS;
+    const current = () => version === this.pollVersion && context === this.contextVersion
+      && instanceId === this.instanceId && this.analysisId === id && this.isConnected;
+    this.observationPaused = false;
+    this.observationMessage = null;
+    this.analysisLoading = true;
+    let errors = 0;
+    const pause = (message: string) => {
+      if (!current()) return;
+      this._stopPolling();
+      this.observationPaused = true;
+      this.observationMessage = message;
+      this.analysisLoading = false;
+    };
+    const expire = () => pause('已达到 5 分钟观察截止，任务状态未知。任务可能仍在运行，可继续查询原任务；不会重新提交分析。');
+    this.pollDeadline = setTimeout(expire, OBSERVATION_WINDOW_MS);
+    const poll = async () => {
+      if (!current()) return;
+      if (performance.now() >= deadline) { expire(); return; }
+      this.pollTimer = null;
+      const controller = new AbortController();
+      this.pollController = controller;
+      let delay = POLL_INTERVAL_MS;
       try {
         const token = getToken();
         const res = await authFetch(`${API_BASE}/api/logs/analysis/${id}`, {
           headers: token ? { Authorization: `Bearer ${token}` } : {},
+          signal: controller.signal,
         });
-        if (!res.ok) return;
+        if (!current()) return;
+        if (performance.now() >= deadline) { expire(); return; }
+        if (res.status === 401 || res.status === 403) { this.onAccessChanged(); return; }
+        if (!res.ok) throw new Error('状态查询失败');
         const data = await res.json();
-        if (context !== this.contextVersion || instanceId !== this.instanceId || this.analysisId !== id) return;
+        if (!current()) return;
+        if (performance.now() >= deadline) { expire(); return; }
+        if (data?.status === 'unknown') {
+          pause('任务状态未知，可继续查询原任务；不会重新提交分析。');
+          return;
+        }
+        if (!['pending', 'running', 'completed', 'failed'].includes(data?.status)) throw new Error('无效的分析状态');
         this.analysisStatus = data.status;
+        this.observationMessage = null;
+        errors = 0;
 
         if (data.status === "completed") {
           this._stopPolling();
@@ -519,16 +561,30 @@ export class DatabaseLogTab extends LitElement {
           this.analysisError = data.error_message || "分析失败";
         }
       } catch {
-        // Ignore polling errors, next poll will retry
+        if (!current()) return;
+        if (performance.now() >= deadline) { expire(); return; }
+        errors++;
+        delay = Math.min(MAX_ERROR_DELAY_MS, POLL_INTERVAL_MS * 2 ** Math.min(errors, 4));
+        this.observationMessage = `暂时无法查询任务状态，${delay / 1000} 秒后重试；本轮观察最多 5 分钟。`;
+      } finally {
+        if (this.pollController === controller) this.pollController = null;
       }
-    }, 3000);
+      // Schedule only after the response body has settled; never overlap status requests.
+      if (current()) {
+        this.pollTimer = setTimeout(poll, Math.min(delay, Math.max(0, deadline - performance.now())));
+      }
+    };
+    this.pollTimer = setTimeout(poll, POLL_INTERVAL_MS);
   }
 
   private _stopPolling() {
-    if (this.pollTimer) {
-      clearInterval(this.pollTimer);
-      this.pollTimer = null;
-    }
+    ++this.pollVersion;
+    if (this.pollTimer !== null) clearTimeout(this.pollTimer);
+    if (this.pollDeadline !== null) clearTimeout(this.pollDeadline);
+    this.pollController?.abort();
+    this.pollTimer = null;
+    this.pollDeadline = null;
+    this.pollController = null;
   }
 
   private _closeAnalysisResult() {
@@ -538,6 +594,8 @@ export class DatabaseLogTab extends LitElement {
     this.analysisResult = null;
     this.analysisError = null;
     this.analysisLoading = false;
+    this.observationPaused = false;
+    this.observationMessage = null;
   }
 
   private _formatTime(dateStr: string): string {
@@ -602,12 +660,20 @@ export class DatabaseLogTab extends LitElement {
   private _renderAnalysisSection() {
     if (!this.analysisId) return html``;
 
+    if (this.observationPaused) {
+      return html`<div style="margin-top:var(--space-md);padding:var(--space-md);border:1px solid var(--border);border-radius:var(--radius-md);">
+        <p role="status">${this.observationMessage}</p>
+        <button class="btn" @click=${() => { if (this.analysisId && !this.accessInvalidated) this._startPolling(this.analysisId); }}>继续查询</button>
+        <button class="btn" @click=${this._closeAnalysisResult}>关闭</button>
+      </div>`;
+    }
+
     if (this.analysisStatus === "pending" || this.analysisStatus === "running") {
       return html`
         <div style="margin-top: 16px;">
           <div class="loading-state">
             <div class="spinner"></div>
-            <span>AI 日志分析进行中...</span>
+            <span role="status">${this.observationMessage || 'AI 日志分析进行中（本轮最多观察 5 分钟）...'}</span>
           </div>
         </div>
       `;
@@ -623,9 +689,6 @@ export class DatabaseLogTab extends LitElement {
     }
 
     // completed - render result inline
-    const esc = (s: string) =>
-      s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
-
     const result = this.analysisResult;
     if (!result) return html``;
 
@@ -635,7 +698,7 @@ export class DatabaseLogTab extends LitElement {
       sections.push(
         html`<div style="margin-bottom:16px;padding:12px;background:var(--bg-elevated);border-radius:var(--radius-md);border:1px solid var(--border);">
           <strong style="color:var(--text-strong);">摘要</strong>
-          <p style="margin:8px 0 0;font-size:14px;color:var(--text);line-height:1.6;">${esc(result.summary)}</p>
+          <p style="margin:8px 0 0;font-size:14px;color:var(--text);line-height:1.6;">${String(result.summary)}</p>
         </div>`
       );
     }
@@ -645,17 +708,17 @@ export class DatabaseLogTab extends LitElement {
       if (Array.isArray(value)) {
         sections.push(
           html`<div style="margin-bottom:12px;">
-            <strong style="color:var(--text-strong);font-size:13px;">${esc(key)}</strong>
+            <strong style="color:var(--text-strong);font-size:13px;">${key}</strong>
             <ul style="margin:6px 0 0 20px;font-size:13px;color:var(--text);line-height:1.8;">
               ${value.map(
                 (item: any) =>
                   typeof item === "string"
-                    ? html`<li>${esc(item)}</li>`
+                    ? html`<li>${item}</li>`
                     : typeof item === "object" && item !== null
                     ? html`<li>${Object.entries(item)
-                        .map(([k, v]) => `${esc(k)}: ${esc(String(v))}`)
+                        .map(([k, v]) => `${k}: ${String(v)}`)
                         .join("; ")}</li>`
-                    : html`<li>${esc(String(item))}</li>`
+                    : html`<li>${String(item)}</li>`
               )}
             </ul>
           </div>`
@@ -663,15 +726,15 @@ export class DatabaseLogTab extends LitElement {
       } else if (typeof value === "object" && value !== null) {
         sections.push(
           html`<div style="margin-bottom:12px;">
-            <strong style="color:var(--text-strong);font-size:13px;">${esc(key)}</strong>
-            <pre style="margin:6px 0 0;padding:10px;background:var(--bg-elevated);border-radius:var(--radius-sm);font-size:12px;color:var(--text);white-space:pre-wrap;overflow-x:auto;">${esc(JSON.stringify(value, null, 2))}</pre>
+            <strong style="color:var(--text-strong);font-size:13px;">${key}</strong>
+            <pre style="margin:6px 0 0;padding:10px;background:var(--bg-elevated);border-radius:var(--radius-sm);font-size:12px;color:var(--text);white-space:pre-wrap;overflow-x:auto;">${JSON.stringify(value, null, 2)}</pre>
           </div>`
         );
       } else {
         sections.push(
           html`<div style="margin-bottom:8px;font-size:13px;">
-            <strong style="color:var(--text-strong);">${esc(key)}:</strong>
-            <span style="color:var(--text);">${esc(String(value))}</span>
+            <strong style="color:var(--text-strong);">${key}:</strong>
+            <span style="color:var(--text);">${String(value)}</span>
           </div>`
         );
       }
@@ -705,7 +768,7 @@ export class DatabaseLogTab extends LitElement {
             <button aria-busy=${String(this.loading)} class="btn btn-refresh" ?disabled=${this.loading || this.accessInvalidated} @click=${this._handleFilterChange}>刷新</button>
             <button
               class="btn-primary"
-              ?disabled=${this.selectedIds.size === 0 || this.analysisLoading || this.accessInvalidated}
+              ?disabled=${this.selectedIds.size === 0 || this.analysisLoading || this.observationPaused || this.accessInvalidated}
               @click=${this._triggerAnalysis}
             >
               AI 分析 (${this.selectedIds.size})

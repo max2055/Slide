@@ -4,6 +4,7 @@ import type { AgentHook, AgentHookContext, AgentRunSpec, LLMResponse, Message } 
 import { ContextManager, normalizeToolGroups } from './context-manager.js';
 import { RuntimeError, cancellationError } from './recovery-policy.js';
 import { StreamingCoordinator } from './streaming-coordinator.js';
+import { MAX_TIMEOUT_MS } from './timeout-policy.js';
 
 export class TimeoutError extends RuntimeError {
   constructor(message: string, code = 'MODEL_REQUEST_TIMEOUT') { super(code, message); this.name = 'TimeoutError'; }
@@ -13,7 +14,10 @@ export class TimeoutError extends RuntimeError {
 export class ModelStep {
   constructor(private readonly provider: import('../types.js').LLMProvider) {}
   async request(spec: AgentRunSpec, messages: Message[], hook: AgentHook, context: AgentHookContext, requestIdentity?: import('./summary-receipt.js').SummaryIdentity): Promise<LLMResponse> {
-    const timeoutS = spec.llmTimeoutS ?? parseFloat(process.env.NANOBOT_LLM_TIMEOUT_S || '300');
+    const timeoutS = spec.llmTimeoutS ?? (process.env.NANOBOT_LLM_TIMEOUT_S === undefined ? 300 : Number(process.env.NANOBOT_LLM_TIMEOUT_S));
+    if (!Number.isFinite(timeoutS) || timeoutS <= 0 || timeoutS * 1000 > MAX_TIMEOUT_MS) {
+      throw new RuntimeError('INVALID_POLICY', `llmTimeoutS or NANOBOT_LLM_TIMEOUT_S must be finite and positive, at most ${MAX_TIMEOUT_MS / 1000}s`);
+    }
     const idleS = spec.streamIdleTimeoutS ?? spec.llmTimeoutS ?? (parseFloat(process.env.NANOBOT_STREAM_IDLE_TIMEOUT_S || '0') || undefined);
     const controller = new AbortController();
     let active = true;

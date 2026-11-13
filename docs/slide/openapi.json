@@ -4912,6 +4912,9 @@
               }
             ]
           },
+          "inodeSupported": {
+            "type": "boolean"
+          },
           "inodeTotal": {
             "anyOf": [
               {
@@ -5570,6 +5573,1114 @@
             "items": {
               "additionalProperties": false,
               "properties": {
+                "diagnostics": {
+                  "$id": "ServerDiagnostics",
+                  "additionalProperties": false,
+                  "properties": {
+                    "collectedAt": {
+                      "type": "string"
+                    },
+                    "expiresAt": {
+                      "type": "string"
+                    },
+                    "gaps": {
+                      "items": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "reason": {
+                            "type": "string"
+                          },
+                          "section": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "section",
+                          "reason"
+                        ],
+                        "type": "object"
+                      },
+                      "type": "array"
+                    },
+                    "interfaceErrors": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "collectedAt": {
+                          "type": "string"
+                        },
+                        "expiresAt": {
+                          "type": "string"
+                        },
+                        "items": {
+                          "items": {
+                            "additionalProperties": false,
+                            "properties": {
+                              "interface": {
+                                "type": "string"
+                              },
+                              "rxBytes": {
+                                "minimum": 0,
+                                "type": "number"
+                              },
+                              "rxDrops": {
+                                "minimum": 0,
+                                "type": "number"
+                              },
+                              "rxErrors": {
+                                "minimum": 0,
+                                "type": "number"
+                              },
+                              "txBytes": {
+                                "minimum": 0,
+                                "type": "number"
+                              },
+                              "txDrops": {
+                                "minimum": 0,
+                                "type": "number"
+                              },
+                              "txErrors": {
+                                "minimum": 0,
+                                "type": "number"
+                              }
+                            },
+                            "required": [
+                              "interface",
+                              "rxBytes",
+                              "txBytes",
+                              "rxErrors",
+                              "txErrors",
+                              "rxDrops",
+                              "txDrops"
+                            ],
+                            "type": "object"
+                          },
+                          "type": "array"
+                        },
+                        "quality": {
+                          "anyOf": [
+                            {
+                              "const": "good",
+                              "type": "string"
+                            },
+                            {
+                              "const": "partial",
+                              "type": "string"
+                            },
+                            {
+                              "const": "unknown",
+                              "type": "string"
+                            },
+                            {
+                              "const": "unsupported",
+                              "type": "string"
+                            }
+                          ]
+                        },
+                        "reason": {
+                          "type": "string"
+                        },
+                        "source": {
+                          "items": {
+                            "type": "string"
+                          },
+                          "maxItems": 8,
+                          "type": "array"
+                        },
+                        "truncated": {
+                          "type": "boolean"
+                        },
+                        "validForMs": {
+                          "minimum": 1,
+                          "type": "integer"
+                        }
+                      },
+                      "required": [
+                        "source",
+                        "collectedAt",
+                        "expiresAt",
+                        "validForMs",
+                        "quality",
+                        "truncated",
+                        "items"
+                      ],
+                      "type": "object"
+                    },
+                    "listeningPorts": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "collectedAt": {
+                          "type": "string"
+                        },
+                        "expiresAt": {
+                          "type": "string"
+                        },
+                        "items": {
+                          "items": {
+                            "additionalProperties": false,
+                            "properties": {
+                              "address": {
+                                "type": "string"
+                              },
+                              "port": {
+                                "maximum": 65535,
+                                "minimum": 1,
+                                "type": "integer"
+                              },
+                              "process": {
+                                "anyOf": [
+                                  {
+                                    "type": "string"
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ]
+                              },
+                              "protocol": {
+                                "anyOf": [
+                                  {
+                                    "const": "tcp",
+                                    "type": "string"
+                                  },
+                                  {
+                                    "const": "udp",
+                                    "type": "string"
+                                  },
+                                  {
+                                    "const": "unknown",
+                                    "type": "string"
+                                  }
+                                ]
+                              }
+                            },
+                            "required": [
+                              "protocol",
+                              "address",
+                              "port",
+                              "process"
+                            ],
+                            "type": "object"
+                          },
+                          "type": "array"
+                        },
+                        "quality": {
+                          "anyOf": [
+                            {
+                              "const": "good",
+                              "type": "string"
+                            },
+                            {
+                              "const": "partial",
+                              "type": "string"
+                            },
+                            {
+                              "const": "unknown",
+                              "type": "string"
+                            },
+                            {
+                              "const": "unsupported",
+                              "type": "string"
+                            }
+                          ]
+                        },
+                        "reason": {
+                          "type": "string"
+                        },
+                        "source": {
+                          "items": {
+                            "type": "string"
+                          },
+                          "maxItems": 8,
+                          "type": "array"
+                        },
+                        "truncated": {
+                          "type": "boolean"
+                        },
+                        "validForMs": {
+                          "minimum": 1,
+                          "type": "integer"
+                        }
+                      },
+                      "required": [
+                        "source",
+                        "collectedAt",
+                        "expiresAt",
+                        "validForMs",
+                        "quality",
+                        "truncated",
+                        "items"
+                      ],
+                      "type": "object"
+                    },
+                    "osType": {
+                      "type": "string"
+                    },
+                    "quality": {
+                      "anyOf": [
+                        {
+                          "const": "good",
+                          "type": "string"
+                        },
+                        {
+                          "const": "partial",
+                          "type": "string"
+                        },
+                        {
+                          "const": "unknown",
+                          "type": "string"
+                        },
+                        {
+                          "const": "unsupported",
+                          "type": "string"
+                        }
+                      ]
+                    },
+                    "recentSystemLogs": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "collectedAt": {
+                          "type": "string"
+                        },
+                        "expiresAt": {
+                          "type": "string"
+                        },
+                        "items": {
+                          "items": {
+                            "additionalProperties": false,
+                            "properties": {
+                              "identifier": {
+                                "anyOf": [
+                                  {
+                                    "type": "string"
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ]
+                              },
+                              "message": {
+                                "type": "string"
+                              },
+                              "severity": {
+                                "type": "string"
+                              },
+                              "timestamp": {
+                                "anyOf": [
+                                  {
+                                    "type": "string"
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ]
+                              },
+                              "unit": {
+                                "anyOf": [
+                                  {
+                                    "type": "string"
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ]
+                              }
+                            },
+                            "required": [
+                              "timestamp",
+                              "severity",
+                              "unit",
+                              "identifier",
+                              "message"
+                            ],
+                            "type": "object"
+                          },
+                          "type": "array"
+                        },
+                        "quality": {
+                          "anyOf": [
+                            {
+                              "const": "good",
+                              "type": "string"
+                            },
+                            {
+                              "const": "partial",
+                              "type": "string"
+                            },
+                            {
+                              "const": "unknown",
+                              "type": "string"
+                            },
+                            {
+                              "const": "unsupported",
+                              "type": "string"
+                            }
+                          ]
+                        },
+                        "reason": {
+                          "type": "string"
+                        },
+                        "source": {
+                          "items": {
+                            "type": "string"
+                          },
+                          "maxItems": 8,
+                          "type": "array"
+                        },
+                        "truncated": {
+                          "type": "boolean"
+                        },
+                        "validForMs": {
+                          "minimum": 1,
+                          "type": "integer"
+                        }
+                      },
+                      "required": [
+                        "source",
+                        "collectedAt",
+                        "expiresAt",
+                        "validForMs",
+                        "quality",
+                        "truncated",
+                        "items"
+                      ],
+                      "type": "object"
+                    },
+                    "schemaVersion": {
+                      "const": 1,
+                      "type": "number"
+                    },
+                    "sections": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "interfaceErrors": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "collectedAt": {
+                              "type": "string"
+                            },
+                            "expiresAt": {
+                              "type": "string"
+                            },
+                            "items": {
+                              "items": {
+                                "additionalProperties": false,
+                                "properties": {
+                                  "interface": {
+                                    "type": "string"
+                                  },
+                                  "rxBytes": {
+                                    "minimum": 0,
+                                    "type": "number"
+                                  },
+                                  "rxDrops": {
+                                    "minimum": 0,
+                                    "type": "number"
+                                  },
+                                  "rxErrors": {
+                                    "minimum": 0,
+                                    "type": "number"
+                                  },
+                                  "txBytes": {
+                                    "minimum": 0,
+                                    "type": "number"
+                                  },
+                                  "txDrops": {
+                                    "minimum": 0,
+                                    "type": "number"
+                                  },
+                                  "txErrors": {
+                                    "minimum": 0,
+                                    "type": "number"
+                                  }
+                                },
+                                "required": [
+                                  "interface",
+                                  "rxBytes",
+                                  "txBytes",
+                                  "rxErrors",
+                                  "txErrors",
+                                  "rxDrops",
+                                  "txDrops"
+                                ],
+                                "type": "object"
+                              },
+                              "type": "array"
+                            },
+                            "quality": {
+                              "anyOf": [
+                                {
+                                  "const": "good",
+                                  "type": "string"
+                                },
+                                {
+                                  "const": "partial",
+                                  "type": "string"
+                                },
+                                {
+                                  "const": "unknown",
+                                  "type": "string"
+                                },
+                                {
+                                  "const": "unsupported",
+                                  "type": "string"
+                                }
+                              ]
+                            },
+                            "reason": {
+                              "type": "string"
+                            },
+                            "source": {
+                              "items": {
+                                "type": "string"
+                              },
+                              "maxItems": 8,
+                              "type": "array"
+                            },
+                            "truncated": {
+                              "type": "boolean"
+                            },
+                            "validForMs": {
+                              "minimum": 1,
+                              "type": "integer"
+                            }
+                          },
+                          "required": [
+                            "source",
+                            "collectedAt",
+                            "expiresAt",
+                            "validForMs",
+                            "quality",
+                            "truncated",
+                            "items"
+                          ],
+                          "type": "object"
+                        },
+                        "listeningPorts": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "collectedAt": {
+                              "type": "string"
+                            },
+                            "expiresAt": {
+                              "type": "string"
+                            },
+                            "items": {
+                              "items": {
+                                "additionalProperties": false,
+                                "properties": {
+                                  "address": {
+                                    "type": "string"
+                                  },
+                                  "port": {
+                                    "maximum": 65535,
+                                    "minimum": 1,
+                                    "type": "integer"
+                                  },
+                                  "process": {
+                                    "anyOf": [
+                                      {
+                                        "type": "string"
+                                      },
+                                      {
+                                        "type": "null"
+                                      }
+                                    ]
+                                  },
+                                  "protocol": {
+                                    "anyOf": [
+                                      {
+                                        "const": "tcp",
+                                        "type": "string"
+                                      },
+                                      {
+                                        "const": "udp",
+                                        "type": "string"
+                                      },
+                                      {
+                                        "const": "unknown",
+                                        "type": "string"
+                                      }
+                                    ]
+                                  }
+                                },
+                                "required": [
+                                  "protocol",
+                                  "address",
+                                  "port",
+                                  "process"
+                                ],
+                                "type": "object"
+                              },
+                              "type": "array"
+                            },
+                            "quality": {
+                              "anyOf": [
+                                {
+                                  "const": "good",
+                                  "type": "string"
+                                },
+                                {
+                                  "const": "partial",
+                                  "type": "string"
+                                },
+                                {
+                                  "const": "unknown",
+                                  "type": "string"
+                                },
+                                {
+                                  "const": "unsupported",
+                                  "type": "string"
+                                }
+                              ]
+                            },
+                            "reason": {
+                              "type": "string"
+                            },
+                            "source": {
+                              "items": {
+                                "type": "string"
+                              },
+                              "maxItems": 8,
+                              "type": "array"
+                            },
+                            "truncated": {
+                              "type": "boolean"
+                            },
+                            "validForMs": {
+                              "minimum": 1,
+                              "type": "integer"
+                            }
+                          },
+                          "required": [
+                            "source",
+                            "collectedAt",
+                            "expiresAt",
+                            "validForMs",
+                            "quality",
+                            "truncated",
+                            "items"
+                          ],
+                          "type": "object"
+                        },
+                        "services": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "collectedAt": {
+                              "type": "string"
+                            },
+                            "expiresAt": {
+                              "type": "string"
+                            },
+                            "items": {
+                              "items": {
+                                "additionalProperties": false,
+                                "properties": {
+                                  "activeState": {
+                                    "type": "string"
+                                  },
+                                  "description": {
+                                    "anyOf": [
+                                      {
+                                        "type": "string"
+                                      },
+                                      {
+                                        "type": "null"
+                                      }
+                                    ]
+                                  },
+                                  "loadState": {
+                                    "type": "string"
+                                  },
+                                  "name": {
+                                    "type": "string"
+                                  },
+                                  "subState": {
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "name",
+                                  "loadState",
+                                  "activeState",
+                                  "subState",
+                                  "description"
+                                ],
+                                "type": "object"
+                              },
+                              "type": "array"
+                            },
+                            "quality": {
+                              "anyOf": [
+                                {
+                                  "const": "good",
+                                  "type": "string"
+                                },
+                                {
+                                  "const": "partial",
+                                  "type": "string"
+                                },
+                                {
+                                  "const": "unknown",
+                                  "type": "string"
+                                },
+                                {
+                                  "const": "unsupported",
+                                  "type": "string"
+                                }
+                              ]
+                            },
+                            "reason": {
+                              "type": "string"
+                            },
+                            "source": {
+                              "items": {
+                                "type": "string"
+                              },
+                              "maxItems": 8,
+                              "type": "array"
+                            },
+                            "truncated": {
+                              "type": "boolean"
+                            },
+                            "validForMs": {
+                              "minimum": 1,
+                              "type": "integer"
+                            }
+                          },
+                          "required": [
+                            "source",
+                            "collectedAt",
+                            "expiresAt",
+                            "validForMs",
+                            "quality",
+                            "truncated",
+                            "items"
+                          ],
+                          "type": "object"
+                        },
+                        "systemLogs": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "collectedAt": {
+                              "type": "string"
+                            },
+                            "expiresAt": {
+                              "type": "string"
+                            },
+                            "items": {
+                              "items": {
+                                "additionalProperties": false,
+                                "properties": {
+                                  "identifier": {
+                                    "anyOf": [
+                                      {
+                                        "type": "string"
+                                      },
+                                      {
+                                        "type": "null"
+                                      }
+                                    ]
+                                  },
+                                  "message": {
+                                    "type": "string"
+                                  },
+                                  "severity": {
+                                    "type": "string"
+                                  },
+                                  "timestamp": {
+                                    "anyOf": [
+                                      {
+                                        "type": "string"
+                                      },
+                                      {
+                                        "type": "null"
+                                      }
+                                    ]
+                                  },
+                                  "unit": {
+                                    "anyOf": [
+                                      {
+                                        "type": "string"
+                                      },
+                                      {
+                                        "type": "null"
+                                      }
+                                    ]
+                                  }
+                                },
+                                "required": [
+                                  "timestamp",
+                                  "severity",
+                                  "unit",
+                                  "identifier",
+                                  "message"
+                                ],
+                                "type": "object"
+                              },
+                              "type": "array"
+                            },
+                            "quality": {
+                              "anyOf": [
+                                {
+                                  "const": "good",
+                                  "type": "string"
+                                },
+                                {
+                                  "const": "partial",
+                                  "type": "string"
+                                },
+                                {
+                                  "const": "unknown",
+                                  "type": "string"
+                                },
+                                {
+                                  "const": "unsupported",
+                                  "type": "string"
+                                }
+                              ]
+                            },
+                            "reason": {
+                              "type": "string"
+                            },
+                            "source": {
+                              "items": {
+                                "type": "string"
+                              },
+                              "maxItems": 8,
+                              "type": "array"
+                            },
+                            "truncated": {
+                              "type": "boolean"
+                            },
+                            "validForMs": {
+                              "minimum": 1,
+                              "type": "integer"
+                            }
+                          },
+                          "required": [
+                            "source",
+                            "collectedAt",
+                            "expiresAt",
+                            "validForMs",
+                            "quality",
+                            "truncated",
+                            "items"
+                          ],
+                          "type": "object"
+                        },
+                        "topProcesses": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "collectedAt": {
+                              "type": "string"
+                            },
+                            "expiresAt": {
+                              "type": "string"
+                            },
+                            "items": {
+                              "items": {
+                                "additionalProperties": false,
+                                "properties": {
+                                  "command": {
+                                    "type": "string"
+                                  },
+                                  "cpuPercent": {
+                                    "minimum": 0,
+                                    "type": "number"
+                                  },
+                                  "memoryPercent": {
+                                    "minimum": 0,
+                                    "type": "number"
+                                  },
+                                  "pid": {
+                                    "minimum": 1,
+                                    "type": "integer"
+                                  }
+                                },
+                                "required": [
+                                  "pid",
+                                  "command",
+                                  "cpuPercent",
+                                  "memoryPercent"
+                                ],
+                                "type": "object"
+                              },
+                              "type": "array"
+                            },
+                            "quality": {
+                              "anyOf": [
+                                {
+                                  "const": "good",
+                                  "type": "string"
+                                },
+                                {
+                                  "const": "partial",
+                                  "type": "string"
+                                },
+                                {
+                                  "const": "unknown",
+                                  "type": "string"
+                                },
+                                {
+                                  "const": "unsupported",
+                                  "type": "string"
+                                }
+                              ]
+                            },
+                            "reason": {
+                              "type": "string"
+                            },
+                            "source": {
+                              "items": {
+                                "type": "string"
+                              },
+                              "maxItems": 8,
+                              "type": "array"
+                            },
+                            "truncated": {
+                              "type": "boolean"
+                            },
+                            "validForMs": {
+                              "minimum": 1,
+                              "type": "integer"
+                            }
+                          },
+                          "required": [
+                            "source",
+                            "collectedAt",
+                            "expiresAt",
+                            "validForMs",
+                            "quality",
+                            "truncated",
+                            "items"
+                          ],
+                          "type": "object"
+                        }
+                      },
+                      "required": [
+                        "services",
+                        "listeningPorts",
+                        "topProcesses",
+                        "systemLogs",
+                        "interfaceErrors"
+                      ],
+                      "type": "object"
+                    },
+                    "serverId": {
+                      "minimum": 1,
+                      "type": "integer"
+                    },
+                    "serviceStatus": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "collectedAt": {
+                          "type": "string"
+                        },
+                        "expiresAt": {
+                          "type": "string"
+                        },
+                        "items": {
+                          "items": {
+                            "additionalProperties": false,
+                            "properties": {
+                              "activeState": {
+                                "type": "string"
+                              },
+                              "description": {
+                                "anyOf": [
+                                  {
+                                    "type": "string"
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ]
+                              },
+                              "loadState": {
+                                "type": "string"
+                              },
+                              "name": {
+                                "type": "string"
+                              },
+                              "subState": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "name",
+                              "loadState",
+                              "activeState",
+                              "subState",
+                              "description"
+                            ],
+                            "type": "object"
+                          },
+                          "type": "array"
+                        },
+                        "quality": {
+                          "anyOf": [
+                            {
+                              "const": "good",
+                              "type": "string"
+                            },
+                            {
+                              "const": "partial",
+                              "type": "string"
+                            },
+                            {
+                              "const": "unknown",
+                              "type": "string"
+                            },
+                            {
+                              "const": "unsupported",
+                              "type": "string"
+                            }
+                          ]
+                        },
+                        "reason": {
+                          "type": "string"
+                        },
+                        "source": {
+                          "items": {
+                            "type": "string"
+                          },
+                          "maxItems": 8,
+                          "type": "array"
+                        },
+                        "truncated": {
+                          "type": "boolean"
+                        },
+                        "validForMs": {
+                          "minimum": 1,
+                          "type": "integer"
+                        }
+                      },
+                      "required": [
+                        "source",
+                        "collectedAt",
+                        "expiresAt",
+                        "validForMs",
+                        "quality",
+                        "truncated",
+                        "items"
+                      ],
+                      "type": "object"
+                    },
+                    "topProcesses": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "collectedAt": {
+                          "type": "string"
+                        },
+                        "expiresAt": {
+                          "type": "string"
+                        },
+                        "items": {
+                          "items": {
+                            "additionalProperties": false,
+                            "properties": {
+                              "command": {
+                                "type": "string"
+                              },
+                              "cpuPercent": {
+                                "minimum": 0,
+                                "type": "number"
+                              },
+                              "memoryPercent": {
+                                "minimum": 0,
+                                "type": "number"
+                              },
+                              "pid": {
+                                "minimum": 1,
+                                "type": "integer"
+                              }
+                            },
+                            "required": [
+                              "pid",
+                              "command",
+                              "cpuPercent",
+                              "memoryPercent"
+                            ],
+                            "type": "object"
+                          },
+                          "type": "array"
+                        },
+                        "quality": {
+                          "anyOf": [
+                            {
+                              "const": "good",
+                              "type": "string"
+                            },
+                            {
+                              "const": "partial",
+                              "type": "string"
+                            },
+                            {
+                              "const": "unknown",
+                              "type": "string"
+                            },
+                            {
+                              "const": "unsupported",
+                              "type": "string"
+                            }
+                          ]
+                        },
+                        "reason": {
+                          "type": "string"
+                        },
+                        "source": {
+                          "items": {
+                            "type": "string"
+                          },
+                          "maxItems": 8,
+                          "type": "array"
+                        },
+                        "truncated": {
+                          "type": "boolean"
+                        },
+                        "validForMs": {
+                          "minimum": 1,
+                          "type": "integer"
+                        }
+                      },
+                      "required": [
+                        "source",
+                        "collectedAt",
+                        "expiresAt",
+                        "validForMs",
+                        "quality",
+                        "truncated",
+                        "items"
+                      ],
+                      "type": "object"
+                    },
+                    "truncated": {
+                      "type": "boolean"
+                    },
+                    "validForMs": {
+                      "minimum": 1,
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "schemaVersion",
+                    "serverId",
+                    "osType",
+                    "collectedAt",
+                    "expiresAt",
+                    "validForMs",
+                    "quality",
+                    "truncated",
+                    "sections",
+                    "serviceStatus",
+                    "listeningPorts",
+                    "topProcesses",
+                    "recentSystemLogs",
+                    "interfaceErrors",
+                    "gaps"
+                  ],
+                  "type": "object"
+                },
                 "evidence": {
                   "anyOf": [
                     {
@@ -5619,6 +6730,9 @@
                                         "type": "null"
                                       }
                                     ]
+                                  },
+                                  "inodeSupported": {
+                                    "type": "boolean"
                                   },
                                   "inodeTotal": {
                                     "anyOf": [
@@ -5799,7 +6913,15 @@
                             "values": {
                               "patternProperties": {
                                 "^(.*)$": {
-                                  "type": "number"
+                                  "anyOf": [
+                                    {
+                                      "type": "number"
+                                    },
+                                    {
+                                      "pattern": "^\\d+$",
+                                      "type": "string"
+                                    }
+                                  ]
                                 }
                               },
                               "type": "object"
@@ -5858,6 +6980,9 @@
                                             "type": "null"
                                           }
                                         ]
+                                      },
+                                      "inodeSupported": {
+                                        "type": "boolean"
                                       },
                                       "inodeTotal": {
                                         "anyOf": [
@@ -15457,6 +16582,9 @@
                         }
                       ]
                     },
+                    "inodeSupported": {
+                      "type": "boolean"
+                    },
                     "inodeTotal": {
                       "anyOf": [
                         {
@@ -15636,7 +16764,15 @@
               "values": {
                 "patternProperties": {
                   "^(.*)$": {
-                    "type": "number"
+                    "anyOf": [
+                      {
+                        "type": "number"
+                      },
+                      {
+                        "pattern": "^\\d+$",
+                        "type": "string"
+                      }
+                    ]
                   }
                 },
                 "type": "object"
@@ -15695,6 +16831,9 @@
                               "type": "null"
                             }
                           ]
+                        },
+                        "inodeSupported": {
+                          "type": "boolean"
                         },
                         "inodeTotal": {
                           "anyOf": [
@@ -29251,6 +30390,9 @@
                     "type": "null"
                   }
                 ]
+              },
+              "inodeSupported": {
+                "type": "boolean"
               },
               "inodeTotal": {
                 "anyOf": [

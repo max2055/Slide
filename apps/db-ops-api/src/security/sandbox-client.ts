@@ -14,7 +14,12 @@ export interface DatabaseNetworkScanRequest {
   profile: string;
 }
 
-async function parseResponse(response: Response): Promise<unknown> {
+async function parseResponse(response: Response, failureCode: string): Promise<unknown> {
+  if (!response.ok) {
+    // Discard arbitrary upstream bodies while preserving the HTTP failure.
+    await response.body?.cancel().catch(() => undefined);
+    throw new Error(`${failureCode}:${response.status}`);
+  }
   try {
     return await response.json();
   } catch {
@@ -46,9 +51,7 @@ export class SandboxClient {
       body,
       signal,
     });
-    const result = await parseResponse(response);
-    if (!response.ok) throw new Error(`SANDBOX_REQUEST_FAILED:${response.status}`);
-    return result;
+    return parseResponse(response, 'SANDBOX_REQUEST_FAILED');
   }
 
   async scanDatabaseEndpoints(request: DatabaseNetworkScanRequest, signal?: AbortSignal): Promise<unknown> {
@@ -74,9 +77,7 @@ export class SandboxClient {
       },
       signal,
     });
-    const result = await parseResponse(response);
-    if (!response.ok) throw new Error(`SANDBOX_STATUS_FAILED:${response.status}`);
-    return result;
+    return parseResponse(response, 'SANDBOX_STATUS_FAILED');
   }
 
   private async post(path: string, request: unknown, signal?: AbortSignal): Promise<unknown> {
@@ -97,9 +98,7 @@ export class SandboxClient {
       body,
       signal,
     });
-    const result = await parseResponse(response);
-    if (!response.ok) throw new Error(`SANDBOX_REQUEST_FAILED:${response.status}`);
-    return result;
+    return parseResponse(response, 'SANDBOX_REQUEST_FAILED');
   }
 }
 
