@@ -98,7 +98,7 @@ export function applyCandidates(state: MemoryState, job: MemoryJob, candidates: 
   }
 }
 
-/** Single-host crash-recoverable file transactions. Foreign-host or malformed ownership fails closed. */
+/** Single-host crash-recoverable file transactions. Stop older writers before upgrading the lock protocol. */
 export class StructuredMemoryStore {
   readonly file: string;
   constructor(directory: string) { this.file = path.resolve(directory, 'memory-v1.json'); }
@@ -120,29 +120,36 @@ export class StructuredMemoryStore {
     return withMemoryLock(this.file, async () => {
       await fs.mkdir(path.dirname(this.file), { recursive: true, mode: 0o700 });
       const lock = this.file + '.lock';
-      const token = crypto.randomUUID();
-      const owner = { pid: process.pid, host: os.hostname(), token };
+      const owner = { pid: process.pid, host: os.hostname(), token: crypto.randomUUID() };
+      const release = await acquireMemoryGuard(lock + '.owner', owner);
       let handle;
-      try { handle = await fs.open(lock, 'wx', 0o600); }
-      catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
-        // A second reclaimer cannot unlink the fresh lock published by the first.
-        const guard = await fs.open(lock + '.reclaim', 'wx', 0o600);
-        try {
-          const old = JSON.parse(await fs.readFile(lock, 'utf8'));
-          if (ownerAlive(old)) throw new Error('MEMORY_STORE_BUSY');
-          await fs.unlink(lock);
-          handle = await fs.open(lock, 'wx', 0o600);
-        } finally { await guard.close(); await fs.unlink(lock + '.reclaim'); }
-      }
       try {
+        // All upgraded writers hold the guard even while this diagnostic file is
+        // empty/partial. Legacy empty/truncated files can therefore be recovered
+        // without an age heuristic. Mixed old/new writer versions are unsupported.
+        try {
+          const content = await fs.readFile(lock, 'utf8');
+          let old;
+          try { old = JSON.parse(content); } catch { /* interrupted legacy write */ }
+          if (old && ownerAlive(old)) throw new Error('MEMORY_STORE_BUSY');
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+        }
+        handle = await fs.open(lock, 'w', 0o600);
+        await handle.chmod(0o600);
         await handle.writeFile(JSON.stringify(owner)); await handle.sync();
         const state = await this.readSnapshot();
         const result = await action(state);
         await writeMemoryFile(this.file, JSON.stringify(state), 0o600);
         await fs.chmod(this.file, 0o600);
         return structuredClone(result);
-      } finally { await handle.close(); await fs.unlink(lock); }
+      } finally {
+        try {
+          if (handle) {
+            try { await handle.close(); } finally { await fs.unlink(lock); }
+          }
+        } finally { await release(); }
+      }
     });
   }
   async list(scope: MemoryScope): Promise<MemoryRecord[]> {
@@ -237,6 +244,62 @@ export class StructuredMemoryStore {
       state.records.push({ id, schemaVersion: 1, scope, kind: 'fact', subject: 'legacy MEMORY.md', content: text, sources: [], confidence: 0,
         operation: 'new', evidence: 'legacy/unknown', status: 'uncertain', createdAt: now, updatedAt: now, jobIds: [], supersedes: [], sharedWith: [], invalidSourceIds: [] });
     });
+  }
+}
+
+type MemoryLockOwner = { host: string; pid: number; token: string };
+
+/** Publish ownership together with the guard: rename never replaces a nonempty
+ * directory. A stale remover addresses the unique marker, then uses rmdir,
+ * which cannot remove a fresh owner's nonempty directory (including ABA races).
+ * No age-based expiry and no reclaim lock that itself needs another lock.
+ */
+async function acquireMemoryGuard(guard: string, owner: MemoryLockOwner): Promise<() => Promise<void>> {
+  const marker = Buffer.from(JSON.stringify(owner)).toString('base64url');
+  const staging = guard + '.' + owner.token;
+  await fs.mkdir(staging, { mode: 0o700 });
+  let published = false;
+  const removeEmpty = async (directory: string) => {
+    try { await fs.rmdir(directory); }
+    catch (error) {
+      if (!['ENOENT', 'ENOTEMPTY', 'EEXIST'].includes((error as NodeJS.ErrnoException).code ?? '')) throw error;
+    }
+  };
+  try {
+    await fs.mkdir(path.join(staging, marker), { mode: 0o700 });
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        await fs.rename(staging, guard);
+        published = true;
+        return async () => {
+          await removeEmpty(path.join(guard, marker));
+          await removeEmpty(guard);
+        };
+      } catch (error) {
+        if (!['EEXIST', 'ENOTEMPTY'].includes((error as NodeJS.ErrnoException).code ?? '')) throw error;
+      }
+      let entries: string[];
+      try { entries = await fs.readdir(guard); }
+      catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') continue;
+        throw error;
+      }
+      if (entries.length) {
+        let previous: MemoryLockOwner;
+        try { previous = JSON.parse(Buffer.from(entries[0], 'base64url').toString('utf8')); }
+        catch { throw new Error('MEMORY_STORE_BUSY'); }
+        if (entries.length !== 1 || !previous || typeof previous.token !== 'string' || !previous.token
+          || ownerAlive(previous)) throw new Error('MEMORY_STORE_BUSY');
+        await removeEmpty(path.join(guard, entries[0]));
+      }
+      await removeEmpty(guard);
+    }
+    throw new Error('MEMORY_STORE_BUSY');
+  } finally {
+    if (!published) {
+      await removeEmpty(path.join(staging, marker));
+      await removeEmpty(staging);
+    }
   }
 }
 export function ownerAlive(owner: { host: string; pid: number } | undefined): boolean {
