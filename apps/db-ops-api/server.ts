@@ -886,8 +886,9 @@ async function start() {
   fastify.post('/api/llm/configs', { preHandler: [verifyToken, requirePermission('llm:manage')] }, async (request, reply) => {
     try {
       const data = request.body as any;
+      const bodyError = warnUnknown(data, ['name','displayName','deploymentType','apiKey','apiFormat','model','baseURL','modelsSupported','contextWindow','supportsFunctionCall','supportsVision','inputCostPer1k','outputCostPer1k','enabled','temperature','maxTokens','timeoutMs','rateLimitPerMinute','dailyQuota'], 'POST /api/llm/configs');
+      if (bodyError) return reply.code(400).send(bodyError);
       const result = await llmDatabaseService.configureProvider(data)
-      warnUnknown(data, ['name','displayName','deploymentType','apiKey','apiFormat','model','baseURL','modelsSupported','contextWindow','supportsFunctionCall','supportsVision','inputCostPer1k','outputCostPer1k','enabled','temperature','maxTokens','timeoutMs','rateLimitPerMinute','dailyQuota'], 'POST /api/llm/configs');
       if (!result.success) return reply.send(result);
       return reply.send({ ...result, ...await reloadOutcome(request.log, reloadChatProvider) });
     } catch (error: any) {
@@ -1430,8 +1431,9 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
   fastify.post('/api/database/instances', { preHandler: [verifyToken, requirePermission('instance:create')] }, async (request, reply) => {
     try {
       const data = request.body as any;
+      const bodyError = warnUnknown(data, ['name','environment','db_type','host','port','username','password','database_name','max_connections','connection_timeout_ms','description','tags','created_by'], 'POST /api/database/instances');
+      if (bodyError) return reply.code(400).send(bodyError);
       const result = await instanceDatabaseService.createInstance(data);
-      warnUnknown(data, ['name','environment','db_type','host','port','username','password','database_name','max_connections','connection_timeout_ms','description','tags','created_by'], 'POST /api/database/instances');
       if (result.success) {
         reply.send({ id: result.instanceId, message: '创建成功' });
       } else {
@@ -1451,8 +1453,9 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
     try {
       const { id } = request.params as any;
       const data = request.body as any;
+      const bodyError = warnUnknown(data, ['name','environment','db_type','host','port','username','password','database_name','max_connections','connection_timeout_ms','description','tags'], 'PUT /api/database/instances/:id');
+      if (bodyError) return reply.code(400).send(bodyError);
       const result = await instanceDatabaseService.updateInstance(Number(id), data);
-      warnUnknown(data, ['name','environment','db_type','host','port','username','password','database_name','max_connections','connection_timeout_ms','description','tags'], 'PUT /api/database/instances/:id');
       if (result.success) {
         reply.send({ message: '更新成功' });
       } else {
@@ -1545,7 +1548,8 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
   fastify.post('/api/servers', { preHandler: [verifyToken, requirePermission('servers:manage')] }, async (request, reply) => {
     try {
       const data = request.body as any;
-      warnUnknown(data, ['host','port','label','os_type','credential_type','credential_username','credential_value','host_key_fingerprint','ssh_trust_mode','created_by'], 'POST /api/servers');
+      const bodyError = warnUnknown(data, ['host','port','label','os_type','credential_type','credential_username','credential_value','host_key_fingerprint','ssh_trust_mode','created_by'], 'POST /api/servers');
+      if (bodyError) return reply.code(400).send(bodyError);
       if (!data.host) return reply.code(400).send({ error: '缺少必填字段：host' });
       if (!data.os_type) return reply.code(400).send({ error: '缺少必填字段：os_type' });
       if (!data.credential_type) return reply.code(400).send({ error: '缺少必填字段：credential_type' });
@@ -1568,7 +1572,8 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
     try {
       const { id } = request.params as any;
       const data = request.body as any;
-      warnUnknown(data, ['host','port','label','os_type','credential_type','credential_username','credential_value','host_key_fingerprint','ssh_trust_mode','collection_enabled'], 'PUT /api/servers/:id');
+      const bodyError = warnUnknown(data, ['host','port','label','os_type','credential_type','credential_username','credential_value','host_key_fingerprint','ssh_trust_mode','collection_enabled'], 'PUT /api/servers/:id');
+      if (bodyError) return reply.code(400).send(bodyError);
       if (data.ssh_trust_mode === 'insecure' && (data.credential_type ?? (await serverDatabaseService.getServerById(Number(id)))?.credential_type) === 'key') {
         await recordSshTrustRequest(Number((request as any).user?.userId), 'server', String(id), data.ssh_trust_mode);
       }
@@ -1630,7 +1635,8 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
     try {
       const { id } = request.params as any;
       const data = request.body as any;
-      warnUnknown(data, ['credential_type','credential_username','credential_value'], 'POST /api/servers/:id/rotate-key');
+      const bodyError = warnUnknown(data, ['credential_type','credential_username','credential_value'], 'POST /api/servers/:id/rotate-key');
+      if (bodyError) return reply.code(400).send(bodyError);
       if (!data.credential_type) return reply.code(400).send({ error: '缺少必填字段：credential_type' });
       if (!data.credential_username) return reply.code(400).send({ error: '缺少必填字段：credential_username' });
       if (!data.credential_value) return reply.code(400).send({ error: '缺少必填字段：credential_value' });
