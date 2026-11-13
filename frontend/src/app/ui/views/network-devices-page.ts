@@ -77,6 +77,8 @@ export class NetworkDevicesPage extends LitElement {
   @state() private deletingDevice: NetworkDevice | null = null;
   @state() private deleting = false;
   @state() private form: DeviceForm = { ...EMPTY_FORM };
+  private savedSnmpVersion: 2 | 3 | null = null;
+  private savedSnmpSettings: Pick<DeviceForm, "securityLevel" | "authProtocol" | "privacyProtocol"> = EMPTY_FORM;
   @state() private formError: string | null = null;
   @state() private showSshPrivateKey = false;
 
@@ -162,6 +164,8 @@ export class NetworkDevicesPage extends LitElement {
     this.showSshPrivateKey = false;
     this.editorTab = "basic"; this.connectionPending = true;
     this.editingId = null;
+    this.savedSnmpVersion = null;
+    this.savedSnmpSettings = EMPTY_FORM;
     this.form = { ...EMPTY_FORM };
     this.formError = null;
     this.showDialog = true;
@@ -171,6 +175,8 @@ export class NetworkDevicesPage extends LitElement {
     this.showSshPrivateKey = false;
     this.editorTab = "basic";
     this.editingId = device.id;
+    this.savedSnmpVersion = device.snmpVersion ?? 2;
+    this.savedSnmpSettings = EMPTY_FORM;
     this.form = {
       ...EMPTY_FORM,
       name: device.name,
@@ -180,6 +186,7 @@ export class NetworkDevicesPage extends LitElement {
       model: device.model ?? "",
       osVersion: device.os_version ?? "",
       serialNumber: device.serial_number ?? "",
+      snmpVersion: device.snmpVersion ?? 2,
       snmpPort: device.snmp_port,
       sshPort: device.ssh_port,
       sshCredentialType: device.sshCredentialType === "key" ? "key" : "password",
@@ -221,10 +228,10 @@ export class NetworkDevicesPage extends LitElement {
 
   private credentialPayload(): NetworkDeviceSnmpCredential | NetworkDeviceSnmpV2Credential | undefined {
     if (this.form.snmpVersion === 2) {
-      if (!this.form.community.trim()) return undefined;
+      if (!this.form.community) return undefined;
       return { version: 2, community: this.form.community.trim() };
     }
-    if (!this.form.username.trim()) return undefined;
+    if (!this.form.username && !this.form.authSecret && !this.form.privacySecret) return undefined;
     const credential: NetworkDeviceSnmpCredential = {
       username: this.form.username.trim(),
       securityLevel: this.form.securityLevel,
@@ -234,6 +241,32 @@ export class NetworkDevicesPage extends LitElement {
     if (this.form.authSecret) credential.authSecret = this.form.authSecret;
     if (this.form.privacySecret) credential.privacySecret = this.form.privacySecret;
     return credential;
+  }
+
+  private snmpValidationError(requireCredential = false): string | null {
+    const credential = this.credentialPayload();
+    const settingsChanged = this.form.snmpVersion === 3 && (this.form.securityLevel !== this.savedSnmpSettings.securityLevel
+      || this.form.authProtocol !== this.savedSnmpSettings.authProtocol || this.form.privacyProtocol !== this.savedSnmpSettings.privacyProtocol);
+    if (!credential) {
+      if (requireCredential || !this.editingId || this.form.snmpVersion !== this.savedSnmpVersion || settingsChanged) {
+        return `请完整配置 SNMPv${this.form.snmpVersion === 2 ? "2c" : "3"} 凭据；切换版本或修改安全设置时不能留空`;
+      }
+      return null;
+    }
+    if (this.form.snmpVersion === 2) {
+      return this.form.community.trim() ? null : "SNMPv2c Community 不能为空";
+    }
+    if (!this.form.username.trim()) return "请完整填写 SNMPv3 用户名和所需密钥，或全部留空保留现有凭据";
+    if (this.form.securityLevel !== "noAuthNoPriv" && (this.form.authSecret.length < 8 || this.form.authSecret.length > 512)) {
+      return "SNMPv3 认证密钥需为 8–512 个字符；修改凭据时需完整填写";
+    }
+    if (this.form.securityLevel === "authPriv" && (this.form.privacySecret.length < 8 || this.form.privacySecret.length > 512)) {
+      return "SNMPv3 隐私密钥需为 8–512 个字符；修改凭据时需完整填写";
+    }
+    if ((this.form.securityLevel === "noAuthNoPriv" && this.form.authSecret) || (this.form.securityLevel !== "authPriv" && this.form.privacySecret)) {
+      return "SNMPv3 当前安全级别不使用已填写的密钥，请清空无关密钥或调整安全级别";
+    }
+    return null;
   }
 
   private sshPayload() {
@@ -262,14 +295,14 @@ export class NetworkDevicesPage extends LitElement {
 
   private async saveDevice(configureCollection = false) {
     if (this.saving) return;
+    // The editor leave guard may have selected collection; credential errors belong here.
+    this.editorTab = "basic";
     if (!this.form.name.trim() || !this.form.host.trim()) {
       this.formError = "名称和主机不能为空";
       return;
     }
-    if (!this.editingId && !this.credentialPayload()) {
-      this.formError = `请配置 SNMPv${this.form.snmpVersion === 2 ? "2c" : "3"} 凭据`;
-      return;
-    }
+    const snmpError = this.snmpValidationError();
+    if (snmpError) { this.formError = snmpError; return; }
     const ssh = this.sshPayload();
     if (ssh && (!ssh.username || !ssh.credentialValue)) {
       this.formError = "请完整填写 SSH 用户名和凭据，或全部留空";
@@ -290,6 +323,8 @@ export class NetworkDevicesPage extends LitElement {
       const savedId = this.editingId ?? Number((await response.json()).id);
       if (configureCollection) {
         this.editingId = savedId;
+        this.savedSnmpVersion = this.form.snmpVersion;
+        this.savedSnmpSettings = { securityLevel: this.form.securityLevel, authProtocol: this.form.authProtocol, privacyProtocol: this.form.privacyProtocol };
         this.connectionPending = false;
         this.editorTab = 'collection';
       } else await this.finishCloseDialog();
@@ -304,8 +339,9 @@ export class NetworkDevicesPage extends LitElement {
 
   private async testConnection() {
     if (this.testing) return;
-    if (!this.form.host.trim() || !this.credentialPayload()) {
-      this.formError = `探测需要填写主机和 SNMPv${this.form.snmpVersion === 2 ? "2c" : "3"} 凭据`;
+    const snmpError = this.snmpValidationError(true);
+    if (!this.form.host.trim() || snmpError) {
+      this.formError = snmpError || "探测需要填写主机";
       return;
     }
     this.testing = true;
@@ -451,7 +487,7 @@ export class NetworkDevicesPage extends LitElement {
         <section class="device-form-section">
           <div class="section-heading">
             <h3>SNMP 监控</h3>
-            <span>协议版本与厂商无关，用于只读指标采集</span>
+            <span>${this.editingId ? "凭据全部留空保留现有配置；修改凭据或切换版本需完整填写" : "协议版本与厂商无关，用于只读指标采集"}</span>
           </div>
           <div class="device-form-row"><app-form-field label="SNMP 版本" .inline=${true}><select class="field" .value=${String(this.form.snmpVersion)} @change=${(e: Event) => this.updateForm("snmpVersion", Number((e.target as HTMLSelectElement).value) as 2 | 3)}><option value="2">SNMPv2c</option><option value="3">SNMPv3</option></select></app-form-field>
           ${this.form.snmpVersion === 2 ? html`<app-form-field label="Community" required .inline=${true}><input class="field" autocomplete="off" type="password" .value=${this.form.community} @input=${(e: Event) => this.updateForm("community", (e.target as HTMLInputElement).value)}></app-form-field>` : html`<app-form-field label="SNMPv3 用户名" required .inline=${true}><input class="field" autocomplete="off" .value=${this.form.username} @input=${(e: Event) => this.updateForm("username", (e.target as HTMLInputElement).value)}></app-form-field>`}</div>

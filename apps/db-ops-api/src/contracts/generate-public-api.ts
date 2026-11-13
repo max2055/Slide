@@ -492,7 +492,7 @@ function buildLegacyClientTypes(): string {
 
 const NETWORK_CLIENT_TYPES = `export type NetworkDeviceStatus = 'unknown' | 'online' | 'offline' | 'error' | 'unreachable';
 export type NetworkDeviceVendor = 'huawei' | 'cisco';
-export interface NetworkDevice { id: number; name: string; label: string | null; host: string; site: string | null; vendor: NetworkDeviceVendor; model: string | null; os_version: string | null; serial_number: string | null; snmp_port: number; ssh_port: number; status: NetworkDeviceStatus; last_check_at: string | null; collection_enabled: boolean; created_at: string; updated_at: string; hasSnmpCredential: boolean; hasSshCredential: boolean; sshCredentialType?: string | null; sshTrustMode?: string | null; hostKeyFingerprint?: string | null; }
+export interface NetworkDevice { id: number; name: string; label: string | null; host: string; site: string | null; vendor: NetworkDeviceVendor; model: string | null; os_version: string | null; serial_number: string | null; snmp_port: number; ssh_port: number; status: NetworkDeviceStatus; last_check_at: string | null; collection_enabled: boolean; created_at: string; updated_at: string; snmpVersion?: 2 | 3 | null; hasSnmpCredential: boolean; hasSshCredential: boolean; sshCredentialType?: string | null; sshTrustMode?: string | null; hostKeyFingerprint?: string | null; }
 export type NetworkDevicesResponse = NetworkDevice[];
 export type NetworkDeviceSnmpSecurityLevel = 'noAuthNoPriv' | 'authNoPriv' | 'authPriv';
 export interface NetworkDeviceSnmpCredential { username: string; securityLevel: NetworkDeviceSnmpSecurityLevel; authProtocol?: 'MD5' | 'SHA'; authSecret?: string; privacyProtocol?: 'DES' | 'AES'; privacySecret?: string; }

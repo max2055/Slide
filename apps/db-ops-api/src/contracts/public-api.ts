@@ -94,6 +94,7 @@ export const NetworkDeviceSchema = Type.Object({
   collection_enabled: Type.Boolean(),
   created_at: Type.String(),
   updated_at: Type.String(),
+  snmpVersion: Type.Optional(Type.Union([Type.Literal(2), Type.Literal(3), Type.Null()])),
   hasSnmpCredential: Type.Boolean(),
   hasSshCredential: Type.Boolean(),
   sshCredentialType: Type.Optional(Type.Union([Type.String(), Type.Null()])),

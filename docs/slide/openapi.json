@@ -26452,6 +26452,21 @@
             "minimum": 1,
             "type": "integer"
           },
+          "snmpVersion": {
+            "anyOf": [
+              {
+                "const": 2,
+                "type": "number"
+              },
+              {
+                "const": 3,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "ssh_port": {
             "maximum": 65535,
             "minimum": 1,
@@ -27871,6 +27886,21 @@
               "maximum": 65535,
               "minimum": 1,
               "type": "integer"
+            },
+            "snmpVersion": {
+              "anyOf": [
+                {
+                  "const": 2,
+                  "type": "number"
+                },
+                {
+                  "const": 3,
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ]
             },
             "ssh_port": {
               "maximum": 65535,
