@@ -1,3 +1,4 @@
+import { generateSshFixtureKeyPair } from '../../../tests/fixtures/ssh-key.fixture.js';
 /** Synthetic signing/identity and socket routing; real SSH2, production adapter,
  * and source helper disk/lock protocol. No VM/systemd or external target. */
 import { createHash, generateKeyPairSync, sign } from 'node:crypto';
@@ -11,7 +12,7 @@ import { operationsContentHash } from '../contracts.js';
 import { RestartDemoServiceAdapter, type DemoTargetRegistration } from './adapters/restart-demo-service.js';
 
 export async function startHelperSshFixture(serverId: number) {
-  const host = utils.generateKeyPairSync('ed25519'), login = utils.generateKeyPairSync('ed25519');
+  const host = generateSshFixtureKeyPair(), login = generateSshFixtureKeyPair();
   const parsed = utils.parseKey(host.private);
   if (parsed instanceof Error) throw parsed;
   const signing = generateKeyPairSync('ed25519');
