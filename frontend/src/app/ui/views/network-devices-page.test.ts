@@ -199,3 +199,96 @@ describe("network-devices-page", () => {
     expect(body.snmpv3).toBeUndefined();
   });
 });
+
+// MAX-603 / #435: a visible credential edit must never become a successful no-op.
+describe('SNMP editor credential intent', () => {
+  beforeEach(() => { authFetch.mockReset(); showToast.mockReset(); authFetch.mockResolvedValue(response([])); });
+  afterEach(() => document.body.replaceChildren());
+  const device = { id: 7, name: 'switch', host: '192.0.2.7', vendor: 'huawei', snmp_port: 161, ssh_port: 22,
+    collection_enabled: true, hasSnmpCredential: true, snmpVersion: 3 };
+  async function editor() {
+    const element = document.createElement('network-devices-page') as any;
+    document.body.append(element); await settle(element); await element.openEdit(device); return element;
+  }
+  it('loads the saved protocol and leaves all credentials blank to retain them', async () => {
+    const element = await editor();
+    expect(element.form.snmpVersion).toBe(3);
+    expect(element.requestPayload().snmpv3).toBeUndefined();
+  });
+  it.each([
+    { snmpVersion: 3, authSecret: 'auth-secret' },
+    { snmpVersion: 3, privacySecret: 'priv-secret' },
+    { snmpVersion: 3, username: 'monitor' },
+    { snmpVersion: 2 },
+    { snmpVersion: 3, securityLevel: 'authNoPriv' },
+    { snmpVersion: 3, authProtocol: 'MD5' },
+  ])('blocks incomplete modification %j before PUT', async changes => {
+    const element = await editor(); element.form = { ...element.form, ...changes };
+    element.editorTab = 'collection';
+    await element.saveDevice();
+    expect(element.editorTab).toBe('basic');
+    expect(element.formError).toMatch(/SNMP/);
+    expect(authFetch.mock.calls.some(([, init]) => init?.method === 'PUT')).toBe(false);
+  });
+  it('retains credentials after saving nondefault security settings in the same editor', async () => {
+    const element = await editor();
+    element.form = { ...element.form, username: 'monitor', securityLevel: 'noAuthNoPriv' };
+    await element.saveDevice(true);
+    element.form = { ...element.form, username: '', authSecret: '', privacySecret: '' };
+    await element.saveDevice(true);
+    expect(element.formError).toBeNull();
+    const writes = authFetch.mock.calls.filter(([, init]) => init?.method === 'PUT');
+    expect(writes).toHaveLength(2);
+    expect(JSON.parse(writes[1][1].body).snmpv3).toBeUndefined();
+  });
+  it('submits complete replacement credentials, preserving secret whitespace', async () => {
+    const element = await editor();
+    element.form = { ...element.form, username: 'monitor', authSecret: '  auth-secret  ', privacySecret: 'priv-secret' };
+    const payload = element.requestPayload();
+    expect(payload.snmpv3).toMatchObject({ username: 'monitor', authSecret: '  auth-secret  ', privacySecret: 'priv-secret' });
+    expect(payload.snmpv2c).toBeUndefined();
+  });
+});
+
+// MAX-613 / #720: test input events, not just hand-built request bodies.
+describe('network device port editing', () => {
+  beforeEach(() => { authFetch.mockReset(); showToast.mockReset(); });
+  afterEach(() => document.body.replaceChildren());
+  async function editor(editing: boolean) {
+    authFetch.mockImplementation(async (_url: string, init?: RequestInit) => response(init?.method === 'POST' ? { id: 7 } : []));
+    const element = document.createElement('network-devices-page') as any;
+    document.body.append(element); await settle(element);
+    if (editing) await element.openEdit({ id: 7, name: 'edge', host: '192.0.2.10', snmp_port: 1161, ssh_port: 2222, vendor: 'huawei', snmpVersion: 2 });
+    else { element.openCreate(); element.form = { ...element.form, name: 'edge', host: '192.0.2.10', community: 'readonly' }; }
+    await settle(element); return element;
+  }
+  async function fill(element: any, label: string, value: string) {
+    const input = element.querySelector(`app-form-field[label="${label} 端口"] input`) as HTMLInputElement;
+    input.value = value; input.dispatchEvent(new Event('input', { bubbles: true }));
+    await settle(element); return input;
+  }
+  it.each([true, false])('preserves empty/zero/intermediate values and blocks invalid saves (editing=%s)', async editing => {
+    const element = await editor(editing);
+    for (const label of ['SNMP', 'SSH']) {
+      for (const value of ['', '0', '70000', '-1', '1.5']) {
+        const input = await fill(element, label, value);
+        expect(input.value).toBe(value);
+        await element.saveDevice();
+        expect(element.formError).toContain(`${label} 端口`);
+        expect(authFetch.mock.calls.filter(([, init]) => ['POST', 'PUT'].includes(init?.method))).toHaveLength(0);
+      }
+      await fill(element, label, label === 'SNMP' ? '1161' : '2222');
+    }
+    await element.saveDevice();
+    const writes = authFetch.mock.calls.filter(([, init]) => ['POST', 'PUT'].includes(init?.method));
+    expect(writes).toHaveLength(1);
+    expect(JSON.parse(writes[0][1].body)).toMatchObject({ snmpPort: 1161, sshPort: 2222 });
+  });
+  it.each(['1', '65535'])('saves valid boundary port %s as a number', async value => {
+    const element = await editor(true);
+    await fill(element, 'SNMP', value); await fill(element, 'SSH', value);
+    await element.saveDevice();
+    const write = authFetch.mock.calls.find(([, init]) => init?.method === 'PUT');
+    expect(JSON.parse(write?.[1].body)).toMatchObject({ snmpPort: Number(value), sshPort: Number(value) });
+  });
+});

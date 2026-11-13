@@ -8,7 +8,7 @@ const labels: Record<string, string> = {
   api: '手动配置', manual: '手动配置', discovered: '自动发现', discovery: '自动发现', inferred: '推断',
   redacted: '已脱敏', unredacted: '未脱敏', failed: '失败', running: '执行中', success: '成功',
 };
-export const networkDeviceLabel = (value: string): string => labels[value] ?? value;
+export const networkDeviceLabel = (value: string): string => Object.hasOwn(labels, value) ? labels[value] : value;
 
 const errors: Record<string, string> = {
   SSH_CREDENTIAL_REQUIRED: '请先编辑网络设备并配置 SSH 用户名和密码或私钥',
@@ -27,5 +27,5 @@ const errors: Record<string, string> = {
 };
 export function networkDeviceError(value: unknown, fallback = '操作失败，请稍后重试'): string {
   const message = value instanceof Error ? value.message : String(value ?? '');
-  return errors[message] ?? (/\p{Script=Han}/u.test(message) ? message : fallback);
+  return Object.hasOwn(errors, message) ? errors[message] : (/\p{Script=Han}/u.test(message) ? message : fallback);
 }

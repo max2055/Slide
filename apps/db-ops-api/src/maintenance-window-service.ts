@@ -1,4 +1,4 @@
-import { MaintenanceIntervals } from './maintenance-intervals.js';
+import { MaintenanceIntervals, WeeklyScheduleInput } from './maintenance-intervals.js';
 /**
  * 维护窗口服务
  * 在维护窗口期间抑制告警通知，支持按实例/全局配置、按星期几过滤、时间段匹配。
@@ -80,7 +80,8 @@ class MaintenanceWindowService {
         return { active: false };
       }
 
-      const row = rows.find((candidate: MaintenanceWindow) => matchesMaintenanceTime(candidate, new Date()));
+      const at = new Date();
+      const row = rows.find((candidate: MaintenanceWindow) => matchesMaintenanceTime(candidate, at));
       if (!row) return { active: false };
       return {
         active: true,
@@ -156,20 +157,12 @@ class MaintenanceWindowService {
     const pool = this.getPool();
     if (!pool) return { success: false, error: '数据库未连接' };
 
-    try { new Intl.DateTimeFormat('en', { timeZone: data.timezone || 'Asia/Shanghai' }); }
-    catch { return { success: false, error: '无效的时区' }; }
-
-    // 验证 day_of_week 值范围
-    if (!data.day_of_week) {
-      return { success: false, error: '缺少必要参数：day_of_week（如 "*" 或 "1,2,3,4,5"）' };
-    }
-    const validDays = new Set(['*', '1', '2', '3', '4', '5', '6', '7']);
-    const days = data.day_of_week.split(',').map((d: string) => d.trim());
-    for (const day of days) {
-      if (!validDays.has(day)) {
-        return { success: false, error: `无效的星期值: ${day}（应为 1-7 或 *）` };
-      }
-    }
+    const schedule = WeeklyScheduleInput.safeParse({
+      day_of_week: data.day_of_week, start_time: data.start_time, end_time: data.end_time,
+      timezone: data.timezone === undefined ? 'Asia/Shanghai' : data.timezone,
+    });
+    if (!schedule.success) return { success: false, error: `无效的星期值、时间或时区: ${schedule.error.issues.map(i => i.path.join('.')).join(', ')}` };
+    data = { ...data, ...schedule.data };
 
     try {
       const [result] = await pool.execute(
@@ -211,8 +204,16 @@ class MaintenanceWindowService {
     const pool = this.getPool();
     if (!pool) return { success: false, error: '数据库未连接' };
 
+    const schedule = WeeklyScheduleInput.partial().safeParse({
+      ...(data.day_of_week !== undefined ? { day_of_week: data.day_of_week } : {}),
+      ...(data.start_time !== undefined ? { start_time: data.start_time } : {}),
+      ...(data.end_time !== undefined ? { end_time: data.end_time } : {}),
+      ...(data.timezone !== undefined ? { timezone: data.timezone } : {}),
+    });
+    if (!schedule.success) return { success: false, error: `无效的星期值、时间或时区: ${schedule.error.issues.map(i => i.path.join('.')).join(', ')}` };
+    data = { ...data, ...schedule.data };
+
     try {
-      if (data.timezone !== undefined) new Intl.DateTimeFormat('en', { timeZone: data.timezone });
       const updates: string[] = [];
       const values: any[] = [];
       if (data.name !== undefined) { updates.push('name = ?'); values.push(data.name); }

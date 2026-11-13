@@ -14,7 +14,8 @@ vi.mock('../db-connection.js', () => ({
 afterEach(() => vi.clearAllMocks());
 
 function poolFor(execute: ReturnType<typeof vi.fn>, getConnection?: () => any) {
-  return { execute, getConnection } as any;
+  const connection = { execute, beginTransaction: vi.fn().mockResolvedValue(undefined), commit: vi.fn().mockResolvedValue(undefined), rollback: vi.fn().mockResolvedValue(undefined), release: vi.fn() };
+  return { execute, getConnection: getConnection ?? (async () => connection) } as any;
 }
 
 describe('NetworkDeviceDatabaseService', () => {
@@ -51,7 +52,8 @@ describe('NetworkDeviceDatabaseService', () => {
   it('stores SNMPv3 secrets encrypted and returns only a redacted inventory DTO', async () => {
     const execute = vi.fn()
       .mockResolvedValueOnce([{ insertId: 7 }, []])
-      .mockResolvedValueOnce([{}, []]);
+      .mockResolvedValueOnce([{}, []])
+      .mockResolvedValue([{}, []]);
     const service = new NetworkDeviceDatabaseService(() => poolFor(execute));
     const result = await service.createDevice({
       name: 'edge-1', host: '192.0.2.10', vendor: 'huawei',
@@ -67,7 +69,8 @@ describe('NetworkDeviceDatabaseService', () => {
     const execute = vi.fn()
       .mockResolvedValueOnce([{ insertId: 7 }, []])
       .mockResolvedValueOnce([{}, []])
-      .mockResolvedValueOnce([{}, []]);
+      .mockResolvedValueOnce([{}, []])
+      .mockResolvedValue([{}, []]);
     const service = new NetworkDeviceDatabaseService(() => poolFor(execute));
 
     await expect(service.createDevice({
@@ -94,7 +97,7 @@ describe('NetworkDeviceDatabaseService', () => {
     const execute = vi.fn().mockRejectedValue(duplicate);
     const service = new NetworkDeviceDatabaseService(() => poolFor(execute));
     await expect(service.createDevice({ name: 'edge-1', host: '192.0.2.10', snmpv3: { username: 'm', securityLevel: 'noAuthNoPriv' } }))
-      .resolves.toMatchObject({ success: false, error: expect.stringContaining('已被纳管') });
+      .resolves.toMatchObject({ success: false, error: expect.stringContaining('已被纳管'), errorCode: 'NETWORK_DEVICE_EXISTS' });
   });
 
   it('refuses deleting devices that still have active resource relations', async () => {
@@ -107,5 +110,47 @@ describe('NetworkDeviceDatabaseService', () => {
     await expect(service.deleteDevice(7)).resolves.toEqual({ success: false, error: 'NETWORK_DEVICE_HAS_RELATIONS' });
     expect(rollback).toHaveBeenCalled();
     expect(release).toHaveBeenCalled();
+  });
+});
+
+// MAX-601 / #341: transaction ownership and inactive protocol replacement.
+describe('SNMP replacement transaction', () => {
+  it.each([
+    ['snmpv2c', { community: 'new-community' }, 'snmpv3'],
+    ['snmpv3', { username: 'monitor', securityLevel: 'noAuthNoPriv' }, 'snmpv2c'],
+  ])('locks the device and replaces only the opposite SNMP protocol for %s', async (key, credential, opposite) => {
+    const execute = vi.fn().mockResolvedValue([[{ id: 7 }]]);
+    const connection = { execute, beginTransaction: vi.fn().mockResolvedValue(undefined), commit: vi.fn().mockResolvedValue(undefined), rollback: vi.fn().mockResolvedValue(undefined), release: vi.fn() };
+    const outside = vi.fn();
+    const service = new NetworkDeviceDatabaseService(() => poolFor(outside, async () => connection));
+    await expect(service.updateDevice(7, { [key]: credential })).resolves.toEqual({ success: true });
+    expect(execute.mock.calls[0][0]).toContain('FOR UPDATE');
+    const deletes = execute.mock.calls.filter(([sql]) => String(sql).startsWith('DELETE'));
+    expect(deletes).toEqual([[`DELETE FROM network_device_credentials WHERE device_id = ? AND protocol = '${opposite}'`, [7]]]);
+    expect(connection.commit).toHaveBeenCalledOnce(); expect(outside).not.toHaveBeenCalled();
+  });
+  it('rolls back and releases when replacing the inactive protocol fails', async () => {
+    const execute = vi.fn().mockResolvedValueOnce([[{ id: 7 }]]).mockResolvedValueOnce([{}]).mockRejectedValueOnce(new Error('injected SQL failure'));
+    const connection = { execute, beginTransaction: vi.fn().mockResolvedValue(undefined), commit: vi.fn().mockResolvedValue(undefined), rollback: vi.fn().mockResolvedValue(undefined), release: vi.fn() };
+    const service = new NetworkDeviceDatabaseService(() => poolFor(vi.fn(), async () => connection));
+    await expect(service.updateDevice(7, { snmpv2c: { community: 'new-community' } })).resolves.toEqual({ success: false, error: 'NETWORK_DEVICE_OPERATION_FAILED' });
+    expect(connection.commit).not.toHaveBeenCalled(); expect(connection.rollback).toHaveBeenCalledOnce(); expect(connection.release).toHaveBeenCalledOnce();
+  });
+  it('default collector lookup excludes SSH credentials', async () => {
+    const execute = vi.fn().mockResolvedValue([[]]);
+    await new NetworkDeviceDatabaseService(() => poolFor(execute)).getCredentials(7);
+    expect(execute.mock.calls[0][0]).toContain("AND protocol IN ('snmpv2c','snmpv3')");
+  });
+});
+
+// MAX-609 / #552: assert generated SQL preserves null, including snake_case.
+describe('nullable network device metadata SQL', () => {
+  it.each([{ osVersion: null, serialNumber: null }, { os_version: null, serial_number: null }])('clears both columns for %j', async input => {
+    const execute = vi.fn().mockResolvedValue([[{ id: 7 }]]);
+    const service = new NetworkDeviceDatabaseService(() => poolFor(execute));
+    expect(await service.updateDevice(7, input)).toEqual({ success: true });
+    expect(execute.mock.calls.find(([sql]) => String(sql).startsWith('UPDATE network_devices'))).toEqual([
+      'UPDATE network_devices SET os_version = ?, serial_number = ? WHERE id = ?', [null, null, 7],
+    ]);
   });
 });

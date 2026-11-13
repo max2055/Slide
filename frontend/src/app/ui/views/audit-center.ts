@@ -52,10 +52,11 @@ export class AuditCenterPage extends LitElement {
 
   private syncFromLocation(): void {
     const requested = new URL(window.location.href).searchParams.get('view');
-    if (AUDIT_VIEWS.some(view => view.id === requested)) this.activeView = requested as AuditView;
+    this.activeView = requested === 'agent' && !new URL(window.location.href).searchParams.has('resource') ? 'agent' : 'system';
   }
 
   private selectView(view: AuditView): void {
+    if (view === this.activeView) return;
     this.activeView = view;
     const url = new URL(window.location.href);
     url.searchParams.set('view', view);

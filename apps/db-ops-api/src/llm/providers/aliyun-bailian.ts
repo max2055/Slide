@@ -1,3 +1,4 @@
+import { isNativeEndpoint } from './native-endpoint.js';
 /**
  * 阿里云百炼 LLM 提供商配置
  *
@@ -93,8 +94,7 @@ export const BAILIAN_MODEL_CATALOG = [
  * 判断是否是阿里云百炼的原生 Base URL
  */
 export function isNativeBailianBaseUrl(baseUrl: string | undefined): boolean {
-  if (!baseUrl) return false;
-  return baseUrl.includes('dashscope.aliyuncs.com');
+  return isNativeEndpoint(baseUrl, ['dashscope.aliyuncs.com']);
 }
 
 /**

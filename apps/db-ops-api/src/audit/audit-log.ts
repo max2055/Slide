@@ -125,8 +125,14 @@ export class MemoryAuditLogStore implements AuditLogHandler {
   private logs: AuditLogEntry[] = [];
   private events = new EventEmitter();
 
+  // Process-local mirror only; authoritative history lives in the persistent store.
+  constructor(private readonly capacity = 1000) {
+    if (!Number.isSafeInteger(capacity) || capacity < 1) throw new Error('AUDIT_MEMORY_CAPACITY_INVALID');
+  }
+
   async write(entry: AuditLogEntry): Promise<void> {
     this.logs.push(entry);
+    if (this.logs.length > this.capacity) this.logs.splice(0, this.logs.length - this.capacity);
     this.events.emit('log:written', entry);
   }
 
@@ -214,6 +220,11 @@ export class MemoryAuditLogStore implements AuditLogHandler {
   }
 }
 
+// MySQL VARCHAR(512) counts characters; keep astral characters intact.
+function normalizeUserAgent(value: string | undefined): string | undefined {
+  return value === undefined ? undefined : Array.from(value).slice(0, 512).join('');
+}
+
 // ============== 数据库审计日志存储 ==============
 
 /**
@@ -246,7 +257,7 @@ export class DatabaseAuditLogStore implements AuditLogHandler {
           entry.details === undefined ? null : JSON.stringify(entry.details),
           entry.approvalRequestId ?? null,
           entry.clientIp ?? null,
-          entry.userAgent ?? null,
+          normalizeUserAgent(entry.userAgent) ?? null,
           entry.result,
           entry.errorMessage ?? null,
           entry.timestamp,
@@ -765,7 +776,7 @@ export class AuditLogManager {
       result: params.success ? 'success' : 'failure',
       errorMessage: params.errorMessage,
       clientIp: params.clientIp,
-      userAgent: params.userAgent,
+      userAgent: normalizeUserAgent(params.userAgent),
       timestamp: Date.now(),
     };
 
@@ -829,7 +840,7 @@ export class AuditLogManager {
       result: failed ? 'failure' : 'success',
       errorMessage: failed ? `HTTP_${params.statusCode}` : undefined,
       clientIp: params.clientIp,
-      userAgent: params.userAgent,
+      userAgent: normalizeUserAgent(params.userAgent),
       timestamp: Date.now(),
     };
 
