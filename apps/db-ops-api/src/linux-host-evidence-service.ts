@@ -66,7 +66,8 @@ export interface LinuxHostEvidence extends Record<string, unknown> {
   expiresAt: string;
   quality: EvidenceQuality;
   truncated: boolean;
-  metrics: EvidenceSection & { values: Record<string, number> };
+  /** Unsafe cumulative integers are encoded as exact decimal strings. */
+  metrics: EvidenceSection & { values: Record<string, number | string> };
   filesystems: EvidenceSection & { items: FilesystemEvidence[] };
   systemLogs: EvidenceSection & { entries: SystemLogEvidence[] };
   physicalFiles: EvidenceSection & { items: PhysicalFileEvidence[] };
@@ -520,12 +521,13 @@ export class LinuxHostEvidenceService {
       if (validatedPaths.rejected.length > 0) gaps.push({ section: 'physicalFiles', reason: 'PHYSICAL_PATH_REJECTED' });
       if (validatedPaths.truncated) gaps.push({ section: 'physicalFiles', reason: 'PHYSICAL_PATH_LIMIT' });
 
-      const metricValues: Record<string, number> = {};
+      const metricValues: Record<string, number | string> = {};
       const metricDefinitions = serverMetricProvider.getDefinitions(server.os_type)
         .filter((definition) => definition.name !== 'disk_usage' && definition.name !== 'disk_detail');
+      const metricNames = new Set(metricDefinitions.map((definition) => definition.name));
       let metricGap = false;
       const metricBatches = serverMetricProvider.getCollectionBatches(server.os_type)
-        .filter((batch) => batch.definitions.some((definition) => metricDefinitions.includes(definition)));
+        .filter((batch) => batch.definitions.some((definition) => metricNames.has(definition.name)));
       for (const batch of metricBatches) {
         const result = (await this.dependencies.sshSessionPool.execCommands(client, [batch.command]))[0];
         if (result.exitCode !== 0) {
@@ -533,12 +535,15 @@ export class LinuxHostEvidenceService {
           gaps.push({ section: 'metrics', reason: 'METRIC_COMMAND_FAILED' });
           continue;
         }
-        const activeDefinitions = batch.definitions.filter((definition) => metricDefinitions.includes(definition));
-        const samples = activeDefinitions[0]?.parseRows?.(result.stdout) ?? [];
+        const activeDefinitions = batch.definitions.filter((definition) => metricNames.has(definition.name));
+        const samples = activeDefinitions[0]?.parseExactRows?.(result.stdout) ?? [];
         for (const definition of activeDefinitions) {
-          if (definition.parseRows && !definition.parseProcesses) {
+          if (definition.parseExactRows) {
             const values = samples.filter((sample) => sample.name === definition.name).map((sample) => sample.value);
-            if (values.length > 0) metricValues[definition.name] = values.reduce((sum, value) => sum + value, 0);
+            if (values.length > 0) {
+              const total = values.reduce((sum, value) => sum + BigInt(value), 0n);
+              metricValues[definition.name] = total <= BigInt(Number.MAX_SAFE_INTEGER) ? Number(total) : total.toString();
+            }
             else {
               metricGap = true;
               gaps.push({ section: 'metrics', reason: 'METRIC_PARSE_FAILED' });
@@ -551,6 +556,12 @@ export class LinuxHostEvidenceService {
             gaps.push({ section: 'metrics', reason: 'METRIC_PARSE_FAILED' });
           } else metricValues[definition.name] = value;
         }
+      }
+      // Empty definitions/batches and omitted metrics must also degrade overall evidence.
+      if (Object.keys(metricValues).length === 0
+        || metricDefinitions.some((definition) => metricValues[definition.name] === undefined)) {
+        metricGap = true;
+        gaps.push({ section: 'metrics', reason: 'METRICS_UNAVAILABLE' });
       }
 
       const dfBytes = (await this.dependencies.sshSessionPool.execCommands(
