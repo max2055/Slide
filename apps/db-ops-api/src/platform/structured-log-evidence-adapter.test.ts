@@ -38,3 +38,41 @@ describe('platform log evidence', () => {
     expect(() => adapter.record({ component: 'api?token=abc', eventType: 'request', status: 'ok' })).toThrow('PLATFORM_LOG_INVALID');
   });
 });
+
+// MAX-440 / #544: truncation describes lost event time, not eviction time.
+describe('evicted event windows', () => {
+  const origin = Date.parse('2026-09-08T10:00:00Z');
+  const iso = (minutes: number) => new Date(origin + minutes * 60000).toISOString();
+  it('preserves a complete recent window and inclusive lost boundaries', () => {
+    let now = origin;
+    const adapter = new StructuredLogEvidenceAdapter(() => now, 2);
+    for (let i = 0; i < 3; i++) { now = origin + i * 60000; adapter.record({ component: 'api', eventType: 'request', status: 'ok' }); }
+    expect(adapter.query({ from: iso(1), to: iso(2) })).toMatchObject({ quality: 'good', gaps: [] });
+    expect(adapter.query({ from: iso(0), to: iso(0) }).gaps).toContain('LOG_BUFFER_TRUNCATED');
+    expect(adapter.query({ from: iso(0.001), to: iso(2) }).gaps).not.toContain('LOG_BUFFER_TRUNCATED');
+  });
+  it('compares both endpoints across consecutive evictions and expires loss metadata', () => {
+    let now = origin;
+    const adapter = new StructuredLogEvidenceAdapter(() => now, 2);
+    for (let i = 1; i < 5; i++) { now = origin + i * 60000; adapter.record({ component: 'api', eventType: 'request', status: 'ok' }); }
+    expect(adapter.query({ from: iso(0), to: iso(0.5) }).gaps).not.toContain('LOG_BUFFER_TRUNCATED');
+    expect(adapter.query({ from: iso(2), to: iso(3) }).gaps).toContain('LOG_BUFFER_TRUNCATED');
+    expect(adapter.query({ from: iso(3), to: iso(4) }).quality).toBe('good');
+    now = origin + 65 * 60000;
+    adapter.record({ component: 'api', eventType: 'request', status: 'ok' });
+    expect(adapter.query({ from: iso(5), to: iso(65) }).gaps).not.toContain('LOG_BUFFER_TRUNCATED');
+    expect(adapter.query({ from: iso(65), to: iso(65) }).quality).toBe('good');
+  });
+  it('shares the event-time boundary with failure verification', () => {
+    let now = origin;
+    const adapter = new StructuredLogEvidenceAdapter(() => now, 2);
+    adapter.record({ component: 'queue', eventType: 'job', status: 'ok' });
+    now += 60000;
+    const identity = { callsite: '/api/test', releaseId: 'test', commitSha: 'a'.repeat(40), requestScope: 'b'.repeat(64) };
+    adapter.record({ ...identity, component: 'api', eventType: 'request.completed', status: 'failed', correlationId: 'original' });
+    now += 60000;
+    adapter.record({ ...identity, component: 'api', eventType: 'request.completed', status: 'ok' });
+    expect(adapter.verifyFailure({ ...identity, occurredAt: iso(1), correlationId: 'original' }, true)).toMatchObject({ conclusion: 'recovered', gaps: [] });
+    expect(adapter.verifyFailure({ ...identity, occurredAt: iso(0), correlationId: 'original' }, true).gaps).toContain('LOG_BUFFER_TRUNCATED');
+  });
+});
