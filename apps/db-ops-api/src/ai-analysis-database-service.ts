@@ -473,6 +473,7 @@ class AiAnalysisDatabaseService {
     }
 
     let connection: mysql.PoolConnection | undefined;
+    let discardConnection = false;
     try {
       connection = await pool.getConnection();
       await connection.beginTransaction();
@@ -495,14 +496,26 @@ class AiAnalysisDatabaseService {
       await connection.execute('DELETE FROM analysis_dispatch_attempts WHERE analysis_id = ?', [analysisId]);
       await connection.execute('DELETE FROM analysis_dispatches WHERE analysis_id = ?', [analysisId]);
       await connection.execute('DELETE FROM ai_analysis WHERE id = ?', [analysisId]);
+      // A rejected COMMIT can mean its acknowledgement was lost after persistence.
+      discardConnection = true;
       await connection.commit();
+      discardConnection = false;
       return { success: true };
     } catch (error: any) {
-      await connection?.rollback();
+      if (connection) {
+        if (discardConnection) console.error('删除分析记录提交结果未确认，不自动重放:', error);
+        try {
+          await connection.rollback();
+        } catch (rollbackError) {
+          discardConnection = true;
+          console.error('删除分析记录回滚失败，事务结果未确认:', rollbackError);
+        }
+      }
       console.error('删除分析记录失败:', error);
       return { success: false, error: error.message };
     } finally {
-      connection?.release();
+      if (discardConnection) connection?.destroy();
+      else connection?.release();
     }
   }
 
