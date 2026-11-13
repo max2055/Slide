@@ -650,7 +650,7 @@ export const zh_CN: TranslationMap = {
     sidebarWidth: "侧边栏宽度",
     sidebarWidthDesc: "调整侧边栏宽度。",
     sidebarTabs: "侧边栏标签",
-    sidebarTabsDesc: "选择侧边栏中显示的标签。取消勾选即隐藏。留空 = 全部显示。",
+    sidebarTabsDesc: "选择侧边栏中显示的标签。取消勾选即隐藏；全部取消后可通过顶部搜索打开个人设置。",
     dataDisplay: "数据显示",
     defaultPageSize: "默认每页条数",
     dateFormat: "日期格式",

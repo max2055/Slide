@@ -62,6 +62,7 @@ export type UiSettings = {
   // Layer 2 — Layout
   defaultTab: string;
   visibleTabs: string[];
+  visibleTabsConfigured?: boolean; // Legacy empty lists mean all; explicit empty lists mean none.
   // Layer 3 — Data display
   defaultPageSize: number;
   dateFormat: 'relative' | 'absolute';
@@ -253,6 +254,7 @@ export function loadSettings(): UiSettings {
       accentColor: typeof (parsed as any).accentColor === "string" && (parsed as any).accentColor ? (parsed as any).accentColor : defaults.accentColor,
       // Layer 2 — Layout
       defaultTab: typeof (parsed as any).defaultTab === "string" ? (parsed as any).defaultTab : defaults.defaultTab,
+      visibleTabsConfigured: (parsed as any).visibleTabsConfigured === true,
       visibleTabs: Array.isArray((parsed as any).visibleTabs) ? (parsed as any).visibleTabs : defaults.visibleTabs,
       // Layer 3 — Data display
       defaultPageSize: typeof (parsed as any).defaultPageSize === "number" && (parsed as any).defaultPageSize > 0 ? (parsed as any).defaultPageSize : defaults.defaultPageSize,
@@ -304,6 +306,7 @@ function persistSettings(next: UiSettings) {
     // Layer 2
     defaultTab: next.defaultTab,
     visibleTabs: next.visibleTabs,
+    visibleTabsConfigured: next.visibleTabsConfigured === true,
     // Layer 3
     defaultPageSize: next.defaultPageSize,
     dateFormat: next.dateFormat,
@@ -345,6 +348,7 @@ function buildServerPrefsPayload(settings: UiSettings): Record<string, unknown> 
     accentColor: settings.accentColor,
     defaultTab: settings.defaultTab,
     visibleTabs: settings.visibleTabs,
+    visibleTabsConfigured: settings.visibleTabsConfigured === true,
     navWidth: settings.navWidth,
     defaultPageSize: settings.defaultPageSize,
     dateFormat: settings.dateFormat,
@@ -390,6 +394,7 @@ export async function syncPreferencesFromServer(currentSettings: UiSettings): Pr
         reduceAnimations: typeof server.reduceAnimations === 'boolean' ? server.reduceAnimations : currentSettings.reduceAnimations,
         accentColor: typeof server.accentColor === 'string' && server.accentColor ? server.accentColor : currentSettings.accentColor,
         defaultTab: typeof server.defaultTab === 'string' ? server.defaultTab : currentSettings.defaultTab,
+        visibleTabsConfigured: Array.isArray(server.visibleTabs) ? server.visibleTabsConfigured === true : currentSettings.visibleTabsConfigured,
         visibleTabs: Array.isArray(server.visibleTabs) ? server.visibleTabs as string[] : currentSettings.visibleTabs,
         navWidth: typeof server.navWidth === 'number' ? server.navWidth : currentSettings.navWidth,
         defaultPageSize: typeof server.defaultPageSize === 'number' && server.defaultPageSize > 0 ? server.defaultPageSize : currentSettings.defaultPageSize,

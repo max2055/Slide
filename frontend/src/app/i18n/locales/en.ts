@@ -638,7 +638,7 @@ export const en: TranslationMap = {
     sidebarWidth: "Sidebar Width",
     sidebarWidthDesc: "Adjust the sidebar width.",
     sidebarTabs: "Sidebar Tabs",
-    sidebarTabsDesc: "Choose which tabs appear in the sidebar. Uncheck to hide. Empty = show all.",
+    sidebarTabsDesc: "Choose which tabs appear in the sidebar. Uncheck to hide. If all are hidden, open Personal Settings from the top search.",
     dataDisplay: "Data Display",
     defaultPageSize: "Default Page Size",
     dateFormat: "Date Format",

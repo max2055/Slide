@@ -44,7 +44,7 @@ describe('appearance labels and stored-value compatibility', () => {
       expect(changed.mock.calls[0][0].detail).toEqual({ defaultTab: 'network-devices' });
       const toggle = [...view.shadowRoot!.querySelectorAll('app-toggle')].find(el => el.textContent?.trim() === titleForTab('instances-db'))!;
       toggle.dispatchEvent(new CustomEvent('change', { detail: false }));
-      expect(changed.mock.calls[1][0].detail).toEqual({ visibleTabs: ['chat'] });
+      expect(changed.mock.calls[1][0].detail).toEqual({ visibleTabs: ['chat'], visibleTabsConfigured: true });
     } finally { window.removeEventListener('slide-settings-change', changed); }
   });
 
@@ -99,5 +99,31 @@ describe('appearance labels and stored-value compatibility', () => {
     expect(fields[1].value).toBe('dashboard');
     expect(view.shadowRoot!.querySelectorAll('app-toggle').length).toBeGreaterThan(10);
     expect(localStorage.getItem(storageKey)).toBe(raw);
+  });
+});
+
+// MAX-661 / #650: the last unchecked tab must stay unchecked.
+describe('explicit sidebar visibility', () => {
+  it.each([{}, { visibleTabs: [] }])('retains legacy all-visible defaults: %j', async settings => {
+    await mount(settings);
+    expect((view as any)._isTabVisible('dashboard')).toBe(true);
+  });
+  it('keeps an explicit empty selection when reopened and can enable one tab', async () => {
+    await mount({ visibleTabs: [], visibleTabsConfigured: true });
+    expect((view as any)._isTabVisible('dashboard')).toBe(false);
+    (view as any)._toggleTab('dashboard');
+    expect((view as any).visibleTabs).toEqual(['dashboard']);
+    (view as any)._toggleTab('dashboard');
+    expect((view as any).visibleTabs).toEqual([]);
+    expect((view as any)._isTabVisible('dashboard')).toBe(false);
+  });
+  it('dispatches the explicit marker when unchecking the last tab', async () => {
+    await mount({ visibleTabs: ['chat'] });
+    const changed = vi.fn(); window.addEventListener('slide-settings-change', changed);
+    try {
+      (view as any)._toggleTab('chat');
+      expect(changed.mock.calls[0][0].detail).toEqual({ visibleTabs: [], visibleTabsConfigured: true });
+      expect((view as any)._isTabVisible('chat')).toBe(false);
+    } finally { window.removeEventListener('slide-settings-change', changed); }
   });
 });

@@ -18,6 +18,7 @@ export interface UserPreferences {
   // Layout
   defaultTab: string;
   visibleTabs: string[];
+  visibleTabsConfigured?: boolean; // Distinguishes explicit empty lists from legacy defaults.
   navWidth: number;
 
   // Data display
