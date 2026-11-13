@@ -1,3 +1,4 @@
+import { isSupportedApiFormat } from './provider-api-format.js';
 import Anthropic from '@anthropic-ai/sdk';
 import OpenAI from 'openai';
 import type { LLMProvider } from '../llm-database-service.js';
@@ -7,7 +8,7 @@ import { credentialSafeFetch, normalizeCredentialDestination, providerBaseURL } 
 export function resolveProviderConnection(provider: LLMProvider, apiKey: string | null) {
   const local = provider.deployment_type === 'local';
   const format = provider.api_format || (local ? 'ollama' : 'openai-completions');
-  if (!['anthropic-messages', 'openai-completions', 'ollama'].includes(format)) {
+  if (!isSupportedApiFormat(format)) {
     throw new Error('LLM_API_FORMAT_UNSUPPORTED');
   }
   const key = apiKey || (local ? 'ollama' : '');

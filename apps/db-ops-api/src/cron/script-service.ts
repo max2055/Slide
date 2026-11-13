@@ -1,3 +1,4 @@
+import { cronStorageError } from './cron-storage-error.js';
 /**
  * Script Service
  * 提供 cron_scripts 表的 CRUD 操作
@@ -29,7 +30,7 @@ export class ScriptService {
    */
   async getAllScripts(): Promise<CronScript[]> {
     const pool = this.getPool();
-    if (!pool) return [];
+    if (!pool) throw cronStorageError('getAllScripts');
 
     try {
       const [rows] = await pool.execute(
@@ -37,8 +38,7 @@ export class ScriptService {
       ) as any;
       return rows as CronScript[];
     } catch (error) {
-      console.error('查询脚本列表失败:', error);
-      return [];
+      throw cronStorageError('getAllScripts', error);
     }
   }
 
@@ -47,7 +47,7 @@ export class ScriptService {
    */
   async getScriptById(id: number): Promise<CronScript | null> {
     const pool = this.getPool();
-    if (!pool) return null;
+    if (!pool) throw cronStorageError('getScriptById');
 
     try {
       const [rows] = await pool.execute(
@@ -60,8 +60,7 @@ export class ScriptService {
       }
       return null;
     } catch (error) {
-      console.error('查询脚本失败:', error);
-      return null;
+      throw cronStorageError('getScriptById', error);
     }
   }
 
@@ -161,18 +160,18 @@ export class ScriptService {
    */
   async deleteScript(id: number, actor: ScriptActor): Promise<boolean> {
     const pool = this.getPool();
-    if (!pool) return false;
+    if (!pool) throw cronStorageError('deleteScript');
 
-    await this.assertReferencesAccessible(id, actor);
     try {
+      await this.assertReferencesAccessible(id, actor);
       const [result] = await pool.execute(
         'DELETE FROM cron_scripts WHERE id = ?',
         [id]
       ) as any;
       return (result as any).affectedRows > 0;
     } catch (error) {
-      console.error('删除脚本失败:', error);
-      return false;
+      if (error instanceof Error && error.message === 'CRON_SCRIPT_ACCESS_DENIED') throw error;
+      throw cronStorageError('deleteScript', error);
     }
   }
 }

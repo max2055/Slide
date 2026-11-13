@@ -240,7 +240,7 @@ describe('Resource detail', () => {
 
 describe('Resource capabilities', () => {
   it('does not let an expired verified capability continue to claim verification', async () => {
-    const service = new CapabilityService({
+    const service = new CapabilityService({ list: async () => [],
       get: async () => ({ resource: { type: 'instance' as const, id: 1 }, key: 'metrics', state: 'verified' as const,
         evidence: { probe: 'collector' }, checkedAt: new Date(0), validUntil: new Date(1) }),
       put: async () => {},
@@ -250,7 +250,7 @@ describe('Resource capabilities', () => {
   });
 
   it('requires probe evidence before writing verified state', async () => {
-    const service = new CapabilityService({ get: async () => null, put: async () => {} });
+    const service = new CapabilityService({ list: async () => [], get: async () => null, put: async () => {} });
     await expect(service.put(actor({ 1: 'admin' }), {
       resource: { type: 'instance', id: 1 }, key: 'metrics', state: 'verified', evidence: { source: 'config' }, checkedAt: new Date(),
     })).rejects.toThrow('CAPABILITY_VERIFICATION_EVIDENCE_REQUIRED');

@@ -1,3 +1,4 @@
+import { isNativeEndpoint } from './native-endpoint.js';
 /**
  * OpenAI LLM 提供商配置
  *
@@ -49,8 +50,7 @@ export const OPENAI_MODEL_CATALOG = [
 ] as const;
 
 export function isNativeOpenAIBaseUrl(baseUrl: string | undefined): boolean {
-  if (!baseUrl) return false;
-  return baseUrl.includes('api.openai.com');
+  return isNativeEndpoint(baseUrl, ['api.openai.com']);
 }
 
 export function buildOpenAIProvider(): ModelProviderConfig {

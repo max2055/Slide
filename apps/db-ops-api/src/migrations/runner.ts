@@ -119,6 +119,14 @@ export function statementsForExecution(migration: SqlMigration): string[] {
   if (migration.id === '010_add_task_description_log_columns.sql') {
     return statements.map((statement) => statement.replace(/\bAFTER usage\b/, 'AFTER `usage`'));
   }
+  // #300: do not shrink legacy 51–100 character names before the forward
+  // repair can execute. Keep the registered 058 bytes/checksum immutable.
+  if (migration.id === '058_complete_schema_comments.sql') {
+    return statements.map(statement => statement.replace(
+      'MODIFY COLUMN `display_name` varchar(50)',
+      'MODIFY COLUMN `display_name` varchar(100)',
+    ));
+  }
   if (migration.id === '015_add_output_schema.sql') {
     return statements.map((statement) => statement.replace(
       /DEFAULT NULL AFTER (task_description|result)\s+COMMENT ('[^']*')/,

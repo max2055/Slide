@@ -85,6 +85,14 @@ export const addNetworkDeviceTool: AnyAgentTool = {
         collectionEnabled: false,
         createdBy: context.actor.userId,
       });
+      if (created.errorCode === 'NETWORK_DEVICE_EXISTS') {
+        // The winning insert may only have committed after our precheck.
+        // A failed follow-up read must not turn a known conflict into a retry.
+        const winner = await networkDeviceDatabaseService.getAllDevices()
+          .then(devices => devices.find(device => device.host.toLowerCase() === host && device.snmp_port === snmpPort))
+          .catch(() => undefined);
+        return existingResult(winner?.id, winner?.name);
+      }
       if (!created.success || !created.deviceId) {
         return {
           success: false,
@@ -134,16 +142,16 @@ function optionalText(value: string | undefined): string | undefined {
   return normalized || undefined;
 }
 
-function existingResult(id: number, name: string): ToolResult {
+function existingResult(id?: number, name?: string): ToolResult {
   return {
     success: false,
     status: 'warning',
-    error: `该地址已被网络设备 "${name}" 纳管`,
+    error: name ? `该地址已被网络设备 "${name}" 纳管` : '该网络设备地址和 SNMP 端口已被纳管',
     errorCode: 'NETWORK_DEVICE_EXISTS',
-    data: { networkDeviceId: id, name, credentialStatus: 'existing' },
-    artifacts: { networkDeviceId: id },
-    details: { networkDeviceId: id, terminal: true, retryable: false },
-    next_actions: [`复用已有网络设备 ID ${id}，不要重复纳管`],
+    data: { ...(id ? { networkDeviceId: id, name } : {}), credentialStatus: 'existing' },
+    ...(id ? { artifacts: { networkDeviceId: id } } : {}),
+    details: { ...(id ? { networkDeviceId: id } : {}), terminal: true, retryable: false },
+    next_actions: [id ? `复用已有网络设备 ID ${id}，不要重复纳管` : '刷新网络设备列表以查询已有设备，不要重复纳管'],
   };
 }
 

@@ -2,11 +2,7 @@ import { dismissChatRecoveryNotice } from './chat/recovery-notice.ts';
 import { html, nothing } from "lit";
 import { html as navigationHtml, literal } from "lit/static-html.js";
 import { readCachedPermissions, renderPermissionsError } from "./permissions.ts";
-import {
-  buildAgentMainSessionKey,
-  parseAgentSessionKey,
-  resolveAgentIdFromSessionKey,
-} from "./routing/session-key.ts";
+import { parseAgentSessionKey } from "./session-key.ts";
 import { t } from "../i18n/index.ts";
 import { getSafeLocalStorage } from "./local-storage.ts";
 import { refreshChatAvatar } from "./app-chat.ts";
@@ -251,7 +247,7 @@ export function renderApp(state: AppViewState) {
     state.agentsList?.agents?.[0]?.id ??
     null;
   const resolvedAgentId = resolveSelectedAgentId();
-  const activeSessionAgentId = resolveAgentIdFromSessionKey(state.sessionKey);
+  const activeSessionAgentId = parseAgentSessionKey(state.sessionKey)?.agentId;
   const toolsPanelUsesActiveSession = Boolean(
     resolvedAgentId && activeSessionAgentId && resolvedAgentId === activeSessionAgentId,
   );
@@ -912,6 +908,8 @@ export function renderApp(state: AppViewState) {
               sidebarOpen: state.sidebarOpen,
               sidebarContent: state.sidebarContent,
               sidebarError: state.sidebarError,
+              onOpenSidebar: (content) => state.handleOpenSidebar(content),
+              onCloseSidebar: () => state.handleCloseSidebar(),
               splitRatio: state.splitRatio,
               assistantName: state.assistantName,
               assistantAvatar: state.assistantAvatar,

@@ -16,8 +16,8 @@ import {
 } from './instance-diagnostic-context-service.js';
 
 type FaultDiagnosisTrigger = 'manual' | 'auto';
-type FaultDiagnosisStatus = 'queued' | 'in_progress' | 'unknown';
-type FaultDiagnosisResult = { success: boolean; analysisId?: number; error?: string; status?: FaultDiagnosisStatus };
+type FaultDiagnosisStatus = 'pending' | 'running' | 'completed' | 'unknown';
+type FaultDiagnosisResult = { success: boolean; analysisId?: number; error?: string; status?: FaultDiagnosisStatus; cached: boolean };
 
 type FaultAnalysisStore = Pick<typeof aiAnalysisDatabaseService, 'getAnalysisList' | 'getAnalysisStats'>;
 
@@ -77,7 +77,7 @@ export class FaultDiagnosisService {
         });
         assertWorkflowActive();
         const result = await this.diagnose(actor, instance.id, 'auto');
-        if (result.status === 'in_progress') continue;
+        if (result.status === 'running') continue;
         if (result.success && result.analysisId !== undefined) {
           analysisIds.push(result.analysisId);
         } else {
@@ -115,8 +115,10 @@ export class FaultDiagnosisService {
       userMessage: `请仅依据随请求提供的 diagnosticContext 分析实例 "${name}" `
         + `(${databaseType}, ${environment}) 的故障证据。缺失证据必须保持未知；完成后保存结构化诊断结果。`,
     });
-    if (result.status === 'unknown') return { success: false, analysisId: result.analysisId, status: 'unknown', error: 'ANALYSIS_PROVIDER_RESULT_UNKNOWN：重试可能再次计费，需要明确确认' };
-    return { success: true, analysisId: result.analysisId, status: result.status === 'running' ? 'in_progress' : 'queued' };
+    if (result.status === 'unknown') return { success: false, analysisId: result.analysisId, status: 'unknown', cached: result.cached, error: 'ANALYSIS_PROVIDER_RESULT_UNKNOWN：重试可能再次计费，需要明确确认' };
+    const status = result.status;
+    if (status !== 'pending' && status !== 'running' && status !== 'completed') throw new Error('ANALYSIS_ACCEPTANCE_STATUS_INVALID');
+    return { success: true, analysisId: result.analysisId, status, cached: result.cached };
   }
 
   async getDiagnosisHistory(instanceId: number, limit: number = 10): Promise<any[]> {

@@ -10,6 +10,7 @@ import { createVerifyToken } from '../auth-middleware.js';
 import { AuthDatabaseService } from '../auth-database-service.js';
 import { INVESTIGATION_SERVICE_PASSWORD } from '../auth/investigation-service-identity.js';
 import { ChatDatabaseService } from '../chat-database-service.js';
+import { persistedMessageParts } from '../adapter/message-parts.js';
 import { InvestigationAuthorization, provisionInvestigationServiceIdentity, type AuthorityExecutor } from './authorization.js';
 import { InvestigationSessionBridge } from './session-bridge.js';
 import { registerInvestigationRoutes } from './routes.js';
@@ -224,6 +225,29 @@ describe.skipIf(!port)('T03-B real MySQL/JWT authorization and atomic Session br
     expect((await all('chat_messages')).map(row => row.message_id)).toEqual(['original-id']);
     await expect(chat.getMessages(member, original.session_id)).rejects.toThrow('Chat session not found');
     await expect(chat.addMessage(owner, original.session_id, { messageId: 'bypass', role: 'user', content: 'no' })).rejects.toThrow('Chat session not found');
+  });
+
+  it('MAX-471 chat and investigation history preserve persisted statuses and never rewrite metadata', async () => {
+    const session = await chat.createSession(owner);
+    const statuses = ['partial', 'completed', 'failed', 'discarded'] as const;
+    for (const sessionId of [session.session_id, investigation.sessionId]) {
+      for (const status of statuses) {
+        const id = `${sessionId}-${status}`;
+        const content = `History ${status}`;
+        const entry = persistedMessageParts({ id, role: 'assistant', content }, 'mysql', status);
+        await pool.execute('INSERT INTO chat_messages (message_id, session_id, role, content, metadata) VALUES (?, ?, ?, ?, ?)',
+          [id, sessionId, 'assistant', content, JSON.stringify({ messageParts: entry.messageParts })]);
+      }
+    }
+    const before = await all('chat_messages');
+    const regular = await chat.getMessages(owner, session.session_id);
+    const page = await chat.getMessagePage(owner, session.session_id, 10);
+    const investigated = await bridge.messages(owner, investigation.id);
+    for (const history of [regular, page.messages, investigated]) {
+      expect(history.map(row => row.messageParts?.status)).toEqual(statuses);
+      for (const row of history) expect(row.messageParts?.parts[0].status).toBe(row.messageParts?.status);
+    }
+    expect(await all('chat_messages')).toEqual(before);
   });
 
   it('active Chat Run prevents conversion without changing history', async () => {

@@ -551,6 +551,7 @@ export async function restoreProviderConfiguration(
     await connection.beginTransaction();
     const currentProviders = await readProviders(connection, true);
     const currentBindings = await readBindings(connection, true);
+    buildRestorePlan(currentProviders, currentBindings, document);
     // Snapshot under the same locks as the apply: rollback restores exactly the
     // state this transaction observed, with no window for a concurrent change.
     const snapshotDocument = buildBackupDocument(currentProviders, currentBindings, { database: options.database, now });
