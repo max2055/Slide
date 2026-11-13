@@ -110,7 +110,9 @@ export class CronManager {
 
       console.log(`CronManager: ${enabledJobs.length} 个任务已调度`);
     } catch (error) {
-      console.error('CronManager 重载失败:', error);
+      this.running = false;
+      this.stopAllJobs();
+      console.error('CronManager 重载失败:', error instanceof Error ? error.message : 'unknown');
       throw error;
     }
   }

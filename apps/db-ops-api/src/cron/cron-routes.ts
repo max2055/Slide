@@ -1,3 +1,4 @@
+import { validateCronPagination } from './cron-storage-error.js';
 import { cronRunStore } from './cron-run-store.js';
 import type { FastifyInstance, preHandlerHookHandler } from 'fastify';
 import { CronJob } from 'cron';
@@ -16,6 +17,7 @@ import { validateCronTimeoutSeconds } from '../adapter/runtime-policy.js';
 
 function cronErrorStatus(error: Error): number {
   if (error.message?.startsWith('Invalid cron timeout:')) return 400;
+  if (error.message === 'CRON_STORAGE_UNAVAILABLE') return 503;
   if (error.message?.startsWith('WORKER_LEASE') || error.message === 'WORKER_STOPPED') return 503;
   if (error.message === 'CRON_IDEMPOTENCY_CONFLICT') return 409;
   if (['CRON_RUN_STORE_UNAVAILABLE', 'CRON_AUDIT_UNAVAILABLE', 'CRON_AUTHORITY_UNAVAILABLE', 'WORKFLOW_RUNTIME_UNAVAILABLE'].includes(error.message)) return 503;
@@ -357,8 +359,10 @@ export function registerCronRoutes(fastify: FastifyInstance, verifyToken: preHan
         const { id } = request.params as any;
         if (!await requireCronJobAccess(request, reply, Number(id))) return;
         const query = request.query as any;
-        const limit = Math.min(Math.max(Number(query.limit) || 20, 1), 100);
-        const offset = Math.max(Number(query.offset) || 0, 0);
+        if (query.limit === '' || query.offset === '') throw new Error('CRON_INVALID_PAGINATION');
+        const limit = query.limit === undefined ? 20 : Number(query.limit);
+        const offset = query.offset === undefined ? 0 : Number(query.offset);
+        validateCronPagination(limit, offset);
 
         const result = await cronJobService.getLogs(Number(id), limit, offset);
         reply.send(result);
@@ -378,7 +382,7 @@ export function registerCronRoutes(fastify: FastifyInstance, verifyToken: preHan
         const scripts = await scriptService.getAllScripts();
         reply.send(scripts);
       } catch (error: any) {
-        reply.code(error.message === 'CRON_SCRIPT_ACCESS_DENIED' ? 403 : error.message?.startsWith('CRON_') ? 400 : 500).send({ error: error.message });
+        reply.code(cronErrorStatus(error)).send({ error: error.message });
       }
     }
   });
@@ -393,7 +397,7 @@ export function registerCronRoutes(fastify: FastifyInstance, verifyToken: preHan
         if (!script) return reply.code(404).send({ error: '脚本不存在' });
         reply.send(script);
       } catch (error: any) {
-        reply.code(error.message === 'CRON_SCRIPT_ACCESS_DENIED' ? 403 : error.message?.startsWith('CRON_') ? 400 : 500).send({ error: error.message });
+        reply.code(cronErrorStatus(error)).send({ error: error.message });
       }
     }
   });
@@ -426,7 +430,7 @@ export function registerCronRoutes(fastify: FastifyInstance, verifyToken: preHan
 
         reply.code(201).send({ id, message: '创建成功' });
       } catch (error: any) {
-        reply.code(error.message === 'CRON_SCRIPT_ACCESS_DENIED' ? 403 : error.message?.startsWith('CRON_') ? 400 : 500).send({ error: error.message });
+        reply.code(cronErrorStatus(error)).send({ error: error.message });
       }
     }
   });
@@ -456,7 +460,7 @@ export function registerCronRoutes(fastify: FastifyInstance, verifyToken: preHan
 
         reply.send({ message: '更新成功' });
       } catch (error: any) {
-        reply.code(error.message === 'CRON_SCRIPT_ACCESS_DENIED' ? 403 : error.message?.startsWith('CRON_') ? 400 : 500).send({ error: error.message });
+        reply.code(cronErrorStatus(error)).send({ error: error.message });
       }
     }
   });
@@ -471,10 +475,11 @@ export function registerCronRoutes(fastify: FastifyInstance, verifyToken: preHan
         const existing = await scriptService.getScriptById(Number(id));
         if (!existing) return reply.code(404).send({ error: '脚本不存在' });
 
-        await scriptService.deleteScript(Number(id), (request as any).user);
+        const deleted = await scriptService.deleteScript(Number(id), (request as any).user);
+        if (!deleted) return reply.code(404).send({ error: '脚本不存在' });
         reply.send({ message: '删除成功' });
       } catch (error: any) {
-        reply.code(error.message === 'CRON_SCRIPT_ACCESS_DENIED' ? 403 : error.message?.startsWith('CRON_') ? 400 : 500).send({ error: error.message });
+        reply.code(cronErrorStatus(error)).send({ error: error.message });
       }
     }
   });
@@ -510,7 +515,7 @@ export function registerCronRoutes(fastify: FastifyInstance, verifyToken: preHan
 
         reply.send(result);
       } catch (error: any) {
-        reply.code(error.message === 'CRON_SCRIPT_ACCESS_DENIED' ? 403 : error.message?.startsWith('CRON_') ? 400 : 500).send({ error: error.message });
+        reply.code(cronErrorStatus(error)).send({ error: error.message });
       }
     }
   });
