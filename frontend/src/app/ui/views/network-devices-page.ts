@@ -78,6 +78,7 @@ export class NetworkDevicesPage extends LitElement {
   @state() private deleting = false;
   @state() private form: DeviceForm = { ...EMPTY_FORM };
   private savedSnmpVersion: 2 | 3 | null = null;
+  private savedSnmpSettings: Pick<DeviceForm, "securityLevel" | "authProtocol" | "privacyProtocol"> = EMPTY_FORM;
   @state() private formError: string | null = null;
   @state() private showSshPrivateKey = false;
 
@@ -164,6 +165,7 @@ export class NetworkDevicesPage extends LitElement {
     this.editorTab = "basic"; this.connectionPending = true;
     this.editingId = null;
     this.savedSnmpVersion = null;
+    this.savedSnmpSettings = EMPTY_FORM;
     this.form = { ...EMPTY_FORM };
     this.formError = null;
     this.showDialog = true;
@@ -174,6 +176,7 @@ export class NetworkDevicesPage extends LitElement {
     this.editorTab = "basic";
     this.editingId = device.id;
     this.savedSnmpVersion = device.snmpVersion ?? 2;
+    this.savedSnmpSettings = EMPTY_FORM;
     this.form = {
       ...EMPTY_FORM,
       name: device.name,
@@ -242,8 +245,8 @@ export class NetworkDevicesPage extends LitElement {
 
   private snmpValidationError(requireCredential = false): string | null {
     const credential = this.credentialPayload();
-    const settingsChanged = this.form.snmpVersion === 3 && (this.form.securityLevel !== EMPTY_FORM.securityLevel
-      || this.form.authProtocol !== EMPTY_FORM.authProtocol || this.form.privacyProtocol !== EMPTY_FORM.privacyProtocol);
+    const settingsChanged = this.form.snmpVersion === 3 && (this.form.securityLevel !== this.savedSnmpSettings.securityLevel
+      || this.form.authProtocol !== this.savedSnmpSettings.authProtocol || this.form.privacyProtocol !== this.savedSnmpSettings.privacyProtocol);
     if (!credential) {
       if (requireCredential || !this.editingId || this.form.snmpVersion !== this.savedSnmpVersion || settingsChanged) {
         return `请完整配置 SNMPv${this.form.snmpVersion === 2 ? "2c" : "3"} 凭据；切换版本或修改安全设置时不能留空`;
@@ -321,6 +324,7 @@ export class NetworkDevicesPage extends LitElement {
       if (configureCollection) {
         this.editingId = savedId;
         this.savedSnmpVersion = this.form.snmpVersion;
+        this.savedSnmpSettings = { securityLevel: this.form.securityLevel, authProtocol: this.form.authProtocol, privacyProtocol: this.form.privacyProtocol };
         this.connectionPending = false;
         this.editorTab = 'collection';
       } else await this.finishCloseDialog();

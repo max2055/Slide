@@ -230,6 +230,17 @@ describe('SNMP editor credential intent', () => {
     expect(element.formError).toMatch(/SNMP/);
     expect(authFetch.mock.calls.some(([, init]) => init?.method === 'PUT')).toBe(false);
   });
+  it('retains credentials after saving nondefault security settings in the same editor', async () => {
+    const element = await editor();
+    element.form = { ...element.form, username: 'monitor', securityLevel: 'noAuthNoPriv' };
+    await element.saveDevice(true);
+    element.form = { ...element.form, username: '', authSecret: '', privacySecret: '' };
+    await element.saveDevice(true);
+    expect(element.formError).toBeNull();
+    const writes = authFetch.mock.calls.filter(([, init]) => init?.method === 'PUT');
+    expect(writes).toHaveLength(2);
+    expect(JSON.parse(writes[1][1].body).snmpv3).toBeUndefined();
+  });
   it('submits complete replacement credentials, preserving secret whitespace', async () => {
     const element = await editor();
     element.form = { ...element.form, username: 'monitor', authSecret: '  auth-secret  ', privacySecret: 'priv-secret' };
