@@ -234,6 +234,14 @@ function parseSnmpCredentials(value: Record<string, unknown>): Pick<NetworkDevic
   return hints[0] === 2 ? { snmpv2c: validateSnmpV2Credential(raw) } : { snmpv3: validateSnmpV3Credential(raw) };
 }
 
+// Preserve explicit null; when both spellings are supplied, require identical values.
+function aliasedValue(value: Record<string, unknown>, key: string, field: string): unknown {
+  if (value[key] !== undefined && value[field] !== undefined && value[key] !== value[field]) {
+    throw new Error('NETWORK_DEVICE_ALIAS_CONFLICT');
+  }
+  return value[key] !== undefined ? value[key] : value[field];
+}
+
 export function parseNetworkDeviceCreateInput(input: unknown): NetworkDeviceCreateInput {
   if (!input || typeof input !== 'object') throw new Error('NETWORK_DEVICE_INPUT_INVALID');
   const value = input as Record<string, unknown>;
@@ -244,7 +252,7 @@ export function parseNetworkDeviceCreateInput(input: unknown): NetworkDeviceCrea
   return {
     name: text(value.name, 'name', true)!, label: nullableText(value.label, 'label'), host: validateNetworkHost(value.host),
     site: nullableText(value.site, 'site'), vendor: vendor as NetworkDeviceVendor, model: nullableText(value.model, 'model'),
-    osVersion: nullableText(value.osVersion ?? value.os_version, 'os_version'), serialNumber: nullableText(value.serialNumber ?? value.serial_number, 'serial_number'),
+    osVersion: nullableText(aliasedValue(value, 'osVersion', 'os_version'), 'os_version'), serialNumber: nullableText(aliasedValue(value, 'serialNumber', 'serial_number'), 'serial_number'),
     snmpPort: validatePort(value.snmpPort ?? value.snmp_port, 'snmp_port', 161), sshPort: validatePort(value.sshPort ?? value.ssh_port, 'ssh_port', 22),
     collectionEnabled: value.collectionEnabled == null ? true : (() => {
       if (typeof value.collectionEnabled !== 'boolean') throw new Error('COLLECTION_ENABLED_INVALID');
@@ -266,7 +274,7 @@ export function parseNetworkDeviceUpdateInput(input: unknown): NetworkDeviceUpda
   }
   if (value.name !== undefined) result.name = text(value.name, 'name', true)!;
   for (const [key, field] of [['label', 'label'], ['site', 'site'], ['model', 'model'], ['osVersion', 'os_version'], ['serialNumber', 'serial_number']] as const) {
-    if (value[key] !== undefined || value[field] !== undefined) (result as any)[key] = nullableText(value[key] ?? value[field], field);
+    if (value[key] !== undefined || value[field] !== undefined) (result as any)[key] = nullableText(aliasedValue(value, key, field), field);
   }
   if (value.host !== undefined) result.host = validateNetworkHost(value.host);
   if (value.vendor !== undefined) { if (value.vendor !== 'huawei' && value.vendor !== 'cisco') throw new Error('NETWORK_DEVICE_VENDOR_UNSUPPORTED'); result.vendor = value.vendor; }

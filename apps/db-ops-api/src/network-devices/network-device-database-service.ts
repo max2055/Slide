@@ -113,7 +113,7 @@ export class NetworkDeviceDatabaseService {
     };
   }
 
-  async createDevice(raw: unknown): Promise<{ success: boolean; deviceId?: number; error?: string }> {
+  async createDevice(raw: unknown): Promise<{ success: boolean; deviceId?: number; error?: string; errorCode?: 'NETWORK_DEVICE_EXISTS' }> {
     let connection: SqlConnection | null = null;
     try {
       const input = parseNetworkDeviceCreateInput(raw);
@@ -135,7 +135,7 @@ export class NetworkDeviceDatabaseService {
       return { success: true, deviceId: id };
     } catch (error: any) {
       if (connection) await connection.rollback().catch(() => undefined);
-      if (error?.code === 'ER_DUP_ENTRY') return { success: false, error: '该网络设备地址和 SNMP 端口已被纳管' };
+      if (error?.code === 'ER_DUP_ENTRY') return { success: false, error: '该网络设备地址和 SNMP 端口已被纳管', errorCode: 'NETWORK_DEVICE_EXISTS' };
       return { success: false, error: this.safeError(error) };
     } finally { connection?.release(); }
   }
