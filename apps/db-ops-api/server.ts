@@ -105,6 +105,7 @@ import { registerChatRoutes } from './src/chat-routes.js';
 import { reportService } from './src/report-service.js';
 import { reportDatabaseService } from './src/report-database-service.js';
 import { reportConfigService } from './src/report-config-database-service.js';
+import { InvalidReportCronError } from './src/report-cron.js';
 import { ReportType } from './src/report-database-service.js';
 import { reportExporter } from './src/report-exporter.js';
 import { alertEngine } from './src/alert-engine.js';
@@ -134,6 +135,7 @@ import { alertEventService } from './src/alert-event-service.js';
 import { eventAggregator } from './src/event-aggregator.js';
 import { capacityPredictor } from './src/capacity-predictor.js';
 import { aiAnalysisDatabaseService } from './src/ai-analysis-database-service.js';
+import { analysisAccessSql, canReadAnalysis } from './src/analysis/analysis-access.js';
 import { aiAnalysisConfigService } from './src/ai-analysis-config-service.js';
 import { getAgentGreeting } from './src/agent-service.js';
 import { scoringConfigService } from './src/scoring-config-service.js';
@@ -190,7 +192,7 @@ import { startSessionCleanup, stopSessionCleanup } from './src/session-cleanup.j
 import { loadPredefinedSkills, skillRegistry } from './src/skills/loader.js';
 import { promptManager } from './src/prompts/prompt-manager.js';
 import { optimizePromptContent } from './src/prompts/optimize.js';
-import { serverDatabaseService } from './src/server-database-service.js';
+import { SERVER_HAS_HISTORICAL_REPORTS, SERVER_HISTORICAL_REPORT_DELETE_ERROR, serverDatabaseService } from './src/server-database-service.js';
 import { serverReportService } from './src/server-report-service.js';
 import serverCollector from './src/server-collector.js';
 import { serverDiagnosticService } from './src/server-diagnostic-service.js';
@@ -884,8 +886,9 @@ async function start() {
   fastify.post('/api/llm/configs', { preHandler: [verifyToken, requirePermission('llm:manage')] }, async (request, reply) => {
     try {
       const data = request.body as any;
+      const bodyError = warnUnknown(data, ['name','displayName','deploymentType','apiKey','apiFormat','model','baseURL','modelsSupported','contextWindow','supportsFunctionCall','supportsVision','inputCostPer1k','outputCostPer1k','enabled','temperature','maxTokens','timeoutMs','rateLimitPerMinute','dailyQuota'], 'POST /api/llm/configs');
+      if (bodyError) return reply.code(400).send(bodyError);
       const result = await llmDatabaseService.configureProvider(data)
-      warnUnknown(data, ['name','displayName','deploymentType','apiKey','apiFormat','model','baseURL','modelsSupported','contextWindow','supportsFunctionCall','supportsVision','inputCostPer1k','outputCostPer1k','enabled','temperature','maxTokens','timeoutMs','rateLimitPerMinute','dailyQuota'], 'POST /api/llm/configs');
       if (!result.success) return reply.send(result);
       return reply.send({ ...result, ...await reloadOutcome(request.log, reloadChatProvider) });
     } catch (error: any) {
@@ -1428,8 +1431,9 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
   fastify.post('/api/database/instances', { preHandler: [verifyToken, requirePermission('instance:create')] }, async (request, reply) => {
     try {
       const data = request.body as any;
+      const bodyError = warnUnknown(data, ['name','environment','db_type','host','port','username','password','database_name','max_connections','connection_timeout_ms','description','tags','created_by'], 'POST /api/database/instances');
+      if (bodyError) return reply.code(400).send(bodyError);
       const result = await instanceDatabaseService.createInstance(data);
-      warnUnknown(data, ['name','environment','db_type','host','port','username','password','database_name','max_connections','connection_timeout_ms','description','tags','created_by'], 'POST /api/database/instances');
       if (result.success) {
         reply.send({ id: result.instanceId, message: '创建成功' });
       } else {
@@ -1449,8 +1453,9 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
     try {
       const { id } = request.params as any;
       const data = request.body as any;
+      const bodyError = warnUnknown(data, ['name','environment','db_type','host','port','username','password','database_name','max_connections','connection_timeout_ms','description','tags'], 'PUT /api/database/instances/:id');
+      if (bodyError) return reply.code(400).send(bodyError);
       const result = await instanceDatabaseService.updateInstance(Number(id), data);
-      warnUnknown(data, ['name','environment','db_type','host','port','username','password','database_name','max_connections','connection_timeout_ms','description','tags'], 'PUT /api/database/instances/:id');
       if (result.success) {
         reply.send({ message: '更新成功' });
       } else {
@@ -1543,7 +1548,8 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
   fastify.post('/api/servers', { preHandler: [verifyToken, requirePermission('servers:manage')] }, async (request, reply) => {
     try {
       const data = request.body as any;
-      warnUnknown(data, ['host','port','label','os_type','credential_type','credential_username','credential_value','host_key_fingerprint','ssh_trust_mode','created_by'], 'POST /api/servers');
+      const bodyError = warnUnknown(data, ['host','port','label','os_type','credential_type','credential_username','credential_value','host_key_fingerprint','ssh_trust_mode','created_by'], 'POST /api/servers');
+      if (bodyError) return reply.code(400).send(bodyError);
       if (!data.host) return reply.code(400).send({ error: '缺少必填字段：host' });
       if (!data.os_type) return reply.code(400).send({ error: '缺少必填字段：os_type' });
       if (!data.credential_type) return reply.code(400).send({ error: '缺少必填字段：credential_type' });
@@ -1566,7 +1572,8 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
     try {
       const { id } = request.params as any;
       const data = request.body as any;
-      warnUnknown(data, ['host','port','label','os_type','credential_type','credential_username','credential_value','host_key_fingerprint','ssh_trust_mode','collection_enabled'], 'PUT /api/servers/:id');
+      const bodyError = warnUnknown(data, ['host','port','label','os_type','credential_type','credential_username','credential_value','host_key_fingerprint','ssh_trust_mode','collection_enabled'], 'PUT /api/servers/:id');
+      if (bodyError) return reply.code(400).send(bodyError);
       if (data.ssh_trust_mode === 'insecure' && (data.credential_type ?? (await serverDatabaseService.getServerById(Number(id)))?.credential_type) === 'key') {
         await recordSshTrustRequest(Number((request as any).user?.userId), 'server', String(id), data.ssh_trust_mode);
       }
@@ -1591,6 +1598,12 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
       } else {
         if (result.error === 'SERVER_HAS_INSTANCE_RELATIONS') {
           return reply.code(409).send({ error: result.error });
+        }
+        if (result.error === SERVER_HAS_HISTORICAL_REPORTS) {
+          return reply.code(409).send({
+            error: SERVER_HISTORICAL_REPORT_DELETE_ERROR,
+            code: SERVER_HAS_HISTORICAL_REPORTS,
+          });
         }
         reply.code(400).send({ error: result.error });
       }
@@ -1622,7 +1635,8 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
     try {
       const { id } = request.params as any;
       const data = request.body as any;
-      warnUnknown(data, ['credential_type','credential_username','credential_value'], 'POST /api/servers/:id/rotate-key');
+      const bodyError = warnUnknown(data, ['credential_type','credential_username','credential_value'], 'POST /api/servers/:id/rotate-key');
+      if (bodyError) return reply.code(400).send(bodyError);
       if (!data.credential_type) return reply.code(400).send({ error: '缺少必填字段：credential_type' });
       if (!data.credential_username) return reply.code(400).send({ error: '缺少必填字段：credential_username' });
       if (!data.credential_value) return reply.code(400).send({ error: '缺少必填字段：credential_value' });
@@ -1851,7 +1865,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
   // SQL 审批
   fastify.post('/api/approval/submit', {
     config: { rateLimit: sensitiveOperationRateLimitConfig },
-    preHandler: [verifyToken, requirePermission('approval:approve')],
+    preHandler: [verifyToken, requirePermission('instance:query')],
   }, async (request, reply) => {
     try {
       const check = strictBody(request.body as Record<string, unknown>,
@@ -2588,12 +2602,8 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
       const pool = dbConnection.getPool();
       if (!pool) return reply.code(500).send({ error: '数据库未连接' });
 
-      const allowedInstanceIds = getAccessibleInstanceIds((request as any).user);
-      const scopeSql = allowedInstanceIds === null
-        ? ''
-        : allowedInstanceIds.length > 0
-          ? ` AND instance_id IN (${allowedInstanceIds.map(() => '?').join(', ')})`
-          : ' AND 1 = 0';
+      const access = analysisAccessSql((request as any).user);
+      const scopeSql = ` AND ${access.sql}`;
 
       const [rows] = await pool.execute(
         `SELECT COUNT(*) as cnt, analysis_type
@@ -2606,7 +2616,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
          FROM ai_analysis
          WHERE created_at >= CURDATE()
          ${scopeSql}`,
-        [...(allowedInstanceIds ?? []), ...(allowedInstanceIds ?? [])],
+        [...access.params, ...access.params],
       ) as any;
 
       let today_total = 0;
@@ -2854,6 +2864,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
 
         reply.send({ id: result.id, message: '创建成功' });
       } catch (error: any) {
+        if (error instanceof InvalidReportCronError) return reply.code(400).send({ error: error.message });
         reply.code(500).send({ error: error.message });
       }
     }
@@ -2924,6 +2935,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
 
         reply.send({ message: '更新成功' });
       } catch (error: any) {
+        if (error instanceof InvalidReportCronError) return reply.code(400).send({ error: error.message });
         reply.code(500).send({ error: error.message });
       }
     }
@@ -3185,10 +3197,10 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
           duration_seconds: Number(data.duration_seconds) || 60,
           severity: data.severity,
           notification_channels: data.notification_channels,
-          threshold_type: data.threshold_type || 'static',
+          threshold_type: data.threshold_type,
           threshold_template: data.threshold_template,
           dynamic_config: data.dynamic_config,
-          silence_minutes: data.silence_minutes ?? 5,
+          silence_minutes: data.silence_minutes,
           db_types: data.db_types || (metricDef ? metricDef.db_types : null),
           instance_ids: instanceIds,
           template_id: data.template_id ?? null,
@@ -3760,8 +3772,8 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
             if (!diagnosisResult.success) {
               return reply.code(diagnosisResult.status === 'unknown' ? 409 : 500).send(diagnosisResult);
             }
-            analysisId = diagnosisResult.analysisId!;
-            break;
+            return reply.send({ id: diagnosisResult.analysisId, status: diagnosisResult.status, cached: diagnosisResult.cached,
+              session_key: `diagnosis-${diagnosisResult.analysisId}` });
 
           case 'capacity_prediction': {
             const body = request.body as any;
@@ -3800,7 +3812,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
         if (!record) {
           return reply.code(404).send({ ok: false, error: '分析记录不存在' });
         }
-        if (record.instance_id && !hasInstanceAccess((request as any).user, Number(record.instance_id), 'read-only')) {
+        if (!canReadAnalysis((request as any).user, record)) {
           return reply.code(404).send({ ok: false, error: '分析记录不存在' });
         }
         reply.send({
@@ -3828,17 +3840,23 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
     preHandler: [verifyToken, requirePermission('ai:view')],
     handler: async (request, reply) => {
       try {
-        const { instance_id, analysis_type, limit } = request.query as {
+        const { instance_id, analysis_type, target_type, server_id, network_device_id, limit } = request.query as {
           instance_id?: string;
           analysis_type?: string;
+          target_type?: string;
+          server_id?: string;
+          network_device_id?: string;
           limit?: string;
         };
         const filters: Record<string, any> = {};
         if (instance_id) filters.instance_id = parseInt(instance_id);
         if (analysis_type) filters.analysis_type = analysis_type;
+        if (target_type) filters.target_type = target_type;
+        if (server_id) filters.server_id = Number(server_id);
+        if (network_device_id) filters.network_device_id = Number(network_device_id);
         if (limit) filters.limit = parseInt(limit);
-        const records = await aiAnalysisDatabaseService.getAnalysisList(filters);
-        return { ok: true, records: filterByInstanceAccess((request as any).user, records, (record: any) => record.instance_id) };
+        const records = await aiAnalysisDatabaseService.getAnalysisList(filters, (request as any).user);
+        return { ok: true, records };
       } catch (error: any) {
         reply.code(500).send({ error: error.message });
       }
@@ -3855,7 +3873,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
         if (!analysis) {
           return reply.code(404).send({ error: '分析记录不存在' });
         }
-        if (analysis.instance_id && !hasInstanceAccess((request as any).user, Number(analysis.instance_id), 'read-only')) {
+        if (!canReadAnalysis((request as any).user, analysis)) {
           return reply.code(404).send({ error: '分析记录不存在' });
         }
         reply.send({
@@ -3890,7 +3908,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
           analysis_type,
           status: 'completed',
           limit: Number(limit),
-        });
+        }, (request as any).user);
         reply.send(analyses);
       } catch (error: any) {
         reply.code(500).send({ error: error.message });
@@ -3918,7 +3936,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
         if (!analysis) {
           return reply.code(404).send({ error: '分析记录不存在' });
         }
-        if (analysis.instance_id && !hasInstanceAccess((request as any).user, Number(analysis.instance_id), 'read-only')) {
+        if (!canReadAnalysis((request as any).user, analysis)) {
           return reply.code(404).send({ error: '分析记录不存在' });
         }
         reply.send(analysis);
@@ -3933,16 +3951,19 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
     preHandler: [verifyToken, requirePermission('ai:view')],
     handler: async (request, reply) => {
       try {
-        const { analysis_type, instance_id, status, related_id, page = '1', limit = '20' } = request.query as any;
+        const { analysis_type, target_type, instance_id, server_id, network_device_id, status, related_id, page = '1', limit = '20' } = request.query as any;
         const analyses = await aiAnalysisDatabaseService.getAnalysisList({
           analysis_type: analysis_type || undefined,
+          target_type: target_type || undefined,
           instance_id: instance_id ? Number(instance_id) : undefined,
+          server_id: server_id ? Number(server_id) : undefined,
+          network_device_id: network_device_id ? Number(network_device_id) : undefined,
           status: status || undefined,
           related_id: related_id ? Number(related_id) : undefined,
           limit: Number(limit),
           offset: (Number(page) - 1) * Number(limit),
-        });
-        reply.send(filterByInstanceAccess((request as any).user, analyses, (analysis: any) => analysis.instance_id));
+        }, (request as any).user);
+        reply.send(analyses);
       } catch (error: any) {
         reply.code(500).send({ error: error.message });
       }
@@ -4008,9 +4029,9 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
         } else if (existing.analysis_type === 'fault_diagnosis') {
           const diagnosisResult = await faultDiagnosisService.diagnoseInstance((request as any).user, faultInstanceId, existing.status === 'unknown' ? existing.id : undefined);
           if (!diagnosisResult.success) {
-            return reply.code(500).send({ error: diagnosisResult.error });
+            return reply.code(diagnosisResult.status === 'unknown' ? 409 : 500).send(diagnosisResult);
           }
-          reply.send({ id: diagnosisResult.analysisId, status: 'pending', message: '重新分析任务已提交' });
+          reply.send({ id: diagnosisResult.analysisId, status: diagnosisResult.status, cached: diagnosisResult.cached, message: diagnosisResult.cached ? '已复用完成的分析' : '重新分析任务已提交' });
         } else {
           return reply.code(400).send({ error: '不支持重新分析该类型' });
         }

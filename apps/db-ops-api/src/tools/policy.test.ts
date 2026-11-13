@@ -4,6 +4,8 @@ import type { AnyAgentTool } from './types.js';
 import { canActorDiscoverTool, decideToolPolicy, executeToolWithPolicy } from './policy.js';
 import { projectContextBlocks } from '@slide/agent-core';
 import { agentExecutionConfigService } from '../security/agent-execution-config-service.js';
+import { dbConnection } from '../db-connection.js';
+import { instanceDatabaseService } from '../instance-database-service.js';
 
 const actor = (roles: string[], permissions: string[] = [], scopes: Record<number, 'read-only' | 'read-write' | 'admin'> = {}): ActorContext => Object.freeze({
   userId: 7,
@@ -26,6 +28,49 @@ const tool = (overrides: Partial<AnyAgentTool> = {}): AnyAgentTool => ({
 describe('actor tool policy', () => {
   afterEach(() => vi.restoreAllMocks());
 
+  // GitHub #624: use the default resolver and actual service, faulting only the pool.
+  it.each([
+    ['found', 'ALLOW'],
+    ['missing', 'RESOURCE_NOT_FOUND'],
+    ['query-failed', 'RESOURCE_LOOKUP_UNAVAILABLE'],
+    ['pool-unavailable', 'RESOURCE_LOOKUP_UNAVAILABLE'],
+    ['permission-denied', 'MISSING_PERMISSION'],
+    ['scope-denied', 'INSTANCE_SCOPE_DENIED'],
+  ] as const)('contains instance-name resolution at the execution boundary: %s', async (scenario, reasonCode) => {
+    vi.spyOn(agentExecutionConfigService, 'get').mockResolvedValue({
+      approvalEnabled: true, restrictedNetworkEnabled: false, reasonCode: 'EXECUTION_CONFIG_READY',
+    });
+    const execute = vi.fn().mockImplementation(async () => {
+      if (scenario === 'query-failed' || scenario === 'permission-denied') {
+        throw new Error('SQL failed: password=private-test-sentinel');
+      }
+      return [scenario === 'missing' ? [] : [{ id: 12, name: 'orders', environment: 'production' }]];
+    });
+    vi.spyOn(dbConnection, 'getPool').mockReturnValue(scenario === 'pool-unavailable' ? null : { execute } as any);
+    const handler = vi.fn().mockResolvedValue({ success: true });
+    const consume = vi.fn().mockResolvedValue(true);
+    const record = vi.fn().mockResolvedValue(undefined);
+    const outcome = await executeToolWithPolicy(
+      actor(['operator'], scenario === 'permission-denied' ? [] : ['instance:update'],
+        scenario === 'scope-denied' ? {} : { 12: 'read-write' }),
+      tool({ name: 'slide_update_db_config', requiresApproval: true, handler }),
+      { instance_name: ' orders ', approvalId: '42' },
+      undefined, { consume }, { record },
+    );
+    expect(outcome.decision).toMatchObject({ allow: scenario === 'found', reasonCode });
+    expect(outcome.result).toMatchObject(scenario === 'found'
+      ? { success: true } : { success: false, errorCode: reasonCode });
+    expect(handler).toHaveBeenCalledTimes(scenario === 'found' ? 1 : 0);
+    expect(consume).toHaveBeenCalledTimes(scenario === 'found' ? 1 : 0);
+    expect(record).toHaveBeenCalledWith(expect.objectContaining({
+      phase: 'decision', decision: expect.objectContaining({ reasonCode }),
+    }));
+    expect(JSON.stringify({ outcome, audit: record.mock.calls })).not.toContain('private-test-sentinel');
+    if (scenario !== 'pool-unavailable') {
+      expect(execute).toHaveBeenCalledExactlyOnceWith(expect.stringContaining('SELECT id, name, environment'), ['orders']);
+    }
+  });
+
   it.each(['permission', 'scope', 'audit'] as const)('does not spend an approval on %s failure', async (failure) => {
     vi.spyOn(agentExecutionConfigService, 'get').mockResolvedValue({
       approvalEnabled: true, restrictedNetworkEnabled: false, reasonCode: 'EXECUTION_CONFIG_READY',
@@ -43,6 +88,105 @@ describe('actor tool policy', () => {
     expect(result.result.success).toBe(false);
     expect(handler).not.toHaveBeenCalled();
     expect(consume).not.toHaveBeenCalled();
+  });
+
+  it('default resolver receives the actor and rejects a cross-environment name before approval', async () => {
+    vi.spyOn(agentExecutionConfigService, 'get').mockResolvedValue({
+      approvalEnabled: true, restrictedNetworkEnabled: false, reasonCode: 'EXECUTION_CONFIG_READY',
+    });
+    const list = vi.spyOn(instanceDatabaseService, 'listAvailableInstancesByNormalizedName').mockResolvedValue([
+      { id: 8, name: 'orders', environment: 'development' },
+      { id: 9, name: 'orders', environment: 'production' },
+    ]);
+    const submit = vi.fn();
+    const handler = vi.fn(async () => ({ success: true }));
+    const outcome = await executeToolWithPolicy(
+      actor(['dba'], ['instance:*']),
+      tool({ name: 'slide_update_db_config', handler }),
+      { instance_name: ' orders ', environment: 'staging' },
+      undefined,
+      { consume: vi.fn(async () => false) },
+      { record: async () => {} },
+      undefined,
+      { approvalRequester: { submit } },
+    );
+    expect(list).toHaveBeenCalledWith('orders');
+    expect(outcome.decision.reasonCode).toBe('AMBIGUOUS_INSTANCE_NAME');
+    expect(outcome.decision.resource.instanceId).toBeUndefined();
+    expect(handler).not.toHaveBeenCalled();
+    expect(submit).not.toHaveBeenCalled();
+  });
+
+  it('reports a result-audit gap without an approval receipt and preserves tool data', async () => {
+    vi.spyOn(agentExecutionConfigService, 'get').mockResolvedValue({
+      approvalEnabled: false, restrictedNetworkEnabled: false, reasonCode: 'EXECUTION_CONFIG_READY',
+    });
+    const data = { instances: [1] };
+    const outcome = await executeToolWithPolicy(
+      actor(['admin']), tool({ handler: async () => ({ success: true, data, details: { original: true } }) }), {},
+      async () => ({ type: 'none' }), { consume: vi.fn() },
+      { record: async entry => { if (entry.phase === 'result') throw new Error('audit offline'); } },
+    );
+    expect(outcome.result).toMatchObject({
+      success: true, status: 'warning', data,
+      details: { original: true, resultAudit: 'unavailable', approvalExecution: 'not_applicable' },
+    });
+    expect(outcome.result.summary).toContain('结果审计未持久化');
+  });
+
+  // MAX-353 / #622: result audit and approval completion are independent.
+  it.each(
+    ['execute_code', 'list_database_instances'].flatMap(name =>
+      [false, true].flatMap(handlerFails =>
+        [false, true].flatMap(auditFails =>
+          [false, true].map(finishFails => ({ name, handlerFails, auditFails, finishFails }))))),
+  )('settles approval after handler: $name handler=$handlerFails audit=$auditFails finish=$finishFails', async ({ name, handlerFails, auditFails, finishFails }) => {
+    vi.spyOn(agentExecutionConfigService, 'get').mockResolvedValue({
+      approvalEnabled: true, restrictedNetworkEnabled: false, reasonCode: 'EXECUTION_CONFIG_READY',
+    });
+    const finish = vi.fn(async () => { if (finishFails) throw new Error('private finish failure'); });
+    const releaseBeforeHandler = vi.fn();
+    const handler = vi.fn(async () => {
+      if (handlerFails) throw new Error('private handler failure');
+      return { success: true, data: { output: 'tool output' }, details: { original: true }, next_actions: ['retry-handler'] };
+    });
+    const record = vi.fn(async (entry: { phase: string }) => {
+      if (entry.phase === 'result' && auditFails) throw new Error('private audit failure');
+    });
+    const outcome = await executeToolWithPolicy(
+      actor(['admin']), tool({ name, requiresApproval: true, handler }),
+      { approvalId: '42', runtime: 'shell', code: 'curl https://example.com' },
+      async () => ({ type: 'none' }),
+      { consume: vi.fn(), authorize: async () => ({ approved: true, executionId: 'execution-42', finish, releaseBeforeHandler }) },
+      { record },
+    );
+    expect(handler).toHaveBeenCalledTimes(1);
+    expect(finish).toHaveBeenCalledTimes(1);
+    expect(releaseBeforeHandler).not.toHaveBeenCalled();
+    expect(record.mock.calls.map(([entry]) => entry.phase)).toEqual(['result']);
+    expect(outcome.decision).toMatchObject({ allow: true, approvalId: '42', requestId: 'policy-test' });
+    if (auditFails || finishFails) {
+      expect(outcome.result.details).toMatchObject({
+        resultAudit: auditFails ? 'unavailable' : 'persisted',
+        approvalExecution: finishFails ? 'unavailable' : 'finished',
+        executionId: 'execution-42', approvalId: '42', requestId: 'policy-test',
+      });
+      expect(outcome.result.next_actions?.join(' ')).toContain('不要重放');
+      expect(outcome.result.next_actions).not.toContain('retry-handler');
+      if (name === 'execute_code') {
+        expect(outcome.result.success).toBe(false);
+        expect(outcome.result.errorCode).toBe('AUDIT_UNAVAILABLE');
+        expect(JSON.stringify(outcome.result)).not.toContain('tool output');
+      } else {
+        expect(outcome.result.success).toBe(!handlerFails);
+        expect(outcome.result.status).toBe(handlerFails ? 'error' : 'warning');
+        if (!handlerFails) expect(outcome.result.data).toEqual({ output: 'tool output' });
+        else expect(outcome.result.errorCode).toBe('TOOL_EXECUTION_FAILED');
+      }
+    } else {
+      expect(outcome.result.success).toBe(!handlerFails);
+    }
+    expect(JSON.stringify(outcome)).not.toContain('private');
   });
 
   it('keeps execute_code available without a pending approval when the admin approval switch is off', async () => {
@@ -321,6 +465,31 @@ describe('actor tool policy', () => {
     expect(requester.submit).not.toHaveBeenCalled();
   });
 
+  it.each([
+    { code: 'pwd\nmv secret back' }, { code: 'ls\ncp a b' },
+    { code: 'pwd; cp a b' }, { code: 'cat foo > bar' },
+    { code: 'find . -delete' }, { code: 'find . -fprint output' },
+    { code: 'pwd ${x:=value}' },
+    { code: 'pwd', files: [{ path: 'input.txt', content: 'data' }] },
+  ])('GitHub #282: stops unsafe Shell before the handler with approval enabled: %j', async (input) => {
+    vi.spyOn(agentExecutionConfigService, 'get').mockResolvedValue({
+      approvalEnabled: true, restrictedNetworkEnabled: false, reasonCode: 'EXECUTION_CONFIG_READY',
+    });
+    const handler = vi.fn();
+    const requester = { submit: vi.fn().mockResolvedValue({ id: '73', expiresAt: new Date('2026-11-05T08:00:00Z') }) };
+    const result = await executeToolWithPolicy(
+      actor(['admin'], ['ai:execute']),
+      tool({ name: 'execute_code', requiredPermissions: ['ai:execute'], requiresApproval: true, handler }),
+      { runtime: 'shell', ...input }, undefined, { consume: async () => false },
+      { record: vi.fn().mockResolvedValue(undefined) }, undefined,
+      { approvalRequester: requester },
+    );
+    expect(result.decision).toMatchObject({ allow: false, reasonCode: 'APPROVAL_REQUIRED' });
+    expect(result.decision.riskLevel).not.toBe('low');
+    expect(requester.submit).toHaveBeenCalledOnce();
+    expect(handler).not.toHaveBeenCalled();
+  });
+
   it('creates an approval on the first medium-risk call and preserves session context', async () => {
     const requester = {
       submit: vi.fn().mockResolvedValue({ id: '73', expiresAt: new Date('2026-08-24T00:05:00.000Z') }),
@@ -338,7 +507,7 @@ describe('actor tool policy', () => {
     );
 
     expect(result).toMatchObject({
-      decision: { reasonCode: 'APPROVAL_REQUIRED', approvalId: '73', riskLevel: 'medium', approvalScope: 'window' },
+      decision: { reasonCode: 'APPROVAL_REQUIRED', requestId: 'policy-test', approvalId: '73', riskLevel: 'medium', approvalScope: 'window' },
       result: { success: false, data: { approvalId: '73', riskLevel: 'medium', approvalScope: 'window' } },
     });
     expect(requester.submit).toHaveBeenCalledWith(
@@ -346,6 +515,7 @@ describe('actor tool policy', () => {
       { scope: 'window', sessionKey: 'agent-session-1', riskLevel: 'medium' },
     );
     expect(JSON.stringify(audit.record.mock.calls[0][0])).toContain('"riskLevel":"medium"');
+    expect(audit.record.mock.calls[0][0].decision.requestId).toBe('policy-test');
   });
 
   it('passes the session and risk ceiling to approval consumption on retry', async () => {

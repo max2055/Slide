@@ -1,3 +1,4 @@
+import { isNativeEndpoint } from './native-endpoint.js';
 /**
  * Anthropic LLM 提供商配置
  *
@@ -40,8 +41,7 @@ export const ANTHROPIC_MODEL_CATALOG = [
 ] as const;
 
 export function isNativeAnthropicBaseUrl(baseUrl: string | undefined): boolean {
-  if (!baseUrl) return false;
-  return baseUrl.includes('api.anthropic.com');
+  return isNativeEndpoint(baseUrl, ['api.anthropic.com']);
 }
 
 export function buildAnthropicProvider(): ModelProviderConfig {

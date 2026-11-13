@@ -13,7 +13,7 @@ export type BadgeVariant = "ok" | "danger" | "warn" | "info" | "muted";
 
 @customElement("app-badge")
 export class AppBadge extends LitElement {
-  @property() variant: "ok" | "danger" | "warn" | "info" | "muted" = "muted";
+  @property({ reflect: true }) variant: "ok" | "danger" | "warn" | "info" | "muted" = "muted";
 
   createRenderRoot() { return this; }
 

@@ -818,6 +818,10 @@ class AlertDatabaseService {
     network_device_id?: number;
     created_by?: number;
   }): Promise<{ success: boolean; ruleId?: number; error?: string }> {
+    if ((data.threshold_type !== undefined && data.threshold_type !== 'static' && data.threshold_type !== 'dynamic')
+      || (data.silence_minutes !== undefined && (!Number.isInteger(data.silence_minutes) || data.silence_minutes === null || data.silence_minutes < 0 || data.silence_minutes > 2147483647))) {
+      return { success: false, error: '阈值类型必须为 static/dynamic，静默分钟必须为 0–2147483647 的整数；不能为 null' };
+    }
     const pool = this.getPool();
     if (!pool) {
       return { success: false, error: '数据库未连接' };
@@ -889,6 +893,10 @@ class AlertDatabaseService {
       network_device_id?: number | null;
     }
   ): Promise<{ success: boolean; error?: string }> {
+    if ((data.threshold_type !== undefined && data.threshold_type !== 'static' && data.threshold_type !== 'dynamic')
+      || (data.silence_minutes !== undefined && (!Number.isInteger(data.silence_minutes) || data.silence_minutes === null || data.silence_minutes < 0 || data.silence_minutes > 2147483647))) {
+      return { success: false, error: '阈值类型必须为 static/dynamic，静默分钟必须为 0–2147483647 的整数；不能为 null' };
+    }
     const pool = this.getPool();
     if (!pool) {
       return { success: false, error: '数据库未连接' };

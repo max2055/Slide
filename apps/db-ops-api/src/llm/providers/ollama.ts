@@ -1,3 +1,4 @@
+import { isNativeEndpoint } from './native-endpoint.js';
 /**
  * Ollama 本地 LLM 提供商配置
  *
@@ -152,8 +153,7 @@ export const OLLAMA_MODEL_CATALOG = [
  * 判断是否是 Ollama 的原生 Base URL
  */
 export function isNativeOllamaBaseUrl(baseUrl: string | undefined): boolean {
-  if (!baseUrl) return false;
-  return baseUrl.includes('localhost:11434') || baseUrl.includes('127.0.0.1:11434');
+  return isNativeEndpoint(baseUrl, ['localhost', '127.0.0.1'], '11434');
 }
 
 /**

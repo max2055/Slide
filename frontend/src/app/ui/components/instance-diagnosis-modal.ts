@@ -19,31 +19,31 @@ export class InstanceDiagnosisModal extends LitElement {
   @property({ type: String }) instanceName: string | null = null;
 
   static styles = css`
-    .empty-state { text-align: center; padding: 40px; }
-    .empty-title { font-size: var(--text-lg); font-weight: 600; color: var(--text-strong); margin-bottom: var(--space-sm); }
-    .empty-desc { font-size: var(--text-md); color: var(--muted); margin-bottom: var(--space-lg); }
+    instance-diagnosis-modal > app-dialog > .empty-state { text-align: center; padding: 40px; }
+    instance-diagnosis-modal > app-dialog > .empty-state > .empty-title { font-size: var(--text-lg); font-weight: 600; color: var(--text-strong); margin-bottom: var(--space-sm); }
+    instance-diagnosis-modal > app-dialog > .empty-state > .empty-desc { font-size: var(--text-md); color: var(--muted); margin-bottom: var(--space-lg); }
 
-    @keyframes spin { to { transform: rotate(360deg); } }
-    .spinner {
+    @keyframes instance-diagnosis-spin { to { transform: rotate(360deg); } }
+    instance-diagnosis-modal > app-dialog > .empty-state > .spinner {
       display: inline-block;
       width: 18px; height: 18px;
       border: 2px solid var(--border);
       border-top-color: var(--accent);
       border-radius: 50%;
-      animation: spin 0.8s linear infinite;
+      animation: instance-diagnosis-spin 0.8s linear infinite;
     }
-    .trace-list { text-align: left; max-width: 500px; margin: var(--space-lg) auto; }
-    .trace-item { display: flex; align-items: center; gap: var(--space-sm); padding: var(--space-xs) 0; font-size: 13px; color: var(--text); }
-    .trace-item.ok { color: var(--success); }
-    .trace-item.error { color: var(--danger); }
-    .trace-dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
-    .trace-dot.pending { background: var(--muted); }
-    .trace-dot.running { background: var(--accent); animation: pulse 1s infinite; }
-    .trace-dot.ok { background: var(--success); }
-    .trace-dot.error { background: var(--danger); }
-    @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
-    .continue-section { text-align: center; padding: var(--space-lg) 0 var(--space-md); border-top: 1px solid var(--border); margin-top: var(--space-lg); }
-    .continue-section p { font-size: 13px; color: var(--muted); margin-bottom: var(--space-md); }
+    instance-diagnosis-modal > app-dialog > .empty-state .trace-list { text-align: left; max-width: 500px; margin: var(--space-lg) auto; }
+    instance-diagnosis-modal > app-dialog > .empty-state .trace-item { display: flex; align-items: center; gap: var(--space-sm); padding: var(--space-xs) 0; font-size: 13px; color: var(--text); }
+    instance-diagnosis-modal > app-dialog > .empty-state .trace-item.ok { color: var(--ok); }
+    instance-diagnosis-modal > app-dialog > .empty-state .trace-item.error { color: var(--danger); }
+    instance-diagnosis-modal > app-dialog > .empty-state .trace-dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
+    instance-diagnosis-modal > app-dialog > .empty-state .trace-dot.pending { background: var(--muted); }
+    instance-diagnosis-modal > app-dialog > .empty-state .trace-dot.running { background: var(--accent); animation: instance-diagnosis-pulse 1s infinite; }
+    instance-diagnosis-modal > app-dialog > .empty-state .trace-dot.ok { background: var(--ok); }
+    instance-diagnosis-modal > app-dialog > .empty-state .trace-dot.error { background: var(--danger); }
+    @keyframes instance-diagnosis-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+    instance-diagnosis-modal > app-dialog > .continue-section { text-align: center; padding: var(--space-lg) 0 var(--space-md); border-top: 1px solid var(--border); margin-top: var(--space-lg); }
+    instance-diagnosis-modal > app-dialog > .continue-section p { font-size: 13px; color: var(--muted); margin-bottom: var(--space-md); }
   `;
 
   private _close() {
@@ -71,6 +71,7 @@ export class InstanceDiagnosisModal extends LitElement {
 
   override render() {
     return html`
+      <style>${InstanceDiagnosisModal.styles}</style>
       <app-dialog .open=${this.open} size="xl" title="AI 诊断" @app-dialog-close=${this._close}>
         ${this._renderBody()}
         ${this._renderFooter()}

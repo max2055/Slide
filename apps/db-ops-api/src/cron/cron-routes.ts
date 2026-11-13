@@ -1,3 +1,4 @@
+import { validateCronPagination } from './cron-storage-error.js';
 import { cronRunStore } from './cron-run-store.js';
 import type { FastifyInstance, preHandlerHookHandler } from 'fastify';
 import { CronJob } from 'cron';
@@ -12,8 +13,11 @@ import { actorContextService } from '../auth/actor-context.js';
 import { dbConnection } from '../db-connection.js';
 import { assertCronActorAccess } from './cron-authority.js';
 import { expensiveOperationRateLimitConfig } from '../security/http-security.js';
+import { validateCronTimeoutSeconds } from '../adapter/runtime-policy.js';
 
 function cronErrorStatus(error: Error): number {
+  if (error.message?.startsWith('Invalid cron timeout:')) return 400;
+  if (error.message === 'CRON_STORAGE_UNAVAILABLE') return 503;
   if (error.message?.startsWith('WORKER_LEASE') || error.message === 'WORKER_STOPPED') return 503;
   if (error.message === 'CRON_IDEMPOTENCY_CONFLICT') return 409;
   if (['CRON_RUN_STORE_UNAVAILABLE', 'CRON_AUDIT_UNAVAILABLE', 'CRON_AUTHORITY_UNAVAILABLE', 'WORKFLOW_RUNTIME_UNAVAILABLE'].includes(error.message)) return 503;
@@ -139,6 +143,7 @@ export function registerCronRoutes(fastify: FastifyInstance, verifyToken: preHan
           return reply.code(400).send({ error: '无效的 cron 表达式' });
         }
 
+        if (body.timeout_seconds !== undefined) validateCronTimeoutSeconds(body.timeout_seconds);
         const identity = await bindJobIdentity(request, body);
         const scriptBinding = await bindJobScript(request, body);
         const id = await cronJobService.createJob({
@@ -193,6 +198,7 @@ export function registerCronRoutes(fastify: FastifyInstance, verifyToken: preHan
           }
         }
 
+        if (body.timeout_seconds !== undefined) validateCronTimeoutSeconds(body.timeout_seconds);
         const identity = await bindJobIdentity(request, body, existing);
         const scriptBinding = await bindJobScript(request, body, existing);
         const updated = await cronJobService.updateJob(Number(id), {
@@ -353,8 +359,10 @@ export function registerCronRoutes(fastify: FastifyInstance, verifyToken: preHan
         const { id } = request.params as any;
         if (!await requireCronJobAccess(request, reply, Number(id))) return;
         const query = request.query as any;
-        const limit = Math.min(Math.max(Number(query.limit) || 20, 1), 100);
-        const offset = Math.max(Number(query.offset) || 0, 0);
+        if (query.limit === '' || query.offset === '') throw new Error('CRON_INVALID_PAGINATION');
+        const limit = query.limit === undefined ? 20 : Number(query.limit);
+        const offset = query.offset === undefined ? 0 : Number(query.offset);
+        validateCronPagination(limit, offset);
 
         const result = await cronJobService.getLogs(Number(id), limit, offset);
         reply.send(result);
@@ -374,7 +382,7 @@ export function registerCronRoutes(fastify: FastifyInstance, verifyToken: preHan
         const scripts = await scriptService.getAllScripts();
         reply.send(scripts);
       } catch (error: any) {
-        reply.code(error.message === 'CRON_SCRIPT_ACCESS_DENIED' ? 403 : error.message?.startsWith('CRON_') ? 400 : 500).send({ error: error.message });
+        reply.code(cronErrorStatus(error)).send({ error: error.message });
       }
     }
   });
@@ -389,7 +397,7 @@ export function registerCronRoutes(fastify: FastifyInstance, verifyToken: preHan
         if (!script) return reply.code(404).send({ error: '脚本不存在' });
         reply.send(script);
       } catch (error: any) {
-        reply.code(error.message === 'CRON_SCRIPT_ACCESS_DENIED' ? 403 : error.message?.startsWith('CRON_') ? 400 : 500).send({ error: error.message });
+        reply.code(cronErrorStatus(error)).send({ error: error.message });
       }
     }
   });
@@ -422,7 +430,7 @@ export function registerCronRoutes(fastify: FastifyInstance, verifyToken: preHan
 
         reply.code(201).send({ id, message: '创建成功' });
       } catch (error: any) {
-        reply.code(error.message === 'CRON_SCRIPT_ACCESS_DENIED' ? 403 : error.message?.startsWith('CRON_') ? 400 : 500).send({ error: error.message });
+        reply.code(cronErrorStatus(error)).send({ error: error.message });
       }
     }
   });
@@ -452,7 +460,7 @@ export function registerCronRoutes(fastify: FastifyInstance, verifyToken: preHan
 
         reply.send({ message: '更新成功' });
       } catch (error: any) {
-        reply.code(error.message === 'CRON_SCRIPT_ACCESS_DENIED' ? 403 : error.message?.startsWith('CRON_') ? 400 : 500).send({ error: error.message });
+        reply.code(cronErrorStatus(error)).send({ error: error.message });
       }
     }
   });
@@ -467,12 +475,50 @@ export function registerCronRoutes(fastify: FastifyInstance, verifyToken: preHan
         const existing = await scriptService.getScriptById(Number(id));
         if (!existing) return reply.code(404).send({ error: '脚本不存在' });
 
-        await scriptService.deleteScript(Number(id), (request as any).user);
+        const deleted = await scriptService.deleteScript(Number(id), (request as any).user);
+        if (!deleted) return reply.code(404).send({ error: '脚本不存在' });
         reply.send({ message: '删除成功' });
       } catch (error: any) {
-        reply.code(error.message === 'CRON_SCRIPT_ACCESS_DENIED' ? 403 : error.message?.startsWith('CRON_') ? 400 : 500).send({ error: error.message });
+        reply.code(cronErrorStatus(error)).send({ error: error.message });
       }
     }
+  });
+
+  // 草稿测试不创建脚本，关闭表单或请求失败也不会在脚本库留下记录。
+  fastify.post('/api/cron/scripts/test', {
+    config: { rateLimit: expensiveOperationRateLimitConfig },
+    preHandler: [verifyToken, requirePermission('cron:manage')],
+    handler: async (request, reply) => {
+      const body = request.body as { instance_id?: unknown; content?: unknown; database?: unknown } | null;
+      if (!Number.isSafeInteger(body?.instance_id) || Number(body?.instance_id) <= 0) {
+        return reply.code(400).send({ error: '缺少必要参数：instance_id（正整数）' });
+      }
+      if (typeof body?.content !== 'string' || !body.content.trim()) {
+        return reply.code(400).send({ error: '缺少必要参数：content' });
+      }
+      if (body.database != null && typeof body.database !== 'string') {
+        return reply.code(400).send({ error: '无效的 database' });
+      }
+      const instanceId = Number(body.instance_id);
+      if (!hasInstanceAccess((request as any).user, instanceId, 'read-only')) {
+        return reply.code(403).send({ error: '无权访问该实例' });
+      }
+      try {
+        const result = await sqlExecutor.executeSql(instanceId, body.content, {
+          database: typeof body.database === 'string' ? body.database : undefined,
+          userId: String((request as any).user.userId),
+          username: (request as any).user.username,
+          ipAddress: request.ip,
+        });
+        if (result.rows && result.rows.length > 100) {
+          result.rows = result.rows.slice(0, 100);
+          result.rowCount = result.rows.length;
+        }
+        return reply.send(result);
+      } catch (error: any) {
+        return reply.code(cronErrorStatus(error)).send({ error: error.message });
+      }
+    },
   });
 
   // 测试执行脚本（dry-run，结果限制100行）
@@ -506,7 +552,7 @@ export function registerCronRoutes(fastify: FastifyInstance, verifyToken: preHan
 
         reply.send(result);
       } catch (error: any) {
-        reply.code(error.message === 'CRON_SCRIPT_ACCESS_DENIED' ? 403 : error.message?.startsWith('CRON_') ? 400 : 500).send({ error: error.message });
+        reply.code(cronErrorStatus(error)).send({ error: error.message });
       }
     }
   });

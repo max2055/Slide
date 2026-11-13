@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="zh-CN" data-theme-mode="light">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>MAX-650 诊断弹窗样式验收</title>
+<link rel="stylesheet" href="/src/app/styles.css">
+<style>body { margin: 24px; font: 14px system-ui; }</style>
+<body>
+  <button id="trigger">实例诊断</button>
+  <div id="outside"><div class="empty-state"><div class="empty-title">外部标题</div><div class="empty-desc">外部描述</div><div class="spinner"></div><div class="trace-list"><div class="trace-item ok"><span class="trace-dot running"></span></div></div><div class="continue-section"><p>外部继续区域</p></div></div></div>
+  <instance-diagnosis-modal></instance-diagnosis-modal>
+  <script type="module">
+    import '/src/app/ui/components/instance-diagnosis-modal.ts';
+    const modal = document.querySelector('instance-diagnosis-modal');
+    modal.instanceId = 650;
+    modal.instanceName = '样本 MySQL';
+    document.querySelector('#trigger').onclick = () => { modal.open = true; };
+    modal.addEventListener('close', () => { modal.open = false; });
+    window.events = [];
+    for (const type of ['request-diagnosis', 'continue-in-chat']) {
+      document.addEventListener(type, event => window.events.push({ type, detail: event.detail }));
+    }
+  </script>
+</body>
+</html>

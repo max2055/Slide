@@ -75,7 +75,7 @@ describe.skipIf(!host)('MAX-308 real SSH trust across production entry points', 
             getCredentials: async () => ({ protocol: 'ssh' as const, username: 'fixture', credentialType: type as 'key' | 'password',
               credentialValue: type === 'key' ? pem : 'synthetic-secret', hostKeyFingerprint: fingerprint, sshTrustMode: mode }),
           },
-          store: { insert: async input => ({ ...input, id: 1, versionNo: 1, collectedAt: input.collectedAt.toISOString() }) },
+          store: { insert: async input => ({ created: true, summary: { ...input, id: 1, versionNo: 1, collectedAt: input.collectedAt.toISOString() } }) },
           audit: () => {},
         });
         await service.collect(1);

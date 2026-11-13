@@ -1,5 +1,6 @@
 import { LitElement, css, html, nothing } from "lit";
 import { customElement, state } from "lit/decorators.js";
+import "../components/app-empty-state.js";
 import { permissionMatches } from "../settings-navigation.ts";
 
 type StatusView = "health" | "observations" | "sandbox";
@@ -12,24 +13,29 @@ const STATUS_VIEWS: readonly { id: StatusView; label: string; permission: string
 
 @customElement("platform-status-page")
 export class PlatformStatusPage extends LitElement {
-  @state() private activeView: StatusView = "health";
-  @state() private permissions: Set<string> | null = this.readPermissions();
+  @state() private activeView: StatusView | null = null;
+  @state() private permissions: Set<string> = new Set();
+  private connectedPath = "";
   private readonly permissionsHandler = (event: Event) => {
     const values = (event as CustomEvent<{ permissions?: string[] }>).detail?.permissions;
-    this.permissions = Array.isArray(values) ? new Set(values) : this.readPermissions();
-    this.ensureVisibleView();
+    this.permissions = values === undefined ? this.readPermissions() : this.parsePermissions(values);
+    this.syncLocation();
   };
+
+  private readonly popStateHandler = () => this.syncLocation();
 
   override connectedCallback() {
     super.connectedCallback();
     window.addEventListener("slide-permissions-loaded", this.permissionsHandler);
-    const requested = new URL(window.location.href).searchParams.get("view");
-    if (STATUS_VIEWS.some((view) => view.id === requested)) this.activeView = requested as StatusView;
-    this.ensureVisibleView();
+    window.addEventListener("popstate", this.popStateHandler);
+    this.connectedPath = window.location.pathname;
+    this.permissions = this.readPermissions();
+    this.syncLocation();
   }
 
   override disconnectedCallback() {
     window.removeEventListener("slide-permissions-loaded", this.permissionsHandler);
+    window.removeEventListener("popstate", this.popStateHandler);
     super.disconnectedCallback();
   }
 
@@ -54,12 +60,16 @@ export class PlatformStatusPage extends LitElement {
     .tab.active { border-bottom-color: var(--accent); color: var(--accent-text); font-weight: 600; }
   `;
 
-  private readPermissions(): Set<string> | null {
+  private parsePermissions(values: unknown): Set<string> {
+    return Array.isArray(values) && values.every((value) => typeof value === "string")
+      ? new Set(values) : new Set();
+  }
+
+  private readPermissions(): Set<string> {
     try {
-      const raw = localStorage.getItem("permissions");
-      return raw ? new Set(JSON.parse(raw)) : null;
+      return this.parsePermissions(JSON.parse(localStorage.getItem("permissions") ?? "null"));
     } catch {
-      return null;
+      return new Set();
     }
   }
 
@@ -67,13 +77,22 @@ export class PlatformStatusPage extends LitElement {
     return STATUS_VIEWS.filter((view) => permissionMatches(this.permissions, view.permission));
   }
 
-  private ensureVisibleView() {
-    if (!this.visibleViews.some((view) => view.id === this.activeView) && this.visibleViews[0]) {
-      this.activeView = this.visibleViews[0].id;
+  private syncLocation() {
+    // The shell removes this component after the current popstate dispatch.
+    if (window.location.pathname !== this.connectedPath) return;
+    const url = new URL(window.location.href);
+    const requested = url.searchParams.get("view");
+    const visible = this.visibleViews;
+    this.activeView = visible.find((view) => view.id === requested)?.id ?? visible[0]?.id ?? null;
+    // Normalize denied/unknown views without adding an extra history entry.
+    if (this.activeView && requested !== null && requested !== this.activeView) {
+      url.searchParams.set("view", this.activeView);
+      window.history.replaceState(window.history.state, "", url);
     }
   }
 
   private selectView(view: StatusView) {
+    if (view === this.activeView || !this.visibleViews.some((item) => item.id === view)) return;
     this.activeView = view;
     const url = new URL(window.location.href);
     url.searchParams.set("view", view);
@@ -82,6 +101,11 @@ export class PlatformStatusPage extends LitElement {
   }
 
   override render() {
+    if (!this.visibleViews.some((view) => view.id === this.activeView)) {
+      return html`<app-empty-state role="status" title="无权限访问平台状态"
+        description="当前账号没有可访问的平台状态视图，请联系管理员。"
+      ></app-empty-state>`;
+    }
     return html`
       ${this.visibleViews.length > 1 ? html`
         <div class="tabs" role="tablist" aria-label="平台状态">

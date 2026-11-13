@@ -43,7 +43,7 @@ function store(overrides: Partial<ConfigBackupStore> = {}): ConfigBackupStore {
   return {
     list: vi.fn(async () => []),
     find: vi.fn(async () => null),
-    insert: vi.fn(async (input) => ({ id: 9, deviceId: input.deviceId, versionNo: 1, contentSha256: input.contentSha256, sourceProtocol: 'ssh' as const, collectedAt: input.collectedAt.toISOString(), sizeBytes: input.sizeBytes, redactionStatus: input.redactionStatus })),
+    insert: vi.fn(async (input) => ({ created: true, summary: { id: 9, deviceId: input.deviceId, versionNo: 1, contentSha256: input.contentSha256, sourceProtocol: 'ssh' as const, collectedAt: input.collectedAt.toISOString(), sizeBytes: input.sizeBytes, redactionStatus: input.redactionStatus } })),
     ...overrides,
   };
 }
@@ -60,6 +60,31 @@ function options(overrides: Partial<ConfigBackupServiceOptions> = {}, active = c
 }
 
 describe('ConfigBackupService', () => {
+  it('MAX-600 propagates the transactional creation decision through collect and capture', async () => {
+    const config = options();
+    const insert = config.store!.insert as ReturnType<typeof vi.fn>;
+    const service = new ConfigBackupService(config);
+    expect((await service.collect(7)).deduplicated).toBe(false);
+    const saved = await insert.mock.results[0].value;
+    insert.mockResolvedValueOnce({ ...saved, created: false });
+    expect(await service.capture(7)).toMatchObject({ success: true, duplicate: true, backup: { id: 9 } });
+    expect(await service.capture(7)).toMatchObject({ success: true, duplicate: false });
+  });
+
+  it('MAX-606 reports a saved backup when auditing fails and does not recollect or suppress the error', async () => {
+    const audit = vi.fn().mockRejectedValueOnce(new Error('private audit error')).mockResolvedValue(undefined);
+    const active = connection();
+    const config = options({ audit }, active);
+    const service = new ConfigBackupService(config);
+    const result = await service.capture(7);
+    expect(result).toMatchObject({ success: false, error: 'CONFIG_BACKUP_SAVED_AUDIT_FAILED', backupSaved: true, retryable: false, backup: { id: 9 }, duplicate: false });
+    expect(config.store!.insert).toHaveBeenCalledTimes(1);
+    expect(active.commands).toEqual([...CONFIG_BACKUP_COMMANDS]);
+    expect(audit).toHaveBeenCalledTimes(1);
+    expect(JSON.stringify(result)).not.toMatch(/private audit error|SuperSecret|cipher:/);
+    expect(active.end).toHaveBeenCalledOnce();
+  });
+
   it('can verify an SSH host key without executing a device command', async () => {
     const active = connection();
     const transport: ConfigBackupSshTransport = { connect: vi.fn(async () => active) };
