@@ -16,6 +16,7 @@ export interface ResourceCapability {
 
 export interface CapabilityStore {
   get(resource: ResourceRef, key: string): Promise<ResourceCapability | null>;
+  list(resource: ResourceRef): Promise<ResourceCapability[]>;
   put(capability: ResourceCapability): Promise<void>;
 }
 
@@ -35,7 +36,15 @@ export class CapabilityService {
   async get(actor: ActorContext, resource: ResourceRef, key: string, now = new Date()): Promise<ResourceCapability | null> {
     if (!canReadResource(actor, resource)) throw new Error('RESOURCE_FORBIDDEN');
     const value = await this.store.get(resource, key);
-    if (!value) return null;
+    return value ? this.current(value, now) : null;
+  }
+
+  async list(actor: ActorContext, resource: ResourceRef, now = new Date()): Promise<ResourceCapability[]> {
+    if (!canReadResource(actor, resource)) throw new Error('RESOURCE_FORBIDDEN');
+    return (await this.store.list(resource)).map(value => this.current(value, now));
+  }
+
+  private current(value: ResourceCapability, now: Date): ResourceCapability {
     if (value.state === 'verified' && value.validUntil && value.validUntil <= now) {
       return { ...value, state: 'configured', reason: 'capability_verification_expired' };
     }
@@ -49,7 +58,8 @@ export class CapabilityService {
     if (capability.state === 'verified' && capability.evidence?.probe !== 'collector') {
       throw new Error('CAPABILITY_VERIFICATION_EVIDENCE_REQUIRED');
     }
-    if (Number.isNaN(capability.checkedAt.getTime())) throw new Error('CAPABILITY_TIME_INVALID');
+    if (Number.isNaN(capability.checkedAt.getTime())
+      || (capability.validUntil != null && Number.isNaN(capability.validUntil.getTime()))) throw new Error('CAPABILITY_TIME_INVALID');
     await this.store.put(capability);
   }
 }
@@ -69,6 +79,19 @@ export class MysqlCapabilityStore implements CapabilityStore {
     );
     const row = rows[0];
     if (!row) return null;
+    return this.fromRow(row);
+  }
+
+  async list(resource: ResourceRef): Promise<ResourceCapability[]> {
+    const [rows] = await this.pool().execute<Array<any>>(
+      `SELECT resource_type, resource_id, capability_key, state, evidence, reason, checked_at, valid_until
+       FROM resource_capabilities WHERE resource_type = ? AND resource_id = ? ORDER BY capability_key`,
+      [resource.type, resource.id],
+    );
+    return rows.map(row => this.fromRow(row));
+  }
+
+  private fromRow(row: any): ResourceCapability {
     return {
       resource: { type: row.resource_type, id: Number(row.resource_id) }, key: row.capability_key, state: row.state,
       evidence: typeof row.evidence === 'string' ? JSON.parse(row.evidence) : row.evidence, reason: row.reason,

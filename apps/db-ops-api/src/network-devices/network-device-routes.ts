@@ -197,12 +197,8 @@ export async function registerNetworkDeviceRoutes(
         const value = await capabilityService.get(actor(request), { type: 'network_device', id }, key);
         return reply.send({ deviceId: id, capabilities: value ? [serializeCapability(value)] : [] });
       }
-      const pool = dbConnection.getPool();
-      if (!pool) return reply.code(500).send({ error: '数据库未连接' });
-      const [rows] = await pool.execute<any[]>(
-        `SELECT capability_key AS capabilityKey, state, evidence, reason, checked_at AS checkedAt, valid_until AS validUntil
-         FROM resource_capabilities WHERE resource_type = 'network_device' AND resource_id = ? ORDER BY capability_key`, [id]);
-      return reply.send({ deviceId: id, capabilities: rows.map(serializeCapabilityRow) });
+      const values = await capabilityService.list(actor(request), { type: 'network_device', id });
+      return reply.send({ deviceId: id, capabilities: values.map(serializeCapability) });
     } catch (error) {
       const failure = safeNetworkError(error);
       return reply.code(failure.status).send({ error: failure.error });
