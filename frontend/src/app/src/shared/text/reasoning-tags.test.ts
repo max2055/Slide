@@ -18,7 +18,7 @@ describe('#704 assistant final wrappers', () => {
 
   it.each(['final', 'antml:final', 'antml:think'])('preserves %s inside fenced and inline code', tag => {
     const code = `\`<${tag}>示例</${tag}>\`\n\n\`\`\`xml\n<${tag}>示例</${tag}>\n\`\`\``;
-    const text = `<antml:final>${code}</antml:final>`;
+    const text = `<antml:final>\n${code}\n</antml:final>`;
     expect(stripReasoningTagsFromText(text)).toBe(code);
     expect(extractText({ role: 'assistant', content: text })).toBe(code);
   });
