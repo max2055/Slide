@@ -438,6 +438,7 @@ export class LLMConfigPage extends LitElement {
       if (!API_FORMATS.some(format => format.value === this.form.api_format)) {
         throw new Error('LLM_API_FORMAT_UNSUPPORTED：此历史协议不受支持，请迁移到服务商支持的协议及对应端点后保存');
       }
+      if ([...this.form.display_name].length > 100) throw new Error('显示名称最多 100 个字符');
       const window = this.form.context_window;
       const output = this.form.max_tokens;
       const selected = this.form.models.find(m => m.id === this.form.default_model);
@@ -903,7 +904,8 @@ export class LLMConfigPage extends LitElement {
         </div>
         <div class="form-group">
           <label class="form-label" for="provider-display">显示名称</label>
-          <input id="provider-display" class="form-input" .value=${this.form.display_name} @input=${(e: any) => this.form.display_name = e.target.value} placeholder="Anthropic Claude" />
+          <input id="provider-display" class="form-input" .value=${this.form.display_name} @input=${(e: any) => this.form.display_name = e.target.value} aria-describedby="provider-display-hint" placeholder="Anthropic Claude" />
+          <span id="provider-display-hint" class="muted">最多 100 个字符</span>
         </div>
 
       <div class="form-group">

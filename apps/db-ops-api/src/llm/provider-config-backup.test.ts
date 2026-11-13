@@ -169,6 +169,16 @@ describe('provider configuration backup artifact', () => {
     expect(codeOf(() => parseBackupArtifact(JSON.stringify(longModel)))).toBe('PROVIDER_CONFIG_BACKUP_INVALID_ARTIFACT');
   });
 
+  it('#300 keeps the same 100 Unicode character contract in backup validation', () => {
+    for (const display_name of ['名'.repeat(100), '😀'.repeat(100)]) {
+      const artifact = serializeBackupDocument(documentFor([record({ display_name })]));
+      expect(parseBackupArtifact(artifact).providers[0].display_name).toBe(display_name);
+    }
+    const invalid = documentFor([record()]);
+    invalid.providers[0].display_name = '😀'.repeat(101);
+    expect(() => parseBackupArtifact(JSON.stringify(invalid))).toThrow(/display_name/);
+  });
+
   it('computes the documented SHA-256 checksum', () => {
     expect(backupChecksum('abc')).toBe('ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad');
   });
