@@ -618,7 +618,10 @@ export class ReportsPage extends LitElement {
   }
 
   private _formatTime(dateStr: string): string {
-    const diff = Date.now() - new Date(dateStr).getTime();
+    const date = new Date(dateStr);
+    if (!Number.isFinite(date.getTime())) return '—';
+    const diff = Date.now() - date.getTime();
+    if (diff < 0) return date.toLocaleString('zh-CN', { hour12: false });
     const hours = Math.floor(diff / 3600000);
     const days = Math.floor(diff / 86400000);
     if (hours < 24) return `${hours} 小时前`;
