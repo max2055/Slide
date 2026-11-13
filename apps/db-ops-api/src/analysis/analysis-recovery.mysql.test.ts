@@ -22,6 +22,7 @@ import { AnalysisDispatchStore, type AnalysisRequest } from './analysis-dispatch
 import { registerAnalysisDispatchHandler } from './analysis-dispatch-handler.js';
 import { JobRegistry } from '../workflows/job-registry.js';
 import { dbConnection } from '../db-connection.js';
+import { aiAnalysisConfigService, DEFAULT_CONFIG } from '../ai-analysis-config-service.js';
 import { aiAnalysisDatabaseService } from '../ai-analysis-database-service.js';
 import { analysisRecoveryInventory } from './analysis-recovery-inventory.js';
 import { actorContextService } from '../auth/actor-context.js';
@@ -103,6 +104,58 @@ describe.skipIf(!port)('analysis durable recovery in isolated MySQL', () => {
       expect(column.COLUMN_COMMENT).toBe(column.COLUMN_NAME === 'retry_of' ? 'Explicitly confirmed unknown analysis predecessor' : 'Analysis record identity');
     }
   }
+  it('#309 preserves metadata across repeated config saves and defines JSON type', async () => {
+    await pool.query("CREATE TABLE system_config (id INT AUTO_INCREMENT PRIMARY KEY, config_key VARCHAR(100) UNIQUE, config_value TEXT, value_type ENUM('string','json') DEFAULT 'string', description TEXT, updated_by INT)");
+    const spy = vi.spyOn(dbConnection, 'getPool').mockReturnValue(pool);
+    try {
+      await pool.query("INSERT INTO system_config VALUES (71,'auto_analysis_config','{}','string','retain description',19)");
+      for (const enabled of [false, true]) {
+        expect(await aiAnalysisConfigService.saveConfig({ ...DEFAULT_CONFIG, enabled })).toEqual({ success: true });
+        const [row] = await rows('SELECT * FROM system_config');
+        expect(row).toMatchObject({ id: 71, description: 'retain description', updated_by: 19, value_type: 'json' });
+        expect(JSON.parse(row.config_value).enabled).toBe(enabled);
+      }
+      await pool.query('DELETE FROM system_config');
+      expect((await aiAnalysisConfigService.saveConfig(DEFAULT_CONFIG)).success).toBe(true);
+      expect((await rows('SELECT value_type FROM system_config'))[0].value_type).toBe('json');
+    } finally { spy.mockRestore(); await pool.query('DROP TABLE system_config'); }
+  });
+  it.each(['completed', 'failed', 'pending', 'running', 'unknown'])('#310 deletion contract for %s', async status => {
+    const created = await enqueue();
+    await pool.query('UPDATE ai_analysis SET status = ? WHERE id = ?', [status, created.analysisId]);
+    await pool.query("INSERT INTO analysis_dispatch_attempts (analysis_id,attempt_number,job_id,owner_id,fencing_token,runtime_run_id) SELECT analysis_id,1,job_id,'owner',1,'run' FROM analysis_dispatches");
+    const spy = vi.spyOn(dbConnection, 'getPool').mockReturnValue(pool);
+    try {
+      const allowed = ['completed', 'failed'].includes(status);
+      expect((await aiAnalysisDatabaseService.deleteAnalysis(created.analysisId)).success).toBe(allowed);
+      for (const table of ['ai_analysis', 'analysis_dispatches', 'analysis_dispatch_attempts', 'analysis_dispatch_keys']) {
+        expect(await rows('SELECT * FROM ' + table)).toHaveLength(allowed ? 0 : 1);
+      }
+    } finally { spy.mockRestore(); }
+  });
+  it('#310 rolls back every deletion when a later statement fails', async () => {
+    const created = await enqueue();
+    await pool.query("UPDATE ai_analysis SET status = 'completed'");
+    await pool.query("CREATE TRIGGER fail_delete BEFORE DELETE ON ai_analysis FOR EACH ROW SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'injected delete failure'");
+    const spy = vi.spyOn(dbConnection, 'getPool').mockReturnValue(pool);
+    try {
+      expect((await aiAnalysisDatabaseService.deleteAnalysis(created.analysisId)).success).toBe(false);
+      for (const table of ['ai_analysis', 'analysis_dispatches', 'analysis_dispatch_keys']) expect(await rows('SELECT * FROM ' + table)).toHaveLength(1);
+    } finally { spy.mockRestore(); await pool.query('DROP TRIGGER fail_delete'); }
+  });
+  it('#310 rechecks status after a concurrent lifecycle writer commits', async () => {
+    const created = await enqueue();
+    const writer = await pool.getConnection();
+    const spy = vi.spyOn(dbConnection, 'getPool').mockReturnValue(pool);
+    try {
+      await writer.beginTransaction();
+      await writer.query("UPDATE ai_analysis SET status = 'running' WHERE id = ?", [created.analysisId]);
+      const deletion = aiAnalysisDatabaseService.deleteAnalysis(created.analysisId);
+      await writer.commit();
+      expect((await deletion).success).toBe(false);
+      expect(await rows('SELECT * FROM analysis_dispatches')).toHaveLength(1);
+    } finally { await writer.rollback(); writer.release(); spy.mockRestore(); }
+  });
   it('#302 upgrades populated INT references without losing data and can repeat the widening', async () => {
     for (const table of ['analysis_dispatches', 'analysis_dispatch_attempts', 'analysis_dispatch_keys']) {
       await pool.query(`ALTER TABLE ${table} MODIFY COLUMN analysis_id INT UNSIGNED ${table === 'analysis_dispatch_keys' ? 'NULL' : 'NOT NULL'} COMMENT 'Analysis record identity'`);
