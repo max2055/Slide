@@ -95,6 +95,12 @@ describe.skipIf(!enabled)('MAX-409/410/419 real MySQL maintenance acceptance', (
     const edit = (key: string) => app.inject({ method: 'PUT', url: `/api/maintenance-windows/${local.id}`, headers: { authorization: `Bearer ${token}` }, payload: { operation_key: key, expected_revision: 0, value } });
     const responses = await Promise.all([edit('concurrent-a'), edit('concurrent-b')]);
     expect(responses.map(r => r.statusCode).sort()).toEqual([200, 409]);
+    const winner = responses.findIndex(r => r.statusCode === 200);
+    const winnerKey = ['concurrent-a', 'concurrent-b'][winner];
+    expect((await edit(winnerKey)).json()).toEqual(responses[winner].json());
+    const recovered = await app.inject({ method: 'GET', url: `/api/maintenance-windows/operations/${winnerKey}`, headers: { authorization: `Bearer ${token}` } });
+    expect(recovered.statusCode).toBe(200);
+    expect(recovered.json().status).toBe('committed');
     await pool.query('DELETE FROM instance_permissions WHERE user_id=701');
     expect((await edit('revoked')).statusCode).toBe(403);
     const [history] = await pool.query<any[]>('SELECT COUNT(*) AS n FROM maintenance_weekly_history WHERE id=?', [local.id]);
