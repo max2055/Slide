@@ -56,8 +56,17 @@ export class CronRunStore {
     return result.affectedRows === 1;
   }
   async bindLog(runId: string, logId: number): Promise<void> {
-    await this.pool().execute('UPDATE cron_runs SET log_id = ? WHERE run_id = ?', [logId, runId]);
-    await this.pool().execute('UPDATE cron_job_logs SET run_id = ? WHERE id = ?', [runId, logId]);
+    const connection = await this.pool().getConnection();
+    try {
+      await connection.beginTransaction();
+      await connection.execute('UPDATE cron_runs SET log_id = ? WHERE run_id = ?', [logId, runId]);
+      await connection.execute('UPDATE cron_job_logs SET run_id = ? WHERE id = ?', [runId, logId]);
+      await connection.commit();
+    } catch (error) {
+      // Rollback can also fail after a connection error; preserve the original cause.
+      await connection.rollback().catch(() => { connection.destroy(); });
+      throw error;
+    } finally { connection.release(); }
   }
   async saveCompletion(runId: string, completion: CronCompletion): Promise<void> {
     const connection = await this.pool().getConnection();

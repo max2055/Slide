@@ -1,4 +1,5 @@
 import { mkdtemp, rm } from 'node:fs/promises';
+import { EventEmitter } from 'node:events';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, expect, it, vi } from 'vitest';
@@ -105,8 +106,8 @@ it('invoke cannot broadcast completed for a rejected candidate even when thinkin
   mock.value.chat = async () => ({ content: bad, reasoningContent: 'private analysis', finishReason: 'stop', toolCalls: [], usage: {}, shouldExecuteTools: false, hasToolCalls: false });
   const adapter = new DirectAdapter({ workspace: directory, tools: new ToolRegistry(), llmProvider: mock.value });
   const sent: string[] = [];
-  (adapter as any).sessionSubscribers.set('invoke-failure', new Set([{ readyState: 1, bufferedAmount: 0,
-    send: (message: string, callback: () => void) => { sent.push(message); callback(); } }]));
+  (adapter as any).sessionSubscribers.set('invoke-failure', new Set([Object.assign(new EventEmitter(), { readyState: 1, bufferedAmount: 0,
+    send: (message: string, callback: () => void) => { sent.push(message); callback(); } })]));
   const result = await adapter.invoke('invoke-failure', '诊断数据库');
   expect(result.stopReason).toBe('error');
   expect(result.resolution?.reasonCode).toBe('MODEL_REPETITION_LOOP');
