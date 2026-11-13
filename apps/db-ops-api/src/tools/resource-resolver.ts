@@ -1,16 +1,33 @@
-import { instanceDatabaseService } from '../instance-database-service.js';
+import type { ActorContext } from '../auth/actor-context.js';
+import { hasPermission } from '../auth/require-permission.js';
+import { instanceDatabaseService, type AvailableInstanceIdentity } from '../instance-database-service.js';
 import { getToolSecurityDefinition } from './security-catalog.js';
 import type { ToolPolicyResource } from './types.js';
 
 export interface ToolResourceLookup {
   findInstanceIdByName(name: string): Promise<number | null>;
+  /** When present, name resolution uses the full active set instead of an arbitrary id. */
+  listAvailableInstancesByNormalizedName?(name: string): Promise<AvailableInstanceIdentity[]>;
 }
 
 const defaultLookup: ToolResourceLookup = {
   async findInstanceIdByName(name: string): Promise<number | null> {
     return instanceDatabaseService.findInstanceIdByName(name);
   },
+  listAvailableInstancesByNormalizedName(name: string) {
+    return instanceDatabaseService.listAvailableInstancesByNormalizedName(name);
+  },
 };
+
+/** Same write scope as tool policy. Exported so the update tool cannot drift from authorization. */
+export function actorCanWriteInstance(actor: ActorContext, instanceId: number): boolean {
+  if (actor.resourceBoundary && !actor.resourceBoundary.instanceIds.includes(instanceId)) return false;
+  if (actor.username.toLowerCase() === 'admin' || actor.roles.includes('admin') || hasPermission(new Set(actor.permissions), 'instance:*')) {
+    return true;
+  }
+  const level = actor.instanceScopes[instanceId];
+  return level === 'read-write' || level === 'admin';
+}
 
 function positiveInteger(value: unknown): number | undefined {
   return Number.isSafeInteger(value) && Number(value) > 0 ? Number(value) : undefined;
@@ -51,8 +68,9 @@ export function resolveToolResourceFromArgs(
   // Cross-resource read tools carry an explicit, typed reference rather than
   // pretending every target is a database instance. Resolve it before the
   // handler so Agent policy/audit records retain the concrete subject.
-  if (['list_resources', 'get_resource_observations', 'get_resource_relations', 'diagnose_resource', 'query_metrics'].includes(toolName)
-    && hasOwn(args, 'resourceType')) {
+  const evidenceTool = ['get_evidence_bundle', 'get_evidence_item'].includes(toolName);
+  if ((evidenceTool || ['list_resources', 'get_resource_observations', 'get_resource_relations', 'diagnose_resource', 'query_metrics'].includes(toolName))
+    && (evidenceTool || hasOwn(args, 'resourceType'))) {
     const resourceType = args.resourceType;
     const resourceId = positiveInteger(args.resourceId);
     if (!['instance', 'server', 'network_device'].includes(String(resourceType)) || resourceId === undefined) {
@@ -93,6 +111,7 @@ export async function resolveToolResource(
   toolName: string,
   args: Record<string, unknown>,
   lookup: ToolResourceLookup = defaultLookup,
+  actor?: ActorContext,
 ): Promise<ToolPolicyResource> {
   const resource = resolveToolResourceFromArgs(toolName, args);
   if (resource.error || resource.instanceId !== undefined) return resource;
@@ -101,10 +120,24 @@ export async function resolveToolResource(
     if (typeof args.instance_name !== 'string' || !args.instance_name.trim()) {
       return { ...resource, error: 'RESOURCE_INVALID' };
     }
-    const instanceId = await lookup.findInstanceIdByName(args.instance_name.trim());
-    return instanceId
-      ? { ...resource, instanceId }
-      : { ...resource, error: 'RESOURCE_NOT_FOUND' };
+    const normalized = args.instance_name.trim();
+    // The new environment argument is the value to store, never the row selector.
+    try {
+      if (lookup.listAvailableInstancesByNormalizedName) {
+        const matches = await lookup.listAvailableInstancesByNormalizedName(normalized);
+        if (matches.length === 1) return { ...resource, instanceId: matches[0].id };
+        const visible = actor ? matches.filter((match) => actorCanWriteInstance(actor, match.id)) : [];
+        if (matches.length > 1 && visible.length >= 2) return { ...resource, error: 'AMBIGUOUS_INSTANCE_NAME' };
+        return { ...resource, error: 'RESOURCE_NOT_FOUND' };
+      }
+      const instanceId = await lookup.findInstanceIdByName(normalized);
+      return instanceId
+        ? { ...resource, instanceId }
+        : { ...resource, error: 'RESOURCE_NOT_FOUND' };
+    } catch {
+      // Keep storage details (including SQL and credentials) out of policy/audit results.
+      return { ...resource, error: 'RESOURCE_LOOKUP_UNAVAILABLE' };
+    }
   }
 
   return resource;

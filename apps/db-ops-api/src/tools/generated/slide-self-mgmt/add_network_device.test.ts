@@ -56,3 +56,29 @@ describe('slide_add_network_device', () => {
     expect(result).toMatchObject({ success: false, errorCode: 'PLAINTEXT_CREDENTIAL_DENIED' });
   });
 });
+
+// MAX-610 / #605: concurrency must produce the same result as the precheck.
+describe('network device insertion races', () => {
+  afterEach(() => vi.restoreAllMocks());
+  const input = { name: 'new-edge', host: 'EDGE.EXAMPLE', snmp_port: 1161 };
+  const context = { actor: { userId: 7 } as any } as any;
+  const winner = { id: 73, name: 'winner', host: 'edge.example', snmp_port: 1161 } as any;
+  it('matches the precheck result after a duplicate insert', async () => {
+    vi.spyOn(networkDeviceDatabaseService, 'getAllDevices').mockResolvedValueOnce([]).mockResolvedValue([winner]);
+    vi.spyOn(networkDeviceDatabaseService, 'createDevice').mockResolvedValue({ success: false, error: 'conflict', errorCode: 'NETWORK_DEVICE_EXISTS' });
+    const raced = await addNetworkDeviceTool.handler(input, context);
+    expect(raced).toEqual(await addNetworkDeviceTool.handler(input, context));
+    expect(raced).toMatchObject({ errorCode: 'NETWORK_DEVICE_EXISTS', details: { retryable: false, terminal: true }, data: { networkDeviceId: 73 } });
+  });
+  it.each(['missing', 'unavailable'])('keeps a known conflict nonretryable when the follow-up read is %s', async state => {
+    const read = vi.spyOn(networkDeviceDatabaseService, 'getAllDevices').mockResolvedValueOnce([]);
+    if (state === 'missing') read.mockResolvedValueOnce([]); else read.mockRejectedValueOnce(Error('offline'));
+    vi.spyOn(networkDeviceDatabaseService, 'createDevice').mockResolvedValue({ success: false, errorCode: 'NETWORK_DEVICE_EXISTS' });
+    expect(await addNetworkDeviceTool.handler(input, context)).toMatchObject({ errorCode: 'NETWORK_DEVICE_EXISTS', status: 'warning', details: { retryable: false, terminal: true } });
+  });
+  it('retains retryability for temporary storage failures', async () => {
+    vi.spyOn(networkDeviceDatabaseService, 'getAllDevices').mockResolvedValue([]);
+    vi.spyOn(networkDeviceDatabaseService, 'createDevice').mockResolvedValue({ success: false, error: 'RESOURCE_STORE_UNAVAILABLE' });
+    expect(await addNetworkDeviceTool.handler(input, context)).toMatchObject({ errorCode: 'CREATE_NETWORK_DEVICE_FAILED', details: { retryable: true } });
+  });
+});

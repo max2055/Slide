@@ -13,6 +13,7 @@ export class CronRunTracker {
   private storageKey = '';
   constructor(private readonly changed: () => void) {}
   start(): void {
+    this.stop();
     this.stopped = false;
     let user: any;
     try { user = JSON.parse(localStorage.getItem('user') || 'null'); } catch { /* absent user */ }
@@ -34,35 +35,49 @@ export class CronRunTracker {
     try { localStorage.setItem(this.storageKey, JSON.stringify([...this.runs.values()].map(({ jobId, requestKey, runId, status }) => ({ jobId, requestKey, runId, status })))); } catch { /* storage unavailable */ }
     if (!this.stopped) this.changed();
   }
+  private owns(run: TrackedCronRun, controller: AbortController): boolean {
+    return !this.stopped && !controller.signal.aborted && this.controllers.get(run.jobId) === controller && this.runs.get(run.jobId) === run;
+  }
   async trigger(jobId: number): Promise<void> {
     if (this.stopped || this.controllers.has(jobId) || this.runs.get(jobId)?.runId && active(this.runs.get(jobId)!.status)) return;
     const previous = this.runs.get(jobId);
     const run: TrackedCronRun = previous && active(previous.status) ? previous : { jobId, requestKey: crypto.randomUUID(), status: 'unconfirmed' };
-    this.runs.set(jobId, run); this.publish();
+    const timer = this.timers.get(jobId);
+    if (timer !== undefined) { clearTimeout(timer); this.timers.delete(jobId); }
     const controller = new AbortController(); this.controllers.set(jobId, controller);
+    this.runs.set(jobId, run); this.publish();
     try {
       const response = await authFetch(`/api/cron/jobs/${jobId}/run`, { method: 'POST', headers: { 'Idempotency-Key': run.requestKey }, signal: controller.signal });
+      if (!this.owns(run, controller)) return;
       if (!response.ok) {
         const body = await response.json().catch(() => ({}));
+        if (!this.owns(run, controller)) return;
         if (response.status < 500) { this.runs.delete(jobId); this.publish(); }
         throw new Error(body.error || '触发失败');
       }
       const body = await response.json();
+      if (!this.owns(run, controller)) return;
       if (body.jobId !== jobId || typeof body.runId !== 'string') throw new Error('运行状态待确认');
       Object.assign(run, { runId: body.runId, status: body.status });
       this.publish();
     } finally {
-      this.controllers.delete(jobId);
-      if (!this.stopped && this.runs.has(jobId)) this.schedule(jobId);
+      if (this.controllers.get(jobId) === controller) {
+        this.controllers.delete(jobId);
+        if (!this.stopped && this.runs.get(jobId) === run && active(run.status)) this.schedule(jobId);
+      }
     }
   }
   private schedule(jobId: number): void {
-    if (this.stopped || this.timers.has(jobId)) return;
-    this.timers.set(jobId, setTimeout(() => { this.timers.delete(jobId); void this.poll(jobId); }, 3000));
+    if (this.stopped || this.timers.has(jobId) || this.controllers.has(jobId)) return;
+    const timer = setTimeout(() => {
+      if (this.timers.get(jobId) !== timer) return;
+      this.timers.delete(jobId); void this.poll(jobId);
+    }, 3000);
+    this.timers.set(jobId, timer);
   }
   private async poll(jobId: number): Promise<void> {
     const run = this.runs.get(jobId);
-    if (!run || this.stopped || !active(run.status)) return;
+    if (!run || this.stopped || this.controllers.has(jobId) || !active(run.status)) return;
     const controller = new AbortController(); this.controllers.set(jobId, controller);
     try {
       const url = run.runId ? `/api/cron/jobs/${jobId}/runs/${run.runId}` : `/api/cron/jobs/${jobId}/runs?requestKey=${encodeURIComponent(run.requestKey)}`;
@@ -70,13 +85,15 @@ export class CronRunTracker {
       if (!response.ok) throw new Error('状态待确认');
       const body = await response.json();
       if (body.jobId !== jobId || (run.runId && body.runId !== run.runId)) throw new Error('状态待确认');
-      if (this.stopped) return;
+      if (!this.owns(run, controller)) return;
       Object.assign(run, { runId: body.runId, status: body.status, summary: body.completion?.summary });
     } catch {
-      if (!this.stopped) run.status = 'unconfirmed';
+      if (this.owns(run, controller)) run.status = 'unconfirmed';
     } finally {
-      this.controllers.delete(jobId);
-      if (!this.stopped) { this.publish(); if (active(run.status)) this.schedule(jobId); }
+      if (this.owns(run, controller)) {
+        this.controllers.delete(jobId);
+        this.publish(); if (active(run.status)) this.schedule(jobId);
+      }
     }
   }
 }

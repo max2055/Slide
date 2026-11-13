@@ -130,8 +130,11 @@ export class DisplayStreamAuthority<Peer extends object> {
       if (run) this.sendSnapshot(run);
       return;
     }
-    if (run.state.terminal || frame.sequence <= run.state.sequence) return;
-    const bounded = boundedSnapshot(reduceMessageProjection(run.state, frame), this.limits);
+    const next = reduceMessageProjection(run.state, frame);
+    // The reducer advances the watermark even for valid content no-ops (for
+    // example appending to an ended part). Rejected frames never advance it.
+    if (next.sequence === run.state.sequence) return;
+    const bounded = boundedSnapshot(next, this.limits);
     run.state = bounded.state; run.snapshotBytes = bytes(run.state);
     run.omitted += bounded.omitted; run.truncated ||= bounded.truncated; run.touched = Date.now();
     if (run.state.terminal) run.terminalAt = Date.now();

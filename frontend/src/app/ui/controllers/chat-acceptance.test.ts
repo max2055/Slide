@@ -9,6 +9,21 @@ function state(request: ReturnType<typeof vi.fn>): ChatState {
 }
 
 describe('unconfirmed chat UI', () => {
+  it.each(['', 'caption'])('deduplicates retries by image content as well as text (%j) (#716)', async text => {
+    const retry = vi.fn().mockResolvedValue(undefined);
+    const request = vi.fn().mockRejectedValueOnce(new ChatAcceptanceTimeoutError('image-1', retry, () => ''))
+      .mockResolvedValue(undefined);
+    const host = state(request);
+    const image = { id: 'first', dataUrl: 'data:image/png;base64,YQ==', mimeType: 'image/png' };
+    await sendChatMessage(host, text, [image]);
+    await sendChatMessage(host, text, [{ ...image, id: 'new-preview-id' }]);
+    expect(host.chatMessages).toHaveLength(1);
+    expect(retry).toHaveBeenCalledTimes(1);
+    host.chatRunId = null;
+    await sendChatMessage(host, text, [{ ...image, dataUrl: 'data:image/png;base64,Yg==' }]);
+    expect(host.chatMessages).toHaveLength(2);
+    expect(request).toHaveBeenCalledTimes(2);
+  });
   it('send rejection keeps the user question without a fabricated assistant answer', async () => {
     const host = state(vi.fn().mockRejectedValue(new Error('检查 API Key')));
     await sendChatMessage(host, 'question');

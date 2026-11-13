@@ -44,9 +44,12 @@ function toAnthropicMessages(messages: Message[]): Anthropic.MessageParam[] {
 
     // Handle tool results
     if (msg.role === 'tool') {
+      if (typeof msg.tool_call_id !== 'string' || msg.tool_call_id.trim().length === 0) {
+        throw new Error('ANTHROPIC_TOOL_RESULT_ID_REQUIRED: tool message requires a non-empty tool_call_id');
+      }
       const toolResultBlock: ToolResultBlockParam = {
         type: 'tool_result',
-        tool_use_id: msg.tool_call_id || '',
+        tool_use_id: msg.tool_call_id,
         content: typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content),
       };
       anthropicMessages.push({ role: 'user', content: [toolResultBlock] });
