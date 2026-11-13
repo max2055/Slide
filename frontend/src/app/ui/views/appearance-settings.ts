@@ -102,6 +102,7 @@ export class AppearanceSettings extends LitElement {
   @state() private defaultTab: string = "dashboard";
   @state() private navWidth: number = 258;
   @state() private visibleTabs: string[] = [];
+  @state() private visibleTabsConfigured = false;
   @state() private pageSize: number = 50;
   @state() private dateFormat: "absolute" | "relative" = "absolute";
   @state() private timezone: string = "";
@@ -222,6 +223,7 @@ export class AppearanceSettings extends LitElement {
     this.reduceMotion = readSettingsField("reduceAnimations", false);
     const defaultTab = readSettingsField<unknown>("defaultTab", "dashboard");
     this.defaultTab = typeof defaultTab === "string" ? defaultTab : "dashboard";
+    this.visibleTabsConfigured = readSettingsField<unknown>("visibleTabsConfigured", false) === true;
     const visibleTabs = readSettingsField<unknown>("visibleTabs", []);
     this.visibleTabs = Array.isArray(visibleTabs) ? visibleTabs.filter((tab): tab is string => typeof tab === "string") : [];
     this.navWidth = readSettingsField("navWidth", 258);
@@ -563,13 +565,13 @@ export class AppearanceSettings extends LitElement {
   }
 
   private _isTabVisible(tab: string): boolean {
-    if (this.visibleTabs.length === 0) return true;
+    if (!this.visibleTabsConfigured && this.visibleTabs.length === 0) return true;
     return this.visibleTabs.includes(tab);
   }
 
   private _toggleTab(tab: string) {
     let next: string[];
-    if (this.visibleTabs.length === 0) {
+    if (!this.visibleTabsConfigured && this.visibleTabs.length === 0) {
       next = ALL_TABS.filter((t) => t !== tab);
     } else if (this.visibleTabs.includes(tab)) {
       next = this.visibleTabs.filter((t) => t !== tab);
@@ -577,7 +579,8 @@ export class AppearanceSettings extends LitElement {
       next = [...this.visibleTabs, tab];
     }
     this.visibleTabs = next;
-    dispatchSettingsChange({ visibleTabs: next });
+    this.visibleTabsConfigured = true;
+    dispatchSettingsChange({ visibleTabs: next, visibleTabsConfigured: true });
   }
 
   private _setPageSize(n: number) {

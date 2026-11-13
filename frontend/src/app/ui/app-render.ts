@@ -272,7 +272,7 @@ export function renderApp(state: AppViewState) {
   );
   const isNavigationTabVisible = (tab: import("./navigation.ts").Tab) => {
     const visibleTabs = state.settings.visibleTabs;
-    if (visibleTabs && visibleTabs.length > 0 && !visibleTabs.includes(tab)) return false;
+    if (visibleTabs && (state.settings.visibleTabsConfigured || visibleTabs.length > 0) && !visibleTabs.includes(tab)) return false;
     const required = TAB_REQUIRED_PERMISSIONS[tab];
     if (!required) return true;
     const permissions = state.userPermissions || loadPermissionsFromStorage();
