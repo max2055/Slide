@@ -4,7 +4,13 @@
 import '/src/app/ui/views/settings-shell.ts';
 import '/src/app/ui/components/metric-configuration.ts';
 import '/src/app/ui/components/app-toast-container.ts';
-localStorage.setItem('permissions', JSON.stringify(['*']));
+// This isolated metric API fixture has no auth router; supply its test session
+// and explicit permission response instead of relying on cached authorization.
+if (!localStorage.getItem('token')) localStorage.setItem('token', 'metrics-fixture');
+const upstreamFetch = window.fetch.bind(window);
+window.fetch = (input, init) => new URL(typeof input === 'string' ? input : input instanceof URL ? input.href : input.url, location.href).pathname === '/api/auth/permissions'
+  ? Promise.resolve(new Response(JSON.stringify(['metric:view']), { headers: { 'content-type': 'application/json' } }))
+  : upstreamFetch(input, init);
 const mode = new URL(location.href).searchParams.get('mode');
 if (mode === 'settings') { history.replaceState({},'', '/settings/monitoring/metrics?view=packages'); document.body.append(document.createElement('settings-shell')); }
 else { const el = document.createElement('metric-configuration'); el.resourceId=1; document.body.append(el); }

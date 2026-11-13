@@ -121,7 +121,8 @@ export class AiAnalysisConfigService {
 
     try {
       await pool.execute(
-        `REPLACE INTO system_config (config_key, config_value) VALUES (?, ?)`,
+        `INSERT INTO system_config (config_key, config_value, value_type) VALUES (?, ?, 'json')
+         ON DUPLICATE KEY UPDATE config_value = VALUES(config_value), value_type = VALUES(value_type)`,
         ['auto_analysis_config', JSON.stringify(config)]
       );
       return { success: true };
