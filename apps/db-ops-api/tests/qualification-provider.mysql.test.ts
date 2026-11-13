@@ -116,7 +116,7 @@ describe.skipIf(process.env.MAX490_MYSQL !== '1')('#458 real MySQL qualification
     }, 15000);
   }
   it('unchanged target succeeds with actual affectedRows=0 and one pool connection', async () => {
-    const single = mysql.createPool({ ...config, database: owned!.database, connectionLimit: 1, flags: '-FOUND_ROWS' });
+    const single = mysql.createPool({ ...config, database: owned!.database, connectionLimit: 1, flags: ['-FOUND_ROWS'] });
     const fixed = { displayName: 'Stable', encryptedApiKey: 'opaque-fixed', baseUrl: 'http://localhost/v1', model: 'fixed' };
     try {
       await configureQualificationProvider(single, fixed);
