@@ -57,8 +57,8 @@ describe('dashboard breadcrumb language subscription', () => {
     await header.updateComplete;
     expect(label(header)).toBe('AI 工作空间');
     const navigate = vi.fn();
-    header.addEventListener('navigate', navigate);
+    header.addEventListener('slide-navigate', navigate);
     header.querySelector<HTMLElement>('.dashboard-header__breadcrumb-link')!.click();
-    expect(navigate.mock.calls[0][0].detail).toBe('overview');
+    expect(navigate.mock.calls[0][0].detail).toEqual({ tab: 'dashboard' });
   });
 });

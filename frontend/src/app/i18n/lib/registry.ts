@@ -1,34 +1,19 @@
 import type { Locale, TranslationMap } from "./types.ts";
-
-type LazyLocale = Exclude<Locale, "en">;
-type LocaleModule = Record<string, TranslationMap>;
-
-type LazyLocaleRegistration = {
-  exportName: string;
-  loader: () => Promise<LocaleModule>;
-};
+import { en } from "../locales/en.ts";
+import { zh_CN } from "../locales/zh-CN.ts";
 
 export const DEFAULT_LOCALE: Locale = "en";
 
-const LAZY_LOCALES: readonly LazyLocale[] = [
-  "zh-CN",
-];
-
-const LAZY_LOCALE_REGISTRY: Record<string, LazyLocaleRegistration> = {
-  "zh-CN": {
-    exportName: "zh_CN",
-    loader: () => import("../locales/zh-CN.ts"),
-  },
+// Both supported languages must be available before the first render.
+export const BUNDLED_TRANSLATIONS: Partial<Record<Locale, TranslationMap>> = {
+  en,
+  "zh-CN": zh_CN,
 };
 
-export const SUPPORTED_LOCALES: ReadonlyArray<Locale> = [DEFAULT_LOCALE, ...LAZY_LOCALES];
+export const SUPPORTED_LOCALES: ReadonlyArray<Locale> = [DEFAULT_LOCALE, "zh-CN"];
 
 export function isSupportedLocale(value: string | null | undefined): value is Locale {
   return value !== null && value !== undefined && SUPPORTED_LOCALES.includes(value as Locale);
-}
-
-function isLazyLocale(locale: Locale): locale is LazyLocale {
-  return LAZY_LOCALES.includes(locale as LazyLocale);
 }
 
 export function resolveNavigatorLocale(navLang: string): Locale {
@@ -36,14 +21,4 @@ export function resolveNavigatorLocale(navLang: string): Locale {
     return "zh-CN";
   }
   return DEFAULT_LOCALE;
-}
-
-export async function loadLazyLocaleTranslation(locale: Locale): Promise<TranslationMap | null> {
-  if (!isLazyLocale(locale)) {
-    return null;
-  }
-  const registration = LAZY_LOCALE_REGISTRY[locale];
-  if (!registration) return null;
-  const module = await registration.loader();
-  return module[registration.exportName] ?? null;
 }

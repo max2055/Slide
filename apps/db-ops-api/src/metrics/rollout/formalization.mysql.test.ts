@@ -52,7 +52,7 @@ describe.skipIf(!port)('real MySQL measurement → source acceptance → formal 
     const started=Date.now(); now=started-120000;
     policy=new PolicyService(new MysqlPolicyStore(()=>pool),registry,{exists:async()=>true,inventory:async r=>({...inventory(),id:String(r.id)})},()=>new Date(now).toISOString());
     for(let id=1;id<=3;id++){
-      if(id>1)await pool.query("INSERT INTO database_instances (id,name,host,port,username,password_encrypted,db_type,db_version,status) VALUES (?,?,'127.0.0.1',?,'root','fixture','mysql','9.6.0','active')",[id,`load-${id}`,port]);
+      if(id>1)await pool.query("INSERT INTO database_instances (id,name,host,port,database_name,username,password_encrypted,db_type,db_version,status) VALUES (?,?,'127.0.0.1',?,?,'root','fixture','mysql','9.6.0','active')",[id,`load-${id}`,port,`load-${id}`]);
       await policy.changeBinding(admin,{...ref,id},{expected_revision:id===1?1:0,...(id===1?{}:{package:(await policy.binding(admin,ref)).binding.package}),overrides:{interval_ms:{mode:'set',value:60000},timeout_ms:{mode:'set',value:1000}}},true);
     }
     const LoadFormalization=(await import(process.env.METRICS_LOAD_FORMALIZATION ?? './formalization.js')).MetricFormalization as typeof MetricFormalization;

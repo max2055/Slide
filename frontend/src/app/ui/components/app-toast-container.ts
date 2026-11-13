@@ -19,33 +19,53 @@ interface Toast {
 }
 
 let _nextId = 0;
-let _instance: ToastContainer | null = null;
+// The most recently connected container receives notifications.
+const _containers = new Set<ToastContainer>();
 
 @customElement("app-toast-container")
 export class ToastContainer extends LitElement {
   @state() private _toasts: Toast[] = [];
+  private _timers = new Map<number, ReturnType<typeof setTimeout>>();
+
+  connectedCallback(): void {
+    super.connectedCallback();
+    _containers.add(this);
+  }
+
+  disconnectedCallback(): void {
+    _containers.delete(this);
+    for (const timer of this._timers.values()) clearTimeout(timer);
+    this._timers.clear();
+    this._toasts = [];
+    super.disconnectedCallback();
+  }
 
   addToast(message: string, type: ToastType = "info"): void {
+    if (!this.isConnected) return;
     const id = _nextId++;
+    for (const toast of this._toasts.slice(4)) {
+      clearTimeout(this._timers.get(toast.id));
+      this._timers.delete(toast.id);
+    }
     this._toasts = [{ id, message, type, exiting: false }, ...this._toasts].slice(0, 5);
-    setTimeout(() => this._dismiss(id), 3000);
+    this._timers.set(id, setTimeout(() => this._dismiss(id), 3000));
   }
 
   private _dismiss(id: number): void {
+    const toast = this._toasts.find((t) => t.id === id);
+    if (!this.isConnected || !toast || toast.exiting) return;
+    clearTimeout(this._timers.get(id));
     this._toasts = this._toasts.map((t) =>
       t.id === id ? { ...t, exiting: true } : t,
     );
-    setTimeout(() => {
+    this._timers.set(id, setTimeout(() => {
+      this._timers.delete(id);
       this._toasts = this._toasts.filter((t) => t.id !== id);
-    }, 200);
+    }, 200));
   }
 
   private _close(id: number): void {
     this._dismiss(id);
-  }
-
-  firstUpdated(): void {
-    _instance = this;
   }
 
   private _iconForType(type: ToastType): string {
@@ -144,7 +164,7 @@ export class ToastContainer extends LitElement {
             <div class="toast toast--${t.type}${t.exiting ? " toast--exit" : ""}">
               <span class="toast__icon">${this._iconForType(t.type)}</span>
               <span class="toast__msg">${t.message}</span>
-              <button class="toast__close" @click=${() => this._close(t.id)} aria-label="Dismiss"></button>
+              <button class="toast__close" @click=${() => this._close(t.id)} aria-label="关闭提示"></button>
             </div>
           `,
         )}
@@ -155,8 +175,9 @@ export class ToastContainer extends LitElement {
 
 export function showToast(message: string, type: ToastType = "info"): void {
   if (type === "error" && isSessionExpiryInProgress()) return;
-  if (_instance) {
-    _instance.addToast(message, type);
+  const instance = [..._containers].at(-1);
+  if (instance?.isConnected) {
+    instance.addToast(message, type);
   } else {
     console.warn("showToast: app-toast-container not yet mounted");
   }

@@ -93,8 +93,8 @@ export class AiSettingsPage extends LitElement {
   `];
 
   private _boundClickOutside = (e: MouseEvent) => {
-    const target = e.target as HTMLElement;
-    if (!this.shadowRoot?.contains(target)) {
+    // document 上的 target 会被 Shadow DOM 重定向到宿主。
+    if (!e.composedPath().includes(this)) {
       this._instanceDropdownOpen = false;
     }
   };
@@ -252,7 +252,7 @@ export class AiSettingsPage extends LitElement {
                   </div>
                   ${this._filteredInstances.length > 0
                     ? this._filteredInstances.map(inst => html`
-                      <label class="inst-dropdown-item" @click=${(e: Event) => { e.preventDefault(); this._toggleWhitelistInstance(inst.id); }}>
+                      <label class="inst-dropdown-item">
                         <input type="checkbox" .checked=${instanceWhitelist.includes(inst.id)} @change=${() => this._toggleWhitelistInstance(inst.id)} />
                         <span>${inst.name}</span>
                         <span style="color:var(--muted);font-size:11px;">#${inst.id}</span>

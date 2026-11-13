@@ -110,7 +110,8 @@ export class CronManager {
 
       console.log(`CronManager: ${enabledJobs.length} 个任务已调度`);
     } catch (error) {
-      console.error('CronManager 重载失败:', error);
+      this.stopAllJobs();
+      console.error('CronManager 重载失败:', error instanceof Error ? error.message : 'unknown');
       throw error;
     }
   }
@@ -175,6 +176,7 @@ export class CronManager {
     if (!pool) throw new Error('CRON_RUN_STORE_UNAVAILABLE');
     const lock = await pool.getConnection();
     const lockName = `slide:cron:${run.jobId}`;
+    let ownsExecution = false;
     try {
       const [rows] = await lock.query<any[]>('SELECT GET_LOCK(?, 0) AS acquired', [lockName]);
       if (!rows[0].acquired || this.runningFlags.has(run.jobId)) {
@@ -186,15 +188,20 @@ export class CronManager {
       if (!config) { await cronRunStore.finish(runId, 'failed', 'CRON_JOB_DELETED'); return; }
       config.output_schema = run.outputSchema;
       const trigger = run.triggeredBy === null ? undefined : await actorContextService.loadActiveActor(run.triggeredBy, undefined, `cron:${runId}`);
+      ownsExecution = !this.runningFlags.has(run.jobId);
       await this.executeJob(config, trigger, runId, context);
     } catch (error: any) {
       await cronRunStore.finish(runId, 'failed', error.message);
       throw error;
     } finally {
       const release = async () => { try { await lock.query('SELECT RELEASE_LOCK(?)', [lockName]); } finally { lock.release(); } };
-      const pending = this.pendingSettlements.get(run.jobId);
-      if (pending) await pending;
-      await release();
+      try {
+        // Busy requests never inherit another execution's settlement or connection ownership.
+        const pending = ownsExecution ? this.pendingSettlements.get(run.jobId) : undefined;
+        if (pending) await pending;
+      } finally {
+        await release();
+      }
     }
   }
 
@@ -343,7 +350,7 @@ export class CronManager {
       console.error(`CronManager: 任务 #${config.id} "${config.name}" 执行失败:`, error.message);
 
       if (logId !== null) {
-        await this.jobService.completeLog(logId, 'error', `执行失败`, error.message, {
+        await this.jobService.completeLog(logId, 'error', `执行失败`, error.message, null, {
           error_trace: error.stack,
         });
       }

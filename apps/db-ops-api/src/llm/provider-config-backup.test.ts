@@ -1,7 +1,10 @@
+import { mkdtemp, writeFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { encryptData } from '../db-connection.js';
 import { llmService } from '../llm-service.js';
-import { checkProviderConnections } from './provider-config-backup-service.js';
+import { checkProviderConnections, restoreProviderConfiguration } from './provider-config-backup-service.js';
 import {
   PROVIDER_CONFIG_BACKUP_FORMAT,
   PROVIDER_CONFIG_BACKUP_VERSION,
@@ -166,6 +169,16 @@ describe('provider configuration backup artifact', () => {
     expect(codeOf(() => parseBackupArtifact(JSON.stringify(longModel)))).toBe('PROVIDER_CONFIG_BACKUP_INVALID_ARTIFACT');
   });
 
+  it('#300 keeps the same 100 Unicode character contract in backup validation', () => {
+    for (const display_name of ['名'.repeat(100), '😀'.repeat(100)]) {
+      const artifact = serializeBackupDocument(documentFor([record({ display_name })]));
+      expect(parseBackupArtifact(artifact).providers[0].display_name).toBe(display_name);
+    }
+    const invalid = documentFor([record()]);
+    invalid.providers[0].display_name = '😀'.repeat(101);
+    expect(() => parseBackupArtifact(JSON.stringify(invalid))).toThrow(/display_name/);
+  });
+
   it('computes the documented SHA-256 checksum', () => {
     expect(backupChecksum('abc')).toBe('ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad');
   });
@@ -325,5 +338,45 @@ describe('provider connection checks', () => {
     expect(explicit).toEqual([{ provider: 'no-key', checked: false, success: false, error: 'CREDENTIAL_NOT_CONFIGURED' }]);
     const missing = await checkProviderConnections(pool, ['absent']);
     expect(missing).toEqual([{ provider: 'absent', checked: false, success: false, error: 'PROVIDER_NOT_FOUND' }]);
+  });
+});
+
+describe('protocol backup compatibility (#471)', () => {
+  it.each(['anthropic-messages', 'openai-completions', 'ollama'])('round-trips supported protocol %s', api_format => {
+    const document = parseBackupArtifact(serializeBackupDocument(documentFor([record({ api_format })])));
+    expect(document.providers[0].api_format).toBe(api_format);
+    expect(buildRestorePlan([], [], document).create).toEqual(['deepseek']);
+  });
+  it('keeps historical Google values readable and reports explicit migration guidance', () => {
+    const current = record({ api_format: 'google-generative-ai' });
+    const document = parseBackupArtifact(serializeBackupDocument(documentFor([current])));
+    expect(document.providers[0].api_format).toBe('google-generative-ai');
+    expect(buildRestorePlan([current], [], document).unchanged).toEqual(['deepseek']);
+    expect(verifyRestoredConfiguration([current], [], document).issues).toContainEqual(
+      expect.objectContaining({ code: 'LLM_API_FORMAT_UNSUPPORTED', message: expect.stringContaining('迁移') }));
+    expect(() => buildRestorePlan([], [], document)).toThrow('LLM_API_FORMAT_UNSUPPORTED');
+    expect(() => buildRestorePlan([record()], [], document)).toThrow('LLM_API_FORMAT_UNSUPPORTED');
+  });
+});
+
+describe('restore entry protocol boundary (#471)', () => {
+  it.each([true, false])('rejects a new legacy protocol before any writes (dryRun=%s)', async dryRun => {
+    const directory = await mkdtemp(join(tmpdir(), 'max491-restore-'));
+    const path = join(directory, 'legacy.json');
+    const text = serializeBackupDocument(documentFor([record({ api_format: 'google-generative-ai' })]));
+    await writeFile(path, text);
+    await writeFile(path + '.sha256', backupChecksum(text));
+    const execute = vi.fn().mockResolvedValue([[]]);
+    const connection = { query: vi.fn().mockResolvedValue([[]]), execute, beginTransaction: vi.fn().mockResolvedValue(undefined), rollback: vi.fn().mockResolvedValue(undefined), release: vi.fn() };
+    const pool = { getConnection: vi.fn().mockResolvedValue(connection) };
+    try {
+      await expect(restoreProviderConfiguration(pool as any, path, { database: 'isolated', dryRun }))
+        .rejects.toMatchObject({ code: 'LLM_API_FORMAT_UNSUPPORTED' });
+      expect(execute.mock.calls.every(([sql]) => /^SELECT/.test(sql))).toBe(true);
+      expect(connection.release).toHaveBeenCalledOnce();
+      if (!dryRun) expect(connection.rollback).toHaveBeenCalledOnce();
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
   });
 });

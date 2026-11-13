@@ -2,7 +2,7 @@ import Fastify from 'fastify';
 import { createServer } from 'node:http';
 import { execFileSync, spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, chmodSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import mysql from 'mysql2/promise';
@@ -87,7 +87,13 @@ describe.skipIf(!port)('source sync real HTTP/MySQL acceptance', () => {
       };
       const proxy = origin.replace('http://', 'http://fixture-proxy-user:fixture-proxy-credential@');
       const config = { provider: 'gitlab', baseUrl: origin, repositoryPath: 'group/repo', ref: commit, allowedPaths: [], allowModelContent: false, httpProxy: proxy };
+      // MAX-439 / #543: verify the failure reason reaches real audit persistence.
+      expect(await call('manifest')).toEqual({ status: 409, body: { error: 'SOURCE_NOT_CONFIGURED' } });
       expect(await call('config', config, 'PUT')).toMatchObject({ status: 200 });
+      await expect(new SourceManagementService(() => pool, [origin]).inspect(
+        { userId: 1, username: 'fixture', permissions: ['admin:*'], roles: [], instanceScopes: {}, requestId: 'max439', sessionVersion: 1 },
+        'manifest', {}, true,
+      )).rejects.toThrow('SOURCE_MODEL_EGRESS_DENIED');
       const readerConfig = await call('config', undefined, 'GET', true);
       expect(readerConfig.status).toBe(200); expect(JSON.stringify(readerConfig.body)).not.toContain('fixture-proxy-credential');
       expect(readerConfig.body.config.httpProxy).toBe(origin + '/');
@@ -110,6 +116,19 @@ describe.skipIf(!port)('source sync real HTTP/MySQL acceptance', () => {
       vi.stubEnv('SLIDE_COMMIT_SHA', mainCommit);
       expect(await call('manifest')).toMatchObject({ status: 200, body: { verification: { status: 'repository-unbound', reason: 'SOURCE_COMMIT_MISMATCH' } } });
       expect(await call('region?path=src/a.ts&startLine=1&endLine=1')).toMatchObject({ status: 200, body: { content: 'export const selected = "release";', source: { commitSha: commit } } });
+      const manifestPath = join(snapshotRoot, complete.body.releaseId, 'manifest.json');
+      const validManifest = readFileSync(manifestPath, 'utf8');
+      chmodSync(manifestPath, 0o600);
+      try {
+        writeFileSync(manifestPath, '{}');
+        expect(await call('manifest')).toEqual({ status: 409, body: { error: 'SOURCE_SNAPSHOT_UNTRUSTED' } });
+      } finally { writeFileSync(manifestPath, validManifest); chmodSync(manifestPath, 0o400); }
+      const [failures] = await pool.query<mysql.RowDataPacket[]>(
+        "SELECT error_message FROM audit_log_entries WHERE action = 'source_manifest' AND result = 'failure'",
+      );
+      expect(failures.map(row => row.error_message).sort()).toEqual([
+        'SOURCE_MODEL_EGRESS_DENIED', 'SOURCE_NOT_CONFIGURED', 'SOURCE_SNAPSHOT_UNTRUSTED',
+      ]);
       const [configs] = await pool.query('SELECT config_value FROM system_config');
       const [audits] = await pool.query<mysql.RowDataPacket[]>('SELECT * FROM audit_log_entries');
       expect(audits.length).toBeGreaterThan(0);
