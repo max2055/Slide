@@ -15,8 +15,10 @@ export const getInstanceConnectionTool: AnyAgentTool = {
     type: 'object',
     properties: {
       instance_id: {
-        type: 'number',
-        description: '数据库实例 ID',
+        type: 'integer',
+        minimum: 1,
+        maximum: Number.MAX_SAFE_INTEGER,
+        description: '数据库实例 ID（正安全整数）',
       },
     },
     required: ['instance_id'],
@@ -26,13 +28,21 @@ export const getInstanceConnectionTool: AnyAgentTool = {
   requiresApproval: true,
   dangerLevel: 4,
   handler: async (args) => {
-    const instanceId = args.instance_id as number;
+    const instanceId = args?.instance_id;
 
-    if (!instanceId || typeof instanceId !== 'number') {
+    if (args == null || !Object.prototype.hasOwnProperty.call(args, 'instance_id')) {
       return {
         success: false,
         error: '缺少必需参数 instance_id',
         errorCode: 'MISSING_INSTANCE_ID',
+      };
+    }
+
+    if (typeof instanceId !== 'number' || !Number.isSafeInteger(instanceId) || instanceId <= 0) {
+      return {
+        success: false,
+        error: '参数 instance_id 必须是正安全整数',
+        errorCode: 'RESOURCE_INVALID',
       };
     }
 

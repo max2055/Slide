@@ -1,10 +1,10 @@
 # 已批准 SQL 的持久意图与对账
 
-上线前通过现有迁移 runner 应用 `091_sql_execution_intents.sql`。表不可用、控制库不可写或意图提交未获确认时，SqlExecutor 不下发写 SQL；没有内存降级。最新 main 复核基线为 `ef85a08`，该版本尚无统一控制库 capability 接口；当前以真实事务提交作为能力证明，兼容 `dbConnection.getPool()` 与既有审计接口。
+上线前通过现有迁移 runner 应用 `091_sql_execution_intents.sql`，再应用 `154_sql_execution_intent_receipts.sql` 以保存 `rolled_back` 与 `not_executed`。未应用 154 时，驱动回执无法落账，执行器保持 `unknown` 且不重放。表不可用、控制库不可写或意图提交未获确认时，SqlExecutor 不下发写 SQL；没有内存降级。最新 main 复核基线为 `ef85a08`，该版本尚无统一控制库 capability 接口；当前以真实事务提交作为能力证明，兼容 `dbConnection.getPool()` 与既有审计接口。
 
 控制库账本保存完整 SQL、instance、database、operation、approval、reviewer、actor。userId 缺失时采用已验证 reviewer。审批锁内复核 SQL 哈希、实例、库、reviewer、operation、状态和有效期。operation 与 approval 均唯一，任何重复调用都不能重新下发；唯一记录不得删除作为重试手段。
 
-意图初始状态为 `unknown`：进程可能尚未下发、正在运行，或已提交但尚未记录结果。只有目标驱动返回、审计调用完成、结果持久化成功后才为 `succeeded`。审计中心仍是既有日志接口；执行账本是本功能的持久证据，不依赖其内存/持久配置。异常返回包含 operationId、`executionState=unknown`、`retryable=false`，不能理解为回滚。审批/operation 保持执行中，避免自动失败重试。SELECT 审计保持 best-effort。
+意图初始状态为 `unknown`：进程可能尚未下发、正在运行，或已提交但尚未记录结果。PostgreSQL 只有在驱动确认 `COMMIT` 后才把目标记为 `succeeded`；确认 `COMMIT` 之后审计日志失败仍是成功，并在结果里保留 `auditStatus=failed`，不把目标事务改成 `unknown`。语句失败且 `ROLLBACK` 命令完成时记为 `rolled_back`；用户语句尚未发出且没有未确认的提交时记为 `not_executed`。这两种回执可以重新审批，但不能复用已消费的 operation。提交或回滚命令没有完成回执时保持 `unknown`、`retryable=false`，不能按错误文本猜成可重试失败，也不能自动重放。MySQL 超时、Oracle 提交失败和达梦回滚失败仍沿用各自的未知结果围栏。审计中心仍是既有日志接口；执行账本是本功能的持久证据，不依赖其内存/持久配置。`unknown` 不能理解为回滚。审批/operation 在 `unknown` 时保持执行中。SELECT 审计保持 best-effort。
 
 ## 恢复步骤
 

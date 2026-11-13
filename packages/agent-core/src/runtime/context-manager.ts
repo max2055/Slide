@@ -1,3 +1,4 @@
+import { progressValue } from './progress-evidence.js';
 import { createHash } from 'node:crypto';
 import type { AgentRunSpec, Message, LLMProvider } from '../types.js';
 import { RuntimeError } from './recovery-policy.js';
@@ -271,7 +272,8 @@ export function ensureNonemptyToolResult(toolName: string, result: unknown): str
   if (typeof result === "string" && result.trim() === "")
     return `[${toolName}: empty result]`;
   if (typeof result === "string") return result;
-  return JSON.stringify(result, null, 2);
+  try { return JSON.stringify(result, null, 2) ?? `[${toolName}: no result]`; }
+  catch { return progressValue(result); }
 }
 
 function truncateText(text: string, maxChars: number): string {

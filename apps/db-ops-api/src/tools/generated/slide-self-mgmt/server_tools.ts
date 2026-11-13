@@ -88,7 +88,7 @@ export const getServerMetricsTool: AnyAgentTool = {
     if (id === null) return { success: false, error: 'serverId 必须为正整数', errorCode: 'INVALID_PARAMETER' };
     if (maxRows === null) return { success: false, error: 'maxRows 必须是 1-100 的整数', errorCode: 'INVALID_PARAMETER' };
     if (range !== undefined && !(RANGES as readonly string[]).includes(range)) return { success: false, error: 'range 无效', errorCode: 'TIME_RANGE_INVALID' };
-    if (args.metricName !== undefined && (typeof args.metricName !== 'string' || !/^[a-z][a-z0-9_]{1,80}$/.test(args.metricName))) return { success: false, error: 'metricName 无效', errorCode: 'METRIC_NAME_INVALID' };
+    if (args.metricName !== undefined && (typeof args.metricName !== 'string' || !/^[a-z][a-z0-9_.]{0,127}$/.test(args.metricName))) return { success: false, error: 'metricName 无效', errorCode: 'METRIC_NAME_INVALID' };
     try {
       const result = await serverDiagnosticService.getMetricData(id, { metricName: args.metricName as string | undefined, range: range as any, maxRows: maxRows! }, context!.actor);
       return { success: true, data: result, summary: `服务器 #${id} 指标数据`, details: { server_id: id, freshness: result.freshness, gaps: result.gaps } };
@@ -176,7 +176,7 @@ export const getServerDiagnosticsTool: AnyAgentTool = {
       const diagnostics = await serverDiagnosticService.getDiagnostics(id, { refresh: args.refresh === true });
       const sectionName = args.section as string | undefined;
       const data = capDiagnosticRows(diagnostics, sectionName, maxRows!);
-      return { success: true, data, summary: `服务器 #${id} 诊断证据`, details: { server_id: id, freshness: diagnostics.expiresAt, gaps: diagnostics.gaps } };
+      return { success: true, data, summary: `服务器 #${id} 诊断证据`, details: { server_id: id, expiresAt: diagnostics.expiresAt, gaps: diagnostics.gaps } };
     } catch (error: any) {
       return { success: false, error: error.message, errorCode: error.message === 'SERVER_NOT_FOUND' ? 'SERVER_NOT_FOUND' : 'GET_DIAGNOSTICS_FAILED' };
     }

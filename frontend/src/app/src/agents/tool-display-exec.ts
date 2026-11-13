@@ -81,7 +81,7 @@ function summarizeKnownExec(words: string[]): string {
       stash: "stash git changes",
     };
 
-    if (sub && map[sub]) {
+    if (sub && Object.hasOwn(map, sub) && typeof map[sub] === "string") {
       return map[sub];
     }
     if (!sub || sub.startsWith("/") || sub.startsWith("~") || sub.includes("/")) {
@@ -227,7 +227,9 @@ function summarizeKnownExec(words: string[]): string {
       lint: "run lint",
       run: positional[1] ? `run ${positional[1]}` : "run script",
     };
-    return map[sub] ?? `run ${bin} ${sub}`;
+    return Object.hasOwn(map, sub) && typeof map[sub] === "string"
+      ? map[sub]
+      : `run ${bin} ${sub}`;
   }
 
   if (bin === "node" || bin === "python" || bin === "python3" || bin === "ruby" || bin === "php") {

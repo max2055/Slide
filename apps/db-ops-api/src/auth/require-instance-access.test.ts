@@ -5,6 +5,7 @@
  */
 
 import { describe, it, expect, vi } from 'vitest';
+import Fastify from 'fastify';
 
 import {
   filterByInstanceAccess,
@@ -135,8 +136,8 @@ describe('requireInstanceAccess middleware', () => {
     expect(unrestrictedReply.code).not.toHaveBeenCalled();
   });
 
-  it.each([[[]], [['*']], [['instance:*']]])('intersects list, filter and URL access with the boundary for permissions %j', async (permissions) => {
-    const user = { permissions, roles: ['admin'], instanceScopes: { 7: 'read-only', 8: 'admin' },
+  it.each([[['instance:view']]])('intersects list, filter and URL access with the boundary for permissions %j', async (permissions) => {
+    const user = { permissions, instanceScopes: { 7: 'read-only', 8: 'admin' },
       resourceBoundary: { instanceIds: [7, 9] } } as const;
     expect(getAccessibleInstanceIds(user)).toEqual([7]);
     expect(hasUnrestrictedInstanceAccess(user)).toBe(false);
@@ -150,6 +151,78 @@ describe('requireInstanceAccess middleware', () => {
     const reply = makeReply();
     await requireInstanceAccess()({ user, params: { instanceId: '7' } }, reply);
     expect(reply.code).not.toHaveBeenCalled();
+  });
+
+  // MAX-346 / #497: global grants remain effective inside a resource boundary.
+  it.each([{ permissions: ['*'] }, { permissions: ['instance:*'] }, { roles: ['admin'] }])(
+    'limits global grant %j to valid boundary IDs without requiring scopes', async (grant) => {
+      const user = { ...grant, instanceScopes: {}, resourceBoundary: { instanceIds: [9, 7, 9, 0, -1, 1.5, NaN, Infinity, Number.MAX_SAFE_INTEGER + 1] } };
+      expect(getAccessibleInstanceIds(user)).toEqual([7, 9]);
+      expect(hasUnrestrictedInstanceAccess(user)).toBe(false);
+      for (const level of ['read-only', 'read-write', 'admin'] as const) {
+        expect(hasInstanceAccess(user, 7, level)).toBe(true);
+        expect(hasInstanceAccess(user, 8, level)).toBe(false);
+      }
+      expect(filterByInstanceAccess(user, [7, 8, 9], (id) => id)).toEqual([7, 9]);
+      for (const id of [0, -1, 1.5, NaN, Infinity, Number.MAX_SAFE_INTEGER + 1]) {
+        expect(hasInstanceAccess(user, id)).toBe(false);
+      }
+      const reply = makeReply();
+      await requireInstanceAccess('admin')({ user, params: { id: '9' } }, reply);
+      expect(reply.code).not.toHaveBeenCalled();
+      const globalReply = makeReply();
+      await requireUnrestrictedInstanceAccess()({ user }, globalReply);
+      expect(globalReply.code).toHaveBeenCalledWith(403);
+    },
+  );
+
+  it('applies the boundary to the actual get_instance_summary handler', async () => {
+    const { instanceDatabaseService } = await import('../instance-database-service.js');
+    const { getInstanceSummaryTool } = await import('../tools/ops/get_instance_summary.js');
+    const rows = [{ id: 1, name: 'allowed' }, { id: 2, name: 'denied' }];
+    const single = vi.spyOn(instanceDatabaseService, 'getInstanceById').mockResolvedValue(rows[0] as any);
+    const all = vi.spyOn(instanceDatabaseService, 'getAllInstances').mockResolvedValue(rows as any);
+    const context = { actor: { permissions: ['instance:*'], instanceScopes: {}, resourceBoundary: { instanceIds: [1] } } } as any;
+    try {
+      expect(await getInstanceSummaryTool.handler({ instance_id: 1 }, context)).toMatchObject({ success: true, data: { count: 1 } });
+      single.mockClear();
+      expect(await getInstanceSummaryTool.handler({ instance_id: 2 }, context)).toMatchObject({ success: false, errorCode: 'INSTANCE_SCOPE_DENIED' });
+      expect(single).not.toHaveBeenCalled();
+      expect(await getInstanceSummaryTool.handler({}, context)).toMatchObject({ success: true, data: { count: 1, instances: [{ id: 1 }] } });
+    } finally {
+      single.mockRestore();
+      all.mockRestore();
+    }
+  });
+
+  it('enforces the boundary through a real Fastify HTTP listener', async () => {
+    const app = Fastify();
+    app.decorateRequest('user', null);
+    app.addHook('preHandler', async (request) => {
+      (request as any).user = { permissions: ['instance:*'], instanceScopes: {}, resourceBoundary: { instanceIds: [1] } };
+    });
+    app.get('/instances/:id', { preHandler: requireInstanceAccess('admin') }, async () => ({ allowed: true }));
+    app.get('/instances', async (request) => ({ ids: getAccessibleInstanceIds((request as any).user) }));
+    app.get('/global', { preHandler: requireUnrestrictedInstanceAccess() }, async () => ({ allowed: true }));
+    try {
+      const base = await app.listen({ host: '127.0.0.1', port: 0 });
+      expect((await fetch(`${base}/instances/1`)).status).toBe(200);
+      expect((await fetch(`${base}/instances/2`)).status).toBe(403);
+      expect((await fetch(`${base}/instances/0`)).status).toBe(400);
+      expect((await fetch(`${base}/global`)).status).toBe(403);
+      expect(await (await fetch(`${base}/instances`)).json()).toEqual({ ids: [1] });
+    } finally {
+      await app.close();
+    }
+  });
+
+  it('preserves scope minimum levels within a boundary', () => {
+    const user = { permissions: ['instance:view'], instanceScopes: { 7: 'read-only', 8: 'admin' }, resourceBoundary: { instanceIds: [7, 9] } } as const;
+    expect(hasInstanceAccess(user, 7)).toBe(true);
+    expect(hasInstanceAccess(user, 7, 'read-write')).toBe(false);
+    expect(hasInstanceAccess(user, 8, 'admin')).toBe(false);
+    expect(hasInstanceAccess(user, 9)).toBe(false);
+    expect(getAccessibleInstanceIds(user)).toEqual([7]);
   });
 
   it('an empty boundary denies all explicit grants and wildcards', async () => {
