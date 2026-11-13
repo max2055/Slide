@@ -5,6 +5,8 @@ set -u
 
 root="$(cd "$(dirname "$0")/../.." && pwd)"
 real_node="$(command -v node)"
+real_python="$(command -v python3)"
+export SERVE_E2E_PYTHON="$real_python"
 script="$root/scripts/qualification/serve-e2e.sh"
 work="$(mktemp -d "${TMPDIR:-/tmp}/max288-XXXXXX")"
 bin="$work/bin"
@@ -94,7 +96,24 @@ if [ "$mode" = exit ]; then
 fi
 exec sleep 600
 EOF
-chmod +x "$bin/pnpm" "$bin/curl" "$bin/node"
+# Hold one collect RPC after both services exist. The signal is delivered
+# while the supervisor is inside a nested command substitution (MAX-626 CI).
+cat >"$bin/python3" <<'EOF'
+#!/bin/sh
+if [ "${SERVE_E2E_COLLECT_GATE:-}" = 1 ] && [ "${2:-}" = --rpc ] && [ "${4:-}" = collect ] &&
+   [ -s "${SERVE_E2E_DIR}/vite.pid" ] && [ ! -f "${SERVE_E2E_DIR}/collect-used" ]; then
+  : > "${SERVE_E2E_DIR}/collect-used"
+  : > "${SERVE_E2E_DIR}/collect-entered"
+  count=0
+  while [ ! -f "${SERVE_E2E_DIR}/collect-release" ]; do
+    count=$((count + 1))
+    if [ "$count" -gt 200 ]; then exit 98; fi
+    sleep 0.02
+  done
+fi
+exec "$SERVE_E2E_PYTHON" "$@"
+EOF
+chmod +x "$bin/pnpm" "$bin/curl" "$bin/node" "$bin/python3"
 
 sleep 600 &
 bystander=$!
@@ -149,6 +168,8 @@ run_scenario() {
   PATH="$bin:$PATH" \
   SERVE_E2E_DIR="$dir" \
   SERVE_E2E_READY_FILE="$dir/ready" \
+  SERVE_E2E_PYTHON="$real_python" \
+  SERVE_E2E_COLLECT_GATE="$([[ "$inject" == collect ]] && echo 1 || echo 0)" \
   SERVE_E2E_api_MODE="$api_mode" \
   SERVE_E2E_vite_MODE="$vite_mode" \
   QUALIFICATION_ADMIN_PASSWORD="isolated-not-a-secret" \
@@ -185,8 +206,13 @@ run_scenario() {
         break
       fi
     elif [[ -n "$snapshot" ]]; then
+      if [[ "$inject" == collect && ! -f "$dir/collect-entered" ]]; then
+        sleep 0.2 || true
+        continue
+      fi
       sleep 0.3 || true
       kill "-$signal" "$script_pid" 2>/dev/null || true
+      if [[ "$inject" == collect ]]; then : > "$dir/collect-release"; fi
       break
     fi
     if ! alive "$script_pid"; then
@@ -229,6 +255,10 @@ run_scenario() {
   } | tee "$report"
 
   local ok=1
+  if [[ "$inject" == collect && ! -f "$dir/collect-entered" ]]; then
+    echo "FAIL $name signal missed the collect boundary" | tee -a "$report"
+    ok=0
+  fi
   if [[ "$code" != "$expect_exit" ]]; then
     echo "FAIL $name exit $code != $expect_exit" | tee -a "$report"
     ok=0
@@ -443,6 +473,7 @@ run_scenario api-exit exit stay none 1 "E2E服务异常：API退出 code=7"
 run_scenario vite-exit stay exit none 1 "E2E服务异常：Vite退出 code=9"
 run_scenario signal-term stay stay TERM 0 "E2E服务停止：收到信号，清理本次进程"
 run_scenario signal-int stay stay INT 0 "E2E服务停止：收到信号，清理本次进程"
+run_scenario signal-during-collect stay stay TERM 0 "E2E服务停止：收到信号，清理本次进程" collect
 run_scenario unrelated-orphan stay stay TERM 0 "E2E服务停止：收到信号，清理本次进程" orphan
 
 # Playwright webServer: shell + detached, stdio pipes, SIGKILL of the launcher

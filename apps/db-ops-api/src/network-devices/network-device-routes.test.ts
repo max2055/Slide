@@ -90,6 +90,21 @@ describe('MAX-308 explicit key compatibility audit', () => {
 });
 
 describe('network-device routes', () => {
+  it('MAX-606 exposes only saved-backup metadata on audit failure and discourages replay', async () => {
+    const capture = vi.fn(async () => ({ success: false, error: 'CONFIG_BACKUP_SAVED_AUDIT_FAILED', backupSaved: true, retryable: false,
+      duplicate: false, backup: { id: 9, deviceId: 7, contentEncrypted: 'private', content: 'private', preview: 'private', secret: 'private' } }));
+    const app = await appWith({ backupService: { capture } });
+    try {
+      for (const token of ['reader', 'manager']) {
+        expect((await app.inject({ method: 'POST', url: '/api/network-devices/7/config-backups', headers: { authorization: `Bearer ${token}` } })).statusCode).toBe(403);
+      }
+      expect(capture).not.toHaveBeenCalled();
+      const response = await app.inject({ method: 'POST', url: '/api/network-devices/7/config-backups', headers: { authorization: 'Bearer backup' } });
+      expect(response.statusCode).toBe(409);
+      expect(response.json()).toEqual({ error: 'CONFIG_BACKUP_SAVED_AUDIT_FAILED', backupSaved: true, retryable: false, duplicate: false, backup: { id: 9, deviceId: 7 } });
+    } finally { await app.close(); }
+  });
+
   it('reads defaults, saves schedules with backup permission, and rejects unauthorized writes', async () => {
     let schedule = { enabled: true, dailyTime: '00:00', timeZone: 'Asia/Shanghai', lastRun: null };
     const store = { get: vi.fn(async () => schedule), save: vi.fn(async (_id, input) => { schedule = { ...schedule, ...input }; }) };

@@ -25,7 +25,7 @@ export function parseFenceSpans(buffer: string): FenceSpan[] {
     const lineEnd = nextNewline === -1 ? buffer.length : nextNewline;
     const line = buffer.slice(offset, lineEnd);
 
-    const match = line.match(/^( {0,3})(`{3,}|~{3,})(.*)$/);
+    const match = line.match(/^( {0,3})(`{3,}|~{3,})([^\r\n]*)\r?$/);
     if (match) {
       const indent = match[1];
       const marker = match[2];
@@ -40,7 +40,11 @@ export function parseFenceSpans(buffer: string): FenceSpan[] {
           marker,
           indent,
         };
-      } else if (open.markerChar === markerChar && markerLen >= open.markerLen) {
+      } else if (
+        open.markerChar === markerChar &&
+        markerLen >= open.markerLen &&
+        /^[ \t\r]*$/.test(match[3])
+      ) {
         const end = lineEnd;
         spans.push({
           start: open.start,

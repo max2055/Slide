@@ -19,6 +19,39 @@ function fixture(limits = {}) {
 }
 const start: ProjectionOperation = { type: 'part.start', messageId: 'message', part: { id: 'part', type: 'text', text: 'first', source: 'fact', status: 'partial' } };
 describe('synchronous bounded display authority', () => {
+  it('MAX-454 rejects rollback attempts and invalid frames without advancing the stream cursor', () => {
+    const f = fixture();
+    try {
+      f.hub.publish('session', { version: 1, runId: 'run', attempt: 2, sequence: 1, operations: [{ type: 'run.status', phase: 'preparing' }] });
+      const accepted = structuredClone(f.events.at(-1)!);
+      f.hub.publish('session', { version: 1, runId: 'run', attempt: 1, sequence: 2, operations: [{ type: 'run.status', phase: 'saving' }] });
+      f.hub.publish('session', { version: 1, runId: 'run', attempt: 2, sequence: 3, operations: [{ type: 'run.status', phase: 'saving' }, { type: 'invalid' } as unknown as ProjectionOperation] });
+      expect(f.events.at(-1)).toEqual(accepted);
+      const fresh: DisplayStreamEvent[] = [];
+      f.hub.watch({}, 'session', 'fresh', e => { fresh.push(e); return true; });
+      expect(fresh[0].stream.toSeq).toBe(accepted.stream.toSeq);
+      expect(fresh[0].snapshot).toMatchObject({ attempt: 2, sequence: 1, phase: 'preparing' });
+      f.hub.publish('session', { version: 1, runId: 'run', attempt: 2, sequence: 2, operations: [{ type: 'run.status', phase: 'generating' }] });
+      expect(f.events.at(-1)?.stream.toSeq).toBe(accepted.stream.toSeq + 1);
+    } finally { f.hub.dispose(); }
+  });
+  it('MAX-454 preserves accepted watermarks for ended-part no-ops and normal batches', () => {
+    vi.useFakeTimers();
+    const f = fixture();
+    try {
+      f.publish(start);
+      f.publish({ type: 'part.append', partId: 'part', text: 'a' });
+      f.publish({ type: 'part.append', partId: 'part', text: 'b' });
+      f.publish({ type: 'part.end', partId: 'part' });
+      f.publish({ type: 'part.append', partId: 'part', text: 'ignored' });
+      vi.advanceTimersByTime(40);
+      let client: DisplayStreamState = { subscriptionId: 'sub', recovering: true };
+      for (const e of f.events) client = reduceDisplayStream(client, e).state;
+      expect(client.projection).toEqual(f.state());
+      expect(client.projection?.sequence).toBe(5);
+      expect(client.projection?.parts[0].part).toMatchObject({ text: 'firstab', generation: 'ended' });
+    } finally { f.hub.dispose(); }
+  });
   it('cold history hydration does not imply truncated execution output', () => {
     const hub = new DisplayStreamAuthority();
     try {

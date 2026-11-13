@@ -120,14 +120,16 @@ export class FeedbackService {
     rawInput: Pick<FeedbackInput, 'title' | 'description' | 'status'>,
   ): Promise<FeedbackItem> {
     const input = normalizeInput({ ...rawInput, source: 'manual' });
-    const existing = await this.requireVisible(actor, id);
-    const status = input.status ?? existing.status;
+    await this.requireVisible(actor, id);
+    // Content edits leave status untouched. Explicit status writes are atomic
+    // with the content update; competing explicit writes follow SQL execution order.
+    const statusValues = input.status === undefined ? [] : [input.status];
     const scoped = !isAdmin(actor);
     await this.pool().execute<ResultSetHeader>(
-      `UPDATE problem_feedback SET title = ?, description = ?, status = ?, updated_by = ? WHERE id = ?${scoped ? ' AND created_by = ?' : ''}`,
+      `UPDATE problem_feedback SET title = ?, description = ?${input.status === undefined ? '' : ', status = ?'}, updated_by = ? WHERE id = ?${scoped ? ' AND created_by = ?' : ''}`,
       scoped
-        ? [input.title, input.description, status, actor.userId, id, actor.userId]
-        : [input.title, input.description, status, actor.userId, id],
+        ? [input.title, input.description, ...statusValues, actor.userId, id, actor.userId]
+        : [input.title, input.description, ...statusValues, actor.userId, id],
     );
     return this.requireVisible(actor, id);
   }

@@ -40,6 +40,7 @@ describe.skipIf(!port)('P08 B13 isolated functional SQL/JWT/HTTP', () => {
   let composition: ReturnType<typeof createOperationsComposition>, apiUrl: string;
   let owner: typeof f.owner, reviewer: typeof f.owner;
   let ssh: Awaited<ReturnType<typeof startHelperSshFixture>>, useSsh = false;
+  let preflightError: string | undefined;
   let onSample: (() => Promise<void>) | undefined;
   const definition: VerificationDefinition = {
     id: 'demo-health',
@@ -266,7 +267,10 @@ describe.skipIf(!port)('P08 B13 isolated functional SQL/JWT/HTTP', () => {
         if (p.target.id !== definition.serverId || p.tool.hash !== definition.helperHash) throw Error('synthetic environment mismatch');
       } },
       actionPorts: { adapter: {
-        preflight: async plan => { if (useSsh) await ssh.adapter.preflight(plan); },
+        preflight: async plan => {
+          if (useSsh) try { await ssh.adapter.preflight(plan); }
+          catch (error) { preflightError = error instanceof Error ? error.message : String(error); throw error; }
+        },
         execute: async (i) => {
           sends++;
           if (useSsh) return ssh.adapter.execute(i);
@@ -307,7 +311,7 @@ describe.skipIf(!port)('P08 B13 isolated functional SQL/JWT/HTTP', () => {
     mode = 'healthy';
     useSsh = false;
     ssh.loseReceipt(false);
-    sends = 0;
+    sends = 0; preflightError = undefined;
     probeCount = 0;
     onSample = undefined;
     owner = await f.contexts.loadActiveActor(101);
@@ -359,7 +363,8 @@ describe.skipIf(!port)('P08 B13 isolated functional SQL/JWT/HTTP', () => {
     });
     try {
       await Promise.all([first.runOnce(), second.runOnce()]);
-      expect(sends).toBe(1);
+      const execution = await executions.get(owner, s.execution.id);
+      expect(sends, JSON.stringify({ state: execution.state, errorCode: execution.errorCode, preflightError })).toBe(1);
       expect(await ssh.restartCount()).toBe(1);
       const response = await fetch(`${apiUrl}/api/operations/action-executions/${s.execution.id}/verification`, {
         headers: { authorization: `Bearer ${signAccessToken(owner, f.secret)}` },
@@ -379,7 +384,8 @@ describe.skipIf(!port)('P08 B13 isolated functional SQL/JWT/HTTP', () => {
     const worker = createActionWorker(composition, new MysqlWorkflowStore(() => f.pool as never), 'p11-lost-ack');
     try {
       await worker.runOnce();
-      expect((await executions.get(reviewer, s.execution.id)).state).toBe('outcome_unknown');
+      const execution = await executions.get(reviewer, s.execution.id);
+      expect(execution.state, JSON.stringify({ errorCode: execution.errorCode, preflightError })).toBe('outcome_unknown');
       expect(await ssh.restartCount()).toBe(1);
       const response = await fetch(`${apiUrl}/api/operations/action-executions/${s.execution.id}/reconcile`, {
         method: 'POST', headers: { authorization: `Bearer ${signAccessToken(reviewer, f.secret)}`, 'content-type': 'application/json' }, body: '{}',

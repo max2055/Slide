@@ -91,6 +91,7 @@ export interface NetworkDeviceRow {
 
 export interface NetworkDevicePublicDto extends Omit<NetworkDeviceRow, 'collection_enabled'> {
   collection_enabled: boolean;
+  snmpVersion?: 2 | 3 | null;
   hasSnmpCredential: boolean;
   hasSshCredential: boolean;
   sshCredentialType?: string | null;
@@ -203,16 +204,42 @@ export function validateSshCredential(input: unknown): SshCredentialInput {
   return { protocol: 'ssh', credentialType: value.credentialType, username, credentialValue: value.credentialValue, sshTrustMode: value.sshTrustMode as string | undefined, hostKeyFingerprint: fingerprint };
 }
 
+/** Creation and updates share one discriminator; ambiguous input never chooses a winner. */
+function parseSnmpCredentials(value: Record<string, unknown>): Pick<NetworkDeviceUpdateInput, 'snmpv2c' | 'snmpv3'> {
+  const aliases = ['snmpv2c', 'snmpv2', 'snmpv3', 'snmp'].filter(key => value[key] !== undefined);
+  if (aliases.length > 1) throw new Error('SNMP_CREDENTIAL_CONFLICT');
+  const version = value.version;
+  if (version !== undefined && version !== 2 && version !== 3) throw new Error('SNMP_UNSUPPORTED_SECURITY');
+  if (!aliases.length) {
+    if (version !== undefined) throw new Error(version === 2 ? 'SNMPV2C_CREDENTIAL_REQUIRED' : 'SNMPV3_CREDENTIAL_REQUIRED');
+    return {};
+  }
+  const key = aliases[0];
+  const raw = value[key];
+  const explicitVersion = key === 'snmpv2c' || key === 'snmpv2' ? 2 : key === 'snmpv3' ? 3 : undefined;
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    throw new Error((explicitVersion ?? version) === 2 ? 'SNMPV2C_CREDENTIAL_REQUIRED' : 'SNMPV3_CREDENTIAL_REQUIRED');
+  }
+  const credential = raw as Record<string, unknown>;
+  if (credential.version !== undefined && credential.version !== 2 && credential.version !== 3) throw new Error('SNMP_UNSUPPORTED_SECURITY');
+  if (credential.protocol !== undefined && credential.protocol !== 'snmpv2c' && credential.protocol !== 'snmpv3') throw new Error('SNMP_UNSUPPORTED_SECURITY');
+  const hasCommunity = credential.community !== undefined || credential.communityString !== undefined;
+  const hasV3 = ['username', 'securityLevel', 'authProtocol', 'authSecret', 'privacyProtocol', 'privacySecret'].some(field => credential[field] !== undefined);
+  const hints = [explicitVersion, version, credential.version,
+    credential.protocol === 'snmpv2c' ? 2 : credential.protocol === 'snmpv3' ? 3 : undefined,
+    hasCommunity ? 2 : undefined, hasV3 ? 3 : undefined].filter(v => v !== undefined);
+  if (new Set(hints).size > 1 || credential.community !== undefined && credential.communityString !== undefined && credential.community !== credential.communityString) {
+    throw new Error('SNMP_CREDENTIAL_CONFLICT');
+  }
+  return hints[0] === 2 ? { snmpv2c: validateSnmpV2Credential(raw) } : { snmpv3: validateSnmpV3Credential(raw) };
+}
+
 export function parseNetworkDeviceCreateInput(input: unknown): NetworkDeviceCreateInput {
   if (!input || typeof input !== 'object') throw new Error('NETWORK_DEVICE_INPUT_INVALID');
   const value = input as Record<string, unknown>;
   const vendor = value.vendor ?? 'huawei';
   if (vendor !== 'huawei' && vendor !== 'cisco') throw new Error('NETWORK_DEVICE_VENDOR_UNSUPPORTED');
-  const rawSnmp = value.snmpv2c ?? value.snmpv2 ?? (value.snmpv3 ?? value.snmp);
-  const snmpv2c = (rawSnmp && typeof rawSnmp === 'object' && ((rawSnmp as any).version === 2 || 'community' in (rawSnmp as any) || 'communityString' in (rawSnmp as any))) || value.snmpv2c !== undefined || value.snmpv2 !== undefined
-    ? validateSnmpV2Credential(rawSnmp)
-    : undefined;
-  const snmpv3 = snmpv2c || rawSnmp == null ? undefined : validateSnmpV3Credential(rawSnmp);
+  const { snmpv2c, snmpv3 } = parseSnmpCredentials(value);
   const ssh = value.ssh == null ? undefined : validateSshCredential(value.ssh);
   return {
     name: text(value.name, 'name', true)!, label: nullableText(value.label, 'label'), host: validateNetworkHost(value.host),
@@ -246,8 +273,7 @@ export function parseNetworkDeviceUpdateInput(input: unknown): NetworkDeviceUpda
   if (value.snmpPort !== undefined || value.snmp_port !== undefined) result.snmpPort = validatePort(value.snmpPort ?? value.snmp_port, 'snmp_port', 161);
   if (value.sshPort !== undefined || value.ssh_port !== undefined) result.sshPort = validatePort(value.sshPort ?? value.ssh_port, 'ssh_port', 22);
   if (value.collectionEnabled !== undefined) { if (typeof value.collectionEnabled !== 'boolean') throw new Error('COLLECTION_ENABLED_INVALID'); result.collectionEnabled = value.collectionEnabled; }
-  if (value.snmpv2c !== undefined || value.snmpv2 !== undefined || (value.snmp === undefined && value.snmpv3 === undefined && value.version === 2)) result.snmpv2c = validateSnmpV2Credential(value.snmpv2c ?? value.snmpv2 ?? value.snmp);
-  else if (value.snmpv3 !== undefined || value.snmp !== undefined) result.snmpv3 = validateSnmpV3Credential(value.snmpv3 ?? value.snmp);
+  Object.assign(result, parseSnmpCredentials(value));
   if (value.ssh !== undefined) result.ssh = validateSshCredential(value.ssh);
   return result;
 }
