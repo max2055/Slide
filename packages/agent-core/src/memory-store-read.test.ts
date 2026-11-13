@@ -217,6 +217,7 @@ it.each(['before', 'after'])('SIGKILL %s rename preserves a complete snapshot an
   await store.transaction(state => { state.budgets.test = { attempts: 1, tokens: 41 }; });
   const crashed = await worker(`const rename = fs.rename.bind(fs);
 fs.rename = async (from, to) => {
+  if (to !== store.file) return rename(from, to);
   if (${JSON.stringify(phase)} === 'after') await rename(from, to);
   const wait = gate(); process.send('rename barrier'); await wait;
   if (${JSON.stringify(phase)} === 'before') await rename(from, to);

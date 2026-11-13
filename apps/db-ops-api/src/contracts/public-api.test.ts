@@ -8,6 +8,7 @@ import {
   DatabaseInstanceSchema,
   DatabaseInstancesResponseSchema,
   HealthResponseSchema,
+  LinuxHostEvidenceSchema,
   HostedInstancesResponseSchema,
   InstanceHostEvidenceResponseSchema,
   InstanceHostsResponseSchema,
@@ -27,6 +28,23 @@ import { registerTemplateAuthoringRoutes } from '../metrics/templates/authoring-
 import { registerMetricTemplateRoutes } from '../metrics/templates/routes.js';
 
 describe('generated public API contract', () => {
+  it('MAX-400 keeps exact counter strings through the Fastify response serializer', async () => {
+    const section = { source: ['fixture'], collectedAt: '2026-11-12T00:00:00Z', quality: 'good' as const };
+    const evidence = { schemaVersion: 1, serverId: 400, collectedAt: section.collectedAt, expiresAt: section.collectedAt,
+      quality: 'good', truncated: false, gaps: [],
+      metrics: { ...section, values: { network_rx_bytes: '9007199254740993', disk_read_bytes: '9007199254741504', top_processes_cpu: 812.5 } },
+      filesystems: { ...section, items: [] }, systemLogs: { ...section, entries: [] }, physicalFiles: { ...section, items: [] } };
+    expect(Value.Check(LinuxHostEvidenceSchema, evidence)).toBe(true);
+    const app = Fastify();
+    try {
+      app.get('/', { schema: { response: { 200: LinuxHostEvidenceSchema } } }, async () => evidence);
+      const response = await app.inject({ method: 'GET', url: '/' });
+      expect(response.statusCode).toBe(200);
+      expect(response.json().metrics.values).toEqual(evidence.metrics.values);
+      expect(Value.Check(LinuxHostEvidenceSchema, { ...evidence, metrics: { ...evidence.metrics, values: { bad: 'NaN' } } })).toBe(false);
+    } finally { await app.close(); }
+  });
+
   it('documents protected observations with durable gauges and process-local timings', () => {
     const document = buildOpenApiDocument() as any;
     const operation = document.paths['/api/platform/observations']?.get;

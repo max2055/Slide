@@ -66,8 +66,8 @@ export interface SlowQueryRecord {
   sql_text: string;
   sql_hash: string;
   avg_time_ms: number;
-  max_time_ms: number;
-  min_time_ms: number;
+  max_time_ms: number | null;
+  min_time_ms: number | null;
   execution_count: number;
   total_time_ms: number;
   rows_examined: number;
@@ -562,8 +562,8 @@ class MetricsDatabaseService {
     sql_text: string;
     sql_hash: string;
     avg_time_ms: number;
-    max_time_ms: number;
-    min_time_ms: number;
+    max_time_ms: number | null;
+    min_time_ms: number | null;
     execution_count: number;
     total_time_ms: number;
     rows_examined?: number;
@@ -669,7 +669,15 @@ class MetricsDatabaseService {
         [instanceId, limit]
       ) as any;
 
-      return rows as SlowQueryRecord[];
+      // mysql2 returns DECIMAL columns as strings by default. Keep report and
+      // threshold consumers numeric while preserving SQL NULL as unknown.
+      return rows.map((row: SlowQueryRecord) => ({
+        ...row,
+        avg_time_ms: Number(row.avg_time_ms),
+        max_time_ms: row.max_time_ms == null ? null : Number(row.max_time_ms),
+        min_time_ms: row.min_time_ms == null ? null : Number(row.min_time_ms),
+        total_time_ms: Number(row.total_time_ms),
+      }));
     } catch (error) {
       console.error('获取慢查询失败:', error);
       if (options.strict) throw new Error('SLOW_QUERIES_QUERY_FAILED', { cause: error });

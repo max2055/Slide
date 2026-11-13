@@ -127,3 +127,7 @@ export SANDBOX_QUALIFICATION_OUTPUT="$out/qualification.json"
 for security_command in "${security_commands[@]}"; do
   pnpm "$security_command" 2>&1 | tee -a "$out/release-security.log"
 done
+
+# MAX-328: business approval boundary on the same disposable controller/MySQL.
+export SANDBOX_APPROVAL_QUALIFICATION_OUTPUT="$out/execute-code-approval.json"
+pnpm --filter slide-api exec tsx tests/qualification/execute-code-approval-rootless.ts 2>&1 | tee "$out/execute-code-approval.log"

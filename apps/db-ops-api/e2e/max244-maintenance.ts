@@ -44,11 +44,11 @@ try{
  const oldMigrations=resolve(directory,'before141');mkdirSync(oldMigrations);
  for(const file of readdirSync(resolve('sql/migrations')))if(file.endsWith('.sql')&&file<'141_')copyFileSync(resolve('sql/migrations',file),resolve(oldMigrations,file));
  await new MigrationRunner(pool as any,oldMigrations).run();
- await pool.query("INSERT INTO database_instances(id,name,host,port,username,password_encrypted) VALUES(703,'旧周期数据库','fixture.invalid',3307,'fixture','unused')");
+ await pool.query("INSERT INTO database_instances(id,name,host,port,database_name,username,password_encrypted) VALUES(703,'旧周期数据库','fixture.invalid',3307,'maint-703','fixture','unused')");
  await pool.query("INSERT INTO maintenance_windows(id,name,description,instance_id,day_of_week,start_time,end_time,timezone) VALUES(744,'升级前周期维护','保全重复语义',703,'*','00:00:00','23:59:59','UTC')");
  await new MigrationRunner(pool as any).run();
  const [upgraded]=await pool.query<any[]>('SELECT revision,payload FROM maintenance_weekly_history WHERE id=744');assert.equal(upgraded.length,1);assert.equal(upgraded[0].revision,0);
- await pool.query("INSERT INTO database_instances(id,name,host,port,username,password_encrypted) VALUES(701,'授权数据库','fixture.invalid',3307,'fixture','unused'),(702,'越权数据库','fixture.invalid',3307,'fixture','unused')");
+ await pool.query("INSERT INTO database_instances(id,name,host,port,database_name,username,password_encrypted) VALUES(701,'授权数据库','fixture.invalid',3307,'maint-701','fixture','unused'),(702,'越权数据库','fixture.invalid',3307,'maint-702','fixture','unused')");
  await pool.query("INSERT INTO users(id,username,password_hash) VALUES(701,'maintenance-user','no-login'),(702,'maintenance-other','no-login'),(703,'a-only-reader','no-login')");
  await pool.query("INSERT INTO roles(id,name) VALUES(701,'maintenance-fixture')");
  await pool.query("INSERT IGNORE INTO permissions(code,name,resource,action) VALUES('maintenance:manage','维护','maintenance','manage'),('instance:manage','管理','instance','manage')");
@@ -110,7 +110,7 @@ try{
  await pool.query('DELETE FROM instance_permissions WHERE user_id=701 AND instance_id=702');
  // Controlled scalar evaluator -> production unique event writer -> real MySQL.
  // This is event persistence acceptance, not a physical collector transport test.
- await pool.query("INSERT INTO database_instances(id,name,host,port,username,password_encrypted) VALUES(7,'event fixture','fixture.invalid',3307,'fixture','unused')");
+ await pool.query("INSERT INTO database_instances(id,name,host,port,database_name,username,password_encrypted) VALUES(7,'event fixture','fixture.invalid',3307,'maint-7','fixture','unused')");
  await pool.query("INSERT INTO instance_permissions(user_id,instance_id,access_level) VALUES(701,7,'read-write')");
  await pool.query("INSERT INTO instance_permissions(user_id,instance_id,access_level) VALUES(703,7,'read-only')");
  const aOnlyToken=signAccessToken(await actorContextService.loadActiveActor(703),secret);
