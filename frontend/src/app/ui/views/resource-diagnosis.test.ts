@@ -198,6 +198,10 @@ describe('MAX-432 error responses and MAX-442 navigation receipts', () => {
       history.replaceState({}, '', '/resource-diagnosis?resourceType=server&resourceId=2');
       window.dispatchEvent(new PopStateEvent('popstate'));
     }
+    element.selectResource('instance:1');
+    await element.diagnose(true);
+    expect(authFetch.mock.calls.filter(([url]) => url.endsWith('/diagnose-agent'))).toHaveLength(1);
+    element.selectResource('server:2');
     resolve({ ok: true, json: async () => ({ analysisId: 42, status: 'queued' }) });
     await submission;
     expect(location.search).not.toContain('analysisId=42');
@@ -207,6 +211,26 @@ describe('MAX-432 error responses and MAX-442 navigation receipts', () => {
     expect(authFetch).toHaveBeenCalledWith('/api/resources/instance/1/analyses/42', expect.anything());
     await element.diagnose(true);
     expect(authFetch.mock.calls.filter(([url]) => url.endsWith('/diagnose-agent'))).toHaveLength(1);
+  });
+  it.each([409, 503])('retains task ID from a JSON %s error without resubmission', async status => {
+    const element = await mount();
+    authFetch.mockImplementation(async (url: string) => url.endsWith('/diagnose-agent')
+      ? { ok: false, status, json: async () => ({ analysisId: 42, status: 'unknown' }) }
+      : { ok: true, json: async () => ({ analysisId: 42, status: 'unknown' }) });
+    await element.diagnose(true);
+    await vi.waitFor(() => expect(element.agentResult?.status).toBe('unknown'));
+    expect(location.search).toContain('analysisId=42');
+    await element.diagnose(true);
+    expect(authFetch.mock.calls.filter(([url]) => url.endsWith('/diagnose-agent'))).toHaveLength(1);
+  });
+  it.each([null, { analysisId: -1 }, { analysisId: 42, status: 'unexpected' }])('guards malformed successful agent receipts %j', async body => {
+    const element = await mount();
+    authFetch.mockImplementation(async (url: string) => ({ ok: true, json: async () => url.includes('/analyses/') ? { analysisId: 42, status: 'unknown' } : body }));
+    await element.diagnose(true);
+    expect(element.error).toContain('响应结构');
+    await element.diagnose(true);
+    expect(authFetch.mock.calls.filter(([url]) => url.endsWith('/diagnose-agent'))).toHaveLength(1);
+    if (body?.analysisId === 42) expect(location.search).toContain('analysisId=42');
   });
   it('rejects malformed successful packs without rendering them', async () => {
     const element = await mount();

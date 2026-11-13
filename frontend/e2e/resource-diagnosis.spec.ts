@@ -467,3 +467,23 @@ for (const status of [403, 409, 503]) {
     });
   }
 }
+
+test('MAX-432 MAX-442 receipt follows real SPA departure and history return', async ({ page }) => {
+  const state = await diagnosisFixture(page); state.status = 'unknown';
+  await page.goto('/resource-diagnosis?resourceType=instance&resourceId=1');
+  let release!: () => void; const pending = new Promise<void>(resolve => { release = resolve; });
+  let posts = 0;
+  await page.route('**/diagnose-agent', async route => { posts++; await pending; await route.fulfill({ json: { analysisId: 42, status: 'queued' } }); });
+  const view = page.locator('resource-diagnosis-page');
+  await view.getByRole('button', { name: '开始只读诊断', exact: true }).click();
+  await expect.poll(() => posts).toBe(1);
+  await page.evaluate(() => { history.pushState({}, '', '/dashboard'); window.dispatchEvent(new PopStateEvent('popstate')); });
+  await expect(view).toHaveCount(0);
+  await page.goBack();
+  await expect(view.getByRole('button', { name: '开始只读诊断', exact: true })).toBeDisabled();
+  release();
+  await expect(page).toHaveURL(/analysisId=42/);
+  await view.getByRole('tab', { name: /^分析结果/ }).click();
+  await expect(view.locator('[data-task-status]')).toContainText('结果未知');
+  expect(posts).toBe(1);
+});
