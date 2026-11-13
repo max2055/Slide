@@ -4,7 +4,7 @@ import { property } from 'lit/decorators.js';
 export class StatCard extends LitElement {
   @property({ type: String }) label = '';
   @property({ type: String }) value = '';
-  @property({ type: Object }) hint: string | TemplateResult = '';
+  @property({ type: String }) hint: string | TemplateResult = '';
   @property({ type: String }) variant?: 'ok' | 'warn' | 'danger' | 'info';
 
   static override styles = css`
