@@ -1,23 +1,63 @@
 /** D1 process fence plus durable checks. IDs are never reused after tombstoning. */
 export class InstanceAccessLifecycle {
   private readonly revoked = new Map<number, AbortController>();
+  private readonly fenceToken = new Map<number, number>();
+  /** Commit generations whose outcome is still unknown. A later hold must not drop them. */
+  private readonly unresolved = new Map<number, Set<number>>();
+  private nextFence = 0;
   private readonly operations = new Map<number, Set<Promise<unknown>>>();
   private readonly temporary = new Map<number, Set<() => Promise<void>>>();
   constructor(private check?: (id: number) => Promise<boolean>) {}
   configure(check: (id: number) => Promise<boolean>): void { this.check = check; }
-  isRevoked(id: number): boolean { return this.revoked.get(id)?.signal.aborted === true; }
+  isRevoked(id: number): boolean {
+    return this.unresolved.has(id) || this.fenceToken.has(id) || this.revoked.get(id)?.signal.aborted === true;
+  }
   signal(id: number): AbortSignal {
     let controller = this.revoked.get(id);
     if (!controller) { controller = new AbortController(); this.revoked.set(id, controller); }
     return controller.signal;
   }
-  revoke(id: number): void {
+  /** Block new access before durable intent exists. Does not abort work already in flight. */
+  hold(id: number): number {
+    const token = ++this.nextFence;
+    this.fenceToken.set(id, token);
+    return token;
+  }
+  revoke(id: number): number {
+    const token = ++this.nextFence;
+    this.fenceToken.set(id, token);
     this.signal(id);
     this.revoked.get(id)!.abort(new Error('INSTANCE_REMOVED'));
+    return token;
   }
-  forgetMissing(id: number): void {
+  /** Keep this generation closed until a clean read verifies it did not commit. */
+  retainUnresolved(id: number, token: number): void {
+    let tokens = this.unresolved.get(id);
+    if (!tokens) { tokens = new Set(); this.unresolved.set(id, tokens); }
+    tokens.add(token);
+  }
+  hasUnresolved(id: number): boolean { return this.unresolved.has(id); }
+  unresolvedSnapshot(id: number): number[] { return [...(this.unresolved.get(id) ?? [])]; }
+  /** Drop only the generations this read covered. Tokens retained during the read stay closed. */
+  resolveVerified(id: number, tokens: readonly number[]): void {
+    const pending = this.unresolved.get(id);
+    if (!pending) return;
+    for (const token of tokens) pending.delete(token);
+    if (!pending.size) this.unresolved.delete(id);
+  }
+  /** Clear only the generation this attempt installed, and never while any commit is still unverified. */
+  releaseIfCurrent(id: number, token: number): void {
+    if (this.unresolved.has(id)) return;
+    if (this.fenceToken.get(id) !== token) return;
+    this.fenceToken.delete(id);
+  }
+  forgetMissing(id: number, token?: number): void {
     // A rejected DELETE of a future ID must not fence a later legitimate INSERT.
-    if (!this.operations.has(id) && !this.temporary.has(id)) this.revoked.delete(id);
+    if (this.unresolved.has(id)) return;
+    if (token !== undefined && this.fenceToken.get(id) !== token) return;
+    if (this.operations.has(id) || this.temporary.has(id)) return;
+    this.fenceToken.delete(id);
+    if (this.revoked.get(id)?.signal.aborted) this.revoked.delete(id);
   }
   async assertAvailable(id: number): Promise<void> {
     if (this.isRevoked(id)) throw new Error('INSTANCE_REMOVED');

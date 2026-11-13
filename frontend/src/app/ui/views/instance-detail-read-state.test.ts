@@ -18,6 +18,17 @@ async function text(el: any) {
 }
 afterEach(() => { vi.restoreAllMocks(); fetchMock.mockReset(); roots.forEach(r => r.remove()); roots.length = 0; });
 describe('instance query read states', () => {
+  it('MAX-396 shows Oracle average 2000ms as slow and unknown maximum explicitly', async () => {
+    fetchMock.mockResolvedValue(new Response(JSON.stringify([{ id: 'oracle', sql_text: 'SELECT fixture', avg_time_ms: 2000, max_time_ms: null, execution_count: 5, last_seen: new Date().toISOString() }])));
+    const el = page(); await el.loadTabData();
+    const content = await text(el);
+    expect(content).toContain('2000.00 ms');
+    expect(content).toContain('未知');
+    const duration = roots[0].querySelector('tbody td:nth-child(2) span') as HTMLElement;
+    expect(duration.style.color).toBe('var(--danger)');
+    expect(roots[0].querySelector('tbody td:nth-child(3)')?.textContent).not.toContain('0.00');
+  });
+
   it('does not infer health before any read', async () => {
     const content = await text(page());
     expect(content).not.toContain('数据库运行良好'); expect(content).toContain('尚未读取');
