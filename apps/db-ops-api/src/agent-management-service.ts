@@ -197,8 +197,9 @@ export class AgentManagementService {
     extensionDefinition(next.kind, next.definition ?? {});
     const definition = next.definition ?? {};
     const sourceText = next.sourceText == null ? null : String(next.sourceText).slice(0, 256 * 1024);
-    const digest = createHash('sha256').update(JSON.stringify({ kind: next.kind, name: next.name, description: next.description ?? '', definition, sourceText })).digest('hex');
-    await pool.execute('UPDATE agent_extensions SET name = ?, description = ?, definition_json = ?, source_text = ?, digest = ?, updated_by = ? WHERE id = ? AND status = \'draft\'', [next.name, String(next.description ?? '').slice(0, 2000), JSON.stringify(definition), sourceText, digest, actorId, id]);
+    const description = String(next.description ?? '').slice(0, 2000);
+    const digest = createHash('sha256').update(JSON.stringify({ kind: next.kind, name: next.name, description, definition, sourceText })).digest('hex');
+    await pool.execute('UPDATE agent_extensions SET name = ?, description = ?, definition_json = ?, source_text = ?, digest = ?, updated_by = ? WHERE id = ? AND status = \'draft\'', [next.name, description, JSON.stringify(definition), sourceText, digest, actorId, id]);
     const [rows] = await pool.execute('SELECT * FROM agent_extensions WHERE id = ?', [id]);
     return mapExtension((rows as any[])[0]);
   }
