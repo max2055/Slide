@@ -44,6 +44,8 @@ export class AgentToolAuditPage extends LitElement {
   @state() private allowed = '';
   @state() private from = '';
   @state() private to = '';
+  private listGeneration = 0;
+  private detailGeneration = 0;
 
   static styles = [sharedFieldStyles, sharedBtnStyles, css`
     :host { display: block; color: var(--text); }
@@ -75,7 +77,17 @@ export class AgentToolAuditPage extends LitElement {
     void this.load(true);
   }
 
+  override disconnectedCallback(): void {
+    this.listGeneration++;
+    this.loading = false;
+    this.closeDetail();
+    super.disconnectedCallback();
+  }
+
   private async load(reset = false): Promise<void> {
+    const generation = ++this.listGeneration;
+    this.records = [];
+    this.nextCursor = null;
     if (reset) {
       this.cursor = undefined;
       this.cursorStack = [];
@@ -93,38 +105,49 @@ export class AgentToolAuditPage extends LitElement {
         to: this.to ? new Date(this.to).toISOString() : undefined,
       };
       const response = await apiClient.get<{ records: AuditRecord[]; nextCursor: number | null }>('/agent/security/audit', { params });
+      if (generation !== this.listGeneration) return;
       this.records = response.records;
       this.nextCursor = response.nextCursor;
     } catch {
+      if (generation !== this.listGeneration) return;
       showToast('加载 Tool 审计记录失败', 'error');
     } finally {
-      this.loading = false;
+      if (generation === this.listGeneration) this.loading = false;
     }
   }
 
   private async openDetail(id: number): Promise<void> {
+    const generation = ++this.detailGeneration;
     this.detailLoading = true;
     this.selected = this.records.find((record) => record.id === id) ?? null;
     try {
       const response = await apiClient.get<{ record: AuditRecord }>(`/agent/security/audit/${id}`);
+      if (generation !== this.detailGeneration) return;
       this.selected = response.record;
     } catch {
+      if (generation !== this.detailGeneration) return;
       showToast('加载审计详情失败', 'error');
       this.selected = null;
     } finally {
-      this.detailLoading = false;
+      if (generation === this.detailGeneration) this.detailLoading = false;
     }
   }
 
+  private closeDetail(): void {
+    this.detailGeneration++;
+    this.selected = null;
+    this.detailLoading = false;
+  }
+
   private nextPage(): void {
-    if (this.nextCursor === null) return;
+    if (this.loading || this.nextCursor === null) return;
     this.cursorStack = [...this.cursorStack, this.cursor];
     this.cursor = this.nextCursor;
     void this.load();
   }
 
   private previousPage(): void {
-    if (this.cursorStack.length === 0) return;
+    if (this.loading || this.cursorStack.length === 0) return;
     const stack = [...this.cursorStack];
     this.cursor = stack.pop();
     this.cursorStack = stack;
@@ -164,7 +187,7 @@ export class AgentToolAuditPage extends LitElement {
         <div class="table-wrap"><app-data-table .columns=${[{ key: 'createdAt', label: '时间' }, { key: 'toolName', label: 'Tool' }, { key: 'phase', label: '阶段' }, { key: 'actor', label: '操作者' }, { key: 'allowed', label: '结果' }, { key: 'reasonCode', label: '原因码' }, { key: 'actions', label: '' }]} .rows=${this.rows()} .loading=${this.loading} .dense=${true} emptyMessage="暂无 Tool 审计记录"></app-data-table></div>
         <div class="pagination"><button class="btn" @click=${this.previousPage} .disabled=${this.cursorStack.length === 0 || this.loading}>上一页</button><button class="btn" @click=${this.nextPage} .disabled=${this.nextCursor === null || this.loading}>下一页</button></div>
       </app-card>
-      <app-dialog size="xl" title="Tool 审计详情" .open=${this.selected !== null} @app-dialog-close=${() => { this.selected = null; }}>
+      <app-dialog size="xl" title="Tool 审计详情" .open=${this.selected !== null} @app-dialog-close=${this.closeDetail}>
         ${this.selected ? html`<div class="dialog-grid">
           <div class="detail-row"><span>记录</span><strong>#${this.selected.id} · ${this.selected.toolName}</strong></div>
           <div class="detail-row"><span>请求 ID</span><span class="mono">${this.selected.requestId}</span></div>

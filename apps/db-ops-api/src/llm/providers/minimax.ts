@@ -1,3 +1,4 @@
+import { isNativeEndpoint } from './native-endpoint.js';
 /**
  * MiniMax LLM 提供商配置
  *
@@ -92,8 +93,7 @@ export const MINIMAX_MODEL_CATALOG = [
  * 判断是否是 MiniMax 的原生 Base URL
  */
 export function isNativeMiniMaxBaseUrl(baseUrl: string | undefined): boolean {
-  if (!baseUrl) return false;
-  return baseUrl.includes('api.minimax.chat');
+  return isNativeEndpoint(baseUrl, ['api.minimax.chat']);
 }
 
 /**

@@ -677,7 +677,8 @@ export function isAllowedByPolicy(name: string, policy?: ToolPolicy) {
   }
   const allow = compilePatterns(policy.allow);
   if (allow.length === 0) {
-    return true;
+    // A supplied restriction must not become unrestricted after normalization.
+    return !Array.isArray(policy.allow) || policy.allow.length === 0;
   }
   if (matchesAny(normalized, allow)) {
     return true;
