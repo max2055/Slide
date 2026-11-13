@@ -148,7 +148,7 @@ export class AppFormField extends LitElement {
           margin-bottom: var(--space-xs, 4px);
           line-height: 1.4;
         }
-        :host([error]) .form-label {
+        .form-field.has-error .form-label {
           color: var(--danger, #dc2626);
         }
         .required-mark {
@@ -159,7 +159,7 @@ export class AppFormField extends LitElement {
         .form-control {
           position: relative;
         }
-        :host([error]) .form-control {
+        .form-field.has-error .form-control {
           box-shadow: 0 0 0 2px var(--danger-subtle, rgba(220, 38, 38, 0.12));
           border-radius: var(--radius-sm, 6px);
         }
@@ -184,7 +184,7 @@ export class AppFormField extends LitElement {
           white-space: nowrap;
         }
       </style>
-      <div class="form-field" part="field">
+      <div class="form-field ${this.error ? "has-error" : ""}" part="field">
         ${this.label
           ? html`
               <label class="form-label" part="label" @click=${() => this.control?.focus()}>

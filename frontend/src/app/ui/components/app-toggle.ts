@@ -8,7 +8,7 @@ import { customElement, property } from "lit/decorators.js";
 @customElement("app-toggle")
 export class AppToggle extends LitElement {
   @property({ type: Boolean }) checked = false;
-  @property({ type: Boolean }) disabled = false;
+  @property({ type: Boolean, reflect: true }) disabled = false;
   @property({ type: Boolean, reflect: true }) compact = false;
 
   static styles = css`
@@ -18,6 +18,7 @@ export class AppToggle extends LitElement {
     }
     :host([compact]) { padding: 0; gap: 0; }
     :host([disabled]) { opacity: 0.5; pointer-events: none; }
+    .row { display: inline-flex; align-items: center; gap: inherit; cursor: inherit; }
     .label { font-size: 13px; color: var(--text); }
     :host([compact]) .label { display: none; }
     .toggle {
@@ -46,18 +47,21 @@ export class AppToggle extends LitElement {
 
   render() {
     return html`
-      <span class="label"><slot></slot></span>
-      <button
-        class="toggle ${this.checked ? "on" : ""}"
-        type="button"
-        ?disabled=${this.disabled}
-        @click=${this._toggle}
-        aria-pressed=${this.checked}
-      ></button>
+      <label class="row">
+        <span class="label"><slot></slot></span>
+        <button
+          class="toggle ${this.checked ? "on" : ""}"
+          type="button"
+          ?disabled=${this.disabled}
+          @click=${this._toggle}
+          aria-pressed=${this.checked}
+        ></button>
+      </label>
     `;
   }
 
   private _toggle() {
+    if (this.disabled) return;
     this.checked = !this.checked;
     this.dispatchEvent(new CustomEvent("change", { detail: this.checked, bubbles: true }));
   }
