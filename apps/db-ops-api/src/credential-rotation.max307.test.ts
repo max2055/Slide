@@ -36,7 +36,17 @@ describe('MAX-307 lost-key markers never reach authentication', () => {
       });
       return [{ affectedRows: 1 }, []];
     });
-    vi.spyOn(dbConnection, 'getPool').mockReturnValue({ execute } as any);
+    vi.spyOn(dbConnection, 'getPool').mockReturnValue({
+      execute,
+      getConnection: async () => ({
+        execute,
+        beginTransaction: async () => {},
+        commit: async () => {},
+        rollback: async () => {},
+        release() {},
+        destroy() {},
+      }),
+    } as any);
     log = vi.spyOn(console, 'error').mockImplementation(() => {});
     ssh.connect.mockImplementation(() => { throw new Error('unexpected SSH authentication'); });
   });

@@ -8,7 +8,7 @@ export interface ExecuteCodeRisk {
 }
 
 const READ_ONLY_SHELL_COMMANDS = new Set([
-  'pwd', 'ls', 'cat', 'head', 'tail', 'find', 'grep', 'wc', 'du', 'stat',
+  'pwd', 'ls', 'cat', 'head', 'tail', 'grep', 'wc', 'du', 'stat',
 ]);
 
 const HIGH_RISK_PATTERNS = [
@@ -34,8 +34,17 @@ function classifyShell(code: string): ExecuteCodeRiskLevel {
   const source = code.trim();
   if (HIGH_RISK_PATTERNS.some((pattern) => pattern.test(source))) return 'high';
 
-  const command = source.match(/^([a-z][a-z0-9_-]*)\b/i)?.[1]?.toLowerCase();
-  const hasUnsafePath = /(?:^|\s)(?:\/|\.\.|~\/)/.test(source);
+  // Only prove simple literal argv read-only. Shell syntax, expansions, quoting,
+  // control characters and compound scripts require approval rather than a
+  // partial parse. find is excluded because its actions can write or execute.
+  const simpleCommand = /^([a-z][a-z0-9_-]*)(?:[ \t]+[a-zA-Z0-9_./:=,@%+-]+)*[ \t]*$/;
+  const command = source.match(simpleCommand)?.[1];
+  // Do not normalize away parent segments: symlinks and missing directories
+  // make lexical containment insufficient. Also inspect option values; attached
+  // short-option paths (e.g. -f../pattern) cannot be proven safe without parsing.
+  const hasUnsafePath = source.split(/[\s=:,]+/).some((argument) =>
+    argument.startsWith('/') || argument.startsWith('~/') || argument.split('/').includes('..')
+    || (argument.startsWith('-') && (argument.includes('/') || argument.includes('..'))));
   if (command && READ_ONLY_SHELL_COMMANDS.has(command) && !hasUnsafePath) return 'low';
   return 'medium';
 }

@@ -51,14 +51,21 @@ export class BusinessMemoryService {
     return result;
   }
   async completed(actor: ActorContext, sessionId: string, runId: string, signal?: AbortSignal): Promise<void> {
+    await this.extractCompleted(actor, sessionId, runId, false, signal);
+  }
+  private async extractCompleted(actor: ActorContext, sessionId: string, runId: string, retry: boolean, signal?: AbortSignal) {
     if (!this.pipeline.enabled) return;
     await chatDatabaseService.authorizeSession(actor, sessionId, 'append');
     const run = await agentRunService.getForActor(runId, actor.userId, sessionId);
-    if (run?.state !== 'completed') return;
+    if (run?.state !== 'completed') {
+      if (retry) throw new Error(run ? 'MEMORY_RUN_NOT_COMPLETED' : 'MEMORY_RUN_NOT_FOUND');
+      return;
+    }
     const inputs = await canonicalStore.getCommittedMemoryInputs(actor.userId, sessionId, [`run_${runId}_user`]);
     await this.pipeline.reconcile(this.scope(actor, sessionId));
-    await this.pipeline.run({ scope: this.scope(actor, sessionId), boundary: runId, completed: true,
-      messages: inputs.map(s => ({ id: s.id, role: 'user', content: s.content, source: 'fact', timestamp: new Date().toISOString() })) }, signal);
+    const snapshot = { scope: this.scope(actor, sessionId), boundary: runId, completed: true as const,
+      messages: inputs.map(s => ({ id: s.id, role: 'user' as const, content: s.content, source: 'fact' as const, timestamp: new Date().toISOString() })) };
+    return retry ? this.pipeline.retry(snapshot) : this.pipeline.run(snapshot, signal);
   }
   async request(actor: ActorContext, sessionId: string, operation: string, payload: Record<string, unknown>): Promise<unknown> {
     if (!this.pipeline.enabled) throw new Error('MEMORY_DISABLED');
@@ -90,7 +97,7 @@ export class BusinessMemoryService {
       }
       case 'memory.retry': {
         if (typeof payload.runId !== 'string') throw new Error('MEMORY_RUN_INVALID');
-        await this.completed(actor, sessionId, payload.runId); return { retried: true };
+        return this.extractCompleted(actor, sessionId, payload.runId, true);
       }
       default: throw new Error('MEMORY_OPERATION_INVALID');
     }

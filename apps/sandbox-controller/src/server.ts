@@ -67,29 +67,42 @@ function send(response: http.ServerResponse, status: number, body: unknown): voi
   response.end(JSON.stringify(body));
 }
 
+async function cleanupWorkspace(workspace: string, jobId: string): Promise<void> {
+  try {
+    await fs.rm(workspace, { recursive: true, force: true });
+  } catch {
+    console.error('[SandboxController] workspace cleanup failed', { jobId });
+  }
+}
+
 async function prepareWorkspace(jobId: string, files: JobRequest['files']): Promise<string> {
   if (files !== undefined && (!Array.isArray(files) || files.length > 128)) {
     throw new Error('SANDBOX_FILES_INVALID');
   }
   const workspace = validateWorkspacePath(workspaceRoot, jobId);
   await fs.mkdir(workspace, { recursive: false, mode: 0o700 });
-  let total = 0;
-  for (const file of files ?? []) {
-    if (!file || typeof file.path !== 'string' || typeof file.contentBase64 !== 'string'
-      || file.contentBase64.length % 4 !== 0 || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(file.contentBase64)) {
-      throw new Error('SANDBOX_FILE_CONTENT_INVALID');
+  try {
+    let total = 0;
+    for (const file of files ?? []) {
+      if (!file || typeof file.path !== 'string' || typeof file.contentBase64 !== 'string'
+        || file.contentBase64.length % 4 !== 0 || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(file.contentBase64)) {
+        throw new Error('SANDBOX_FILE_CONTENT_INVALID');
+      }
+      const relative = validateRelativeFilePath(file.path);
+      const content = Buffer.from(file.contentBase64, 'base64');
+      if (content.toString('base64') !== file.contentBase64) throw new Error('SANDBOX_FILE_CONTENT_INVALID');
+      total += content.length;
+      if (total > DEFAULT_SANDBOX_LIMITS.maxFilesBytes) throw new Error('SANDBOX_FILES_TOO_LARGE');
+      const target = path.join(workspace, relative);
+      await fs.mkdir(path.dirname(target), { recursive: true, mode: 0o755 });
+      await fs.writeFile(target, content, { flag: 'wx', mode: 0o644 });
     }
-    const relative = validateRelativeFilePath(file.path);
-    const content = Buffer.from(file.contentBase64, 'base64');
-    if (content.toString('base64') !== file.contentBase64) throw new Error('SANDBOX_FILE_CONTENT_INVALID');
-    total += content.length;
-    if (total > DEFAULT_SANDBOX_LIMITS.maxFilesBytes) throw new Error('SANDBOX_FILES_TOO_LARGE');
-    const target = path.join(workspace, relative);
-    await fs.mkdir(path.dirname(target), { recursive: true, mode: 0o755 });
-    await fs.writeFile(target, content, { flag: 'wx', mode: 0o644 });
+    await fs.chmod(workspace, 0o777);
+    return workspace;
+  } catch (error) {
+    await cleanupWorkspace(workspace, jobId);
+    throw error;
   }
-  await fs.chmod(workspace, 0o777);
-  return workspace;
 }
 
 async function runDocker(jobId: string, workspace: string, job: JobRequest): Promise<unknown> {
@@ -267,7 +280,7 @@ const server = http.createServer(async (request, response) => {
     return send(response, 400, { jobId, error: error instanceof Error ? error.message : 'SANDBOX_JOB_FAILED' });
   } finally {
     concurrencyLease.release();
-    if (workspace) await fs.rm(workspace, { recursive: true, force: true }).catch(() => undefined);
+    if (workspace) await cleanupWorkspace(workspace, jobId);
   }
 });
 
