@@ -128,7 +128,7 @@ describe('daily configuration backups', () => {
   });
   it('returns default settings without storing credentials', async () => {
     const execute = vi.fn(async () => [[], []] as [any, any]);
-    const store = new MysqlBackupScheduleStore(() => ({ execute }));
+    const store = new MysqlBackupScheduleStore(() => ({ execute, getConnection: vi.fn() }));
     await expect(store.get(7)).resolves.toEqual({ enabled: true, dailyTime: '00:00', timeZone: 'Asia/Shanghai', lastRun: null });
     await store.save(7, { enabled: false, dailyTime: '03:30' });
     expect(execute.mock.calls.at(-1)).toEqual([expect.stringContaining('ON DUPLICATE KEY UPDATE'), [7, 0, '03:30']]);

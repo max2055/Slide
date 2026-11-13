@@ -96,12 +96,38 @@ try {
 
   const base = new MysqlBackupScheduleStore(() => pool!);
   let finalizationFailures = 1;
+  let lostCheckpointResponses = 0;
+  let lostFinalizationResponses = 0;
+  let checkpointWrites = 0;
+  let finalizationWrites = 0;
   const faulty = new MysqlBackupScheduleStore(() => ({
+    getConnection: async () => {
+      const connection = await pool!.getConnection();
+      return {
+        beginTransaction: () => connection.beginTransaction(),
+        rollback: () => connection.rollback(),
+        release: () => connection.release(),
+        execute: async (sql: string, values?: unknown[]) => {
+          const result = await connection.execute(sql, values);
+          if (sql.includes("SET status = 'running', error_code")) checkpointWrites++;
+          return result;
+        },
+        commit: async () => {
+          await connection.commit();
+          if (lostCheckpointResponses > 0) { lostCheckpointResponses--; throw new Error('injected lost checkpoint response'); }
+        },
+      };
+    },
     execute: async (sql: string, values?: unknown[]) => {
       if (sql.includes("SET status = IF(error_code") && values?.length === 2 && finalizationFailures > 0) {
         finalizationFailures--; throw new Error('injected final status write failure');
       }
-      return pool!.execute(sql, values);
+      const result = await pool!.execute(sql, values);
+      if (sql.includes('SET status = IF(error_code') && values?.length === 2) {
+        finalizationWrites++;
+        if (lostFinalizationResponses > 0) { lostFinalizationResponses--; throw new Error('injected lost finalization response'); }
+      }
+      return result;
     },
   } as any));
   const run = (store = base) => new ConfigBackupScheduler(store, id => service.collect(id), () => new Date('2026-11-12T16:00:00Z'));
@@ -111,6 +137,20 @@ try {
   assert.deepEqual((await base.get(7)).lastRun, { date: '2026-11-13', status: 'success', errorCode: null });
   await run().tick(); assert.equal(captures, before + 1);
   console.log('PASS #536: transient final status failure retries persistence only, same-day exclusion retained');
+  for (const stage of ['checkpoint', 'finalization']) {
+    await pool.query('DELETE FROM network_config_backup_runs');
+    if (stage === 'checkpoint') lostCheckpointResponses = 1;
+    else lostFinalizationResponses = 1;
+    const priorCheckpointWrites = checkpointWrites;
+    const priorFinalizationWrites = finalizationWrites;
+    before = captures;
+    await run(faulty).tick();
+    assert.equal(captures, before + 1);
+    assert.equal((await base.get(7)).lastRun?.status, 'success');
+    assert.equal(checkpointWrites, priorCheckpointWrites + 1);
+    assert.equal(finalizationWrites, priorFinalizationWrites + 1);
+  }
+  console.log('PASS #536: committed checkpoint/finalization with lost response is read back, never blindly resent');
 
   await pool.query('DELETE FROM network_config_backup_runs');
   finalizationFailures = 3;

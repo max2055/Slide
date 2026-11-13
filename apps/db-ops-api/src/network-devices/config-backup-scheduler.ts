@@ -1,3 +1,4 @@
+import type { PoolConnection } from 'mysql2/promise';
 import { dbConnection } from '../db-connection.js';
 import { configBackupService, ConfigBackupError } from './config-backup-service.js';
 
@@ -32,7 +33,10 @@ export function beijingDateTime(now: Date): { date: string; time: string } {
   return { date: local.slice(0, 10), time: local.slice(11, 16) };
 }
 
-interface SqlPool { execute<T = unknown>(sql: string, values?: unknown[]): Promise<[T, unknown?]>; }
+interface SqlPool {
+  execute<T = unknown>(sql: string, values?: unknown[]): Promise<[T, unknown?]>;
+  getConnection(): Promise<PoolConnection>;
+}
 export class MysqlBackupScheduleStore implements BackupScheduleStore {
   constructor(private readonly poolProvider: () => SqlPool | null = () => dbConnection.getPool() as unknown as SqlPool | null) {}
   private pool(): SqlPool {
@@ -74,12 +78,29 @@ export class MysqlBackupScheduleStore implements BackupScheduleStore {
     return result.affectedRows === 1;
   }
   async finish(deviceId: number, date: string, errorCode: string | null): Promise<void> {
-    // finished_at marks a durably known result while status is still running.
-    // A late known outcome can also correct an interruption inferred by another worker.
-    // Both statements are idempotent: a lost response never causes another SSH operation.
-    await this.pool().execute(`UPDATE network_config_backup_runs SET status = 'running', error_code = ?, finished_at = CURRENT_TIMESTAMP
-      WHERE device_id = ? AND scheduled_date = ?
-      AND ((status = 'running' AND finished_at IS NULL) OR (status = 'failed' AND error_code = 'CONFIG_BACKUP_INTERRUPTED'))`, [errorCode, deviceId, date]);
+    // Reconcile under a row lock before retrying an ambiguous SQL response.
+    // The checkpoint commits separately so a restart can finish without repeating SSH.
+    const connection = await this.pool().getConnection();
+    try {
+      await connection.beginTransaction();
+      const [rows] = await connection.execute<any[]>(`SELECT status, error_code, finished_at FROM network_config_backup_runs
+        WHERE device_id = ? AND scheduled_date = ? FOR UPDATE`, [deviceId, date]);
+      const row = rows[0];
+      if (!row || (row.status !== 'running' && row.error_code !== 'CONFIG_BACKUP_INTERRUPTED')) {
+        await connection.commit();
+        return;
+      }
+      // A late known outcome can correct an interruption inferred by another worker.
+      if (row.finished_at === null || row.error_code === 'CONFIG_BACKUP_INTERRUPTED') {
+        await connection.execute(`UPDATE network_config_backup_runs SET status = 'running', error_code = ?, finished_at = CURRENT_TIMESTAMP
+          WHERE device_id = ? AND scheduled_date = ?`, [errorCode, deviceId, date]);
+      }
+      await connection.commit();
+    } catch (error) {
+      await connection.rollback().catch(() => undefined);
+      throw error;
+    } finally { connection.release(); }
+    // Release the checkpoint connection before using the pool, including when its limit is one.
     await this.pool().execute(`UPDATE network_config_backup_runs SET status = IF(error_code IS NULL, 'success', 'failed')
       WHERE device_id = ? AND scheduled_date = ? AND status = 'running' AND finished_at IS NOT NULL`, [deviceId, date]);
   }
