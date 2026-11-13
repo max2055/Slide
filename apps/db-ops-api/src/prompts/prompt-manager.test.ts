@@ -193,6 +193,59 @@ describe('PromptManager version lifecycle (#360, #545, #696)', () => {
     await expect(manager.createVersion('sample', 'success')).resolves.toMatchObject({ version: 3 });
   });
 
+  it('#545 Chief review: returns committed publication even if staging unlink fails', async () => {
+    const { manager, versionsDir } = await fixture();
+    const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const link = vi.spyOn(fs.promises, 'link');
+    vi.spyOn(fs.promises, 'unlink').mockRejectedValueOnce(Object.assign(
+      new Error('secret cleanup path'), { code: 'EACCES' },
+    ));
+    await expect(manager.createVersion('sample', 'published')).resolves.toEqual({ version: 3, fileName: 'sample-v3.md' });
+    expect(link).toHaveBeenCalledTimes(1);
+    expect(await readFile(join(versionsDir, 'sample-v3.md'), 'utf-8')).toBe('published');
+    expect(manager.getVersionContent('sample', 3)).toBe('published');
+    expect(warning).toHaveBeenCalledWith('[PromptManager] 临时文件清理失败 (unlink: EACCES)');
+    expect(JSON.stringify(warning.mock.calls)).not.toContain('secret');
+    await reload(manager);
+    expect(manager.getTypeInfo('sample')!.versions).toHaveLength(2);
+    await expect(manager.createVersion('sample', 'next request')).resolves.toMatchObject({ version: 4 });
+  });
+
+  it.each(['write', 'link'] as const)('#545 Chief review: preserves the first %s error when both cleanup steps fail', async (stage) => {
+    const { manager, versionsDir } = await fixture();
+    const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const primary = Object.assign(new Error('original failure'), { code: 'EIO' });
+    const closeFailure = Object.assign(new Error('secret close path'), { code: 'EBADF' });
+    const originalOpen = fs.promises.open.bind(fs.promises);
+    vi.spyOn(fs.promises, 'open').mockImplementationOnce(async (...args) => {
+      const handle = await originalOpen(...args);
+      const originalClose = handle.close.bind(handle);
+      const close = vi.spyOn(handle, 'close');
+      if (stage === 'write') {
+        vi.spyOn(handle, 'writeFile').mockRejectedValueOnce(primary);
+      } else {
+        close.mockImplementationOnce(originalClose);
+      }
+      close.mockImplementationOnce(async () => { await originalClose(); throw closeFailure; });
+      return handle;
+    });
+    const link = vi.spyOn(fs.promises, 'link');
+    if (stage === 'link') link.mockRejectedValueOnce(primary);
+    const unlink = vi.spyOn(fs.promises, 'unlink').mockRejectedValueOnce(Object.assign(
+      new Error('secret unlink path'), { code: 'ENOSPC' },
+    ));
+    await expect(manager.createVersion('sample', 'failed')).rejects.toBe(primary);
+    expect(unlink).toHaveBeenCalledTimes(1);
+    expect(link).toHaveBeenCalledTimes(stage === 'link' ? 1 : 0);
+    expect(manager.getVersionContent('sample', 3)).toBeNull();
+    expect((await readdir(versionsDir)).filter(file => file.endsWith('.md'))).toEqual(['sample-v2.md']);
+    expect(warning.mock.calls).toEqual([
+      ['[PromptManager] 临时文件清理失败 (close: EBADF)'],
+      ['[PromptManager] 临时文件清理失败 (unlink: ENOSPC)'],
+    ]);
+    await expect(manager.createVersion('sample', 'recovered')).resolves.toMatchObject({ version: 3 });
+  });
+
   it('#360 watches real events, catches sanitized failures, and recovers after a burst', async () => {
     const { manager, versionsDir } = await fixture();
     const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined);

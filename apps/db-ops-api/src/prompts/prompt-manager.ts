@@ -270,7 +270,7 @@ export class PromptManager {
         while (Number.isSafeInteger(newVersion)) {
           const fileName = `${type}-v${newVersion}.md`;
           try {
-            // link publishes a complete file and fails exclusively if another process won.
+            // A successful link is the publication commit point. Cleanup must not change its receipt.
             await fs.promises.link(temporaryPath, path.join(this.versionsDir, fileName));
           } catch (error) {
             if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
@@ -284,8 +284,16 @@ export class PromptManager {
         }
         throw new Error('提示词版本号超出安全整数范围');
       } finally {
-        await temporaryFile.close();
-        await fs.promises.unlink(temporaryPath);
+        try {
+          await temporaryFile.close();
+        } catch (error) {
+          this.logCleanupFailure('close', error);
+        }
+        try {
+          await fs.promises.unlink(temporaryPath);
+        } catch (error) {
+          this.logCleanupFailure('unlink', error);
+        }
       }
     });
   }
@@ -334,6 +342,11 @@ export class PromptManager {
   private logWatchFailure(error: unknown): void {
     const code = (error as NodeJS.ErrnoException | null)?.code;
     console.warn(`[PromptManager] 文件监听或热重载失败，保留原快照 (${typeof code === 'string' && /^E[A-Z0-9]+$/.test(code) ? code : 'UNKNOWN'})`);
+  }
+
+  private logCleanupFailure(operation: 'close' | 'unlink', error: unknown): void {
+    const code = (error as NodeJS.ErrnoException | null)?.code;
+    console.warn(`[PromptManager] 临时文件清理失败 (${operation}: ${typeof code === 'string' && /^E[A-Z0-9]+$/.test(code) ? code : 'UNKNOWN'})`);
   }
 }
 
