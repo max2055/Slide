@@ -707,3 +707,57 @@ describe('exportAuditLogs', () => {
     expect(parsed).toHaveLength(1);
   });
 });
+
+// MAX-434 / #490: the mirror must stay bounded without changing durable semantics.
+describe('audit memory retention', () => {
+  it('keeps only the latest 1000 mirror entries after 10000 durable writes', async () => {
+    const mirror = new MemoryAuditLogStore();
+    const durable = { write: vi.fn(async () => {}), query: vi.fn(async () => ({ entries: [], total: 10000 })), export: vi.fn(async () => 'durable') };
+    const manager = new AuditLogManager(mirror);
+    manager.setPersistentStore(durable);
+    for (let i = 0; i < 10000; i++) await manager.logSystemOperation({ userId: '7', username: 'alice', method: 'PATCH', route: '/api/users/:id', statusCode: 204, requestId: String(i) });
+    expect(durable.write).toHaveBeenCalledTimes(10000);
+    expect(mirror.getCount()).toBe(1000);
+    const cached = await mirror.query({ limit: 1000 });
+    expect(cached.entries.map(row => row.details?.requestId).sort()).toEqual(Array.from({ length: 1000 }, (_, i) => String(i + 9000)).sort());
+    expect(await manager.query({})).toEqual({ entries: [], total: 10000 });
+    expect(await manager.export({})).toBe('durable');
+  });
+
+  it('propagates durable failure, retains a bounded mirror and emits no success event', async () => {
+    const mirror = new MemoryAuditLogStore(2);
+    const write = vi.fn(async () => { throw new Error('DB_UNAVAILABLE'); });
+    const manager = new AuditLogManager(mirror, { write, query: vi.fn(), export: vi.fn() });
+    const event = vi.fn(); manager.on('log:system_operation', event);
+    for (let i = 0; i < 5; i++) await expect(manager.logSystemOperation({ userId: '7', username: 'alice', method: 'PATCH', route: '/api/users/:id', statusCode: 204 })).rejects.toThrow('DB_UNAVAILABLE');
+    expect(write).toHaveBeenCalledTimes(5);
+    expect(mirror.getCount()).toBe(2);
+    expect(event).not.toHaveBeenCalled();
+  });
+
+  it('rejects invalid capacities and releases entries on clear', async () => {
+    for (const capacity of [0, -1, 1.5, Infinity, NaN]) expect(() => new MemoryAuditLogStore(capacity)).toThrow();
+    const store = new MemoryAuditLogStore(1);
+    const manager = new AuditLogManager(store);
+    await manager.logSystemOperation({ userId: '7', username: 'alice', method: 'PATCH', route: '/api/users/:id', statusCode: 204 });
+    store.clear(); expect(store.getCount()).toBe(0);
+  });
+});
+
+// MAX-436 / #491: VARCHAR length counts Unicode code points, not UTF-16 units.
+describe('audit User-Agent column boundary', () => {
+  it.each([512, 513, 1024])('bounds %i-character User-Agent in manager and direct database writes', async length => {
+    for (const character of ['a', '中', '😀']) {
+      const execute = vi.fn(async (..._args: any[]) => []);
+      const database = new DatabaseAuditLogStore({ execute } as any);
+      const memory = new MemoryAuditLogStore();
+      const manager = new AuditLogManager(memory, database);
+      await manager.logSystemOperation({ userId: '7', username: 'alice', method: 'PATCH', route: '/api/users/:id', statusCode: 500, userAgent: character.repeat(length) });
+      expect(execute.mock.calls[0][1][12]).toBe(character.repeat(512));
+      const entry = (await memory.query({})).entries[0];
+      expect(entry.userAgent).toBe(character.repeat(512));
+      await database.write({ ...entry, userAgent: character.repeat(length) });
+      expect(execute.mock.calls[1][1][12]).toBe(character.repeat(512));
+    }
+  });
+});

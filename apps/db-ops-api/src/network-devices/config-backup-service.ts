@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import type { Pool } from 'mysql2/promise';
 import { Client, type ClientChannel, type ConnectConfig } from 'ssh2';
 
 import { decryptData, dbConnection, encryptData } from '../db-connection.js';
@@ -37,7 +38,8 @@ export type ConfigBackupErrorCode =
   | 'CONFIG_EMPTY'
   | 'CONFIG_BACKUP_NOT_FOUND'
   | 'CONFIG_BACKUP_DIFF_LIMIT'
-  | 'CONFIG_BACKUP_STORE_UNAVAILABLE';
+  | 'CONFIG_BACKUP_STORE_UNAVAILABLE'
+  | 'CONFIG_BACKUP_SAVED_AUDIT_FAILED';
 
 export class ConfigBackupError extends Error {
   readonly code: ConfigBackupErrorCode;
@@ -105,7 +107,7 @@ export interface ConfigBackupStore {
     sizeBytes: number;
     redactionStatus: ConfigBackupSummary['redactionStatus'];
     createdBy: number | null;
-  }): Promise<ConfigBackupSummary>;
+  }): Promise<ConfigBackupInsertResult>;
   /** Legacy capture seam (all methods are normalized by the constructor). */
   getTarget?(deviceId: number): Promise<ConfigBackupTarget | null>;
   getCredentials?(deviceId: number): Promise<NetworkDeviceCredentials | null>;
@@ -137,6 +139,18 @@ export interface ConfigBackupCrypto {
 
 export interface StoredConfigBackup extends ConfigBackupSummary {
   contentEncrypted: string;
+}
+
+export interface ConfigBackupInsertResult {
+  summary: ConfigBackupSummary;
+  created: boolean;
+}
+
+/** The backup is queryable, but the required audit did not complete. Never recollect automatically. */
+export class ConfigBackupSavedAuditError extends ConfigBackupError {
+  constructor(readonly result: ConfigBackupResult, cause: unknown) {
+    super('CONFIG_BACKUP_SAVED_AUDIT_FAILED', { cause });
+  }
 }
 
 export interface ConfigBackupResult {
@@ -187,7 +201,7 @@ export async function defaultConfigBackupAudit(event: ConfigBackupAuditEvent): P
   });
 }
 
-function pool(): any {
+function pool(): Pool {
   const value = dbConnection.getPool();
   if (!value) throw new ConfigBackupError('CONFIG_BACKUP_STORE_UNAVAILABLE');
   return value;
@@ -202,10 +216,10 @@ function asSummary(row: any): ConfigBackupSummary {
   };
 }
 
-function createSqlStore(): ConfigBackupStore {
+export function createSqlStore(poolProvider: () => Pick<Pool, 'execute' | 'getConnection'> = pool): ConfigBackupStore {
   return {
     async list(deviceId, limit) {
-      const [rows] = await pool().execute(
+      const [rows] = await poolProvider().execute(
         `SELECT id, device_id AS deviceId, version_no AS versionNo, content_sha256 AS contentSha256,
                 source_protocol AS sourceProtocol, collected_at AS collectedAt, size_bytes AS sizeBytes,
                 redaction_status AS redactionStatus
@@ -215,7 +229,7 @@ function createSqlStore(): ConfigBackupStore {
       return (rows as any[]).map(asSummary);
     },
     async find(deviceId, backupId) {
-      const [rows] = await pool().execute(
+      const [rows] = await poolProvider().execute(
         `SELECT id, device_id AS deviceId, version_no AS versionNo, content_encrypted AS contentEncrypted,
                 content_sha256 AS contentSha256, source_protocol AS sourceProtocol, collected_at AS collectedAt,
                 size_bytes AS sizeBytes, redaction_status AS redactionStatus
@@ -228,27 +242,16 @@ function createSqlStore(): ConfigBackupStore {
     async insert(input) {
       // A single connection/transaction prevents two simultaneous collectors
       // from allocating the same version number or saving duplicate content.
-      const db = pool();
-      if (typeof db.getConnection !== 'function') {
-        const [existing] = await db.execute('SELECT id, device_id AS deviceId, version_no AS versionNo, content_sha256 AS contentSha256, source_protocol AS sourceProtocol, collected_at AS collectedAt, size_bytes AS sizeBytes, redaction_status AS redactionStatus FROM network_device_config_backups WHERE device_id = ? AND content_sha256 = ? LIMIT 1', [input.deviceId, input.contentSha256]);
-        if ((existing as any[])[0]) return asSummary((existing as any[])[0]);
-        const [versionRows] = await db.execute('SELECT COALESCE(MAX(version_no), 0) + 1 AS nextVersion FROM network_device_config_backups WHERE device_id = ?', [input.deviceId]);
-        const versionNo = Number((versionRows as any[])[0]?.nextVersion ?? 1);
-        const [result] = await db.execute(
-          `INSERT INTO network_device_config_backups
-           (device_id, version_no, content_encrypted, content_sha256, source_protocol, collected_at, size_bytes, redaction_status, created_by)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-          [input.deviceId, versionNo, input.contentEncrypted, input.contentSha256, input.sourceProtocol, input.collectedAt, input.sizeBytes, input.redactionStatus, input.createdBy],
-        );
-        return { id: Number((result as any).insertId), deviceId: input.deviceId, versionNo, contentSha256: input.contentSha256, sourceProtocol: input.sourceProtocol, collectedAt: input.collectedAt.toISOString(), sizeBytes: input.sizeBytes, redactionStatus: input.redactionStatus };
-      }
+      const db = poolProvider();
       const connection = await db.getConnection();
       try {
         await connection.beginTransaction();
+        // Serialize all versions for a device, including its very first backup.
+        await connection.execute('SELECT id FROM network_devices WHERE id = ? FOR UPDATE', [input.deviceId]);
         const [existing] = await connection.execute('SELECT id, device_id AS deviceId, version_no AS versionNo, content_sha256 AS contentSha256, source_protocol AS sourceProtocol, collected_at AS collectedAt, size_bytes AS sizeBytes, redaction_status AS redactionStatus FROM network_device_config_backups WHERE device_id = ? AND content_sha256 = ? LIMIT 1 FOR UPDATE', [input.deviceId, input.contentSha256]);
         if ((existing as any[])[0]) {
           await connection.commit();
-          return asSummary((existing as any[])[0]);
+          return { summary: asSummary((existing as any[])[0]), created: false };
         }
         const [versionRows] = await connection.execute('SELECT COALESCE(MAX(version_no), 0) + 1 AS nextVersion FROM network_device_config_backups WHERE device_id = ? FOR UPDATE', [input.deviceId]);
         const versionNo = Number((versionRows as any[])[0]?.nextVersion ?? 1);
@@ -259,15 +262,9 @@ function createSqlStore(): ConfigBackupStore {
           [input.deviceId, versionNo, input.contentEncrypted, input.contentSha256, input.sourceProtocol, input.collectedAt, input.sizeBytes, input.redactionStatus, input.createdBy],
         );
         await connection.commit();
-        return { id: Number((result as any).insertId), deviceId: input.deviceId, versionNo, contentSha256: input.contentSha256, sourceProtocol: input.sourceProtocol, collectedAt: input.collectedAt.toISOString(), sizeBytes: input.sizeBytes, redactionStatus: input.redactionStatus };
+        return { created: true, summary: { id: Number((result as any).insertId), deviceId: input.deviceId, versionNo, contentSha256: input.contentSha256, sourceProtocol: input.sourceProtocol, collectedAt: input.collectedAt.toISOString(), sizeBytes: input.sizeBytes, redactionStatus: input.redactionStatus } };
       } catch (error) {
         await connection.rollback().catch(() => undefined);
-        // A concurrent insert can win the unique hash/version race. Resolve it
-        // as a deduplicated result instead of exposing a raw SQL error.
-        if ((error as any)?.code === 'ER_DUP_ENTRY') {
-          const [rows] = await db.execute('SELECT id, device_id AS deviceId, version_no AS versionNo, content_sha256 AS contentSha256, source_protocol AS sourceProtocol, collected_at AS collectedAt, size_bytes AS sizeBytes, redaction_status AS redactionStatus FROM network_device_config_backups WHERE device_id = ? AND content_sha256 = ? LIMIT 1', [input.deviceId, input.contentSha256]);
-          if ((rows as any[])[0]) return asSummary((rows as any[])[0]);
-        }
         throw error;
       } finally { connection.release(); }
     },
@@ -293,6 +290,52 @@ function redactConfiguration(content: string): { preview: string; status: Config
   } catch {
     return { preview: '', status: 'failed' };
   }
+}
+
+function diffConfigurationLines(left: string, right: string): string {
+  const before = left.split(/\r?\n/);
+  const after = right.split(/\r?\n/);
+  let start = 0;
+  let beforeEnd = before.length;
+  let afterEnd = after.length;
+  while (start < beforeEnd && start < afterEnd && before[start] === after[start]) start++;
+  while (beforeEnd > start && afterEnd > start && before[beforeEnd - 1] === after[afterEnd - 1]) {
+    beforeEnd--;
+    afterEnd--;
+  }
+  const n = beforeEnd - start;
+  const m = afterEnd - start;
+  const changes: string[] = [];
+  // Bound the LCS table to 4 MB / one million cells. Byte limits alone do not
+  // bound quadratic work for many short lines. For larger changed regions,
+  // show a complete replacement of that region (accurate, but not minimal).
+  if (n === 0 || m === 0 || (n + 1) * (m + 1) > 1_000_000) {
+    for (let i = start; i < beforeEnd; i++) changes.push(`-${before[i]}`);
+    for (let j = start; j < afterEnd; j++) changes.push(`+${after[j]}`);
+    return changes.join('\n');
+  }
+  const width = m + 1;
+  const lengths = new Uint32Array((n + 1) * width);
+  for (let i = n - 1; i >= 0; i--) {
+    for (let j = m - 1; j >= 0; j--) {
+      lengths[i * width + j] = before[start + i] === after[start + j]
+        ? 1 + lengths[(i + 1) * width + j + 1]
+        : Math.max(lengths[(i + 1) * width + j], lengths[i * width + j + 1]);
+    }
+  }
+  let i = 0;
+  let j = 0;
+  while (i < n || j < m) {
+    if (i < n && j < m && before[start + i] === after[start + j]) {
+      i++;
+      j++;
+    } else if (i < n && (j === m || lengths[(i + 1) * width + j] >= lengths[i * width + j + 1])) {
+      changes.push(`-${before[start + i++]}`);
+    } else {
+      changes.push(`+${after[start + j++]}`);
+    }
+  }
+  return changes.join('\n');
 }
 
 function stableFailure(error: unknown, fallback: ConfigBackupErrorCode = 'SSH_COMMAND_FAILED'): ConfigBackupError {
@@ -483,6 +526,9 @@ export class ConfigBackupService {
         const result = await this.collect(deviceId, actorId);
         return { success: true, backup: { ...result.summary, preview: result.preview }, duplicate: result.deduplicated };
       } catch (error) {
+        if (error instanceof ConfigBackupSavedAuditError) {
+          return { success: false, error: error.code, backupSaved: true, retryable: false, backup: error.result.summary, duplicate: error.result.deduplicated };
+        }
         return { success: false, error: error instanceof ConfigBackupError ? error.code : 'CONFIG_BACKUP_FAILED' };
       }
     }
@@ -571,12 +617,17 @@ export class ConfigBackupService {
       const digest = createHash('sha256').update(content, 'utf8').digest('hex');
       const redaction = redactConfiguration(content);
       failureStage = 'CONFIG_BACKUP_STORE_UNAVAILABLE';
-      const summary = await this.store.insert!({ deviceId, contentEncrypted: this.crypto.encrypt(content), contentSha256: digest, sourceProtocol: 'ssh', collectedAt: this.clock(), sizeBytes, redactionStatus: redaction.status, createdBy: actorId });
-      const result = { summary, preview: redaction.preview.slice(0, 64 * 1024), deduplicated: summary.contentSha256 === digest };
-      await this.recordAudit({ action: 'collect', deviceId, backupId: summary.id, contentSha256: digest, sizeBytes, actorId });
+      const { summary, created } = await this.store.insert!({ deviceId, contentEncrypted: this.crypto.encrypt(content), contentSha256: digest, sourceProtocol: 'ssh', collectedAt: this.clock(), sizeBytes, redactionStatus: redaction.status, createdBy: actorId });
+      const result = { summary, preview: redaction.preview.slice(0, 64 * 1024), deduplicated: !created };
+      try {
+        await this.recordAudit({ action: 'collect', deviceId, backupId: summary.id, contentSha256: digest, sizeBytes, actorId });
+      } catch (error) {
+        throw new ConfigBackupSavedAuditError(result, error);
+      }
       return result;
     } catch (error) {
       const stable = stableFailure(error, failureStage);
+      if (stable instanceof ConfigBackupSavedAuditError) throw stable;
       const auditResult = this.recordAudit({ action: 'failed', deviceId, reason: stable.code, actorId });
       if (auditResult && typeof (auditResult as Promise<void>).catch === 'function') await (auditResult as Promise<void>).catch(() => undefined);
       throw stable;
@@ -618,13 +669,8 @@ export class ConfigBackupService {
       if (this.legacyMode) return { success: false, error: 'CONFIG_BACKUP_DIFF_LIMIT' };
       throw new ConfigBackupError('CONFIG_BACKUP_DIFF_LIMIT');
     }
-    const leftLines = left.split(/\r?\n/);
-    const rightLines = right.split(/\r?\n/);
-    const rightSet = new Set(rightLines);
-    const leftSet = new Set(leftLines);
-    const removed = leftLines.filter((line) => !rightSet.has(line)).map((line) => `-${line}`);
-    const added = rightLines.filter((line) => !leftSet.has(line)).map((line) => `+${line}`);
-    return this.legacyMode ? { success: true, fromId, toId, diff: [...removed, ...added].join('\n') } : { fromId, toId, diff: [...removed, ...added].join('\n') };
+    const diff = diffConfigurationLines(left, right);
+    return this.legacyMode ? { success: true, fromId, toId, diff } : { fromId, toId, diff };
   }
 
   private async runFixedCommands(connection: ConfigBackupConnection, commands: readonly string[]): Promise<string> {

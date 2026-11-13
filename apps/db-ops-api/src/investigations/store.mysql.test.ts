@@ -24,6 +24,10 @@ describe.skipIf(!port)('formal investigation persistence transactions', () => {
     idempotencyKey: 'request:1', message: 'Investigate the latency', expectedVersion: 1 });
 
   const observation = recoveryObservation(database);
+  // MAX-389 CI42820938621/API8: migration-1 spent 9.89s actively running
+  // 1,000+ statements (lock wait 1.5ms); the generic 10s hook cut it off.
+  // Allow 3x that measured setup cost for this full-schema hook only. Per-test
+  // and global timeouts stay unchanged; stage/SQL timings remain archived.
   beforeAll(async () => {
     let initialized = false;
     try {
@@ -58,7 +62,7 @@ describe.skipIf(!port)('formal investigation persistence transactions', () => {
       });
       initialized = true;
     } finally { observation.finish(initialized); }
-  });
+  }, 30_000);
   beforeEach(async () => {
     await pool.query('DROP TRIGGER IF EXISTS inject_admission_failure');
     for (const table of ['test_scope_grants', 'test_operator_grants', 'investigation_admission_keys', 'investigation_requests', 'investigation_resources', 'investigation_members', 'investigations', 'chat_messages', 'chat_sessions', 'outbox_events', 'workflow_jobs', 'agent_runs']) await pool.query(`DELETE FROM ${table}`);

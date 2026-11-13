@@ -16,6 +16,20 @@ function spec(extra: Partial<AgentRunSpec> = {}): AgentRunSpec {
 function provider(chat: LLMProvider['chat']): LLMProvider { return { getDefaultModel: () => 'test', chat, chatStream: (m, t, _c, o) => chat(m, t, o) }; }
 afterEach(() => { vi.useRealTimers(); });
 
+it('MAX-470: BigInt, circular and undefined tool results survive the full loop with budgets', async () => {
+  const cycle: Record<string, unknown> = { value: 2 }; cycle.self = cycle;
+  const values = [1n, cycle, undefined];
+  const config = spec();
+  config.tools.register({ ...config.tools.get('read')!, execute: async args => values[Number(args.n)] });
+  let count = 0;
+  const result = await new AgentRunner(provider(async () => count < values.length ? call(count++) : ok)).run(config);
+  expect(result.stopReason).toBe('completed');
+  expect(result.runtimeState).toMatchObject({ toolCalls: 3, noProgressSteps: 1 });
+  expect(result.runtimeState!.progressEvidence).toHaveLength(3);
+  expect(result.messages.filter(m => m.role === 'tool')).toHaveLength(3);
+  expect(() => JSON.stringify(result)).not.toThrow();
+});
+
 it('completes 45 model steps across 130 seconds with progress and no run deadline', async () => {
   vi.useFakeTimers(); let count = 0;
   const chat = vi.fn(async () => { await new Promise(r => setTimeout(r, 130_000 / 45)); return ++count < 45 ? call(count) : ok; });

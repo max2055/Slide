@@ -52,6 +52,29 @@ describe('instance-host-field', () => {
     expect(changes).not.toHaveBeenCalled();
   });
 
+  // MAX-612 / #648: inspect the DOM on the first appearance after async host loading.
+  it.each([
+    ['standalone', '独立节点'], ['primary', '主节点'], ['replica', '副本'],
+    ['shard', '分片'], ['arbiter', '仲裁节点'], ['unknown', '未知角色'],
+  ])('first displays the saved %s role without changing the mapping', async (role, label) => {
+    const element = document.createElement('instance-host-field') as HostFieldElement;
+    element.value = [{ serverId: 7, role }];
+    const changes = vi.fn();
+    element.addEventListener('instance-host-change', changes);
+    document.body.append(element);
+    await settle(element);
+    const select = element.shadowRoot!.querySelector<HTMLSelectElement>('select')!;
+    expect(select.value).toBe(role);
+    expect(select.selectedOptions[0].textContent).toBe(label);
+    expect(element.value).toEqual([{ serverId: 7, role }]);
+    expect(changes).not.toHaveBeenCalled();
+
+    element.value = [{ serverId: 7, role: role === 'primary' ? 'replica' : 'primary' }];
+    await element.updateComplete;
+    expect(select.value).toBe(element.value[0].role);
+    expect(changes).not.toHaveBeenCalled();
+  });
+
   it('emits mappings only when the user selects a host or edits its role', async () => {
     const element = document.createElement('instance-host-field') as HostFieldElement;
     element.value = [];

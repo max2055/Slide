@@ -9,6 +9,11 @@ const actor = { userId: 7, username: 'op', roles: [], permissions: ['ai:manage']
 const query = (sql_text = "SELECT * FROM orders WHERE id=1") => ({ sql_text, schema_name: 'shop', avg_time_ms: 7 }) as any;
 beforeEach(() => { vi.clearAllMocks(); authorize.mockResolvedValue(undefined); explain.mockResolvedValue('MySQL 执行计划:\n  表：orders'); execute.mockResolvedValue({ success: true, rows: [{ TABLE_NAME: 'orders' }] }); });
 describe('TopSQL server collection boundary', () => {
+  it.each([20, 0, null])('MAX-398 keeps minimum %s and total in analysis evidence', async minimum => {
+    const result = await collectTopSqlEvidence(42, { ...query(), avg_time_ms: 100, max_time_ms: minimum === null ? null : 150, min_time_ms: minimum, total_time_ms: 400 }, actor);
+    expect(result.metrics).toMatchObject({ avg_time_ms: 100, min_time_ms: minimum, max_time_ms: minimum === null ? null : 150, total_time_ms: 400 });
+  });
+
   it.each([
     ['double', 'SELECT `email2` FROM `orders2` WHERE email="FAKE_DOUBLE_VALUE"', 'Filter: email="FAKE_DOUBLE_VALUE"'],
     ['escaped double', String.raw`SELECT * FROM orders WHERE email="FAKE_DOUBLE\"VALUE"`, String.raw`Filter: email="FAKE_DOUBLE\"VALUE"`],

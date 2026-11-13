@@ -2,6 +2,7 @@
  * LLM 配置数据库服务 - 重构版
  * 支持完整的 Provider 配置、用量追踪、成本统计
  */
+import { isSupportedApiFormat, API_FORMAT_MIGRATION_MESSAGE } from './llm/provider-api-format.js';
 import mysql from 'mysql2/promise';
 import type { LLMScene, SceneBinding } from './llm/scene-routing.js';
 import { dbConnection, encryptData, decryptData, needsEncryptionMigration } from './db-connection';
@@ -355,6 +356,12 @@ class LLMDatabaseService {
    * 配置提供商
    */
   async configureProvider(config: LLMProviderConfig): Promise<{ success: boolean; error?: string; providerId?: number }> {
+    if (config.displayName !== undefined && (typeof config.displayName !== 'string' || [...config.displayName].length > 100)) {
+      return { success: false, error: 'LLM_DISPLAY_NAME_INVALID：显示名称最多 100 个字符' };
+    }
+    if (config.apiFormat !== undefined && config.apiFormat !== '' && !isSupportedApiFormat(config.apiFormat)) {
+      return { success: false, error: API_FORMAT_MIGRATION_MESSAGE };
+    }
     const invalid = () => ({ success: false, error: 'LLM_MODEL_PARAMETERS_INVALID：上下文和输出必须为正整数，且 Max Tokens + 1024 必须小于上下文窗口' });
     const positive = (n: unknown) => Number.isSafeInteger(n) && Number(n) > 0;
     if ((config.contextWindow !== undefined && (!positive(config.contextWindow) || config.contextWindow <= 1025))
@@ -480,7 +487,7 @@ class LLMDatabaseService {
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
             config.name,
-            config.displayName || config.name.toUpperCase(),
+            config.displayName ?? config.name.toUpperCase(),
             config.deploymentType || 'api',
             config.apiFormat || null,
             config.apiKey ? encryptData(config.apiKey) : null,
@@ -519,15 +526,40 @@ class LLMDatabaseService {
       return { success: false, error: '数据库未连接' };
     }
 
+    let connection: mysql.PoolConnection | undefined;
     try {
-      // 先取消所有默认
-      await pool.execute('UPDATE llm_providers SET is_default = FALSE');
-      // 设置新的默认
-      await pool.execute('UPDATE llm_providers SET is_default = TRUE WHERE name = ?', [name]);
+      connection = await pool.getConnection();
+      await connection.beginTransaction();
+      // 所有切换按相同主键顺序锁定集合，避免先锁各自目标再互相等待。
+      // 锁同时阻止目标在校验与提交之间被删除；全程只使用本连接。
+      await connection.execute('SELECT id FROM llm_providers ORDER BY id FOR UPDATE');
+      const [targets] = await connection.execute<mysql.RowDataPacket[]>(
+        'SELECT id FROM llm_providers WHERE name = ?', [name],
+      );
+      if (targets.length !== 1) throw new Error('提供商不存在');
+
+      await connection.execute('UPDATE llm_providers SET is_default = FALSE');
+      const [result] = await connection.execute<mysql.ResultSetHeader>(
+        // 复用已锁定主键，避免与按 name 删除时持有的二级索引锁形成逆序。
+        'UPDATE llm_providers SET is_default = TRUE WHERE id = ?', [targets[0].id],
+      );
+      if (result.affectedRows !== 1) throw new Error('提供商不存在');
+      await connection.commit();
       return { success: true };
     } catch (error: any) {
+      if (connection) {
+        try {
+          await connection.rollback();
+        } catch {
+          // 不把回滚状态未知的事务连接交回池，也不自动重放切换请求。
+          connection.destroy();
+          connection = undefined;
+        }
+      }
       console.error('设置默认提供商失败:', error);
       return { success: false, error: error.message };
+    } finally {
+      connection?.release();
     }
   }
 
@@ -590,7 +622,10 @@ class LLMDatabaseService {
       return { success: false, error: '数据库未连接' };
     }
 
+    let connection: mysql.PoolConnection | undefined;
     try {
+      connection = await pool.getConnection();
+      await connection.beginTransaction();
       const total_tokens = record.input_tokens + record.output_tokens;
       const cost = record.cost_usd ?? 0;
       const duration = record.duration_ms ?? 0;
@@ -598,12 +633,24 @@ class LLMDatabaseService {
       const error = record.error_message ?? null;
       const purpose = record.purpose ?? null;
 
+      // 以数据库的本地日期对齐 DATETIME 明细；显式复用同一时间，避免午夜跨桶。
+      const [clock] = await connection.execute<mysql.RowDataPacket[]>(
+        'SELECT CAST(CURRENT_TIMESTAMP AS CHAR) AS recorded_at, CAST(CURRENT_DATE AS CHAR) AS usage_date',
+      );
+      const { recorded_at: recordedAt, usage_date: today } = clock[0];
+      // 在插入明细及建立一致性快照之前锁住本桶，串行化同日/Provider/模型写入。
+      await connection.execute(
+        `INSERT INTO llm_usage_daily_stats (provider_id, provider_name, model, date)
+         VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE id = id`,
+        [record.provider_id, record.provider_name, record.model, today],
+      );
+
       // 插入用量记录
-      await pool.execute(
+      await connection.execute(
         `INSERT INTO llm_usage_records
          (provider_id, provider_name, model, user_id, session_id, instance_id,
-          input_tokens, output_tokens, total_tokens, cost_usd, duration_ms, status, error_message, purpose)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          input_tokens, output_tokens, total_tokens, cost_usd, duration_ms, status, error_message, purpose, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           record.provider_id,
           record.provider_name,
@@ -619,42 +666,46 @@ class LLMDatabaseService {
           status,
           error,
           purpose,
+          recordedAt,
         ]
       );
 
-      // 更新每日统计
-      const today = new Date().toISOString().split('T')[0];
-      await pool.execute(
-        `INSERT INTO llm_usage_daily_stats
-         (provider_id, provider_name, model, date, total_requests, total_input_tokens, total_output_tokens,
-          total_tokens, total_cost_usd, failed_requests, avg_duration_ms, unique_users, unique_sessions)
-         VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, 1, 1)
-         ON DUPLICATE KEY UPDATE
-           total_requests = total_requests + 1,
-           total_input_tokens = total_input_tokens + VALUES(total_input_tokens),
-           total_output_tokens = total_output_tokens + VALUES(total_output_tokens),
-           total_tokens = total_tokens + VALUES(total_tokens),
-           total_cost_usd = total_cost_usd + VALUES(total_cost_usd),
-           failed_requests = failed_requests + ${status === 'error' ? 1 : 0},
-           avg_duration_ms = (avg_duration_ms * (total_requests - 1) + ${duration}) / total_requests`,
-        [
-          record.provider_id,
-          record.provider_name,
-          record.model,
-          today,
-          record.input_tokens,
-          record.output_tokens,
-          total_tokens,
-          cost,
-          status === 'error' ? 1 : 0,
-          duration,
-        ]
+      // COUNT(DISTINCT) 与明细排序规则一致：NULL 匿名用户不计数，非空会话按原值去重。
+      // 首次一致性读在桶锁之后，REPEATABLE READ 下也能看到上一位写入者的提交。
+      const [counts] = await connection.execute<mysql.RowDataPacket[]>(
+        `SELECT COUNT(DISTINCT user_id) AS unique_users, COUNT(DISTINCT session_id) AS unique_sessions
+         FROM llm_usage_records WHERE provider_id = ? AND model = ?
+         AND created_at >= ? AND created_at < DATE_ADD(?, INTERVAL 1 DAY)`,
+        [record.provider_id, record.model, today, today],
       );
+      await connection.execute(
+        `UPDATE llm_usage_daily_stats SET
+           avg_duration_ms = (avg_duration_ms * total_requests + ?) / (total_requests + 1),
+           total_requests = total_requests + 1,
+           total_input_tokens = total_input_tokens + ?,
+           total_output_tokens = total_output_tokens + ?,
+           total_tokens = total_tokens + ?, total_cost_usd = total_cost_usd + ?,
+           failed_requests = failed_requests + ?, unique_users = ?, unique_sessions = ?
+         WHERE provider_id = ? AND model = ? AND date = ?`,
+        [duration, record.input_tokens, record.output_tokens, total_tokens, cost,
+          status === 'error' ? 1 : 0, counts[0].unique_users, counts[0].unique_sessions,
+          record.provider_id, record.model, today],
+      );
+      await connection.commit();
 
       return { success: true };
     } catch (error: any) {
+      if (connection) {
+        try { await connection.rollback(); }
+        catch {
+          connection.destroy();
+          connection = undefined;
+        }
+      }
       console.error('记录用量失败:', error);
       return { success: false, error: error.message };
+    } finally {
+      connection?.release();
     }
   }
 

@@ -3,7 +3,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { WebSocket } from 'ws';
-import { ToolRegistry, MemoryPipeline, StructuredMemoryStore, memoryHash, type MemoryInput, type MemoryExtractor, type LLMProvider } from '@slide/agent-core';
+import { ToolRegistry, MemoryPipeline, ProviderMemoryExtractor, StructuredMemoryStore, memoryHash, type MemoryInput, type MemoryExtractor, type LLMProvider } from '@slide/agent-core';
 import { BusinessMemoryService } from '../memory-service.js';
 import { DirectAdapter } from '../direct-adapter.js';
 import { CanonicalStore, canonicalStore } from '../canonical-store.js';
@@ -167,4 +167,89 @@ it('source lookup failure logs a bounded degradation and chat still completes wi
   expect(JSON.stringify(vi.mocked(provider.chatStream).mock.calls[0][0])).not.toContain('legacy file');
   expect(vi.mocked(provider.chatStream).mock.calls[0][0].some(m => m.name === 'runtime_memory')).toBe(false);
   expect(JSON.stringify(log.mock.calls)).toContain('MEMORY_RETRIEVAL_FAILED'); expect(JSON.stringify(log.mock.calls)).not.toContain('private-source-error');
+});
+
+// MAX-455 / #306: use the business entrance, including its permission and run checks.
+it.each(['failed', 'running', 'cancelled', 'timed_out', 'partial', 'missing'])('retry rejects %s business run before extraction', async state => {
+  vi.mocked(agentRunService.getForActor).mockResolvedValue(state === 'missing' ? null : { ...run, state: state as AgentRun['state'] });
+  const extract = vi.fn(async () => ({ candidates: [], usage: {} }));
+  const service = new BusinessMemoryService(directory, 'workspace', async () => provider, pipeline(extract));
+  await expect(service.request(actor, 's1', 'memory.retry', { runId: 'r1' })).rejects.toThrow(state === 'missing' ? 'MEMORY_RUN_NOT_FOUND' : 'MEMORY_RUN_NOT_COMPLETED');
+  expect(extract).not.toHaveBeenCalled();
+});
+it.each(['cancelled', 'timed_out', 'budget_exhausted', 'obsolete', 'succeeded'] as const)('retry reports terminal job %s without invoking extractor', async state => {
+  const extract = vi.fn(async () => ({ candidates: [], usage: { prompt_tokens: 10, completion_tokens: 2 } }));
+  const p = pipeline(extract); const service = new BusinessMemoryService(directory, 'workspace', async () => provider, p);
+  await service.completed(actor, 's1', 'r1');
+  await p.store.transaction(s => { s.jobs[0].state = state; }); extract.mockClear();
+  expect(await service.request(actor, 's1', 'memory.retry', { runId: 'r1' })).toMatchObject({ retried: false, state, reason: state });
+  expect(extract).not.toHaveBeenCalled();
+});
+it('reports concurrent retry as in progress while only the owner invokes extraction', async () => {
+  let release!: () => void; let enter!: () => void; const ready = new Promise<void>(r => { enter = r; });
+  const extract = vi.fn(async () => { enter(); await new Promise<void>(r => { release = r; }); return { candidates: [], usage: { prompt_tokens: 10, completion_tokens: 2 } }; });
+  const service = new BusinessMemoryService(directory, 'workspace', async () => provider, pipeline(extract));
+  const active = service.request(actor, 's1', 'memory.retry', { runId: 'r1' }); await ready;
+  try { expect(await service.request(actor, 's1', 'memory.retry', { runId: 'r1' })).toMatchObject({ retried: false, reason: 'in_progress' }); }
+  finally { release(); await active; }
+  expect(extract).toHaveBeenCalledTimes(1);
+});
+it('preparation failure is not reported as retried; restored provider retries through the same business and pipeline entrance', async () => {
+  let broken = true;
+  const extractor = new ProviderMemoryExtractor(async () => { if (broken) throw new Error('PROVIDER_CONFIG_UNAVAILABLE'); return provider; });
+  const p = pipeline(extractor.extract.bind(extractor));
+  const service = new BusinessMemoryService(directory, 'workspace', async () => provider, p);
+  expect(await service.request(actor, 's1', 'memory.retry', { runId: 'r1' })).toMatchObject({ retried: false, reason: 'not_sent', state: 'failed' });
+  broken = false;
+  expect(await service.request(actor, 's1', 'memory.retry', { runId: 'r1' })).toMatchObject({ retried: true, state: 'succeeded' });
+  expect(provider.chat).toHaveBeenCalledTimes(1);
+  expect((await p.store.transaction(s => s.jobs))[0]).toMatchObject({ attempts: 1, reservedTokens: 0 });
+});
+
+it('MAX-455 retries a settled failed job and retains prior usage, deadline and attempt history', async () => {
+  const extract = vi.fn(async () => ({ candidates: [], usage: { prompt_tokens: 10, completion_tokens: 2 } }));
+  const p = pipeline(extract); const service = new BusinessMemoryService(directory, 'workspace', async () => provider, p);
+  await service.completed(actor, 's1', 'r1');
+  const old = await p.store.transaction(s => { s.jobs[0].state = 'failed'; return s.jobs[0]; });
+  expect(await service.request(actor, 's1', 'memory.retry', { runId: 'r1' })).toMatchObject({ retried: true, reason: 'attempted', state: 'succeeded' });
+  expect(await p.store.transaction(s => s.jobs[0])).toMatchObject({ deadlineAt: old.deadlineAt, attempts: 2, usage: { prompt_tokens: 20, completion_tokens: 4 } });
+  expect(await p.store.transaction(s => Object.values(s.budgets)[0])).toEqual({ attempts: 2, tokens: 24 });
+});
+it('MAX-455 reports exhausted attempts on a failed job without resetting the budget', async () => {
+  const extract = vi.fn(async () => ({ candidates: 'invalid JSON', usage: { prompt_tokens: 10, completion_tokens: 2 } }));
+  const p = pipeline(extract); const service = new BusinessMemoryService(directory, 'workspace', async () => provider, p);
+  await service.completed(actor, 's1', 'r1');
+  expect(await service.request(actor, 's1', 'memory.retry', { runId: 'r1' })).toMatchObject({ retried: false, reason: 'budget_exhausted', state: 'budget_exhausted' });
+  expect(extract).toHaveBeenCalledTimes(2);
+  expect(await p.store.transaction(s => Object.values(s.budgets)[0])).toEqual({ attempts: 2, tokens: 24 });
+});
+it('MAX-455 does not report empty canonical inputs as an actual retry', async () => {
+  inputs = []; const extract = vi.fn(async () => ({ candidates: [], usage: {} }));
+  const service = new BusinessMemoryService(directory, 'workspace', async () => provider, pipeline(extract));
+  expect(await service.request(actor, 's1', 'memory.retry', { runId: 'r1' })).toMatchObject({ retried: false, reason: 'no_inputs', state: 'succeeded' });
+  expect(extract).not.toHaveBeenCalled();
+});
+
+it('MAX-455/465: real WS retry returns preparation failure, actual retry and live permission rejection', async () => {
+  let broken = true;
+  const extractor = new ProviderMemoryExtractor(async () => { if (broken) throw new Error('PROVIDER_CONFIG_UNAVAILABLE'); return provider; });
+  const p = pipeline(extractor.extract.bind(extractor));
+  await connection(p);
+  const client = clients.at(-1)!;
+  const request = (messageId: string) => new Promise<any>((resolve, reject) => {
+    const timer = setTimeout(() => { client.off('message', receive); reject(new Error('memory response timeout')); }, 3000);
+    const receive = (data: any) => {
+      const event = JSON.parse(String(data));
+      if (event.messageId !== messageId) return;
+      clearTimeout(timer); client.off('message', receive); resolve(event);
+    };
+    client.on('message', receive);
+    client.send(JSON.stringify({ type: 'memory.retry', sessionKey: 's1', runId: 'r1', messageId }));
+  });
+  expect(await request('before-send')).toMatchObject({ type: 'memory.result', result: { retried: false, reason: 'not_sent', state: 'failed' } });
+  broken = false;
+  expect(await request('actual-retry')).toMatchObject({ type: 'memory.result', result: { retried: true, state: 'succeeded' } });
+  vi.mocked(chatDatabaseService.authorizeSession).mockRejectedValue(new Error('not owner'));
+  expect(await request('revoked')).toMatchObject({ type: 'error' });
+  expect(provider.chat).toHaveBeenCalledTimes(1);
 });
