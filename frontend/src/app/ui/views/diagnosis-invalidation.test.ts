@@ -1,6 +1,6 @@
 import { afterEach, expect, it, vi } from 'vitest';
 const { authFetch } = vi.hoisted(() => ({ authFetch: vi.fn() }));
-vi.mock('../../../api/index.js', () => ({ authFetch }));
+vi.mock('../../../api/index.js', () => ({ authFetch, apiClient: { getSessionContext: () => 1 } }));
 import './resource-diagnosis.js';
 
 const fact = { id: 'private-evidence', kind: 'observation', status: 'fact', quality: 'good', observedAt: new Date().toISOString(), validUntil: new Date(Date.now() + 300_000).toISOString(), source: 'collector', payload: { metricId: 'cpu', value: 92.4 } };

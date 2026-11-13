@@ -3,12 +3,30 @@ import { CronManager } from './cron-manager.js';
 import { dbConnection } from '../db-connection.js';
 import { bindScript, CONTROL_MAINTENANCE, hashScript, validateBinding } from './script-policy.js';
 import { cronAuthorityService } from './cron-authority.js';
+import * as controlSql from './control-sql-executor.js';
 import type { CronScript } from './types.js';
 
 const script = (content: string) => ({ id: 3, content, script_type: 'sql', target_db_type: 'mysql' }) as CronScript;
 afterEach(() => vi.restoreAllMocks());
 
 describe('Cron control-plane SQL regression (audit R3)', () => {
+  it.each(['revalidation', 'executor'] as const)('keeps script authorization separate from %s failure evidence (#509)', async failure => {
+    const cause = new Error(`CONTROLLED_${failure}`);
+    const refreshActor = vi.fn(async () => { if (failure === 'revalidation') throw cause; return {}; });
+    vi.spyOn(cronAuthorityService, 'authorize').mockResolvedValue({ audit: {}, refreshActor } as any);
+    vi.spyOn(dbConnection, 'getPool').mockReturnValue({} as any);
+    const execute = vi.spyOn(controlSql, 'executeControlSql').mockRejectedValue(cause);
+    const binding = bindScript(script('SELECT 1'), null, undefined, '7');
+    const job = { id: 2, task_type: 'script', script_id: 3, target_instance_id: null, script_binding: binding } as any;
+    const service = { getJobById: async () => job, startLog: async () => 1, recordExecutionAuthority: async () => true,
+      recordScriptAuthorization: vi.fn(async () => true), completeLog: vi.fn(async () => true), updateRunResult: vi.fn() };
+    await new CronManager(service as any, {} as any).executeJob(job);
+    expect(service.recordScriptAuthorization).toHaveBeenCalledWith(1, { script_id: 3, sha256: binding.sha256,
+      capability: binding.capability, authorized_by: binding.authorizedBy });
+    expect(service.completeLog).toHaveBeenCalledWith(1, 'error', '执行失败', cause.message, null, { error_trace: cause.stack });
+    expect(execute).toHaveBeenCalledTimes(failure === 'revalidation' ? 0 : 1);
+  });
+
   it('rejects the original null-target mutation probe before calling any SQL pool', async () => {
     const execute = vi.fn();
     vi.spyOn(dbConnection, 'getPool').mockReturnValue({ execute } as any);
@@ -20,7 +38,7 @@ describe('Cron control-plane SQL regression (audit R3)', () => {
     await new CronManager(service as any, {} as any).executeJob(job);
     expect(execute).not.toHaveBeenCalled();
     expect(service.updateRunResult).toHaveBeenCalledWith(2, 'error');
-    expect(service.completeLog).toHaveBeenCalledWith(1, 'error', '执行失败', 'CRON_SCRIPT_BINDING_REQUIRED', expect.anything());
+    expect(service.completeLog).toHaveBeenCalledWith(1, 'error', '执行失败', 'CRON_SCRIPT_BINDING_REQUIRED', null, expect.objectContaining({ error_trace: expect.any(String) }));
   });
 
   it.each([

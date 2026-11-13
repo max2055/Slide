@@ -1,3 +1,4 @@
+import { generateSshFixtureKeyPair } from '../../../../tests/fixtures/ssh-key.fixture.js';
 import { generateKeyPairSync, sign, createHash, randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import { Server, Client as RealClient, utils } from 'ssh2';
@@ -339,8 +340,8 @@ print('disk intent, duplicate, collision, lost reply, unknown blockade passed')
   });
 
   it('real loopback SSH handshake accepts only pinned key and fixed helper command', async () => {
-    const host = utils.generateKeyPairSync('ed25519'),
-      login = utils.generateKeyPairSync('ed25519');
+    const host = generateSshFixtureKeyPair(),
+      login = generateSshFixtureKeyPair();
     const parsed = utils.parseKey(host.private);
     if (parsed instanceof Error) throw parsed;
     const fingerprint =

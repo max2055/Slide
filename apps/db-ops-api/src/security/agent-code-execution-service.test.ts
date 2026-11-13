@@ -33,6 +33,28 @@ function executionConfig(overrides: Record<string, unknown> = {}) {
 }
 
 describe('AgentCodeExecutionService', () => {
+  // MAX-474 / #560: a readiness timeout must never be reported as code execution.
+  it.each(['TimeoutError', 'AbortError', 'Error'])('fails closed on status %s before execution', async (name) => {
+    const sandbox = controller({ status: vi.fn().mockRejectedValue(new DOMException('private probe detail', name)) });
+    const service = new AgentCodeExecutionService(config(true), sandbox);
+
+    await expect(service.execute({ runtime: 'node', code: 'console.log(1)' })).resolves.toEqual({
+      success: false, errorCode: 'SANDBOX_UNAVAILABLE', error: 'Sandbox code execution denied',
+    });
+    expect(sandbox.execute).not.toHaveBeenCalled();
+  });
+
+  it.each(['TimeoutError', 'AbortError'])('reports execution %s only after a successful status probe', async (name) => {
+    const sandbox = controller({ execute: vi.fn().mockRejectedValue(new DOMException('private execution detail', name)) });
+    const service = new AgentCodeExecutionService(config(true), sandbox);
+
+    await expect(service.execute({ runtime: 'node', code: 'console.log(1)' })).resolves.toEqual({
+      success: false, errorCode: 'SANDBOX_TIMEOUT', error: 'Sandbox code execution denied',
+    });
+    expect(sandbox.status).toHaveBeenCalledTimes(1);
+    expect(sandbox.execute).toHaveBeenCalledTimes(1);
+  });
+
   it.each([
     [false, 'SANDBOX_DISABLED'],
     [false, 'SANDBOX_CONFIG_UNAVAILABLE'],

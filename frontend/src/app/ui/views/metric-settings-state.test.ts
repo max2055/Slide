@@ -116,3 +116,13 @@ it('does not publish late binding counts after permission invalidation', async (
   await pending;
   expect(el.packageBindings).toEqual([]); expect(el.bindingsLoading).toBe(false);
 });
+
+it('MAX-448 explains missing and rejected group IDs without sending a request', async () => {
+  mock(); const el = await mount();
+  authFetch.mockClear();
+  for (const [id, message] of [['', '请先选择策略组'], ['bad/id', '策略组标识仅支持'], ['a'.repeat(65), '策略组标识仅支持']]) {
+    el.groupId = id; await el.group('load'); await el.updateComplete;
+    expect(el.shadowRoot.querySelector('[role="alert"]').textContent).toContain(message);
+  }
+  expect(authFetch).not.toHaveBeenCalled();
+});

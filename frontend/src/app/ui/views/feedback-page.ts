@@ -1,5 +1,6 @@
 import { sharedFieldStyles } from "../../styles/shared-field-styles.ts";
 import { LitElement, css, html, nothing } from 'lit';
+import { live } from 'lit/directives/live.js';
 import { customElement, state } from 'lit/decorators.js';
 import { apiClient } from '../../../api/index.js';
 import { icons } from '../../../icons.js';
@@ -46,6 +47,8 @@ export class FeedbackPage extends LitElement {
   @state() private expandedIds = new Set<number>();
   @state() private statusSavingIds = new Set<number>();
   @state() private copiedId: number | null = null;
+  @state() private overflowingIds = new Set<number>();
+  private descriptionObserver: ResizeObserver | undefined;
   private copyResetTimer: number | undefined;
 
   static styles = [sharedFieldStyles, sharedBtnStyles, css`
@@ -210,10 +213,41 @@ export class FeedbackPage extends LitElement {
 
   connectedCallback(): void {
     super.connectedCallback();
+    if (typeof ResizeObserver !== 'undefined') {
+      this.descriptionObserver = new ResizeObserver(() => this.measureDescriptions());
+    }
     void this.load();
   }
 
+  protected async updated(): Promise<void> {
+    // The table renders these light-DOM cells in its own Lit update.
+    await this.renderRoot.querySelector<LitElement>('app-data-table')?.updateComplete;
+    if (!this.isConnected) return;
+    this.descriptionObserver?.disconnect();
+    this.renderRoot.querySelectorAll<HTMLElement>('.feedback-description__text').forEach((text) => {
+      this.descriptionObserver?.observe(text);
+    });
+    this.measureDescriptions();
+  }
+
+  private measureDescriptions(): void {
+    const overflowingIds = new Set<number>();
+    this.renderRoot.querySelectorAll<HTMLElement>('.feedback-description__text').forEach((text) => {
+      // Compare full content height to two lines even while expanded, so the
+      // collapse control remains available and responds to column resizing.
+      const twoLines = Number.parseFloat(getComputedStyle(text).lineHeight) * 2;
+      if (text.scrollHeight > twoLines + 1) {
+        overflowingIds.add(Number(text.dataset.feedbackId));
+      }
+    });
+    if (overflowingIds.size !== this.overflowingIds.size
+      || [...overflowingIds].some((id) => !this.overflowingIds.has(id))) {
+      this.overflowingIds = overflowingIds;
+    }
+  }
+
   disconnectedCallback(): void {
+    this.descriptionObserver?.disconnect();
     if (this.copyResetTimer !== undefined) window.clearTimeout(this.copyResetTimer);
     super.disconnectedCallback();
   }
@@ -343,14 +377,14 @@ export class FeedbackPage extends LitElement {
   private rows(): Record<string, unknown>[] {
     return this.items.map((item) => {
       const expanded = this.expandedIds.has(item.id);
-      const canExpand = item.description.length > 48;
+      const canExpand = this.overflowingIds.has(item.id);
       const statusSaving = this.statusSavingIds.has(item.id);
       return {
         serial: html`<span class="serial">${item.id}</span>`,
         title: item.title,
         description: html`
           <div class="feedback-description ${expanded ? 'is-expanded' : ''}">
-            <span class="feedback-description__text" id="feedback-description-${item.id}">${item.description}</span>
+            <span class="feedback-description__text" data-feedback-id=${item.id} id="feedback-description-${item.id}">${item.description}</span>
             ${canExpand ? html`
               <button
                 class="btn-ghost description-toggle"
@@ -370,7 +404,7 @@ export class FeedbackPage extends LitElement {
           <select
             class="status-select status-select--${item.status}"
             aria-label="更新 ${item.title} 的状态"
-            .value=${item.status}
+            .value=${live(item.status)}
             .disabled=${statusSaving}
             @change=${(event: Event) => {
               void this.updateStatus(item, (event.currentTarget as HTMLSelectElement).value as FeedbackStatus);

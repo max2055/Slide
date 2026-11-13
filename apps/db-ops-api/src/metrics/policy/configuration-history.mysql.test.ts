@@ -44,8 +44,8 @@ describe.skipIf(!port)('configuration history on owned MySQL', () => {
     await pool.execute("INSERT IGNORE INTO permissions (id, code) VALUES (1,'instance:manage')");
     await pool.execute('INSERT IGNORE INTO role_permissions (role_id, permission_id) VALUES (1,1)');
     await pool.execute('INSERT IGNORE INTO user_roles (user_id,role_id) VALUES (1,1)');
-    await pool.execute(`INSERT INTO database_instances (id,name,environment,db_type,host,port,username,password_encrypted,status,lifecycle_state)
-      VALUES (1,'history-fixture','testing','mysql','fixture.invalid',1,'fixture','','active','available')`);
+    await pool.execute(`INSERT INTO database_instances (id,name,environment,db_type,host,port,database_name,username,password_encrypted,status,lifecycle_state)
+      VALUES (1,'history-fixture','testing','mysql','fixture.invalid',1,'history-1','fixture','','active','available')`);
     store = new MysqlPolicyStore(() => pool);
     policies = new PolicyService(store, registry, { exists: async () => true, inventory: async r => resource(r.id) }, () => at);
     const service = new TemplateBindingService({ pool: () => pool, registry,
@@ -87,8 +87,8 @@ describe.skipIf(!port)('configuration history on owned MySQL', () => {
     expect((await read(4)).json().state).toBe('unknown'); expect((await read(1)).json().settings.interval_ms).toBe(60000);
   });
   it('records a real leased handler activation for a disabled plan without remote IO or samples', async () => {
-    await pool.execute(`INSERT INTO database_instances (id,name,environment,db_type,host,port,username,password_encrypted,status,lifecycle_state)
-      VALUES (2,'disabled-fixture','testing','mysql','fixture.invalid',1,'fixture','','active','available')`);
+    await pool.execute(`INSERT INTO database_instances (id,name,environment,db_type,host,port,database_name,username,password_encrypted,status,lifecycle_state)
+      VALUES (2,'disabled-fixture','testing','mysql','fixture.invalid',1,'history-2','fixture','','active','available')`);
     const disabled = { ...ref, id: 2 };
     await policies.changeBinding(admin, disabled, { expected_revision: 0, package: pin, overrides: { enabled: 'disable' } }, true);
     const schedule = new MysqlScheduleStore(pool, registry);

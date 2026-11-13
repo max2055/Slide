@@ -3,7 +3,7 @@ import { addDatabaseTool } from './add_database.js';
 import { addDatabaseBatchTool } from './add_database_batch.js';
 
 describe('slide_add_database_batch', () => {
-  afterEach(() => vi.restoreAllMocks());
+  afterEach(() => { vi.restoreAllMocks(); vi.useRealTimers(); });
 
   it('returns an itemized result for mixed success and terminal failure', async () => {
     vi.spyOn(addDatabaseTool, 'handler')
@@ -94,19 +94,278 @@ describe('slide_add_database_batch', () => {
     expect(progress.at(-1)).toMatchObject({ completed: 5, total: 5 });
   });
 
-  it('marks unstarted items as cancelled when the signal is aborted', async () => {
+  it('does not count a pre-start cancellation as a retryable failure', async () => {
     const controller = new AbortController();
-    vi.spyOn(addDatabaseTool, 'handler').mockImplementation(async () => {
+    controller.abort();
+    controller.abort();
+    const handler = vi.spyOn(addDatabaseTool, 'handler');
+    const result = await addDatabaseBatchTool.handler({
+      concurrency: 4,
+      databases: Array.from({ length: 3 }, (_, index) => ({
+        db_type: 'mysql', host: `db-${index}`, port: 3306 + index, username: 'root', name: `pre-${index}`,
+      })),
+    }, { actor: { userId: 7 } as any, signal: controller.signal } as any);
+
+    expect(handler).not.toHaveBeenCalled();
+    expect(result).toMatchObject({
+      success: true,
+      status: 'warning',
+      summary: '批量纳管完成：0 项成功，0 项失败，3 项已取消且尚未执行',
+      data: { total: 3, succeeded: 0, failed: 0, cancelled: 3 },
+      details: { terminal: true, retryable: false, failed: 0, cancelled: 3 },
+    });
+    expect((result.data as any).results).toEqual([
+      expect.objectContaining({ index: 0, status: 'cancelled', errorCode: 'BATCH_CANCELLED', retryable: false, name: 'pre-0' }),
+      expect.objectContaining({ index: 1, status: 'cancelled', errorCode: 'BATCH_CANCELLED', retryable: false }),
+      expect.objectContaining({ index: 2, status: 'cancelled', errorCode: 'BATCH_CANCELLED', retryable: false }),
+    ]);
+    expect(result.next_actions?.join('\n')).toContain('尚未执行');
+    expect(result.next_actions?.join('\n')).not.toContain('retryable=true');
+  });
+
+  it('keeps a partial success and does not retry the batch after later items are cancelled', async () => {
+    const controller = new AbortController();
+    const handler = vi.spyOn(addDatabaseTool, 'handler').mockImplementation(async () => {
       controller.abort();
-      return { success: true, data: { instanceId: 1 } };
+      return { success: true, data: { instanceId: 1, connectionStatus: 'connected' } };
     });
     const result = await addDatabaseBatchTool.handler({
       concurrency: 1,
       databases: Array.from({ length: 3 }, (_, index) => ({ db_type: 'mysql', host: `db-${index}`, port: 3306, username: 'root' })),
     }, { actor: { userId: 7 } as any, signal: controller.signal } as any);
-    expect((result.data as any)?.results).toEqual(expect.arrayContaining([
-      expect.objectContaining({ index: 1, errorCode: 'BATCH_CANCELLED', retryable: true }),
-      expect.objectContaining({ index: 2, errorCode: 'BATCH_CANCELLED', retryable: true }),
-    ]));
+
+    expect(handler).toHaveBeenCalledTimes(1);
+    expect(result).toMatchObject({
+      success: true,
+      status: 'warning',
+      data: {
+        total: 3,
+        succeeded: 1,
+        failed: 0,
+        cancelled: 2,
+        results: [
+          { index: 0, status: 'created', instanceId: 1, retryable: false },
+          { index: 1, status: 'cancelled', errorCode: 'BATCH_CANCELLED', retryable: false },
+          { index: 2, status: 'cancelled', errorCode: 'BATCH_CANCELLED', retryable: false },
+        ],
+      },
+      details: { terminal: true, retryable: false, failed: 0, cancelled: 2 },
+    });
+    expect(result.summary).toBe('批量纳管完成：1 项成功，0 项失败，2 项已取消且尚未执行');
+  });
+
+  it('preserves a terminal failure and does not let cancellation mark the batch retryable', async () => {
+    const controller = new AbortController();
+    const handler = vi.spyOn(addDatabaseTool, 'handler').mockImplementation(async () => {
+      controller.abort();
+      return {
+        success: false,
+        error: '连接失败',
+        errorCode: 'CONNECTION_FAILED',
+        details: { terminal: true, retryable: false },
+      };
+    });
+    const result = await addDatabaseBatchTool.handler({
+      concurrency: 1,
+      databases: Array.from({ length: 3 }, (_, index) => ({ db_type: 'mysql', host: `db-${index}`, port: 3400 + index, username: 'root' })),
+    }, { actor: { userId: 7 } as any, signal: controller.signal } as any);
+
+    expect(handler).toHaveBeenCalledTimes(1);
+    expect(result).toMatchObject({
+      data: {
+        succeeded: 0,
+        failed: 1,
+        cancelled: 2,
+        results: [
+          { index: 0, status: 'failed', errorCode: 'CONNECTION_FAILED', retryable: false },
+          { index: 1, status: 'cancelled', errorCode: 'BATCH_CANCELLED', retryable: false },
+          { index: 2, status: 'cancelled', errorCode: 'BATCH_CANCELLED', retryable: false },
+        ],
+      },
+      details: { terminal: true, retryable: false },
+    });
+    expect(result.next_actions?.join('\n')).toContain('不可重试');
+    expect(result.next_actions?.join('\n')).toContain('尚未执行');
+  });
+
+  it('keeps in-flight success, exceptions, and unknown writes distinct from unstarted cancellations', async () => {
+    const controller = new AbortController();
+    let started = 0;
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const calls: number[] = [];
+    vi.spyOn(addDatabaseTool, 'handler').mockImplementation(async (args) => {
+      const index = Number(args.port) - 3306;
+      calls.push(index);
+      started += 1;
+      if (started === 3) {
+        controller.abort();
+        controller.abort();
+      }
+      await gate;
+      if (index === 1) throw new Error('in-flight exception');
+      if (index === 2) {
+        return {
+          success: false,
+          error: '创建结果未知：先对账，不要直接重试',
+          errorCode: 'CREATE_INSTANCE_FAILED',
+          details: { terminal: true, retryable: false },
+        };
+      }
+      return { success: true, data: { instanceId: 10 + index, connectionStatus: 'connected' } };
+    });
+
+    const pending = addDatabaseBatchTool.handler({
+      concurrency: 3,
+      databases: Array.from({ length: 5 }, (_, index) => ({
+        db_type: 'mysql', host: `db-${index}`, port: 3306 + index, username: 'root', name: `live-${index}`,
+      })),
+    }, { actor: { userId: 7 } as any, signal: controller.signal } as any);
+    await vi.waitFor(() => { if (started < 3) throw new Error('waiting for in-flight handlers'); });
+    release();
+    const result = await pending;
+
+    expect(calls).toEqual([0, 1, 2]);
+    expect(result).toMatchObject({
+      success: true,
+      status: 'warning',
+      data: {
+        total: 5,
+        succeeded: 1,
+        failed: 2,
+        cancelled: 2,
+        results: [
+          { index: 0, status: 'created', instanceId: 10, retryable: false },
+          { index: 1, status: 'failed', errorCode: 'BATCH_ITEM_FAILED', retryable: true },
+          { index: 2, status: 'failed', errorCode: 'CREATE_INSTANCE_FAILED', retryable: false, reason: '创建结果未知：先对账，不要直接重试' },
+          { index: 3, status: 'cancelled', errorCode: 'BATCH_CANCELLED', retryable: false, name: 'live-3' },
+          { index: 4, status: 'cancelled', errorCode: 'BATCH_CANCELLED', retryable: false, name: 'live-4' },
+        ],
+      },
+      details: { terminal: false, retryable: true, failed: 2, cancelled: 2 },
+    });
+    expect(result.summary).toBe('批量纳管完成：1 项成功，2 项失败，2 项已取消且尚未执行');
+    const guidance = result.next_actions?.join('\n') ?? '';
+    expect(guidance).toContain('retryable=true');
+    expect(guidance).toContain('不要重放已成功、已取消未执行或结果未知的条目');
+    expect(guidance).toContain('status=cancelled');
+    expect((result.data as any).results.filter((item: { status: string }) => item.status === 'cancelled')).toHaveLength(2);
+  });
+});
+
+// #372 / OCR-0286: a completed side effect survives a finish failure in the response.
+describe('batch idempotency recovery', () => {
+  afterEach(() => { vi.restoreAllMocks(); vi.useRealTimers(); });
+  const args = { concurrency: 1, databases: [0, 1].map(i => ({ db_type: 'mysql', host: `db-${i}`, port: 3306, username: 'root' })) };
+  const context = { actor: { userId: 7 }, sessionId: 'recovery', idempotencyKey: 'key' } as any;
+  it('returns all executed results and a non-retryable unconfirmed state when finish rejects', async () => {
+    const { agentToolIdempotencyService: service } = await import('../../../security/agent-tool-idempotency-service.js');
+    vi.spyOn(service, 'claim').mockResolvedValue({ kind: 'claimed', argumentsHash: 'hash', ownerToken: 'owner' });
+    vi.spyOn(service, 'checkpoint').mockResolvedValue();
+    vi.spyOn(service, 'finish').mockRejectedValue(new Error('lost acknowledgement'));
+    const handler = vi.spyOn(addDatabaseTool, 'handler').mockResolvedValue({ success: true, data: { instanceId: 101 } });
+    const result = await addDatabaseBatchTool.handler(args, context);
+    expect(handler).toHaveBeenCalledTimes(2);
+    expect(result).toMatchObject({ success: true, errorCode: 'IDEMPOTENCY_RESULT_UNCONFIRMED', data: { succeeded: 2, results: [{ instanceId: 101 }, { instanceId: 101 }] }, details: { retryable: false, recoveryState: 'unknown' } });
+  });
+  it('does not start remaining items after a result checkpoint loses its acknowledgement', async () => {
+    const { agentToolIdempotencyService: service } = await import('../../../security/agent-tool-idempotency-service.js');
+    vi.spyOn(service, 'claim').mockResolvedValue({ kind: 'claimed', argumentsHash: 'hash', ownerToken: 'owner' });
+    vi.spyOn(service, 'checkpoint').mockResolvedValueOnce().mockRejectedValue(new Error('unknown checkpoint'));
+    const finish = vi.spyOn(service, 'finish');
+    const handler = vi.spyOn(addDatabaseTool, 'handler').mockResolvedValue({ success: true, data: { instanceId: 101 } });
+    const result = await addDatabaseBatchTool.handler(args, context);
+    expect(handler).toHaveBeenCalledTimes(1);
+    expect(finish).not.toHaveBeenCalled();
+    expect(result).toMatchObject({ errorCode: 'IDEMPOTENCY_RESULT_UNCONFIRMED', data: { results: [{ instanceId: 101 }, { errorCode: 'IDEMPOTENCY_NOT_STARTED', retryable: false }] } });
+  });
+  it('exposes the interrupted checkpoint without calling any side effects', async () => {
+    const { agentToolIdempotencyService: service } = await import('../../../security/agent-tool-idempotency-service.js');
+    vi.spyOn(service, 'claim').mockResolvedValue({ kind: 'unknown', argumentsHash: 'hash', checkpoint: { items: { 0: { state: 'started' } } } });
+    const handler = vi.spyOn(addDatabaseTool, 'handler');
+    await expect(addDatabaseBatchTool.handler(args, context)).resolves.toMatchObject({ errorCode: 'IDEMPOTENCY_OUTCOME_UNKNOWN', details: { retryable: false, checkpoint: { items: { 0: { state: 'started' } } } } });
+    expect(handler).not.toHaveBeenCalled();
+  });
+});
+
+// MAX-458 Chief review: another worker/heartbeat can invalidate a delayed started acknowledgement.
+describe('concurrent batch admission after persistence failure', () => {
+  afterEach(() => { vi.restoreAllMocks(); vi.useRealTimers(); });
+  it.each(['checkpoint', 'heartbeat'])('blocks delayed admission on %s failure while preserving in-flight results', async source => {
+    const { AgentToolIdempotencyService, agentToolIdempotencyService: service } = await import('../../../security/agent-tool-idempotency-service.js');
+    if (source === 'heartbeat') vi.useFakeTimers();
+    vi.spyOn(service, 'claim').mockResolvedValue({ kind: 'claimed', argumentsHash: 'hash', ownerToken: 'owner' });
+    const finish = vi.spyOn(service, 'finish').mockResolvedValue();
+    const heartbeat = vi.spyOn(service, 'heartbeat').mockRejectedValue(new Error('ownership lost'));
+    let releaseStarted!: () => void;
+    const delayedStarted = new Promise<void>(resolve => { releaseStarted = resolve; });
+    let releaseFirst!: () => void;
+    const firstResult = new Promise<void>(resolve => { releaseFirst = resolve; });
+    let releaseInFlight!: () => void;
+    const inFlightResult = new Promise<void>(resolve => { releaseInFlight = resolve; });
+    let admitted!: () => void;
+    const initialAdmission = new Promise<void>(resolve => { admitted = resolve; });
+    let failureObserved!: () => void;
+    const failure = new Promise<void>(resolve => { failureObserved = resolve; });
+    vi.spyOn(service, 'checkpoint').mockImplementation(async (_actor, _session, _tool, _key, _execution, index, value: any) => {
+      if (index === 1 && value.state === 'started') await delayedStarted;
+      if (source === 'checkpoint' && index === 0 && value.state === 'completed') throw new Error('checkpoint acknowledgement lost');
+    });
+    const calls: number[] = [];
+    vi.spyOn(addDatabaseTool, 'handler').mockImplementation(async item => {
+      const index = Number(item.port) - 3306;
+      calls.push(index);
+      if (calls.includes(0) && calls.includes(2)) admitted();
+      if (index === 0) await firstResult;
+      if (index === 2) await inFlightResult;
+      return { success: true, data: { instanceId: 100 + index } };
+    });
+    const pending = addDatabaseBatchTool.handler({ concurrency: 3, databases: [0, 1, 2].map(i => ({ db_type: 'mysql', host: `db-${i}`, port: 3306 + i, username: 'fixture' })) }, {
+      actor: { userId: 7 }, sessionId: 'concurrent', idempotencyKey: 'key',
+      progressCallback: (event: any) => { if (event.index === 0) failureObserved(); },
+    } as any);
+    await initialAdmission;
+    if (source === 'checkpoint') {
+      releaseFirst();
+      await failure; // Progress runs only after persist has caught the failure.
+    } else {
+      await vi.advanceTimersByTimeAsync(AgentToolIdempotencyService.heartbeatMs);
+      expect(heartbeat).toHaveBeenCalledTimes(1);
+    }
+    // A successful acknowledgement arrives after another worker has latched failure.
+    releaseStarted();
+    releaseFirst();
+    releaseInFlight();
+    const result = await pending;
+    expect(calls).toEqual([0, 2]);
+    expect(finish).not.toHaveBeenCalled();
+    expect(result).toMatchObject({ errorCode: 'IDEMPOTENCY_RESULT_UNCONFIRMED', details: { retryable: false }, data: { succeeded: 2, results: [
+      { index: 0, instanceId: 100 },
+      { index: 1, errorCode: 'IDEMPOTENCY_NOT_STARTED', retryable: false },
+      { index: 2, instanceId: 102 },
+    ] } });
+  });
+});
+
+// MAX-458 Chief review: an unreconstructable historical digest is not permission to change keys.
+describe('batch identity recovery guidance', () => {
+  afterEach(() => vi.restoreAllMocks());
+  it.each([1, 2])('uses a conservative response for mismatched hash version %i', async hashVersion => {
+    const { AgentToolIdempotencyService, agentToolIdempotencyService: service, stableArgumentsHash } = await import('../../../security/agent-tool-idempotency-service.js');
+    const original = { concurrency: 1, databases: [{ db_type: 'mysql', host: 'db-a', port: 3306, username: 'fixture' }] };
+    const row = { arguments_hash: hashVersion === 1 ? '0'.repeat(64) : stableArgumentsHash(original), hash_version: hashVersion, state: 'completed', result_json: { success: true } };
+    const query = vi.fn().mockRejectedValueOnce({ code: 'ER_DUP_ENTRY' }).mockResolvedValueOnce([[row]]);
+    const realService = new AgentToolIdempotencyService(() => ({ query }));
+    vi.spyOn(service, 'claim').mockImplementation((...params) => realService.claim(...params));
+    const handler = vi.spyOn(addDatabaseTool, 'handler');
+    const result = await addDatabaseBatchTool.handler({ ...original, concurrency: 2 }, { actor: { userId: 7 }, sessionId: 'legacy', idempotencyKey: 'key' } as any);
+    expect(result.errorCode).toBe(hashVersion === 1 ? 'IDEMPOTENCY_IDENTITY_UNVERIFIED' : 'IDEMPOTENCY_KEY_CONFLICT');
+    if (hashVersion === 1) {
+      expect(result.details).toMatchObject({ terminal: true, retryable: false, recoveryState: 'identity_unverified' });
+      expect(result.next_actions?.join('')).not.toContain('使用新的幂等键');
+      expect(result.next_actions?.join('')).toContain('禁止');
+    }
+    expect(handler).not.toHaveBeenCalled();
+    expect(query).toHaveBeenCalledTimes(2);
   });
 });
