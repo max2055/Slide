@@ -33,7 +33,8 @@ export function historyWindow(turns: HistoryTurn[], count: number, selectedKey: 
   const desiredStart = selected?.index ?? Math.max(0, count - limit);
   const start = selected?.index ?? turns.findLast((turn) => turn.index <= desiredStart)?.index ?? 0;
   const end = selected ? turns.find((turn) => turn.index >= start + limit)?.index ?? count : count;
-  const previous = turns.findLast((turn) => turn.index <= Math.max(0, start - limit));
+  const previous = turns.findLast((turn) => turn.index < start && turn.index <= start - limit)
+    ?? turns.find((turn) => turn.index < start);
   const next = turns.find((turn) => turn.index === end);
   return { start, end, previous: start > 0 ? previous : undefined, next };
 }

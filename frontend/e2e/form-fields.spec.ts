@@ -113,8 +113,13 @@ test('scoring sliders have names, native click focus and percentage values', asy
 test('scoring total uses percent and keyboard errors remain associated until corrected', async ({ page }, info) => {
   const weights = { availability: .35, performance: .35, capacity: .2, security: .1 };
   let saved: unknown;
+  let finishSave!: () => void;
+  const pendingSave = new Promise<void>(resolve => { finishSave = resolve; });
   await page.route('**/api/scoring/config', async route => {
-    if (route.request().method() === 'PUT') saved = route.request().postDataJSON();
+    if (route.request().method() === 'PUT') {
+      await pendingSave;
+      saved = route.request().postDataJSON();
+    }
     await route.fulfill({ json: route.request().method() === 'PUT' ? { success: true } : weights });
   });
   await harness(page, '<scoring-settings-page></scoring-settings-page>', 'views/scoring-settings');
@@ -142,6 +147,11 @@ test('scoring total uses percent and keyboard errors remain associated until cor
   await expect(available).not.toHaveAttribute('aria-invalid');
   await expect(available).toHaveAccessibleDescription('实例在线时长与连接成功率');
   await save.click();
+  // #904 CI regression: click completion does not imply the asynchronous save settled.
+  try {
+    await expect(view.getByRole('button', { name: '保存中...', exact: true })).toBeDisabled();
+  } finally { finishSave(); }
+  await expect(view.getByRole('status').filter({ hasText: '权重配置已保存' })).toBeVisible();
   expect(saved).toEqual({ ...weights, availability: .3, performance: .4 });
 });
 
