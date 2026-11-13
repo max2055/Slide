@@ -19,5 +19,5 @@ import { installPlatformRuntimeObservation } from './platform-runtime.js';
 
 const stopRuntimeObservation = installPlatformRuntimeObservation(window,
   body => authFetch('/api/platform/frontend-events', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }),
-  () => Boolean(localStorage.getItem('token')), import.meta.env.VITE_SLIDE_BUILD_ID ?? 'unknown');
+  () => { try { return Boolean(localStorage.getItem('token')); } catch { return false; } }, import.meta.env.VITE_SLIDE_BUILD_ID ?? 'unknown');
 import.meta.hot?.dispose(stopRuntimeObservation);
