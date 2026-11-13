@@ -20,7 +20,11 @@ describe('#704 assistant final wrappers', () => {
     const code = `\`<${tag}>示例</${tag}>\`\n\n\`\`\`xml\n<${tag}>示例</${tag}>\n\`\`\``;
     const text = `<antml:final>\n${code}\n</antml:final>`;
     expect(stripReasoningTagsFromText(text)).toBe(code);
-    expect(extractText({ role: 'assistant', content: text })).toBe(code);
+    // The display entry preserves the newline after a fenced code block.
+    expect(extractText({ role: 'assistant', content: text })?.trimEnd()).toBe(code);
+    expect(extractText({ role: 'assistant', content: text })).toBe(
+      extractText({ role: 'assistant', content: `<final>\n${code}\n</final>` }),
+    );
   });
 
   it('keeps attributes, whitespace and trim options consistent with bare final', () => {
