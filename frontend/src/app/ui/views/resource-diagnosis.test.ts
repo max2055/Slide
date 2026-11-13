@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { TAB_GROUPS, tabFromPath } from '../navigation.js';
 const { authFetch } = vi.hoisted(() => ({ authFetch: vi.fn() }));
-vi.mock('../../../api/index.js', () => ({ authFetch }));
+vi.mock('../../../api/index.js', () => ({ authFetch, apiClient: { getSessionContext: () => 1 } }));
 
 afterEach(() => { document.body.replaceChildren(); authFetch.mockReset(); localStorage.clear(); history.replaceState({}, '', '/'); });
 

@@ -470,7 +470,7 @@ for (const status of [403, 409, 503]) {
   }
 }
 
-test('MAX-432 MAX-442 receipt follows real SPA departure and re-entry', async ({ page }) => {
+for (const rotate of [false, true]) test(`MAX-432 MAX-442 receipt follows real SPA departure and re-entry, rotation=${rotate}`, async ({ page }) => {
   const state = await diagnosisFixture(page); state.status = 'unknown';
   await page.goto('/resource-diagnosis?resourceType=instance&resourceId=1');
   let release!: () => void; const pending = new Promise<void>(resolve => { release = resolve; });
@@ -479,6 +479,17 @@ test('MAX-432 MAX-442 receipt follows real SPA departure and re-entry', async ({
   const view = page.locator('resource-diagnosis-page');
   await view.getByRole('button', { name: '开始只读诊断', exact: true }).click();
   await expect.poll(() => posts).toBe(1);
+  if (rotate) {
+    await page.route('**/api/rotation-probe', route => route.fulfill({ status: route.request().headers().authorization === 'Bearer fixture-token' ? 401 : 200, json: {} }));
+    await page.route('**/api/auth/refresh', route => route.fulfill({ json: { token: 'rotated-access', refreshToken: 'rotated-refresh' } }));
+    const refreshed = await page.evaluate(async () => {
+      const { apiClient, authFetch } = await import('/src/api/index.ts');
+      const context = apiClient.getSessionContext();
+      const response = await authFetch('/api/rotation-probe');
+      return { status: response.status, sameContext: context === apiClient.getSessionContext(), refresh: localStorage.getItem('refreshToken') };
+    });
+    expect(refreshed).toEqual({ status: 200, sameContext: true, refresh: 'rotated-refresh' });
+  }
   await page.evaluate(() => window.dispatchEvent(new CustomEvent('slide-navigate', { detail: { tab: 'dashboard' } })));
   await expect(view).toHaveCount(0);
   await page.evaluate(() => window.dispatchEvent(new CustomEvent('slide-navigate', { detail: { tab: 'resource-diagnosis' } })));

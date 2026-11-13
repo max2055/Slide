@@ -3,7 +3,7 @@ import { sharedFieldStyles } from "../../styles/shared-field-styles.ts";
 import { LitElement, html, css, nothing } from 'lit';
 import { keyed } from 'lit/directives/keyed.js';
 import { customElement, state } from 'lit/decorators.js';
-import { authFetch } from '../../../api/index.js';
+import { apiClient, authFetch } from '../../../api/index.js';
 import { safeDashboardReturn } from './dashboard-model.js';
 import { icons } from '../../../icons.js';
 import { sharedBtnStyles } from '../../styles/shared-btn-styles.js';
@@ -33,12 +33,11 @@ const key = (ref: ResourceRef) => `${ref.type}:${ref.id}`;
 const evidenceLabels: Record<string, string> = { good: '有效', degraded: '质量降级', partial: '部分可用', invalid: '无效', unknown: '未知', fact: '事实', inference: '推论', hypothesis: '假设', online: '在线', offline: '离线', active: '配置启用', unreachable: '不可达', error: '异常', NO_EVIDENCE_IN_WINDOW: '有效窗口内没有证据', EVIDENCE_QUALITY_UNKNOWN: '证据质量未知', OBSERVATIONS_EMPTY: '缺少观测', OBSERVATIONS_STALE: '观测已过期', OBSERVATIONS_UNAVAILABLE: '观测读取失败', RELATIONS_EMPTY: '未建立关系', ALERTS_EMPTY: '未读取到告警', EVIDENCE_PACK_TRUNCATED: '证据包已截断' };
 
 type DiagnosisTask = { analysisId: number; status: string; result?: unknown; resource?: ResourceRef; createdAt?: string; completedAt?: string; error?: string };
-const newTracking = () => ({ tasks: new Map<string, DiagnosisTask>(), pending: new Set<string>(), unconfirmed: new Set<string>() });
-let trackedSession: { token: string; tracking: ReturnType<typeof newTracking> } | undefined;
-function sessionTracking() {
-  const token = localStorage.getItem('refreshToken') ?? localStorage.getItem('token');
-  if (!token) return newTracking();
-  if (trackedSession?.token !== token) trackedSession = { token, tracking: newTracking() };
+const newTracking = () => ({ revoked: false, tasks: new Map<string, DiagnosisTask>(), pending: new Set<string>(), unconfirmed: new Set<string>() });
+let trackedSession: { context: number; tracking: ReturnType<typeof newTracking> } | undefined;
+function sessionTracking(context: number) {
+  if (!localStorage.getItem('token')) return newTracking();
+  if (trackedSession?.context !== context || trackedSession.tracking.revoked) trackedSession = { context, tracking: newTracking() };
   return trackedSession.tracking;
 }
 function validResourceRef(value: unknown): value is ResourceRef {
@@ -72,12 +71,14 @@ export class ResourceDiagnosisPage extends LitElement {
   private requestVersion = 0;
   private submissionVersion = 0;
   // Navigation changes evidence, never the lifetime of a billable request.
-  private readonly tracking = sessionTracking();
+  private readonly sessionContext = apiClient.getSessionContext();
+  private readonly tracking = sessionTracking(this.sessionContext);
+  private ownsSession() { return !this.tracking.revoked && this.sessionContext === apiClient.getSessionContext(); }
   private readonly tasks = this.tracking.tasks;
   private readonly pendingSubmissions = this.tracking.pending;
   private readonly unconfirmedSubmissions = this.tracking.unconfirmed;
   private readonly onReceipt = (event: Event) => {
-    if ((event as CustomEvent).detail !== this.tracking || !this.selected) return;
+    if (!this.ownsSession() || (event as CustomEvent).detail !== this.tracking || !this.selected) return;
     void this.loadEvidence();
   };
   private submitting = false;
@@ -99,7 +100,12 @@ export class ResourceDiagnosisPage extends LitElement {
   private clearSensitive() {
     this.invalidateFacts(); this.listVersion++; this.error = ''; this.loading = false;
   }
-  private readonly onExpired = () => { trackedSession = undefined; this.permissions = new Set(); this.clearSensitive(); };
+  private readonly onExpired = () => {
+    this.tracking.revoked = true; trackedSession = undefined;
+    this.tasks.clear(); this.pendingSubmissions.clear(); this.unconfirmedSubmissions.clear();
+    this.agentResult = null; this.submitting = false;
+    this.permissions = new Set(); this.clearSensitive();
+  };
   private readonly onPermissions = (event: Event) => {
     this.clearSensitive();
     const codes = (event as CustomEvent<{ permissions?: string[] }>).detail?.permissions;
@@ -184,16 +190,17 @@ export class ResourceDiagnosisPage extends LitElement {
     history.pushState({}, '', url); this.readSelection(); void this.loadEvidence();
   }
   private async diagnose(agent = false, retryOf?: number) {
+    if (!this.ownsSession()) return;
     if (agent && !permissionMatches(this.permissions, 'ai:manage')) return;
     if (!this.selected || this.busy || (agent && this.taskActive() && retryOf === undefined)) return;
     const resource = { ...this.selected };
     const resourceKey = key(resource);
     if (agent && (this.pendingSubmissions.has(resourceKey) || this.unconfirmedSubmissions.has(resourceKey))) return;
     const version = this.requestVersion;
-    const isCurrent = () => this.isConnected && (agent ? this.selected !== null && key(this.selected) === resourceKey : version === this.requestVersion);
+    const isCurrent = () => this.ownsSession() && this.isConnected && (agent ? this.selected !== null && key(this.selected) === resourceKey : version === this.requestVersion);
     if (agent) { this.pendingSubmissions.add(resourceKey); this.unconfirmedSubmissions.add(resourceKey); }
     const retainReceipt = (result: Record<string, unknown>) => {
-      if (!agent || !Number.isSafeInteger(result.analysisId) || Number(result.analysisId) <= 0) return false;
+      if (!this.ownsSession() || !agent || !Number.isSafeInteger(result.analysisId) || Number(result.analysisId) <= 0) return false;
       const receipt = { analysisId: Number(result.analysisId), status: typeof result.status === 'string' ? result.status : 'unconfirmed', resource };
       this.tasks.set(resourceKey, receipt);
       this.unconfirmedSubmissions.delete(resourceKey);
@@ -262,7 +269,7 @@ export class ResourceDiagnosisPage extends LitElement {
   }
   private startStatus() { this.stopStatus(); this.statusDeadline = Date.now() + 120_000; void this.checkStatus(); }
   private async checkStatus() {
-    if (!this.selected || !this.agentResult || !this.contextReady) return;
+    if (!this.ownsSession() || !this.selected || !this.agentResult || !this.contextReady) return;
     if (Date.now() >= this.statusDeadline) { this.statusUnconfirmed = true; this.taskMessage = '等待超时，任务状态待确认'; this.stopStatus(); return; }
     const version = this.requestVersion;
     const analysisId = this.agentResult.analysisId;
@@ -272,7 +279,7 @@ export class ResourceDiagnosisPage extends LitElement {
       const response = await authFetch(`/api/resources/${this.selected.type}/${this.selected.id}/analyses/${analysisId}`, { signal: controller.signal });
       if (!response.ok) throw new Error(response.status === 409 ? '供应商可能已经执行，结果未知；重试可能再次计费，需要明确确认' : response.status === 403 ? '无分析结果查看权限，需要 ai:view' : response.status === 404 ? '任务不存在或不属于当前账号与资源权限范围' : '任务状态暂不可用，可重试查询');
       const result = await response.json();
-      if (version !== this.requestVersion || !this.isConnected || controller.signal.aborted) return;
+      if (!this.ownsSession() || version !== this.requestVersion || !this.isConnected || controller.signal.aborted) return;
       if (result.analysisId !== analysisId || !['pending', 'running', 'completed', 'failed', 'unknown'].includes(result.status)) throw new Error('任务状态暂不可用，可重试查询');
       this.agentResult = result;
       this.tasks.set(key(this.selected!), result);
@@ -280,7 +287,7 @@ export class ResourceDiagnosisPage extends LitElement {
       this.taskMessage = ({ pending: '排队中，等待执行', running: '运行中，尚无最终结论', completed: '执行完成', failed: '执行失败', unknown: '结果未知，已停止自动重试' } as Record<string, string>)[result.status];
       if (['pending', 'running'].includes(result.status)) this.statusTimer = setTimeout(() => { this.statusTimer = null; void this.checkStatus(); }, 3000);
     } catch (error) {
-      if (version === this.requestVersion && this.isConnected) { this.statusUnconfirmed = true; this.taskMessage = controller.signal.aborted ? '等待超时，任务状态待确认' : error instanceof Error ? error.message : '任务状态暂不可用'; }
+      if (this.ownsSession() && version === this.requestVersion && this.isConnected) { this.statusUnconfirmed = true; this.taskMessage = controller.signal.aborted ? '等待超时，任务状态待确认' : error instanceof Error ? error.message : '任务状态暂不可用'; }
     } finally { clearTimeout(timeout); if (this.statusController === controller) this.statusController = null; this.requestUpdate(); }
   }
   private renderAgentResult() {
