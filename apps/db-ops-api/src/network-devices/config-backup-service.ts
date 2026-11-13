@@ -292,6 +292,52 @@ function redactConfiguration(content: string): { preview: string; status: Config
   }
 }
 
+function diffConfigurationLines(left: string, right: string): string {
+  const before = left.split(/\r?\n/);
+  const after = right.split(/\r?\n/);
+  let start = 0;
+  let beforeEnd = before.length;
+  let afterEnd = after.length;
+  while (start < beforeEnd && start < afterEnd && before[start] === after[start]) start++;
+  while (beforeEnd > start && afterEnd > start && before[beforeEnd - 1] === after[afterEnd - 1]) {
+    beforeEnd--;
+    afterEnd--;
+  }
+  const n = beforeEnd - start;
+  const m = afterEnd - start;
+  const changes: string[] = [];
+  // Bound the LCS table to 4 MB / one million cells. Byte limits alone do not
+  // bound quadratic work for many short lines. For larger changed regions,
+  // show a complete replacement of that region (accurate, but not minimal).
+  if (n === 0 || m === 0 || (n + 1) * (m + 1) > 1_000_000) {
+    for (let i = start; i < beforeEnd; i++) changes.push(`-${before[i]}`);
+    for (let j = start; j < afterEnd; j++) changes.push(`+${after[j]}`);
+    return changes.join('\n');
+  }
+  const width = m + 1;
+  const lengths = new Uint32Array((n + 1) * width);
+  for (let i = n - 1; i >= 0; i--) {
+    for (let j = m - 1; j >= 0; j--) {
+      lengths[i * width + j] = before[start + i] === after[start + j]
+        ? 1 + lengths[(i + 1) * width + j + 1]
+        : Math.max(lengths[(i + 1) * width + j], lengths[i * width + j + 1]);
+    }
+  }
+  let i = 0;
+  let j = 0;
+  while (i < n || j < m) {
+    if (i < n && j < m && before[start + i] === after[start + j]) {
+      i++;
+      j++;
+    } else if (i < n && (j === m || lengths[(i + 1) * width + j] >= lengths[i * width + j + 1])) {
+      changes.push(`-${before[start + i++]}`);
+    } else {
+      changes.push(`+${after[start + j++]}`);
+    }
+  }
+  return changes.join('\n');
+}
+
 function stableFailure(error: unknown, fallback: ConfigBackupErrorCode = 'SSH_COMMAND_FAILED'): ConfigBackupError {
   if (error instanceof ConfigBackupError) return error;
   if (fallback !== 'SSH_COMMAND_FAILED') return new ConfigBackupError(fallback);
@@ -623,13 +669,8 @@ export class ConfigBackupService {
       if (this.legacyMode) return { success: false, error: 'CONFIG_BACKUP_DIFF_LIMIT' };
       throw new ConfigBackupError('CONFIG_BACKUP_DIFF_LIMIT');
     }
-    const leftLines = left.split(/\r?\n/);
-    const rightLines = right.split(/\r?\n/);
-    const rightSet = new Set(rightLines);
-    const leftSet = new Set(leftLines);
-    const removed = leftLines.filter((line) => !rightSet.has(line)).map((line) => `-${line}`);
-    const added = rightLines.filter((line) => !leftSet.has(line)).map((line) => `+${line}`);
-    return this.legacyMode ? { success: true, fromId, toId, diff: [...removed, ...added].join('\n') } : { fromId, toId, diff: [...removed, ...added].join('\n') };
+    const diff = diffConfigurationLines(left, right);
+    return this.legacyMode ? { success: true, fromId, toId, diff } : { fromId, toId, diff };
   }
 
   private async runFixedCommands(connection: ConfigBackupConnection, commands: readonly string[]): Promise<string> {
