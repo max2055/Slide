@@ -1,8 +1,12 @@
 import { expect, test, type Locator } from '@playwright/test';
+import { writeFile } from 'node:fs/promises';
 
 // Production shell/chat rendering; remote services return controlled sample data.
 test.beforeEach(async ({ page }) => {
-  await page.addInitScript(() => localStorage.setItem('permissions', '["*"]'));
+  await page.addInitScript(() => {
+    localStorage.setItem('permissions', '["*"]');
+    localStorage.setItem('slide.i18n.locale', 'zh-CN');
+  });
   await page.routeWebSocket('**/session-fixture', socket => socket.onMessage(raw => {
     if (JSON.parse(String(raw)).type === 'auth') socket.send(JSON.stringify({ type: 'auth_ok' }));
   }));
@@ -26,6 +30,7 @@ test.beforeEach(async ({ page }) => {
   await page.addStyleTag({ content: '* { transition: none !important; animation: none !important; }' });
   await expect(page.locator('html')).toHaveAttribute('data-theme-mode', 'light');
   await expect(page.locator('.topbar')).toBeVisible();
+  await expect(page.locator('.topbar-search__label')).toHaveText('搜索');
 });
 
 for (const [width, height] of [[1440, 900], [1366, 768], [1920, 1080]]) {
@@ -53,7 +58,9 @@ for (const [width, height] of [[1440, 900], [1366, 768], [1920, 1080]]) {
       expect(child.top).toBeGreaterThanOrEqual(geometry.bar.top);
       expect(child.bottom).toBeLessThanOrEqual(geometry.bar.bottom - geometry.border);
     }
-    await info.attach('geometry', { body: JSON.stringify(geometry, null, 2), contentType: 'application/json' });
+    const geometryPath = info.outputPath('geometry.json');
+    await writeFile(geometryPath, JSON.stringify(geometry, null, 2));
+    await info.attach('geometry', { path: geometryPath, contentType: 'application/json' });
     await page.screenshot({ path: info.outputPath(`desktop-${width}.png`) });
   });
 }
