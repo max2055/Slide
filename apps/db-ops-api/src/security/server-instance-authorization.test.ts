@@ -76,7 +76,7 @@ describe('server instance authorization coverage', () => {
 
   it('scopes aggregate dashboards, report statistics, alerts, and alert events', () => {
     expect(routeBlocks('/api/dashboard/capacity-trend')[0]?.block).toContain('getAccessibleInstanceIds(');
-    expect(routeBlocks('/api/dashboard/ai-stats')[0]?.block).toContain('getAccessibleInstanceIds(');
+    expect(routeBlocks('/api/dashboard/ai-stats')[0]?.block).toContain('analysisAccessSql(');
     expect(routeBlocks('/api/reports/stats')[0]?.block).toContain('getAccessibleInstanceIds(');
     expect(source).toContain('await registerAlertListRoute(fastify,verifyToken)');
     expect(readFileSync(resolve(import.meta.dirname, '../alert-list-route.ts'), 'utf8')).toContain('getAccessibleInstanceIds(');

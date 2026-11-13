@@ -11,6 +11,6 @@ export function createConfigurationRegistry(reviewed?: unknown[]): PackageRegist
   const custom = compileReviewedSql(reviewed);
   const snmp = createSnmpPackage();
   const registry = new PackageRegistry(canonicalDefinitions, [...implementationSpecs, ...databaseSpecs, ...capacitySpecs, ...oracle1919Specs, ...vendorLifecycleSpecs, ...diagnosticSpecs, ...hostDiagnosticSpecs, ...snmp.specs, ...dynamicSpecs, ...custom.specs]);
-  [...builtinReleases(), ...databaseReleases(), ...capacityReleases(), oracle1919Release(), ...vendorLifecycleReleases(), ...diagnosticReleases(), hostDiagnosticRelease(), snmp.release, ...dynamicReleases(), ...custom.releases].forEach(release => registry.install(release));
+  [...builtinReleases(), ...databaseReleases(), ...capacityReleases(), oracle1919Release(), ...vendorLifecycleReleases(), ...diagnosticReleases(), hostDiagnosticRelease(), snmp.legacyRelease, snmp.release, ...dynamicReleases(), ...custom.releases].forEach(release => registry.install(release));
   return registry;
 }

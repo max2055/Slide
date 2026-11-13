@@ -169,28 +169,41 @@ const FALLBACK_TOAST_DURATION_MS = 8000;
 const inputHistories = new Map<string, InputHistory>();
 const pinnedMessagesMap = new Map<string, PinnedMessages>();
 const deletedMessagesMap = new Map<string, DeletedMessages>();
+let activeDeletedMessages: { store: DeletedMessages; requestUpdate: () => void } | null = null;
+function handleDeletedMessagesStorage(event: StorageEvent) {
+  const active = activeDeletedMessages;
+  if (!active || !active.store.handlesStorageKey(event.key)) return;
+  // Read current storage rather than a possibly superseded event payload.
+  active.store.refresh();
+  active.requestUpdate();
+}
 
 // Agent greeting cache — fetched once from backend
 let _agentGreeting: string | null = null;
 let _agentGreetingPending = false;
+let _agentGreetingAttempted = false;
 let _greetingIdentity: string | null = null;
 let _greetingGeneration = 0;
 
 export function clearChatViewCaches() {
+  window.removeEventListener("storage", handleDeletedMessagesStorage);
+  activeDeletedMessages = null;
   resetChatViewState();
   for (const cache of [inputHistories, pinnedMessagesMap, deletedMessagesMap, expandedToolCardsBySession, initializedToolCardsBySession, lastAutoExpandPrefBySession]) cache.clear();
-  _agentGreeting = null; _agentGreetingPending = false; _greetingIdentity = null; _greetingGeneration++;
+  _agentGreeting = null; _agentGreetingPending = false; _agentGreetingAttempted = false; _greetingIdentity = null; _greetingGeneration++;
 }
 
 function syncGreetingIdentity() {
   const identity = apiClient.getToken();
   if (identity !== _greetingIdentity) {
-    _greetingIdentity = identity; _greetingGeneration++; _agentGreeting = null; _agentGreetingPending = false;
+    _greetingIdentity = identity; _greetingGeneration++; _agentGreeting = null; _agentGreetingPending = false; _agentGreetingAttempted = false;
   }
 }
 
 async function _fetchAgentGreeting(requestUpdate: () => void): Promise<void> {
-  if (_agentGreeting !== null || _agentGreetingPending) return;
+  if (_agentGreetingAttempted || _agentGreetingPending) return;
+  // A failed/empty greeting is terminal for this identity, just like success.
+  _agentGreetingAttempted = true;
   _agentGreetingPending = true;
   const generation = _greetingGeneration;
   const identity = _greetingIdentity;
@@ -1090,7 +1103,7 @@ function renderWelcomeState(props: ChatProps, requestUpdate: () => void): Templa
 
   syncGreetingIdentity();
   // Initiate greeting fetch on first render
-  if (_agentGreeting === null && !_agentGreetingPending) {
+  if (!_agentGreetingAttempted && !_agentGreetingPending) {
     _fetchAgentGreeting(requestUpdate);
   }
 
@@ -1382,6 +1395,9 @@ export function renderChat(props: ChatProps) {
   };
   const pinned = getPinnedMessages(props.sessionKey);
   const deleted = getDeletedMessages(props.sessionKey);
+  deleted.refresh();
+  activeDeletedMessages = { store: deleted, requestUpdate: props.onRequestUpdate ?? (() => {}) };
+  window.addEventListener("storage", handleDeletedMessagesStorage);
   const inputHistory = getInputHistory(props.sessionKey);
   const hasAttachments = (props.attachments?.length ?? 0) > 0;
   const tokens = tokenEstimate(props.draft);

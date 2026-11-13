@@ -8,6 +8,20 @@ import type { ReportConfig } from './report-config-database-service.js';
 import type { WorkflowJobInput } from './workflows/worker-runtime.js';
 
 export interface ReportOccurrence { configId: number; occurrenceAt: Date; }
+export interface ReportScheduleFailure {
+  configId: number;
+  stage: 'lastOccurrence' | 'nextOccurrence' | 'schedule';
+  error: unknown;
+}
+
+/** Healthy entries have been processed, but the scan must not be acknowledged as successful. */
+export class ReportSchedulePartialFailure extends AggregateError {
+  constructor(readonly due: ReportOccurrence[], readonly failures: ReportScheduleFailure[]) {
+    super(failures.map(failure => failure.error),
+      `REPORT_SCHEDULE_PARTIAL_FAILURE:${failures.map(failure => `${failure.configId}/${failure.stage}`).join(',')}`);
+    this.name = 'ReportSchedulePartialFailure';
+  }
+}
 /** One durable scan per minute. Reusing the slot id makes restarts idempotent. */
 export function createReportScheduleJob(availableAt = new Date()): WorkflowJobInput {
   const slot = Math.floor(availableAt.getTime() / 60_000);
@@ -44,16 +58,32 @@ export function nextReportOccurrence(config: Pick<ReportConfig, 'id' | 'cron' | 
 }
 
 export class ReportScheduler {
-  constructor(private readonly configs: { getEnabledConfigs(): Promise<ReportConfig[]> }, private readonly occurrences: ReportOccurrenceStore) {}
+  constructor(private readonly configs: { getEnabledConfigs(): Promise<ReportConfig[]> }, private readonly occurrences: Pick<ReportOccurrenceStore, 'lastOccurrence' | 'schedule'>) {}
   async scheduleDue(now = new Date()): Promise<ReportOccurrence[]> {
     const due: ReportOccurrence[] = [];
+    const failures: ReportScheduleFailure[] = [];
     assertWorkflowActive();
     for (const config of await this.configs.getEnabledConfigs()) {
       assertWorkflowActive();
-      const occurrence = nextReportOccurrence(config, await this.occurrences.lastOccurrence(config.id), now);
-      assertWorkflowActive();
-      if (occurrence && await this.occurrences.schedule(occurrence, config)) due.push(occurrence);
+      let stage: ReportScheduleFailure['stage'] = 'lastOccurrence';
+      try {
+        const last = await this.occurrences.lastOccurrence(config.id);
+        assertWorkflowActive();
+        stage = 'nextOccurrence';
+        const occurrence = nextReportOccurrence(config, last, now);
+        stage = 'schedule';
+        if (occurrence && await this.occurrences.schedule(occurrence, config)) due.push(occurrence);
+        assertWorkflowActive();
+      } catch (error) {
+        // Cancellation reasons can be arbitrary values; check the execution signal first.
+        assertWorkflowActive();
+        if (error instanceof Error && (error.name === 'AbortError'
+          || error.message === 'WORKFLOW_LEASE_LOST' || error.message === 'REPORT_OCCURRENCE_LEASE_LOST')) throw error;
+        failures.push({ configId: config.id, stage, error });
+      }
     }
+    assertWorkflowActive();
+    if (failures.length) throw new ReportSchedulePartialFailure(due, failures);
     return due;
   }
 }
