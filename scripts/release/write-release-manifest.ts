@@ -10,6 +10,8 @@ const paths = (process.env.SLIDE_SOURCE_PATHS ?? '').split(',').map(path => path
 // contract listing; a single blob read must hold one contract file. Overflow is a domain error.
 const MAX_SOURCE_PATH_LENGTH = 512;
 const TREE_LIST_BYTES = MAX_FILES * (MAX_SOURCE_PATH_LENGTH + 1);
+// Include mode, type and object ID metadata in the bounded tree response.
+const TREE_ENTRY_METADATA_BYTES = 6 + 1 + 6 + 1 + 64 + 1;
 const gitOutputOverflow = (error: unknown) => typeof error === 'object' && error !== null && 'code' in error && (error as { code?: unknown }).code === 'ENOBUFS';
 const git = (args: string[], maxBuffer: number, overflow: string) => {
   try { return execFileSync('git', args, { encoding: 'utf8', maxBuffer, timeout: 30_000 }); }
@@ -20,14 +22,25 @@ const git = (args: string[], maxBuffer: number, overflow: string) => {
 };
 let source;
 if (paths.length) {
-  const selected = git(['ls-tree', '--full-tree', '-r', '--name-only', '-z', commit], TREE_LIST_BYTES, 'SOURCE_FILE_COUNT_INVALID').split('\0').filter(path => {
+  let pathBytes = 0;
+  const entries = git(['ls-tree', '--full-tree', '-r', '-z', commit], TREE_LIST_BYTES + MAX_FILES * TREE_ENTRY_METADATA_BYTES, 'SOURCE_FILE_COUNT_INVALID').split('\0').filter(Boolean).map(entry => {
+    const match = /^[0-7]{6} [a-z]+ ([a-f0-9]{40,64})\t([\s\S]+)$/.exec(entry);
+    if (!match) throw new Error('SOURCE_BLOB_INVALID');
+    const [, oid, path] = match;
+    pathBytes += Buffer.byteLength(path) + 1;
+    return { oid, path };
+  });
+  if (pathBytes > TREE_LIST_BYTES) throw new Error('SOURCE_FILE_COUNT_INVALID');
+  const selected = entries.filter(({ path }) => {
     if (!paths.some(prefix => path.startsWith(prefix))) return false;
     try { assertSourcePath(path); return true; } catch { return false; }
   });
   if (!selected.length || selected.length > MAX_FILES) throw new Error('SOURCE_FILE_COUNT_INVALID');
   // One process per blob made the 20,000-file boundary exceed the backend CI budget.
   // Check byte limits before reading, then use one bounded batch for all blob contents.
-  const input = selected.map(path => `${commit}:${path}\n`).join('');
+  // MAX-665 CI recovery: commit:path repeats a large-tree lookup for every file.
+  // ls-tree already resolved the object IDs; use them for both batch reads.
+  const input = selected.map(({ oid }) => `${oid}\n`).join('');
   const headers = execFileSync('git', ['cat-file', '--batch-check'], {
     input, encoding: 'utf8', maxBuffer: MAX_FILES * 100, timeout: 30_000,
   }).trimEnd().split('\n');
@@ -46,7 +59,7 @@ if (paths.length) {
     input, maxBuffer: MAX_SNAPSHOT_BYTES + MAX_FILES * 100, timeout: 30_000,
   });
   let offset = 0;
-  const files = selected.map((path, index) => {
+  const files = selected.map(({ path }, index) => {
     const boundary = batch.indexOf(10, offset);
     if (boundary < offset || batch.toString('ascii', offset, boundary) !== headers[index]) throw new Error('SOURCE_BLOB_INVALID');
     const start = boundary + 1, end = start + sizes[index];

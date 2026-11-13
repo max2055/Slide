@@ -1,4 +1,5 @@
 import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { chmodSync, mkdirSync, writeFileSync } from 'node:fs';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -65,7 +66,13 @@ it.each([4000, 4001, MAX_FILES])('the release manifest script binds %i files ins
       commit,
       source: { releaseId: 'qualification', commitSha: commit, fileCount: count, allowedPaths: ['src/'] },
     });
-    expect(manifest.source.treeDigest).toMatch(/^[a-f0-9]{64}$/);
+    // MAX-665: object-ID batch reads must preserve every path and its exact digest,
+    // including the large flat tree that exposed repeated commit:path lookup cost.
+    const content = 'export x=1\n';
+    const digest = createHash('sha256').update(content).digest('hex');
+    const descriptors = Array.from({ length: count }, (_, index) => `src/f${index}.ts`)
+      .sort().map(path => ({ path, digest, bytes: Buffer.byteLength(content) }));
+    expect(manifest.source.treeDigest).toBe(createHash('sha256').update(JSON.stringify(descriptors)).digest('hex'));
   } finally { await rm(directory, { recursive: true, force: true }); }
 }, 60_000);
 
