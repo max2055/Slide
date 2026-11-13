@@ -64,7 +64,8 @@ export type FormatRelativeTimestampOptions = {
  * Format an epoch timestamp relative to now.
  *
  * Handles both past ("5m ago") and future ("in 5m") timestamps.
- * Optionally falls back to a short date for timestamps older than 7 days.
+ * Selects units from the raw time difference, showing completed units only.
+ * Optionally falls back to a short date for timestamps more than 7 days away.
  */
 export function formatRelativeTimestamp(
   timestampMs: number | null | undefined,
@@ -79,24 +80,27 @@ export function formatRelativeTimestamp(
   const absDiff = Math.abs(diff);
   const isPast = diff >= 0;
 
-  const sec = Math.round(absDiff / 1000);
-  if (sec < 60) {
+  const minuteMs = 60_000;
+  const hourMs = 60 * minuteMs;
+  const dayMs = 24 * hourMs;
+  if (absDiff < minuteMs) {
     return isPast ? "just now" : "in <1m";
   }
 
-  const min = Math.round(sec / 60);
-  if (min < 60) {
+  if (absDiff < hourMs) {
+    const min = Math.floor(absDiff / minuteMs);
     return isPast ? `${min}m ago` : `in ${min}m`;
   }
 
-  const hr = Math.round(min / 60);
-  if (hr < 48) {
+  if (absDiff < dayMs) {
+    const hr = Math.floor(absDiff / hourMs);
     return isPast ? `${hr}h ago` : `in ${hr}h`;
   }
 
-  const day = Math.round(hr / 24);
-  if (!options?.dateFallback || day <= 7) {
-    return isPast ? `${day}d ago` : `in ${day}d`;
+  const day = Math.floor(absDiff / dayMs);
+  const relativeDays = isPast ? `${day}d ago` : `in ${day}d`;
+  if (!options?.dateFallback || absDiff <= 7 * dayMs) {
+    return relativeDays;
   }
 
   // Fall back to short date display for old timestamps
@@ -107,6 +111,6 @@ export function formatRelativeTimestamp(
       ...(options.timezone ? { timeZone: options.timezone } : {}),
     }).format(new Date(timestampMs));
   } catch {
-    return `${day}d ago`;
+    return relativeDays;
   }
 }
