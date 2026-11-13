@@ -363,7 +363,8 @@ export async function sendChatMessage(
   const retrying = (unconfirmedChats.get(state) ?? []).some(item => item.payload === payload
     && (item.sessionKey === state.sessionKey || item.error.getSessionKey() === state.sessionKey));
   const hasQuestion = state.chatMessages.some(message => (message as { role?: string } | null)?.role === 'user'
-    && extractText(message) === msg);
+    && (extractText(message) ?? "") === msg
+    && (!hasAttachments || JSON.stringify((message as { content?: unknown }).content) === JSON.stringify(contentBlocks)));
   if (!retrying || !hasQuestion) state.chatMessages = [
     ...state.chatMessages,
     {
