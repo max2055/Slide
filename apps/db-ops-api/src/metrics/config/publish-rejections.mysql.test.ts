@@ -91,8 +91,8 @@ describe.skipIf(!port)('MAX-238 publish rejections keep the published revision a
     for (const [id, name] of [[ref1.id, 'publish-rejections-1'], [ref2.id, 'publish-rejections-2']] as const) {
       await pool.execute(`INSERT INTO database_instances
         (id,name,environment,db_type,host,port,username,password_encrypted,database_name,db_version,status,lifecycle_state)
-        VALUES (?,?,?,?,?,3306,'fixture','','fixture','8.0.46','active','available')`,
-        [id, name, 'production', 'mysql', '127.0.0.1']);
+        VALUES (?,?,?,?,?,3306,'fixture','',?,'8.0.46','active','available')`,
+        [id, name, 'production', 'mysql', '127.0.0.1', name]);
     }
 
     packages = createConfigurationRegistry();

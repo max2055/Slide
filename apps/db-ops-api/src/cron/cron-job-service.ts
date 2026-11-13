@@ -5,6 +5,7 @@
 import mysql from 'mysql2/promise';
 import { dbConnection } from '../db-connection';
 import { CronJobConfig, CronJobLog, CronJobParam } from './types';
+import { validateCronTimeoutSeconds } from '../adapter/runtime-policy.js';
 
 export class CronJobDatabaseService {
   /**
@@ -107,6 +108,7 @@ export class CronJobDatabaseService {
    * 更新任务配置（仅更新非 undefined 的字段）
    */
   async updateJob(id: number, data: Partial<Pick<CronJobConfig, 'task_description' | 'cron_expr' | 'enabled' | 'task_type' | 'script_id' | 'script_binding' | 'target_instance_id' | 'timezone' | 'description' | 'timeout_seconds' | 'retry_count' | 'owner_user_id' | 'principal_type' | 'resource_scope' | 'identity_status' | 'identity_audit'>>): Promise<boolean> {
+    if (data.timeout_seconds !== undefined) validateCronTimeoutSeconds(data.timeout_seconds);
     const pool = this.getPool();
     if (!pool) throw new Error('数据库未连接');
 
@@ -246,6 +248,7 @@ export class CronJobDatabaseService {
     resource_scope?: CronJobConfig['resource_scope'];
     identity_audit?: Record<string, unknown>;
   }): Promise<number> {
+    validateCronTimeoutSeconds(data.timeout_seconds === undefined ? 300 : data.timeout_seconds);
     const pool = this.getPool();
     if (!pool) throw new Error('数据库未连接');
 
@@ -263,7 +266,7 @@ export class CronJobDatabaseService {
           data.target_instance_id || null,
           data.timezone || 'Asia/Shanghai',
           data.description || null,
-          data.timeout_seconds || 300,
+          data.timeout_seconds ?? 300,
           data.owner_user_id ?? null,
           data.resource_scope ? JSON.stringify(data.resource_scope) : null,
           data.owner_user_id ? 'bound' : 'owner-required',
@@ -402,6 +405,7 @@ export class CronJobDatabaseService {
 
   /**
    * 完成执行日志（更新状态、结束时间、结果摘要、Agent 迹数据）
+   * 未提供新结果时保留已落库的脚本授权；异常堆栈使用 trace.error_trace。
    */
   async completeLog(
     logId: number,
@@ -427,7 +431,7 @@ export class CronJobDatabaseService {
         `UPDATE cron_job_logs
          SET finished_at = NOW(), status = ?, result_summary = ?,
              error_message = ?,
-             structured_result = ?,
+             structured_result = COALESCE(?, structured_result),
              tools_used = ?,
              tool_events = ?,
              \`usage\` = ?,

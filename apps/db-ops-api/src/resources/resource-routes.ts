@@ -1,4 +1,5 @@
 import { ActorAuthenticationError } from '../auth/actor-context.js';
+import { hasPermission } from '../auth/require-permission.js';
 import { PolicyError } from '../metrics/policy/model.js';
 import type { FastifyInstance, preHandlerHookHandler } from 'fastify';
 import type { ActorContext } from '../auth/actor-context.js';
@@ -18,6 +19,12 @@ function parseRef(params: Record<string, unknown>): ResourceRef | null {
 
 function actor(request: any): ActorContext {
   return request.user as ActorContext;
+}
+
+function hasAiPermission(actor: ActorContext, permission: 'ai:view' | 'ai:manage'): boolean {
+  // Keep the administrator fallback consistent with requirePermission.
+  return actor.username.toLowerCase() === 'admin' || actor.roles.includes('admin')
+    || hasPermission(new Set(actor.permissions), permission);
 }
 
 function errorStatus(error: unknown): number {
@@ -90,7 +97,7 @@ export async function registerResourceRoutes(
     const analysisId = typeof params.analysisId === 'string' && /^[1-9]\d*$/.test(params.analysisId) ? Number(params.analysisId) : NaN;
     if (!ref || !Number.isSafeInteger(analysisId)) return reply.code(400).send({ error: 'ANALYSIS_ID_INVALID' });
     const currentActor = actor(request);
-    if (!currentActor.permissions.some(permission => ['*', 'ai:*', 'ai:view'].includes(permission))) return reply.code(403).send({ error: 'AI_RESULT_FORBIDDEN' });
+    if (!hasAiPermission(currentActor, 'ai:view')) return reply.code(403).send({ error: 'AI_RESULT_FORBIDDEN' });
     try { return reply.send(await agentDiagnosis.result(currentActor, ref, analysisId)); }
     catch (error) { return reply.code(errorStatus(error)).send({ error: errorStatus(error) === 500 ? 'ANALYSIS_READ_FAILED' : (error as Error).message }); }
   });
@@ -99,9 +106,7 @@ export async function registerResourceRoutes(
     const ref = parseRef(request.params as Record<string, unknown>);
     if (!ref) return reply.code(400).send({ error: 'RESOURCE_REF_INVALID' });
     const currentActor = actor(request);
-    if (!currentActor.permissions.includes('*')
-      && !currentActor.permissions.includes('ai:manage')
-      && !currentActor.permissions.includes('ai:*')) {
+    if (!hasAiPermission(currentActor, 'ai:manage')) {
       return reply.code(403).send({ error: 'AI_DIAGNOSIS_FORBIDDEN' });
     }
     try {

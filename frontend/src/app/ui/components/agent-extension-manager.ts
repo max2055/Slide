@@ -5,16 +5,10 @@ import { apiClient } from '../../../api/index.js';
 import { sharedBtnStyles } from '../../styles/shared-btn-styles.ts';
 import { showToast } from './app-toast-container.js';
 import './app-dialog.js';
+import { readCachedPermissions } from '../permissions.js';
 
 type ExtensionKind = 'tool' | 'skill';
 type Extension = { id: number; kind: ExtensionKind; name: string; description: string; definition: Record<string, unknown>; sourceText: string | null; status: string; version: number };
-
-function isAdmin(): boolean {
-  try {
-    const permissions = JSON.parse(localStorage.getItem('permissions') || '[]');
-    return Array.isArray(permissions) && (permissions.includes('*') || permissions.includes('admin:*'));
-  } catch { return false; }
-}
 
 @customElement('agent-extension-manager')
 export class AgentExtensionManager extends LitElement {
@@ -27,6 +21,22 @@ export class AgentExtensionManager extends LitElement {
   @state() private definition = '{}';
   @state() private sourceText = '';
   @state() private saving = false;
+  @state() private permissions = readCachedPermissions() ?? new Set<string>();
+  private loadVersion = 0;
+
+  private hasPermission(permission: string) {
+    return this.permissions.has('*') || this.permissions.has(permission)
+      || this.permissions.has(`${permission.split(':')[0]}:*`)
+      || this.permissions.has(`*:${permission.split(':')[1]}`);
+  }
+  private get canView() { return this.hasPermission('ai:view'); }
+  private get canManage() { return this.canView && this.hasPermission('admin:*'); }
+  private accessChanged = (event: Event) => {
+    this.permissions = event.type === 'slide-session-expired' ? new Set() : readCachedPermissions() ?? new Set();
+    this.close();
+    this.editing = null; this.name = ''; this.description = ''; this.definition = '{}'; this.sourceText = '';
+    void this.load();
+  };
 
   static styles = [sharedFieldStyles, sharedBtnStyles, css`
     :host { display: block; margin-bottom: 20px; }
@@ -42,21 +52,36 @@ export class AgentExtensionManager extends LitElement {
     textarea { min-height: 100px; font-family: var(--mono, monospace); }
   `];
 
-  connectedCallback() { super.connectedCallback(); void this.load(); }
-
-  private async load() {
-    if (!isAdmin()) return;
-    try {
-      const result = await apiClient.get<{ extensions: Extension[] }>(`/agent/extensions?kind=${this.kind}`);
-      this.extensions = result.extensions || [];
-    } catch { showToast('加载扩展列表失败', 'error'); }
+  connectedCallback() {
+    super.connectedCallback();
+    this.permissions = readCachedPermissions() ?? new Set();
+    window.addEventListener('slide-permissions-loaded', this.accessChanged);
+    window.addEventListener('slide-session-expired', this.accessChanged);
+    void this.load();
+  }
+  disconnectedCallback() {
+    this.loadVersion++;
+    window.removeEventListener('slide-permissions-loaded', this.accessChanged);
+    window.removeEventListener('slide-session-expired', this.accessChanged);
+    super.disconnectedCallback();
   }
 
-  private beginCreate() { this.editing = null; this.name = ''; this.description = ''; this.definition = this.kind === 'tool' ? '{\n  "parameters": { "type": "object", "properties": {} }\n}' : '{\n  "frontmatter": {}\n}'; this.sourceText = ''; this.open = true; }
-  private beginEdit(extension: Extension) { this.editing = extension; this.name = extension.name; this.description = extension.description; this.definition = JSON.stringify(extension.definition, null, 2); this.sourceText = extension.sourceText || ''; this.open = true; }
+  private async load() {
+    const version = ++this.loadVersion;
+    this.extensions = [];
+    if (!this.canView) return;
+    try {
+      const result = await apiClient.get<{ extensions: Extension[] }>(`/agent/extensions?kind=${this.kind}`);
+      if (version === this.loadVersion && this.canView) this.extensions = result.extensions || [];
+    } catch { if (version === this.loadVersion) { this.extensions = []; showToast('加载扩展列表失败', 'error'); } }
+  }
+
+  private beginCreate() { if (!this.canManage || this.saving) return; this.editing = null; this.name = ''; this.description = ''; this.definition = this.kind === 'tool' ? '{\n  "parameters": { "type": "object", "properties": {} }\n}' : '{\n  "frontmatter": {}\n}'; this.sourceText = ''; this.open = true; }
+  private beginEdit(extension: Extension) { if (!this.canManage || this.saving) return; this.editing = extension; this.name = extension.name; this.description = extension.description; this.definition = JSON.stringify(extension.definition, null, 2); this.sourceText = extension.sourceText || ''; this.open = true; }
   private close() { this.open = false; }
 
   private async save() {
+    if (this.saving || !this.canManage) return;
     let definition: Record<string, unknown>;
     try { definition = JSON.parse(this.definition) as Record<string, unknown>; } catch { showToast('定义必须是合法 JSON', 'error'); return; }
     this.saving = true;
@@ -68,16 +93,16 @@ export class AgentExtensionManager extends LitElement {
     } catch { showToast('保存扩展失败', 'error'); } finally { this.saving = false; }
   }
 
-  private async publish(extension: Extension) { try { await apiClient.post(`/agent/extensions/${extension.id}/publish`, {}); showToast('扩展已发布', 'success'); await this.load(); } catch { showToast('发布扩展失败', 'error'); } }
-  private async archive(extension: Extension) { if (!window.confirm(`确认归档 ${extension.name}？`)) return; try { await apiClient.delete(`/agent/extensions/${extension.id}`); showToast('扩展已归档', 'success'); await this.load(); } catch { showToast('归档扩展失败', 'error'); } }
+  private async publish(extension: Extension) { if (!this.canManage) return; try { await apiClient.post(`/agent/extensions/${extension.id}/publish`, {}); showToast('扩展已发布', 'success'); await this.load(); } catch { showToast('发布扩展失败', 'error'); } }
+  private async archive(extension: Extension) { if (!this.canManage) return; if (!window.confirm(`确认归档 ${extension.name}？`)) return; try { await apiClient.delete(`/agent/extensions/${extension.id}`); showToast('扩展已归档', 'success'); await this.load(); } catch { showToast('归档扩展失败', 'error'); } }
 
   render() {
-    if (!isAdmin()) return nothing;
+    if (!this.canView) return nothing;
     const label = this.kind === 'tool' ? 'Tool 扩展' : 'Skill 扩展';
     return html`
-      <div class="header"><span class="title">${label}</span><button class="btn" @click=${this.beginCreate}>新增</button></div>
-      ${this.extensions.map(extension => html`<div class="item"><span class="item-name">${extension.name}</span><span class="item-desc">${extension.description}</span><span class="status">${extension.status === 'published' ? '已发布' : '草稿'} · v${extension.version}</span><button class="btn" @click=${() => this.beginEdit(extension)}>编辑</button>${extension.status === 'draft' ? html`<button class="btn-primary" @click=${() => this.publish(extension)}>发布</button>` : nothing}<button class="btn-ghost" @click=${() => this.archive(extension)}>归档</button></div>`)}
-      <app-dialog .open=${this.open} size="lg" title="${this.editing ? '编辑' : '新增'}${label}" @app-dialog-close=${this.close}>
+      <div class="header"><span class="title">${label}</span>${this.canManage ? html`<button class="btn" @click=${this.beginCreate}>新增</button>` : nothing}</div>
+      ${this.extensions.map(extension => html`<div class="item"><span class="item-name">${extension.name}</span><span class="item-desc">${extension.description}</span><span class="status">${extension.status === 'published' ? '已发布' : '草稿'} · v${extension.version}</span>${this.canManage ? html`<button class="btn" @click=${() => this.beginEdit(extension)}>编辑</button>${extension.status === 'draft' ? html`<button class="btn-primary" @click=${() => this.publish(extension)}>发布</button>` : nothing}<button class="btn-ghost" @click=${() => this.archive(extension)}>归档</button>` : nothing}</div>`)}
+      ${this.canManage ? html`<app-dialog .open=${this.open} size="lg" title="${this.editing ? '编辑' : '新增'}${label}" @app-dialog-close=${this.close}>
         <div class="form">
           <label>名称<input .value=${this.name} @input=${(e: Event) => this.name = (e.target as HTMLInputElement).value} maxlength="128"></label>
           <label>描述<input .value=${this.description} @input=${(e: Event) => this.description = (e.target as HTMLInputElement).value} maxlength="2000"></label>
@@ -85,7 +110,7 @@ export class AgentExtensionManager extends LitElement {
           <label>说明文本（可选）<textarea .value=${this.sourceText} @input=${(e: Event) => this.sourceText = (e.target as HTMLTextAreaElement).value}></textarea></label>
         </div>
         <div slot="footer"><button class="btn" @click=${this.close}>取消</button><button class="btn-primary" ?disabled=${this.saving} @click=${this.save}>${this.saving ? '保存中...' : '保存草稿'}</button></div>
-      </app-dialog>
+      </app-dialog>` : nothing}
     `;
   }
 }

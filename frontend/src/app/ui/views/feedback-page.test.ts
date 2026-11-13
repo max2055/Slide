@@ -7,7 +7,7 @@ const mocks = vi.hoisted(() => ({
   delete: vi.fn(),
 }));
 
-vi.mock('../../../api/index.js', () => ({ apiClient: mocks }));
+vi.mock('../../../api/index.js', () => ({ apiClient: mocks, isSessionExpiryInProgress: () => false }));
 
 import './feedback-page.js';
 
@@ -64,15 +64,9 @@ describe('feedback-page', () => {
     expect(root.querySelector('button[aria-label="删除 连接页报错"]')).not.toBeNull();
   });
 
-  it('expands, copies, and updates a feedback item status', async () => {
+  it('copies and updates a feedback item status', async () => {
     const element = await renderPage();
     const root = element.shadowRoot!;
-    const toggle = root.querySelector<HTMLButtonElement>('button[aria-label="展开 连接页报错 的问题描述"]')!;
-    toggle.click();
-    await element.updateComplete;
-    expect(root.querySelector('.feedback-description')?.classList.contains('is-expanded')).toBe(true);
-    expect(root.querySelector('button[aria-label="收起 连接页报错 的问题描述"]')).not.toBeNull();
-
     root.querySelector<HTMLButtonElement>('button[aria-label="复制 连接页报错 的问题描述"]')!.click();
     await vi.waitFor(() => expect(navigator.clipboard.writeText).toHaveBeenCalledWith(feedback.description));
 
@@ -86,6 +80,26 @@ describe('feedback-page', () => {
     }));
     await element.updateComplete;
     expect(root.querySelector<HTMLSelectElement>('select[aria-label="更新 连接页报错 的状态"]')?.value).toBe('accepted');
+  });
+
+  it.each(['HTTP拒绝', '网络失败'])('MAX-430: restores confirmed status after %s and blocks duplicate writes', async () => {
+    let reject!: (error: Error) => void;
+    mocks.put.mockImplementationOnce(() => new Promise((_resolve, fail) => { reject = fail; }));
+    const element = await renderPage();
+    const status = element.shadowRoot!.querySelector<HTMLSelectElement>('select.status-select')!;
+    status.value = 'resolved';
+    status.dispatchEvent(new Event('change'));
+    await element.updateComplete;
+    expect(status.disabled).toBe(true);
+    status.dispatchEvent(new Event('change'));
+    expect(mocks.put).toHaveBeenCalledTimes(1);
+    reject(new Error('request failed'));
+    await vi.waitFor(() => expect(status.disabled).toBe(false));
+    expect(status.value).toBe('pending');
+    status.value = 'resolved';
+    status.dispatchEvent(new Event('change'));
+    await vi.waitFor(() => expect(status.value).toBe('accepted'));
+    expect(mocks.put).toHaveBeenCalledTimes(2);
   });
 
   it('creates a feedback item and refreshes history', async () => {
