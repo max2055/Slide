@@ -484,6 +484,43 @@ export function registerCronRoutes(fastify: FastifyInstance, verifyToken: preHan
     }
   });
 
+  // 草稿测试不创建脚本，关闭表单或请求失败也不会在脚本库留下记录。
+  fastify.post('/api/cron/scripts/test', {
+    config: { rateLimit: expensiveOperationRateLimitConfig },
+    preHandler: [verifyToken, requirePermission('cron:manage')],
+    handler: async (request, reply) => {
+      const body = request.body as { instance_id?: unknown; content?: unknown; database?: unknown } | null;
+      if (!Number.isSafeInteger(body?.instance_id) || Number(body?.instance_id) <= 0) {
+        return reply.code(400).send({ error: '缺少必要参数：instance_id（正整数）' });
+      }
+      if (typeof body?.content !== 'string' || !body.content.trim()) {
+        return reply.code(400).send({ error: '缺少必要参数：content' });
+      }
+      if (body.database != null && typeof body.database !== 'string') {
+        return reply.code(400).send({ error: '无效的 database' });
+      }
+      const instanceId = Number(body.instance_id);
+      if (!hasInstanceAccess((request as any).user, instanceId, 'read-only')) {
+        return reply.code(403).send({ error: '无权访问该实例' });
+      }
+      try {
+        const result = await sqlExecutor.executeSql(instanceId, body.content, {
+          database: typeof body.database === 'string' ? body.database : undefined,
+          userId: String((request as any).user.userId),
+          username: (request as any).user.username,
+          ipAddress: request.ip,
+        });
+        if (result.rows && result.rows.length > 100) {
+          result.rows = result.rows.slice(0, 100);
+          result.rowCount = result.rows.length;
+        }
+        return reply.send(result);
+      } catch (error: any) {
+        return reply.code(cronErrorStatus(error)).send({ error: error.message });
+      }
+    },
+  });
+
   // 测试执行脚本（dry-run，结果限制100行）
   fastify.post('/api/cron/scripts/:id/test', {
     config: { rateLimit: expensiveOperationRateLimitConfig },

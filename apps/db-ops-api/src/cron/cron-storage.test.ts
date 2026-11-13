@@ -128,6 +128,44 @@ describe('MAX-414/415/418/420 storage failures', () => {
     (manager as any).running = true;
     vi.spyOn(console, 'error').mockImplementation(() => {});
     await expect(manager.reload()).rejects.toThrow('CRON_STORAGE_UNAVAILABLE');
-    expect((manager as any).running).toBe(false);
+    expect((manager as any).running).toBe(true);
   });
+  it('recovers through normal reload after a failed read without replaying executions (Chief R1)', async () => {
+    const job = { id: 1, target_instance_id: null, resource_scope: { instanceIds: [] } };
+    const read = vi.fn().mockRejectedValueOnce(new Error('CRON_STORAGE_UNAVAILABLE')).mockResolvedValue([job]);
+    const owned = vi.fn().mockResolvedValue(undefined);
+    const manager = new CronManager({ getEnabledJobs: read } as any, {} as any, undefined, undefined, owned);
+    const schedule = vi.spyOn(manager as any, 'scheduleJob').mockImplementation(() => {});
+    const execute = vi.spyOn(manager, 'executeJob');
+    (manager as any).running = true;
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    await expect(manager.reload()).rejects.toThrow('CRON_STORAGE_UNAVAILABLE');
+    await manager.reload();
+    expect(read).toHaveBeenCalledTimes(2);
+    expect(schedule).toHaveBeenCalledWith(job);
+    expect(execute).not.toHaveBeenCalled();
+    await manager.stop();
+    await manager.reload();
+    expect(read).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not schedule when stopped during loading or when ownership is lost (Chief R1)', async () => {
+    let finish!: (rows: any[]) => void;
+    const manager = new CronManager({ getEnabledJobs: () => new Promise(r => { finish = r; }) } as any, {} as any);
+    const schedule = vi.spyOn(manager as any, 'scheduleJob').mockImplementation(() => {});
+    (manager as any).running = true;
+    const reload = manager.reload();
+    await manager.stop();
+    finish([{ id: 1 }]);
+    await reload;
+    expect(schedule).not.toHaveBeenCalled();
+    const lost = new CronManager({ getEnabledJobs: async () => [{ id: 1 }] } as any, {} as any,
+      undefined, undefined, async () => { throw new Error('WORKER_LEASE_LOST'); });
+    (lost as any).running = true;
+    const lostSchedule = vi.spyOn(lost as any, 'scheduleJob').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    await expect(lost.reload()).rejects.toThrow('WORKER_LEASE_LOST');
+    expect(lostSchedule).not.toHaveBeenCalled();
+  });
+
 });
