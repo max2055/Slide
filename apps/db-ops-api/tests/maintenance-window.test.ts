@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 vi.mock('../src/db-connection', () => ({
   dbConnection: { getPool: () => mockPool, isConnected: () => true },
@@ -7,6 +7,7 @@ vi.mock('../src/db-connection', () => ({
 const mockPool = { execute: vi.fn().mockResolvedValue([[{ insertId: 1 }]]) };
 
 describe('maintenance-window-service.ts', () => {
+  afterEach(() => { vi.useRealTimers(); });
   beforeEach(() => { vi.resetModules(); vi.mocked(mockPool.execute).mockReset(); });
 
   it('isActiveMaintenanceWindow returns false when no active window', async () => {
@@ -17,6 +18,8 @@ describe('maintenance-window-service.ts', () => {
   });
 
   it('isActiveMaintenanceWindow returns active with window details', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-11-01T04:00:00Z'));
     vi.mocked(mockPool.execute).mockResolvedValueOnce([[{
       id: 1, name: 'DB Maintenance', description: null, instance_id: 1,
       day_of_week: '*', start_time: '00:00:00', end_time: '23:59:59',
@@ -42,6 +45,29 @@ describe('maintenance-window-service.ts', () => {
     });
     expect(result.success).toBe(false);
     expect(result.error).toContain('无效的星期值');
+  });
+
+  // MAX-419 / GitHub #525: reject before SQL so an existing valid window survives.
+  it.each([
+    { day_of_week: 'abc' }, { day_of_week: '8' }, { day_of_week: '0' },
+    { day_of_week: '1,,7' }, { day_of_week: '' }, { day_of_week: null },
+    { day_of_week: 2 }, { day_of_week: '*,2' },
+    { start_time: '24:00' }, { start_time: '1:00' }, { end_time: '02:60' },
+    { end_time: '02:00:60' }, { end_time: null }, { timezone: '' }, { timezone: 'bad' },
+  ])('rejects the same invalid schedule on create and update: %j', async changed => {
+    const { maintenanceWindowService: service } = await import('../src/maintenance-window-service');
+    const value = { name: 'Test', day_of_week: '*', start_time: '23:00', end_time: '02:00', ...changed };
+    expect((await service.createMaintenanceWindow(value as any)).success).toBe(false);
+    expect((await service.updateMaintenanceWindow(1, changed as any)).success).toBe(false);
+    expect(mockPool.execute).not.toHaveBeenCalled();
+  });
+
+  it.each(['*', '1', '1,3,7', ' 2 , 4 '])('accepts and normalizes valid days on both writes: %s', async day_of_week => {
+    mockPool.execute.mockResolvedValue([{ insertId: 1, affectedRows: 1 }]);
+    const { maintenanceWindowService: service } = await import('../src/maintenance-window-service');
+    expect((await service.createMaintenanceWindow({ name: 'valid', day_of_week, start_time: '23:00', end_time: '02:00:00' })).success).toBe(true);
+    expect((await service.updateMaintenanceWindow(1, { day_of_week, start_time: '23:00', end_time: '02:00:00' })).success).toBe(true);
+    expect(mockPool.execute.mock.calls[1][1]).toContain(day_of_week.split(',').map(d => d.trim()).join(','));
   });
 
   it('createMaintenanceWindow accepts valid day_of_week', async () => {

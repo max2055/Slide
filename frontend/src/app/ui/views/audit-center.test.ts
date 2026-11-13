@@ -52,3 +52,32 @@ describe('audit center', () => {
     expect(page.shadowRoot!.querySelector('.tab.active')?.textContent?.trim()).toBe('Agent 审计');
   });
 });
+
+describe('audit navigation regressions', () => {
+  afterEach(() => { document.body.replaceChildren(); window.history.replaceState({}, '', '/'); vi.restoreAllMocks(); });
+
+it('MAX-447 restores default content for missing or invalid view on popstate', async () => {
+  window.history.replaceState({}, '', '/audit?view=agent');
+  const page = document.createElement('audit-center-page') as Page;
+  document.body.append(page); await page.updateComplete;
+  for (const path of ['/audit', '/audit?view=unknown']) {
+    window.history.replaceState({}, '', path);
+    window.dispatchEvent(new PopStateEvent('popstate')); await page.updateComplete;
+    expect(page.shadowRoot!.querySelector('system-audit-page')).not.toBeNull();
+    expect(page.shadowRoot!.querySelector('[aria-selected="true"]')?.textContent).toContain('系统审计');
+  }
+  document.body.replaceChildren(); window.history.replaceState({}, '', '/');
+});
+
+it('MAX-450 only pushes history for a changed view', async () => {
+  window.history.replaceState({}, '', '/audit');
+  const page = document.createElement('audit-center-page') as Page;
+  document.body.append(page); await page.updateComplete;
+  const push = vi.spyOn(window.history, 'pushState');
+  const tabs = page.shadowRoot!.querySelectorAll<HTMLButtonElement>('[role="tab"]');
+  tabs[0].click(); tabs[1].click(); tabs[1].click();
+  expect(push).toHaveBeenCalledTimes(1);
+  push.mockRestore(); document.body.replaceChildren(); window.history.replaceState({}, '', '/');
+});
+
+});

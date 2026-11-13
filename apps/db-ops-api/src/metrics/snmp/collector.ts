@@ -4,6 +4,11 @@ import type { HuaweiMibCatalog } from '../../network-devices/huawei-mib-catalog.
 import { AdapterError, classifyError, type DecodedRow, type Transport } from '../packages/adapters.js';
 
 export const OIDS = Object.freeze({ uptime: '1.3.6.1.2.1.1.3.0', count: '1.3.6.1.2.1.2.1.0', table: '1.3.6.1.2.1.2.2', xTable: '1.3.6.1.2.1.31.1.1' });
+function capacityError(max: number): AdapterError {
+  const error = new AdapterError('parse_error', 'SNMP_INTERFACE_CAPACITY_EXCEEDED');
+  error.message = `SNMP 接口数量超过 max_rows=${max}；请同时调整 max_rows 与 max_series_per_resource（标准包至少 1 + 15 × max_rows，厂商包加 2）；平台最多支持 100 行，超过需缩小采集范围。`;
+  return error;
+}
 type Snmp = Extract<Transport, { method: 'snmp' }>;
 type Detail = NonNullable<DecodedRow['field_evidence']>[string];
 const absent = (v: unknown) => v === undefined || v === null || (typeof v === 'object' && 'type' in v && [128, 129, 130, 'NoSuchObject', 'NoSuchInstance', 'EndOfMibView'].includes((v as SnmpVarbind).type!));
@@ -26,7 +31,8 @@ function column(row: SnmpTableRow | undefined, root: string, n: number): unknown
   return row?.values[`${root}.1.${n}`] ?? row?.values[String(n)];
 }
 function table(rows: SnmpTableRow[], max: number): Map<string, SnmpTableRow> {
-  if (!Array.isArray(rows) || rows.length > max) throw new AdapterError('parse_error');
+  if (!Array.isArray(rows)) throw new AdapterError('parse_error');
+  if (rows.length > max) throw capacityError(max);
   const result = new Map<string, SnmpTableRow>();
   for (const row of rows) {
     if (!/^[1-9]\d{0,9}$/.test(row.index) || BigInt(row.index) > 2147483647n || result.has(row.index)) throw new AdapterError('parse_error');
@@ -68,6 +74,7 @@ export class SnmpDiscovery {
       return await this.interfaceRows(t, timeout, maxRows);
     } catch (error) {
       if (id === 'builtin:snmp.interfaces.v1') { this.interfaces.clear(); this.previous = undefined; }
+      if (error instanceof AdapterError) throw error;
       throw new AdapterError(classifyError(error));
     }
   }
@@ -87,16 +94,21 @@ export class SnmpDiscovery {
     // A successful walk alone does not prove completeness. Both count reads
     // must exist and agree with the indexed base table, including a real zero.
     const count = this.persistentIdentity ? Number(unsigned(start.get(OIDS.count),32)) : undefined;
-    if (count !== undefined && count > max) throw new AdapterError('parse_error');
+    if (count !== undefined && count > max) throw capacityError(max);
     const base = table(await t.table(OIDS.table, timeout), max);
     let extended = new Map<string, SnmpTableRow>(), xError: AdapterError['code'] | undefined;
     try { extended = table(await t.table(OIDS.xTable, timeout), max); }
-    catch (e) { xError = classifyError(e); }
+    catch (e) {
+      if (e instanceof AdapterError && e.evidenceCode === 'SNMP_INTERFACE_CAPACITY_EXCEEDED') throw e;
+      xError = classifyError(e);
+    }
     const end = await get(t, this.persistentIdentity ? [OIDS.uptime,OIDS.count] : [OIDS.uptime], timeout);
     const endTicks = Number(unsigned(end.get(OIDS.uptime), 32)), now = this.clock(), at = new Date(now).toISOString();
     // Uptime wrapping, reboot during walk, or an implausible clock delta all break continuity.
     if (endTicks < ticks) throw new AdapterError('parse_error');
-    if (this.persistentIdentity && (Number(unsigned(end.get(OIDS.count),32)) !== count || base.size !== count
+    const endCount = this.persistentIdentity ? Number(unsigned(end.get(OIDS.count),32)) : undefined;
+    if (endCount !== undefined && endCount > max) throw capacityError(max);
+    if (this.persistentIdentity && (endCount !== count || base.size !== count
       || [...base].some(([index,row]) => unsigned(column(row,OIDS.table,1),32) !== index)
       || [...extended.keys()].some(index => !base.has(index)))) throw new AdapterError('parse_error');
     const reboot = !!this.previous && (ticks < this.previous.ticks || now <= this.previous.at

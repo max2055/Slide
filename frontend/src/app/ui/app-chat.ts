@@ -64,16 +64,7 @@ export function isChatStopCommand(text: string) {
     return false;
   }
   const normalized = normalizeLowercaseStringOrEmpty(trimmed);
-  if (normalized === "/stop") {
-    return true;
-  }
-  return (
-    normalized === "stop" ||
-    normalized === "esc" ||
-    normalized === "abort" ||
-    normalized === "wait" ||
-    normalized === "exit"
-  );
+  return normalized === "/stop";
 }
 
 function isChatResetCommand(text: string) {
@@ -246,8 +237,7 @@ async function flushChatQueue(host: ChatHost) {
   let ok = false;
   try {
     if (next.localCommandName) {
-      await dispatchSlashCommand(host, next.localCommandName, next.localCommandArgs ?? "");
-      ok = true;
+      ok = await dispatchSlashCommand(host, next.localCommandName, next.localCommandArgs ?? "");
     } else {
       ok = await sendChatMessageNow(host, next.text, {
         attachments: next.attachments,
@@ -320,6 +310,10 @@ export async function handleSendChat(
   // Intercept local slash commands (/status, /model, /compact, etc.)
   const parsed = parseSlashCommand(message);
   if (parsed?.command.executeLocal) {
+    if (hasAttachments) {
+      host.lastError = "本地斜杠命令不支持附件，请移除附件后执行，或将图片作为普通消息发送。草稿和附件已保留。";
+      return;
+    }
     if (isChatBusy(host) && shouldQueueLocalSlashCommand(parsed.command.key)) {
       if (messageOverride == null) {
         host.chatMessage = "";
@@ -331,15 +325,13 @@ export async function handleSendChat(
       });
       return;
     }
-    const prevDraft = messageOverride == null ? previousDraft : undefined;
-    if (messageOverride == null) {
+    // Keep the draft until success; failures must not destroy unsent work.
+    const ok = await dispatchSlashCommand(host, parsed.command.key, parsed.args);
+    if (ok && messageOverride == null && host.chatMessage === previousDraft
+      && host.chatAttachments === attachments) {
       host.chatMessage = "";
       host.chatAttachments = [];
     }
-    await dispatchSlashCommand(host, parsed.command.key, parsed.args, {
-      previousDraft: prevDraft,
-      restoreDraft: Boolean(messageOverride && opts?.restoreDraft),
-    });
     return;
   }
 
@@ -374,40 +366,48 @@ async function dispatchSlashCommand(
   host: ChatHost,
   name: string,
   args: string,
-  sendOpts?: { previousDraft?: string; restoreDraft?: boolean },
-) {
+): Promise<boolean> {
   switch (name) {
     case "stop":
       await handleAbortChat(host);
-      return;
+      return true;
     case "new":
     case "reset":
       host.onSlashAction?.("switch-session:");
-      return;
+      return true;
     case "clear":
       await clearChatHistory(host);
-      return;
+      return false;
     case "focus":
       host.onSlashAction?.("toggle-focus");
-      return;
+      return true;
     case "export-session":
       host.onSlashAction?.("export");
-      return;
+      return true;
   }
 
   if (!host.client) {
-    return;
+    host.lastError = "命令未执行，请连接恢复后重试。";
+    return false;
   }
 
+  host.lastError = null;
   const targetSessionKey = host.sessionKey;
   const result = await executeSlashCommand(host.client, targetSessionKey, name, args, {
     chatModelCatalog: host.chatModelCatalog,
     sessionsResult: host.sessionsResult,
   });
-  if (!isVisibleChatSession(host)) return;
+  if (!isVisibleChatSession(host)) return !result.failure;
 
   if (result.content) {
     injectCommandResult(host, result.content);
+  }
+
+  if (result.failure) {
+    host.lastError = result.failure === "unknown"
+      ? "命令执行结果未知，请先核对会话状态再决定是否重新执行；未自动重试。"
+      : "命令未完成，可重试。草稿已保留；排队命令仍在队列中。";
+    return false;
   }
 
   if (result.trackRunId) {
@@ -433,6 +433,7 @@ async function dispatchSlashCommand(
   }
 
   scheduleChatScroll(host as unknown as Parameters<typeof scheduleChatScroll>[0]);
+  return true;
 }
 
 async function clearChatHistory(host: ChatHost) {

@@ -22,4 +22,7 @@ for _ in $(seq 1 60); do
   sleep 1
 done
 if [[ "$stable" -lt 3 ]]; then exit 1; fi
-V23_SOURCE_TEST_MYSQL_PORT="$port" pnpm --filter slide-api exec vitest run src/operations/source-package/control.mysql.test.ts src/operations/source-package/runtime.mysql.test.ts src/operations/source-package/authorization.mysql.test.ts
+# MAX-413 CI gate: independent schemas still share MigrationRunner's instance-level
+# GET_LOCK(?, 30). Serialize files so complete migration chains cannot queue
+# behind each other; retain every test and each suite's internal concurrency.
+V23_SOURCE_TEST_MYSQL_PORT="$port" pnpm --filter slide-api exec vitest run --no-file-parallelism src/operations/source-package/control.mysql.test.ts src/operations/source-package/runtime.mysql.test.ts src/operations/source-package/authorization.mysql.test.ts

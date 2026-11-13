@@ -410,7 +410,8 @@ export class SemanticMetrics extends LitElement {
     return html`<div class="latest-cell"><h3>最近一次采集尝试</h3>
       ${attempt ? html`<p><strong>${attemptLabels[attempt.status] ?? attempt.status}</strong>${['partial', 'failed'].includes(attempt.status) ? ' · 不是成功' : ''}</p>
         <p>开始：${localTime(attempt.started_at)}${attempt.ended_at ? ` · 结束：${localTime(attempt.ended_at)}` : ''}</p>
-        <p>错误：${attempt.error ?? (attempt.status === 'succeeded' ? '无' : '未提供')}${attempt.evidence_code ? ` · ${attempt.evidence_code}` : ''}</p>`
+        <p>错误：${attempt.error ?? (attempt.status === 'succeeded' ? '无' : '未提供')}${attempt.evidence_code ? ` · ${attempt.evidence_code}` : ''}</p>
+        ${attempt.evidence_code === 'SNMP_INTERFACE_CAPACITY_EXCEEDED' ? html`<p>接口数量超过采集容量，未发布部分接口。请在采集策略中同时提高接口行数（max_rows）和总序列预算（max_series_per_resource）；标准包至少需要 1 + 15 × 行数条序列，厂商包再加 2。平台最多支持 100 行，超过需缩小设备端 SNMP 采集范围，并保证接口总数与范围一致。</p>` : ''}`
         : html`<p>暂无采集尝试</p>`}
     </div>`;
   }
