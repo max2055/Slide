@@ -472,16 +472,50 @@ class AiAnalysisDatabaseService {
       return { success: false, error: '数据库未连接' };
     }
 
+    let connection: mysql.PoolConnection | undefined;
+    let discardConnection = false;
     try {
-      const [result] = await pool.execute(`DELETE FROM ai_analysis WHERE id = ? AND NOT (status IN ('pending','running','unknown')
-        AND EXISTS (SELECT 1 FROM analysis_dispatches d WHERE d.analysis_id = ai_analysis.id))`, [analysisId]) as any;
-      if (result.affectedRows === 0) {
+      connection = await pool.getConnection();
+      await connection.beginTransaction();
+      // Serialize with dispatch lifecycle writers before deciding whether deletion is safe.
+      const [rows] = await connection.execute<mysql.RowDataPacket[]>(
+        'SELECT status FROM ai_analysis WHERE id = ? FOR UPDATE', [analysisId]);
+      if (!rows.length) {
+        await connection.rollback();
         return { success: false, error: '分析记录不存在' };
       }
+      const [dispatches] = await connection.execute<mysql.RowDataPacket[]>(
+        'SELECT analysis_id FROM analysis_dispatches WHERE analysis_id = ? FOR UPDATE', [analysisId]);
+      if (dispatches.length && ['pending', 'running', 'unknown'].includes(rows[0].status)) {
+        await connection.rollback();
+        return { success: false, error: '分析记录仍在处理中或结果未知，不能删除' };
+      }
+      // Explicit deletion is the retention boundary for request snapshots and attempts.
+      // Queue/outbox records contain only the analysis identity and remain for queue audit.
+      await connection.execute('DELETE FROM analysis_dispatch_keys WHERE analysis_id = ?', [analysisId]);
+      await connection.execute('DELETE FROM analysis_dispatch_attempts WHERE analysis_id = ?', [analysisId]);
+      await connection.execute('DELETE FROM analysis_dispatches WHERE analysis_id = ?', [analysisId]);
+      await connection.execute('DELETE FROM ai_analysis WHERE id = ?', [analysisId]);
+      // A rejected COMMIT can mean its acknowledgement was lost after persistence.
+      discardConnection = true;
+      await connection.commit();
+      discardConnection = false;
       return { success: true };
     } catch (error: any) {
+      if (connection) {
+        if (discardConnection) console.error('删除分析记录提交结果未确认，不自动重放:', error);
+        try {
+          await connection.rollback();
+        } catch (rollbackError) {
+          discardConnection = true;
+          console.error('删除分析记录回滚失败，事务结果未确认:', rollbackError);
+        }
+      }
       console.error('删除分析记录失败:', error);
       return { success: false, error: error.message };
+    } finally {
+      if (discardConnection) connection?.destroy();
+      else connection?.release();
     }
   }
 
