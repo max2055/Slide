@@ -51,3 +51,16 @@ it('seeds the complete predefined metadata on an empty store', async () => {
   expect(create).toHaveBeenCalledWith(expect.objectContaining({ id: 'cpu_usage', threshold_template: { warning: 80, error: 90, critical: 95 } }), true);
   expect(create).toHaveBeenCalledWith(expect.objectContaining({ id: 'network_rx_errors', target_type: 'server', value_type: 'counter', category: 'server', higher_is_worse: true }), true);
 });
+
+it('does not repair custom metadata merely because its id and name match a builtin', async () => {
+  const registry = new MetricRegistry();
+  const builtin = registry.getById('network_rx_errors', 'server')!;
+  vi.spyOn(metricDatabaseService, 'getAllMetrics').mockResolvedValue([{
+    ...builtin, is_builtin: false, value_type: 'gauge', higher_is_worse: null, category: null,
+    collection_sqls: null, compute_expr: null, threshold_template: null,
+  }] as any);
+  await registry.initialize();
+  expect(registry.getById('network_rx_errors', 'server')).toMatchObject({ is_builtin: false, value_type: 'gauge', threshold_template: null });
+  expect(registry.getById('network_rx_errors', 'server')?.higher_is_worse).toBeUndefined();
+  expect(registry.getById('network_rx_errors', 'server')?.category).toBeUndefined();
+});

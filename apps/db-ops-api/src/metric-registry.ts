@@ -74,6 +74,8 @@ export class MetricRegistry {
           // Older seeded rows must not hide newly supported database engines.
           // Preserve operator intervals, enabled flags and SQL overrides.
           existing.db_types = [...new Set([...existing.db_types, ...m.db_types])];
+          // A custom definition can share a builtin id/name; never repair its metadata.
+          if (!existing.is_builtin) continue;
           const row = rowsByKey.get(this.definitionKey(m))!;
           const explicit: Record<string, boolean> = typeof row.metadata_overrides === 'string'
             ? JSON.parse(row.metadata_overrides) : row.metadata_overrides ?? {};
