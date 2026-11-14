@@ -22,6 +22,8 @@ export interface MetricDefinitionRow {
   compute_expr: string | null;
   value_type: 'gauge' | 'counter' | 'histogram';
   category: string | null;
+  higher_is_worse?: boolean | null;
+  metadata_overrides?: Record<string, boolean> | string | null;
   updated_by: number | null;
   created_at: Date;
   updated_at: Date;
@@ -139,10 +141,12 @@ class MetricDatabaseService {
     aggregation: string;
     default_interval: number;
     is_collected?: boolean;
-    collection_sqls?: Record<string, string>;
-    compute_expr?: string;
+    collection_sqls?: Record<string, string> | null;
+    compute_expr?: string | null;
     value_type?: string;
-    category?: string;
+    category?: string | null;
+    higher_is_worse?: boolean | null;
+    threshold_template?: { warning: number; error: number; critical: number } | null;
     target_type?: MetricTargetType;
   }, builtin = false): Promise<{ success: boolean; error?: string }> {
     const pool = this.getPool();
@@ -153,8 +157,8 @@ class MetricDatabaseService {
     try {
       await pool.execute(
         `INSERT INTO metric_definitions
-         (id, target_type, name, description, unit, db_types, aggregation, default_interval, is_collected, is_builtin, collection_sqls, compute_expr, value_type, category)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         (id, target_type, name, description, unit, db_types, aggregation, default_interval, is_collected, is_builtin, collection_sqls, compute_expr, value_type, category, higher_is_worse, threshold_template, metadata_overrides)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           data.id,
           data.target_type || 'instance',
@@ -169,7 +173,10 @@ class MetricDatabaseService {
           data.collection_sqls ? JSON.stringify(data.collection_sqls) : null,
           data.compute_expr || null,
           data.value_type || 'gauge',
-          data.category || null,
+          data.category ?? null,
+          data.higher_is_worse ?? null,
+          data.threshold_template == null ? null : JSON.stringify(data.threshold_template),
+          JSON.stringify(Object.fromEntries(Object.keys(data).filter(key => data[key as keyof typeof data] !== undefined).map(key => [key, true]))),
         ]
       );
 
@@ -196,14 +203,16 @@ class MetricDatabaseService {
       aggregation?: string;
       default_interval?: number;
       is_collected?: boolean;
-      collection_sqls?: Record<string, string>;
-      compute_expr?: string;
+      collection_sqls?: Record<string, string> | null;
+      compute_expr?: string | null;
       value_type?: string;
-      category?: string;
+      category?: string | null;
+      higher_is_worse?: boolean | null;
+      threshold_template?: { warning: number; error: number; critical: number } | null;
       updated_by?: number;
     },
     targetType: MetricTargetType = 'instance',
-  ): Promise<{ success: boolean; error?: string }> {
+  ): Promise<{ success: boolean; reason?: 'not_found'; error?: string }> {
     const pool = this.getPool();
     if (!pool) {
       return { success: false, error: '数据库未连接' };
@@ -220,13 +229,23 @@ class MetricDatabaseService {
       if (data.aggregation !== undefined) { updates.push('aggregation = ?'); values.push(data.aggregation); }
       if (data.default_interval !== undefined) { updates.push('default_interval = ?'); values.push(data.default_interval); }
       if (data.is_collected !== undefined) { updates.push('is_collected = ?'); values.push(data.is_collected ? 1 : 0); }
-      if (data.collection_sqls !== undefined) { updates.push('collection_sqls = ?'); values.push(JSON.stringify(data.collection_sqls)); }
+      if (data.collection_sqls !== undefined) { updates.push('collection_sqls = ?'); values.push(data.collection_sqls === null ? null : JSON.stringify(data.collection_sqls)); }
       if (data.compute_expr !== undefined) { updates.push('compute_expr = ?'); values.push(data.compute_expr); }
       if (data.value_type !== undefined) { updates.push('value_type = ?'); values.push(data.value_type); }
       if (data.category !== undefined) { updates.push('category = ?'); values.push(data.category); }
+      if (data.higher_is_worse !== undefined) { updates.push('higher_is_worse = ?'); values.push(data.higher_is_worse); }
+      if (data.threshold_template !== undefined) { updates.push('threshold_template = ?'); values.push(data.threshold_template === null ? null : JSON.stringify(data.threshold_template)); }
       if (data.updated_by !== undefined) { updates.push('updated_by = ?'); values.push(data.updated_by); }
 
-      if (updates.length === 0) return { success: true };
+      if (updates.length === 0) {
+        const [existing] = await pool.execute(
+          'SELECT 1 FROM metric_definitions WHERE target_type = ? AND id = ? LIMIT 1', [targetType, id],
+        ) as any;
+        return existing.length ? { success: true } : { success: false, reason: 'not_found', error: '指标未找到' };
+      }
+      // Track explicit values (including null) so legacy default repair cannot undo operator choices.
+      updates.push('metadata_overrides = JSON_MERGE_PATCH(COALESCE(metadata_overrides, JSON_OBJECT()), CAST(? AS JSON))');
+      values.push(JSON.stringify(Object.fromEntries(updates.filter(update => !update.startsWith('metadata_overrides')).map(update => [update.split(' = ')[0], true]))));
 
       values.push(targetType, id);
       const sql = `UPDATE metric_definitions SET ${updates.join(', ')} WHERE target_type = ? AND id = ?`;
@@ -237,12 +256,7 @@ class MetricDatabaseService {
           [targetType, id],
         ) as any;
         if (existing.length === 0) {
-          await pool.execute(
-            `INSERT INTO metric_definitions (id, target_type, name, unit, db_types, aggregation, default_interval, is_builtin)
-             VALUES (?, ?, ?, ?, ?, ?, ?, TRUE)`,
-            [id, targetType, id, '', '[]', 'avg', data.default_interval ?? 60]
-          );
-          await pool.execute(sql, values);
+          return { success: false, reason: 'not_found', error: '指标未找到' };
         }
       }
 

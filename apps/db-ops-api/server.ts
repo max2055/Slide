@@ -4847,7 +4847,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
       }
       const result = await metricDatabaseService.updateMetric(id, body, targetType);
       if (!result.success) {
-        reply.code(400).send(result);
+        reply.code(result.reason === 'not_found' ? 404 : 400).send(result);
         return;
       }
       await metricRegistry.refreshFromDB();
