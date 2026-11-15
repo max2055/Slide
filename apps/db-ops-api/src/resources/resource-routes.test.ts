@@ -171,3 +171,29 @@ describe('GitHub #553: AI permission grants retain downstream authorization', ()
     expect(fixture.dispatch).toHaveBeenCalledWith(expect.objectContaining({ actor: expect.objectContaining({ instanceScopes: { 2: 'read-only' } }) }));
   });
 });
+
+// GitHub #366: exercise the HTTP parser and the real diagnostic service together.
+describe('observation limit contract', () => {
+  it('rejects malformed limits before reads and retains integer clamping through HTTP', async () => {
+    const app = Fastify(); apps.push(app);
+    const observations = vi.fn(async () => []);
+    const service = new ResourceDiagnosticService({ list: async () => [], detail: async () => null,
+      observations, relations: async () => [], alerts: async () => [] });
+    await registerResourceRoutes(app, async request => { (request as any).user = actor; }, service);
+    const base = await app.listen({ host: '127.0.0.1', port: 0 });
+    for (const type of ['instance', 'server', 'network_device']) {
+      for (const raw of ['abc', 'NaN', 'Infinity', '-Infinity', '3.5', '', ' ', '9007199254740992', '1&limit=2']) {
+        const response = await fetch(`${base}/api/resources/${type}/2/observations?limit=${raw === '1&limit=2' ? raw : encodeURIComponent(raw)}`);
+        expect(response.status, raw).toBe(400);
+        expect(await response.json()).toEqual({ error: 'OBSERVATION_LIMIT_INVALID' });
+      }
+    }
+    expect(observations).not.toHaveBeenCalled();
+    for (const [raw, expected] of [[undefined, 200], ['-1', 1], ['0', 1], ['1', 1], ['199', 199], ['200', 200], ['201', 200]] as const) {
+      const response = await fetch(`${base}/api/resources/server/2/observations${raw === undefined ? '' : `?limit=${raw}`}`);
+      expect(response.status).toBe(200);
+      expect(observations).toHaveBeenLastCalledWith({ type: 'server', id: 2 }, actor, { metricIds: undefined, limit: expected });
+      await response.body?.cancel();
+    }
+  });
+});

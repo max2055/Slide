@@ -8,7 +8,7 @@ import type { ActorContext } from '../../auth/actor-context.js';
 import { canReadResource } from '../../resources/resource-service.js';
 import { CONTRACT_VERSION, DimensionsSchema, MetricRefSchema, validateDimensions, type CollectionAttempt, type CoreProfile, type MetricDefinition, type NormalizedObservation } from '../../contracts/metrics/index.js';
 import type { PolicyService } from '../policy/service.js';
-import { PolicyError, RefSchema, metricKey, rule, type Ref } from '../policy/model.js';
+import { PolicyError, RefSchema, metricKey, rule, refKey, type Ref, type Resolved } from '../policy/model.js';
 import type { PackageRegistry } from '../packages/model.js';
 import { canonicalDefinitions } from '../packages/builtins.js';
 import { aggregate, SemanticQueryService, type QueryStore, type SemanticBucket } from '../query.js';
@@ -69,6 +69,32 @@ export interface ConsumerMetric {
   attempt: CollectionAttempt | null;
   observed_at?: string;
   series: Array<{ dimensions: Record<string, string>; buckets: SemanticBucket[] }>;
+}
+const failedAttempt = (a: CollectionAttempt) => Boolean(a.error) || ['failed', 'partial', 'cancelled'].includes(a.status);
+/** Keep each dependency's latest result before selecting the evidence for state. */
+function metricAttempt(definition: MetricDefinition, resolved: Resolved | undefined, revision: number | undefined,
+  ref: Ref, attempts: CollectionAttempt[]): CollectionAttempt | null {
+  const collectors = new Set<string>(), visited = new Set<string>();
+  const visit = (key: string) => {
+    if (visited.has(key)) return;
+    visited.add(key);
+    const template = resolved?.metric_templates.find(t => metricKey(t.metric) === key);
+    if (template?.source.kind === 'collector') collectors.add(template.source.collector_id);
+    else if (template?.source.kind === 'derived') {
+      collectors.add(`derived:${template.source.derived_id}`);
+      resolved?.dependencies?.find(d => d.metric === key)?.requires.forEach(visit);
+    }
+  };
+  visit(metricKey(definition));
+  const latest = new Map<string, CollectionAttempt>();
+  const ordered = attempts.filter(a => a.config_revision === revision && a.resource_id === String(ref.id)
+    && a.binding_id === refKey(ref) && collectors.has(a.collector_id))
+    .sort((a, b) => b.started_at.localeCompare(a.started_at) || (b.ended_at ?? '').localeCompare(a.ended_at ?? '') || b.id.localeCompare(a.id));
+  for (const attempt of ordered) if (!latest.has(attempt.collector_id)) latest.set(attempt.collector_id, attempt);
+  const evidence = [...latest.values()];
+  // A later successful sibling cannot erase a failed dependency. A newer success
+  // for that same collector does supersede its previous failure.
+  return evidence.find(a => a.error === 'permission_denied') ?? evidence.find(failedAttempt) ?? evidence[0] ?? null;
 }
 export class MetricConsumerService {
   constructor(private policy: Pick<PolicyService, 'assertAccess' | 'effective'>, private registry: PackageRegistry,
@@ -169,16 +195,14 @@ export class MetricConsumerService {
     for (const definition of ids.flatMap(id => visible.filter(d => d.id === id))) {
       const id = definition.id;
       const template = catalog.effective?.resolved.metric_templates.find(t => metricKey(t.metric) === metricKey(definition));
-      const collector = template?.source.kind === 'collector' ? template.source.collector_id : undefined;
-      const attempt = attempts.filter(a => a.config_revision === catalog.effective?.published_revision && (!collector || a.collector_id === collector))
-        .sort((a, b) => b.started_at.localeCompare(a.started_at))[0] ?? null;
+      const attempt = metricAttempt(definition, catalog.effective?.resolved, catalog.effective?.published_revision, q.resource, attempts);
       // The rate query supports byte/count units. Retain other cumulative evidence
       // (e.g. block I/O milliseconds) without making one unavailable operation fail
       // the whole resource or relabelling its value as a byte/count rate.
       const state = definition.kind === 'counter' && (!definition.aggregation.time.includes('rate') || !['By','count'].includes(definition.unit)) ? 'query_operation_unavailable' : !template ? 'not_covered' : !template.enabled || !settings?.enabled ? 'disabled'
         : attempt?.error === 'permission_denied' ? 'permission_denied'
         : template.capability.status === 'unsupported' ? 'unsupported'
-        : attempt?.error || attempt && ['failed', 'partial', 'cancelled'].includes(attempt.status) ? 'temporary_failure' : template.capability.status === 'unknown' ? 'capability_unknown' : 'available';
+        : attempt && failedAttempt(attempt) ? 'temporary_failure' : template.capability.status === 'unknown' ? 'capability_unknown' : 'available';
       const metric: ConsumerMetric = { definition, capability: template?.capability ?? null,
         enabled: Boolean(template?.enabled && settings?.enabled), state, attempt, series: [] };
       if (q.latest_capacity && catalog.profile.columns.some(c => c.key === 'database_size' && c.metric.id === id)) {
