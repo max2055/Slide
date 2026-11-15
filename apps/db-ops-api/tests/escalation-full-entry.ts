@@ -81,7 +81,14 @@ try {
   assert.equal((await pool.query<any[]>('SELECT level FROM alerts WHERE id=564'))[0][0].level,'warning');
   assert.equal(await count('alert_event_logs'),0);assert.equal(await count('workflow_jobs'),0);assert.equal(smtp.messages.length,0);
   await pool.query('DROP TRIGGER max564_fail');
-  await Promise.all([api('/api/alerts/escalation/check'),api('/api/alerts/escalation/check'),api('/api/alerts/564/escalate',{new_level:'error'})]);
+  await Promise.all([api('/api/alerts/escalation/check'),api('/api/alerts/escalation/check'),
+    fetch(url+'/api/alerts/564/escalate',{method:'POST',headers,body:JSON.stringify({new_level:'error'})}).then(async response => {
+      // MAX-576: if the scanner wins, the same-level manual request is a conflict.
+      assert([200,409].includes(response.status));
+      const body = await response.json() as any;
+      if(response.status===409) assert.equal(body.error,'ESCALATION_DIRECTION');
+      else assert.equal(body.changed,true);
+    })]);
   assert.equal(await count('alert_event_logs'),1);assert.equal(await count('workflow_jobs'),1);
   assert.equal(smtp.messages.length,0); // No send inside transaction.
   const registry = new JobRegistry();
