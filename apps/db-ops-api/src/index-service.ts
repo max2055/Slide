@@ -64,10 +64,6 @@ class IndexService {
         return { error: `不支持的数据库类型: ${conn.db_type}` };
       }
 
-      if (!indexEntries || indexEntries.length === 0) {
-        return { error: '未找到任何索引数据' };
-      }
-
       // 保存到数据库
       const result = await indexDatabaseService.saveIndexData(instanceId, indexEntries);
       if (!result.success) {
@@ -256,9 +252,6 @@ class IndexService {
   ): Promise<RedundantIndex[] | { error: string }> {
     try {
       const indexRows = await indexDatabaseService.getIndexesByInstance(instanceId);
-      if (indexRows.length === 0) {
-        return { error: '暂无索引数据，请先采集' };
-      }
 
       // 按 table_name 分组
       const tableMap = new Map<string, Map<string, { columns: string[]; nonUnique: number; subParts: (number | null)[] }>>();
@@ -341,7 +334,7 @@ class IndexService {
       }
 
       // 保存结果到 index_redundancy_report 表
-      if (redundantList.length > 0) {
+      {
         const reports: RedundantIndexReport[] = redundantList.map((r) => ({
           instance_id: instanceId,
           table_name: r.redundant.tableName,
@@ -350,7 +343,8 @@ class IndexService {
           reason: r.reason,
         }));
 
-        await indexDatabaseService.saveRedundancyReport(reports);
+        const saved = await indexDatabaseService.saveRedundancyReport(instanceId, reports);
+        if (!saved.success) return { error: saved.error || '冗余报告保存失败' };
       }
 
       return redundantList;
@@ -465,7 +459,7 @@ class IndexService {
       return unusedIndexes;
     } catch (error: any) {
       console.error('未使用索引检测失败:', error);
-      return { error: error.message || '未使用索引检测时发生未知错误' };
+      return { error: '未使用索引检测或保存失败' };
     }
   }
 
@@ -477,7 +471,7 @@ class IndexService {
     unusedIndexes: { table_name: string; index_name: string }[]
   ): Promise<void> {
     const pool = dbConnection.getPool();
-    if (!pool) return;
+    if (!pool) throw new Error('索引标记保存失败');
 
     const conn = await pool.getConnection();
     try {
@@ -500,8 +494,8 @@ class IndexService {
       }
       await conn.commit();
     } catch (error) {
-      await conn.rollback();
-      console.error('标记未使用索引失败:', error);
+      try { await conn.rollback(); } catch { conn.destroy(); }
+      throw new Error('索引标记保存失败');
     } finally {
       conn.release();
     }

@@ -10,6 +10,23 @@ import { migrateReference } from './metrics/consumers/migration.js';
 import { rule } from './metrics/policy/model.js';
 import { aiAnalysisDatabaseService } from './ai-analysis-database-service.js';
 
+export type PredictionHorizon = '7d' | '30d' | '90d';
+
+const HORIZON_DAYS: Record<PredictionHorizon, number> = { '7d': 7, '30d': 30, '90d': 90 };
+
+export class PredictionHorizonError extends Error {
+  readonly statusCode = 400;
+  constructor() {
+    super('horizon 必须为 7d/30d/90d 之一');
+  }
+}
+
+export function assertPredictionHorizon(value: unknown): asserts value is PredictionHorizon {
+  if (typeof value !== 'string' || !Object.hasOwn(HORIZON_DAYS, value)) {
+    throw new PredictionHorizonError();
+  }
+}
+
 export interface PredictionPoint {
   date: string; // YYYY-MM-DD
   value: number;
@@ -22,7 +39,7 @@ export interface PredictionResult {
   current_value: number | null;
   regression: { m: number; b: number; r_squared: number };
   predictions: PredictionPoint[];
-  horizon: '7d' | '30d' | '90d';
+  horizon: PredictionHorizon;
   saturation_threshold: number | null;
   warning: string | null;
   data_points_used: number;
@@ -46,8 +63,10 @@ class CapacityPredictor {
   async predict(
     instanceId: number,
     metric: string,
-    horizon: '7d' | '30d' | '90d'
+    horizon: PredictionHorizon
   ): Promise<PredictionResult> {
+    assertPredictionHorizon(horizon);
+
     // 验证 metric
     if (!VALID_METRICS.includes(metric)) {
       throw new Error(`不支持的指标: ${metric}。支持的指标: ${VALID_METRICS.join(', ')}`);
@@ -55,7 +74,7 @@ class CapacityPredictor {
 
     // 计算时间范围
     const now = new Date();
-    const horizonDays = horizon === '7d' ? 7 : horizon === '30d' ? 30 : 90;
+    const horizonDays = HORIZON_DAYS[horizon];
     const lookbackDays = Math.min(31, horizonDays * 2);
     const startTime = new Date(now.getTime() - lookbackDays * 86400000);
 
@@ -75,8 +94,7 @@ class CapacityPredictor {
     });
 
     // 最小数据点检查
-    const minDataPoints: Record<string, number> = { '7d': 7, '30d': 30, '90d': 90 };
-    const required = minDataPoints[horizon] || 7;
+    const required = horizonDays;
     let warning: string | null = horizonDays*2>31?'正式查询最多回溯31天；预测窗口未扩展实际样本':null;
 
     if (records.length < required) {
@@ -194,8 +212,9 @@ class CapacityPredictor {
    */
   async predictAll(
     instanceId: number,
-    horizon: '7d' | '30d' | '90d'
+    horizon: PredictionHorizon
   ): Promise<PredictionResult[]> {
+    assertPredictionHorizon(horizon);
     const results: PredictionResult[] = [];
 
     for (const metric of VALID_METRICS) {
