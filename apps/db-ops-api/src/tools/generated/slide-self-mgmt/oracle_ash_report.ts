@@ -91,13 +91,13 @@ export const oracleAshReportTool: AnyAgentTool = {
       // storage configuration, not necessarily the host clock used by ASH.
       const identityResult = await oracleConnection.execute(
         `SELECT d.dbid, d.name, i.instance_number, i.instance_name,
-          SYS_CONTEXT('USERENV', 'CON_NAME'), SESSIONTIMEZONE, DBTIMEZONE,
+          SYS_CONTEXT('USERENV', 'SERVICE_NAME'), SESSIONTIMEZONE, DBTIMEZONE,
           TO_CHAR(SYSTIMESTAMP, 'TZH:TZM')
          FROM V$DATABASE d CROSS JOIN V$INSTANCE i`
       );
       const row = identityResult.rows?.[0];
       const identity = Array.isArray(row) ? row : [];
-      const [dbid, databaseName, instanceNumber, instanceName, containerName,
+      const [dbid, databaseName, instanceNumber, instanceName, serviceName,
         sessionTimezone, databaseTimezone, databaseHostOffset] = identity;
       if (!Number.isSafeInteger(dbid) || dbid <= 0 || !Number.isSafeInteger(instanceNumber) || instanceNumber <= 0
         || typeof databaseName !== 'string' || !databaseName || typeof instanceName !== 'string' || !instanceName) {
@@ -110,7 +110,7 @@ export const oracleAshReportTool: AnyAgentTool = {
         database_name: databaseName,
         instance_number: instanceNumber,
         instance_name: instanceName,
-        container_name: containerName,
+        service_name: serviceName,
         target_strategy: 'connected_instance',
         time_semantics: 'database_wall_clock',
         session_timezone: sessionTimezone,

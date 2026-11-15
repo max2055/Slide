@@ -25,7 +25,7 @@ describe.skipIf(process.env.SLIDE_MAX534_ORACLE !== '1')('MAX-534/535/548 real O
     admin = await oracle.getConnection(config);
     admin.callTimeout = 15000;
     const environment = await admin.execute(`SELECT d.dbid, d.name, i.instance_number, i.instance_name,
-      SYS_CONTEXT('USERENV', 'CON_NAME'), SESSIONTIMEZONE, DBTIMEZONE,
+      SYS_CONTEXT('USERENV', 'SERVICE_NAME'), SESSIONTIMEZONE, DBTIMEZONE,
       TO_CHAR(SYSTIMESTAMP, 'TZH:TZM'), i.parallel FROM V$DATABASE d CROSS JOIN V$INSTANCE i`);
     identity = (environment.rows as unknown[][])[0];
     console.log('MAX534 environment', { driver: oracle.versionString, thin: oracle.thin, server: admin.oracleServerVersionString, identity });
@@ -64,7 +64,7 @@ describe.skipIf(process.env.SLIDE_MAX534_ORACLE !== '1')('MAX-534/535/548 real O
     databaseService.getConnection.mockReturnValue({ connected: true, db_type: 'oracle', oracleConnection: admin });
     const result = await tool.handler({ instance_id: 534, start_time, end_time });
     if (!result.success) console.log('MAX534 report failure', result);
-    expect(result).toMatchObject({ success: true, data: { dbid: identity[0], database_name: identity[1], instance_number: identity[2], instance_name: identity[3], container_name: identity[4], time_semantics: 'database_wall_clock', start_time, end_time } });
+    expect(result).toMatchObject({ success: true, data: { dbid: identity[0], database_name: identity[1], instance_number: identity[2], instance_name: identity[3], service_name: identity[4], time_semantics: 'database_wall_clock', start_time, end_time } });
     const data = result.data as { html: string };
     expect(data.html).toMatch(/<html/i);
     expect(data.html).toContain(String(identity[0]));

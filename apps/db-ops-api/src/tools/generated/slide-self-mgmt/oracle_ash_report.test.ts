@@ -15,9 +15,9 @@ beforeEach(() => {
 });
 
 describe('MAX-534 / #391 connected Oracle instance identity', () => {
-  it('binds the actual non-1 instance with database/container identity and correct Oracle parameter names', async () => {
+  it('binds the actual non-1 instance with database/service identity and correct Oracle parameter names', async () => {
     const result = await tool.handler(args);
-    expect(result).toMatchObject({ success: true, data: { dbid: 123456, database_name: 'ORCL', instance_number: 2, instance_name: 'orcl2', container_name: 'ORCLPDB1', instance_id: 534, target_strategy: 'connected_instance', html: '<html>\noriginal report\n</html>' } });
+    expect(result).toMatchObject({ success: true, data: { dbid: 123456, database_name: 'ORCL', instance_number: 2, instance_name: 'orcl2', service_name: 'ORCLPDB1', instance_id: 534, target_strategy: 'connected_instance', html: '<html>\noriginal report\n</html>' } });
     expect(result.summary).toContain('ORCL/orcl2');
     expect(execute.mock.calls[0][0]).toContain('V$INSTANCE');
     const [sql, binds] = execute.mock.calls[1];
