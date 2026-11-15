@@ -39,3 +39,38 @@ describe('report export bytes agree with MIME and extension', () => {
     expect(result).toContain('"null"\r\n');
   });
 });
+
+// #547: verify the real PDF writer embeds the bundled font, including concurrent exports.
+describe('Chinese PDF reports (#547)', () => {
+  it('embeds an extractable CJK font for Chinese and mixed ASCII reports', async () => {
+    const sample = { ...report, name: '中文报表测试 health-01', content: '中文健康报告：正常，容量 80%；CPU 12.5%。\n第二段：数据库 MySQL 8.4，延迟 < 10ms。' };
+    const results = await Promise.all([reportExporter.export(sample, 'pdf'), reportExporter.export({ ...sample, content: null }, 'pdf')]);
+    for (const result of results) {
+      expect(Buffer.isBuffer(result)).toBe(true);
+      const pdf = result.toString('binary');
+      expect(pdf).toContain('/FontFile3');
+      expect(pdf).toContain('/ToUnicode');
+      expect(pdf).toContain('NotoSansCJKsc-Regular');
+      expect(pdf).not.toMatch(/\/BaseFont \/Helvetica/);
+    }
+  });
+});
+
+// #548: assert Markdown source preserves one HTML decode and remains inert HTML.
+describe('Markdown text semantics (#548)', () => {
+  it.each([
+    ['<p>literal: &amp;lt;tag&amp;gt;</p>', 'literal: &amp;lt;tag&amp;gt;'],
+    ['<p>literal: &lt;tag&gt;</p>', 'literal: &lt;tag&gt;'],
+    ['<p>A &amp; B &quot;双引号&quot; &#39;单引号&#39; &#x4E2D;&#25991; &copy;</p>', 'A &amp; B "双引号" \'单引号\' 中文 ©'],
+    ['<p>中文 <b>health</b><br>第二行</p><div>第三行</div>', '中文 health\n第二行\n第三行'],
+    ['<p title="a > b">前 &lt;img src=x onerror=alert(1)&gt; 后</p>', '前 &lt;img src=x onerror=alert\\(1\\)&gt; 后'],
+    ['<script>alert(1)</script><style>body{}</style><template>隐藏</template><p>正文</p>', '正文'],
+    ['<p>&amp;amp; &#38;lt; &#x26;lt; &unknown;</p>', '&amp;amp; &amp;lt; &amp;lt; &amp;unknown;'],
+    ['<p>*literal* [link](javascript:evil) `code`</p>', '\\*literal\\* \\[link\\]\\(javascript:evil\\) \\`code\\`'],
+    ['普通中文与 SQL: a < 5 && b > 3', '普通中文与 SQL: a &lt; 5 &amp;&amp; b &gt; 3'],
+  ])('preserves text from %s', async (content, expected) => {
+    const markdown = String(await reportExporter.export({ ...report, data: null, content }, 'md'));
+    expect(markdown.split('## 详细内容\n\n')[1]).toBe(expected);
+    expect(markdown).not.toMatch(/<\/?(?:script|img|p|div|b)\b/i);
+  });
+});

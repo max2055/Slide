@@ -3,7 +3,31 @@
  */
 import PDFDocument from 'pdfkit';
 import ejs from 'ejs';
+import { fileURLToPath } from 'node:url';
+import { parseFragment, type DefaultTreeAdapterMap } from 'parse5';
 import type { Report, ReportFormat } from './report-database-service';
+
+const reportFont = fileURLToPath(new URL('../assets/fonts/NotoSansCJKsc-Regular.otf', import.meta.url));
+
+// Parse before decoding: encoded angle brackets belong to text, not HTML tags.
+function reportMarkdownContent(content: string): string {
+  const parts: string[] = [];
+  const visit = (node: DefaultTreeAdapterMap['node']) => {
+    if (node.nodeName === '#text') {
+      parts.push((node as DefaultTreeAdapterMap['textNode']).value);
+      return;
+    }
+    if ('tagName' in node && ['script', 'style', 'template', 'head'].includes(node.tagName)) return;
+    if ('childNodes' in node) node.childNodes.forEach(visit);
+    if ('tagName' in node && /^(br|div|p|tr|li|h[1-6]|blockquote|pre|th|td)$/.test(node.tagName)) parts.push('\n');
+  };
+  visit(parseFragment(content));
+  return parts.join('')
+    // Keep extracted text literal when the Markdown is rendered.
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/([\\`*_{}\[\]()#+\-.!|])/g, '\\$1')
+    .replace(/\n{3,}/g, '\n\n').trim();
+}
 
 class ReportExporter {
   /**
@@ -24,14 +48,14 @@ class ReportExporter {
       // 标题
       doc
         .fontSize(24)
-        .font('Helvetica-Bold')
+        .font(reportFont)
         .text(report.name, { align: 'center' })
         .moveDown(0.5);
 
       // 元信息
       doc
         .fontSize(10)
-        .font('Helvetica')
+        .font(reportFont)
         .text(`类型：${report.type} | 格式：${report.format}`, { align: 'center' })
         .text(`生成时间：${report.created_at}`, { align: 'center' })
         .moveDown(1);
@@ -43,7 +67,7 @@ class ReportExporter {
       // 内容
       doc
         .fontSize(12)
-        .font('Helvetica')
+        .font(reportFont)
         .text(report.content || '无内容', {
           align: 'left',
           width: 500,
@@ -84,26 +108,7 @@ class ReportExporter {
     if (report.content) {
       lines.push('## 详细内容');
       lines.push('');
-      // 改进的 HTML 转纯文本处理
-      let textContent = report.content
-        // 替换 <br> 为换行
-        .replace(/<br\s*\/?>/gi, '\n')
-        // 替换块级结束标签
-        .replace(/<\/(div|p|tr|li|h[1-6]|blockquote|pre|th|td)>/gi, '\n')
-        // 解码常见 HTML 实体
-        .replace(/&amp;/g, '&')
-        .replace(/&lt;/g, '<')
-        .replace(/&gt;/g, '>')
-        .replace(/&nbsp;/g, ' ')
-        .replace(/&quot;/g, '"')
-        .replace(/&#39;/g, "'")
-        .replace(/&#x27;/g, "'")
-        // 移除剩余 HTML 标签
-        .replace(/<[^>]*>/g, '')
-        // 压缩多余空白行
-        .replace(/\n{3,}/g, '\n\n')
-        .trim();
-      lines.push(textContent);
+      lines.push(reportMarkdownContent(report.content));
     }
 
     return lines.join('\n');
