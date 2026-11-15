@@ -7,7 +7,6 @@ import mysql from 'mysql2/promise';
 import { ALERT_LEVELS } from './alert-levels.js';
 import { CronJob } from 'cron';
 import { dbConnection } from './db-connection';
-import { alertDatabaseService } from './alert-database-service';
 import { enqueueNotificationTransition } from './notification-transition.js';
 import { actorContextService, ActorAuthenticationError, type ActorContext } from './auth/actor-context.js';
 import { canManageResource } from './resources/resource-service.js';
@@ -83,31 +82,29 @@ class AlertEscalationService {
     if (!pool) return { escalated: 0 };
 
     const rules = await this.getEscalationRules(true);
+    const [clock] = await pool.query<mysql.RowDataPacket[]>('SELECT NOW(6) AS started_at');
+    const startedAt = clock[0].started_at;
     let totalEscalated = 0;
+    const escalatedIds = new Set<number>();
 
     for (const rule of rules) {
-      const minutes = rule.trigger_value;
-      // 查询需要升级的告警：等级匹配且超过指定时间未处理
+      // Unsupported legacy rules must never silently become timeout rules.
+      if (rule.trigger_condition !== 'timeout_minutes' ||
+          !Number.isInteger(rule.trigger_value) || rule.trigger_value <= 0 || rule.trigger_value > 2147483647) continue;
       const [alerts] = await pool.execute(
         `SELECT id, level FROM alerts
-         WHERE status IN ('unread', 'read', 'acknowledged')
-           AND level = ?
-           AND created_at <= DATE_SUB(NOW(), INTERVAL ? MINUTE)
-           AND id NOT IN (
-             SELECT alert_id FROM alert_event_logs
-             WHERE action = 'escalated'
-               AND JSON_EXTRACT(details, '$.from_level') = ?
-               AND created_at > DATE_SUB(NOW(), INTERVAL ? MINUTE)
-           )`,
-        [rule.from_level, minutes, rule.from_level, minutes]
+         WHERE status IN ('unread', 'read', 'acknowledged') AND level = ?
+           AND created_at <= DATE_SUB(?, INTERVAL ? MINUTE)`,
+        [rule.from_level, startedAt, rule.trigger_value]
       ) as any;
 
       if (!Array.isArray(alerts) || alerts.length === 0) continue;
 
       for (const alert of alerts) {
+        if (escalatedIds.has(alert.id)) continue;
         try {
-          const result = await this.transition(alert.id,rule.to_level,undefined,rule.from_level,rule.id);
-          if (result.changed) totalEscalated++;
+          const result = await this.transition(alert.id,rule.to_level,undefined,rule.from_level,rule.id,{ startedAt, minutes: rule.trigger_value });
+          if (result.changed) { totalEscalated++; escalatedIds.add(alert.id); }
         } catch (error) {
           console.error(`升级告警 ${alert.id} 失败:`, error);
         }
@@ -124,7 +121,7 @@ class AlertEscalationService {
     try { return {success:true,...await this.transition(alertId,newLevel,actor)}; }
     catch(e) {return {success:false,error:e instanceof ActorAuthenticationError?'ESCALATION_AUTH':e instanceof Error&&e.message.startsWith('ESCALATION_')?e.message:'ESCALATION_STATE_UNKNOWN'};}
   }
-  private async transition(alertId:number,newLevel:string,actor?:ActorContext,expected?:string,ruleId?:number){
+  private async transition(alertId:number,newLevel:string,actor?:ActorContext,expected?:string,ruleId?:number,timeout?:{startedAt:Date;minutes:number}){
     const levels=ALERT_LEVELS;
     if(!levels.includes(newLevel))throw Error('ESCALATION_LEVEL');
     const pool=this.getPool();if(!pool)throw Error('ESCALATION_UNAVAILABLE');
@@ -140,7 +137,28 @@ class AlertEscalationService {
         if(!(live.permissions.includes('*')||live.permissions.includes('alert:manage'))||!ref||!canManageResource(live,ref))throw Error('ESCALATION_FORBIDDEN');
       };
       await authorize();
-      const changed=(!expected||a.level===expected)&&!['resolved','closed'].includes(a.status)&&a.level!==newLevel;
+      // Manual requests must report stale state as a conflict. Automatic scans
+      // may have selected a candidate before another transaction handled it.
+      const active = ['unread', 'read', 'acknowledged'].includes(a.status);
+      if (expected === undefined) {
+        if (!active) throw Error('ESCALATION_STATUS');
+        if (levels.indexOf(newLevel) <= levels.indexOf(a.level)) throw Error('ESCALATION_DIRECTION');
+      }
+      // Recheck after acquiring the alert lock, using the scan's DB clock.
+      // Each level waits from the latest escalation (or initial creation).
+      let eligible = true;
+      if (timeout) {
+        const [due] = await c.execute<mysql.RowDataPacket[]>(
+          `SELECT a.id FROM alerts a WHERE a.id = ?
+           AND GREATEST(a.created_at, COALESCE(
+             (SELECT MAX(e.created_at) FROM alert_event_logs e
+              WHERE e.alert_id = a.id AND e.action = 'escalated'), a.created_at))
+             <= DATE_SUB(?, INTERVAL ? MINUTE)`,
+          [alertId, timeout.startedAt, timeout.minutes],
+        );
+        eligible = due.length > 0;
+      }
+      const changed=eligible&&(!expected||a.level===expected)&&active&&a.level!==newLevel;
       if(changed){
         if(levels.indexOf(newLevel)<=levels.indexOf(a.level))throw Error('ESCALATION_DIRECTION');
         await c.execute('UPDATE alerts SET level=? WHERE id=?',[newLevel,alertId]);
@@ -180,6 +198,10 @@ class AlertEscalationService {
     trigger_value: number;
     enabled?: boolean;
   }): Promise<{ success: boolean; ruleId?: number; error?: string }> {
+    if (data.trigger_condition !== 'timeout_minutes')
+      return { success: false, error: '仅支持 timeout_minutes 升级条件' };
+    if (data.trigger_value !== undefined && (!Number.isInteger(data.trigger_value) || data.trigger_value <= 0 || data.trigger_value > 2147483647))
+      return { success: false, error: '升级等待分钟数必须是 1 至 2147483647 的整数' };
     const pool = this.getPool();
     if (!pool) return { success: false, error: '数据库未连接' };
 
@@ -203,6 +225,10 @@ class AlertEscalationService {
     trigger_value?: number;
     enabled?: boolean;
   }): Promise<{ success: boolean; error?: string }> {
+    if (data.trigger_condition !== undefined && data.trigger_condition !== 'timeout_minutes')
+      return { success: false, error: '仅支持 timeout_minutes 升级条件' };
+    if (data.trigger_value !== undefined && (!Number.isInteger(data.trigger_value) || data.trigger_value <= 0 || data.trigger_value > 2147483647))
+      return { success: false, error: '升级等待分钟数必须是 1 至 2147483647 的整数' };
     const pool = this.getPool();
     if (!pool) return { success: false, error: '数据库未连接' };
 
