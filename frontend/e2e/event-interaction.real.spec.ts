@@ -19,8 +19,8 @@ test('real application saves and permission failure preserve drafts; local filte
  const responsePromise = page.waitForResponse(r=>r.url().endsWith('/55/note'));
  await page.getByRole('button',{name:'添加备注',exact:true}).click();
  const saved = await responsePromise; expect(saved.status()).toBe(200);
- expect((await saved.json()).success).toBe(false);
- await expect(note).toHaveValue('真实备注');
+ expect((await saved.json()).success).toBe(true);
+ await expect(note).toHaveValue('');
  await page.getByRole('button',{name:'添加复盘',exact:true}).click();
  const review=page.getByRole('textbox',{name:'事件复盘'});
  await review.fill('真实复盘');
@@ -29,20 +29,25 @@ test('real application saves and permission failure preserve drafts; local filte
  const headers={Authorization:`Bearer ${token}`};
  const logs=await (await page.request.get('/api/alerts/events/55/logs',{headers})).json();
  expect(JSON.stringify(logs)).toContain('真实复盘');
- // Existing backend handled enum mismatch prevents note persistence.
+ expect(JSON.stringify(logs)).toContain('真实备注');
+ expect(logs.some((log:any)=>log.action==='note_added' && JSON.stringify(log.details).includes('真实备注'))).toBe(true);
  // Real authentication rejection: no mocked HTTP responses.
  await page.evaluate(()=>localStorage.setItem('token','invalid'));
  await note.fill('失败保留备注');
  await page.getByRole('button',{name:'添加备注',exact:true}).click();
  await expect(note).toHaveValue('失败保留备注');
+ await expect(page.getByRole('button',{name:'添加备注',exact:true})).toBeEnabled();
  await page.evaluate(token=>localStorage.setItem('token',token),token);
  await page.getByRole('button',{name:'添加备注',exact:true}).click();
- await expect(note).toHaveValue('失败保留备注');
+ await expect(note).toHaveValue('');
+ const retriedLogs=await (await page.request.get('/api/alerts/events/55/logs',{headers})).json();
+ expect(JSON.stringify(retriedLogs)).toContain('失败保留备注');
  await page.getByRole('button',{name:'添加复盘',exact:true}).click();
  await review.fill('失败保留复盘');
  await page.evaluate(()=>localStorage.setItem('token','invalid'));
  await page.getByRole('button',{name:'提交复盘'}).click();
  await expect(review).toHaveValue('失败保留复盘');
+ await expect(page.getByRole('button',{name:'提交复盘'})).toBeEnabled();
  await page.evaluate(token=>localStorage.setItem('token',token),token);
  await page.getByRole('button',{name:'提交复盘'}).click();
  await expect(review).toHaveCount(0);
