@@ -789,11 +789,11 @@ async function start() {
       }
       const result = await authDatabaseService.deleteUserById(Number(id));
       if (!result.success) {
-        return reply.code(400).send(result);
+        return reply.code(result.code === 'USER_HAS_RETAINED_RECORDS' ? 409 : 400).send(result);
       }
       reply.send(result);
     } catch (error: any) {
-      reply.code(500).send({ error: '删除用户失败：' + error.message });
+      reply.code(500).send({ error: '删除用户失败，请稍后重试' });
     }
   });
 
