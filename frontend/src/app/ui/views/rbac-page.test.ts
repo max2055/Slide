@@ -125,3 +125,16 @@ for (const kind of ['role', 'instance'] as const) {
     });
   });
 }
+
+
+it('#625: clears a role description with an explicit empty value', async () => {
+  const view: any = new RoleManagementTab();
+  view.editingRole = { id: 9, name: 'custom', description: 'before' };
+  view.formName = 'custom'; view.formDescription = '   ';
+  view._loadRoles = vi.fn();
+  const put = vi.spyOn(apiClient, 'put').mockResolvedValue({ success: true });
+  try {
+    await view._saveRole();
+    expect(put).toHaveBeenCalledWith('/v1/rbac/roles/9', { name: 'custom', description: '' });
+  } finally { vi.restoreAllMocks(); }
+});

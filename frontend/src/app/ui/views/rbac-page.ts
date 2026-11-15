@@ -296,7 +296,7 @@ export class RoleManagementTab extends LitElement {
         : "/v1/rbac/roles";
       const body = {
         name: this.formName.trim(),
-        description: this.formDescription.trim() || undefined,
+        description: this.formDescription.trim(),
       };
       if (isEdit) {
         await apiClient.put(url, body);
