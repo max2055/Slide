@@ -83,6 +83,6 @@ describe('MAX-672 / #687: user management permission states', () => {
     await flush();
     expect(view.shadowRoot!.textContent).toContain('未登录');
     expect(view.shadowRoot!.textContent).not.toContain('old-admin-data');
-    expect(get.mock.calls.some(call => call[0] === '/v1/rbac/users/42/roles')).toBe(false);
+    expect(get.mock.calls.map(call => call[0])).toEqual(['/v1/rbac/roles', '/users', '/v1/rbac/roles']);
   });
 });
