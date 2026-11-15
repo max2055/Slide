@@ -7,6 +7,25 @@ import { createHash } from 'crypto';
 import { dbConnection, encryptData, decryptData } from './db-connection';
 import { isInvestigationServiceIdentity } from './auth/investigation-service-identity.js';
 
+export interface UserDeletionResult {
+  success: boolean;
+  error?: string;
+  code?: 'USER_HAS_RETAINED_RECORDS';
+}
+
+function userDeletionFailure(error: unknown): UserDeletionResult {
+  // Let InnoDB enforce retention atomically, including audit inserts racing DELETE.
+  // Other RESTRICT references also require retaining the user's identity.
+  if ((error as { code?: string })?.code === 'ER_ROW_IS_REFERENCED_2') {
+    return {
+      success: false,
+      code: 'USER_HAS_RETAINED_RECORDS',
+      error: '该用户存在审计或其他关联记录，不能删除。请在编辑用户中将状态设为“停用”，以保留历史身份和记录。',
+    };
+  }
+  return { success: false, error: '删除用户失败，请稍后重试' };
+}
+
 export interface User {
   id: number;
   username: string;
@@ -257,7 +276,7 @@ export class AuthDatabaseService {
   /**
    * 删除用户
    */
-  async deleteUser(username: string): Promise<{ success: boolean; error?: string }> {
+  async deleteUser(username: string): Promise<UserDeletionResult> {
     const pool = this.getPool();
     if (!pool) {
       return { success: false, error: '数据库未连接' };
@@ -272,8 +291,7 @@ export class AuthDatabaseService {
       await pool.execute('DELETE FROM users WHERE username = ?', [username]);
       return { success: true };
     } catch (error: any) {
-      console.error('删除用户失败:', error);
-      return { success: false, error: error.message };
+      return userDeletionFailure(error);
     }
   }
 
@@ -484,7 +502,7 @@ export class AuthDatabaseService {
   /**
    * 根据 ID 删除用户
    */
-  async deleteUserById(id: number): Promise<{ success: boolean; error?: string }> {
+  async deleteUserById(id: number): Promise<UserDeletionResult> {
     const pool = this.getPool();
     if (!pool) {
       return { success: false, error: '数据库未连接' };
@@ -503,8 +521,7 @@ export class AuthDatabaseService {
       await pool.execute('DELETE FROM users WHERE id = ?', [id]);
       return { success: true };
     } catch (error: any) {
-      console.error('删除用户失败:', error);
-      return { success: false, error: error.message };
+      return userDeletionFailure(error);
     }
   }
 }
