@@ -173,6 +173,11 @@ export class UsersManagement extends LitElement {
       color: var(--muted);
     }
 
+    .permission-actions {
+      text-align: center;
+      padding: 0 var(--space-xl) var(--space-xl);
+    }
+
     .error-msg {
       color: var(--danger);
       font-size: 13px;
@@ -596,9 +601,8 @@ export class UsersManagement extends LitElement {
               <app-empty-state icon="lock"
                 title=${this.checkingAdmin ? '正在检查权限' : this.error || '无权限访问此页面，需要 admin 角色'}
                 description=${this.checkingAdmin ? '确认权限后加载用户数据。' : this.error === '未登录' ? '请登录后重新检查权限。' : ''}
-              >
-                ${this.checkingAdmin ? '' : html`<button slot="actions" class="btn" type="button" @click=${() => void this._checkAdmin()}>重新检查权限</button>`}
-              </app-empty-state>
+              ></app-empty-state>
+              ${this.checkingAdmin ? '' : html`<div class="permission-actions"><button class="btn" type="button" @click=${() => void this._checkAdmin()}>重新检查权限</button></div>`}
             </div>
           </app-card>
         </div>
