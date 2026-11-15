@@ -57,4 +57,23 @@ describe('analysis completion write recovery (#488)', () => {
     await fixture.execute();
     expect(fixture.store.fail).toHaveBeenCalledExactlyOnceWith(fixture.owned, reason, known);
   });
+
+  it('logs both execution and settlement failures without replacing the original error (#596)', async () => {
+    const original = new Error('provider interrupted');
+    const fixture = setup(async () => { throw original; });
+    fixture.store.fail.mockRejectedValue(Object.assign(new Error('password=private-value'), { code: 'ER_SIGNAL_EXCEPTION' }));
+    const log = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      await expect(fixture.execute()).rejects.toBe(original);
+      expect(log).toHaveBeenCalledWith('[AnalysisDispatch] execution failed', expect.objectContaining({
+        analysisId: 1, jobId: 'job', reason: 'ANALYSIS_EXECUTION_INTERRUPTED',
+      }));
+      expect(log).toHaveBeenCalledWith('[AnalysisDispatch] failure settlement failed', expect.objectContaining({
+        analysisId: 1, jobId: 'job', recovery: 'analysis.recover', code: 'ER_SIGNAL_EXCEPTION',
+      }));
+      expect(JSON.stringify(log.mock.calls)).not.toContain('private-value');
+      expect(fixture.store.fail).toHaveBeenCalledTimes(1);
+    } finally { log.mockRestore(); }
+  });
+
 });

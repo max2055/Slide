@@ -165,6 +165,68 @@ describe.skipIf(process.env.SQL_AUDIT_MYSQL_TEST !== '1')('MAX-533 real MySQL au
     expect((await rows('SELECT COUNT(*) n FROM sql_audit_records'))[0].n).toBe(count);
   });
 
+  it.each(['ai_analysis', 'analysis_dispatches', 'workflow_jobs'])('rolls back every admission row when %s insertion fails (#595)', async table => {
+    const tables = ['sql_audit_records', 'ai_analysis', 'analysis_dispatches', 'workflow_jobs', 'outbox_events', 'analysis_dispatch_keys'];
+    const counts = async () => Promise.all(tables.map(async name => (await rows(`SELECT COUNT(*) n FROM ${name}`))[0].n));
+    const before = await counts();
+    await pool.query(`CREATE TRIGGER max546_insert BEFORE INSERT ON ${table} FOR EACH ROW SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='MAX546_INSERT_FAILED'`);
+    try { await expect(submit(`SELECT 'max546-${table}'`)).rejects.toThrow('MAX546_INSERT_FAILED'); }
+    finally { await pool.query('DROP TRIGGER max546_insert'); }
+    expect(await counts()).toEqual(before);
+  });
+
+  it.each([['ai_analysis', true], ['sql_audit_records', true], ['ai_analysis', false], ['sql_audit_records', false]] as const)('logs a failed %s write (sent=%s) and recovers without a provider replay (#596)', async (table, sent) => {
+    const accepted = await submit(`SELECT 'max551-${table}-${sent}'`);
+    const [dispatch] = await rows('SELECT job_id FROM analysis_dispatches WHERE analysis_id=?', [accepted.analysisId]);
+    await pool.query("UPDATE workflow_jobs SET available_at=DATE_ADD(NOW(), INTERVAL 1 HOUR) WHERE state IN ('queued','retry')");
+    await pool.query('UPDATE workflow_jobs SET available_at=DATE_SUB(NOW(), INTERVAL 1 SECOND) WHERE id=?', [dispatch.job_id]);
+    const job = (await jobs.claim('max546', 30))!;
+    expect(job.id).toBe(dispatch.job_id);
+    const original = new Error(sent ? 'fixture provider failure' : 'ANALYSIS_CONFIGURATION_CHANGED');
+    let requests = 0;
+    const registry = new JobRegistry();
+    registerAnalysisDispatchHandler(registry, {
+      store: analysisDispatchStore, authorize: async request => {
+        await authorizeAnalysisRequest(request);
+        if (!sent) throw original;
+      }, configurationVersion: analysisConfigurationVersion,
+      engine: async () => ({ invoke: async (_s: string, _m: string, _p: string, options: any) => {
+        await options.beforeProviderRequest(); requests++;
+        throw original;
+      } } as any),
+    });
+    const log = vi.spyOn(console, 'error').mockImplementation(() => {});
+    await pool.query(`CREATE TRIGGER max546_update BEFORE UPDATE ON ${table} FOR EACH ROW
+      BEGIN IF NEW.status IN ('failed','unknown') THEN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='MAX546_UPDATE_FAILED'; END IF; END`);
+    const context = { workerId: 'max546', fencingToken: job.fencingToken, signal: new AbortController().signal };
+    try {
+      await expect(registry.execute(job, context)).rejects.toBe(original);
+      expect(log).toHaveBeenCalledWith('[AnalysisDispatch] failure settlement failed', expect.objectContaining({
+        analysisId: accepted.analysisId, jobId: job.id, code: 'ER_SIGNAL_EXCEPTION', recovery: 'analysis.recover',
+      }));
+      // Both writes roll back, including when the audit update fails after the analysis update.
+      expect((await rows('SELECT status FROM ai_analysis WHERE id=?', [accepted.analysisId]))[0].status).toBe('running');
+      expect((await rows('SELECT status FROM sql_audit_records WHERE id=?', [accepted.recordId]))[0].status).toBe('running');
+    } finally { await pool.query('DROP TRIGGER max546_update'); log.mockRestore(); }
+    // Use the worker's terminal job write, then the production recovery scan.
+    // An unknown response must never invoke the engine again.
+    expect(await jobs.fail(job, 'max546', original, null)).toBe(true);
+    await analysisDispatchStore.recover();
+    expect((await rows('SELECT status,recovery_reason FROM ai_analysis WHERE id=?', [accepted.analysisId]))[0]).toMatchObject({
+      status: sent ? 'unknown' : 'failed', recovery_reason: sent ? 'ANALYSIS_PROVIDER_RESULT_UNKNOWN' : 'ANALYSIS_UNSENT_JOB_TERMINAL',
+    });
+    expect((await rows('SELECT status FROM sql_audit_records WHERE id=?', [accepted.recordId]))[0].status).toBe('failed');
+    await registry.execute(job, context);
+    expect(requests).toBe(sent ? 1 : 0);
+    if (sent) await expect(submit(`SELECT 'max551-${table}-${sent}'`)).rejects.toThrow('ANALYSIS_PROVIDER_RESULT_UNKNOWN');
+    else {
+      const fresh = await submit(`SELECT 'max551-${table}-${sent}'`);
+      expect(fresh.analysisId).not.toBe(accepted.analysisId);
+      expect(fresh.recordId).not.toBe(accepted.recordId);
+      await run(fresh.analysisId);
+    }
+  });
+
   it('rejects a changed configuration before send and permits a fresh admission after settlement', async () => {
     const accepted = await submit('SELECT 536');
     const before = sends;
