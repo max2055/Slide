@@ -18,7 +18,11 @@ SQL 审核使用持久化 analysis dispatch，与其他 AI 分析共用 worker�
 
 ## 生命周期与兼容性
 
-审核记录与分析、dispatch、outbox 和 workflow job 在同一事务创建；登记失败整体回滚。worker 更新审核记录为 running/completed/failed。旧审核表没有 unknown 枚举，未知回执时该表标记 failed，真实状态及恢复原因以 `ai_analysis.status/recovery_reason` 为准，不能据此自动重试。
+审核记录与分析、dispatch、outbox 和 workflow job 在同一事务创建；登记失败整体回滚。worker 更新审核记录为 running/completed/failed。分析与审核的终态更新也使用同一事务，任一步失败整体回滚。旧审核表没有 unknown 枚举，未知回执时该表标记 failed，真实状态及恢复原因以 `ai_analysis.status/recovery_reason` 为准，不能据此自动重试。
+
+失败日志可按 `[AnalysisDispatch] execution failed` 与 `[AnalysisDispatch] failure settlement failed` 检索，并通过 `analysisId`、`jobId`、`attempt` 和围栏信息关联。回写错误仅记录驱动错误码，不输出可能包含 SQL 或凭据的数据库错误正文；原始执行错误仍向 worker 抛出。
+
+回写失败后沿用持久化恢复，不在 catch 内重发请求：worker 释放租约或租约过期后，由既有 `analysis.recover` 扫描（10 秒调度槽）或新领取者收敛。发送结果未知时，分析保留 unknown、审核标为 failed，后续提交继续拒绝自动重发；未发送且任务进入终态时，两表均标为 failed。数据库故障未恢复期间，扫描仍可能失败，恢复依赖数据库可用和 worker 持续运行。
 
 完成结果保留 `raw_content`、`pre_audit_results`、`explain_plan`、`index_info` 和 `table_stats`，同时保存结构化 envelope。审核/批量审核 API 字段保持兼容。提交者身份改由认证后的 ActorContext 传入，不再以用户名字符串代替授权身份。
 
@@ -39,3 +43,5 @@ SQL_AUDIT_MYSQL_TEST=1 SQL_AUDIT_MYSQL_HOST=127.0.0.1 SQL_AUDIT_MYSQL_PORT=3308 
 ```
 
 密码通过执行环境的 `SQL_AUDIT_MYSQL_PASSWORD` 注入，不写入命令、源码或日志。该套件使用真实迁移、审核服务、配置解析、授权校验、dispatch/worker handler 与事务，模型边界为受控替身，不证明厂商模型调用或实际计费。
+
+真实套件还覆盖 #595 的分析/dispatch/job 插入失败整体回滚，以及 #596 的分析和审核更新分别失败、发送前/后恢复、失败日志与禁止未知请求重发。
