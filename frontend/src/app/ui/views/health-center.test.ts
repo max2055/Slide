@@ -62,3 +62,15 @@ describe('system health and consistency page', () => {
     ]);
   });
 });
+
+describe('MAX-530 / #718 capacity difference signs', () => {
+  it('renders negative, positive, zero and rounded zero without +- or +0', async () => {
+    const { render } = await import('lit');
+    const el = document.createElement('health-center-page') as any;
+    const root = document.createElement('div');
+    render(el._renderCapacityDetailTable([95, 105, 100, 99.9, 100.1].map(inst_size => ({ name: 'fixture', inst_size, cap_size: 100 }))), root);
+    expect([...root.querySelectorAll('tbody tr td:last-child')].map(td => td.textContent?.trim())).toEqual(['-5%', '+5%', '0%', '0%', '0%']);
+    render(el._renderCapacityDetailTable([{ name: 'missing', inst_size: 5, cap_size: 0 }]), root);
+    expect(root.querySelector('tbody tr td:last-child')?.textContent?.trim()).toBe('—');
+  });
+});

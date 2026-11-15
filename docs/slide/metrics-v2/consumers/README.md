@@ -41,6 +41,10 @@
 
 ## 验证与限制
 
+MAX-517 输入语义补充（当前路由为 `/api/metrics/evaluate`）：恢复条件是同一算子在恢复阈值处的补集。`>`/`>=` 要求 `recovery_threshold <= threshold`，`<`/`<=` 要求 `recovery_threshold >= threshold`，`=`/`!=` 仅允许恢复阈值等于触发阈值；省略恢复阈值时使用触发阈值。非法组合返回 HTTP 400 `QUERY_INPUT_INVALID`。零触发/恢复持续时间仍合法；合法策略的 `state: firing` 与 `recovery: true` 互斥，滞回区间返回 pending。
+
+派生指标尝试证据沿有效配置的版本化依赖图追溯到实际采集器及 `derived:<derived_id>`，仅接受同资源、binding 和配置版本的 attempt。每个依赖先取最新 `started_at`（并列时按 `ended_at`、ID 降序），再优先呈现权限失败、其他失败、成功证据。其他依赖的较新成功不能覆盖失败；同一依赖的较新成功可解除其旧失败。不相关采集器不改变状态或遮蔽已有序列。现有质量、覆盖率和新鲜度检查继续适用。
+
 确定性 fixture：`fixtures.json`。合同测试直接调用真实查询服务和 Fastify 路由；浏览器测试启动真实 HTTP、Vite 和 Chromium，使用固定的内存观测存储，不依赖 LLM 或外部数据库采样。覆盖 UI/API/Agent/告警/评分一致性、授权、未知指标、单位/语义版本、缺失、stale、estimated、分母未知、临时失败和模板切换。
 
 命令与结果见 `verification.md`。截图位于 `screenshots/1440.png`、`screenshots/375.png`。

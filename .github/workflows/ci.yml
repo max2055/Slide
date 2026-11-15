@@ -169,7 +169,7 @@ jobs:
       - run: pnpm --filter slide-sandbox-controller test
 
   browser:
-    # Keep Playwright browser/dependency installation on its supported OS.
+    # Keep Playwright 1.60 browser jobs on its supported Ubuntu release (MAX-579).
     runs-on: ubuntu-24.04
     needs: plan
     if: needs.plan.outputs.browser == 'true'
@@ -206,7 +206,6 @@ jobs:
         run: pnpm --filter slide-frontend exec playwright test streaming-render.spec.ts --config playwright.streaming.config.ts --grep 'real phases'
 
   browser-qualification:
-    # Keep Playwright browser/dependency installation on its supported OS.
     runs-on: ubuntu-24.04
     needs: plan
     if: needs.plan.outputs.integration == 'true'
@@ -305,7 +304,6 @@ jobs:
   # from the job above. Splitting them keeps the browser critical path below
   # the API shard ceiling instead of stacking both slow steps in one job.
   browser-edge-qualification:
-    # Keep Playwright browser/dependency installation on its supported OS.
     runs-on: ubuntu-24.04
     needs: plan
     if: needs.plan.outputs.integration == 'true'
@@ -369,7 +367,6 @@ jobs:
   # Playwright shards the 79 tests across two runners so a slow spec cannot
   # hold the whole job.
   investigation-workspace-qualification:
-    # Keep Playwright browser/dependency installation on its supported OS.
     runs-on: ubuntu-24.04
     needs: plan
     if: needs.plan.outputs.integration == 'true'
@@ -496,7 +493,6 @@ jobs:
   # Every leg still uses its own isolated MySQL pair (the exec leg needs only
   # the 8.4 server), so the isolated-database contract is unchanged.
   investigation-api-qualification:
-    # Keep Playwright browser/dependency installation on its supported OS.
     runs-on: ubuntu-24.04
     needs: plan
     if: needs.plan.outputs.api == 'true'
