@@ -825,6 +825,10 @@ class AlertDatabaseService {
     network_device_id?: number;
     created_by?: number;
   }): Promise<{ success: boolean; ruleId?: number; error?: string }> {
+    if (data.duration_seconds !== undefined && (!Number.isInteger(data.duration_seconds)
+      || data.duration_seconds === null || data.duration_seconds < 0 || data.duration_seconds > 2147483647)) {
+      return { success: false, error: '持续秒数必须为 0–2147483647 的整数；不能为 null' };
+    }
     if ((data.threshold_type !== undefined && data.threshold_type !== 'static' && data.threshold_type !== 'dynamic')
       || (data.silence_minutes !== undefined && (!Number.isInteger(data.silence_minutes) || data.silence_minutes === null || data.silence_minutes < 0 || data.silence_minutes > 2147483647))) {
       return { success: false, error: '阈值类型必须为 static/dynamic，静默分钟必须为 0–2147483647 的整数；不能为 null' };
@@ -852,7 +856,7 @@ class AlertDatabaseService {
           data.threshold_type || 'static',
           data.dynamic_config ? JSON.stringify(data.dynamic_config) : null,
           data.silence_minutes ?? 5,
-          data.duration_seconds || 60,
+          data.duration_seconds ?? 60,
           data.severity,
           data.notification_channels ? JSON.stringify(data.notification_channels) : null,
           data.db_types ? JSON.stringify(data.db_types) : null,
@@ -900,6 +904,10 @@ class AlertDatabaseService {
       network_device_id?: number | null;
     }
   ): Promise<{ success: boolean; error?: string }> {
+    if (data.duration_seconds !== undefined && (!Number.isInteger(data.duration_seconds)
+      || data.duration_seconds === null || data.duration_seconds < 0 || data.duration_seconds > 2147483647)) {
+      return { success: false, error: '持续秒数必须为 0–2147483647 的整数；不能为 null' };
+    }
     if ((data.threshold_type !== undefined && data.threshold_type !== 'static' && data.threshold_type !== 'dynamic')
       || (data.silence_minutes !== undefined && (!Number.isInteger(data.silence_minutes) || data.silence_minutes === null || data.silence_minutes < 0 || data.silence_minutes > 2147483647))) {
       return { success: false, error: '阈值类型必须为 static/dynamic，静默分钟必须为 0–2147483647 的整数；不能为 null' };

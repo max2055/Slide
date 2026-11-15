@@ -3199,14 +3199,14 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
           metric_name: data.metric_name,
           operator: data.operator,
           threshold: Number(data.threshold),
-          duration_seconds: Number(data.duration_seconds) || 60,
+          duration_seconds: data.duration_seconds,
           severity: data.severity,
           notification_channels: data.notification_channels,
           threshold_type: data.threshold_type,
           threshold_template: data.threshold_template,
           dynamic_config: data.dynamic_config,
           silence_minutes: data.silence_minutes,
-          db_types: data.db_types || (metricDef ? metricDef.db_types : null),
+          db_types: data.db_types === undefined ? (metricDef?.db_types ?? null) : data.db_types,
           instance_ids: instanceIds,
           template_id: data.template_id ?? null,
           target_type: data.target_type || 'instance',
@@ -3275,7 +3275,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
         if (data.metric_name !== undefined) updateData.metric_name = data.metric_name;
         if (data.operator !== undefined) updateData.operator = data.operator;
         if (data.threshold !== undefined) updateData.threshold = Number(data.threshold);
-        if (data.duration_seconds !== undefined) updateData.duration_seconds = Number(data.duration_seconds);
+        if (data.duration_seconds !== undefined) updateData.duration_seconds = data.duration_seconds;
         if (data.severity !== undefined) updateData.severity = data.severity;
         if (data.enabled !== undefined) updateData.enabled = data.enabled;
         if (data.notification_channels !== undefined) updateData.notification_channels = data.notification_channels;
