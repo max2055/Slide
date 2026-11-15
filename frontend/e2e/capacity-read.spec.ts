@@ -24,7 +24,7 @@ for (const [width, height] of [[1440, 900], [1366, 768], [1920, 1080]]) {
       el.instanceId = 529; el.instance = { id: 529, name: '受控接口样本', db_type: 'mysql', host: 'fixture', port: 3308 };
       el.activeTab = 'capacity'; await el.loadTabData(); await el.loadDiagnosisHistory();
     });
-    await expect(el.getByRole('alert')).toContainText('HTTP 503');
+    await expect(el.locator('app-card [role=alert]')).toContainText('HTTP 503');
     await expect(el.getByText('暂无容量数据')).toHaveCount(0);
     const retry = el.getByRole('button', { name: '重试容量读取', exact: true });
     await retry.focus(); await expect(retry).toBeFocused();
@@ -36,11 +36,11 @@ for (const [width, height] of [[1440, 900], [1366, 768], [1920, 1080]]) {
     await page.keyboard.press('Enter');
     await expect(el.getByText('容量读取结果：10.00 GB')).toBeVisible();
     await el.evaluate((el: any) => { el.activeTab = 'diagnosis'; });
-    await expect(el.getByRole('alert')).toContainText('HTTP 500');
+    await expect(el.locator('app-card [role=alert]')).toContainText('HTTP 500');
     await page.screenshot({ path: info.outputPath('diagnosis-failure.png') });
     await el.getByRole('button', { name: '重试诊断历史', exact: true }).focus();
     await page.keyboard.press('Enter');
-    await expect(el.getByRole('alert')).toHaveCount(0);
+    await expect(el.locator('app-card [role=alert]')).toHaveCount(0);
     await page.evaluate(() => {
       const page = document.querySelector('instance-detail-page')!; page.remove();
       const health = document.createElement('health-center-page') as any;
