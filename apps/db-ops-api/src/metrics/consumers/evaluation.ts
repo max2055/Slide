@@ -9,6 +9,15 @@ export const ConsumerAlertPolicySchema = z.strictObject({
   semantic_version: z.string().optional(), min_coverage: z.number().min(0).max(1).default(1),
   accepted_quality: z.array(z.enum(['good', 'partial'])).min(1).default(['good']),
   allow_estimated: z.boolean().default(false),
+}).superRefine((policy, ctx) => {
+  if (policy.recovery_threshold === undefined) return;
+  // Recovery is the complement of the same operator at its recovery threshold.
+  // Greater-than alarms recover below the trigger, less-than above it; equality
+  // operators have no directional hysteresis and must retain the same threshold.
+  const valid = policy.operator === '>' || policy.operator === '>=' ? policy.recovery_threshold <= policy.threshold
+    : policy.operator === '<' || policy.operator === '<=' ? policy.recovery_threshold >= policy.threshold
+    : policy.recovery_threshold === policy.threshold;
+  if (!valid) ctx.addIssue({ code: 'custom', path: ['recovery_threshold'], message: 'RECOVERY_THRESHOLD_OVERLAP' });
 });
 export type ConsumerAlertPolicy = z.input<typeof ConsumerAlertPolicySchema>;
 export function scalarNumber(bucket: ConsumerMetric['series'][number]['buckets'][number]): number | null {
@@ -42,7 +51,7 @@ export function evaluateMetric(metric: ConsumerMetric, input: ConsumerAlertPolic
     const contiguous = buckets.every((b, i) => !i || b.window.from === buckets[i - 1].window.to);
     if (!contiguous) return { state: 'unknown' as const, recovery: false, reason: 'gap', value: null, dimensions: s.dimensions };
     const firing = span >= policy.duration_seconds && buckets.every(b => matches(b.value!, policy.threshold));
-    const recovery = span >= policy.recovery_seconds && buckets.every(b => !matches(b.value!, policy.recovery_threshold ?? policy.threshold));
+    const recovery = !firing && span >= policy.recovery_seconds && buckets.every(b => !matches(b.value!, policy.recovery_threshold ?? policy.threshold));
     return { state: firing ? 'firing' as const : recovery ? 'healthy' as const : 'pending' as const,
       recovery, reason: 'evaluated', dimensions: s.dimensions, value: scalarNumber(buckets.at(-1)!) };
   });

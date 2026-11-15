@@ -13,7 +13,9 @@ export async function registerEvidenceRoutes(app: FastifyInstance, verifyToken: 
     const { type, id, evidenceId } = request.params;
     if (!['instance', 'server', 'network_device'].includes(type) || !/^[1-9][0-9]*$/.test(id) || !Number.isSafeInteger(Number(id))) return reply.code(400).send({ error: 'RESOURCE_REF_INVALID' });
     if (!request.user) return reply.code(401).send({ error: 'ACTOR_REQUIRED' });
-    const query = request.query as Record<string, string>;
+    const rawQuery = request.query as Record<string, unknown>;
+    if (['from', 'to', 'correlationId', 'limit'].some(key => rawQuery[key] !== undefined && typeof rawQuery[key] !== 'string')) return reply.code(400).send({ error: 'EVIDENCE_QUERY_INVALID' });
+    const query = rawQuery as Record<string, string>;
     const limit = query.limit === undefined ? undefined : Number(query.limit);
     if (limit !== undefined && (!Number.isSafeInteger(limit) || limit < 1 || limit > 100)) return reply.code(400).send({ error: 'EVIDENCE_LIMIT_INVALID' });
     if ((query.from !== undefined && !Number.isFinite(Date.parse(query.from))) || (query.to !== undefined && !Number.isFinite(Date.parse(query.to))) || (query.correlationId?.length ?? 0) > 128) return reply.code(400).send({ error: 'EVIDENCE_QUERY_INVALID' });

@@ -13,6 +13,8 @@ vi.mock('../src/alert-rca-service', () => ({
 const mockPool = {
   execute: vi.fn().mockResolvedValue([[]]),
   query: vi.fn().mockResolvedValue([[]]),
+  getConnection: vi.fn(),
+  beginTransaction: vi.fn(), commit: vi.fn(), rollback: vi.fn(), release: vi.fn(), destroy: vi.fn(),
 };
 
 const alert = (id: number, minutesAgo: number, level = 'critical') => ({
@@ -27,6 +29,13 @@ describe('event-aggregator.ts', () => {
     vi.resetModules();
     mockPool.execute.mockReset().mockResolvedValue([[]]);
     mockPool.query.mockReset().mockResolvedValue([[]]);
+    mockPool.getConnection.mockResolvedValue({ ...mockPool, execute: async (sql: string, values?: unknown[]) => {
+      if (sql.includes('GET_LOCK')) return [[{ acquired: 1 }]];
+      if (sql.includes('RELEASE_LOCK') || sql.includes('FOR UPDATE')) return [[]];
+      return mockPool.execute(sql, values);
+    }});
+    mockPool.commit.mockReset();
+    mockPool.rollback.mockReset();
   });
 
   it('aggregate returns 0 when no ungrouped alerts', async () => {
@@ -59,6 +68,9 @@ describe('event-aggregator.ts', () => {
       Array(3).fill(expect.stringContaining("VALUES (?, ?, 'triggered')")),
     );
     expect(inserts('alert_event_logs')).toHaveLength(1);
+    expect(mockPool.commit).toHaveBeenCalledOnce();
+    expect(mockPool.commit.mock.invocationCallOrder[0]).toBeLessThan(mockPool.release.mock.invocationCallOrder.at(-1)!);
+    expect(mockPool.release.mock.invocationCallOrder.at(-1)!).toBeLessThan(mockPool.query.mock.invocationCallOrder[0]);
     expect(JSON.parse(String(inserts('alert_event_logs')[0][1][1]))).toMatchObject({
       alert_count: 3, alert_ids: [10, 11, 12], action: 'created',
     });
@@ -91,6 +103,40 @@ describe('event-aggregator.ts', () => {
     expect(result).toEqual({ eventsCreated: 1, alertsAggregated: 2 });
     expect(inserts('alert_event_members')).toHaveLength(2);
   });
+
+  for (const table of ['alert_event_members', 'alert_event_logs']) {
+    it(`MAX-566 rolls back group on ${table} failure and counts only commits`, async () => {
+      mockPool.execute.mockImplementation(async (sql: string) => {
+        if (sql.includes('SELECT e.id')) return [[]];
+        if (sql.includes('SELECT a.id')) return [[alert(10, 2), alert(11, 1)]];
+        if (sql.includes(`INSERT INTO ${table}`)) throw new Error('injected');
+        return [{ insertId: 77 }];
+      });
+      const { eventAggregator } = await import('../src/event-aggregator');
+      expect(await eventAggregator.aggregate()).toEqual({ eventsCreated: 0, alertsAggregated: 0 });
+      expect(mockPool.rollback).toHaveBeenCalledOnce();
+      expect(mockPool.commit).not.toHaveBeenCalled();
+    });
+  }
+
+  for (const rollbackFails of [false, true]) {
+    it(`MAX-566 retains committed group counts when next group fails (rollback failure=${rollbackFails})`, async () => {
+      let inserted = 0;
+      mockPool.execute.mockImplementation(async (sql: string) => {
+        if (sql.includes('SELECT e.id')) return [[]];
+        if (sql.includes('SELECT a.id')) return [[alert(10,2),alert(11,1),
+          {...alert(12,2),metric_name:'disk'}, {...alert(13,1),metric_name:'disk'}]];
+        if (sql.includes('INSERT INTO alert_events') && ++inserted === 2) throw new Error('write failure');
+        return [{insertId:77}];
+      });
+      if (rollbackFails) mockPool.rollback.mockRejectedValueOnce(new Error('connection lost'));
+      const { eventAggregator } = await import('../src/event-aggregator');
+      expect(await eventAggregator.aggregate()).toEqual({eventsCreated:1,alertsAggregated:2});
+      expect(mockPool.commit).toHaveBeenCalledOnce();
+      expect(mockPool.rollback).toHaveBeenCalledOnce();
+      if (rollbackFails) expect(mockPool.destroy).toHaveBeenCalled();
+    });
+  }
 
   it('getPendingAggregation returns list of pending alerts', async () => {
     mockPool.execute.mockResolvedValueOnce([[]]);

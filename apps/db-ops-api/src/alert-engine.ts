@@ -195,7 +195,10 @@ class AlertEngine {
     // dimensions in alert tags.
     try {
       assertWorkflowActive();
-      await networkDeviceAlertEvaluator.evaluateNetworkDeviceRules();
+      const network = await networkDeviceAlertEvaluator.evaluateNetworkDeviceRules();
+      if (network.status !== 'complete') {
+        console.error('[AlertEngine] Network-device rule evaluation incomplete:', network);
+      }
     } catch (error) {
       assertWorkflowActive();
       console.error('[AlertEngine] Network-device rule evaluation failed:', error);
