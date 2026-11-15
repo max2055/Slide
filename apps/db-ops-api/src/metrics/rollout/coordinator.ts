@@ -316,20 +316,24 @@ export class MysqlRolloutCoordinator {
 
   async status(input: Ref): Promise<RolloutResourceStatus> {
     const ref = RefSchema.parse(input);
-    const [resources] = await this.pool.execute<RowDataPacket[]>(
-      'SELECT * FROM metric_rollout_resources WHERE resource_key = ?', [refKey(ref)],
-    );
+    // One consistent statement view, including under READ COMMITTED. Separate
+    // autocommit reads can straddle an atomic cutover or rollback commit.
+    const [resources] = await this.pool.execute<RowDataPacket[]>(`SELECT resource.*, counts.*
+      FROM metric_rollout_resources resource CROSS JOIN (
+        SELECT COUNT(*) AS series_count,
+          SUM(applied_revision = published_revision) AS applied_series,
+          MIN(generation) AS min_generation, MAX(generation) AS max_generation,
+          MIN(published_revision) AS min_revision, MAX(published_revision) AS max_revision
+        FROM metric_rollout WHERE resource_type = ? AND resource_id = ?
+      ) counts WHERE resource.resource_key = ?`, [ref.type, String(ref.id), refKey(ref)]);
     check(resources[0], 'ROLLOUT_RESOURCE_NOT_FOUND');
     const resource = resources[0];
-    const [counts] = await this.pool.execute<RowDataPacket[]>(`SELECT COUNT(*) AS series_count,
-      SUM(applied_revision = published_revision) AS applied_series,
-      MIN(generation) AS min_generation, MAX(generation) AS max_generation,
-      MIN(published_revision) AS min_revision, MAX(published_revision) AS max_revision
-      FROM metric_rollout WHERE resource_type = ? AND resource_id = ?`, [ref.type, String(ref.id)]);
-    const count = counts[0];
+    const count = resource;
     check(Number(count.series_count) > 0
       && Number(count.min_generation) === Number(count.max_generation)
-      && Number(count.min_revision) === Number(count.max_revision), 'ROLLOUT_RESOURCE_MIXED');
+      && Number(count.min_revision) === Number(count.max_revision)
+      && Number(count.min_generation) === Number(resource.generation)
+      && Number(count.min_revision) === Number(resource.revision), 'ROLLOUT_RESOURCE_MIXED');
     return {
       phase: resource.phase as Phase,
       revision: Number(resource.revision),
