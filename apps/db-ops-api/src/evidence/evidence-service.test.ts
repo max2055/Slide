@@ -104,3 +104,25 @@ describe('persistent authorized evidence', () => {
     expect(result.gaps).toContain('NO_EVIDENCE_IN_WINDOW');
   });
 });
+
+// MAX-540 / #515: runtime callers cannot bypass the SQL boundary with TS casts.
+describe('evidence query runtime types', () => {
+  it.each(['correlationId', 'from', 'to'])('rejects non-string %s before collection or execute', async key => {
+    for (const value of [['a', 'b'], ['2026-09-08'], 1, true, {}, null]) {
+      const f = fixture();
+      const query = { from: '2026-09-08T00:00:00.000Z', to: now.toISOString(), limit: 10, [key]: value } as any;
+      await expect(f.service.getBundle(actor, ref, query)).rejects.toThrow('EVIDENCE_QUERY_INVALID');
+      await expect(f.store.query(actor, ref, query)).rejects.toThrow('EVIDENCE_QUERY_INVALID');
+      expect(f.execute).not.toHaveBeenCalled();
+      expect(f.observations).not.toHaveBeenCalled();
+    }
+  });
+  it('retains single correlationId filtering as a scalar SQL binding', async () => {
+    const f = fixture();
+    await f.service.getBundle(actor, ref, { correlationId: 'a', limit: 10 });
+    expect(f.execute).toHaveBeenCalledWith(expect.stringContaining('AND correlation_id = ?'), [
+      actor.userId, ref.type, ref.id, new Date(now.getTime() - 86400_000), now, 'a',
+    ]);
+    expect(f.observations).not.toHaveBeenCalled();
+  });
+});
