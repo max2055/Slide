@@ -516,7 +516,7 @@ function beginChatAvatarRequest(host: ChatHost): number {
 
 function shouldApplyChatAvatarResult(host: ChatHost, version: number, sessionKey: string): boolean {
   return (
-    chatAvatarRequestVersions.get(host as object) === version && host.sessionKey === sessionKey
+    host.connected && chatAvatarRequestVersions.get(host as object) === version && host.sessionKey === sessionKey
   );
 }
 
@@ -539,12 +539,12 @@ function buildAvatarMetaUrl(basePath: string, agentId: string): string {
 }
 
 export async function refreshChatAvatar(host: ChatHost) {
+  const requestVersion = beginChatAvatarRequest(host);
   if (!host.connected) {
     host.chatAvatarUrl = null;
     return;
   }
   const sessionKey = host.sessionKey;
-  const requestVersion = beginChatAvatarRequest(host);
   const agentId = resolveAgentIdForSession(host);
   if (!agentId) {
     if (shouldApplyChatAvatarResult(host, requestVersion, sessionKey)) {

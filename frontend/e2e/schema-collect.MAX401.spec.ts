@@ -81,3 +81,44 @@ for (const [width, height] of [[1440, 900], [1366, 768], [1920, 1080]]) {
     await page.screenshot({ path: info.outputPath('recovered.png') });
   });
 }
+
+// #558: unknown allocation must not be presented as measured zero.
+for (const [width, height] of [[1440, 900], [1366, 768], [1920, 1080]]) {
+  test(`Oracle allocation unavailable, zero and measured bytes ${width}`, async ({ page }, info) => {
+    await page.setViewportSize({ width, height });
+    await page.addInitScript(() => {
+      localStorage.setItem('token', 'max543-controlled');
+      localStorage.setItem('permissions', '["*"]');
+      localStorage.setItem('app-theme-mode', 'light');
+    });
+    await page.route('**/__slide/**', route => route.fulfill({ json: {} }));
+    await page.routeWebSocket('**/agent-ws', () => {});
+    await page.route('**/api/**', route => {
+      const path = new URL(route.request().url()).pathname;
+      if (!path.startsWith('/api/')) return route.fallback();
+      let data: unknown = [];
+      if (path === '/api/auth/permissions') data = ['*'];
+      if (path === '/api/auth/me') data = { id: 1, username: 'max543' };
+      if (path === '/api/database/instances') data = [{ id: 1, name: 'Oracle 结构大小', db_type: 'oracle' }];
+      if (path === '/api/schema/snapshot/1') data = { tables: [
+        { table_name: 'APP.UNKNOWN', table_rows: 0, data_length: null, column_count: 1 },
+        { table_name: 'APP.EMPTY', table_rows: 0, data_length: 0, column_count: 1 },
+        { table_name: 'APP.ITEMS', table_rows: 1, data_length: 196608, column_count: 1 },
+      ] };
+      if (path === '/api/schema/changes/1') data = { changes: [] };
+      return route.fulfill({ json: data });
+    });
+    await page.goto('/schema');
+    const view = page.locator('schema-management-page');
+    await expect(view).toContainText('APP.UNKNOWN');
+    await expect(view.locator('tr.table-row').filter({ hasText: 'APP.UNKNOWN' })).toContainText('不可用');
+    await expect(view.locator('tr.table-row').filter({ hasText: 'APP.EMPTY' })).toContainText('0 B');
+    await expect(view.locator('tr.table-row').filter({ hasText: 'APP.ITEMS' })).toContainText('192 KB');
+    const button = view.getByRole('button', { name: '采集快照', exact: true });
+    await button.focus();
+    await expect(button).toBeFocused();
+    const box = await button.boundingBox();
+    expect(box && box.x >= 0 && box.y >= 0 && box.x + box.width <= width && box.y + box.height <= height).toBe(true);
+    await page.screenshot({ path: info.outputPath('oracle-allocation.png') });
+  });
+}

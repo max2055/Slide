@@ -384,14 +384,15 @@ export class NotificationService {
   /**
    * 发送通知
    */
-  async send(channel: NotificationChannel, message: any, signal?: AbortSignal, businessKey?: string, retryDeadline?: number): Promise<{ success: boolean; error?: string }> {
+  async send(channel: NotificationChannel, message: any, signal?: AbortSignal, businessKey?: string, retryDeadline?: number, onTransportStart?: () => void): Promise<{ success: boolean; error?: string }> {
     signal?.throwIfAborted();
     if (channel.type === 'email') {
       if (!this.isValidEmailConfiguration(channel.config)) {
         return { success: false, error: 'EMAIL_CONFIGURATION_INVALID' };
       }
       try {
-        if (businessKey) await this.sendEmail(channel.config, message, channel.id, signal, businessKey);
+        if (onTransportStart) await this.sendEmail(channel.config, message, channel.id, signal, businessKey, onTransportStart);
+        else if (businessKey) await this.sendEmail(channel.config, message, channel.id, signal, businessKey);
         else await this.sendEmail(channel.config, message, channel.id, ...(signal ? [signal] : []));
         signal?.throwIfAborted();
         return { success: true };
@@ -401,12 +402,11 @@ export class NotificationService {
       }
     }
 
-    const webhookUrl = channel.config?.webhook_url;
-    if (!webhookUrl) {
-      return { success: false, error: '渠道未配置 webhook_url' };
-    }
-
     try {
+      // An encrypted value is authoritative: never fall back after a bad envelope.
+      const webhookUrl = channel.config?.webhook_url_encrypted
+        ? decryptData(channel.config.webhook_url_encrypted) : channel.config?.webhook_url;
+      if (!webhookUrl) return { success: false, error: '渠道未配置 webhook_url' };
       const target = await resolveOutboundTarget(webhookUrl);
       signal?.throwIfAborted();
       const secret = this.getWebhookSecret(channel.config);
@@ -416,7 +416,9 @@ export class NotificationService {
         : message;
       if (retryDeadline !== undefined && Date.now() >= retryDeadline) throw new Error('DELIVERY_RETENTION_EXPIRED');
       const stableKey = channel.type === 'webhook' && channel.config.idempotency_contract === 'receiver-deduplicates' ? businessKey : undefined;
-      const response = stableKey
+      const response = onTransportStart
+        ? await this.postJsonToVerifiedTarget(url, target.addresses, payload, signal, stableKey, onTransportStart)
+        : stableKey
         ? await this.postJsonToVerifiedTarget(url, target.addresses, payload, signal, stableKey)
         : await this.postJsonToVerifiedTarget(url, target.addresses, payload, ...(signal ? [signal] : []));
 
@@ -433,10 +435,10 @@ export class NotificationService {
       try { result = response.body ? JSON.parse(response.body) : {}; } catch { result = {}; }
       // 检查各平台的错误码
       if (result.errcode !== undefined && result.errcode !== 0) {
-        return { success: false, error: result.errmsg || `平台错误码: ${result.errcode}` };
+        return { success: false, error: 'OUTBOUND_PLATFORM_REJECTED' };
       }
       if (result.code !== undefined && result.code !== 0) {
-        return { success: false, error: result.msg || `平台错误码: ${result.code}` };
+        return { success: false, error: 'OUTBOUND_PLATFORM_REJECTED' };
       }
 
       return { success: true };
@@ -457,21 +459,26 @@ export class NotificationService {
     channelId?: number,
     signal?: AbortSignal,
     businessKey?: string,
+    onTransportStart?: () => void,
   ): Promise<void> {
     signal?.throwIfAborted();
     const port = Number(config.smtp_port);
     let auth: { user: string; pass: string } | { type: 'OAuth2'; user: string; accessToken: string };
     if (config.smtp_auth === 'oauth2') {
+      const credential = { ...config };
       const oauth = await exchangeMicrosoftSmtpRefreshToken({
-          tenant: config.oauth2_tenant!,
-          clientId: config.oauth2_client_id!,
-          refreshToken: decryptData(config.oauth2_refresh_token_encrypted!),
+          tenant: credential.oauth2_tenant!,
+          clientId: credential.oauth2_client_id!,
+          refreshToken: decryptData(credential.oauth2_refresh_token_encrypted!),
+          signal,
       });
-      signal?.throwIfAborted();
+      // Save an already returned rotation even if cancellation arrived meanwhile.
+      // The next cancellation check still prevents SMTP from starting.
       if (oauth.refreshToken && channelId !== undefined) {
-        const persisted = await notificationDatabaseService.updateOAuth2RefreshToken(channelId, oauth.refreshToken);
+        const persisted = await notificationDatabaseService.updateOAuth2RefreshToken(channelId, oauth.refreshToken, credential);
         if (!persisted.success) throw new Error('OAUTH_REFRESH_TOKEN_PERSIST_FAILED');
       }
+      if (oauth.interruption) throw oauth.interruption.reason;
       auth = { type: 'OAuth2', user: config.smtp_username!, accessToken: oauth.accessToken };
     } else {
       auth = { user: config.smtp_username!, pass: this.getSmtpPassword(config) };
@@ -490,13 +497,16 @@ export class NotificationService {
     });
     try {
       signal?.throwIfAborted();
-      await transport.sendMail({
+      const mail = {
         ...(businessKey ? { messageId: `<${crypto.createHash('sha256').update(businessKey).digest('hex')}@slide.local>` } : {}),
         from: config.from!,
         to: config.to!,
         subject: message.subject || '数据库运维助手通知',
         text: message.text || '',
-      });
+      };
+      signal?.throwIfAborted();
+      onTransportStart?.();
+      await transport.sendMail(mail);
     } finally {
       transport.close();
     }
@@ -515,20 +525,23 @@ export class NotificationService {
   }
 
   /** Pin requests to validated DNS results while retaining TLS hostname verification. */
-  private postJsonToVerifiedTarget(urlText: string, addresses: string[], message: unknown, signal?: AbortSignal, businessKey?: string): Promise<{ statusCode: number; body: string }> {
+  private postJsonToVerifiedTarget(urlText: string, addresses: string[], message: unknown, signal?: AbortSignal, businessKey?: string, onTransportStart?: () => void): Promise<{ statusCode: number; body: string }> {
     signal?.throwIfAborted();
     const url = new URL(urlText);
     const payload = JSON.stringify(message);
     const address = addresses[0];
     return new Promise((resolve, reject) => {
-      const request = https.request({
+      const options = {
         signal,
         protocol: 'https:', hostname: url.hostname, port: 443,
         path: `${url.pathname}${url.search}`, method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload), ...(businessKey ? { 'Idempotency-Key': businessKey } : {}) },
         servername: url.hostname, rejectUnauthorized: true,
         lookup: createPinnedLookup(address),
-      }, (response) => {
+      };
+      signal?.throwIfAborted();
+      onTransportStart?.();
+      const request = https.request(options, (response) => {
         let body = '';
         response.setEncoding('utf8');
         response.on('data', (chunk) => { body += chunk; });
@@ -541,7 +554,7 @@ export class NotificationService {
   }
 
   /**
-   * 带重试的发送，最多 3 次，指数退避
+   * 带重试的发送，最多 3 次，指数退避；SMTP 开始后的未知结果停止重试。
    * delay = 5000 * 3^(attempt-1) → 5s, 15s, 45s
    */
   async sendWithRetry(
@@ -552,13 +565,19 @@ export class NotificationService {
   ): Promise<{ success: boolean; error?: string }> {
     signal?.throwIfAborted();
     const maxAttempts = 3;
+    let transportStarted = false;
 
     try {
-      const result = await this.send(channel, message, ...(signal ? [signal] : []));
+      // F2: approval callers use this entry without a durable delivery gate.
+      // Once SMTP starts, an error cannot prove the recipient rejected DATA.
+      const result = channel.type === 'email'
+        ? await this.send(channel, message, signal, undefined, undefined, () => { transportStarted = true; })
+        : await this.send(channel, message, ...(signal ? [signal] : []));
       signal?.throwIfAborted();
       if (result.success) {
         return result;
       }
+      if (transportStarted) return { success: false, error: 'DELIVERY_OUTCOME_UNCERTAIN' };
 
       if (attempt >= maxAttempts) {
         return { success: false, error: `重试 ${maxAttempts} 次后仍失败: ${result.error}` };
@@ -572,6 +591,7 @@ export class NotificationService {
       return this.sendWithRetry(channel, message, attempt + 1, signal);
     } catch (error: any) {
       signal?.throwIfAborted();
+      if (transportStarted) return { success: false, error: 'DELIVERY_OUTCOME_UNCERTAIN' };
       if (attempt >= maxAttempts) {
         return { success: false, error: `重试 ${maxAttempts} 次后仍失败: ${error.message}` };
       }

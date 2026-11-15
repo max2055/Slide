@@ -7,6 +7,25 @@ import { createHash } from 'crypto';
 import { dbConnection, encryptData, decryptData } from './db-connection';
 import { isInvestigationServiceIdentity } from './auth/investigation-service-identity.js';
 
+export interface UserDeletionResult {
+  success: boolean;
+  error?: string;
+  code?: 'USER_HAS_RETAINED_RECORDS';
+}
+
+function userDeletionFailure(error: unknown): UserDeletionResult {
+  // Let InnoDB enforce retention atomically, including audit inserts racing DELETE.
+  // Other RESTRICT references also require retaining the user's identity.
+  if ((error as { code?: string })?.code === 'ER_ROW_IS_REFERENCED_2') {
+    return {
+      success: false,
+      code: 'USER_HAS_RETAINED_RECORDS',
+      error: '该用户存在审计或其他关联记录，不能删除。请在编辑用户中将状态设为“停用”，以保留历史身份和记录。',
+    };
+  }
+  return { success: false, error: '删除用户失败，请稍后重试' };
+}
+
 export interface User {
   id: number;
   username: string;
@@ -60,6 +79,7 @@ export class AuthDatabaseService {
     userId: number,
     sql: string,
     values: any[],
+    revokeSessions = true,
   ): Promise<{ success: boolean; error?: string }> {
     const pool = this.getPool();
     if (!pool) return { success: false, error: '数据库未连接' };
@@ -72,10 +92,12 @@ export class AuthDatabaseService {
         await connection.rollback();
         return { success: false, error: '用户不存在' };
       }
-      await connection.execute(
-        'UPDATE refresh_tokens SET revoked = TRUE WHERE user_id = ?',
-        [userId],
-      );
+      if (revokeSessions) {
+        await connection.execute(
+          'UPDATE refresh_tokens SET revoked = TRUE WHERE user_id = ?',
+          [userId],
+        );
+      }
       await connection.commit();
       return { success: true };
     } catch (error: any) {
@@ -257,7 +279,7 @@ export class AuthDatabaseService {
   /**
    * 删除用户
    */
-  async deleteUser(username: string): Promise<{ success: boolean; error?: string }> {
+  async deleteUser(username: string): Promise<UserDeletionResult> {
     const pool = this.getPool();
     if (!pool) {
       return { success: false, error: '数据库未连接' };
@@ -272,8 +294,7 @@ export class AuthDatabaseService {
       await pool.execute('DELETE FROM users WHERE username = ?', [username]);
       return { success: true };
     } catch (error: any) {
-      console.error('删除用户失败:', error);
-      return { success: false, error: error.message };
+      return userDeletionFailure(error);
     }
   }
 
@@ -462,18 +483,33 @@ export class AuthDatabaseService {
   /**
    * 根据 ID 更新用户
    */
-  async updateUserById(id: number, updates: { status?: string }): Promise<{ success: boolean; error?: string }> {
+  async updateUserById(id: number, updates: { status?: string; email?: string }): Promise<{ success: boolean; error?: string }> {
     const pool = this.getPool();
     if (!pool) {
       return { success: false, error: '数据库未连接' };
     }
 
     try {
-      if (!updates.status) return { success: false, error: '没有要更新的字段' };
+      const fields: string[] = [];
+      const values: string[] = [];
+      if (updates.status) {
+        fields.push('status = ?');
+        values.push(updates.status);
+      }
+      // Omission preserves the email; an explicit empty string clears it.
+      if (updates.email !== undefined) {
+        fields.push('email = ?');
+        values.push(updates.email);
+      }
+      if (fields.length === 0) return { success: false, error: '没有要更新的字段' };
+      // Preserve the existing status/password session policy. Profile-only edits
+      // historically did not invalidate sessions.
+      if (updates.status) fields.push('session_version = session_version + 1');
       return await this.mutateUserAndRevokeSessions(
         id,
-        'UPDATE users SET status = ?, session_version = session_version + 1 WHERE id = ?',
-        [updates.status, id],
+        `UPDATE users SET ${fields.join(', ')} WHERE id = ?`,
+        [...values, id],
+        Boolean(updates.status),
       );
     } catch (error: any) {
       console.error('更新用户失败:', error);
@@ -484,15 +520,18 @@ export class AuthDatabaseService {
   /**
    * 根据 ID 删除用户
    */
-  async deleteUserById(id: number): Promise<{ success: boolean; error?: string }> {
+  async deleteUserById(id: number): Promise<UserDeletionResult> {
     const pool = this.getPool();
     if (!pool) {
       return { success: false, error: '数据库未连接' };
     }
 
     try {
-      // 不能删除 admin 用户
-      const user = await this.getUserById(id);
+      // 删除预检查包含所有状态；认证查询 getUserById 继续只返回 active 用户。
+      const [rows] = await pool.execute<mysql.RowDataPacket[]>(
+        'SELECT id, username FROM users WHERE id = ?', [id],
+      );
+      const user = rows[0];
       if (!user) {
         return { success: false, error: '用户不存在' };
       }
@@ -503,8 +542,7 @@ export class AuthDatabaseService {
       await pool.execute('DELETE FROM users WHERE id = ?', [id]);
       return { success: true };
     } catch (error: any) {
-      console.error('删除用户失败:', error);
-      return { success: false, error: error.message };
+      return userDeletionFailure(error);
     }
   }
 }

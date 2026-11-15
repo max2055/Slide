@@ -173,13 +173,9 @@ export class UsersManagement extends LitElement {
       color: var(--muted);
     }
 
-    .no-permission {
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      min-height: 300px;
-      color: var(--muted);
-      font-size: 14px;
+    .permission-actions {
+      text-align: center;
+      padding: 0 var(--space-xl) var(--space-xl);
     }
 
     .error-msg {
@@ -250,10 +246,19 @@ export class UsersManagement extends LitElement {
   @state() private loading = true;
   @state() private error: string | null = null;
   @state() private isAdmin = false;
+  @state() private checkingAdmin = true;
+  private permissionRevision = 0;
+  private readonly sessionExpiredHandler = () => {
+    this.permissionRevision++;
+    this.isAdmin = false;
+    this.checkingAdmin = false;
+    this.error = '未登录';
+  };
   @state() private userRoles: Map<number, UserRoleBinding[]> = new Map();
   @state() private allRoles: RoleInfo[] = [];
   @state() private showModal = false;
   @state() private editingUser: UserInfo | null = null;
+  @state() private createdUserId: number | null = null;
   @state() private showPasswordModal = false;
   @state() private passwordTarget: UserInfo | null = null;
   @state() private saving = false;
@@ -275,22 +280,50 @@ export class UsersManagement extends LitElement {
 
   override connectedCallback() {
     super.connectedCallback();
-    this._checkAdmin();
+    window.addEventListener('slide-session-expired', this.sessionExpiredHandler);
+    void this._checkAdmin();
+  }
+
+  override disconnectedCallback() {
+    this.permissionRevision++;
+    this.isAdmin = false;
+    window.removeEventListener('slide-session-expired', this.sessionExpiredHandler);
+    super.disconnectedCallback();
   }
 
   private async _checkAdmin() {
+    const revision = ++this.permissionRevision;
+    const session = apiClient.getSessionContext();
+    this.isAdmin = false;
+    this.checkingAdmin = true;
+    this.error = null;
+    const isCurrent = () => this.isConnected && revision === this.permissionRevision
+      && session === apiClient.getSessionContext();
+    if (!apiClient.getToken()) {
+      this.error = '未登录';
+      this.checkingAdmin = false;
+      return;
+    }
     try {
       await apiClient.get("/v1/rbac/roles");
+      if (!isCurrent()) return;
       this.isAdmin = true;
-      this._init();
-    } catch (e: any) {
+      void this._init();
+    } catch (e: unknown) {
+      if (!isCurrent()) return;
       this.isAdmin = false;
-      if (e.message?.startsWith("HTTP 403")) {
-        // 403 means not admin, no error shown
-      } else if (e.message?.startsWith("HTTP 401")) {
+      const message = e instanceof Error ? e.message : String(e);
+      if (message.startsWith("HTTP 403")) {
+        // A confirmed denial is distinct from an unavailable permission check.
+      } else if (message.startsWith("HTTP 401")) {
         this.error = "未登录";
       } else {
-        this.error = `权限检查失败: ${e.message}`;
+        this.error = `权限检查失败: ${message}`;
+      }
+    } finally {
+      if (revision === this.permissionRevision) {
+        this.checkingAdmin = false;
+        if (this.isConnected && !isCurrent()) this.error = '权限检查失败: 登录状态已变化，请重新检查权限';
       }
     }
   }
@@ -299,22 +332,34 @@ export class UsersManagement extends LitElement {
     await Promise.all([this._loadUsers(), this._loadAllRoles()]);
   }
 
+  private accessGuard() {
+    const revision = this.permissionRevision;
+    const session = apiClient.getSessionContext();
+    return () => this.isConnected && this.isAdmin && revision === this.permissionRevision
+      && session === apiClient.getSessionContext();
+  }
+
   private async _loadAllRoles() {
+    const isCurrent = this.accessGuard();
     try {
-      this.allRoles = await apiClient.get<RoleInfo[]>("/v1/rbac/roles");
+      const roles = await apiClient.get<RoleInfo[]>("/v1/rbac/roles");
+      if (isCurrent()) this.allRoles = roles;
     } catch (_) {
       // non-critical; dropdown will fall back to hardcoded labels
     }
   }
 
   private async _loadUsers() {
+    const isCurrent = this.accessGuard();
     this.loading = true;
     this.error = null;
     try {
       const data = await apiClient.get<UserInfo[]>('/users');
+      if (!isCurrent()) return;
       this.users = Array.isArray(data) ? data : [];
       await this._loadUserRoles();
     } catch (e: any) {
+      if (!isCurrent()) return;
       if (e.message?.startsWith("HTTP 401")) {
         this.error = "未登录";
         this.isAdmin = false;
@@ -325,11 +370,12 @@ export class UsersManagement extends LitElement {
         this.error = `加载失败: ${e.message}`;
       }
     } finally {
-      this.loading = false;
+      if (isCurrent()) this.loading = false;
     }
   }
 
   private async _loadUserRoles() {
+    const isCurrent = this.accessGuard();
     const userIds = this.users.map(u => u.id);
     if (userIds.length === 0) return;
     const results = await Promise.allSettled(
@@ -347,7 +393,7 @@ export class UsersManagement extends LitElement {
         newMap.set(userIds[i], []);
       }
     }
-    this.userRoles = newMap;
+    if (isCurrent()) this.userRoles = newMap;
   }
 
   private _navigateToRbac(userId: number) {
@@ -362,6 +408,7 @@ export class UsersManagement extends LitElement {
   // Modal handling
   private _openCreateModal() {
     this.editingUser = null;
+    this.createdUserId = null;
     this.formUsername = "";
     this.formEmail = "";
     this.formPassword = "";
@@ -373,6 +420,7 @@ export class UsersManagement extends LitElement {
   }
 
   private _openEditModal(user: UserInfo) {
+    this.createdUserId = null;
     this.editingUser = user;
     this.formUsername = user.username;
     this.formEmail = user.email || "";
@@ -386,6 +434,8 @@ export class UsersManagement extends LitElement {
   }
 
   private _closeModal() {
+    if (this.saving) return;
+    this.createdUserId = null;
     this.showModal = false;
     this.editingUser = null;
     this.formErrors = [];
@@ -393,13 +443,14 @@ export class UsersManagement extends LitElement {
   }
 
   private async _saveUser() {
+    if (this.saving) return;
     this.formErrors = [];
     this.saveError = null;
 
     // Validation
     if (this.editingUser) {
       // Edit mode
-    } else {
+    } else if (this.createdUserId === null) {
       // Create mode: username and password required
       if (!this.formUsername.trim()) {
         this.formErrors.push("用户名不能为空");
@@ -409,6 +460,7 @@ export class UsersManagement extends LitElement {
       }
     }
 
+    if (this.createdUserId !== null && this.formRoleId === null) this.formErrors.push("用户已创建，请选择要绑定的角色");
     if (this.formErrors.length > 0) return;
 
     this.saving = true;
@@ -417,33 +469,36 @@ export class UsersManagement extends LitElement {
       if (this.editingUser) {
         const userId = this.editingUser.id;
         // Update user status
-        const body: Record<string, string> = { status: this.formStatus };
-        if (this.formEmail) body.email = this.formEmail;
+        const body: Record<string, string> = { status: this.formStatus, email: this.formEmail };
         await apiClient.put(`/users/${userId}`, body);
 
         // Sync role via RBAC API
         await this._syncUserRoles(userId, this.formRoleIds);
       } else {
-        // Create user
-        const body: Record<string, string> = {
-          username: this.formUsername.trim(),
-          password: this.formPassword,
-        };
-        if (this.formEmail) body.email = this.formEmail;
-        const result = await apiClient.post<{ success: boolean; userId?: number; error?: string }>('/users', body);
-
-        // Assign role via RBAC API
-        const userId = result?.userId;
-        if (userId && this.formRoleId !== null) {
+        if (this.createdUserId === null) {
+          const body: Record<string, string> = {
+            username: this.formUsername.trim(),
+            password: this.formPassword,
+          };
+          if (this.formEmail) body.email = this.formEmail;
+          const result = await apiClient.post<{ success: boolean; userId?: number; error?: string }>('/users', body);
+          if (!result?.success || !result.userId) throw new Error(result?.error || '创建用户未返回用户 ID');
+          this.createdUserId = result.userId;
+          this.formPassword = "";
+        }
+        if (this.formRoleId !== null) {
           try {
-            await apiClient.post(`/v1/rbac/users/${userId}/roles`, { roleId: this.formRoleId });
+            const rolesUrl = ["/v1/rbac/users", this.createdUserId, "roles"].join("/");
+            const result = await apiClient.post<{ success: boolean; error?: string }>(rolesUrl, { roleId: this.formRoleId });
+            if (!result?.success) throw new Error(result?.error || '角色绑定失败');
           } catch (roleErr: any) {
-            // User created but role assignment failed — log but don't fail the whole operation
-            showToast('Role assignment failed', 'error');
+            this.saveError = `用户已创建（ID：${this.createdUserId}），角色未绑定：${roleErr.message}。请重试绑定，无需重新创建用户。`;
+            return;
           }
         }
       }
 
+      this.saving = false;
       this._closeModal();
       await this._loadUsers();
     } catch (e: any) {
@@ -555,8 +610,12 @@ export class UsersManagement extends LitElement {
             <h1>用户管理</h1>
           </div>
           <app-card variant="default">
-            <div class="no-permission">
-              无权限访问此页面，需要 admin 角色
+            <div role="status" aria-busy=${this.checkingAdmin}>
+              <app-empty-state icon="lock"
+                title=${this.checkingAdmin ? '正在检查权限' : this.error || '无权限访问此页面，需要 admin 角色'}
+                description=${this.checkingAdmin ? '确认权限后加载用户数据。' : this.error === '未登录' ? '请登录后重新检查权限。' : ''}
+              ></app-empty-state>
+              ${this.checkingAdmin ? '' : html`<div class="permission-actions"><button class="btn" type="button" @click=${() => void this._checkAdmin()}>重新检查权限</button></div>`}
             </div>
           </app-card>
         </div>
@@ -642,7 +701,7 @@ export class UsersManagement extends LitElement {
 
         <!-- Create/Edit Modal -->
         ${this.showModal ? html`
-          <app-dialog .open=${true} size="md" .closeOnOverlay=${false} title="${this.editingUser ? "编辑用户" : "新建用户"}" @app-dialog-close=${this._closeModal}>
+          <app-dialog .open=${true} size="md" .closeOnOverlay=${false} .closable=${!this.saving} title="${this.editingUser ? "编辑用户" : "新建用户"}" @app-dialog-close=${this._closeModal}>
             ${this.saveError ? html`<div class="save-error" style="margin-bottom:8px">${this.saveError}</div>` : ""}
             ${this.formErrors.length > 0 ? html`
               <div class="save-error" style="margin-bottom:8px">${this.formErrors.map((e) => html`<div>${e}</div>`)}</div>
@@ -650,18 +709,18 @@ export class UsersManagement extends LitElement {
 
             <div class="form-group">
               <label>用户名</label>
-              <input type="text" autocomplete="off" .value=${this.formUsername} @input=${(e: Event) => { this.formUsername = (e.target as HTMLInputElement).value; }} ?disabled=${!!this.editingUser} placeholder=${this.editingUser ? "" : "请输入用户名"} />
+              <input type="text" aria-label="用户名" autocomplete="off" .value=${this.formUsername} @input=${(e: Event) => { this.formUsername = (e.target as HTMLInputElement).value; }} ?disabled=${!!this.editingUser || this.createdUserId !== null || this.saving} placeholder=${this.editingUser ? "" : "请输入用户名"} />
             </div>
 
             <div class="form-group">
               <label>邮箱</label>
-              <input type="email" aria-label="邮箱" autocomplete="off" .value=${this.formEmail} @input=${(e: Event) => { this.formEmail = (e.target as HTMLInputElement).value; }} placeholder="可选" />
+              <input type="email" ?disabled=${this.createdUserId !== null || this.saving} aria-label="邮箱" autocomplete="off" .value=${this.formEmail} @input=${(e: Event) => { this.formEmail = (e.target as HTMLInputElement).value; }} placeholder="可选" />
             </div>
 
-            ${!this.editingUser ? html`
+            ${!this.editingUser && this.createdUserId === null ? html`
               <div class="form-group">
                 <label>密码</label>
-                <input type="password" autocomplete="new-password" .value=${this.formPassword} @input=${(e: Event) => { this.formPassword = (e.target as HTMLInputElement).value; }} placeholder="至少 8 位" />
+                <input type="password" aria-label="密码" ?disabled=${this.saving} autocomplete="new-password" .value=${this.formPassword} @input=${(e: Event) => { this.formPassword = (e.target as HTMLInputElement).value; }} placeholder="至少 8 位" />
               </div>
             ` : ""}
 
@@ -687,7 +746,7 @@ export class UsersManagement extends LitElement {
             ` : html`
             <div class="form-group">
               <label>角色</label>
-              <select @change=${(e: Event) => { const v = (e.target as HTMLSelectElement).value; this.formRoleId = v ? Number(v) : null; }}>
+              <select aria-label="角色" ?disabled=${this.saving} @change=${(e: Event) => { const v = (e.target as HTMLSelectElement).value; this.formRoleId = v ? Number(v) : null; }}>
                 <option value="" ?selected=${this.formRoleId === null}>不分配角色</option>
                 ${this.allRoles.map((r) => html`<option value=${r.id} ?selected=${this.formRoleId === r.id}>${this._roleLabel(r)}</option>`)}
               </select>
@@ -697,7 +756,7 @@ export class UsersManagement extends LitElement {
             ${this.editingUser ? html`
               <div class="form-group">
                 <label>状态</label>
-                <select .value=${this.formStatus} @change=${(e: Event) => { this.formStatus = (e.target as HTMLSelectElement).value; }}>
+                <select ?disabled=${this.saving} .value=${this.formStatus} @change=${(e: Event) => { this.formStatus = (e.target as HTMLSelectElement).value; }}>
                   <option value="active">活跃</option>
                   <option value="inactive">停用</option>
                   <option value="locked">锁定</option>
@@ -705,8 +764,8 @@ export class UsersManagement extends LitElement {
               </div>
             ` : ""}
             <div slot="footer">
-              <button class="btn" @click=${this._closeModal}>取消</button>
-              <button class="btn-primary" @click=${this._saveUser} ?disabled=${this.saving}>${this.saving ? "保存中..." : "保存"}</button>
+              <button class="btn" ?disabled=${this.saving} @click=${this._closeModal}>取消</button>
+              <button class="btn-primary" @click=${this._saveUser} ?disabled=${this.saving}>${this.saving ? "保存中..." : this.createdUserId !== null ? "重试绑定" : "保存"}</button>
             </div>
           </app-dialog>
         ` : ""}

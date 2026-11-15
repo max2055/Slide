@@ -56,7 +56,20 @@ export function registerAnalysisDispatchHandler(registry: JobRegistry, deps: Ana
       // Expired owners cannot write. The wired scan/new claimant reconciles their intent.
       const reason = completionWriteFailed ? 'ANALYSIS_COMPLETION_WRITE_UNCONFIRMED'
         : error instanceof Error && /^ANALYSIS_[A-Z_]+$/.test(error.message) ? error.message : 'ANALYSIS_EXECUTION_INTERRUPTED';
-      await deps.store.fail(owned, reason, false, /^ANALYSIS_(AUTHORITY_REVOKED|CONFIGURATION_CHANGED|SUBJECT_DELETED|AUTOMATION_DISABLED)$/.test(reason)).catch(() => {});
+      const identity = { analysisId: owned.analysisId, jobId: job.id, attempt: job.attempts,
+        workerId: context.workerId, fencingToken: context.fencingToken, reason };
+      console.error('[AnalysisDispatch] execution failed', identity);
+      try {
+        await deps.store.fail(owned, reason, false, /^ANALYSIS_(AUTHORITY_REVOKED|CONFIGURATION_CHANGED|SUBJECT_DELETED|AUTOMATION_DISABLED)$/.test(reason));
+      } catch (settlementError) {
+        // Do not retry a provider call or replace its original error. The durable scan
+        // reconciles lost ownership after the worker releases/expires its lease.
+        // Log only the driver code: database errors may contain SQL and credentials.
+        const code = (settlementError as { code?: unknown } | null)?.code;
+        console.error('[AnalysisDispatch] failure settlement failed', { ...identity,
+          code: typeof code === 'string' && /^[A-Z][A-Z0-9_]{0,63}$/.test(code) ? code : 'ANALYSIS_SETTLEMENT_WRITE_FAILED',
+          recovery: 'analysis.recover' });
+      }
       throw error;
     }
   });
