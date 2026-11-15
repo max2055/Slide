@@ -8,10 +8,10 @@ afterEach(() => { document.body.replaceChildren(); vi.resetAllMocks(); });
 async function page() {
   const element = new SchemaManagementPage();
   vi.spyOn(element, 'firstUpdated').mockImplementation(() => {});
+  element.instanceId = 1;
   document.body.append(element);
   await element.updateComplete;
   const state = element as any;
-  state.instanceId = 1;
   state.loading = false;
   return state;
 }
