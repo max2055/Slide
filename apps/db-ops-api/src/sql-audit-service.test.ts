@@ -1,9 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-vi.mock('./llm-service.js', () => ({ llmService: { chatWithTracking: vi.fn() } }));
+vi.mock('./ai-agent-bridge.js', () => ({ dispatchOrReuse: vi.fn() }));
+vi.mock('./auth/actor-context.js', () => ({ actorContextService: { revalidateActor: vi.fn() } }));
 vi.mock('./database-service.js', () => ({ databaseService: { getConnection: vi.fn(), getExplainPlan: vi.fn() } }));
 vi.mock('./ai-analysis-database-service.js', () => ({ aiAnalysisDatabaseService: {
-  findByCacheKey: vi.fn(), createAnalysis: vi.fn(), updateStatus: vi.fn(), completeAnalysis: vi.fn(), failAnalysis: vi.fn(),
+  getAnalysisById: vi.fn(),
 } }));
 vi.mock('./db-connection.js', () => ({ dbConnection: { getPool: vi.fn() } }));
 
@@ -11,13 +12,20 @@ import { sqlAuditService } from './sql-audit-service.js';
 import { dbConnection } from './db-connection.js';
 import { databaseService } from './database-service.js';
 import { aiAnalysisDatabaseService } from './ai-analysis-database-service.js';
-import { llmService } from './llm-service.js';
+import { dispatchOrReuse } from './ai-agent-bridge.js';
+import { actorContextService } from './auth/actor-context.js';
+const actor = { userId: 7, username: 'tester', roles: [], permissions: ['sql:audit'], sessionVersion: 1, instanceScopes: { 1: 'read-only' as const }, requestId: 'test' };
 
 const internal = sqlAuditService as any;
 const list = (count: number) => Array.from({ length: count }, (_, i) => String(i)).join(',');
 const risks = (sql: string, pattern: string) => sqlAuditService.detectRisks(sql).filter(r => r.pattern === pattern);
 
-beforeEach(() => vi.resetAllMocks());
+beforeEach(() => {
+  vi.resetAllMocks();
+  vi.mocked(actorContextService.revalidateActor).mockResolvedValue(actor);
+  vi.mocked(dispatchOrReuse).mockResolvedValue({ analysisId: 31, cached: false, success: true, status: 'pending' });
+  vi.mocked(aiAnalysisDatabaseService.getAnalysisById).mockResolvedValue({ related_id: 21 } as any);
+});
 
 describe('MAX-545 / #594: audit context table names', () => {
   it.each([
@@ -94,43 +102,56 @@ describe('MAX-550 / #593: IN list boundaries', () => {
   });
 });
 
-describe('audit submission integration (isolated dependencies)', () => {
-  it('keeps corrected risks and explicit context degradation when metadata is unavailable', async () => {
-    const execute = vi.fn().mockImplementation(async (query: string) => {
-      if (query.includes('FROM index_info')) throw new Error('metadata unavailable');
-      return [{ insertId: 21 }];
-    });
+describe('MAX-533 audit admission and cache identity', () => {
+  it('keeps static risks and explicit degradation in frozen evidence', async () => {
+    const execute = vi.fn().mockRejectedValue(new Error('metadata unavailable'));
     vi.mocked(dbConnection.getPool).mockReturnValue({ execute } as any);
-    vi.mocked(aiAnalysisDatabaseService.createAnalysis).mockResolvedValue({ success: true, analysisId: 31 });
     vi.mocked(databaseService.getExplainPlan).mockRejectedValue(new Error('explain unavailable'));
-    vi.mocked(llmService.chatWithTracking).mockResolvedValue({ success: true, content: '{}' } as any);
-    const submitted = await sqlAuditService.submitAudit('UPDATE db.users SET x=1', 1);
-    await vi.waitFor(() => expect(aiAnalysisDatabaseService.completeAnalysis).toHaveBeenCalled());
+    const submitted = await sqlAuditService.submitAudit('UPDATE db.users SET x=1', 1, actor);
     expect(submitted.preAuditResults).toContainEqual(expect.objectContaining({ pattern: 'MISSING WHERE', level: 'error' }));
-    const prompt = vi.mocked(llmService.chatWithTracking).mock.calls[0][0][0].content;
-    expect(prompt).toContain('表: users - 索引查询失败');
-    expect(prompt).toContain('数据库实例未连接');
-    expect(prompt).toContain('EXPLAIN 获取失败');
+    const evidence = vi.mocked(dispatchOrReuse).mock.calls[0][0].evidenceData as any;
+    expect(evidence.index_info).toContain('表: users - 索引查询失败');
+    expect(evidence.table_stats).toContain('数据库实例未连接');
+    expect(evidence.explain).toBe('EXPLAIN 获取失败');
   });
 
   it.each([
     ['UPDATE users SET x=1', 'error', 'P0'],
     ['SELECT COUNT(*) FROM users', 'warning', 'P2'],
     ['UPDATE users SET x=1 WHERE id=1', 'info', 'P2'],
-  ])('persists the static risk for %s and completes analysis', async (sql, level, risk) => {
-    const execute = vi.fn().mockResolvedValue([{ insertId: 21 }]);
-    vi.mocked(dbConnection.getPool).mockReturnValue({ execute } as any);
-    vi.mocked(aiAnalysisDatabaseService.createAnalysis).mockResolvedValue({ success: true, analysisId: 31 });
-    vi.mocked(databaseService.getExplainPlan).mockResolvedValue('plan' as any);
-    vi.mocked(llmService.chatWithTracking).mockResolvedValue({ success: true, content: '{}' } as any);
-    const result = await sqlAuditService.submitAudit(sql, 1, 'tester');
+  ])('retains static risk on admission and completed reuse: %s', async (sql, auditLevel, riskLevel) => {
+    vi.mocked(dispatchOrReuse).mockResolvedValue({ analysisId: 31, cached: true, success: true, status: 'completed' });
+    const result = await sqlAuditService.submitAudit(sql, 1, actor);
     expect(result.recordId).toBe(21);
-    expect(execute.mock.calls[0][1].slice(3, 5)).toEqual([level, risk]);
-    await vi.waitFor(() => expect(execute).toHaveBeenCalledWith(
-      'UPDATE sql_audit_records SET status = ? WHERE id = ?', ['completed', 21],
-    ));
-    expect(aiAnalysisDatabaseService.completeAnalysis).toHaveBeenCalledWith(31, expect.objectContaining({
-      result: expect.objectContaining({ pre_audit_results: result.preAuditResults }),
+    expect(dispatchOrReuse).toHaveBeenCalledWith(expect.objectContaining({
+      actor, type: 'sql_audit', instanceId: 1,
+      sqlAuditRecord: expect.objectContaining({ auditLevel, riskLevel, createdBy: 'tester' }),
+      evidenceData: expect.objectContaining({ pre_audit_results: result.preAuditResults }),
     }));
+  });
+
+  it('binds distinct literals to distinct cache keys even after SQL redaction', async () => {
+    await sqlAuditService.submitAudit('SELECT 1', 1, actor);
+    await sqlAuditService.submitAudit('SELECT 2', 1, actor);
+    const [first, second] = vi.mocked(dispatchOrReuse).mock.calls.map(c => c[0]);
+    expect(first.cacheKey).not.toBe(second.cacheKey);
+    expect((first.evidenceData as any).input_hash).not.toBe((second.evidenceData as any).input_hash);
+  });
+
+  it.each([
+    { ...actor, permissions: [] },
+    { ...actor, instanceScopes: {} },
+    { ...actor, resourceBoundary: { instanceIds: [], serverIds: [], networkDeviceIds: [] } },
+  ])('rejects revoked permission or scope before collecting evidence', async current => {
+    vi.mocked(actorContextService.revalidateActor).mockResolvedValue(current);
+    await expect(sqlAuditService.submitAudit('SELECT 1', 1, actor)).rejects.toThrow('ANALYSIS_AUTHORITY_REVOKED');
+    expect(databaseService.getExplainPlan).not.toHaveBeenCalled();
+    expect(dispatchOrReuse).not.toHaveBeenCalled();
+  });
+
+  it('never reports an unknown provider result as a cache hit', async () => {
+    vi.mocked(dispatchOrReuse).mockResolvedValue({ analysisId: 31, cached: false, success: false, status: 'unknown' });
+    await expect(sqlAuditService.submitAudit('SELECT 1', 1, actor)).rejects.toThrow('ANALYSIS_PROVIDER_RESULT_UNKNOWN');
+    expect(aiAnalysisDatabaseService.getAnalysisById).not.toHaveBeenCalled();
   });
 });

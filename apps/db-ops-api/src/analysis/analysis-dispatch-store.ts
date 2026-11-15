@@ -20,8 +20,13 @@ export interface AnalysisRequest {
   authorizationVersion: string;
   sessionKey?: string;
 }
+export interface SqlAuditAdmission {
+  sqlText: string; sqlHash: string; auditLevel: 'info' | 'warning' | 'error';
+  riskLevel: 'P0' | 'P1' | 'P2'; createdBy: string;
+}
 export interface AnalysisEnqueueInput {
   analysisType: string; cacheKey: string; triggerType: 'manual' | 'auto';
+  sqlAuditRecord?: SqlAuditAdmission;
   request: AnalysisRequest; existingAnalysisId?: number; relatedId?: number;
   retryOf?: number; ttlMs?: number;
 }
@@ -64,7 +69,10 @@ export class AnalysisDispatchStore {
     // A pre-existing legacy row has no proof that it was never sent. All new
     // callers create their analysis in this transaction; legacy retry creates a new ID.
     if (input.existingAnalysisId !== undefined) throw new Error('ANALYSIS_LEGACY_BINDING_REQUIRES_CONFIRMATION');
-    const scope = analysisHash([input.analysisType, request.subject, input.triggerType, request.actor?.userId ?? 'system', input.relatedId ?? null]);
+    if (input.analysisType === 'sql_audit' && (!input.sqlAuditRecord || request.purpose !== 'sql_audit' || !request.actor
+      || request.subject.type !== 'instance')) throw new Error('SQL_AUDIT_ADMISSION_REQUIRED');
+    const scope = analysisHash([input.analysisType, request.subject, input.triggerType, request.actor?.userId ?? 'system', input.relatedId ?? null,
+      ...(input.analysisType === 'sql_audit' ? [input.cacheKey] : [])]);
     // The scope-key row serializes matching admissions. Historical unknown
     // scans must lock existing rows, not gaps shared by unrelated sources:
     // under REPEATABLE READ those gaps deadlock concurrent analysis inserts.
@@ -118,6 +126,11 @@ export class AnalysisDispatchStore {
             return { analysisId: analysisIdNumber(row.analysis_id), cached: false, success: false, status: 'unknown' };
           }
           if (['pending', 'running'].includes(row.status) && ['queued', 'retry', 'running'].includes(row.job_state)) {
+            // A changed SQL audit identity must never return another evidence/config snapshot.
+            if (input.analysisType === 'sql_audit' && (row.evidence_version !== request.evidenceVersion
+              || row.config_version !== request.configVersion || row.authorization_version !== request.authorizationVersion)) {
+              throw new Error('SQL_AUDIT_ACTIVE_IDENTITY_CHANGED');
+            }
             // A queued durable intent is admission reuse, not an active-result cache.
             return { analysisId: analysisIdNumber(row.analysis_id), cached: false, success: true, status: row.status };
           }
@@ -130,12 +143,21 @@ export class AnalysisDispatchStore {
         }
       }
       if (input.retryOf !== undefined && Number(keys[0]?.analysis_id) !== input.retryOf) throw new Error('ANALYSIS_RETRY_SUPERSEDED');
+      let relatedId = input.relatedId;
+      if (input.analysisType === 'sql_audit') {
+        const audit = input.sqlAuditRecord!;
+        const [record] = await connection.execute<any>(`INSERT INTO sql_audit_records
+          (instance_id, sql_text, sql_hash, audit_level, risk_level, status, created_by)
+          VALUES (?, ?, ?, ?, ?, 'pending', ?)`,
+        [request.subject.id, audit.sqlText, audit.sqlHash, audit.auditLevel, audit.riskLevel, audit.createdBy]);
+        relatedId = analysisIdNumber(record.insertId);
+      }
       const [insert] = await connection.execute<any>(`INSERT INTO ai_analysis
         (analysis_type, target_type, instance_id, server_id, network_device_id, related_id, status, trigger_type, cache_key)
         VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?)`,
       [input.analysisType, request.subject.type, request.subject.type === 'instance' ? request.subject.id : null,
         request.subject.type === 'server' ? request.subject.id : null, request.subject.type === 'network_device' ? request.subject.id : null,
-        input.relatedId ?? null, input.triggerType, input.cacheKey]);
+        relatedId ?? null, input.triggerType, input.cacheKey]);
       const id = analysisIdNumber(insert.insertId);
       const jobId = randomUUID();
       const snapshot = { ...request, message: request.message.replaceAll('__ANALYSIS_ID__', String(id)), sessionKey: `${request.sessionKey ?? 'analysis'}-${id}` };
@@ -153,6 +175,13 @@ export class AnalysisDispatchStore {
       await connection.execute('UPDATE analysis_dispatch_keys SET analysis_id = ? WHERE scope_key = ?', [id, scope]);
       return { analysisId: id, cached: false, success: true, status: 'pending' };
     }, reservedConnection, 'READ COMMITTED');
+  }
+
+  private async auditStatus(connection: PoolConnection, id: number, status: 'pending' | 'running' | 'completed' | 'failed') {
+    const [analyses] = await connection.execute<any[]>('SELECT analysis_type FROM ai_analysis WHERE id = ?', [id]);
+    if (analyses[0]?.analysis_type !== 'sql_audit') return;
+    await connection.execute(`UPDATE sql_audit_records r JOIN ai_analysis a ON a.related_id = r.id
+      SET r.status = ? WHERE a.id = ? AND a.analysis_type = 'sql_audit'`, [status, id]);
   }
 
   private async lock(connection: PoolConnection, id: number) {
@@ -175,6 +204,7 @@ export class AnalysisDispatchStore {
     } else if (row.request_state === 'unsent' && lost && row.status === 'running') {
       await connection.execute("UPDATE ai_analysis SET status = 'pending', recovery_reason = 'ANALYSIS_UNSENT_LEASE_EXPIRED' WHERE id = ?", [row.analysis_id]);
       row.status = 'pending';
+      await this.auditStatus(connection, analysisIdNumber(row.analysis_id), 'pending');
     }
   }
   async claim(analysisId: number, job: ClaimedJob, context: JobExecutionContext): Promise<OwnedAnalysis | null> {
@@ -192,6 +222,7 @@ export class AnalysisDispatchStore {
       await connection.execute(`INSERT INTO analysis_dispatch_attempts (analysis_id, attempt_number, job_id, owner_id, fencing_token, runtime_run_id)
         VALUES (?, ?, ?, ?, ?, ?)`, [analysisId, job.attempts, job.id, context.workerId, job.fencingToken, runtimeRunId]);
       await connection.execute("UPDATE ai_analysis SET status = 'running', started_at = NOW() WHERE id = ?", [analysisId]);
+      await this.auditStatus(connection, analysisId, 'running');
       await this.assertJob(connection, row.job_id, job, context);
       return { analysisId, request: parse<AnalysisRequest>(row.request_snapshot), job, context, runtimeRunId };
     });
@@ -263,7 +294,15 @@ export class AnalysisDispatchStore {
       if (row.status !== 'running' || !['sending', 'responded'].includes(row.request_state)) throw new Error('ANALYSIS_ALREADY_TERMINAL');
       await connection.execute(`UPDATE ai_analysis SET status = 'completed', result = ?, analysis_envelope = ?,
         envelope_backfill_status = 'parsed', completed_at = NOW(), error_message = NULL WHERE id = ?`,
-      [JSON.stringify(safe.displayMarkdown), JSON.stringify(safe), owned.analysisId]);
+      [JSON.stringify(owned.request.purpose === 'sql_audit' ? {
+        raw_content: safe.displayMarkdown,
+        ...(owned.request.evidence?.data && typeof owned.request.evidence.data === 'object'
+          ? { pre_audit_results: (owned.request.evidence.data as any).pre_audit_results,
+              explain_plan: (owned.request.evidence.data as any).explain,
+              index_info: (owned.request.evidence.data as any).index_info,
+              table_stats: (owned.request.evidence.data as any).table_stats } : {}),
+      } : safe.displayMarkdown), JSON.stringify(safe), owned.analysisId]);
+      await this.auditStatus(connection, owned.analysisId, 'completed');
       await this.state(connection, owned, 'completed');
       return { success: true };
     });
@@ -313,6 +352,8 @@ export class AnalysisDispatchStore {
     await connection.execute(`UPDATE analysis_dispatch_attempts SET request_state = ?, finished_at = NOW()
       WHERE analysis_id = ? AND request_state IN ('unsent','sending','responded')`, [status, id]);
     await connection.execute('UPDATE ai_analysis SET status = ?, error_message = ?, recovery_reason = ?, completed_at = IF(? = \'failed\', NOW(), NULL) WHERE id = ?', [status, reason.slice(0, 128), reason.slice(0, 128), status, id]);
+    // The legacy audit table has no unknown state; ai_analysis remains authoritative.
+    await this.auditStatus(connection, id, 'failed');
   }
   async recover(): Promise<void> {
     const [rows] = await this.pool().execute<any[]>(`SELECT d.analysis_id FROM analysis_dispatches d
