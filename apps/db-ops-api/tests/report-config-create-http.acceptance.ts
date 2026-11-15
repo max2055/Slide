@@ -31,6 +31,7 @@ const password = randomBytes(24).toString('hex');
 const jwtSecret = randomBytes(32).toString('hex');
 const encryptionKey = randomBytes(32).toString('hex');
 const observations: unknown[] = [];
+const clientObservations: unknown[] = [];
 let active: ReturnType<typeof spawn> | undefined;
 let closed: Promise<unknown> | undefined;
 let logs = '';
@@ -224,15 +225,87 @@ try {
     const created = await post({ ...value, name: `MAX615 ${mode}` });
     assert.equal(insertExecutions - before, 1);
     assert.equal(await count(`MAX615 ${mode}`), 1);
-    assert.deepEqual(await list(), []);
+    if (mode === 'error') {
+      const unavailable = await request(base, '/api/reports/configs', undefined, 503, token, 'GET', false);
+      assert.deepEqual(unavailable, { error: 'REPORT_CONFIG_LIST_UNAVAILABLE' });
+    } else assert.deepEqual(await list(), []);
     observations.push({ check: `creation while SELECT ${mode}`, id: created.id, durableRows: 1, insertAttempts: 1, passed: true });
+    if (mode === 'error') {
+      // MAX-615 R1 regression: real Lit client -> production HTTP/JWT -> committed INSERT,
+      // lost OK acknowledgement AND unavailable recovery SELECT on fresh connections.
+      const { createServer: createViteServer } = await import(resolve(process.cwd(), '../../frontend/node_modules/vite/dist/node/index.js'));
+      const { chromium } = await import('@playwright/test');
+      const vite = await createViteServer({ configFile: false, root: resolve(process.cwd(), '../../frontend'), server: { host: '127.0.0.1', port: 0, proxy: { '/api': base } } });
+      vite.middlewares.use('/__independent', (_req: any, res: any) => { res.setHeader('Content-Type','text/html'); res.end('<html><body></body></html>'); });
+      let browser;
+      try {
+        await vite.listen();
+        const address = vite.httpServer!.address() as {port:number};
+        browser = await chromium.launch({headless:true});
+        const page = await browser.newPage({viewport:{width:1440,height:900}});
+        await page.goto(`http://127.0.0.1:${address.port}/__independent`);
+        await page.evaluate(async ({token, value}: any) => {
+          localStorage.setItem('token',token);
+          await import('/src/app/ui/views/reports.ts');
+          const element = document.createElement('reports-page') as any;
+          // Suppress unrelated startup requests; retain production render/save/list methods.
+          element.firstUpdated = () => {};
+          document.body.innerHTML = '<app-toast-container></app-toast-container>';
+          document.body.append(element);
+          (window as any).reviewElement=element;
+          element.loading=false; element.configsLoading=false; element.configForm={...value,name:'MAX615 UI unknown with unavailable list'};
+          element.showConfigDialog=true;
+          await element.updateComplete;
+        },{token,value});
+        before=insertExecutions; loseNextInsertReceipt=true;
+        await page.evaluate(async()=> { await (window as any).reviewElement._saveConfig(); });
+        const message = await page.locator('app-toast-container .toast__msg').first().innerText();
+        assert.match(message,/创建结果未确认/); assert.match(message,/勿重复提交/);
+        assert.equal(await count('MAX615 UI unknown with unavailable list'),1);
+        assert.equal(insertExecutions-before,1);
+        await page.evaluate(async()=>{ const e=(window as any).reviewElement; e.showConfigDialog=false; await e.loadConfigs(); await e.updateComplete; });
+        await page.getByText('定时报表读取失败', { exact: true }).waitFor();
+        assert.equal(await page.getByText('暂无定时报表', { exact: true }).count(), 0);
+        assert(await page.getByRole('button', { name: '新建计划', exact: true }).isDisabled());
+        const retry = page.getByRole('button', { name: '重新读取', exact: true });
+        for (const viewport of [{ width: 1366, height: 768 }, { width: 1440, height: 900 }, { width: 1920, height: 1080 }]) {
+          await page.setViewportSize(viewport);
+          const box = await retry.boundingBox();
+          assert(box && box.x >= 0 && box.y >= 0 && box.x + box.width <= viewport.width && box.y + box.height <= viewport.height);
+          await retry.focus(); assert(await retry.evaluate(button => button.matches(':focus')));
+          await page.screenshot({ path: resolve(output, `client-read-failure-${viewport.width}.png`), fullPage: true });
+        }
+        // Failed SELECT was never cached, so restoring the read boundary is enough.
+        readMode = 'healthy';
+        await retry.press('Enter');
+        await page.getByRole('cell', { name: 'MAX615 UI unknown with unavailable list', exact: true }).waitFor();
+        assert.equal(insertExecutions - before, 1);
+        assert.equal(await count('MAX615 UI unknown with unavailable list'), 1);
+        assert(await page.getByRole('button', { name: '新建计划', exact: true }).isEnabled());
+        const found = (await list()).filter((row: any) => row.name === 'MAX615 UI unknown with unavailable list');
+        assert.equal(found.length, 1);
+        await request(base, `/api/reports/configs/${found[0].id}`, { name: 'MAX615 UI reconciled' }, 200, token, 'PUT');
+        assert.equal(await count('MAX615 UI reconciled'), 1);
+        await page.evaluate(async () => { const e = (window as any).reviewElement; await e.loadConfigs(); await e.updateComplete; });
+        await page.getByRole('cell', { name: 'MAX615 UI reconciled', exact: true }).waitFor();
+        await page.screenshot({ path: resolve(output, 'client-recovered.png'), fullPage: true });
+        // A genuinely healthy empty list remains a normal empty state.
+        await pool.query('DELETE FROM report_configs');
+        await page.evaluate(async () => { const e = (window as any).reviewElement; await e.loadConfigs(); await e.updateComplete; });
+        await page.getByText('暂无定时报表', { exact: true }).waitFor();
+        assert.equal(await page.getByText('定时报表读取失败', { exact: true }).count(), 0);
+        assert(await page.getByRole('button', { name: '新建计划', exact: true }).isEnabled());
+        clientObservations.push({ check: 'R1 committed INSERT lost OK then failed reconciliation GET503, explicit UI unknown, keyboard retry recovers unique row, PUT succeeds, healthy empty preserved', message, id: found[0].id, insertAttempts: 1, durableRows: 1, passed: true, scope: 'actual Lit methods/render; unrelated initial reads suppressed; controlled MySQL SELECT fault' });
+        writeFileSync(resolve(output, 'client-observations.json'), JSON.stringify(clientObservations, null, 2));
+      } finally { await browser?.close(); await vite.close(); }
+    }
     await stop();
   }
   readMode = 'healthy'; base = await start();
   token = (await request(base, '/api/auth/login', { username, password }, 200)).token;
   const restored = await list();
-  for (const name of ['MAX615 error', 'MAX615 empty']) assert.equal(restored.filter((row: any) => row.name === name).length, 1);
-  observations.push({ check: 'read recovery exposes both confirmed configs without another POST', passed: true });
+  for (const name of ['MAX615 empty']) assert.equal(restored.filter((row: any) => row.name === name).length, 1);
+  observations.push({ check: 'read recovery exposes confirmed config without another POST', passed: true });
   console.log('PASS full TCP HTTP/JWT, real MySQL, normal/write failure/read error/empty/concurrency/lost commit receipt; LLM requests=0');
 } catch (error) { failure = error; }
 finally {

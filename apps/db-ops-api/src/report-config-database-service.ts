@@ -90,7 +90,7 @@ class ReportConfigDatabaseService {
   async getConfigs(): Promise<ReportConfig[]> {
     const pool = this.getPool();
     if (!pool) {
-      return [];
+      throw new Error('REPORT_CONFIG_LIST_UNAVAILABLE');
     }
 
     try {
@@ -103,7 +103,7 @@ class ReportConfigDatabaseService {
       return rows.map((row: any) => ({ ...row, notification_channel_ids: this.channelIds(row.notification_channel_ids) })) as ReportConfig[];
     } catch (error) {
       console.error('查询报表配置列表失败:', error);
-      return [];
+      throw new Error('REPORT_CONFIG_LIST_UNAVAILABLE');
     }
   }
 

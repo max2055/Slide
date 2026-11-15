@@ -2777,7 +2777,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
         });
         reply.send(result);
       } catch (error: any) {
-        reply.code(500).send({ error: error.message });
+        reply.code(503).send({ error: 'REPORT_CONFIG_LIST_UNAVAILABLE' });
       }
     }
   });

@@ -63,3 +63,40 @@ describe('MAX-615 / #361 confirmed creation receipt', () => {
     } finally { await app.close(); }
   });
 });
+
+// MAX-615 R1: no pool, rejected SELECT and healthy empty results are different states.
+describe('MAX-615 R1 reconciliation list', () => {
+  it('rejects an unavailable pool instead of returning an empty list', async () => {
+    vi.spyOn(dbConnection, 'getPool').mockReturnValue(null);
+    await expect(reportConfigService.getConfigs()).rejects.toThrow('REPORT_CONFIG_LIST_UNAVAILABLE');
+  });
+  it('rejects failed SELECT but preserves a healthy empty list', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const execute = vi.fn().mockRejectedValueOnce(Error('SELECT unavailable')).mockResolvedValueOnce([[]]);
+    vi.spyOn(dbConnection, 'getPool').mockReturnValue({ execute } as any);
+    await expect(reportConfigService.getConfigs()).rejects.toThrow('REPORT_CONFIG_LIST_UNAVAILABLE');
+    await expect(reportConfigService.getConfigs()).resolves.toEqual([]);
+  });
+  it('production GET and security hook expose an exact public error without SQL details', async () => {
+    const app = Fastify();
+    await registerHttpSecurity(app, { NODE_ENV: 'test' });
+    const source = readFileSync(new URL('../server.ts', import.meta.url), 'utf8');
+    const start = source.indexOf("  fastify.get('/api/reports/configs'");
+    const end = source.indexOf('  // 创建报表配置', start);
+    expect(start).toBeGreaterThan(0); expect(end).toBeGreaterThan(start);
+    const code = ts.transpileModule(source.slice(start, end), { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
+    new Function('fastify', 'verifyToken', 'requirePermission', 'reportConfigService', 'filterByInstanceAccess', 'CronJob', code)(
+      app, async () => {}, () => async () => {}, reportConfigService, (_actor: unknown, rows: unknown) => rows, undefined,
+    );
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const execute = vi.fn().mockRejectedValueOnce(Error('SELECT private schema')).mockResolvedValueOnce([[]]);
+    vi.spyOn(dbConnection, 'getPool').mockReturnValue({ execute } as any);
+    try {
+      const failed = await app.inject({ method: 'GET', url: '/api/reports/configs' });
+      expect(failed.statusCode).toBe(503);
+      expect(failed.json()).toEqual({ error: 'REPORT_CONFIG_LIST_UNAVAILABLE' });
+      const recovered = await app.inject({ method: 'GET', url: '/api/reports/configs' });
+      expect(recovered.statusCode).toBe(200); expect(recovered.json()).toEqual([]);
+    } finally { await app.close(); }
+  });
+});
