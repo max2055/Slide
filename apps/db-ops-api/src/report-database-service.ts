@@ -313,7 +313,7 @@ class ReportDatabaseService {
   /**
    * 获取报表统计
    */
-  async getReportStats(allowedInstanceIds: readonly number[] | null = null): Promise<{
+  async getReportStats(allowedInstanceIds: readonly number[] | null = null, allowedServerIds: readonly number[] | null = []): Promise<{
     total: number;
     completed: number;
     running: number;
@@ -325,11 +325,20 @@ class ReportDatabaseService {
     }
 
     try {
-      const scopeSql = allowedInstanceIds === null
-        ? ''
-        : allowedInstanceIds.length > 0
-          ? `WHERE (instance_id IS NULL OR instance_id IN (${allowedInstanceIds.map(() => '?').join(', ')}))`
-          : 'WHERE instance_id IS NULL';
+      const params: number[] = [];
+      const scope = (column: string, ids: readonly number[] | null) => {
+        if (ids === null) return `${column} IS NOT NULL`;
+        if (!ids.length) return 'FALSE';
+        params.push(...ids);
+        return `${column} IN (${ids.map(() => '?').join(', ')})`;
+      };
+      const instanceScope = scope('instance_id', allowedInstanceIds);
+      const serverScope = scope('server_id', allowedServerIds);
+      // Malformed rows with two targets require authority over both. Untargeted
+      // historical aggregate reports are visible only to unrestricted readers.
+      const scopeSql = allowedInstanceIds === null && allowedServerIds === null ? ''
+        : `WHERE (instance_id IS NOT NULL OR server_id IS NOT NULL)
+           AND (instance_id IS NULL OR ${instanceScope}) AND (server_id IS NULL OR ${serverScope})`;
       const [rows] = await pool.execute(`
         SELECT
           COUNT(*) as total,
@@ -338,7 +347,7 @@ class ReportDatabaseService {
           SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) as failed
         FROM reports
         ${scopeSql}
-      `, allowedInstanceIds === null ? [] : [...allowedInstanceIds]) as any;
+      `, params) as any;
 
       return {
         total: rows[0]?.total || 0,

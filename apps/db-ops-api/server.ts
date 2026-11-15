@@ -144,7 +144,8 @@ import { consistencyChecker } from './src/consistency-checker.js';
 import { CapacityConsistencyMonitor, createCapacityConsistencyJob } from './src/capacity-consistency-monitor.js';
 import { userPreferenceService } from './src/user-preference-service.js';
 import { collectionCapabilityTracker } from './src/collection-capabilities.js';
-import { resourceService } from './src/resources/resource-service.js';
+import { assertReportTarget } from './src/report-target.js';
+import { resourceService, canReadResource } from './src/resources/resource-service.js';
 import { capabilityService } from './src/resources/capability-service.js';
 import { observationService } from './src/resources/observation-service.js';
 import { instanceHostService } from './src/resources/instance-host-service.js';
@@ -2709,6 +2710,9 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
       try {
         const stats = await reportDatabaseService.getReportStats(
           getAccessibleInstanceIds((request as any).user),
+          (request as any).user.resourceBoundary
+            ? (request as any).user.resourceBoundary.serverIds.filter((id: number) => canReadResource((request as any).user, { type: 'server', id }))
+            : canReadResource((request as any).user, { type: 'server', id: 1 }) ? null : [],
         );
         reply.send(stats);
       } catch (error: any) {
@@ -2793,6 +2797,11 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
         if ((instance_id === undefined || instance_id === null) === (server_id === undefined || server_id === null)) {
           return reply.code(400).send({ error: 'instance_id 或 server_id 必须且只能提供一个' });
         }
+        try { assertReportTarget({ type, instance_id, server_id }); }
+        catch (error: any) { return reply.code(400).send({ error: error.message }); }
+        if (server_id != null && !canReadResource((request as any).user, { type: 'server', id: server_id })) {
+          return reply.code(403).send({ error: '无权访问该服务器' });
+        }
         if (instance_id != null && !hasInstanceAccess((request as any).user, Number(instance_id), 'read-only')) {
           return reply.code(403).send({ error: '无权访问该实例' });
         }
@@ -2857,12 +2866,20 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
           return reply.code(403).send({ error: '无权访问该实例' });
         }
 
-        // Validate type if provided
-        if (body.type) {
-          const validTypes = ['health', 'performance', 'slow_query', 'capacity'];
-          if (!validTypes.includes(body.type)) {
-            return reply.code(400).send({ error: `无效的报表类型：${body.type}，有效值：${validTypes.join(', ')}` });
-          }
+        if (existing.server_id != null && !canReadResource((request as any).user, { type: 'server', id: existing.server_id })) {
+          return reply.code(404).send({ error: '报表配置不存在' });
+        }
+        const target = {
+          type: body.type === undefined ? existing.type : body.type,
+          instance_id: body.instance_id === undefined ? existing.instance_id : body.instance_id,
+          server_id: body.server_id === undefined ? existing.server_id : body.server_id,
+        };
+        if (body.enabled !== false || body.type !== undefined || body.instance_id !== undefined || body.server_id !== undefined) {
+          try { assertReportTarget(target); }
+          catch (error: any) { return reply.code(400).send({ error: error.message }); }
+        }
+        if (target.server_id != null && !canReadResource((request as any).user, { type: 'server', id: target.server_id })) {
+          return reply.code(403).send({ error: '无权访问该服务器' });
         }
 
         // Validate format if provided
@@ -2889,7 +2906,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
           name: body.name,
           cron: body.cron,
           type: body.type,
-          instance_id: body.instance_id !== undefined ? Number(body.instance_id) : undefined,
+          instance_id: body.instance_id !== undefined ? body.instance_id : undefined,
           server_id: body.server_id !== undefined ? Number(body.server_id) : undefined,
           format: body.format,
           notification_channel_ids: notificationChannelIds,
