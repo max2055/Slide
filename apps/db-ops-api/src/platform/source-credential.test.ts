@@ -31,6 +31,15 @@ beforeEach(async () => {
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllEnvs(); });
 
 describe('saved source credentials', () => {
+  it('demonstrates that the old fixed-ff mutation can leave valid ciphertext unchanged', () => {
+    // Deterministic AES-GCM fixture, key ab*32, plaintext fixture-token,
+    // nonce 0000000000000000000000ce; its last ciphertext byte is already ff.
+    const encrypted = 'v2:9a2db2e23f15:0000000000000000000000ce:2d46ed65cadc7d1bb819188795c659eb:a4a27dad144a631876fe9af5ff';
+    const unchanged = encrypted.slice(0, -2) + 'ff';
+    expect(unchanged).toBe(encrypted);
+    expect(decryptData(unchanged)).toBe('fixture-token');
+  });
+
   it('encrypts separately, survives service recreation, and never exposes the token to config, manifest, audit or logs', async () => {
     const token = 'fixture-saved-token';
     await service.saveCredential(actor, token);
@@ -80,7 +89,12 @@ describe('saved source credentials', () => {
     await service.saveCredential(actor, 'new-token');
     await service.sync(actor, ''); expect(fetchFiles).toHaveBeenCalledWith(expect.objectContaining({ token: 'new-token' }));
     const stored = JSON.parse(values.get('source.sync-credential')!);
-    values.set('source.sync-credential', JSON.stringify({ ...stored, encrypted: stored.encrypted.slice(0, -2) + 'ff' }));
+    const encrypted = stored.encrypted as string;
+    const lastByte = Number.parseInt(encrypted.slice(-2), 16);
+    const tampered = encrypted.slice(0, -2) + (lastByte ^ 1).toString(16).padStart(2, '0');
+    expect(tampered).not.toBe(encrypted);
+    expect(tampered).toHaveLength(encrypted.length);
+    values.set('source.sync-credential', JSON.stringify({ ...stored, encrypted: tampered }));
     await expect(service.sync(actor, '')).rejects.toThrow('SOURCE_SAVED_CREDENTIAL_UNAVAILABLE');
     await service.saveCredential(actor, 'new-token');
     const bound = JSON.parse(values.get('source.sync-credential')!);

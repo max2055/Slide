@@ -8,6 +8,9 @@ import { randomUUID } from 'node:crypto';
 import mysql, { type Pool } from 'mysql2/promise';
 import Fastify from 'fastify';
 import nodemailer from 'nodemailer';
+import * as smtpOAuth from '../smtp-oauth2.js';
+import { encryptData } from '../db-connection.js';
+import { MysqlRolloutAlertPublicationGate, type RolloutAlertPublicationGate } from '../metrics/rollout/alert-publication-fence.js';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { MysqlDeliveryStore } from './delivery-store.js';
 import { MysqlWorkflowStore, WorkerRuntime, type ClaimedJob, type JobExecutionContext } from './worker-runtime.js';
@@ -33,13 +36,14 @@ describe.skipIf(!port)('delivery recovery with isolated MySQL and SMTP', () => {
   let secondPool: Pool;
   let gate: MysqlDeliveryStore;
   let workflows: MysqlWorkflowStore;
+  const password = process.env.DELIVERY_TEST_MYSQL_PASSWORD ?? '';
   const database = `delivery_recovery_${process.pid}`;
   beforeAll(async () => {
     vi.stubEnv('ENCRYPTION_KEY', '0123456789abcdef0123456789abcdef');
-    admin = mysql.createPool({ host: '127.0.0.1', timezone: 'Z', port, user: 'root', password: '' });
+    admin = mysql.createPool({ host: '127.0.0.1', timezone: 'Z', port, user: 'root', password });
     await admin.query(`CREATE DATABASE ${database}`);
-    pool = mysql.createPool({ host: '127.0.0.1', timezone: 'Z', port, user: 'root', password: '', database, connectionLimit: 8 });
-    secondPool = mysql.createPool({ host: '127.0.0.1', timezone: 'Z', port, user: 'root', password: '', database, connectionLimit: 8 });
+    pool = mysql.createPool({ host: '127.0.0.1', timezone: 'Z', port, user: 'root', password, database, connectionLimit: 8 });
+    secondPool = mysql.createPool({ host: '127.0.0.1', timezone: 'Z', port, user: 'root', password, database, connectionLimit: 8 });
     await pool.query('CREATE TABLE report_configs (id INT PRIMARY KEY, format VARCHAR(32))');
     await pool.query('CREATE TABLE notification_records (id INT AUTO_INCREMENT PRIMARY KEY, alert_id BIGINT, channel_id INT, status VARCHAR(32), sent_at DATETIME)');
     // The HTTP routes revalidate the actor and source resource on this real pool.
@@ -69,7 +73,7 @@ describe.skipIf(!port)('delivery recovery with isolated MySQL and SMTP', () => {
     gate = new MysqlDeliveryStore(() => pool);
     workflows = new MysqlWorkflowStore(() => pool as any);
   });
-  afterEach(() => vi.restoreAllMocks());
+  afterEach(() => { vi.restoreAllMocks(); vi.clearAllMocks(); });
   afterAll(async () => { await pool?.end(); await secondPool?.end(); if (admin) { await admin.query(`DROP DATABASE ${database}`); await admin.end(); } vi.unstubAllEnvs(); });
   async function enqueue(type = 'report.notify', channelId = 1) {
     const id = randomUUID();
@@ -81,14 +85,17 @@ describe.skipIf(!port)('delivery recovery with isolated MySQL and SMTP', () => {
     expect(job).not.toBeNull();
     return [job, { workerId: owner, fencingToken: job.fencingToken, signal: new AbortController().signal }];
   }
-  function registry(channel: any, store = gate) {
+  function registry(channel: any, store = gate, publicationGate?: RolloutAlertPublicationGate) {
     const registry = new JobRegistry();
     registerNotificationHandlers(registry, {
-      getAlertById: async () => ({ id: 1, level: 'warning', title: 'isolated', message: 'isolated', created_at: new Date() }) as any,
+      getAlertById: async () => ({ id: 1, level: 'warning', title: 'isolated', message: 'isolated', created_at: new Date(),
+        ...(publicationGate ? { source: 'metrics-rollout', tags: { rollout_fence: {
+          series_hash: 'a'.repeat(64), source: 'semantic', generation: 1, revision: 1,
+        } } } : {}) }) as any,
       getChannelById: async () => channel,
     }, new NotificationService(), {
       getReportById: async () => ({ id: 1, name: 'isolated', type: 'health', format: 'html', status: 'completed' }) as any,
-    }, store);
+    }, store, publicationGate);
     return registry;
   }
   const frozen = { channel: { id: 1, type: 'webhook', config: { webhook_url: 'https://receiver.example.test' }, enabled: true }, message: { text: 'frozen' } } as any;
@@ -193,6 +200,89 @@ describe.skipIf(!port)('delivery recovery with isolated MySQL and SMTP', () => {
     } finally { await smtp.close(); }
   });
 
+  // MAX-598 / #700: real SQL acquire/finish and real SMTP receive after OAuth recovers.
+  it.each(['report.notify', 'notification.deliver'].flatMap(type => [false, true].map(cancel => ({ type, cancel }))))('OAuth preparation permits a later real SMTP send: $type cancelled=$cancel', async ({ type, cancel }) => {
+    const smtp = await smtpRecipient();
+    const channel = { ...smtp.channel, config: { ...smtp.channel.config, password: undefined,
+      smtp_auth: 'oauth2' as const, oauth2_tenant: 'consumers', oauth2_client_id: 'test-client',
+      oauth2_refresh_token_encrypted: encryptData('test-refresh') } };
+    const controller = new AbortController();
+    const code = cancel ? 'SEND_CANCELLED' : 'EMAIL_DELIVERY_FAILED';
+    const oauth = vi.spyOn(smtpOAuth, 'exchangeMicrosoftSmtpRefreshToken')
+      .mockImplementationOnce(async () => {
+        if (cancel) { controller.abort(new Error(code)); return { accessToken: 'test-access' } as any; }
+        throw new Error('isolated OAuth failure');
+      })
+      .mockResolvedValue({ accessToken: 'test-access' } as any);
+    try {
+      const id = await enqueue(type);
+      const [job, context] = await claim();
+      await expect(registry(channel).execute(job, { ...context, signal: controller.signal })).rejects.toThrow(code);
+      expect(smtp.messages).toHaveLength(0);
+      expect((await gate.inspect(id))?.delivery).toMatchObject({ state: 'retryable', error_code: code });
+      await pool.execute("UPDATE workflow_jobs SET state = 'retry', lease_expires_at = NULL WHERE id = ?", [id]);
+      const [retry, retryContext] = await claim('b');
+      await registry(channel).execute(retry, retryContext);
+      expect(oauth).toHaveBeenCalledTimes(2);
+      expect(smtp.messages).toHaveLength(1);
+      expect((await gate.inspect(id))?.delivery.state).toBe('sent');
+      expect((await gate.inspect(id))?.attempts.map(a => a.status)).toEqual(['sent', 'failed']);
+    } finally { await smtp.close(); }
+  });
+
+  it.each([false, true])('DNS preparation failure/cancellation retries through real HTTP: cancelled=%s', async cancel => {
+    const received: string[] = [];
+    const server = http.createServer((request, response) => {
+      let body = '';
+      request.on('data', chunk => { body += chunk; });
+      request.on('end', () => { received.push(body); response.end('{}'); });
+    });
+    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+    const localPort = (server.address() as { port: number }).port;
+    const controller = new AbortController();
+    const realResolve = outbound.resolveOutboundTarget;
+    const resolve = vi.spyOn(outbound, 'resolveOutboundTarget').mockImplementationOnce(value =>
+      realResolve(value, { allowedHosts: ['receiver.example.test'], lookup: async () => {
+        if (cancel) controller.abort(new Error('SEND_CANCELLED'));
+        throw new Error('isolated resolver unavailable');
+      } })).mockImplementation(async value => ({ url: new URL(value), addresses: ['127.0.0.1'] }));
+    vi.mocked(https.request).mockImplementation(((options: any, callback: any) =>
+      http.request({ ...options, protocol: 'http:', hostname: '127.0.0.1', port: localPort }, callback)) as any);
+    try {
+      const id = await enqueue();
+      const [job, context] = await claim();
+      const code = cancel ? 'SEND_CANCELLED' : 'DNS_FAILED';
+      await expect(registry(frozen.channel).execute(job, { ...context, signal: controller.signal })).rejects.toThrow(code);
+      expect(received).toHaveLength(0);
+      expect(https.request).not.toHaveBeenCalled();
+      expect((await gate.inspect(id))?.delivery).toMatchObject({ state: 'retryable', error_code: code, idempotent_until: null });
+      await pool.execute("UPDATE workflow_jobs SET state = 'retry', lease_expires_at = NULL WHERE id = ?", [id]);
+      const [retry, retryContext] = await claim('b');
+      await registry(frozen.channel).execute(retry, retryContext);
+      expect(resolve).toHaveBeenCalledTimes(2);
+      expect(received).toHaveLength(1);
+      expect((await gate.inspect(id))?.delivery.state).toBe('sent');
+      expect((await gate.inspect(id))?.attempts.map(a => a.status)).toEqual(['sent', 'failed']);
+    } finally { server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); }
+  });
+
+  // #630: actual GET_LOCK/transaction/query failure must agree in workflow and delivery audit.
+  it('a real publication query failure records neutral preparation error in job and delivery', async () => {
+    const smtp = await smtpRecipient();
+    try {
+      const id = await enqueue('notification.deliver');
+      const registryWithFence = registry(smtp.channel, gate, new MysqlRolloutAlertPublicationGate(() => pool));
+      const runtime = new WorkerRuntime(workflows, 'fence-test', 30);
+      expect(await runtime.runOnce((job, context) => registryWithFence.execute(job, context))).toBe('retry');
+      const view = (await gate.inspect(id))!;
+      expect(view.delivery).toMatchObject({ state: 'retryable', error_code: 'DELIVERY_PREPARATION_FAILED' });
+      expect(view.attempts[0].error_code).toBe('DELIVERY_PREPARATION_FAILED');
+      const [jobs] = await pool.execute<any[]>('SELECT last_error FROM workflow_jobs WHERE id = ?', [id]);
+      expect(jobs[0].last_error).toBe(view.delivery.error_code);
+      expect(smtp.messages).toHaveLength(0);
+    } finally { await smtp.close(); }
+  });
+
   it('recovery API enforces admin, reason, reconciliation, CAS and explicit duplicate risk; replay does not reset audit identity', async () => {
     const id = await enqueue();
     const [job, context] = await claim();
@@ -281,6 +371,36 @@ describe.skipIf(!port)('delivery recovery with isolated MySQL and SMTP', () => {
     } finally { server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); }
   });
 
+  it('a pre-send DNS failure on an uncertain contracted retry cannot bypass retention expiry', async () => {
+    const received: string[] = [];
+    const server = http.createServer((request, response) => {
+      let body = '';
+      request.on('data', chunk => { body += chunk; });
+      request.on('end', () => { received.push(body); response.destroy(); });
+    });
+    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+    const localPort = (server.address() as { port: number }).port;
+    const resolve = vi.spyOn(outbound, 'resolveOutboundTarget').mockImplementation(async value => ({ url: new URL(value), addresses: ['127.0.0.1'] }));
+    vi.mocked(https.request).mockImplementation(((options: any, callback: any) =>
+      http.request({ ...options, protocol: 'http:', hostname: '127.0.0.1', port: localPort }, callback)) as any);
+    const channel = { ...frozen.channel, config: { ...frozen.channel.config,
+      idempotency_contract: 'receiver-deduplicates', idempotency_retention_seconds: 60 } };
+    try {
+      const id = await enqueue();
+      const [job, context] = await claim();
+      await expect(registry(channel).execute(job, context)).rejects.toThrow('DELIVERY_TRANSPORT_UNCERTAIN');
+      expect(received).toHaveLength(1);
+      await pool.execute("UPDATE workflow_jobs SET state = 'retry', lease_expires_at = NULL WHERE id = ?", [id]);
+      const [retry, retryContext] = await claim('b');
+      resolve.mockRejectedValueOnce(new outbound.OutboundPolicyError('DNS_FAILED'));
+      await expect(registry(channel).execute(retry, retryContext)).rejects.toThrow('DNS_FAILED');
+      expect((await gate.inspect(id))?.delivery.state).toBe('unknown');
+      await pool.execute('UPDATE notification_delivery_states SET idempotent_until = DATE_SUB(NOW(), INTERVAL 1 SECOND)');
+      await expect(gate.acquire(retry, retryContext, null)).rejects.toThrow('DELIVERY_RECONCILIATION_REQUIRED');
+      expect(received).toHaveLength(1);
+    } finally { server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); }
+  });
+
   it('contract retention expiry forbids automatic retry', async () => {
     const id = await enqueue();
     const [job, context] = await claim();
@@ -308,7 +428,13 @@ describe.skipIf(!port)('delivery recovery with isolated MySQL and SMTP', () => {
       await expect(registry(smtp.channel).execute(job, { ...context, signal: cancelled.signal })).rejects.toThrow('LEASE_CANCELLED');
       expect(smtp.messages).toHaveLength(0);
       await pool.execute('UPDATE workflow_jobs SET lease_expires_at = DATE_SUB(NOW(), INTERVAL 1 SECOND) WHERE id = ?', [id]);
-      expect((await gate.inspect(id))?.delivery.state).toBe('unknown');
+      expect((await gate.inspect(id))?.delivery.state).toBe('retryable');
+      expect((await gate.inspect(id))?.delivery.error_code).toBe('LEASE_CANCELLED');
+      vi.restoreAllMocks();
+      await pool.execute("UPDATE workflow_jobs SET state = 'retry', lease_expires_at = NULL WHERE id = ?", [id]);
+      const [retry, retryContext] = await claim('b');
+      await registry(smtp.channel).execute(retry, retryContext);
+      expect(smtp.messages).toHaveLength(1);
     } finally { await smtp.close(); }
   });
 

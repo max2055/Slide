@@ -25,3 +25,43 @@ describe('evidence HTTP boundary', () => {
     expect(result.statusCode).toBe(503); expect(result.body).not.toContain('mysql'); await app.close();
   });
 });
+
+// MAX-540 / #515: duplicate query keys must never reach the reader as arrays.
+describe('evidence query scalar contract', () => {
+  it.each(['from', 'to', 'correlationId', 'limit'])('rejects non-string %s from a query parser', async key => {
+    for (const value of [null, 1, true, {}, ['a']]) {
+      const app = Fastify({ routerOptions: { querystringParser: () => ({ [key]: value }) } });
+      const service = { getBundle: vi.fn(), getItem: vi.fn() };
+      await registerEvidenceRoutes(app, async request => { (request as any).user = { userId: 3 }; }, service);
+      try {
+        expect((await app.inject('/api/resources/instance/1/evidence?test=1')).statusCode).toBe(400);
+        expect(service.getBundle).not.toHaveBeenCalled();
+      } finally { await app.close(); }
+    }
+  });
+  it('passes valid single string filters and parses the numeric limit', async () => {
+    const app = Fastify();
+    const service = { getBundle: vi.fn(async () => ({ facts: [] })), getItem: vi.fn() };
+    await registerEvidenceRoutes(app, async request => { (request as any).user = { userId: 3 }; }, service);
+    try {
+      expect((await app.inject('/api/resources/instance/1/evidence?from=2026-09-08&to=2026-09-09&correlationId=a&limit=10')).statusCode).toBe(200);
+      expect(service.getBundle).toHaveBeenCalledWith(expect.anything(), { type: 'instance', id: 1 }, {
+        from: '2026-09-08', to: '2026-09-09', correlationId: 'a', limit: 10,
+      });
+    } finally { await app.close(); }
+  });
+  it.each(['correlationId', 'from', 'to', 'limit'])('rejects repeated %s on list and item routes', async key => {
+    const app = Fastify();
+    const service = { getBundle: vi.fn(), getItem: vi.fn() };
+    await registerEvidenceRoutes(app, async request => { (request as any).user = { userId: 3 }; }, service);
+    const value = key === 'limit' ? '1' : key === 'correlationId' ? 'a' : '2026-09-08';
+    try {
+      for (const suffix of ['', '/' + 'a'.repeat(64)]) {
+        const result = await app.inject('/api/resources/instance/1/evidence' + suffix + '?' + key + '=' + value + '&' + key + '=' + value);
+        expect(result.statusCode).toBe(400);
+      }
+      expect(service.getBundle).not.toHaveBeenCalled();
+      expect(service.getItem).not.toHaveBeenCalled();
+    } finally { await app.close(); }
+  });
+});

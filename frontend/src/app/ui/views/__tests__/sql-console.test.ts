@@ -159,6 +159,7 @@ describe('SQL Console', () => {
 
     it('appends the next history batch rather than replacing loaded entries', async () => {
       const subject = page();
+      subject.historyInstanceFilter = 7;
       subject.historyItems = [{ id: 1 }];
       subject.historyOffset = 1;
       const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ items: [{ id: 2 }], total: 2 }) });
@@ -194,5 +195,30 @@ describe('SQL Console', () => {
       const node = { operation: 'root', rows: 1, cost: 1, details: {}, children: [{ operation: 'child', rows: 2, cost: 3, details: {}, children: [] }] };
       expect(subject._flattenPlan(node).map((item: any) => item.operation)).toEqual(['root', 'child']);
     });
+  });
+});
+
+describe('MAX-549 / #441 completion multiplicity', () => {
+  it('returns each alias column once across a large schema, including Chinese names', () => {
+    const subject = page();
+    subject.schemas = [{ schema: 'app', tables: Array.from({ length: 1000 }, (_, i) => ({
+      name: 't' + i, alias: i === 0 ? 'a' : undefined,
+      columns: [{ name: '编号', type: 'int' }],
+    })) }];
+    const result = subject._sqlCompletions(completionContext('select a.'));
+    expect(result.options.filter((o: any) => o.type === 'property').map((o: any) => o.label)).toEqual(['编号']);
+    expect(result.options.filter((o: any) => o.type === 'keyword')).toHaveLength(1000);
+  });
+});
+
+describe('MAX-538 / #440 cleanup', () => {
+  it('destroys remaining editors once and preserves their current text on repeated cleanup', () => {
+    const subject = page();
+    const destroy = vi.fn();
+    subject.tabs = [{ id: 'one', sql: '', editorView: { destroy, state: { doc: { toString: () => 'select 9' } } } }];
+    subject.disconnectedCallback();
+    subject.disconnectedCallback();
+    expect(destroy).toHaveBeenCalledTimes(1);
+    expect(subject.tabs[0]).toMatchObject({ sql: 'select 9', editorView: null });
   });
 });

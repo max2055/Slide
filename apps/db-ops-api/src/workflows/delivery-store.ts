@@ -12,6 +12,7 @@ export interface DeliveryRequest { channel: NotificationChannel; message: unknow
 export interface DeliveryClaim { key: string; attemptId: string; request: DeliveryRequest; retryDeadline?: number }
 export type DeliveryFinishState = 'sent' | 'unknown' | 'retryable' | 'skipped';
 export interface DeliveryGate {
+  skipDisabled(job: ClaimedJob, context: JobExecutionContext): Promise<void>;
   preflightFailed(job: ClaimedJob, context: JobExecutionContext): Promise<void>;
   snapshot(key: string): Promise<DeliveryRequest | null>;
   acquire(job: ClaimedJob, context: JobExecutionContext, request: DeliveryRequest | null): Promise<DeliveryClaim | null>;
@@ -66,6 +67,27 @@ export class MysqlDeliveryStore implements DeliveryGate {
       await c.execute(`INSERT INTO ${attemptTable(identity.kind)}
         (workflow_job_id,${sourceColumn(identity.kind)},channel_id,attempt_number,status,error_code,finished_at)
         VALUES (?,?,?,?,'failed','DELIVERY_PREPARATION_FAILED',NOW())`, [job.id, identity.sourceId, identity.channelId, job.fencingToken]);
+    });
+  }
+  /** Suppress a frozen request without granting a transport right. Keep accepted
+   * or uncertain historical outcomes intact; disabling cannot retract a send. */
+  async skipDisabled(job: ClaimedJob, context: JobExecutionContext): Promise<void> {
+    const { key } = deliveryIdentity(job);
+    await this.transaction(async c => {
+      await this.owned(c, job, context);
+      const [rows] = await c.execute<any[]>('SELECT * FROM notification_delivery_states WHERE business_key = ? FOR UPDATE', [key]);
+      const row = rows[0];
+      if (!row) throw new Error('DELIVERY_SNAPSHOT_MISSING');
+      if (['sent', 'skipped', 'failed', 'unknown'].includes(row.state)) return;
+      if (row.state === 'sending') {
+        const [owners] = await c.execute<any[]>(`SELECT id FROM workflow_jobs WHERE id = ? AND state = 'running'
+          AND fencing_token = ? AND lease_expires_at > NOW()`, [row.workflow_job_id, row.fencing_token]);
+        if (owners.length) return; // An existing sender still owns its outcome.
+        await this.attemptResult(c, row, 'unknown', 'DELIVERY_INTERRUPTED');
+        await c.execute("UPDATE notification_delivery_states SET state = 'unknown', version = version + 1, error_code = 'DELIVERY_INTERRUPTED' WHERE business_key = ?", [key]);
+        return;
+      }
+      await c.execute("UPDATE notification_delivery_states SET state = 'skipped', version = version + 1, error_code = 'DELIVERY_CHANNEL_DISABLED' WHERE business_key = ?", [key]);
     });
   }
   async acquire(job: ClaimedJob, context: JobExecutionContext, request: DeliveryRequest | null): Promise<DeliveryClaim | null> {
