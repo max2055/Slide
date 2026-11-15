@@ -32,6 +32,14 @@ export class MetricPolicyFields extends LitElement {
     details{margin-block:var(--space-lg);font-size:12px}summary{cursor:pointer}
   `;
   private change(patch: Partial<Overrides>) { this.dispatchEvent(new CustomEvent('policy-change', { detail: { ...this.overrides, ...patch }, bubbles: true, composed: true })); }
+  private changeNumber(key: NumberKey, input: HTMLInputElement) {
+    if (input.value.trim() === '') return;
+    const divisor = key.endsWith('_ms') ? 1000 : 1;
+    const numeric = Number(input.value) * divisor;
+    const [min, max] = limits[key];
+    if (!Number.isFinite(numeric) || numeric < min || numeric > max) return;
+    this.change({ [key]: { mode: 'set', value: Math.round(numeric) } });
+  }
   render() { return html`<style>${sharedFieldStyles}${MetricPolicyFields.componentStyles.cssText}</style>
     ${this.compact ? html`<div class="enable-row"><div><h3>启用此对象采集</h3><p>停用此对象后，策略组也不会触发采集。</p></div><label class="switch"><input type="checkbox" role="switch" aria-label="启用此对象采集" .checked=${this.overrides.enabled === 'enable' || this.overrides.enabled !== 'disable' && this.values.enabled === true} .disabled=${this.disabled} @change=${(e: Event) => this.change({ enabled: (e.target as HTMLInputElement).checked ? 'enable' : 'disable' })}><span></span></label></div>` : nothing}
     <div class="fields">
@@ -44,7 +52,7 @@ export class MetricPolicyFields extends LitElement {
       return html`<app-form-field label=${label} hint=${source ? `生效值 ${Number(this.values[key]) / divisor} · ${{ platform: '平台默认', package: '采集包推荐', group: '继承策略组', resource: '本资源覆盖' }[source.layer] ?? '继承'} ` : `${min / divisor}–${max / divisor}`}>
         <select aria-label=${`${label}覆盖方式`} .value=${override?.mode ?? 'inherit'} .disabled=${this.disabled} @change=${(e: Event) => this.change({ [key]: (e.target as HTMLSelectElement).value === 'inherit' ? { mode: 'inherit' } : { mode: 'set', value: Number(this.values[key] ?? fallback) } })}>
           <option value="inherit">继承${this.compact && this.values[key] !== undefined ? `（当前 ${Number(this.values[key]) / divisor}${key.endsWith('_ms') ? ' 秒' : ''}）` : ''}</option><option value="set">覆盖</option></select>
-        ${override?.mode === 'set' ? html`<input type="number" min=${min / divisor} max=${max / divisor} step=${1 / divisor} aria-label=${label} .value=${String(override.value / divisor)} .disabled=${this.disabled} @input=${(e: Event) => this.change({ [key]: { mode: 'set', value: Math.round(Number((e.target as HTMLInputElement).value) * divisor) } })}>` : nothing}
+        ${override?.mode === 'set' ? html`<input type="number" min=${min / divisor} max=${max / divisor} step=${1 / divisor} aria-label=${label} .value=${String(override.value / divisor)} .disabled=${this.disabled} @input=${(e: Event) => this.changeNumber(key, e.target as HTMLInputElement)}>` : nothing}
       </app-form-field>`;
     }); }
 }

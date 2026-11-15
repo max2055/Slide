@@ -55,8 +55,28 @@ class IndexDatabaseService {
     return dbConnection.getPool();
   }
 
-  private isConnected(): boolean {
-    return dbConnection.isConnected();
+  private async replaceSnapshot(
+    instanceId: number,
+    write: (conn: mysql.PoolConnection) => Promise<void>
+  ): Promise<void> {
+    const pool = this.getPool();
+    if (!pool) throw new Error('索引存储暂不可用');
+    const conn = await pool.getConnection();
+    try {
+      await conn.beginTransaction();
+      // 父行锁也覆盖首次采集和空快照，避免依赖 DELETE 的间隙锁。
+      const [rows] = await conn.execute<mysql.RowDataPacket[]>(
+        'SELECT id FROM database_instances WHERE id = ? FOR UPDATE', [instanceId]
+      );
+      if (!rows.length) throw new Error('实例不存在');
+      await write(conn);
+      await conn.commit();
+    } catch {
+      try { await conn.rollback(); } catch { /* 保留稳定失败，连接销毁避免复用未知事务 */ conn.destroy(); }
+      throw new Error('索引存储更新失败');
+    } finally {
+      conn.release();
+    }
   }
 
   /**
@@ -71,50 +91,51 @@ class IndexDatabaseService {
       return { success: false, count: 0, error: '数据库未连接' };
     }
 
-    if (indexEntries.length === 0) {
-      return { success: false, count: 0, error: '索引数据为空' };
-    }
-
     try {
       const collectedAt = new Date();
 
-      // 先删除该实例当前的旧记录（幂等）
-      await pool.execute(
-        'DELETE FROM index_info WHERE instance_id = ?',
-        [instanceId]
-      );
+      await this.replaceSnapshot(instanceId, async (conn) => {
+        // 先删除该实例当前的旧记录（幂等）
+        await conn.execute(
+          'DELETE FROM index_info WHERE instance_id = ?',
+          [instanceId]
+        );
 
-      // 批量插入
-      const values = indexEntries.map((entry) => [
-        instanceId,
-        entry.table_name,
-        entry.index_name,
-        entry.column_name,
-        entry.seq_in_index || 0,
-        entry.non_unique ?? 1,
-        entry.cardinality || 0,
-        entry.sub_part,
-        entry.nullable || 'YES',
-        entry.index_type || 'BTREE',
-        entry.comment,
-        collectedAt,
-      ]);
+        // 批量插入
+        const values = indexEntries.map((entry) => [
+          instanceId,
+          entry.table_name,
+          entry.index_name,
+          entry.column_name,
+          entry.seq_in_index || 0,
+          entry.non_unique ?? 1,
+          entry.cardinality || 0,
+          entry.sub_part,
+          entry.nullable || 'YES',
+          entry.index_type || 'BTREE',
+          entry.comment,
+          collectedAt,
+        ]);
 
-      const placeholders = values.map(() => '(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').join(', ');
-      const flatValues = values.flat();
+        for (let offset = 0; offset < values.length; offset += 1000) {
+          const batch = values.slice(offset, offset + 1000);
+          const placeholders = batch.map(() => '(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').join(', ');
+          const flatValues = batch.flat();
 
-      await pool.execute(
-        `INSERT INTO index_info
-         (instance_id, table_name, index_name, column_name, seq_in_index,
-          non_unique, cardinality, sub_part, nullable, index_type, comment, collected_at)
-         VALUES ${placeholders}`,
-        flatValues
-      );
+          await conn.execute(
+            `INSERT INTO index_info
+             (instance_id, table_name, index_name, column_name, seq_in_index,
+              non_unique, cardinality, sub_part, nullable, index_type, comment, collected_at)
+             VALUES ${placeholders}`,
+            flatValues
+          );
 
+        }
+      });
       return { success: true, count: indexEntries.length };
     } catch (error: any) {
       console.error('保存索引数据失败:', error);
-      return { success: false, count: 0, error: error.message };
+      return { success: false, count: 0, error: '索引存储更新失败' };
     }
   }
 
@@ -124,7 +145,7 @@ class IndexDatabaseService {
   async getIndexesByInstance(instanceId: number): Promise<IndexRow[]> {
     const pool = this.getPool();
     if (!pool) {
-      return [];
+      throw new Error('索引存储暂不可用');
     }
 
     try {
@@ -141,7 +162,7 @@ class IndexDatabaseService {
       return rows as IndexRow[];
     } catch (error) {
       console.error('获取实例索引失败:', error);
-      return [];
+      throw new Error('索引存储暂不可用');
     }
   }
 
@@ -151,7 +172,7 @@ class IndexDatabaseService {
   async getIndexesByTable(instanceId: number, tableName: string): Promise<IndexRow[]> {
     const pool = this.getPool();
     if (!pool) {
-      return [];
+      throw new Error('索引存储暂不可用');
     }
 
     try {
@@ -168,7 +189,7 @@ class IndexDatabaseService {
       return rows as IndexRow[];
     } catch (error) {
       console.error('获取表索引失败:', error);
-      return [];
+      throw new Error('索引存储暂不可用');
     }
   }
 
@@ -178,7 +199,7 @@ class IndexDatabaseService {
   async getRedundancyReport(instanceId: number): Promise<RedundancyReportRow[]> {
     const pool = this.getPool();
     if (!pool) {
-      return [];
+      throw new Error('索引存储暂不可用');
     }
 
     try {
@@ -193,7 +214,7 @@ class IndexDatabaseService {
       return rows as RedundancyReportRow[];
     } catch (error) {
       console.error('获取冗余报告失败:', error);
-      return [];
+      throw new Error('索引存储暂不可用');
     }
   }
 
@@ -201,6 +222,7 @@ class IndexDatabaseService {
    * 保存冗余检测结果（先清后插）
    */
   async saveRedundancyReport(
+    instanceId: number,
     reports: RedundantIndexReport[]
   ): Promise<{ success: boolean; count: number; error?: string }> {
     const pool = this.getPool();
@@ -208,42 +230,46 @@ class IndexDatabaseService {
       return { success: false, count: 0, error: '数据库未连接' };
     }
 
-    if (reports.length === 0) {
-      return { success: false, count: 0, error: '报告数据为空' };
+    if (reports.some((report) => report.instance_id !== instanceId)) {
+      return { success: false, count: 0, error: '报告实例不匹配' };
     }
 
     try {
-      const instanceId = reports[0].instance_id;
+      await this.replaceSnapshot(instanceId, async (conn) => {
 
-      // 先删除该实例当前的旧报告
-      await pool.execute(
-        'DELETE FROM index_redundancy_report WHERE instance_id = ?',
-        [instanceId]
-      );
+        // 先删除该实例当前的旧报告
+        await conn.execute(
+          'DELETE FROM index_redundancy_report WHERE instance_id = ?',
+          [instanceId]
+        );
 
-      // 批量插入
-      const values = reports.map((r) => [
-        r.instance_id,
-        r.table_name,
-        r.redundant_index,
-        r.covered_by_index,
-        r.reason,
-      ]);
+        // 批量插入
+        const values = reports.map((r) => [
+          r.instance_id,
+          r.table_name,
+          r.redundant_index,
+          r.covered_by_index,
+          r.reason,
+        ]);
 
-      const placeholders = values.map(() => '(?, ?, ?, ?, ?)').join(', ');
-      const flatValues = values.flat();
+        for (let offset = 0; offset < values.length; offset += 1000) {
+          const batch = values.slice(offset, offset + 1000);
+          const placeholders = batch.map(() => '(?, ?, ?, ?, ?)').join(', ');
+          const flatValues = batch.flat();
 
-      await pool.execute(
-        `INSERT INTO index_redundancy_report
-         (instance_id, table_name, redundant_index, covered_by_index, reason)
-         VALUES ${placeholders}`,
-        flatValues
-      );
+          await conn.execute(
+            `INSERT INTO index_redundancy_report
+             (instance_id, table_name, redundant_index, covered_by_index, reason)
+             VALUES ${placeholders}`,
+            flatValues
+          );
 
+        }
+      });
       return { success: true, count: reports.length };
     } catch (error: any) {
       console.error('保存冗余报告失败:', error);
-      return { success: false, count: 0, error: error.message };
+      return { success: false, count: 0, error: '索引存储更新失败' };
     }
   }
 
@@ -253,7 +279,7 @@ class IndexDatabaseService {
   async getUnusedIndexes(instanceId: number): Promise<IndexRow[]> {
     const pool = this.getPool();
     if (!pool) {
-      return [];
+      throw new Error('索引存储暂不可用');
     }
 
     try {
@@ -270,7 +296,7 @@ class IndexDatabaseService {
       return rows as IndexRow[];
     } catch (error) {
       console.error('获取未使用索引失败:', error);
-      return [];
+      throw new Error('索引存储暂不可用');
     }
   }
 }

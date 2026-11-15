@@ -409,12 +409,13 @@ export class HealthCenterPage extends LitElement {
         <tbody>
           ${rows.map(r => {
             const diff = r.cap_size > 0 ? ((r.inst_size - r.cap_size) / r.cap_size * 100) : null;
+            const roundedDiff = diff === null ? null : Math.round(diff);
             return html`
               <tr>
                 <td>${r.name}</td>
                 <td>${r.inst_size.toFixed(2)} GB</td>
                 <td>${r.cap_size >= 0 ? r.cap_size.toFixed(2) + ' GB' : '无数据'}</td>
-                <td>${diff !== null ? html`<span class="pct-over">+${Math.round(diff)}%</span>` : '—'}</td>
+                <td>${diff !== null ? html`<span class="pct-over">${roundedDiff! > 0 ? '+' : ''}${roundedDiff}%</span>` : '—'}</td>
               </tr>
             `;
           })}

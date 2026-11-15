@@ -112,3 +112,10 @@ it('keeps the legacy qps name blocked instead of silently evaluating the new rat
     migration: { metric_id: null, status: 'review_required', threshold_conversion: 'none' } });
   expect(mocks.query).not.toHaveBeenCalled();
 });
+
+it('MAX-567 propagates storage failures only for strict network evaluation callers', async () => {
+  mocks.source.mockRejectedValue(new Error('SEMANTIC_QUERY_FAILED'));
+  await expect(evaluateOperationalRule({ type: 'network_device', id: 1 }, rule, 0, {}, true))
+    .rejects.toThrow('SEMANTIC_QUERY_FAILED');
+  expect(await evaluateOperationalRule({ type: 'instance', id: 1 }, rule, 0)).toMatchObject({ state: 'unknown' });
+});
