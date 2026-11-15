@@ -24,7 +24,7 @@ import { strictBody } from './utils/strict-body.js';
 import { authDatabaseService } from './auth-database-service.js';
 import { AgentToolAuditService } from './security/agent-tool-audit-service.js';
 
-describe.skipIf(process.env.SLIDE_USER_DELETE_MYSQL !== '1')('MAX-669 / #299 retained audit identity', () => {
+describe.skipIf(process.env.SLIDE_USER_DELETE_MYSQL !== '1')('MAX-669 / #299 and MAX-673 / #492 user deletion', () => {
   let root: mysql.Pool, pool: mysql.Pool, token: string, browser: Browser;
   let owned: Awaited<ReturnType<typeof createOwnedDatabase>>;
   let vite: ChildProcess, viteExited: Promise<unknown>, origin: string;
@@ -57,7 +57,7 @@ describe.skipIf(process.env.SLIDE_USER_DELETE_MYSQL !== '1')('MAX-669 / #299 ret
     const c = JSON.parse(readFileSync(file, 'utf8'))['mysql-test'];
     if (Number(c.port) !== 3308) throw Error('authorized mysql-test port 3308 required');
     root = mysql.createPool({ host: c.host, port: c.port, user: c.user, password: c.password });
-    owned = await createOwnedDatabase(root, { nonce: generateRunNonce(), purpose: 'max669', handleDir });
+    owned = await createOwnedDatabase(root, { nonce: generateRunNonce(), purpose: 'userdelete', handleDir });
     pool = mysql.createPool({ host: c.host, port: c.port, user: c.user, password: c.password,
       database: owned.database, connectionLimit: 4 });
     vi.spyOn(dbConnection, 'getPool').mockReturnValue(pool);
@@ -178,6 +178,62 @@ describe.skipIf(process.env.SLIDE_USER_DELETE_MYSQL !== '1')('MAX-669 / #299 ret
     try { expect((await remove(66905)).statusCode).toBe(403); }
     finally { await pool.execute("INSERT INTO user_roles(user_id,role_id) SELECT ?,id FROM roles WHERE name='admin'", [operator]); }
     observations.push({ case: 'no audit deletion, admin, self, unauthenticated and revoked permissions', passed: true });
+  });
+
+  for (const [index, status] of ['active', 'inactive', 'locked'].entries()) {
+    it(`#492 deletes ${status} users without retained records and preserves authentication filtering`, async () => {
+      const id = 67310 + index;
+      await user(id);
+      await pool.execute('UPDATE users SET status=? WHERE id=?', [status, id]);
+      expect(await authDatabaseService.getUserById(id)).toEqual(status === 'active'
+        ? expect.objectContaining({ id }) : null);
+      const response = await remove(id);
+      expect(response.statusCode).toBe(200);
+      expect(response.json()).toEqual({ success: true });
+      expect((await pool.query<any[]>('SELECT id FROM users WHERE id=?', [id]))[0]).toHaveLength(0);
+      observations.push({ case: '#492 delete without audit', status, httpStatus: response.statusCode, userRows: 0 });
+    });
+
+    it(`#492 preserves the complete audit row and user identity for ${status} users`, async () => {
+      const id = 67320 + index;
+      const actor = await user(id);
+      await record(id);
+      await pool.execute('UPDATE users SET status=? WHERE id=?', [status, id]);
+      const before = (await pool.query('SELECT * FROM agent_tool_audit WHERE actor_id=?', [id]))[0];
+      const response = await remove(id);
+      expect(response.statusCode).toBe(409);
+      expect(response.json()).toMatchObject({ success: false, code: 'USER_HAS_RETAINED_RECORDS' });
+      expect(response.body).not.toMatch(/fk_|DELETE|sqlMessage|foreign key/i);
+      expect((await pool.query('SELECT * FROM agent_tool_audit WHERE actor_id=?', [id]))[0]).toEqual(before);
+      expect((await pool.query<any[]>('SELECT username,status FROM users WHERE id=?', [id]))[0][0])
+        .toEqual({ username: actor.username, status });
+      observations.push({ case: '#492 retained audit', status, httpStatus: response.statusCode,
+        auditRows: await count(id), completeAuditUnchanged: true, username: actor.username });
+    });
+
+    it(`#492 protects the ${status} admin account`, async () => {
+      const [rows] = await pool.query<any[]>("SELECT id FROM users WHERE username='admin'");
+      const id = rows[0].id;
+      await pool.execute('UPDATE users SET status=? WHERE id=?', [status, id]);
+      try {
+        const response = await remove(id);
+        expect(response.statusCode).toBe(400);
+        expect(response.json().error).toBe('不能删除管理员账户');
+        expect((await pool.query<any[]>('SELECT id FROM users WHERE id=?', [id]))[0]).toHaveLength(1);
+        observations.push({ case: '#492 admin protection', status, httpStatus: response.statusCode, userRows: 1 });
+      } finally { await pool.execute("UPDATE users SET status='active' WHERE id=?", [id]); }
+    });
+  }
+
+  it('#492 returns absence for a nonexistent ID and preserves self-delete protection', async () => {
+    const missing = await remove(67399);
+    expect(missing.statusCode).toBe(400);
+    expect(missing.json()).toEqual({ success: false, error: '用户不存在' });
+    const self = await remove(operator);
+    expect(self.statusCode).toBe(400);
+    expect(self.json().error).toBe('不能删除自己');
+    expect((await pool.query<any[]>('SELECT id FROM users WHERE id=?', [operator]))[0]).toHaveLength(1);
+    observations.push({ case: '#492 nonexistent and self', missingStatus: missing.statusCode, selfStatus: self.statusCode });
   });
 
   it('an uncommitted audit write wins: DELETE waits then reports a safe conflict', async () => {

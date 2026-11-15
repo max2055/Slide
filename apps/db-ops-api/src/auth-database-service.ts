@@ -509,8 +509,11 @@ export class AuthDatabaseService {
     }
 
     try {
-      // 不能删除 admin 用户
-      const user = await this.getUserById(id);
+      // 删除预检查包含所有状态；认证查询 getUserById 继续只返回 active 用户。
+      const [rows] = await pool.execute<mysql.RowDataPacket[]>(
+        'SELECT id, username FROM users WHERE id = ?', [id],
+      );
+      const user = rows[0];
       if (!user) {
         return { success: false, error: '用户不存在' };
       }
