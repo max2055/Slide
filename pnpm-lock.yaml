@@ -106,6 +106,9 @@ importers:
       oracledb:
         specifier: ^6.10.0
         version: 6.10.0
+      parse5:
+        specifier: 7.3.0
+        version: 7.3.0
       pdfkit:
         specifier: ^0.18.0
         version: 0.18.0

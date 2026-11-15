@@ -134,22 +134,64 @@ class UserPreferenceService {
       return { success: false, error: '数据库未连接' };
     }
 
-    try {
-      // 先获取现有偏好，与新偏好合并
-      const existing = await this.getPreferences(userId);
-      const merged = { ...DEFAULT_PREFERENCES, ...(existing ?? {}), ...preferences };
-
-      await pool.execute(
-        `INSERT INTO user_preferences (user_id, preferences)
-         VALUES (?, ?)
-         ON DUPLICATE KEY UPDATE preferences = VALUES(preferences)`,
-        [userId, JSON.stringify(merged)],
-      );
-      return { success: true };
-    } catch (error: any) {
-      console.error('保存用户偏好失败:', error);
-      return { success: false, error: error.message };
+    for (let attempt = 0; attempt < 3; attempt++) {
+      let connection: mysql.PoolConnection | undefined;
+      try {
+        connection = await pool.getConnection();
+        await connection.beginTransaction();
+        // Upsert establishes an exclusive row lock even for concurrent first saves.
+        // Existing JSON is left untouched; all reads/writes share this connection.
+        await connection.execute(
+          `INSERT INTO user_preferences (user_id, preferences)
+           VALUES (?, ?)
+           ON DUPLICATE KEY UPDATE user_id = VALUES(user_id)`,
+          [userId, JSON.stringify(DEFAULT_PREFERENCES)],
+        );
+        const [rows] = await connection.execute<mysql.RowDataPacket[]>(
+          'SELECT preferences FROM user_preferences WHERE user_id = ? FOR UPDATE',
+          [userId],
+        );
+        if (rows.length !== 1) throw new Error('读取用户偏好失败');
+        let existing: unknown;
+        try {
+          existing = typeof rows[0].preferences === 'string'
+            ? JSON.parse(rows[0].preferences)
+            : rows[0].preferences;
+        } catch {
+          throw new Error('用户偏好数据损坏：必须是 JSON 对象');
+        }
+        if (!existing || typeof existing !== 'object' || Array.isArray(existing)) {
+          throw new Error('用户偏好数据损坏：必须是 JSON 对象');
+        }
+        const merged = { ...DEFAULT_PREFERENCES, ...existing, ...preferences };
+        await connection.execute(
+          'UPDATE user_preferences SET preferences = ? WHERE user_id = ?',
+          [JSON.stringify(merged), userId],
+        );
+        await connection.commit();
+        return { success: true };
+      } catch (error: any) {
+        let rolledBack = false;
+        if (connection) {
+          try {
+            await connection.rollback();
+            rolledBack = true;
+          } catch (rollbackError) {
+            console.error('回滚用户偏好失败:', rollbackError);
+            // A failed rollback must not return an open transaction to the pool.
+            connection.destroy();
+            connection = undefined;
+          }
+        }
+        // Only replay a known deadlock after confirmed rollback, never unknown outcomes.
+        if (error.code === 'ER_LOCK_DEADLOCK' && rolledBack && attempt < 2) continue;
+        console.error('保存用户偏好失败:', error);
+        return { success: false, error: error.message };
+      } finally {
+        connection?.release();
+      }
     }
+    return { success: false, error: '保存用户偏好失败' };
   }
 }
 

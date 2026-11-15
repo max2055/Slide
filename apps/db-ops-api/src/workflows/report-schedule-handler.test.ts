@@ -10,7 +10,7 @@ function setup() {
   const events: string[] = [];
   const controller = new AbortController();
   const context = { signal: controller.signal, workerId: 'test', fencingToken: 7 };
-  const config = { id: 1, type: 'server_health', server_id: 9, instance_id: 4, format: 'html', notification_channel_ids: [8, 3] } as ReportConfig;
+  const config = { id: 1, type: 'server_health', server_id: 9, instance_id: null, format: 'html', notification_channel_ids: [8, 3] } as ReportConfig;
   const occurrence = { configId: 1, occurrenceAt: new Date('2026-10-03'), config, context,
     job: { id: 'job', type: 'report.occurrence', payload: {}, attempts: 1, maxAttempts: 5, fencingToken: 7 } };
   const store = {
@@ -64,12 +64,31 @@ it('acknowledges an already finalized occurrence without any report writes', asy
   const h = setup(); h.store.claim.mockResolvedValue(null); await h.run();
   expect(h.store.complete).not.toHaveBeenCalled(); expect(h.store.savedReport).not.toHaveBeenCalled();
 });
-it('preserves server and database report arguments', async () => {
-  const h = setup(); h.config.server_id = undefined; await h.run();
-  expect(h.deps.serverReportService.generateAndPersist).toHaveBeenCalledWith(undefined);
+it('preserves database report arguments', async () => {
+  const h = setup(); h.config.server_id = undefined; h.config.instance_id = 4;
   h.config.type = 'performance'; await h.run();
   expect(h.deps.reportService.generateReport).toHaveBeenCalledWith('performance', 4, { format: 'html' });
   expect(h.store.complete).toHaveBeenCalledWith(h.occurrence, 43);
+});
+it.each([
+  { type: 'server_health', instance_id: 4, server_id: undefined },
+  { type: 'server_health', instance_id: null, server_id: undefined },
+  { type: 'server_health', instance_id: 4, server_id: 9 },
+  { type: 'server_health', instance_id: null, server_id: 0 },
+  { type: 'performance', instance_id: null, server_id: 9 },
+])('MAX-621 rejects historical target mismatch before any reads: %j', async target => {
+  const h = setup(); Object.assign(h.config, target);
+  await expect(h.run()).rejects.toThrow('REPORT_CONFIG_');
+  expect(h.store.savedReport).not.toHaveBeenCalled();
+  expect(h.deps.serverReportService.generateAndPersist).not.toHaveBeenCalled();
+  expect(h.deps.reportService.generateReport).not.toHaveBeenCalled();
+  expect(h.store.fail).toHaveBeenCalledOnce();
+});
+it('MAX-621 preserves the generation failure returned by the server service', async () => {
+  const h = setup();
+  h.deps.serverReportService.generateAndPersist.mockResolvedValue({ success: false, error: 'collector unavailable' } as any);
+  await expect(h.run()).rejects.toThrow('collector unavailable');
+  expect(h.store.fail).toHaveBeenCalledWith(h.occurrence, expect.objectContaining({ message: 'collector unavailable' }));
 });
 it.each(['missing-id', 'generate', 'complete', 'non-error'])('fails only its own occurrence: %s', async kind => {
   const h = setup(); let error: unknown = new Error(kind);

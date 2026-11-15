@@ -1,5 +1,5 @@
 import mysql, { type Pool, type RowDataPacket } from 'mysql2/promise';
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { MigrationRunner } from '../../migrations/runner.js';
 import type { MigrationPool } from '../../migrations/types.js';
 import { definitions, identify, sample } from '../../contracts/metrics/fixtures.js';
@@ -55,9 +55,9 @@ describe.skipIf(!port)('resource rollout coordinator', () => {
   };
 
   beforeAll(async () => {
-    root = mysql.createPool({ host: '127.0.0.1', port, user: 'root', password: '' });
+    root = mysql.createPool({ host: '127.0.0.1', port, user: 'root', password: process.env.METRICS_TEST_MYSQL_PASSWORD ?? '' });
     await root.query(`CREATE DATABASE ${database}`);
-    pool = mysql.createPool({ host: '127.0.0.1', port, user: 'root', password: '', database, connectionLimit: 12 });
+    pool = mysql.createPool({ host: '127.0.0.1', port, user: 'root', password: process.env.METRICS_TEST_MYSQL_PASSWORD ?? '', database, connectionLimit: 12 });
     await new MigrationRunner(pool as unknown as MigrationPool).run();
     coordinator = new MysqlRolloutCoordinator(pool);
     policies = new MysqlPolicyStore(() => pool);
@@ -116,6 +116,57 @@ describe.skipIf(!port)('resource rollout coordinator', () => {
     await coordinator.startShadow(ref,1,actor);await pool.query('DELETE FROM metric_source_checks');
     await expect(coordinator.acceptShadow(ref,1,{sample_count:2,source_conflicts:0,duplicate_formal_writes:0,duplicate_alerts:0,value_mismatches:0,
       unit_mismatches:0,dimension_mismatches:0,quality_mismatches:0,freshness_mismatches:0,missing_mismatches:0,derived_mismatches:0,performance_regressions:0},actor)).rejects.toThrow('ROLLOUT_MEASURED_GATE_REQUIRED');
+  });
+
+  it.each(['READ COMMITTED', 'REPEATABLE READ'] as const)('MAX-520: status survives cutover and rollback commits under %s with a one-connection reader', async isolation => {
+    await coordinator.startShadow(ref, 1, actor);
+    await coordinator.acceptShadow(ref, 1, {
+      sample_count: 2, source_conflicts: 0, duplicate_formal_writes: 0, duplicate_alerts: 0,
+      value_mismatches: 0, unit_mismatches: 0, dimension_mismatches: 0, quality_mismatches: 0,
+      freshness_mismatches: 0, missing_mismatches: 0, derived_mismatches: 0, performance_regressions: 0,
+    }, actor);
+    const reader = mysql.createPool({ host: '127.0.0.1', port, user: 'root',
+      password: process.env.METRICS_TEST_MYSQL_PASSWORD ?? '', database, connectionLimit: 1 });
+    try {
+      await reader.query(`SET SESSION TRANSACTION ISOLATION LEVEL ${isolation}`);
+      const statusReader = new MysqlRolloutCoordinator(reader);
+      const execute = reader.execute.bind(reader);
+      for (const action of ['cutover', 'rollback'] as const) {
+        const before = await statusReader.status(ref);
+        await writePublished(action === 'cutover' ? 2 : 3);
+        let committed = false;
+        // Calls through to MySQL, then commits the real coordinator transition
+        // after the resource read, before a possible second status statement.
+        const spy = vi.spyOn(reader, 'execute').mockImplementation((async (...args: Parameters<typeof reader.execute>) => {
+          const result = await execute(...args);
+          if (!committed && String(args[0]).includes('FROM metric_rollout_resources')) {
+            committed = true;
+            if (action === 'cutover') await coordinator.cutover(ref, { expected_shadow_revision: 1, expected_generation: 1 }, actor);
+            else await coordinator.rollback(ref, { expected_revision: 2, expected_generation: 2 }, actor);
+          }
+          return result;
+        }) as typeof reader.execute);
+        try {
+          expect(await statusReader.status(ref)).toEqual(before);
+          expect(committed).toBe(true);
+        } finally { spy.mockRestore(); }
+        expect(await statusReader.status(ref)).toMatchObject(action === 'cutover'
+          ? { phase: 'cutover_pending', revision: 2, generation: 2, applied_series: 0, series_count: 2 }
+          : { phase: 'legacy', revision: 3, generation: 3, applied_series: 2, series_count: 2 });
+      }
+    } finally { await reader.end(); }
+  });
+
+  it('MAX-520: rejects internally uniform series that disagree with the resource revision or generation', async () => {
+    await coordinator.startShadow(ref, 1, actor);
+    for (const field of ['revision', 'generation']) {
+      await pool.query(`UPDATE metric_rollout_resources SET ${field} = 2 WHERE resource_key = 'instance:1'`);
+      await expect(coordinator.status(ref)).rejects.toThrow('ROLLOUT_RESOURCE_MIXED');
+      await pool.query(`UPDATE metric_rollout_resources SET ${field} = 1 WHERE resource_key = 'instance:1'`);
+    }
+    await pool.query('DELETE FROM metric_rollout');
+    await expect(coordinator.status(ref)).rejects.toThrow('ROLLOUT_RESOURCE_MIXED');
+    await expect(coordinator.status({ type: 'instance', id: 999 })).rejects.toThrow('ROLLOUT_RESOURCE_NOT_FOUND');
   });
 
   it('drains legacy writes, switches all series atomically, confirms applied, and rolls back without deleting history', async () => {

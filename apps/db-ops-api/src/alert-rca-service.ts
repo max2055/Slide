@@ -153,10 +153,9 @@ ${alert.metric_name ? `- 指标：${alert.metric_name} = ${alert.metric_value ??
    * 通过直接 SQL 获取告警详情
    */
   private async _getAlertById(alertId: number): Promise<AlertDetails | null> {
-    const pool = dbConnection.getPool();
-    if (!pool) return null;
-
     try {
+      const pool = dbConnection.getPool();
+      if (!pool) throw new Error('Database pool unavailable');
       const [rows] = await pool.execute(
         `SELECT id, instance_id, server_id, network_device_id, tags, alert_type, level, title, message,
                 metric_name, metric_value, threshold_value, created_at, updated_at
@@ -184,7 +183,7 @@ ${alert.metric_name ? `- 指标：${alert.metric_name} = ${alert.metric_value ??
       };
     } catch (error) {
       console.error('获取告警详情失败:', error);
-      return null;
+      throw new Error('ALERT_RCA_SERVICE_UNAVAILABLE', { cause: error });
     }
   }
 
