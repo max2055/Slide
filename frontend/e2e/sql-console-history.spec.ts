@@ -1,6 +1,7 @@
 import { expect, test } from '@playwright/test';
 import { createServer, type ViteDevServer } from 'vite';
 import { resolve } from 'node:path';
+import { writeFile } from 'node:fs/promises';
 
 // MAX-561/#684/#685: production Lit/CodeMirror in Chromium, controlled HTTP.
 // No database, model, production credentials or cross-instance API is used.
@@ -82,7 +83,9 @@ for (const [width, height] of [[1440, 900], [1366, 768], [1920, 1080]]) {
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     await page.screenshot({ path: info.outputPath(`all-instances-${width}.png`) });
     expect(errors).toEqual([]);
-    await info.attach('requests', { body: JSON.stringify(requests, null, 2), contentType: 'application/json' });
+    const requestLog = info.outputPath('requests.json');
+    await writeFile(requestLog, JSON.stringify(requests, null, 2));
+    await info.attach('requests', { path: requestLog, contentType: 'application/json' });
     await page.close();
   });
 }
