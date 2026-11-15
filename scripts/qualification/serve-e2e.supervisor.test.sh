@@ -164,6 +164,7 @@ run_scenario() {
   mkdir -p "$dir"
   : >"$work/pids"
   local script_pid="" api_pid="" vite_pid="" api_child="" vite_child="" code=0
+  local started_at=$SECONDS
 
   PATH="$bin:$PATH" \
   SERVE_E2E_DIR="$dir" \
@@ -190,7 +191,8 @@ os.execvp("bash", ["bash", *sys.argv[1:]])
   echo "$script_pid" >>"$work/pids"
   (
     sleep 12
-    : > "$dir/watchdog-fired"
+    echo "elapsed=$((SECONDS - started_at))" > "$dir/watchdog-fired"
+    ps -ax -o pid=,ppid=,pgid=,stat=,comm= > "$dir/watchdog-processes"
     kill -TERM "$script_pid" 2>/dev/null || true
   ) >/dev/null 2>&1 &
   local local_watchdog=$!
@@ -219,7 +221,12 @@ os.execvp("bash", ["bash", *sys.argv[1:]])
         continue
       fi
       sleep 0.3 || true
-      kill "-$signal" "$script_pid" 2>/dev/null || true
+      echo "SIGNAL $name target=$script_pid signal=$signal elapsed=$((SECONDS - started_at))" > "$dir/signal-sent"
+      if kill "-$signal" "$script_pid" 2>/dev/null; then
+        echo "signal_delivery=success" >> "$dir/signal-sent"
+      else
+        echo "signal_delivery=failed" >> "$dir/signal-sent"
+      fi
       if [[ "$inject" == collect ]]; then : > "$dir/collect-release"; fi
       break
     fi
@@ -243,7 +250,8 @@ os.execvp("bash", ["bash", *sys.argv[1:]])
   vite_pgid="$(ps -o pgid= -p "$vite_pid" 2>/dev/null | tr -d '[:space:]' || true)"
 
   {
-    echo "scenario=$name"
+    echo "scenario=$name elapsed=$((SECONDS - started_at))"
+    cat "$dir/signal-sent" 2>/dev/null || true
     echo "script_pid=$script_pid script_pgid=${script_pgid:-gone} shell_pgid=$shell_pgid"
     echo "api_pid=${api_pid:-none} api_pgid=${api_pgid:-gone} api_child=${api_child:-none}"
     echo "vite_pid=${vite_pid:-none} vite_pgid=${vite_pgid:-gone} vite_child=${vite_child:-none}"
@@ -264,6 +272,7 @@ os.execvp("bash", ["bash", *sys.argv[1:]])
 
   local ok=1
   if [[ -f "$dir/watchdog-fired" ]]; then
+    cat "$dir/watchdog-fired" "$dir/watchdog-processes" 2>/dev/null | tee -a "$report"
     echo "FAIL $name reached the watchdog instead of the expected exit" | tee -a "$report"
     ok=0
   fi
