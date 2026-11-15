@@ -424,12 +424,15 @@ describe.skipIf(!port)('analysis durable recovery in isolated MySQL', () => {
     try {
       const actor = await actorContextService.loadActiveActor(7, 1);
       const sql = 'SELECT `email2` FROM `orders2` WHERE email=' + String.raw`"FAKE_DOUBLE\"VALUE" AND note='FAKE_SINGLE''VALUE' AND id=987654321`;
-      spies.push(vi.spyOn(databaseService, 'getConnection').mockReturnValue({ db_type: 'mysql' } as any),
+      // MAX-536: TopSQL admission reads the exact instance/query pair, not a ranked list.
+      const getSlowQueryById = vi.spyOn(metricsDatabaseService, 'getSlowQueryById')
+        .mockResolvedValue({ id: 88, instance_id: 42, sql_text: sql, schema_name: 'shop', avg_time_ms: 7 } as any);
+      spies.push(getSlowQueryById, vi.spyOn(databaseService, 'getConnection').mockReturnValue({ db_type: 'mysql' } as any),
         vi.spyOn(databaseService, 'getExplainPlan').mockResolvedValue(`MySQL 执行计划:\nFilter: ${sql}`),
         vi.spyOn(sqlExecutor, 'executeSql').mockResolvedValue({ success: true, rows: [{ TABLE_NAME: 'orders2', COLUMN_NAME: 'email2' }] } as any),
-        vi.spyOn(metricsDatabaseService, 'getSlowQueries').mockResolvedValue([{ id: 88, sql_text: sql, schema_name: 'shop', avg_time_ms: 7 }] as any),
         vi.spyOn(identity, 'analysisConfigurationVersion').mockResolvedValue('fake-route-version'));
       const id = await topsqlAnalysisService.analyzeSlowQuery(88, 42, 'manual', actor);
+      expect(getSlowQueryById).toHaveBeenCalledExactlyOnceWith(42, 88);
       const saved = (await rows(`SELECT request_snapshot FROM analysis_dispatches WHERE analysis_id = ${id}`))[0].request_snapshot;
       expect(JSON.stringify(saved)).not.toMatch(/FAKE_DOUBLE|FAKE_SINGLE|987654321/);
       expect(saved.evidence.data.sql).toContain('orders2');
