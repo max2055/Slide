@@ -137,6 +137,13 @@ class AlertEscalationService {
         if(!(live.permissions.includes('*')||live.permissions.includes('alert:manage'))||!ref||!canManageResource(live,ref))throw Error('ESCALATION_FORBIDDEN');
       };
       await authorize();
+      // Manual requests must report stale state as a conflict. Automatic scans
+      // may have selected a candidate before another transaction handled it.
+      const active = ['unread', 'read', 'acknowledged'].includes(a.status);
+      if (expected === undefined) {
+        if (!active) throw Error('ESCALATION_STATUS');
+        if (levels.indexOf(newLevel) <= levels.indexOf(a.level)) throw Error('ESCALATION_DIRECTION');
+      }
       // Recheck after acquiring the alert lock, using the scan's DB clock.
       // Each level waits from the latest escalation (or initial creation).
       let eligible = true;
@@ -151,7 +158,7 @@ class AlertEscalationService {
         );
         eligible = due.length > 0;
       }
-      const changed=eligible&&(!expected||a.level===expected)&&!['resolved','closed'].includes(a.status)&&a.level!==newLevel;
+      const changed=eligible&&(!expected||a.level===expected)&&active&&a.level!==newLevel;
       if(changed){
         if(levels.indexOf(newLevel)<=levels.indexOf(a.level))throw Error('ESCALATION_DIRECTION');
         await c.execute('UPDATE alerts SET level=? WHERE id=?',[newLevel,alertId]);
