@@ -129,8 +129,16 @@ export class ServerReportService {
     }
 
     // Enforce the configured target set before querying or rendering.
-    const requested = serverIds ? new Set(serverIds) : null;
-    const servers = (await serverDatabaseService.getAllServers()).filter((server) => !requested || requested.has(server.id));
+    if (serverIds && (!serverIds.length || !serverIds.every(id => Number.isSafeInteger(id) && id > 0))) {
+      throw new Error('REPORT_SERVER_IDS_INVALID');
+    }
+    const servers = serverIds
+      ? await Promise.all([...new Set(serverIds)].map(async id => {
+        const server = await serverDatabaseService.getServerById(id);
+        if (!server) throw new Error(`REPORT_SERVER_NOT_FOUND:${id}`);
+        return server;
+      }))
+      : await serverDatabaseService.getAllServers();
 
     // Fetch latest metrics per server
     const serverEntries: ServerReportEntry[] = [];
