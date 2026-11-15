@@ -84,6 +84,8 @@ export function extractSqlFromResponse(response: string): string | null {
   if (!response || !response.trim()) return null;
 
   // Ambiguous replies must not silently choose one of several alternatives.
+  const fenceCount = (response.match(/```/g) || []).length;
+  if (fenceCount !== 0 && fenceCount !== 2) return null;
   const blocks = [...response.matchAll(/```([^\n\r`]*)(?:\r?\n)([\s\S]*?)```/g)];
   if (blocks.length > 1) return null;
   if (blocks.length === 1) {
