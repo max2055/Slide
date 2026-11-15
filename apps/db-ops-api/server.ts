@@ -3362,19 +3362,23 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
     preHandler: [verifyToken, requirePermission('alert:manage')],
     handler: async (request, reply) => {
       try {
+        if (!request.body || typeof request.body !== 'object' || Array.isArray(request.body)) {
+          return reply.code(400).send({ error: '模板必须是对象' });
+        }
         const data = request.body as any;
         const check = strictBody(request.body as Record<string, unknown>,
-          ['name', 'metric_name', 'operator'], 'POST /api/alert-rule-templates');
+          ['name', 'description', 'target_type', 'metric_name', 'operator', 'threshold_template',
+           'duration_seconds', 'severity', 'silence_minutes', 'enabled'], 'POST /api/alert-rule-templates');
         if (check.error) return reply.code(400).send(check.error);
         const result = await alertRuleTemplateService.createTemplate({
           name: data.name,
           description: data.description,
-          target_type: data.target_type || 'instance',
+          target_type: data.target_type,
           metric_name: data.metric_name,
           operator: data.operator,
           threshold_template: data.threshold_template,
-          duration_seconds: Number(data.duration_seconds) || 60,
-          severity: data.severity || 'warning',
+          duration_seconds: data.duration_seconds,
+          severity: data.severity,
           silence_minutes: data.silence_minutes ?? 5,
           enabled: data.enabled !== undefined ? data.enabled : true,
           created_by: (request as any).user?.userId,
@@ -3396,6 +3400,9 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
     handler: async (request, reply) => {
       try {
         const { id } = request.params as any;
+        if (!request.body || typeof request.body !== 'object' || Array.isArray(request.body)) {
+          return reply.code(400).send({ error: '模板必须是对象' });
+        }
         const data = request.body as any;
         const updateData: Record<string, any> = {};
         if (data.name !== undefined) updateData.name = data.name;
@@ -3404,7 +3411,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
         if (data.metric_name !== undefined) updateData.metric_name = data.metric_name;
         if (data.operator !== undefined) updateData.operator = data.operator;
         if (data.threshold_template !== undefined) updateData.threshold_template = data.threshold_template;
-        if (data.duration_seconds !== undefined) updateData.duration_seconds = Number(data.duration_seconds);
+        if (data.duration_seconds !== undefined) updateData.duration_seconds = data.duration_seconds;
         if (data.severity !== undefined) updateData.severity = data.severity;
         if (data.silence_minutes !== undefined) updateData.silence_minutes = data.silence_minutes;
         if (data.enabled !== undefined) updateData.enabled = data.enabled;
