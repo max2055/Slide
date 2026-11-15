@@ -470,8 +470,10 @@ export class NotificationService {
           tenant: config.oauth2_tenant!,
           clientId: config.oauth2_client_id!,
           refreshToken: decryptData(config.oauth2_refresh_token_encrypted!),
+          signal,
       });
-      signal?.throwIfAborted();
+      // Save an already returned rotation even if cancellation arrived meanwhile.
+      // The next cancellation check still prevents SMTP from starting.
       if (oauth.refreshToken && channelId !== undefined) {
         const persisted = await notificationDatabaseService.updateOAuth2RefreshToken(channelId, oauth.refreshToken);
         if (!persisted.success) throw new Error('OAUTH_REFRESH_TOKEN_PERSIST_FAILED');
