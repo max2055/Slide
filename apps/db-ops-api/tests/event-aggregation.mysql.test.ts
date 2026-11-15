@@ -48,6 +48,8 @@ describe.skipIf(!profilePath)('MAX-566 full-schema MySQL aggregation', () => {
     return rows[0];
   }
   it('concurrent manual/scheduled callers commit one group, repeat is idempotent', async () => {
+    await seedActive();
+    await append('critical');
     const app = Fastify();
     const source = readFileSync(new URL('../server.ts', import.meta.url), 'utf8');
     const start = source.indexOf("  fastify.post('/api/alerts/aggregate'");
@@ -70,11 +72,74 @@ describe.skipIf(!profilePath)('MAX-566 full-schema MySQL aggregation', () => {
       await pool.query('DELETE FROM role_permissions WHERE role_id=566');
       expect((await app.inject({method:'POST',url:'/api/alerts/aggregate',headers:{authorization:`Bearer ${token}`}})).statusCode).toBe(403);
     } finally { await app.close(); }
-    expect(results.reduce((n,r) => n+r.eventsCreated,0)).toBe(1);
+    expect(results.reduce((n,r) => n+r.eventsCreated,0)).toBe(0);
     expect(results.reduce((n,r) => n+r.alertsAggregated,0)).toBe(2);
-    expect(await counts()).toEqual({events:1,members:2,logs:1});
+    expect(await counts()).toEqual({events:1,members:4,logs:2});
+    expect(await severity()).toEqual(['critical']);
     expect(await eventAggregator.aggregate()).toEqual({eventsCreated:0,alertsAggregated:0});
   });
+  async function seedActive(severity = 'warning', minutes = 1) {
+    await pool.query('UPDATE alerts SET level=?', [severity]);
+    await eventAggregator.aggregate();
+    await pool.query('UPDATE alert_events SET created_at=DATE_SUB(NOW(), INTERVAL 1 DAY)');
+    await pool.query('UPDATE alert_event_members SET created_at=DATE_SUB(NOW(), INTERVAL ? MINUTE)', [minutes]);
+  }
+  async function append(level: string) {
+    await pool.query("INSERT INTO alerts(instance_id,alert_type,metric_name,level,title,message) VALUES (1,'performance','cpu',?,'next','next'),(1,'performance','cpu',?,'next','next')", [level,level]);
+  }
+  async function severity() {
+    const [rows] = await pool.query<any[]>('SELECT severity FROM alert_events');
+    return rows.map(row => row.severity);
+  }
+  it('MAX-581 old active event absorbs and concurrent callers retain highest severity', async () => {
+    await seedActive();
+    await append('critical');
+    await append('p0');
+    const results = await Promise.all([eventAggregator.aggregate(), eventAggregator.aggregate()]);
+    expect(results.reduce((n,r) => n+r.alertsAggregated,0)).toBe(4);
+    expect(await counts()).toEqual({events:1,members:6,logs:2});
+    expect(await severity()).toEqual(['p0']);
+    await append('info');
+    expect(await eventAggregator.aggregate()).toEqual({eventsCreated:0,alertsAggregated:2});
+    expect(await severity()).toEqual(['p0']);
+  });
+  it('MAX-583 promotes a recent warning event through critical and p0', async () => {
+    await seedActive();
+    await pool.query('UPDATE alert_events SET created_at=NOW()');
+    for (const level of ['critical','p0']) {
+      await append(level);
+      expect(await eventAggregator.aggregate()).toEqual({eventsCreated:0,alertsAggregated:2});
+      expect(await severity()).toEqual([level]);
+    }
+  });
+  it('MAX-583 investigating event retains error severity with one connection', async () => {
+    await seedActive('error');
+    await pool.query("UPDATE alert_events SET status='investigating'");
+    await append('warning');
+    state.pool = smallPool;
+    try { expect(await eventAggregator.aggregate()).toEqual({eventsCreated:0,alertsAggregated:2}); }
+    finally { state.pool = pool; }
+    expect(await severity()).toEqual(['error']);
+  });
+  it('MAX-581 silent old event does not absorb; new severity remains correct', async () => {
+    await seedActive('warning', 11);
+    await append('error');
+    expect(await eventAggregator.aggregate()).toEqual({eventsCreated:1,alertsAggregated:2});
+    expect((await severity()).sort()).toEqual(['error','warning']);
+  });
+  for (const [trigger, table] of [['fail_member','alert_event_members'],['fail_log','alert_event_logs']]) {
+    it(`MAX-583 severity and members roll back together on ${table} failure`, async () => {
+      await seedActive();
+      await append('critical');
+      await pool.query(`CREATE TRIGGER ${trigger} BEFORE INSERT ON ${table} FOR EACH ROW SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='injected'`);
+      expect(await eventAggregator.aggregate()).toEqual({eventsCreated:0,alertsAggregated:0});
+      expect(await counts()).toEqual({events:1,members:2,logs:1});
+      expect(await severity()).toEqual(['warning']);
+      await pool.query(`DROP TRIGGER ${trigger}`);
+      expect(await eventAggregator.aggregate()).toEqual({eventsCreated:0,alertsAggregated:2});
+      expect(await severity()).toEqual(['critical']);
+    });
+  }
   it('MAX-566 counts only the first committed group when the second log fails', async () => {
     await pool.query("INSERT INTO alerts(instance_id,alert_type,metric_name,level,title,message) VALUES (1,'performance','disk','warning','next','next'),(1,'performance','disk','warning','next','next')");
     await pool.query(`CREATE TRIGGER fail_log BEFORE INSERT ON alert_event_logs FOR EACH ROW BEGIN
