@@ -153,7 +153,12 @@ class BrandingConfigService {
     } catch (error) {
       if (connection) {
         try { await connection.rollback(); }
-        catch (rollbackError) { console.error('回滚品牌配置失败:', rollbackError); }
+        catch (rollbackError) {
+          // Never return a connection with an unresolved transaction to the pool.
+          connection.destroy();
+          connection = undefined;
+          console.error('回滚品牌配置失败:', rollbackError);
+        }
       }
       console.error('保存品牌配置失败:', error);
       return { success: false, error: (error as Error).message };

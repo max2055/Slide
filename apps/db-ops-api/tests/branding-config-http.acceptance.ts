@@ -144,6 +144,10 @@ try {
   } } as any);
   assert.equal((await brandingConfigService.saveBranding({ cli_name: 'must-not-write' })).success, false);
   assert.deepEqual(await row(), stable);
+  await pool.execute('DELETE FROM system_config WHERE config_key=?', ['branding.config']);
+  assert.equal((await brandingConfigService.saveBranding({ cli_name: 'must-not-create' })).success, false);
+  assert.equal(await row(), undefined, 'failed first save rolls back its seed row');
+  await pool.execute('INSERT INTO system_config (config_key,config_value) VALUES (?,?)', ['branding.config', stable.config_value]);
   dbConnection.getPool = () => pool;
   assert.equal((await brandingConfigService.saveBranding({ cli_name: 'recovered' })).success, true);
   assert.equal((await get()).cli_name, 'recovered');

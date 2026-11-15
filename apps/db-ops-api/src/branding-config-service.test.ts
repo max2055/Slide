@@ -6,7 +6,7 @@ describe('MAX-670 / #319 / #499 branding partial updates', () => {
   let connection: any;
   let pool: any;
   beforeEach(() => {
-    connection = { beginTransaction: vi.fn(), commit: vi.fn(), rollback: vi.fn(), release: vi.fn(),
+    connection = { beginTransaction: vi.fn(), commit: vi.fn(), rollback: vi.fn(), release: vi.fn(), destroy: vi.fn(),
       execute: vi.fn().mockResolvedValue([{}]) };
     connection.execute.mockImplementation(async (sql: string) => sql.startsWith('SELECT')
       ? [[{ config_value: JSON.stringify({ ...DEFAULTS, product_name: 'Existing' }) }]] : [{}]);
@@ -59,6 +59,18 @@ describe('MAX-670 / #319 / #499 branding partial updates', () => {
     expect(connection.rollback).toHaveBeenCalledOnce();
     connection.execute.mockImplementation(execute);
     expect((await service.saveBranding({ cli_name: 'new' })).success).toBe(true);
+  });
+  it('destroys a connection if rollback cannot be confirmed', async () => {
+    connection.execute.mockRejectedValue(new Error('write failed'));
+    connection.rollback.mockRejectedValue(new Error('connection lost'));
+    expect((await service.saveBranding({ product_name: 'New' })).success).toBe(false);
+    expect(connection.destroy).toHaveBeenCalledOnce();
+    expect(connection.release).not.toHaveBeenCalled();
+  });
+  it('reports connection acquisition failure without attempting a write', async () => {
+    pool.getConnection.mockRejectedValue(new Error('pool unavailable'));
+    expect((await service.saveBranding({ product_name: 'New' })).success).toBe(false);
+    expect(connection.execute).not.toHaveBeenCalled();
   });
   it.each(['insert', 'update', 'commit'])('rolls back on %s failure and releases', async stage => {
     if (stage === 'commit') connection.commit.mockRejectedValue(new Error('commit failed'));
