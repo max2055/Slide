@@ -335,9 +335,9 @@ export class ConsistencyChecker {
     if (!pool) throw new Error('数据库未连接');
 
     const [rows] = await pool.execute(
-      `SELECT ar.id, ar.name, ar.metric_name
+      `SELECT ar.id, ar.name, ar.target_type, ar.metric_name
        FROM alert_rules ar
-       LEFT JOIN metric_definitions md ON ar.metric_name = md.id
+       LEFT JOIN metric_definitions md ON ar.metric_name = md.id AND ar.target_type = md.target_type
        WHERE md.id IS NULL AND ar.metric_name IS NOT NULL`,
       [],
     ) as any;
@@ -360,7 +360,7 @@ export class ConsistencyChecker {
       status: 'fail',
       severity: 'major',
       summary: `${count} 条告警规则引用了无效指标`,
-      details: rows.map((r: any) => ({ id: r.id, name: r.name, metric_name: r.metric_name })),
+      details: rows.map((r: any) => ({ id: r.id, name: r.name, target_type: r.target_type, metric_name: r.metric_name })),
       recommendation: '请修复告警规则中引用的无效指标名',
     };
   }
