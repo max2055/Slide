@@ -4080,8 +4080,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
           return reply.code(403).send({ error: '无权访问该实例' });
         }
 
-        const username = (request as any).user?.username || 'anonymous';
-        const result = await sqlAuditService.submitAudit(sql_text.trim(), instance_id, username);
+        const result = await sqlAuditService.submitAudit(sql_text.trim(), instance_id, (request as any).user);
 
         reply.send({
           success: true,
@@ -4179,8 +4178,6 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
         }
 
         const results: Array<{ slow_query_id: number; analysis_id: number; pre_audit_results: any[] }> = [];
-        const username = (request as any).user?.username || 'anonymous';
-
         const slowQueries = await metricsDatabaseService.getSlowQueries(instance_id, 1000);
         for (const sqId of slow_query_ids) {
           // 获取慢查询 SQL 文本
@@ -4190,7 +4187,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
             continue;
           }
 
-          const auditResult = await sqlAuditService.submitAudit(sq.sql_text, instance_id, username);
+          const auditResult = await sqlAuditService.submitAudit(sq.sql_text, instance_id, (request as any).user);
           results.push({
             slow_query_id: sqId,
             analysis_id: auditResult.analysisId,
