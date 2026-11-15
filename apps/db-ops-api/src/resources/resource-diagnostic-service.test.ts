@@ -208,3 +208,13 @@ it('rejects the summary after a best-effort metric read loses resource access', 
   } }), { reloadActor: async () => live });
   await expect(service.metricsSummary(actor)).rejects.toThrow('POLICY_FORBIDDEN');
 });
+
+// GitHub #366: callers bypassing HTTP must also reject invalid numeric limits.
+describe('observation service limit validation', () => {
+  it.each([NaN, Infinity, -Infinity, 3.5, Number.MAX_SAFE_INTEGER + 1])('rejects %s without observation reads', async limit => {
+    const deps = dependencies();
+    await expect(new ResourceDiagnosticService(deps).getObservations(actor, { type: 'server', id: 3 }, { limit }))
+      .rejects.toThrow('OBSERVATION_LIMIT_INVALID');
+    expect(deps.observations).not.toHaveBeenCalled();
+  });
+});
