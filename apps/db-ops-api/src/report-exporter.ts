@@ -2,6 +2,7 @@
  * 报表导出服务
  */
 import PDFDocument from 'pdfkit';
+import ejs from 'ejs';
 import type { Report, ReportFormat } from './report-database-service';
 
 class ReportExporter {
@@ -112,6 +113,9 @@ class ReportExporter {
    * 导出为 HTML
    */
   async exportToHTML(report: Report): Promise<string> {
+    // content is a complete HTML document persisted by the report generators.
+    // Generators must escape untrusted values at interpolation; this is not a sanitizer
+    // for arbitrary uploaded HTML. Preserve markup and avoid double-escaping on export.
     if (report.content) {
       return report.content;
     }
@@ -122,7 +126,7 @@ class ReportExporter {
 <html>
 <head>
   <meta charset="UTF-8">
-  <title>${report.name}</title>
+  <title>${ejs.escapeXML(report.name)}</title>
   <style>
     body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; padding: 20px; }
     h1 { color: #333; }
@@ -132,9 +136,9 @@ class ReportExporter {
   </style>
 </head>
 <body>
-  <h1>${report.name}</h1>
-  <p class="meta">类型：${report.type} | 生成时间：${report.created_at}</p>
-  <pre>${JSON.stringify(report.data, null, 2)}</pre>
+  <h1>${ejs.escapeXML(report.name)}</h1>
+  <p class="meta">类型：${ejs.escapeXML(report.type)} | 生成时间：${ejs.escapeXML(report.created_at)}</p>
+  <pre>${ejs.escapeXML(JSON.stringify(report.data, null, 2))}</pre>
 </body>
 </html>`;
   }
