@@ -60,7 +60,9 @@ for (const [width, height] of [[1440, 900], [1366, 768], [1920, 1080]]) {
     await expect(view.locator('img, script')).toHaveCount(0);
     expect(await page.evaluate(() => (window as any).auditHtmlExecuted)).toBeUndefined();
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
-    await info.attach(`audit-text-${width}`, { body: await page.screenshot({ fullPage: true }), contentType: 'image/png' });
+    const screenshot = info.outputPath(`audit-text-${width}.png`);
+    await page.screenshot({ path: screenshot, fullPage: true });
+    await info.attach(`audit-text-${width}`, { path: screenshot, contentType: 'image/png' });
     await toggle.press('Space');
     await expect(toggle).toHaveAttribute('aria-expanded', 'false');
     expect(errors).toEqual([]);
