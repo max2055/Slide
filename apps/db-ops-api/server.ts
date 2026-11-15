@@ -3646,6 +3646,9 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
     handler: async (request, reply) => {
       try {
         const { alert_id, channel_id, status, limit = '50', offset = '0' } = request.query as any;
+        if (status !== undefined && !['pending', 'sent', 'failed', 'suppressed'].includes(status)) {
+          return reply.code(400).send({ error: 'status 必须为 pending、sent、failed 或 suppressed' });
+        }
         const filters = {
           alert_id: alert_id ? Number(alert_id) : undefined,
           channel_id: channel_id ? Number(channel_id) : undefined,
