@@ -251,7 +251,7 @@ function generateSlowQueryFallbackHTML(
 <html>
 <head>
   <meta charset="UTF-8">
-  <title>慢查询报告 - ${instanceName}</title>
+  <title>慢查询报告 - ${ejs.escapeXML(instanceName)}</title>
   <style>
     body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; padding: 20px; }
     h1 { color: #333; border-bottom: 2px solid #FF9800; padding-bottom: 10px; }
@@ -263,8 +263,8 @@ function generateSlowQueryFallbackHTML(
 </head>
 <body>
   <h1>\u{1F40C} 慢查询分析报告</h1>
-  <p><strong>实例:</strong> ${instanceName}</p>
-  <p><strong>生成时间:</strong> ${generatedAt}</p>
+  <p><strong>实例:</strong> ${ejs.escapeXML(instanceName)}</p>
+  <p><strong>生成时间:</strong> ${ejs.escapeXML(generatedAt)}</p>
   <p><strong>慢查询数量:</strong> ${slowQueries.length}</p>
 
   <h2>慢查询列表</h2>
@@ -273,10 +273,10 @@ function generateSlowQueryFallbackHTML(
     ${slowQueries.map((q, i) => `
       <tr>
         <td>${i + 1}</td>
-        <td><code>${q.sql_text?.substring(0, 80) || ''}${q.sql_text?.length > 80 ? '...' : ''}</code></td>
-        <td>${q.avg_time_ms?.toFixed(2) || 0}</td>
-        <td>${q.execution_count || 0}</td>
-        <td>${q.rows_examined || 0}</td>
+        <td><code>${ejs.escapeXML(q.sql_text?.substring(0, 80) || '')}${q.sql_text?.length > 80 ? '...' : ''}</code></td>
+        <td>${ejs.escapeXML(q.avg_time_ms?.toFixed(2) || 0)}</td>
+        <td>${ejs.escapeXML(q.execution_count || 0)}</td>
+        <td>${ejs.escapeXML(q.rows_examined || 0)}</td>
       </tr>
     `).join('')}
   </table>

@@ -11,7 +11,7 @@ import type { CollectionAttempt, NormalizedObservation } from '../../contracts/m
 import { MetricConsumerService, type ConsumerStore } from './service.js';
 import { registerMetricConsumerRoutes } from './routes.js';
 import { createQueryMetricsTool } from '../../tools/ops/query_metrics.js';
-import { evaluateAlertPolicy, evaluateMetric, scoreMetrics } from './evaluation.js';
+import { ConsumerAlertPolicySchema, evaluateAlertPolicy, evaluateMetric, scoreMetrics } from './evaluation.js';
 import { migrateReference } from './migration.js';
 const fixture = JSON.parse(readFileSync(new URL('../../../../../docs/slide/metrics-v2/consumers/fixtures.json', import.meta.url), 'utf8'));
 const policy = { metric_id: fixture.metric, unit: fixture.unit, threshold: fixture.threshold, operator: '>' as const, duration_seconds: 60, recovery_seconds: 60 };
@@ -175,5 +175,44 @@ describe('MAX-75 deterministic consumer contract', () => {
     expect(evaluateMetric(metric, { ...policy, threshold: 4000, recovery_threshold: 3000 })).toMatchObject({ state: 'pending', recovery: false });
     expect(migrateReference(fixture.resource, 'mysql', 'connections')).toMatchObject({ metric_id: 'mysql.processlist.count', threshold_conversion: 'none', resource: fixture.resource });
     expect(migrateReference(fixture.resource, 'mysql', 'cpu_usage')).toMatchObject({ status: 'review_required', metric_id: null });
+  });
+  it.each(['>', '>=', '<', '<=', '=', '!='] as const)('MAX-517/#529: %s keeps trigger/recovery exclusive through the HTTP API', async operator => {
+    const app = Fastify(); await registerMetricConsumerRoutes(app, async r => { (r as any).user = admin; }, service);
+    try {
+      for (const recovery_seconds of [0, 60]) for (const threshold of [3500, 3600, 3700]) {
+        const input = { ...policy, operator, threshold, recovery_threshold: threshold, duration_seconds: 0, recovery_seconds };
+        const metric = (await service.query(admin, query())).metrics[0];
+        const expected = evaluateMetric(metric, input);
+        const firing = operator === '>' ? 3600 > threshold : operator === '>=' ? 3600 >= threshold
+          : operator === '<' ? 3600 < threshold : operator === '<=' ? 3600 <= threshold
+          : operator === '=' ? 3600 === threshold : 3600 !== threshold;
+        expect(expected).toMatchObject({ state: firing ? 'firing' : 'healthy', recovery: !firing });
+        const response = await app.inject({ method: 'POST', url: '/api/metrics/evaluate', payload: { query: query(), policies: [input] } });
+        expect(response.statusCode).toBe(200);
+        expect(response.json().assessment.checks[0]).toMatchObject(expected);
+        expect(expected.state === 'firing' && expected.recovery).toBe(false);
+      }
+    } finally { await app.close(); }
+  });
+  it.each([
+    ['>', 3500, 3700], ['>=', 3500, 3700], ['<', 3700, 3500], ['<=', 3700, 3500],
+    ['=', 3600, 3500], ['!=', 3500, 3600],
+  ] as const)('MAX-517/#529: rejects overlapping %s recovery thresholds before querying', async (operator, threshold, recovery_threshold) => {
+    const input = { ...policy, operator, threshold, recovery_threshold, duration_seconds: 0, recovery_seconds: 0 };
+    expect(ConsumerAlertPolicySchema.safeParse(input).success).toBe(false);
+    const app = Fastify(); await registerMetricConsumerRoutes(app, async r => { (r as any).user = admin; }, service);
+    try {
+      const before = reads;
+      const response = await app.inject({ method: 'POST', url: '/api/metrics/evaluate', payload: { query: query(), policies: [input] } });
+      expect(response.statusCode).toBe(400);
+      expect(response.json()).toEqual({ error: 'QUERY_INPUT_INVALID' });
+      expect(reads).toBe(before);
+    } finally { await app.close(); }
+  });
+  it.each(['>', '>=', '<', '<='] as const)('MAX-517/#529: %s retains the hysteresis pending region with zero recovery duration', async operator => {
+    const greater = operator.startsWith('>');
+    const input = { ...policy, operator, threshold: greater ? 3700 : 3500, recovery_threshold: greater ? 3500 : 3700,
+      duration_seconds: 0, recovery_seconds: 0 };
+    expect(evaluateMetric((await service.query(admin, query())).metrics[0], input)).toMatchObject({ state: 'pending', recovery: false });
   });
 });

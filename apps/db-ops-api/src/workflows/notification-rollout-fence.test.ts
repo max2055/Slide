@@ -40,6 +40,7 @@ const channel = {
 
 function deliveryGate(finished: Array<{ state: string; error?: string }>): DeliveryGate {
   return {
+    skipDisabled: async () => {},
     preflightFailed: async () => {},
     snapshot: async () => null,
     acquire: async (job, _context, request) => request ? {

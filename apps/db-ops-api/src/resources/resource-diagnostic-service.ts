@@ -401,6 +401,7 @@ export class ResourceDiagnosticService {
     actor = await this.authorize(actor, [ref]);
     validateRef(ref);
     if (!canReadResource(actor, ref)) throw new Error('RESOURCE_FORBIDDEN');
+    if (options.limit !== undefined && !Number.isSafeInteger(options.limit)) throw new Error('OBSERVATION_LIMIT_INVALID');
     const metricIds = options.metricIds?.filter((id) => /^[a-z][a-z0-9_.]{0,127}$/.test(id)).slice(0, 32);
     if (options.metricIds && metricIds?.length !== options.metricIds.length) throw new Error('METRIC_ID_INVALID');
     const result = (await this.dependencies.observations(ref, actor, {

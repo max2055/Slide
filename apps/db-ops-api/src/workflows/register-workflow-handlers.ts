@@ -58,11 +58,10 @@ export function registerWorkflowHandlers(registry: JobRegistry, deps: WorkflowHa
   registerReportScheduleHandler(registry, reportSchedule);
   registry.register('notification.dispatch', async (_payload, _job, { signal }) => {
     signal.throwIfAborted();
-    const enqueued = await notificationScheduler.enqueuePending(signal);
-    // The next durable tick is committed before this job is completed. A
-    // restart therefore resumes the current or next tick without an in-memory timer.
-    signal.throwIfAborted();
+    // Business scan failure must not consume the only remaining durable tick.
     await enqueueNotificationDispatch(new Date(Date.now() + 10_000));
+    signal.throwIfAborted();
+    const enqueued = await notificationScheduler.enqueuePending(signal);
     return completion('notification.dispatch', enqueued === undefined ? undefined : { enqueued });
   });
   registerNotificationHandlers(registry, notificationDatabaseService, notificationService, reportDatabaseService);
