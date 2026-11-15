@@ -42,8 +42,11 @@ export interface NetworkDeviceAlertStore {
 export interface NetworkDeviceAlertEvaluatorOptions { store?: NetworkDeviceAlertStore }
 
 export interface NetworkDeviceAlertEvaluation {
+  /** Rules evaluated using known evidence, including failed persistence. */
   evaluated: number;
+  /** Firing rules, regardless of persistence outcome. */
   matched: number;
+  /** Successfully created or touched alerts. */
   triggered: number;
   skipped: number;
   failed: number;
@@ -96,10 +99,12 @@ export class NetworkDeviceAlertEvaluator {
     try {
       assertWorkflowActive();
       const allRules = await alertDatabaseService.getAlertRules(true, true) as AlertRuleLike[];
+      assertWorkflowActive();
       const rules = allRules.filter((rule) => rule.enabled && rule.target_type === 'network_device') as NetworkDeviceAlertRule[];
       if (rules.length === 0) return result;
       assertWorkflowActive();
       const devices = await this.store.getCollectionEnabledDevices();
+      assertWorkflowActive();
       setupComplete = true;
       for (const device of devices) {
         if (device.collectionEnabled === false) continue;
@@ -140,6 +145,7 @@ export class NetworkDeviceAlertEvaluator {
       this.recordFailure(result, { phase: setupComplete ? 'recovery' : 'setup' }, error);
       if (!setupComplete) result.status = 'failed';
     }
+    assertWorkflowActive();
     return result;
   }
 

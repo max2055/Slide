@@ -68,6 +68,24 @@ describe('MAX-567 / #340 #539 formal network evaluation failures', () => {
     expect(mocks.resolveAlert.mock.calls).toEqual([[1], [2]]);
   });
 
+  it('continues recovery queries after one alert query fails', async () => {
+    mocks.semantic.mockResolvedValue({ handled: true, state: 'unknown', value: null })
+      .mockResolvedValueOnce({ handled: true, state: 'unknown', value: null })
+      .mockResolvedValueOnce({ handled: true, state: 'unknown', value: null })
+      .mockRejectedValueOnce(new Error('RECOVERY_QUERY_FAILED'))
+      .mockResolvedValueOnce({ handled: true, state: 'healthy', level: null, value: 40, recovery: true });
+    mocks.getActiveAlerts.mockResolvedValue([active(1), active(2)]);
+    expect(await evaluator().evaluate()).toMatchObject({ status: 'partial', failed: 1 });
+    expect(mocks.resolveAlert.mock.calls).toEqual([[2]]);
+  });
+
+  it('propagates cancellation even when the rule query returns no rules', async () => {
+    const controller = new AbortController();
+    const cancel = new Error('CANCELLED');
+    mocks.getAlertRules.mockImplementation(async () => { controller.abort(cancel); return []; });
+    await expect(workflowExecution.run({ signal: controller.signal } as any, () => evaluator().evaluate())).rejects.toBe(cancel);
+  });
+
   it.each(['unknown', 'stale', 'invalid'])('never triggers or recovers from %s evidence', async state => {
     mocks.semantic.mockResolvedValue({ handled: true, state, value: null, recovery: false });
     mocks.getActiveAlerts.mockResolvedValue([active(1)]);
