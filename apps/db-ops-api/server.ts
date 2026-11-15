@@ -156,6 +156,7 @@ import { registerSystemAuditRoutes } from './src/audit/system-audit-routes.js';
 import { sqlExecutor } from './src/sql-executor.js';
 import { classifySql } from './src/sql-validator.js';
 import { PersistentOperationService } from './src/operations/operation-service.js';
+import { migrateNotificationCredentials } from './src/notification-credential-migration.js';
 import { MigrationRunner } from './src/migrations/runner.js';
 import { WorkerLease, type LeasePool } from './src/lifecycle/worker-lease.js';
 import { WorkerStartup } from './src/lifecycle/worker-startup.js';
@@ -283,6 +284,7 @@ async function start() {
   // Fail fast before registering auth routes or starting the WS adapter.
   await new MigrationRunner(pool as any).run();
   console.log('✅ Schema migration ledger is current');
+  await migrateNotificationCredentials(pool);
   instanceAccessLifecycle.configure(id => instanceRemovalStore.available(id));
 
   if (pool) {
@@ -3542,15 +3544,13 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
             field: 'type',
           });
         }
-        let validationType = data.type;
-        if (data.config !== undefined && validationType === undefined) {
-          const existing = await notificationDatabaseService.getChannelById(Number(id));
-          validationType = existing?.type;
-        }
+        const existing = data.config !== undefined || data.type !== undefined
+          ? await notificationDatabaseService.getChannelById(Number(id)) : null;
+        const validationType = data.type ?? existing?.type;
         let config = data.config;
         if (data.config !== undefined && validationType !== undefined) {
           const configValidation = validateNotificationChannelConfig(validationType, data.config, {
-            partial: true,
+            partial: data.type === undefined || data.type === existing?.type,
             allowEncryptedCredentials: false,
           });
           if (configValidation.valid === false) return notificationConfigError(reply, configValidation);

@@ -28,6 +28,18 @@ export type NotificationConfigValidation =
   | { valid: true; config: Record<string, unknown> }
   | { valid: false; code: NotificationConfigErrorCode; field?: string; message: string };
 
+// Persist and expose only fields owned by this channel type. Unknown aliases
+// must never become an alternate plaintext credential store (#296 / #342).
+export function applicableNotificationConfig(type: string, config: Record<string, unknown>): Record<string, unknown> {
+  const fields = type === 'email'
+    ? ['severity', 'smtp_host', 'smtp_port', 'smtp_username', 'smtp_auth', 'password', 'password_encrypted',
+      'oauth2_tenant', 'oauth2_client_id', 'oauth2_refresh_token', 'oauth2_refresh_token_encrypted',
+      'from', 'to', 'smtp_secure', 'smtp_require_tls']
+    : ['severity', 'webhook_url', 'webhook_url_encrypted', 'secret', 'secret_encrypted',
+      ...(type === 'webhook' ? ['idempotency_contract', 'idempotency_retention_seconds'] : [])];
+  return Object.fromEntries(fields.filter(field => Object.hasOwn(config, field)).map(field => [field, config[field]]));
+}
+
 const EMAIL_PATTERN = /^[^@\s<>]+@[^@\s<>]+$/;
 const EMAIL_AUTH_MODES = new Set(['password', 'oauth2']);
 
@@ -78,7 +90,17 @@ function validateEmailConfig(
   rawConfig: unknown,
   options: NotificationConfigValidationOptions = {},
 ): NotificationConfigValidation {
-  const input = asRecord(rawConfig);
+  const raw = asRecord(rawConfig);
+  const input = raw ? { ...raw } : null;
+  const cleared: Record<string, unknown> = {};
+  if (input && options.partial) {
+    for (const field of ['password', 'oauth2_refresh_token']) {
+      if (input[field] === '' || input[field] === null) {
+        cleared[field] = input[field];
+        delete input[field];
+      }
+    }
+  }
   if (!input) return invalid(undefined, 'email 渠道 config 必须是对象', 'NOTIFICATION_CHANNEL_CONFIG_INVALID');
 
   const partial = options.partial === true;
@@ -209,7 +231,7 @@ function validateEmailConfig(
     config[field] = addresses.value;
   }
 
-  return { valid: true, config };
+  return { valid: true, config: { ...config, ...cleared } };
 }
 
 export function validateEmailChannelConfig(
@@ -228,6 +250,12 @@ export function validateNotificationChannelConfig(
     return invalid(undefined, '不支持的通知渠道类型', 'NOTIFICATION_CHANNEL_TYPE_INVALID');
   }
   const raw = asRecord(config);
+  if (raw && options.allowEncryptedCredentials === false && Object.keys(raw).some(key => /encrypted/i.test(key))) {
+    const field = Object.keys(raw).find(key => /encrypted/i.test(key))!;
+    return invalid(field.replace(/_encrypted$/, ''), '加密凭据由服务端管理，不能由客户端提交', 'NOTIFICATION_CHANNEL_CONFIG_INVALID');
+  }
+  if (raw) config = applicableNotificationConfig(type, raw);
+
   if (raw && hasOwn(raw, 'severity') && !ALERT_LEVELS.includes(raw.severity as string)) {
     return invalid('severity', 'severity 必须为 info、warning、error、critical 或 p0', 'NOTIFICATION_CHANNEL_CONFIG_INVALID');
   }
@@ -240,5 +268,11 @@ export function validateNotificationChannelConfig(
   }
   if (type === 'email') return validateEmailConfig(config, options);
   if (!asRecord(config)) return invalid(undefined, '通知渠道 config 必须是对象', 'NOTIFICATION_CHANNEL_CONFIG_INVALID');
-  return { valid: true, config: { ...(config as Record<string, unknown>) } };
+  const output = config as Record<string, unknown>;
+  for (const field of ['webhook_url', 'secret']) {
+    if (Object.hasOwn(output, field) && output[field] !== null && typeof output[field] !== 'string') {
+      return invalid(field, field + ' 必须为字符串或 null', 'NOTIFICATION_CHANNEL_CONFIG_INVALID');
+    }
+  }
+  return { valid: true, config: output };
 }

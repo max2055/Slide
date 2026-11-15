@@ -121,3 +121,20 @@ it('requires explicit webhook deduplication contract with bounded retention', ()
   expect(validateNotificationChannelConfig('webhook', { idempotency_retention_seconds: 60 }).valid).toBe(false);
   expect(validateNotificationChannelConfig('email', { idempotency_contract: 'receiver-deduplicates', idempotency_retention_seconds: 60 }).valid).toBe(false);
 });
+
+describe('MAX-590 credential input boundary', () => {
+  it.each(['email', 'webhook', 'dingtalk', 'feishu', 'wecom'])('rejects encrypted fields and aliases for %s', type => {
+    for (const field of ['webhook_url_encrypted', 'password_encrypted', 'secret_encrypted', 'oauth2_refresh_token_encrypted', 'webhookUrlEncrypted']) {
+      expect(validateNotificationChannelConfig(type, { [field]: 'sentinel' }, { partial: true, allowEncryptedCredentials: false }))
+        .toMatchObject({ valid: false });
+    }
+  });
+  it('allows explicit clearing in a partial email edit, while full validation still requires credentials', () => {
+    for (const value of ['', null]) {
+      expect(validateNotificationChannelConfig('email', { password: value, oauth2_refresh_token: value }, { partial: true, allowEncryptedCredentials: false }))
+        .toEqual({ valid: true, config: { password: value, oauth2_refresh_token: value } });
+    }
+    expect(validateEmailChannelConfig({ smtp_host: 'smtp.example.test', smtp_port: 25, smtp_username: 'a', from: 'a@b.test', to: 'b@b.test', password: '' }))
+      .toMatchObject({ valid: false });
+  });
+});

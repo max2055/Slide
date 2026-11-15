@@ -402,12 +402,11 @@ export class NotificationService {
       }
     }
 
-    const webhookUrl = channel.config?.webhook_url;
-    if (!webhookUrl) {
-      return { success: false, error: '渠道未配置 webhook_url' };
-    }
-
     try {
+      // An encrypted value is authoritative: never fall back after a bad envelope.
+      const webhookUrl = channel.config?.webhook_url_encrypted
+        ? decryptData(channel.config.webhook_url_encrypted) : channel.config?.webhook_url;
+      if (!webhookUrl) return { success: false, error: '渠道未配置 webhook_url' };
       const target = await resolveOutboundTarget(webhookUrl);
       signal?.throwIfAborted();
       const secret = this.getWebhookSecret(channel.config);
@@ -436,10 +435,10 @@ export class NotificationService {
       try { result = response.body ? JSON.parse(response.body) : {}; } catch { result = {}; }
       // 检查各平台的错误码
       if (result.errcode !== undefined && result.errcode !== 0) {
-        return { success: false, error: result.errmsg || `平台错误码: ${result.errcode}` };
+        return { success: false, error: 'OUTBOUND_PLATFORM_REJECTED' };
       }
       if (result.code !== undefined && result.code !== 0) {
-        return { success: false, error: result.msg || `平台错误码: ${result.code}` };
+        return { success: false, error: 'OUTBOUND_PLATFORM_REJECTED' };
       }
 
       return { success: true };
