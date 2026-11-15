@@ -15,7 +15,7 @@ describe.skipIf(!port)('MAX-347 approval event integrity on real MySQL', () => {
   const database = `max347_${process.pid}`;
   const checker = new ConsistencyChecker();
   beforeAll(async () => {
-    connection = await mysql.createConnection({ host: '127.0.0.1', port, user: 'root', password: '', timezone: 'Z' });
+    connection = await mysql.createConnection({ host: '127.0.0.1', port, user: 'root', password: process.env.METRICS_TEST_MYSQL_PASSWORD ?? '', timezone: 'Z' });
     await connection.query(`CREATE DATABASE ${database}`);
     await connection.query(`USE ${database}`);
     const schema = readFileSync(new URL('../sql/schema.sql', import.meta.url), 'utf8');
@@ -92,7 +92,7 @@ describe.skipIf(!port)('resource health truth with legacy mixed collations', () 
   const database = `max210_${process.pid}`;
   const checker = new ConsistencyChecker();
   beforeAll(async () => {
-    connection = await mysql.createConnection({ host: '127.0.0.1', port, user: 'root', password: '', charset: 'utf8mb4', timezone: 'Z' });
+    connection = await mysql.createConnection({ host: '127.0.0.1', port, user: 'root', password: process.env.METRICS_TEST_MYSQL_PASSWORD ?? '', charset: 'utf8mb4', timezone: 'Z' });
     await connection.query(`CREATE DATABASE ${database}`);
     await connection.query(`USE ${database}`);
     await connection.query("CREATE TABLE database_instances (id INT PRIMARY KEY, health_status VARCHAR(32), status VARCHAR(32))");
@@ -157,9 +157,140 @@ describe.skipIf(!port)('resource health truth with legacy mixed collations', () 
       expect((await checker.resourceHealthTruth()).dataFreshness).toMatchObject({ numerator: 0, denominator: 1 });
     });
   }
+  it('MAX-2: serves retained checks over HTTP after a real resource SQL error and recovers', async () => {
+    const { default: Fastify } = await import('fastify');
+    const { registerHealthRoutes } = await import('./health-routes.js');
+    const app = Fastify();
+    const localChecker = new ConsistencyChecker();
+    registerHealthRoutes(app, async (request) => {
+      (request as any).user = { userId: 1, username: 'fixture', roles: [], permissions: ['config:view'] };
+    }, localChecker, async () => true);
+    await seed('instance');
+    await connection.query('RENAME TABLE servers TO servers_max2_hidden');
+    try {
+      for (const route of ['overview', 'consistency', 'readiness']) {
+        const response = await app.inject(`/api/health/${route}`);
+        expect(response.statusCode).toBe(200);
+        const result = response.json();
+        if (route !== 'readiness') {
+          expect(result.checks).toHaveLength(10);
+          expect(result.checks.some((check: { status: string }) => check.status === 'fail')).toBe(true);
+        }
+        if (route !== 'consistency') {
+          expect((result.truth ?? result).managedAvailability).toMatchObject({
+            status: 'unknown', numerator: 0, denominator: 0, reason: 'resource_health_query_failed',
+          });
+        }
+      }
+      expect((await app.inject('/api/health/ready')).json()).toEqual({ ready: true });
+    } finally {
+      await connection.query('RENAME TABLE servers_max2_hidden TO servers');
+      await app.close();
+    }
+    const recovered = await localChecker.healthOverview(true);
+    expect(recovered.truth.managedAvailability).toMatchObject({ status: 'healthy', numerator: 1, denominator: 1 });
+  });
+
   it('keeps workflow observation failure explicitly unknown', async () => {
     await seed('instance');
     await connection.query('DROP TABLE cron_job_logs');
     expect((await checker.resourceHealthTruth()).workflow).toMatchObject({ status: 'unknown', reason: 'workflow_state_unavailable' });
+  });
+});
+
+describe.skipIf(!port)('MAX-8 / #473 composite alert metric references on MySQL', () => {
+  const database = `max8_metric_refs_${process.pid}`;
+  const types = ['instance', 'server', 'network_device'] as const;
+  beforeAll(async () => {
+    connection = await mysql.createConnection({
+      host: '127.0.0.1', port, user: process.env.METRICS_TEST_MYSQL_USER ?? 'root',
+      password: process.env.METRICS_TEST_MYSQL_PASSWORD ?? '', timezone: 'Z',
+    });
+    await connection.query(`CREATE DATABASE ${database}`);
+    await connection.query(`USE ${database}`);
+    const schema = readFileSync(new URL('../sql/schema.sql', import.meta.url), 'utf8');
+    for (const table of ['alert_rules', 'metric_definitions']) {
+      const ddl = schema.match(new RegExp('CREATE TABLE IF NOT EXISTS `' + table + '` \\([\\s\\S]*?;'));
+      if (!ddl) throw new Error(`Missing schema for ${table}`);
+      await connection.query(ddl[0]);
+    }
+    // Relevant schema changes from migrations 021, 031 and 070. Other tables
+    // deliberately stay absent: their safe failures must not hide this check.
+    await connection.query("ALTER TABLE alert_rules ADD COLUMN target_type ENUM('instance','server','network_device') NOT NULL DEFAULT 'instance'");
+    const identityMigration = readFileSync(new URL('../sql/migrations/031_metric_identity_and_schedule.sql', import.meta.url), 'utf8');
+    const identityDdl = identityMigration.match(/ALTER TABLE metric_definitions DROP PRIMARY KEY[^;]+;/);
+    if (!identityDdl) throw new Error('Missing composite metric identity migration');
+    await connection.query(identityDdl[0]);
+    await connection.query("ALTER TABLE metric_definitions MODIFY COLUMN target_type ENUM('instance','server','network_device') NOT NULL DEFAULT 'instance'");
+  });
+  afterAll(async () => {
+    if (connection) {
+      try { await connection.query(`DROP DATABASE IF EXISTS ${database}`); }
+      finally { await connection.end(); }
+    }
+  });
+  beforeEach(async () => {
+    await connection.query('DELETE FROM alert_rules');
+    await connection.query('DELETE FROM metric_definitions');
+  });
+
+  async function metric(type: string, id = 'shared_metric') {
+    await connection.execute(`INSERT INTO metric_definitions (id, target_type, name, unit, db_types)
+      VALUES (?, ?, 'fixture', '%', '[]')`, [id, type]);
+  }
+  async function rule(type: string, metricName = 'shared_metric') {
+    await connection.execute(`INSERT INTO alert_rules
+      (name, target_type, metric_name, operator, threshold, severity)
+      VALUES ('fixture', ?, ?, '>', 90, 'warning')`, [type, metricName]);
+  }
+  async function check() {
+    const snapshot = await new ConsistencyChecker().runAllChecks();
+    expect(snapshot.checks).toHaveLength(10);
+    expect(snapshot.summary.total).toBe(10);
+    return snapshot.checks.find(item => item.id === 'alert_rule_metric_refs')!;
+  }
+
+  it('passes for no rules', async () => {
+    expect((await check()).status).toBe('pass');
+  });
+  for (const type of types) {
+    it(`${type}: accepts its own definition even with same-name definitions in other types`, async () => {
+      for (const target of types) await metric(target);
+      await rule(type);
+      expect((await check()).status).toBe('pass');
+      expect((await connection.query('SELECT id FROM metric_definitions'))[0]).toHaveLength(3);
+    });
+    it(`${type}: reports a completely missing metric with target context`, async () => {
+      await rule(type, 'missing');
+      expect(await check()).toMatchObject({
+        status: 'fail', severity: 'major', summary: '1 条告警规则引用了无效指标',
+        details: [{ name: 'fixture', target_type: type, metric_name: 'missing' }],
+      });
+    });
+    for (const otherType of types.filter(other => other !== type)) {
+      it(`${type}: rejects a metric defined only for ${otherType}`, async () => {
+        await metric(otherType);
+        await rule(type);
+        expect(await check()).toMatchObject({
+          status: 'fail', details: [{ target_type: type, metric_name: 'shared_metric' }],
+        });
+        await metric(type);
+        expect((await check()).status).toBe('pass');
+      });
+    }
+  }
+  it('reports only invalid rules without duplicating valid same-name references', async () => {
+    await metric('instance');
+    await metric('server');
+    await rule('instance');
+    await rule('server');
+    await rule('network_device');
+    await rule('server', 'missing');
+    const result = await check();
+    expect(result.summary).toBe('2 条告警规则引用了无效指标');
+    expect(result.details).toEqual(expect.arrayContaining([
+      expect.objectContaining({ target_type: 'network_device', metric_name: 'shared_metric' }),
+      expect.objectContaining({ target_type: 'server', metric_name: 'missing' }),
+    ]));
   });
 });

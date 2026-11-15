@@ -113,18 +113,18 @@ it('enqueues the 300-second capacity successor before running the monitor with t
   });
   expect(h.actions.consistency).toHaveBeenCalledWith(h.context.signal);
 });
-it('enqueues pending notifications before computing the 10-second successor from the current time', async () => {
+it('persists the 10-second successor before scanning pending notifications (#396)', async () => {
   vi.useFakeTimers(); vi.setSystemTime(1_000);
   const h = setup();
   h.actions.pending.mockImplementationOnce(async () => { h.events.push('pending'); vi.setSystemTime(5_000); });
   await h.run('notification.dispatch');
-  expect(h.events).toEqual(['pending', 'dispatchEnqueue']);
+  expect(h.events).toEqual(['dispatchEnqueue', 'pending']);
   expect(h.actions.pending).toHaveBeenCalledWith(h.context.signal);
-  expect(h.actions.dispatchEnqueue).toHaveBeenCalledWith(new Date(15_000));
+  expect(h.actions.dispatchEnqueue).toHaveBeenCalledWith(new Date(11_000));
 });
 const recurring = [
   ['capacity.consistency', 'capacityEnqueue', 'consistency'],
-  ['notification.dispatch', 'pending', 'dispatchEnqueue'],
+  ['notification.dispatch', 'dispatchEnqueue', 'pending'],
 ] as const;
 it.each(recurring)('%s waits for the first step and honours cancellation before the second', async (key, first, second) => {
   const h = setup(); let release!: () => void;
@@ -187,4 +187,14 @@ it.each([
 it('does not invent native completion when a handler returns no evidence', async () => {
   const h = setup();
   expect(await h.registry.executeWithResult({ id: 'run', type: 'capacity.collect', payload: {}, attempts: 1, maxAttempts: 1, fencingToken: 7 }, h.context)).toBeUndefined();
+});
+
+it('keeps a successor and propagates every one of five consecutive scan failures (#396)', async () => {
+  const h = setup();
+  h.actions.pending.mockRejectedValue(new Error('SCAN_UNAVAILABLE'));
+  for (let attempt = 0; attempt < 5; attempt++) {
+    await expect(h.run('notification.dispatch')).rejects.toThrow('SCAN_UNAVAILABLE');
+  }
+  expect(h.actions.dispatchEnqueue).toHaveBeenCalledTimes(5);
+  expect(h.actions.pending).toHaveBeenCalledTimes(5);
 });

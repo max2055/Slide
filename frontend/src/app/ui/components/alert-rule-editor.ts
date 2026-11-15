@@ -99,11 +99,9 @@ export class AlertRuleEditor extends LitElement {
   private _update(field: string, value: any) {
     this._error = ''; // Clear errors on user edit
     this._form = { ...this._form, [field]: value };
-    if (field === 'metric_name' && value) {
+    if (field === 'metric_name') {
       const metric = this.metricRegistry.find((m: any) => (m.id || m.metric_name) === value);
-      if (metric?.db_types?.length) {
-        this._form = { ...this._form, db_types: metric.db_types };
-      }
+      this._form = { ...this._form, db_types: metric?.db_types?.length ? [...metric.db_types] : null };
     }
   }
 
@@ -121,13 +119,23 @@ export class AlertRuleEditor extends LitElement {
     const f = this._form;
     if (!f.name || !f.metric_name) { this._error = '名称和指标不能为空'; return; }
     if (this._thresholdError) { this._error = this._thresholdError; return; }
+    const timings: Record<string, number> = {};
+    for (const [field, label] of [['duration_seconds', '持续时间'], ['silence_minutes', '沉默期']]) {
+      const raw = f[field];
+      if (raw == null || String(raw).trim() === '') { this._error = `${label}不能为空`; return; }
+      const value = Number(raw);
+      if (!Number.isInteger(value) || value < 0 || value > 2147483647) {
+        this._error = `${label}必须为 0–2147483647 的整数`; return;
+      }
+      timings[field] = value;
+    }
     try {
       const body: Record<string, any> = {
         name: f.name, description: f.description || '',
         metric_name: f.metric_name, operator: f.operator || '>',
-        threshold: Number(f.threshold) || 0, duration_seconds: Number(f.duration_seconds) || 60,
+        threshold: Number(f.threshold) || 0, duration_seconds: timings.duration_seconds,
         severity: f.severity || 'warning', threshold_type: f.threshold_type || 'static',
-        threshold_template: f.threshold_template || null, silence_minutes: Number(f.silence_minutes) || 5,
+        threshold_template: f.threshold_template || null, silence_minutes: timings.silence_minutes,
         target_type: f.target_type || 'instance',
       };
       if (body.target_type === 'server') {
@@ -167,9 +175,9 @@ export class AlertRuleEditor extends LitElement {
         </app-form-field>
 
         <app-form-field label="指标" required>
-          <select class="form-input" .value=${f.metric_name || ''} @change=${(e: any) => this._update('metric_name', e.target.value)}>
-            <option value="">请选择指标</option>
-            ${this.metricRegistry.map((m: any) => html`<option value="${m.id || m.metric_name || m}">${m.name || m.id || m}${m.unit ? ` (${m.unit})` : ''}</option>`)}
+          <select class="form-input" @change=${(e: any) => this._update('metric_name', e.target.value)}>
+            <option value="" ?selected=${!f.metric_name}>请选择指标</option>
+            ${this.metricRegistry.map((m: any) => html`<option value="${m.id || m.metric_name || m}" ?selected=${f.metric_name === (m.id || m.metric_name || m)}>${m.name || m.id || m}${m.unit ? ` (${m.unit})` : ''}</option>`)}
           </select>
         </app-form-field>
 
@@ -229,7 +237,7 @@ export class AlertRuleEditor extends LitElement {
               ${['warning', 'error', 'critical'].map(level => html`
                 <div>
                   <label style="font-size:var(--text-xs);color:var(--muted);margin-bottom:4px;display:block;text-transform:capitalize;">${level}</label>
-                  <input type="number" class="form-input" .value=${f.threshold_template?.[level] ?? ''}
+                  <input type="number" class="form-input" aria-label=${`${level} 阈值`} .value=${f.threshold_template?.[level] ?? ''}
                     @input=${(e: any) => {
                       const t = { ...(f.threshold_template || {}), [level]: e.target.value !== '' ? Number(e.target.value) : null };
                       this._update('threshold_template', t);
@@ -248,12 +256,12 @@ export class AlertRuleEditor extends LitElement {
           </app-form-field>
         `}
 
-        <app-form-field label="持续时间（秒）">
-          <input type="number" class="form-input" .value=${f.duration_seconds ?? 60} @input=${(e: any) => this._update('duration_seconds', Number(e.target.value))} />
+        <app-form-field label="持续时间（秒）" hint="0 表示立即判定。" required>
+          <input type="number" class="form-input" min="0" max="2147483647" step="1" .value=${f.duration_seconds ?? ''} @input=${(e: any) => this._update('duration_seconds', e.target.value)} />
         </app-form-field>
 
-        <app-form-field label="沉默期（分钟）" hint="同一规则在此时间内不重复触发告警。默认 5 分钟。">
-          <input type="number" class="form-input" min="0" .value=${f.silence_minutes ?? 5} @input=${(e: any) => this._update('silence_minutes', Number(e.target.value))} />
+        <app-form-field label="沉默期（分钟）" hint="同一规则在此时间内不重复触发告警。0 表示不设沉默期，默认 5 分钟。" required>
+          <input type="number" class="form-input" min="0" max="2147483647" step="1" .value=${f.silence_minutes ?? ''} @input=${(e: any) => this._update('silence_minutes', e.target.value)} />
         </app-form-field>
 
         <app-form-field label="告警等级">

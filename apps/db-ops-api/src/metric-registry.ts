@@ -59,6 +59,7 @@ export class MetricRegistry {
         console.log(`[MetricRegistry] after seed: ${rows.length} rows`);
       }
       // Load DB rows into memory, then fill gaps with predefined defaults
+      const rowsByKey = new Map(rows.map(row => [`${row.target_type ?? 'instance'}:${row.id}`, row]));
       const nextDefinitions = new Map<string, MetricDefinition>();
       for (const row of rows) {
         const definition = this._rowToDefinition(row);
@@ -73,6 +74,24 @@ export class MetricRegistry {
           // Older seeded rows must not hide newly supported database engines.
           // Preserve operator intervals, enabled flags and SQL overrides.
           existing.db_types = [...new Set([...existing.db_types, ...m.db_types])];
+          // A custom definition can share a builtin id/name; never repair its metadata.
+          if (!existing.is_builtin) continue;
+          const row = rowsByKey.get(this.definitionKey(m))!;
+          const explicit: Record<string, boolean> = typeof row.metadata_overrides === 'string'
+            ? JSON.parse(row.metadata_overrides) : row.metadata_overrides ?? {};
+          if (!existing.unit && !explicit.unit) existing.unit = m.unit;
+          // Legacy null means missing seed metadata. New writes record explicit null
+          // as an operator choice; never replace those values on reload.
+          for (const field of ['collection_sqls', 'compute_expr', 'category', 'higher_is_worse', 'threshold_template'] as const) {
+            if (row[field] == null && !explicit[field]) {
+              Object.assign(existing, { [field]: m[field] });
+            }
+          }
+          // Old seeding omitted value_type and received the schema's gauge default.
+          // A recorded editor or explicit type is evidence of an operator override.
+          if (!explicit.value_type && row.updated_by == null && row.value_type === 'gauge' && m.value_type) {
+            existing.value_type = m.value_type;
+          }
         }
       }
       this.definitions = nextDefinitions;
@@ -95,6 +114,12 @@ export class MetricRegistry {
           default_interval: m.default_interval,
           is_collected: m.is_collected,
           target_type: m.target_type,
+          collection_sqls: m.collection_sqls,
+          compute_expr: m.compute_expr,
+          value_type: m.value_type,
+          category: m.category,
+          threshold_template: m.threshold_template,
+          higher_is_worse: m.higher_is_worse,
         }, m.is_builtin);
         if (r.success) ok++; else { fail++; console.warn(`[MetricRegistry] seed ${m.id} failed: ${r.error}`); }
       } catch (e) { fail++; console.warn(`[MetricRegistry] seed ${m.id} error:`, (e as Error).message); }
@@ -128,6 +153,7 @@ export class MetricRegistry {
         : undefined,
       compute_expr: row.compute_expr || undefined,
       category: row.category || undefined,
+      higher_is_worse: row.higher_is_worse == null ? undefined : !!row.higher_is_worse,
       value_type: row.value_type || 'gauge',
       threshold_template: row.threshold_template
         ? (typeof row.threshold_template === 'string' ? JSON.parse(row.threshold_template) : row.threshold_template)

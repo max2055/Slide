@@ -13,6 +13,8 @@ export function authorizeEvidence(actor: ActorContext, ref: ResourceRef): void {
   if (!canReadResource(actor, ref)) throw new Error('RESOURCE_FORBIDDEN');
 }
 export function validateEvidenceQuery(query: EvidenceQuery): void {
+  if (typeof query.from !== 'string' || typeof query.to !== 'string'
+    || (query.correlationId !== undefined && typeof query.correlationId !== 'string')) throw new Error('EVIDENCE_QUERY_INVALID');
   const from = Date.parse(query.from), to = Date.parse(query.to);
   if (!Number.isFinite(from) || !Number.isFinite(to) || from > to || to - from > 7 * 86400_000
     || !Number.isSafeInteger(query.limit) || query.limit < 1 || query.limit > 100

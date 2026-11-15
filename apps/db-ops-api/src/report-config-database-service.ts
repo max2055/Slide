@@ -19,6 +19,19 @@ export interface ReportConfig {
   updated_at: string;
 }
 
+/** A confirmed INSERT receipt; creation does not depend on a subsequent SELECT. */
+export interface CreatedReportConfig {
+  id: number;
+}
+
+/** SQL may have committed before a transport failure. Never replay automatically. */
+export class ReportConfigCreateOutcomeUnknownError extends Error {
+  constructor(cause: unknown) {
+    super('创建结果未确认，请刷新配置列表核对，勿重复提交', { cause });
+    this.name = 'ReportConfigCreateOutcomeUnknownError';
+  }
+}
+
 export interface CreateReportConfigData {
   name: string;
   cron: string;
@@ -77,7 +90,7 @@ class ReportConfigDatabaseService {
   async getConfigs(): Promise<ReportConfig[]> {
     const pool = this.getPool();
     if (!pool) {
-      return [];
+      throw new Error('REPORT_CONFIG_LIST_UNAVAILABLE');
     }
 
     try {
@@ -90,7 +103,7 @@ class ReportConfigDatabaseService {
       return rows.map((row: any) => ({ ...row, notification_channel_ids: this.channelIds(row.notification_channel_ids) })) as ReportConfig[];
     } catch (error) {
       console.error('查询报表配置列表失败:', error);
-      return [];
+      throw new Error('REPORT_CONFIG_LIST_UNAVAILABLE');
     }
   }
 
@@ -124,16 +137,16 @@ class ReportConfigDatabaseService {
   /**
    * 创建报表配置
    */
-  async createConfig(data: CreateReportConfigData): Promise<ReportConfig> {
+  async createConfig(data: CreateReportConfigData): Promise<CreatedReportConfig> {
     assertReportCron(data.cron);
     const pool = this.getPool();
     if (!pool) {
       throw new Error('数据库未连接');
     }
 
+    this.assertSingleTarget(data.instance_id, data.server_id);
     try {
-      this.assertSingleTarget(data.instance_id, data.server_id);
-      const [result] = await pool.execute(
+      const [result] = await pool.execute<mysql.ResultSetHeader>(
         `INSERT INTO report_configs (name, cron, type, instance_id, server_id, format, notification_channel_ids, enabled)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
         [
@@ -146,12 +159,14 @@ class ReportConfigDatabaseService {
           JSON.stringify(this.channelIds(data.notification_channel_ids)),
           data.enabled !== undefined ? data.enabled : true,
         ]
-      ) as any;
+      );
 
-      return this.getConfigById((result as any).insertId) as Promise<ReportConfig>;
-    } catch (error: any) {
-      console.error('创建报表配置失败:', error);
-      throw error;
+      if (result.affectedRows !== 1 || !Number.isSafeInteger(result.insertId) || result.insertId <= 0) {
+        throw new Error('REPORT_CONFIG_INSERT_RECEIPT_INVALID');
+      }
+      return { id: result.insertId };
+    } catch (error: unknown) {
+      throw new ReportConfigCreateOutcomeUnknownError(error);
     }
   }
 
