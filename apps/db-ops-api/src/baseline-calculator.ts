@@ -57,7 +57,7 @@ class BaselineCalculator {
   }
 
   /**
-   * 计算所有实例和所有已注册指标的基线
+   * 计算所有实例各自适用的 instance 指标基线
    *
    * @param sigma 标准差倍数，默认 2
    * @param lookbackDays 回溯天数，默认 7
@@ -68,17 +68,18 @@ class BaselineCalculator {
     lookbackDays: number = 7
   ): Promise<{ success: number; failed: number; results: BaselineResult[] }> {
     const instances = await instanceDatabaseService.getAllInstances();
-    const metricIds = metricRegistry.getMetricIds();
+    const metrics = metricRegistry.getAll('instance');
 
     let successCount = 0;
     let failedCount = 0;
     const results: BaselineResult[] = [];
 
     for (const instance of instances) {
-      for (const metricId of metricIds) {
+      for (const metric of metrics) {
+        if (!metric.db_types.includes(instance.db_type)) continue;
         const result = await this.computeBaselineForMetric(
           instance.id,
-          metricId,
+          metric.id,
           sigma,
           lookbackDays
         );

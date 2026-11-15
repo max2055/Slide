@@ -35,7 +35,7 @@ export async function authorizeAnalysisRequest(request: AnalysisRequest): Promis
     // Any reduction or expansion invalidates the frozen evidence permission scope.
     const bounded = { ...current, ...(request.actor.resourceBoundary ? { resourceBoundary: request.actor.resourceBoundary } : {}) };
     if (analysisAuthorizationVersion(bounded) !== request.authorizationVersion
-      || !hasPermission(new Set(current.permissions), 'ai:manage') || !canReadResource(bounded, request.subject)) throw new Error('ANALYSIS_AUTHORITY_REVOKED');
+      || !hasPermission(new Set(current.permissions), request.purpose === 'sql_audit' ? 'sql:audit' : 'ai:manage') || !canReadResource(bounded, request.subject)) throw new Error('ANALYSIS_AUTHORITY_REVOKED');
   } else {
     // Server-owned maintenance is distinct from a browser actor. Recheck its live switch.
     const [configs] = await pool.execute<any[]>("SELECT config_value FROM system_config WHERE config_key = 'auto_analysis_config'");

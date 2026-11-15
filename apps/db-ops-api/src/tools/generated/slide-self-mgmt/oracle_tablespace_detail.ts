@@ -8,7 +8,35 @@
 import type { AnyAgentTool, ToolResult } from '../../types.js';
 import { toolCatalog } from '../../catalog.js';
 import { databaseService } from '../../../database-service.js';
-import { instanceDatabaseService } from '../../../instance-database-service.js';
+
+/** Only expose a validated driver code, never driver messages, SQL or connection details. */
+function tablespaceFailure(error: unknown, phase: string): ToolResult {
+  const source = error && typeof error === 'object'
+    ? error as { code?: unknown; errorNum?: unknown; message?: unknown } : {};
+  const candidate = typeof source.code === 'string' ? source.code
+    : Number.isInteger(source.errorNum) && Number(source.errorNum) > 0 && Number(source.errorNum) <= 99999
+      ? `ORA-${String(source.errorNum).padStart(5, '0')}`
+      : typeof source.message === 'string' ? source.message.match(/^(ORA-\d{5}|NJS-\d{3}|DPI-\d{4})\b/)?.[1] : undefined;
+  const code = candidate && /^(ORA-\d{5}|NJS-\d{3}|DPI-\d{4}|ECONNRESET|ECONNREFUSED|ETIMEDOUT|EPIPE|ENOTFOUND)$/.test(candidate)
+    ? candidate : 'UNKNOWN';
+  console.warn('[oracle_tablespace_detail] query failed', { phase, code });
+  if (code === 'ORA-01031' || code === 'ORA-00942') {
+    return { success: false, status: 'error', errorCode: 'DBA_PRIVILEGE_REQUIRED',
+      error: '无法读取表空间数据字典，请由管理员核对当前用户对 DBA_TABLESPACES、DBA_DATA_FILES、DBA_FREE_SPACE、DBA_SEGMENTS 的 SELECT 权限。' };
+  }
+  if (['ORA-01012', 'ORA-03113', 'ORA-03114', 'ORA-03135', 'ORA-12170',
+    'NJS-003', 'NJS-500', 'NJS-501', 'NJS-510', 'NJS-511', 'NJS-518', 'DPI-1010', 'DPI-1080',
+    'ECONNRESET', 'ECONNREFUSED', 'ETIMEDOUT', 'EPIPE', 'ENOTFOUND'].includes(code) || /^ORA-125\d{2}$/.test(code)) {
+    return { success: false, status: 'error', errorCode: 'TABLESPACE_CONNECTION_FAILED',
+      error: '表空间查询连接失败，请检查 Oracle 连接状态和网络。' };
+  }
+  if (/^ORA-/.test(code)) {
+    return { success: false, status: 'error', errorCode: 'TABLESPACE_QUERY_FAILED',
+      error: 'Oracle 表空间查询失败，请联系管理员根据日志中的错误码排查。' };
+  }
+  return { success: false, status: 'error', errorCode: 'TABLESPACE_DETAIL_FAILED',
+    error: '获取表空间详情失败，请根据服务端日志排查。' };
+}
 
 /**
  * 表空间详情参数
@@ -22,7 +50,7 @@ interface TablespaceDetailArgs {
 
 export const oracleTablespaceDetailTool: AnyAgentTool = {
   name: 'slide_oracle_tablespace_detail',
-  description: '获取 Oracle 表空间使用详情，包括大小、使用率、自动扩展状态、Top 段信息',
+  description: '获取 Oracle 表空间使用详情，包括大小、使用率、自动扩展状态、Top 段信息；自动扩展 YES 表示任一数据文件可扩展，NO 表示全部不可扩展',
   parameters: {
     type: 'object',
     properties: {
@@ -121,17 +149,13 @@ export const oracleTablespaceDetailTool: AnyAgentTool = {
           bindParams
         );
         tsRows = tsResult.rows || [];
-      } catch {
-        // DBA_TABLESPACES 权限不足 — 尝试降级查询
-        return {
-          success: false,
-          error: '表空间详情需要 DBA 或 SELECT ANY DICTIONARY 权限。请为监控用户授予相应权限。\n\n需要的权限：\n- SELECT ON dba_tablespaces\n- SELECT ON dba_data_files\n- SELECT ON dba_segments\n\n或使用 SYS/SYSTEM 用户连接重试。',
-          errorCode: 'DBA_PRIVILEGE_REQUIRED',
-        };
+      } catch (error) {
+        return tablespaceFailure(error, 'overview');
       }
 
       // 2. 获取 Top 段信息 (每个表空间 Top 10)
       let topSegments: any[] = [];
+      let topSegmentsError: ToolResult | undefined;
       try {
         const filterClause = typedArgs.tablespace_name
           ? 'AND s.tablespace_name = :ts_name2'
@@ -163,9 +187,10 @@ export const oracleTablespaceDetailTool: AnyAgentTool = {
           segment_type: row[3],
           size_mb: Number(row[4]),
         }));
-      } catch {
+      } catch (error) {
         // DBA_SEGMENTS 可选 — 不影响主体功能
         topSegments = [];
+        topSegmentsError = tablespaceFailure(error, 'top_segments');
       }
 
       // 格式化响应
@@ -191,7 +216,8 @@ export const oracleTablespaceDetailTool: AnyAgentTool = {
 
       return {
         success: true,
-        status: tablespaces.length === 0 ? 'warning' : 'success',
+        status: tablespaces.length === 0 || topSegmentsError ? 'warning' : 'success',
+        ...(topSegmentsError ? { details: { top_segments_error: topSegmentsError } } : {}),
         data: {
           tablespaces,
           top_segments: topSegments,
@@ -206,12 +232,7 @@ export const oracleTablespaceDetailTool: AnyAgentTool = {
         next_actions: tablespaces.length === 0 ? ['确认表空间名称和数据库用户权限'] : [],
       };
     } catch (error: unknown) {
-      const errMsg = error instanceof Error ? error.message : String(error);
-      return {
-        success: false,
-        error: `获取表空间详情失败：${errMsg}`,
-        errorCode: 'TABLESPACE_DETAIL_FAILED',
-      };
+      return tablespaceFailure(error, 'handler');
     }
   },
 };

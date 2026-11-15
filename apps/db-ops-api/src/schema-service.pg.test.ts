@@ -11,6 +11,7 @@ import { schemaService } from './schema-service.js';
 import { describePGCollection } from './pg-collection-test-support.js';
 
 describePGCollection({
+  rejectPartial: true,
   collect: () => schemaService.collectSchema(1),
   loadInstance: vi.mocked(instanceDatabaseService.getInstanceById),
   save: vi.mocked(schemaDatabaseService.saveSnapshot),
