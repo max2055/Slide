@@ -1026,9 +1026,15 @@ async function start() {
       if (!hasUnrestrictedInstanceAccess((request as any).user)) {
         return reply.code(403).send({ error: '清除全局告警需要不受限的实例管理权限' });
       }
-      const { retentionDays } = request.query as { retentionDays?: number };
+      const { retentionDays } = request.query as { retentionDays?: unknown };
       // 默认保留最近 30 天；前端主动传 0 可强制清除全部
+      if (retentionDays !== undefined && (typeof retentionDays !== 'string' || retentionDays.trim() === '')) {
+        return reply.code(400).send({ error: 'retentionDays 必须为非负整数' });
+      }
       const days = retentionDays !== undefined ? Number(retentionDays) : 30;
+      if (!Number.isSafeInteger(days) || days < 0) {
+        return reply.code(400).send({ error: 'retentionDays 必须为非负整数' });
+      }
       const result = await alertDatabaseService.clearAllAlerts(days);
       if (result.success) {
         reply.send({ message: '已清除告警', deletedCount: result.deletedCount });

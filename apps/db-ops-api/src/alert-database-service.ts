@@ -514,13 +514,16 @@ class AlertDatabaseService {
    * 清除告警（默认保留最近 30 天）
    */
   async clearAllAlerts(retentionDays: number = 30): Promise<{ success: boolean; error?: string; deletedCount?: number }> {
+    if (!Number.isSafeInteger(retentionDays) || retentionDays < 0) {
+      return { success: false, error: 'retentionDays 必须为非负整数' };
+    }
     const pool = this.getPool();
     if (!pool) {
       return { success: false, error: '数据库未连接' };
     }
 
     try {
-      if (retentionDays <= 0) {
+      if (retentionDays === 0) {
         // 显式传 0 才允许清除所有（需确认操作）
         const [rows] = await pool.execute('SELECT COUNT(*) as count FROM alerts WHERE NOT (source <=> \"template-trigger\")') as any;
         const total = rows[0]?.count || 0;
