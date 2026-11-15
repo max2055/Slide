@@ -34,7 +34,7 @@ describe('MAX-592 independent review F1 regression', () => {
     const transport = vi.spyOn(nodemailer, 'createTransport');
     const mark = vi.fn();
     await expect(new NotificationService().send(channel(12345), {}, controller.signal, undefined, undefined, mark)).rejects.toBe(reason);
-    expect(save).toHaveBeenCalledExactlyOnceWith(1, 'synthetic-rotated');
+    expect(save).toHaveBeenCalledExactlyOnceWith(1, 'synthetic-rotated', expect.objectContaining({ oauth2_client_id: 'test' }));
     expect(transport).not.toHaveBeenCalled();
     expect(mark).not.toHaveBeenCalled();
   });
@@ -68,7 +68,7 @@ describe('MAX-592 independent review F1 regression', () => {
     const save = vi.spyOn(notificationDatabaseService, 'updateOAuth2RefreshToken').mockResolvedValue({ success: true });
     const transport = vi.spyOn(nodemailer, 'createTransport');
     await expect(new NotificationService().send(channel(12345), {})).resolves.toEqual({ success: false, error: 'EMAIL_DELIVERY_FAILED' });
-    expect(save).toHaveBeenCalledExactlyOnceWith(1, 'synthetic-rotated');
+    expect(save).toHaveBeenCalledExactlyOnceWith(1, 'synthetic-rotated', expect.objectContaining({ oauth2_client_id: 'test' }));
     expect(transport).not.toHaveBeenCalled();
     expect(vi.getTimerCount()).toBe(0);
   });

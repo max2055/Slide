@@ -297,16 +297,24 @@ class NotificationDatabaseService {
   }
 
   /** Persists a Microsoft-issued rotated refresh token without reading or logging any channel secret. */
-  async updateOAuth2RefreshToken(id: number, refreshToken: string): Promise<{ success: boolean; error?: string }> {
+  async updateOAuth2RefreshToken(id: number, refreshToken: string, expected: NotificationChannelConfig): Promise<{ success: boolean; error?: string }> {
     const pool = this.getPool();
     if (!pool) return { success: false, error: '数据库未连接' };
 
+    // MAX-590 review F1: a returned token belongs to the exact credential used
+    // for the exchange. A single CAS also serializes competing rotations without
+    // another pool connection or replaying a write whose outcome is unknown.
+    if (!expected.oauth2_refresh_token_encrypted) return { success: false, error: 'NOTIFICATION_CREDENTIAL_CHANGED' };
+    const identityFields = ['smtp_auth', 'smtp_host', 'smtp_port', 'smtp_username', 'smtp_secure', 'smtp_require_tls',
+      'oauth2_tenant', 'oauth2_client_id', 'oauth2_refresh_token_encrypted'] as const;
+    const identity = JSON.stringify(Object.fromEntries(identityFields.map(field => [field, expected[field]])));
     try {
       const [result] = await pool.execute(
-        "UPDATE notification_channels SET config = JSON_SET(config, '$.oauth2_refresh_token_encrypted', ?), updated_at = CURRENT_TIMESTAMP WHERE id = ? AND type = 'email'",
-        [encryptData(refreshToken), id],
+        "UPDATE notification_channels SET config = JSON_SET(config, '$.oauth2_refresh_token_encrypted', ?), updated_at = CURRENT_TIMESTAMP WHERE id = ? AND type = 'email' AND "
+          + identityFields.map(field => `JSON_EXTRACT(config, '$.${field}') <=> JSON_EXTRACT(?, '$.${field}')`).join(' AND '),
+        [encryptData(refreshToken), id, ...identityFields.map(() => identity)],
       ) as any;
-      if (result.affectedRows === 0) return { success: false, error: '通知渠道不存在' };
+      if (result.affectedRows === 0) return { success: false, error: 'NOTIFICATION_CREDENTIAL_CHANGED' };
       return { success: true };
     } catch (error: any) {
       console.error('更新 OAuth 刷新令牌失败', { code: 'NOTIFICATION_CREDENTIAL_UPDATE_FAILED' });

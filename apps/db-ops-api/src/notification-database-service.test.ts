@@ -144,15 +144,36 @@ describe('NotificationDatabaseService email credentials', () => {
   it('atomically replaces a rotated OAuth refresh token without exposing plaintext', async () => {
     execute.mockResolvedValue([{ affectedRows: 1 }]);
 
-    await expect(notificationDatabaseService.updateOAuth2RefreshToken(10, 'rotated-refresh-token'))
+    await expect(notificationDatabaseService.updateOAuth2RefreshToken(10, 'rotated-refresh-token', { smtp_auth: 'oauth2', oauth2_refresh_token_encrypted: 'original' }))
       .resolves.toEqual({ success: true });
 
     expect(encryptData).toHaveBeenCalledWith('rotated-refresh-token');
     expect(execute).toHaveBeenCalledWith(
       expect.stringContaining("JSON_SET(config, '$.oauth2_refresh_token_encrypted', ?)"),
-      ['encrypted:rotated-refresh-token', 10],
+      ['encrypted:rotated-refresh-token', 10, ...Array(9).fill(JSON.stringify({ smtp_auth: 'oauth2', oauth2_refresh_token_encrypted: 'original' }))],
     );
   });
+
+  it('MAX-590 F1 refuses a rotation without an original credential and performs no SQL', async () => {
+    await expect(notificationDatabaseService.updateOAuth2RefreshToken(10, 'sentinel-rotation', {}))
+      .resolves.toEqual({ success: false, error: 'NOTIFICATION_CREDENTIAL_CHANGED' });
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  it('MAX-590 F1 reports a lost credential CAS without retrying or overwriting the winner', async () => {
+    execute.mockResolvedValue([{ affectedRows: 0 }]);
+    await expect(notificationDatabaseService.updateOAuth2RefreshToken(10, 'sentinel-rotation', { oauth2_refresh_token_encrypted: 'original' }))
+      .resolves.toEqual({ success: false, error: 'NOTIFICATION_CREDENTIAL_CHANGED' });
+    expect(execute).toHaveBeenCalledTimes(1);
+  });
+
+  it('MAX-590 F1 never replays an unknown rotation write or returns its private diagnostic', async () => {
+    execute.mockRejectedValue(new Error('sentinel-private-SQL-diagnostic'));
+    await expect(notificationDatabaseService.updateOAuth2RefreshToken(10, 'sentinel-rotation', { oauth2_refresh_token_encrypted: 'original' }))
+      .resolves.toEqual({ success: false, error: 'NOTIFICATION_CREDENTIAL_UPDATE_FAILED' });
+    expect(execute).toHaveBeenCalledTimes(1);
+  });
+
 });
 
 describe('MAX-590 #296 / #342 credential ownership', () => {

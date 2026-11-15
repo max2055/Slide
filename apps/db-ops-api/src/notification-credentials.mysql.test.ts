@@ -124,6 +124,7 @@ describe.skipIf(!input)('MAX-590 #296/#342 real MySQL and normal notification en
         port: receiverPort, lookup: undefined }, callback);
     }) as any);
     received = [];
+    smtp.messages.length = 0;
     receiverError = false;
   });
 
@@ -265,13 +266,14 @@ describe.skipIf(!input)('MAX-590 #296/#342 real MySQL and normal notification en
 
   it('serializes concurrent field saves and a type switch without reviving old encrypted fields (pool size 1)', async () => {
     const id = await create('email', { ...smtp.channel.config, password: 'sentinel-old-password', oauth2_refresh_token: 'sentinel-old-refresh' });
+    const original = (await channels.getChannelById(id))!.config;
     const single = mysql.createPool({ ...JSON.parse(input!), database: schema, connectionLimit: 1 });
     vi.spyOn(dbConnection, 'getPool').mockReturnValue(single);
     try {
       const results = await Promise.all([
         channels.updateChannel(id, { config: { to: 'parallel@example.test' } }),
         channels.updateChannel(id, { type: 'webhook', config: { webhook_url: sentinelUrl } }),
-        channels.updateOAuth2RefreshToken(id, 'sentinel-rotation'),
+        channels.updateOAuth2RefreshToken(id, 'sentinel-rotation', original),
       ]);
       expect(results[0].success).toBe(true);
       expect(results[1].success).toBe(true);
@@ -368,4 +370,99 @@ describe.skipIf(!input)('MAX-590 #296/#342 real MySQL and normal notification en
       await vite.close();
     }
   }, 60000);
+  it.each(['bidirectional type switch', 'same-type replacement', 'explicit clear', 'identity-only replacement', 'username replacement'])('MAX-590 F1: stale OAuth rotation must respect %s', async mode => {
+    const email = { ...smtp.channel.config, smtp_auth: 'oauth2', oauth2_tenant: 'consumers', oauth2_client_id: 'sentinel-client-A', oauth2_refresh_token: 'sentinel-refresh-A' };
+    const id = await create('email', email);
+    const snapshot = await channels.getChannelById(id);
+    const originalFetch = globalThis.fetch;
+    const controller = new AbortController();
+    const reason = new Error('independent-cancel-after-json');
+    let entered!: () => void;
+    const ready = new Promise<void>(r => entered = r);
+    let release!: () => void;
+    const gate = new Promise<void>(r => release = r);
+    vi.stubGlobal('fetch', async (url: any, options: any) => {
+      if (!String(url).startsWith('https://login.microsoftonline.com/')) return originalFetch(url, options);
+      entered();
+      await gate;
+      const response = new Response(JSON.stringify({ access_token: 'sentinel-access-A', refresh_token: 'sentinel-ROTATED-A' }));
+      const parse = response.json.bind(response);
+      vi.spyOn(response, 'json').mockImplementation(async () => { const payload = await parse(); controller.abort(reason); return payload; });
+      return response;
+    });
+    const pending = notificationService.send(snapshot!, {}, controller.signal).catch(error => error);
+    try {
+      await ready;
+      if (mode === 'bidirectional type switch') expect((await api('PUT', '/' + id, { type: 'webhook', config: { webhook_url: sentinelUrl } })).status).toBe(200);
+      if (mode === 'explicit clear') expect((await api('PUT', '/' + id, { config: { oauth2_refresh_token: null } })).status).toBe(200);
+      else if (mode === 'identity-only replacement') expect((await api('PUT', '/' + id, { config: { oauth2_client_id: 'sentinel-client-B' } })).status).toBe(200);
+      else if (mode === 'username replacement') expect((await api('PUT', '/' + id, { config: { smtp_username: 'sentinel-user-B' } })).status).toBe(200);
+      else expect((await api('PUT', '/' + id, { type: 'email', config: { ...email, oauth2_client_id: 'sentinel-client-B', oauth2_refresh_token: 'sentinel-refresh-B' } })).status).toBe(200);
+      release();
+      expect(await pending).toBe(reason);
+      const row = await stored(id);
+      expect(row.config.oauth2_client_id).toBe(['explicit clear', 'username replacement'].includes(mode) ? 'sentinel-client-A' : 'sentinel-client-B');
+      expect(smtp.messages).toHaveLength(0);
+      if (mode === 'explicit clear') expect(row.config).not.toHaveProperty('oauth2_refresh_token_encrypted');
+      else expect(decryptData(row.config.oauth2_refresh_token_encrypted)).toBe(['identity-only replacement', 'username replacement'].includes(mode) ? 'sentinel-refresh-A' : 'sentinel-refresh-B');
+    } finally { release(); await pending; vi.unstubAllGlobals(); }
+  }, 15000);
+
+  it('MAX-590 F1: same-identity rotations use first-writer CAS, preserve ordinary API edits, and recover from a fresh snapshot (pool size 1)', async () => {
+    const id = await create('email', { ...smtp.channel.config, smtp_auth: 'oauth2', oauth2_tenant: 'consumers',
+      oauth2_client_id: 'sentinel-client-A', oauth2_refresh_token: 'sentinel-refresh-A' });
+    const snapshot = (await channels.getChannelById(id))!;
+    const single = mysql.createPool({ ...JSON.parse(input!), database: schema, connectionLimit: 1 });
+    vi.spyOn(dbConnection, 'getPool').mockReturnValue(single);
+    const requests: Array<{ token: string | null; release: () => void }> = [];
+    const endpoint = http.createServer((request, response) => {
+      let body = '';
+      request.on('data', chunk => { body += chunk; });
+      request.on('end', () => {
+        const index = requests.length;
+        requests.push({ token: new URLSearchParams(body).get('refresh_token'), release: () => response.end(JSON.stringify({
+          access_token: 'sentinel-access', refresh_token: 'sentinel-rotation-' + index,
+        })) });
+      });
+    });
+    const originalFetch = globalThis.fetch;
+    const pending: Array<Promise<{ success: boolean; error?: string }>> = [];
+    try {
+      await new Promise<void>(resolve => endpoint.listen(0, '127.0.0.1', resolve));
+      const port = (endpoint.address() as any).port;
+      vi.stubGlobal('fetch', (url: any, options: any) => originalFetch(String(url).startsWith('https://login.microsoftonline.com/')
+        ? 'http://127.0.0.1:' + port + '/token' : url, options));
+      pending.push(notificationService.send(snapshot, { text: 'first' }), notificationService.send(snapshot, { text: 'second' }));
+      await vi.waitFor(() => expect(requests).toHaveLength(2));
+      // The ordinary field edit must not invalidate the credential or be lost by JSON_SET.
+      expect((await api('PUT', '/' + id, { name: 'renamed', config: { to: 'edited@example.test' } })).status).toBe(200);
+      expect(requests.map(request => request.token)).toEqual(['sentinel-refresh-A', 'sentinel-refresh-A']);
+      requests[0].release();
+      // HTTP acceptance order need not equal send() invocation order.
+      await vi.waitFor(() => expect(smtp.messages).toHaveLength(1));
+      expect(decryptData((await stored(id)).config.oauth2_refresh_token_encrypted)).toBe('sentinel-rotation-0');
+      requests[1].release();
+      const results = await Promise.all(pending);
+      expect(results.filter(result => result.success)).toHaveLength(1);
+      expect(results.filter(result => !result.success)).toEqual([{ success: false, error: 'EMAIL_DELIVERY_FAILED' }]);
+      expect(smtp.messages).toHaveLength(1);
+      expect((await stored(id)).config.to).toBe('edited@example.test');
+      const fresh = (await channels.getChannelById(id))!;
+      pending.push(notificationService.send(fresh, { text: 'fresh snapshot' }));
+      await vi.waitFor(() => expect(requests).toHaveLength(3));
+      expect(requests[2].token).toBe('sentinel-rotation-0');
+      requests[2].release();
+      expect(await pending[2]).toEqual({ success: true });
+      expect(decryptData((await stored(id)).config.oauth2_refresh_token_encrypted)).toBe('sentinel-rotation-2');
+      expect(smtp.messages).toHaveLength(2);
+    } finally {
+      for (const request of requests) request.release();
+      await Promise.allSettled(pending);
+      vi.unstubAllGlobals();
+      endpoint.closeAllConnections();
+      if (endpoint.listening) await new Promise<void>((resolve, reject) => endpoint.close(error => error ? reject(error) : resolve()));
+      await single.end();
+    }
+  }, 15000);
+
 });

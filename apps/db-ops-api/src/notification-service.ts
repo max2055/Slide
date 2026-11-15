@@ -465,16 +465,17 @@ export class NotificationService {
     const port = Number(config.smtp_port);
     let auth: { user: string; pass: string } | { type: 'OAuth2'; user: string; accessToken: string };
     if (config.smtp_auth === 'oauth2') {
+      const credential = { ...config };
       const oauth = await exchangeMicrosoftSmtpRefreshToken({
-          tenant: config.oauth2_tenant!,
-          clientId: config.oauth2_client_id!,
-          refreshToken: decryptData(config.oauth2_refresh_token_encrypted!),
+          tenant: credential.oauth2_tenant!,
+          clientId: credential.oauth2_client_id!,
+          refreshToken: decryptData(credential.oauth2_refresh_token_encrypted!),
           signal,
       });
       // Save an already returned rotation even if cancellation arrived meanwhile.
       // The next cancellation check still prevents SMTP from starting.
       if (oauth.refreshToken && channelId !== undefined) {
-        const persisted = await notificationDatabaseService.updateOAuth2RefreshToken(channelId, oauth.refreshToken);
+        const persisted = await notificationDatabaseService.updateOAuth2RefreshToken(channelId, oauth.refreshToken, credential);
         if (!persisted.success) throw new Error('OAUTH_REFRESH_TOKEN_PERSIST_FAILED');
       }
       if (oauth.interruption) throw oauth.interruption.reason;
