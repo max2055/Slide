@@ -9,6 +9,28 @@ import type { Report, ReportFormat } from './report-database-service';
 
 const reportFont = fileURLToPath(new URL('../assets/fonts/NotoSansCJKsc-Regular.otf', import.meta.url));
 
+// Escape literal text separately from URL labels/destinations: backslashes inside
+// bare URLs are interpreted differently by Markdown automatic link parsers.
+function markdownText(text: string): string {
+  const literal = (value: string) => value
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/([\\`*_{}\[\]()#+\-.!|])/g, '\\$1');
+  return String(text).split(/(https?:\/\/[^\s<>"'`]+)/gi).map((part, index) => {
+    if (index % 2 === 0) return literal(part);
+    // Leave sentence punctuation and unmatched closing delimiters outside links.
+    let url = part.replace(/[.,!?]+$/, '');
+    for (const [open, close] of [['(', ')'], ['[', ']'], ['{', '}']]) {
+      let extra = url.split(close).length - url.split(open).length;
+      let end = url.length;
+      while (extra > 0 && url[end - 1] === close) { end--; extra--; }
+      url = url.slice(0, end);
+    }
+    const suffix = part.slice(url.length);
+    const destination = url.replace(/&/g, '&amp;').replace(/\\/g, '\\\\');
+    return `[${literal(url)}](<${destination}>)${literal(suffix)}`;
+  }).join('');
+}
+
 // Parse before decoding: encoded angle brackets belong to text, not HTML tags.
 function reportMarkdownContent(content: string): string {
   const parts: string[] = [];
@@ -22,11 +44,7 @@ function reportMarkdownContent(content: string): string {
     if ('tagName' in node && /^(br|div|p|tr|li|h[1-6]|blockquote|pre|th|td)$/.test(node.tagName)) parts.push('\n');
   };
   visit(parseFragment(content));
-  return parts.join('')
-    // Keep extracted text literal when the Markdown is rendered.
-    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-    .replace(/([\\`*_{}\[\]()#+\-.!|])/g, '\\$1')
-    .replace(/\n{3,}/g, '\n\n').trim();
+  return markdownText(parts.join('').replace(/\n{3,}/g, '\n\n').trim());
 }
 
 class ReportExporter {
@@ -84,13 +102,13 @@ class ReportExporter {
     const lines: string[] = [];
 
     // 标题
-    lines.push(`# ${report.name}`);
+    lines.push(`# ${markdownText(report.name).replace(/[\r\n]/g, char => char === '\r' ? '&#13;' : '&#10;')}`);
     lines.push('');
 
     // 元信息
-    lines.push(`**类型**: ${report.type}`);
-    lines.push(`**格式**: ${report.format}`);
-    lines.push(`**生成时间**: ${report.created_at}`);
+    lines.push(`**类型**: ${markdownText(report.type)}`);
+    lines.push(`**格式**: ${markdownText(report.format)}`);
+    lines.push(`**生成时间**: ${markdownText(report.created_at)}`);
     lines.push('');
     lines.push('---');
     lines.push('');

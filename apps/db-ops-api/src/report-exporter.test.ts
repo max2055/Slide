@@ -74,3 +74,44 @@ describe('Markdown text semantics (#548)', () => {
     expect(markdown).not.toMatch(/<\/?(?:script|img|p|div|b)\b/i);
   });
 });
+
+// Independent review R1: persisted report names are text, not inline HTML/Markdown.
+describe('literal Markdown metadata (MAX-619 R1)', () => {
+  it.each([
+    '<svg onload="window.__pwn=1"></svg>',
+    '<img src="https://example.invalid/title" onerror="window.__attack=619">',
+    '普通标题\n# injected\r\n<script>window.__pwn=1</script>',
+    '*强调* [链接](javascript:alert(1)) &lt;svg&gt;',
+  ])('escapes the report name %s without treating it as HTML input', async name => {
+    const md = await reportExporter.exportToMarkdown({ ...report, name, data: null, content: '<p>普通正文</p>' });
+    expect(md.split('\n\n')[0]).toMatch(/^# [^\r\n]+$/);
+    expect(md).not.toMatch(/<(?:svg|img|script)\b/i);
+    expect(md).not.toContain('[链接](javascript:');
+    if (name.includes('&lt;')) expect(md).toContain('&amp;lt;svg&amp;gt;');
+    if (name.includes('\n')) expect(md).toContain('&#10;');
+  });
+  it('accepts a database driver Date value in report metadata', async () => {
+    const md = await reportExporter.exportToMarkdown({ ...report, created_at: new Date('2026-11-16T00:00:00Z') as any });
+    expect(md).toContain('**生成时间**:');
+    expect(md).toContain('2026');
+  });
+  it('applies the same boundary to the other literal metadata', async () => {
+    const md = await reportExporter.exportToMarkdown({ ...report, type: '<svg onload=1>' as any, created_at: '<img src=x>', data: null });
+    expect(md).toContain('**类型**: &lt;svg onload=1&gt;');
+    expect(md).toContain('**生成时间**: &lt;img src=x&gt;');
+  });
+});
+
+// Independent review R2: explicit link destinations keep Markdown escape syntax
+// out of automatic link detection, while the displayed label remains literal.
+describe('Markdown URL fidelity (MAX-619 R2)', () => {
+  it.each([
+    ['https://example.invalid/x', '[https://example\\.invalid/x](<https://example.invalid/x>)'],
+    ['https://example.invalid/a_b?q=one&v=2#anchor', '[https://example\\.invalid/a\\_b?q=one&amp;v=2\\#anchor](<https://example.invalid/a_b?q=one&amp;v=2#anchor>)'],
+    ['https://example.invalid/a_(b)', '[https://example\\.invalid/a\\_\\(b\\)](<https://example.invalid/a_(b)>)'],
+    ['(https://example.invalid/x).', '\\([https://example\\.invalid/x](<https://example.invalid/x>)\\)\\.'],
+  ])('preserves the destination for %s', async (url, expected) => {
+    const md = await reportExporter.exportToMarkdown({ ...report, data: null, content: `<p>${url.replace(/&/g, '&amp;')}</p>` });
+    expect(md.split('## 详细内容\n\n')[1]).toBe(expected);
+  });
+});

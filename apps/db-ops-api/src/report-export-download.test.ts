@@ -43,4 +43,24 @@ describe('normal PDF/Markdown download entry (#547/#548)', () => {
       }
     } finally { await app.close(); }
   });
+  it('escapes a persisted name and preserves URLs at the download boundary (R1/R2)', async () => {
+    const persisted = { ...report, name: '<svg onload="window.__pwn=1"></svg>',
+      content: '<p>https://example.invalid/x &amp;lt;tag&amp;gt; &lt;img src=x&gt;</p>' };
+    const app = Fastify();
+    new Function('fastify', 'verifyToken', 'requirePermission', 'hasInstanceAccess', 'reportDatabaseService', 'reportExporter', 'reportAttachmentDisposition', route)(
+      app, async () => {}, () => async () => {}, () => true,
+      { getReportById: async () => persisted }, reportExporter, reportAttachmentDisposition,
+    );
+    try {
+      const response = await app.inject({ method: 'GET', url: '/api/reports/619/download?format=md' });
+      expect(response.statusCode).toBe(200);
+      expect(response.headers['content-type']).toContain('text/markdown');
+      expect(response.headers['content-disposition']).toContain('attachment;');
+      expect(response.body).toBe(await reportExporter.exportToMarkdown(persisted));
+      expect(response.body).toContain('# &lt;svg onload="window\\.\\_\\_pwn=1"&gt;&lt;/svg&gt;');
+      expect(response.body).toContain('](<https://example.invalid/x>)');
+      expect(response.body).toContain('&amp;lt;tag&amp;gt; &lt;img src=x&gt;');
+    } finally { await app.close(); }
+  });
+
 });
