@@ -8,6 +8,11 @@ import type { MetricConsumerService } from '../../metrics/consumers/service.js';
 import { migrateReference } from '../../metrics/consumers/migration.js';
 import { PolicyError } from '../../metrics/policy/model.js';
 import { metricDiscoveryPage } from '../../metrics/consumers/discovery.js';
+class QueryMetricsArgumentError extends Error {
+  constructor(readonly code: 'RESOURCE_AMBIGUOUS' | 'RESOURCE_INVALID' | 'SERIES_INDEX_UNAVAILABLE') {
+    super(code);
+  }
+}
 const Args = z.strictObject({
   instance_id: z.number().int().positive().optional(), resourceType: z.enum(['instance', 'server', 'network_device']).optional(), resourceId: z.number().int().positive().optional(),
   mode: z.enum(['realtime', 'history', 'discover', 'inventory']).default('realtime'),
@@ -39,9 +44,9 @@ export function createQueryMetricsTool(service: MetricConsumerService = metricCo
       if (!context?.actor) return { success: false, status: 'error', errorCode: 'AUTH_REQUIRED', error: '需要已认证的资源权限上下文' };
       try {
         const args = Args.parse(input);
-        if (args.instance_id !== undefined && (args.resourceType !== undefined || args.resourceId !== undefined)) throw new Error('RESOURCE_AMBIGUOUS');
+        if (args.instance_id !== undefined && (args.resourceType !== undefined || args.resourceId !== undefined)) throw new QueryMetricsArgumentError('RESOURCE_AMBIGUOUS');
         const ref = { type: args.resourceType ?? 'instance' as const, id: args.resourceId ?? args.instance_id };
-        if (!ref.id || Boolean(args.resourceType) !== Boolean(args.resourceId)) throw new Error('RESOURCE_INVALID');
+        if (!ref.id || Boolean(args.resourceType) !== Boolean(args.resourceId)) throw new QueryMetricsArgumentError('RESOURCE_INVALID');
         const resource = { ...ref, id: ref.id };
         if (args.mode === 'discover') {
           const catalog = await service.discover(context.actor, resource);
@@ -70,9 +75,9 @@ export function createQueryMetricsTool(service: MetricConsumerService = metricCo
         let selection: { series_index: number; total_series: number } | undefined;
         if (args.series_index !== undefined) {
           const metric = data.metrics[0];
-          if (data.metrics.length !== 1 || !metric || args.series_index >= Math.max(1, metric.series.length)) throw new Error('SERIES_INDEX_UNAVAILABLE');
+          if (data.metrics.length !== 1 || !metric || args.series_index >= metric.series.length) throw new QueryMetricsArgumentError('SERIES_INDEX_UNAVAILABLE');
           selection = { series_index: args.series_index, total_series: metric.series.length };
-          data = { ...data, metrics: [{ ...metric, series: metric.series.length ? [metric.series[args.series_index]] : [] }] };
+          data = { ...data, metrics: [{ ...metric, series: [metric.series[args.series_index]] }] };
         }
         const complete = data.metrics.length > 0 && data.metrics.every(m => m.state === 'available' && m.series.length > 0
           && m.series.every(s => s.buckets.length > 0 && s.buckets.every(b => b.value !== null && b.quality.status === 'good' && b.freshness === 'fresh' && b.accuracy === 'exact')));
@@ -80,7 +85,7 @@ export function createQueryMetricsTool(service: MetricConsumerService = metricCo
           summary: complete ? '已获取标准指标，请按定义解释数值' : '指标证据不完整或包含估算，不能据此判断无异常',
           next_actions: complete ? [] : ['检查 capability、attempt、coverage 和 freshness；不要将缺失值补零'] };
       } catch (e) {
-        return { success: false, status: 'error', errorCode: e instanceof ActorAuthenticationError ? 'AUTH_REQUIRED' : e instanceof PolicyError ? e.code : e instanceof z.ZodError ? 'INVALID_ARGUMENTS' : 'QUERY_METRICS_FAILED', error: '标准指标查询失败，未产生健康结论' };
+        return { success: false, status: 'error', errorCode: e instanceof ActorAuthenticationError ? 'AUTH_REQUIRED' : e instanceof PolicyError || e instanceof QueryMetricsArgumentError ? e.code : e instanceof z.ZodError ? 'INVALID_ARGUMENTS' : 'QUERY_METRICS_FAILED', error: '标准指标查询失败，未产生健康结论' };
       }
     },
   };

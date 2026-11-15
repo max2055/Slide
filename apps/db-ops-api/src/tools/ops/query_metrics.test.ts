@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createQueryMetricsTool } from './query_metrics.js';
 import { admin } from '../../metrics/policy/test-support.js';
+import { ActorAuthenticationError } from '../../auth/actor-context.js';
 import { PolicyError } from '../../metrics/policy/model.js';
 const service = () => ({ query: vi.fn(), discover: vi.fn(), inventory: vi.fn() });
 describe('query_metrics authenticated semantic boundary', () => {
@@ -60,5 +61,48 @@ describe('query_metrics authenticated semantic boundary', () => {
     expect(s.query).toHaveBeenCalledWith(admin, expect.objectContaining({
       metric_ids: ['linux.cpu.user_system_percent'],
     }));
+  });
+});
+
+// GitHub #620: client mistakes must not be reported as storage failures.
+describe('query_metrics error codes', () => {
+  it.each([
+    [{ instance_id: 1, resourceType: 'server', resourceId: 2 }, 'RESOURCE_AMBIGUOUS'],
+    [{ instance_id: 1, resourceId: 2 }, 'RESOURCE_AMBIGUOUS'],
+    [{}, 'RESOURCE_INVALID'], [{ resourceType: 'server' }, 'RESOURCE_INVALID'],
+    [{ resourceId: 2 }, 'RESOURCE_INVALID'],
+    [{ instance_id: -1 }, 'INVALID_ARGUMENTS'],
+    [{ instance_id: 1, series_index: 0 }, 'INVALID_ARGUMENTS'],
+  ])('classifies %j as %s without accessing services', async (input, code) => {
+    const s = service();
+    expect(await createQueryMetricsTool(s as any).handler(input, { actor: admin })).toMatchObject({ success: false, status: 'error', errorCode: code });
+    for (const method of Object.values(s)) expect(method).not.toHaveBeenCalled();
+  });
+  it('preserves valid series selection and rejects out-of-range selection', async () => {
+    const s = service(); s.query.mockResolvedValue({ metrics: [{ state: 'available', series: [
+      { dimensions: { mount: '/' }, buckets: [] }, { dimensions: { mount: '/data' }, buckets: [] },
+    ] }] });
+    const tool = createQueryMetricsTool(s as any);
+    const input = { instance_id: 1, metric_ids: ['host.filesystem.used_bytes'] };
+    expect(await tool.handler({ ...input, series_index: 1 }, { actor: admin })).toMatchObject({ success: true,
+      data: { selection: { series_index: 1, total_series: 2 }, metrics: [{ series: [{ dimensions: { mount: '/data' } }] }] } });
+    expect(await tool.handler({ ...input, series_index: 2 }, { actor: admin })).toMatchObject({ success: false, errorCode: 'SERIES_INDEX_UNAVAILABLE' });
+  });
+  it.each([{ metrics: [] }, { metrics: [{ state: 'available', series: [] }] }])('rejects selecting a nonexistent series in $metrics', async ({ metrics }) => {
+    const s = service(); s.query.mockResolvedValue({ metrics });
+    expect(await createQueryMetricsTool(s as any).handler({ instance_id: 1, metric_ids: ['db.uptime_seconds'], series_index: 0 }, { actor: admin }))
+      .toMatchObject({ success: false, errorCode: 'SERIES_INDEX_UNAVAILABLE' });
+  });
+  it.each([
+    [new ActorAuthenticationError(), 'AUTH_REQUIRED'],
+    [new PolicyError('POLICY_FORBIDDEN', 403), 'POLICY_FORBIDDEN'],
+    [new PolicyError('POLICY_RESOURCE_NOT_FOUND', 404), 'POLICY_RESOURCE_NOT_FOUND'],
+    [new Error('RESOURCE_INVALID'), 'QUERY_METRICS_FAILED'],
+    [new Error('secret SQL details'), 'QUERY_METRICS_FAILED'],
+  ])('preserves typed errors and sanitizes unexpected failures', async (error, code) => {
+    const s = service(); s.query.mockRejectedValue(error);
+    const result = await createQueryMetricsTool(s as any).handler({ instance_id: 1 }, { actor: admin });
+    expect(result).toMatchObject({ success: false, errorCode: code });
+    expect(JSON.stringify(result)).not.toContain('secret SQL details');
   });
 });
