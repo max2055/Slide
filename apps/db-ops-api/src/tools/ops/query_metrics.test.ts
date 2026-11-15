@@ -41,4 +41,24 @@ describe('query_metrics authenticated semantic boundary', () => {
     expect(s.query).toHaveBeenCalledWith(admin, expect.objectContaining({ history: true, resource: { type: 'instance', id: 1 } }));
   });
 
+  it('OCR-0187 reports inherited legacy IDs as UNKNOWN_METRIC before querying values', async () => {
+    const s = service(); s.inventory.mockResolvedValue({ attributes: {} });
+    const result = await createQueryMetricsTool(s as any).handler({
+      resourceType: 'server', resourceId: 3, metric_ids: ['constructor'],
+    }, { actor: admin });
+    expect(result).toMatchObject({ success: false, errorCode: 'UNKNOWN_METRIC',
+      data: { migrations: [{ status: 'review_required', metric_id: null }] } });
+    expect(s.query).not.toHaveBeenCalled();
+  });
+  it('OCR-0187 forwards a valid legacy mapping as a string', async () => {
+    const s = service(); s.inventory.mockResolvedValue({ attributes: {} });
+    s.query.mockResolvedValue({ metrics: [] });
+    const result = await createQueryMetricsTool(s as any).handler({
+      resourceType: 'server', resourceId: 3, metric_ids: ['cpu_usage'],
+    }, { actor: admin });
+    expect(result.success).toBe(true);
+    expect(s.query).toHaveBeenCalledWith(admin, expect.objectContaining({
+      metric_ids: ['linux.cpu.user_system_percent'],
+    }));
+  });
 });
