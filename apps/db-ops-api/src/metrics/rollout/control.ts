@@ -127,7 +127,10 @@ export class RolloutControl {
         VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE observation_id = metric_publications.observation_id`,
       [observation.id, seriesHash(observation), ticket.generation, sqlTime(observation.observed_at)]);
       // A delayed value from the current generation is evidence, not the latest formal value.
-      if (r.latest && Date.parse(r.latest.observed_at) >= Date.parse(observation.observed_at)) return;
+      // Revisions strictly increase on switch/rollback, so only this revision's
+      // latest payload can establish the current generation's time watermark.
+      if (r.latest?.versions.config_revision === ticket.revision
+        && Date.parse(r.latest.observed_at) >= Date.parse(observation.observed_at)) return;
       if (r.read === 'legacy') { check(legacyWrite, 'ROLLOUT_LEGACY_WRITER_REQUIRED'); await legacyWrite(c); }
       await c.execute('UPDATE metric_rollout SET latest_payload = ? WHERE series_hash = ?', [JSON.stringify(observation), seriesHash(observation)]);
     });
