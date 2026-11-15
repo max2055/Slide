@@ -21,6 +21,11 @@ describe('GitHub #368 atomic snapshot batches', () => {
     vi.spyOn(console, 'error').mockImplementation(() => {});
     return { connection, pool };
   }
+  it('#558 preserves unavailable size as SQL NULL instead of measured zero', async () => {
+    const { connection } = setup();
+    expect((await service.saveSnapshot(1, [{ ...column('id'), data_length: null }])).success).toBe(true);
+    expect(connection.execute.mock.calls[2][1][12]).toBeNull();
+  });
   it('allocates after the last committed batch even if the application clock moves backwards', async () => {
     const previous = new Date('2040-01-01T00:00:00.999Z');
     const { connection } = setup(previous);
@@ -61,4 +66,14 @@ describe('GitHub #368 atomic snapshot batches', () => {
     expect((await service.saveSnapshot(1, [])).success).toBe(false);
     expect(pool.getConnection).not.toHaveBeenCalled();
   });
+});
+
+// #558 SQL NULL must survive the aggregate/list conversion as well as INSERT.
+it('preserves unavailable allocation in the table list alongside measured zero', async () => {
+  const pool = { execute: vi.fn().mockResolvedValue([[
+    { table_name: 'unknown', data_length: null, table_rows: 0, column_count: 1, snapshot_time: new Date() },
+    { table_name: 'empty', data_length: '0', table_rows: 0, column_count: 1, snapshot_time: new Date() },
+  ]]) };
+  vi.spyOn(dbConnection, 'getPool').mockReturnValue(pool as any);
+  expect((await service.getTableList(1)).map(row => row.data_length)).toEqual([null, 0]);
 });

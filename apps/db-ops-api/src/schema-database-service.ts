@@ -15,7 +15,7 @@ export interface TableSchemaRow {
   column_comment: string | null;
   table_comment: string | null;
   table_rows: number;
-  data_length: number;
+  data_length: number | null;
 }
 
 export interface SchemaChange {
@@ -86,7 +86,7 @@ class SchemaDatabaseService {
         row.column_comment,
         row.table_comment,
         row.table_rows || 0,
-        row.data_length || 0,
+        row.data_length ?? null,
       ]);
 
       for (let offset = 0; offset < values.length; offset += 500) {
@@ -326,7 +326,7 @@ class SchemaDatabaseService {
   /**
    * 获取当前快照的表列表（去重，含统计）
    */
-  async getTableList(instanceId: number): Promise<{ table_name: string; table_comment: string | null; table_rows: number; data_length: number; column_count: number; snapshot_time: Date }[]> {
+  async getTableList(instanceId: number): Promise<{ table_name: string; table_comment: string | null; table_rows: number; data_length: number | null; column_count: number; snapshot_time: Date }[]> {
     const pool = this.getPool();
     if (!pool) {
       return [];
@@ -354,7 +354,7 @@ class SchemaDatabaseService {
         table_name: row.table_name,
         table_comment: row.table_comment,
         table_rows: Number(row.table_rows),
-        data_length: Number(row.data_length),
+        data_length: row.data_length == null ? null : Number(row.data_length),
         column_count: Number(row.column_count),
         snapshot_time: new Date(row.snapshot_time),
       }));
