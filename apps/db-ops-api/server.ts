@@ -1,3 +1,4 @@
+import { registerIndexRoutes } from './src/index-routes.js';
 import { recordSshTrustRequest } from './src/security/ssh-trust-audit.js';
 import { SystemEventWorkflow } from './src/investigations/system-event-workflow.js';
 import { registerResourceIdentityRoutes } from './src/resources/resource-identity-routes.js';
@@ -113,8 +114,6 @@ import { notificationDatabaseService } from './src/notification-database-service
 import { notificationService } from './src/notification-service.js';
 import { schemaService } from './src/schema-service.js';
 import { schemaDatabaseService } from './src/schema-database-service.js';
-import { indexService } from './src/index-service.js';
-import { indexDatabaseService } from './src/index-database-service.js';
 import { topsqlAnalysisService } from './src/topsql-analysis-service.js';
 import { alertRCAService } from './src/alert-rca-service.js';
 import { faultDiagnosisService } from './src/fault-diagnosis-service.js';
@@ -2431,15 +2430,15 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
     preHandler: [verifyToken, requirePermission('metric:manage')],
     handler: async (request, reply) => {
       try {
-        const body = request.body as any;
-        const result = await scoringConfigService.saveWeights(body);
+        const result = await scoringConfigService.saveWeights(request.body);
         if (result.success) {
           reply.send({ success: true });
         } else {
-          reply.code(400).send({ error: result.error });
+          reply.code(result.statusCode ?? 400).send({ error: result.error });
         }
-      } catch (error: any) {
-        reply.code(500).send({ error: error.message });
+      } catch (error) {
+        request.log.error({ err: error }, '保存评分权重失败');
+        reply.code(500).send({ error: '保存评分权重失败' });
       }
     },
   });
@@ -4648,96 +4647,9 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
     }
   });
 
-  // ========== 索引管理 API ==========
-
-  // 触发索引采集
-  fastify.post('/api/index/collect/:instanceId', {
-    preHandler: [verifyToken, requirePermission('index:manage'), requireInstanceAccess()],
-    handler: async (request, reply) => {
-      try {
-        const { instanceId } = request.params as any;
-        const result = await indexService.collectIndexes(Number(instanceId));
-        if ('error' in result) {
-          return reply.code(400).send({ success: false, error: result.error });
-        }
-        reply.send({ success: true, data: result });
-      } catch (error: any) {
-        reply.code(500).send({ error: error.message });
-      }
-    }
-  });
-
-  // 触发冗余检测
-  fastify.post('/api/index/detect/:instanceId', {
-    preHandler: [verifyToken, requirePermission('index:manage'), requireInstanceAccess()],
-    handler: async (request, reply) => {
-      try {
-        const { instanceId } = request.params as any;
-        const result = await indexService.detectRedundantIndexes(Number(instanceId));
-        if ('error' in result) {
-          return reply.code(400).send({ success: false, error: result.error });
-        }
-        reply.send(result);
-      } catch (error: any) {
-        reply.code(500).send({ error: error.message });
-      }
-    }
-  });
-
-  // 获取实例所有索引
-  fastify.get('/api/indexes/:instanceId', {
-    preHandler: [verifyToken, requirePermission('index:view'), requireInstanceAccess()],
-    handler: async (request, reply) => {
-      try {
-        const { instanceId } = request.params as any;
-        const indexes = await indexDatabaseService.getIndexesByInstance(Number(instanceId));
-        reply.send(indexes);
-      } catch (error: any) {
-        reply.code(500).send({ error: error.message });
-      }
-    }
-  });
-
-  // 获取冗余索引报告（必须在 :tableName 之前）
-  fastify.get('/api/indexes/:instanceId/redundancy', {
-    preHandler: [verifyToken, requirePermission('index:view'), requireInstanceAccess()],
-    handler: async (request, reply) => {
-      try {
-        const { instanceId } = request.params as any;
-        const report = await indexDatabaseService.getRedundancyReport(Number(instanceId));
-        reply.send(report);
-      } catch (error: any) {
-        reply.code(500).send({ error: error.message });
-      }
-    }
-  });
-
-  // 获取未使用索引列表（必须在 :tableName 之前）
-  fastify.get('/api/indexes/:instanceId/unused', {
-    preHandler: [verifyToken, requirePermission('index:view'), requireInstanceAccess()],
-    handler: async (request, reply) => {
-      try {
-        const { instanceId } = request.params as any;
-        const unused = await indexDatabaseService.getUnusedIndexes(Number(instanceId));
-        reply.send(unused);
-      } catch (error: any) {
-        reply.code(500).send({ error: error.message });
-      }
-    }
-  });
-
-  // 获取指定表的索引
-  fastify.get('/api/indexes/:instanceId/:tableName', {
-    preHandler: [verifyToken, requirePermission('index:view'), requireInstanceAccess()],
-    handler: async (request, reply) => {
-      try {
-        const { instanceId, tableName } = request.params as any;
-        const indexes = await indexDatabaseService.getIndexesByTable(Number(instanceId), tableName);
-        reply.send(indexes);
-      } catch (error: any) {
-        reply.code(500).send({ error: error.message });
-      }
-    }
+  registerIndexRoutes(fastify, {
+    manage: [verifyToken, requirePermission('index:manage'), requireInstanceAccess()],
+    view: [verifyToken, requirePermission('index:view'), requireInstanceAccess()],
   });
 
   // ========================================
@@ -4847,7 +4759,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
       }
       const result = await metricDatabaseService.updateMetric(id, body, targetType);
       if (!result.success) {
-        reply.code(400).send(result);
+        reply.code(result.reason === 'not_found' ? 404 : 400).send(result);
         return;
       }
       await metricRegistry.refreshFromDB();
