@@ -977,14 +977,17 @@ class MetricsDatabaseService {
           table_count: Number(row.table_count),
         }));
       } else {
-        // 获取最新一条记录
+        // 在同一语句视图中选择单个最新快照，空快照也不能回退到历史明细。
         const [rows] = await pool.execute(
           `SELECT d.db_name, d.size_gb, d.table_count
            FROM capacity_databases d
-           INNER JOIN capacity_history h ON d.capacity_id = h.id
-           WHERE h.instance_id = ?
-           ORDER BY h.recorded_at DESC
-           LIMIT 100`,
+           WHERE d.capacity_id = (
+             SELECT h.id FROM capacity_history h
+             WHERE h.instance_id = ?
+             ORDER BY h.recorded_at DESC, h.id DESC
+             LIMIT 1
+           )
+           ORDER BY d.size_gb DESC, d.db_name ASC, d.id ASC`,
           [instanceId]
         ) as any;
         return rows.map((row: any) => ({
