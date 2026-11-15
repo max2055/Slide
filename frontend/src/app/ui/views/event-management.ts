@@ -502,25 +502,36 @@ export class EventManagementPage extends LitElement {
     }
   }
 
+  private detailRequest = 0;
+
   private async _selectEvent(event: AlertEvent) {
+    const request = ++this.detailRequest;
     this.selectedEvent = event;
+    this.eventMembers = [];
+    this.eventLogs = [];
     try {
       const [detailRes, logsRes] = await Promise.all([
         authFetch(`${API_BASE}/alerts/events/${event.id}`),
         authFetch(`${API_BASE}/alerts/events/${event.id}/logs`),
       ]);
-      if (detailRes.ok) {
-        const detail = await detailRes.json();
+      const detail = detailRes.ok ? await detailRes.json() : null;
+      const logs = logsRes.ok ? await logsRes.json() : [];
+      if (request !== this.detailRequest || this.selectedEvent?.id !== event.id) return;
+      if (detail && String(detail.id) === String(event.id)) {
         this.eventMembers = detail.alerts || [];
-        this.selectedEvent = { ...this.selectedEvent, ...detail };
+        this.selectedEvent = { ...event, ...detail };
       }
-      this.eventLogs = logsRes.ok ? await logsRes.json() : [];
+      this.eventLogs = logs;
     } catch (e: any) {
-      showToast('Failed to load event details', 'error');
+      if (request === this.detailRequest && this.selectedEvent?.id === event.id) {
+        showToast('Failed to load event details', 'error');
+      }
     }
   }
 
   private async _action(action: () => Promise<void>) {
+    if (this.actionLoading) return;
+    this.error = null;
     this.actionLoading = true;
     try {
       await action();
@@ -551,8 +562,8 @@ export class EventManagementPage extends LitElement {
   private async _addNote() {
     const eventId = this.selectedEvent?.id;
     if (!eventId || !this.noteText.trim()) return;
-    const note = this.noteText.trim();
-    this.noteText = "";
+    const draft = this.noteText;
+    const note = draft.trim();
     await this._action(async () => {
       const res = await authFetch(`${API_BASE}/alerts/events/${eventId}/note`, {
         method: "POST",
@@ -560,6 +571,7 @@ export class EventManagementPage extends LitElement {
         body: JSON.stringify({ note }),
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      if (this.noteText === draft) this.noteText = "";
     });
   }
 
@@ -639,16 +651,19 @@ export class EventManagementPage extends LitElement {
   private async _addPostmortem() {
     const eventId = this.selectedEvent?.id;
     if (!eventId || !this.postmortemText.trim()) return;
-    const content = this.postmortemText.trim();
-    this.postmortemText = "";
-    this.showPostmortemForm = false;
+    const draft = this.postmortemText;
+    const postmortem = draft.trim();
     await this._action(async () => {
       const res = await authFetch(`${API_BASE}/alerts/events/${eventId}/postmortem`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ content }),
+        body: JSON.stringify({ postmortem }),
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      if (this.postmortemText === draft) {
+        this.postmortemText = "";
+        this.showPostmortemForm = false;
+      }
     });
   }
 
@@ -732,14 +747,12 @@ export class EventManagementPage extends LitElement {
           </div>
         </div></div>`;
     }
-    if (this.error) {
-      return html`<div class="page"><div class="error">加载失败: ${this.error}</div></div>`;
-    }
 
     const filtered = this._getFilteredEvents();
 
     return html`
       <div class="page">
+        ${this.error ? html`<div class="error" role="alert">操作失败: ${this.error}</div>` : nothing}
         <div class="page-top">
         <div class="header"></div>
 
@@ -748,11 +761,14 @@ export class EventManagementPage extends LitElement {
         <div class="search-bar">
           <input
             type="text"
-            placeholder="搜索事件标题、实例或根因..."
+            aria-label="搜索本页事件"
+            placeholder="搜索本页事件标题、实例或根因..."
             .value=${this.filterSearch}
             @input=${(e: Event) => { this.filterSearch = (e.target as HTMLInputElement).value; }}
           />
         </div>
+
+        <p>搜索和严重度仅筛选本页；分页总数为当前状态的全部事件数。</p>
 
         <!-- 活跃/已解决 Tab -->
         <div style="display:flex;gap:var(--space-md);margin-bottom:var(--space-lg);">
@@ -771,7 +787,7 @@ export class EventManagementPage extends LitElement {
         </div>
 
         <div class="filter-bar">
-          <label>严重度:</label>
+          <label>本页严重度:</label>
           <select @change=${(e: Event) => { this.filterSeverity = (e.target as HTMLSelectElement).value; }}>
             <option value="all">全部</option>
             <option value="critical" ?selected=${this.filterSeverity === 'critical'}>严重</option>
@@ -943,6 +959,7 @@ export class EventManagementPage extends LitElement {
           <div class="action-bar" style="border-top: none; padding-top: 0; margin-top: var(--space-sm);">
             <textarea
               class="note-input"
+              aria-label="事件备注"
               placeholder="添加备注..."
               .value=${this.noteText}
               @input=${(e: Event) => { this.noteText = (e.target as HTMLTextAreaElement).value; }}
@@ -954,6 +971,7 @@ export class EventManagementPage extends LitElement {
             <div class="postmortem-section">
               <textarea
                 class="note-input"
+                aria-label="事件复盘"
                 placeholder="输入复盘内容（支持 Markdown）..."
                 style="min-height: 120px;"
                 .value=${this.postmortemText}
