@@ -25,7 +25,7 @@ export async function registerAlertEscalationRoute(
             ? 403
             : result.error === "ESCALATION_NOT_FOUND"
               ? 404
-              : result.error === "ESCALATION_LEVEL" || result.error === "ESCALATION_DIRECTION"
+              : result.error === "ESCALATION_LEVEL" || result.error === "ESCALATION_DIRECTION" || result.error === "ESCALATION_STATUS"
                 ? 409
                 : 503,
         )

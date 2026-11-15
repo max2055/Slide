@@ -67,7 +67,17 @@ test('MAX-638 #642 two tabs merge simultaneous deletes, restore, refresh and ses
   await open(page);
   const second = await context.newPage();
   await open(second);
-  await Promise.all([remove(page, messages[0].content), remove(second, messages[2].content)]);
+  // Prepare both confirmation controls before storage events can reflow either row.
+  const firstDelete = group(page, messages[0].content);
+  const secondDelete = group(second, messages[2].content);
+  for (const row of [firstDelete, secondDelete]) {
+    await row.hover();
+    await row.getByRole('button', { name: 'Delete message', exact: true }).click();
+  }
+  await Promise.all([
+    firstDelete.getByRole('button', { name: 'Delete', exact: true }).click(),
+    secondDelete.getByRole('button', { name: 'Delete', exact: true }).click(),
+  ]);
   for (const tab of [page, second]) {
     await expect(group(tab, messages[0].content)).toHaveCount(0);
     await expect(group(tab, messages[2].content)).toHaveCount(0);
@@ -94,6 +104,52 @@ test('MAX-638 #642 two tabs merge simultaneous deletes, restore, refresh and ses
   await info.attach('storage.json', { body: JSON.stringify(await page.evaluate(() => Object.fromEntries(
     Object.entries(localStorage).filter(([key]) => key.startsWith('slide:deleted')),
   ))), contentType: 'application/json' });
+});
+
+// MAX-637 gate recovery: force the storage-driven reflow between confirmations.
+test('MAX-638 #642 pending confirmation survives cross-tab storage and list reflow', async ({ page, context }, info) => {
+  await open(page);
+  const second = await context.newPage();
+  await open(second);
+  const firstRow = group(page, messages[0].content);
+  const secondRow = group(second, messages[2].content);
+  for (const row of [firstRow, secondRow]) {
+    await row.hover();
+    await row.getByRole('button', { name: 'Delete message', exact: true }).click();
+  }
+  const confirm = secondRow.getByRole('button', { name: 'Delete', exact: true });
+  await expect(confirm).toBeVisible();
+  const before = await confirm.boundingBox();
+  expect(before).not.toBeNull();
+  // Observe the real browser event; do not dispatch a synthetic storage event.
+  await second.evaluate(() => {
+    (window as any).deletionStorageEvents = [];
+    window.addEventListener('storage', event => {
+      if (event.key?.startsWith('slide:deleted-message:fixture-one:')) {
+        (window as any).deletionStorageEvents.push({ key: event.key, newValue: event.newValue });
+      }
+    });
+  });
+  await firstRow.getByRole('button', { name: 'Delete', exact: true }).click();
+  await expect.poll(() => second.evaluate(() => (window as any).deletionStorageEvents.length)).toBe(1);
+  await expect(group(second, messages[0].content)).toHaveCount(0);
+  await expect(confirm).toBeVisible();
+  await expect.poll(async () => (await confirm.boundingBox())?.y).toBeLessThan(before!.y);
+  const after = await confirm.boundingBox();
+  await expect(confirm).toHaveCSS('opacity', '1');
+  await expect(confirm).toHaveCSS('pointer-events', 'auto');
+  await confirm.click();
+  for (const tab of [page, second]) {
+    await expect(group(tab, messages[0].content)).toHaveCount(0);
+    await expect(group(tab, messages[2].content)).toHaveCount(0);
+    expect(await tab.evaluate(() => Object.entries(localStorage)
+      .filter(([key, value]) => key.startsWith('slide:deleted-message:fixture-one:') && value === 'true')
+      .length)).toBe(2);
+  }
+  await info.attach('reflow.json', {
+    body: JSON.stringify({ before, after, storageEvents: await second.evaluate(() => (window as any).deletionStorageEvents) }),
+    contentType: 'application/json',
+  });
 });
 
 test('MAX-638 legacy deletions restore and remain restored after reload', async ({ page, context }) => {

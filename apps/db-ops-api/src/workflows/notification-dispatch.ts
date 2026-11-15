@@ -76,3 +76,25 @@ export class NotificationDispatchScheduler {
     return enqueued;
   }
 }
+
+/** Leader tick repair is independent of job retries, including queue-store outages.
+ * One in-flight write only; unknown acknowledgements are reconciled by the store's
+ * slot idempotency key. A restart may safely ensure the same slot again. */
+export class NotificationDispatchReconciler {
+  private inFlight?: Promise<void>;
+  private ensuredSlot?: number;
+  constructor(private readonly workflow: WorkflowEnqueuer) {}
+
+  ensure(signal: AbortSignal, now = new Date()): Promise<void> {
+    signal.throwIfAborted();
+    if (this.inFlight) return this.inFlight;
+    const slot = Math.floor(now.getTime() / 10_000);
+    if (this.ensuredSlot === slot) return Promise.resolve();
+    this.inFlight = (async () => {
+      await this.workflow.enqueue(createNotificationDispatchJob(now));
+      signal.throwIfAborted();
+      this.ensuredSlot = slot;
+    })().finally(() => { this.inFlight = undefined; });
+    return this.inFlight;
+  }
+}

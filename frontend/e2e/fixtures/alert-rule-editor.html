@@ -1,0 +1,31 @@
+<!doctype html><html lang="zh-CN"><meta charset="UTF-8"><title>告警规则隔离验收</title>
+<link rel="stylesheet" href="/src/app/styles/tokens.css">
+<button id="create">新建规则</button><button id="edit">编辑已保存规则</button><output role="status"></output>
+<alert-rule-editor></alert-rule-editor>
+<script type="module">
+import '/src/app/ui/components/alert-rule-editor.ts';
+const editor = document.querySelector('alert-rule-editor');
+const status = document.querySelector('output');
+let saved;
+const request = async (path, options = {}) => {
+  const response = await fetch(path, { ...options, headers: { 'content-type': 'application/json', authorization: 'Bearer ' + sessionStorage.token } });
+  const result = await response.json();
+  if (!response.ok) throw Error(result.error || result.message);
+  return result;
+};
+window.ready = async () => {
+  editor.metricRegistry = await request('/api/metrics/registry');
+};
+document.querySelector('#create').onclick = () => { editor.rule = null; editor.open = true; status.value = ''; };
+document.querySelector('#edit').onclick = () => { editor.rule = saved; editor.open = true; status.value = ''; };
+editor.addEventListener('close', () => { editor.open = false; });
+editor.addEventListener('save', async ({ detail }) => {
+  editor.error = ''; status.value = '保存中';
+  try {
+    const result = await request('/api/alert-rules' + (detail.isEdit ? '/' + detail.id : ''), { method: detail.isEdit ? 'PUT' : 'POST', body: JSON.stringify(detail.body) });
+    saved = (await request('/api/alert-rules')).find(rule => rule.id === (detail.id || result.id));
+    window.saved = saved;
+    editor.open = false; status.value = '保存成功';
+  } catch (error) { editor.error = error.message; status.value = '保存失败'; }
+});
+</script></html>

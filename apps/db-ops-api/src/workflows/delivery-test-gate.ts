@@ -4,6 +4,7 @@ import { deliveryIdentity } from './delivery-store.js';
 export function testDeliveryGate(): DeliveryGate {
   const rows = new Map<string, { request: DeliveryRequest; state: string }>();
   return {
+    skipDisabled: async () => {},
     preflightFailed: async () => {},
     snapshot: async key => rows.get(key)?.request ?? null,
     acquire: async (job, context, request) => {

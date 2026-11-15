@@ -600,32 +600,31 @@ export class SqlAuditTab extends LitElement {
   }
 
   private _renderAnalysisResult() {
-    const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
-
+    // Lit text bindings preserve the original text and do not parse it as HTML.
     if (!this.currentResult) return html``;
 
     const result = this.currentResult;
     const sections: any[] = [];
 
     if (result.summary) {
-      sections.push(html`<div style="margin-bottom:16px;padding:12px;background:var(--bg-elevated);border-radius:var(--radius-md);border:1px solid var(--border);"><strong style="color:var(--text-strong);">摘要</strong><p style="margin:8px 0 0;font-size:14px;color:var(--text);line-height:1.6;">${esc(result.summary)}</p></div>`);
+      sections.push(html`<div style="margin-bottom:16px;padding:12px;background:var(--bg-elevated);border-radius:var(--radius-md);border:1px solid var(--border);"><strong style="color:var(--text-strong);">摘要</strong><p style="margin:8px 0 0;font-size:14px;color:var(--text);line-height:1.6;">${result.summary}</p></div>`);
     }
 
     for (const [key, value] of Object.entries(result)) {
       if (key === "summary") continue;
       if (Array.isArray(value)) {
-        sections.push(html`<div style="margin-bottom:12px;"><strong style="color:var(--text-strong);font-size:13px;">${esc(key)}</strong><ul style="margin:6px 0 0 20px;font-size:13px;color:var(--text);line-height:1.8;">${value.map((item: any) => {
-          if (typeof item === "string") return html`<li>${esc(item)}</li>`;
+        sections.push(html`<div style="margin-bottom:12px;"><strong style="color:var(--text-strong);font-size:13px;">${key}</strong><ul style="margin:6px 0 0 20px;font-size:13px;color:var(--text);line-height:1.8;">${value.map((item: any) => {
+          if (typeof item === "string") return html`<li>${item}</li>`;
           if (typeof item === "object" && item !== null) {
-            const entries = Object.entries(item).map(([k, v]) => `${esc(k)}: ${esc(String(v))}`).join("; ");
+            const entries = Object.entries(item).map(([k, v]) => `${k}: ${String(v)}`).join("; ");
             return html`<li>${entries}</li>`;
           }
-          return html`<li>${esc(String(item))}</li>`;
+          return html`<li>${String(item)}</li>`;
         })}</ul></div>`);
       } else if (typeof value === "object" && value !== null) {
-        sections.push(html`<div style="margin-bottom:12px;"><strong style="color:var(--text-strong);font-size:13px;">${esc(key)}</strong><pre style="margin:6px 0 0;padding:10px;background:var(--bg-elevated);border-radius:var(--radius-sm);font-size:12px;color:var(--text);white-space:pre-wrap;overflow-x:auto;">${esc(JSON.stringify(value, null, 2))}</pre></div>`);
+        sections.push(html`<div style="margin-bottom:12px;"><strong style="color:var(--text-strong);font-size:13px;">${key}</strong><pre style="margin:6px 0 0;padding:10px;background:var(--bg-elevated);border-radius:var(--radius-sm);font-size:12px;color:var(--text);white-space:pre-wrap;overflow-x:auto;">${JSON.stringify(value, null, 2)}</pre></div>`);
       } else {
-        sections.push(html`<div style="margin-bottom:8px;font-size:13px;"><strong style="color:var(--text-strong);">${esc(key)}:</strong> <span style="color:var(--text);">${esc(String(value))}</span></div>`);
+        sections.push(html`<div style="margin-bottom:8px;font-size:13px;"><strong style="color:var(--text-strong);">${key}:</strong> <span style="color:var(--text);">${String(value)}</span></div>`);
       }
     }
 

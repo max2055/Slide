@@ -7,6 +7,7 @@ import { authFetch } from '../../../api/index.js';
 
 interface QanRow {
   fingerprint: string;
+  sql_text?: string | null;
   calls: number;
   avg_time_ms: number;
   max_time_ms: number;
@@ -90,6 +91,7 @@ export class QueryAnalysisTab extends LitElement {
 
     .empty { padding: 40px; text-align: center; color: var(--muted, #6b7280); }
     .loading { padding: 20px; text-align: center; color: var(--muted, #6b7280); }
+    pre { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; }
   `];
 
   @property({ type: Number }) instanceId = 0;
@@ -98,13 +100,34 @@ export class QueryAnalysisTab extends LitElement {
   @state() private selectedQuery: QanRow | null = null;
   @state() private loading = false;
   @state() private explainLoading = false;
+  @state() private explainError = "";
+  private explainRequest = 0;
+  private qanRequest = 0;
   @state() private sortField: keyof QanRow = "total_time_ms";
   @state() private sortDir: "asc" | "desc" = "desc";
 
-  override updated(changed: Map<string, unknown>) {
-    if (changed.has("instanceId") && this.instanceId) {
-      this.loadQanData();
+  override willUpdate(changed: Map<string, unknown>) {
+    if (changed.has("instanceId")) {
+      this.qanRequest++;
+      this.qanData = [];
+      this.loading = false;
+      this.selectedQuery = null;
+      this.clearExplain();
+      if (this.instanceId) void this.loadQanData();
     }
+  }
+
+  override disconnectedCallback() {
+    super.disconnectedCallback();
+    this.qanRequest++;
+    this.clearExplain();
+  }
+
+  private clearExplain() {
+    this.explainRequest++;
+    this.explainPlan = null;
+    this.explainError = "";
+    this.explainLoading = false;
   }
 
   private _authHeaders(): Record<string, string> {
@@ -114,31 +137,52 @@ export class QueryAnalysisTab extends LitElement {
 
   private async loadQanData() {
     if (!this.instanceId) return;
+    const request = ++this.qanRequest;
+    const instanceId = this.instanceId;
+    const current = () => request === this.qanRequest && instanceId === this.instanceId;
     this.loading = true;
     try {
       const res = await authFetch(`/api/database/instances/${this.instanceId}/qan?limit=50`, {
         headers: this._authHeaders(),
       });
-      if (res.ok) this.qanData = await res.json();
-    } catch (e) { showToast('Failed to load query analysis', 'error'); }
-    this.loading = false;
+      if (!res.ok) throw new Error('QAN unavailable');
+      const rows = await res.json();
+      if (!Array.isArray(rows)) throw new Error('Invalid QAN response');
+      if (current()) this.qanData = rows;
+    } catch (e) { if (current()) showToast('查询分析加载失败', 'error'); }
+    finally { if (current()) this.loading = false; }
   }
 
-  private async loadExplain(sql: string) {
+  private async loadExplain(row: QanRow) {
+    const request = this.explainRequest;
+    const instanceId = this.instanceId;
+    const current = () => request === this.explainRequest && instanceId === this.instanceId && row === this.selectedQuery;
     this.explainLoading = true;
     try {
       const res = await authFetch(
-        `/api/database/instances/${this.instanceId}/explain?sql=${encodeURIComponent(sql)}`,
+        `/api/database/instances/${instanceId}/explain?sql=${encodeURIComponent(row.sql_text!)}`,
         { headers: this._authHeaders() }
       );
-      if (res.ok) this.explainPlan = await res.json();
-    } catch (e) { showToast('Failed to load EXPLAIN plan', 'error'); }
-    this.explainLoading = false;
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const result = await res.json();
+      if (!result?.plan || typeof result.plan !== 'object' || result.plan.error) throw new Error('无可用计划');
+      if (current()) this.explainPlan = result;
+    } catch (e) {
+      if (current()) {
+        this.explainPlan = null;
+        this.explainError = `执行计划加载失败${e instanceof Error && /^HTTP \d+$/.test(e.message) ? `（${e.message}）` : ''}，请重新选择查询重试`;
+      }
+    } finally { if (current()) this.explainLoading = false; }
   }
 
   private _selectQuery(row: QanRow) {
+    this.clearExplain();
     this.selectedQuery = row;
-    this.loadExplain(row.fingerprint);
+    if (!row.sql_text?.trim()) {
+      this.explainError = '没有可执行的语句文本，无法生成执行计划；指纹仅用于展示和定位';
+      return;
+    }
+    return this.loadExplain(row);
   }
 
   private _sort(field: keyof QanRow) {
@@ -216,6 +260,8 @@ export class QueryAnalysisTab extends LitElement {
               <tbody>
                 ${this.qanData.map(row => html`
                   <tr class="${this.selectedQuery === row ? 'selected' : ''}"
+                      tabindex="0" aria-selected=${this.selectedQuery === row}
+                      @keydown=${(event: KeyboardEvent) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); void this._selectQuery(row); } }}
                       @click=${() => this._selectQuery(row)}>
                     <td style="text-align:center"><div class="fingerprint" title=${row.fingerprint}>${row.fingerprint.substring(0, 80)}</div></td>
                     <td>${row.calls.toLocaleString()}</td>
@@ -235,12 +281,15 @@ export class QueryAnalysisTab extends LitElement {
           <div class="panel-header">
             ${renderIcon('bar-chart')} 执行计划 ${this.selectedQuery ? "— " + this.selectedQuery.fingerprint.substring(0, 40) + "..." : ""}
           </div>
-          <div class="panel-body">
+          <div class="panel-body" aria-live="polite" aria-busy=${this.explainLoading}>
             ${this.explainLoading ? html`<div class="loading">加载执行计划...</div>` :
               !this.selectedQuery ? html`<div class="empty">点击左侧查询查看执行计划</div>` :
+              this.explainError ? html`<div class="empty" role="status">${this.explainError}</div>` :
               !this.explainPlan ? html`<div class="empty">无法获取执行计划</div>` :
+              this.explainPlan.db_type !== 'postgresql' && !this.explainPlan.plan['Node Type'] ?
+                html`<pre>${JSON.stringify(this.explainPlan.plan, null, 2)}</pre>` :
               Array.isArray(this.explainPlan.plan) ?
-                this.explainPlan.plan.map((n: ExplainNode) => this._renderExplainNode(n, 0)) :
+                this.explainPlan.plan.map((n: ExplainNode & { Plan?: ExplainNode }) => this._renderExplainNode(n.Plan ?? n, 0)) :
                 this._renderExplainNode(this.explainPlan.plan, 0)
             }
           </div>

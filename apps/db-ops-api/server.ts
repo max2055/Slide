@@ -1,3 +1,4 @@
+import { registerIndexRoutes } from './src/index-routes.js';
 import { recordSshTrustRequest } from './src/security/ssh-trust-audit.js';
 import { SystemEventWorkflow } from './src/investigations/system-event-workflow.js';
 import { registerResourceIdentityRoutes } from './src/resources/resource-identity-routes.js';
@@ -63,6 +64,7 @@ import { rbacApiRoutes } from './src/auth/rbac-api.js';
 import { registerAuthSessionConfigRoutes } from './src/auth/session-config-routes.js';
 import { registerInstanceListRoutes } from './src/instance-list-routes.js';
 import { registerInstanceQueryRoutes } from './src/instance-query-routes.js';
+import { registerQueryAnalysisRoutes } from './src/query-analysis-routes.js';
 import { registerFeedbackRoutes } from './src/feedback-routes.js';
 import { authSessionConfigService } from './src/auth/session-config.js';
 import { strictBody, warnUnknown } from './src/utils/strict-body.js';
@@ -104,7 +106,7 @@ import { registerAnalysisBridgeRoutes } from './src/investigations/bridge-routes
 import { registerChatRoutes } from './src/chat-routes.js';
 import { reportService } from './src/report-service.js';
 import { reportDatabaseService } from './src/report-database-service.js';
-import { reportConfigService } from './src/report-config-database-service.js';
+import { reportConfigService, ReportConfigCreateOutcomeUnknownError } from './src/report-config-database-service.js';
 import { InvalidReportCronError } from './src/report-cron.js';
 import { ReportType } from './src/report-database-service.js';
 import { reportExporter } from './src/report-exporter.js';
@@ -113,8 +115,6 @@ import { notificationDatabaseService } from './src/notification-database-service
 import { notificationService } from './src/notification-service.js';
 import { schemaService } from './src/schema-service.js';
 import { schemaDatabaseService } from './src/schema-database-service.js';
-import { indexService } from './src/index-service.js';
-import { indexDatabaseService } from './src/index-database-service.js';
 import { topsqlAnalysisService } from './src/topsql-analysis-service.js';
 import { alertRCAService } from './src/alert-rca-service.js';
 import { faultDiagnosisService } from './src/fault-diagnosis-service.js';
@@ -133,7 +133,7 @@ import { alertSilenceService } from './src/alert-silence-service.js';
 import { maintenanceWindowService } from './src/maintenance-window-service.js';
 import { alertEventService } from './src/alert-event-service.js';
 import { eventAggregator } from './src/event-aggregator.js';
-import { capacityPredictor } from './src/capacity-predictor.js';
+import { capacityPredictor, assertPredictionHorizon, PredictionHorizonError } from './src/capacity-predictor.js';
 import { aiAnalysisDatabaseService } from './src/ai-analysis-database-service.js';
 import { analysisAccessSql, canReadAnalysis } from './src/analysis/analysis-access.js';
 import { aiAnalysisConfigService } from './src/ai-analysis-config-service.js';
@@ -144,7 +144,8 @@ import { consistencyChecker } from './src/consistency-checker.js';
 import { CapacityConsistencyMonitor, createCapacityConsistencyJob } from './src/capacity-consistency-monitor.js';
 import { userPreferenceService } from './src/user-preference-service.js';
 import { collectionCapabilityTracker } from './src/collection-capabilities.js';
-import { resourceService } from './src/resources/resource-service.js';
+import { assertReportTarget } from './src/report-target.js';
+import { resourceService, canReadResource } from './src/resources/resource-service.js';
 import { capabilityService } from './src/resources/capability-service.js';
 import { observationService } from './src/resources/observation-service.js';
 import { instanceHostService } from './src/resources/instance-host-service.js';
@@ -156,6 +157,7 @@ import { registerSystemAuditRoutes } from './src/audit/system-audit-routes.js';
 import { sqlExecutor } from './src/sql-executor.js';
 import { classifySql } from './src/sql-validator.js';
 import { PersistentOperationService } from './src/operations/operation-service.js';
+import { migrateNotificationCredentials } from './src/notification-credential-migration.js';
 import { MigrationRunner } from './src/migrations/runner.js';
 import { WorkerLease, type LeasePool } from './src/lifecycle/worker-lease.js';
 import { WorkerStartup } from './src/lifecycle/worker-startup.js';
@@ -171,7 +173,7 @@ import { MysqlWorkflowStore } from './src/workflows/worker-runtime.js';
 import { BoundedWorkflowRuntime, workflowConcurrency } from './src/workflows/bounded-worker.js';
 import { createMetricSchedulerLifecycle, assertMetricSchedulerSchema } from './src/metrics/scheduler/runtime.js';
 import type { MetricSchedulerLifecycle } from './src/metrics/scheduler/lifecycle.js';
-import { createNotificationDispatchJob, NotificationDispatchScheduler } from './src/workflows/notification-dispatch.js';
+import { createNotificationDispatchJob, NotificationDispatchReconciler, NotificationDispatchScheduler } from './src/workflows/notification-dispatch.js';
 import { createReportScheduleJob, MysqlReportOccurrenceStore } from './src/report-scheduler.js';
 import { assertCreatableDatabaseType, listAdapterCapabilities } from './src/adapters/capability-matrix.js';
 import { approvalService } from './src/approval-service.js';
@@ -283,6 +285,7 @@ async function start() {
   // Fail fast before registering auth routes or starting the WS adapter.
   await new MigrationRunner(pool as any).run();
   console.log('✅ Schema migration ledger is current');
+  await migrateNotificationCredentials(pool);
   instanceAccessLifecycle.configure(id => instanceRemovalStore.available(id));
 
   if (pool) {
@@ -845,6 +848,7 @@ async function start() {
 
   await registerInstanceListRoutes(fastify, verifyToken);
   await registerInstanceQueryRoutes(fastify, verifyToken);
+  await registerQueryAnalysisRoutes(fastify, verifyToken);
 
   await registerLLMSceneRoutes(fastify, verifyToken, requirePermission('llm:manage'));
   await registerModelDiscoveryRoutes(fastify, verifyToken, requirePermission('llm:manage'), llmDatabaseService);
@@ -1026,9 +1030,15 @@ async function start() {
       if (!hasUnrestrictedInstanceAccess((request as any).user)) {
         return reply.code(403).send({ error: '清除全局告警需要不受限的实例管理权限' });
       }
-      const { retentionDays } = request.query as { retentionDays?: number };
+      const { retentionDays } = request.query as { retentionDays?: unknown };
       // 默认保留最近 30 天；前端主动传 0 可强制清除全部
+      if (retentionDays !== undefined && (typeof retentionDays !== 'string' || retentionDays.trim() === '')) {
+        return reply.code(400).send({ error: 'retentionDays 必须为非负整数' });
+      }
       const days = retentionDays !== undefined ? Number(retentionDays) : 30;
+      if (!Number.isSafeInteger(days) || days < 0) {
+        return reply.code(400).send({ error: 'retentionDays 必须为非负整数' });
+      }
       const result = await alertDatabaseService.clearAllAlerts(days);
       if (result.success) {
         reply.send({ message: '已清除告警', deletedCount: result.deletedCount });
@@ -2222,46 +2232,6 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
     }
   });
 
-  // 查询性能分析（QAN）
-  fastify.get('/api/database/instances/:id/qan', { preHandler: [verifyToken, requirePermission('instance:view'), requireInstanceAccess('read-only')] }, async (request, reply) => {
-    try {
-      const { id } = request.params as any;
-      const query = request.query as any;
-      const limit = Math.min(parseInt(query.limit || '20') || 20, 100);
-      const data = await databaseService.getQueryAnalytics(Number(id), limit);
-      if (!data) {
-        return reply.code(404).send({ error: '无法获取 QAN 数据，实例可能未连接或数据库不支持' });
-      }
-      reply.send(data);
-    } catch (error: any) {
-      reply.code(500).send({ error: '获取 QAN 数据失败：' + error.message });
-    }
-  });
-
-  // EXPLAIN 执行计划（JSON 格式）
-  fastify.get('/api/database/instances/:id/explain', {
-    config: { rateLimit: sensitiveOperationRateLimitConfig },
-    preHandler: [verifyToken, requirePermission('instance:query'), requireInstanceAccess('read-only')],
-  }, async (request, reply) => {
-    try {
-      const { id } = request.params as any;
-      const query = request.query as any;
-      const sql = query.sql;
-      if (!sql) return reply.code(400).send({ error: '缺少参数：sql' });
-      const instance = await instanceDatabaseService.getInstanceById(Number(id));
-      if (!instance) return reply.code(404).send({ error: '实例不存在' });
-      const classification = classifySql(String(sql), instance.db_type);
-      if (classification.commandType !== 'read') return reply.code(400).send({ error: '只支持单条安全 SELECT', detail: classification.reasonCode });
-      const plan = await databaseService.getExplainPlanJson(Number(id), sql);
-      if (!plan) {
-        return reply.code(404).send({ error: '无法获取执行计划，实例可能未连接' });
-      }
-      reply.send(plan);
-    } catch (error: any) {
-      reply.code(500).send({ error: '获取执行计划失败：' + error.message });
-    }
-  });
-
   // 获取数据库对象树（SQL 控制台用）
   // List all databases for an instance (for database selector dropdown)
   fastify.get('/api/database/instances/:id/databases', { preHandler: [verifyToken, requirePermission('instance:view'), requireInstanceAccess('read-only')] }, async (request, reply) => {
@@ -2431,15 +2401,15 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
     preHandler: [verifyToken, requirePermission('metric:manage')],
     handler: async (request, reply) => {
       try {
-        const body = request.body as any;
-        const result = await scoringConfigService.saveWeights(body);
+        const result = await scoringConfigService.saveWeights(request.body);
         if (result.success) {
           reply.send({ success: true });
         } else {
-          reply.code(400).send({ error: result.error });
+          reply.code(result.statusCode ?? 400).send({ error: result.error });
         }
-      } catch (error: any) {
-        reply.code(500).send({ error: error.message });
+      } catch (error) {
+        request.log.error({ err: error }, '保存评分权重失败');
+        reply.code(500).send({ error: '保存评分权重失败' });
       }
     },
   });
@@ -2742,6 +2712,9 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
       try {
         const stats = await reportDatabaseService.getReportStats(
           getAccessibleInstanceIds((request as any).user),
+          (request as any).user.resourceBoundary
+            ? (request as any).user.resourceBoundary.serverIds.filter((id: number) => canReadResource((request as any).user, { type: 'server', id }))
+            : canReadResource((request as any).user, { type: 'server', id: 1 }) ? null : [],
         );
         reply.send(stats);
       } catch (error: any) {
@@ -2806,7 +2779,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
         });
         reply.send(result);
       } catch (error: any) {
-        reply.code(500).send({ error: error.message });
+        reply.code(503).send({ error: 'REPORT_CONFIG_LIST_UNAVAILABLE' });
       }
     }
   });
@@ -2825,6 +2798,11 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
         }
         if ((instance_id === undefined || instance_id === null) === (server_id === undefined || server_id === null)) {
           return reply.code(400).send({ error: 'instance_id 或 server_id 必须且只能提供一个' });
+        }
+        try { assertReportTarget({ type, instance_id, server_id }); }
+        catch (error: any) { return reply.code(400).send({ error: error.message }); }
+        if (server_id != null && !canReadResource((request as any).user, { type: 'server', id: server_id })) {
+          return reply.code(403).send({ error: '无权访问该服务器' });
         }
         if (instance_id != null && !hasInstanceAccess((request as any).user, Number(instance_id), 'read-only')) {
           return reply.code(403).send({ error: '无权访问该实例' });
@@ -2864,6 +2842,11 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
 
         reply.send({ id: result.id, message: '创建成功' });
       } catch (error: any) {
+        if (error instanceof ReportConfigCreateOutcomeUnknownError) {
+          return reply.code(409).send({
+            error: error.message, code: 'REPORT_CONFIG_CREATE_OUTCOME_UNKNOWN', retryable: false,
+          });
+        }
         if (error instanceof InvalidReportCronError) return reply.code(400).send({ error: error.message });
         reply.code(500).send({ error: error.message });
       }
@@ -2890,12 +2873,20 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
           return reply.code(403).send({ error: '无权访问该实例' });
         }
 
-        // Validate type if provided
-        if (body.type) {
-          const validTypes = ['health', 'performance', 'slow_query', 'capacity'];
-          if (!validTypes.includes(body.type)) {
-            return reply.code(400).send({ error: `无效的报表类型：${body.type}，有效值：${validTypes.join(', ')}` });
-          }
+        if (existing.server_id != null && !canReadResource((request as any).user, { type: 'server', id: existing.server_id })) {
+          return reply.code(404).send({ error: '报表配置不存在' });
+        }
+        const target = {
+          type: body.type === undefined ? existing.type : body.type,
+          instance_id: body.instance_id === undefined ? existing.instance_id : body.instance_id,
+          server_id: body.server_id === undefined ? existing.server_id : body.server_id,
+        };
+        if (body.enabled !== false || body.type !== undefined || body.instance_id !== undefined || body.server_id !== undefined) {
+          try { assertReportTarget(target); }
+          catch (error: any) { return reply.code(400).send({ error: error.message }); }
+        }
+        if (target.server_id != null && !canReadResource((request as any).user, { type: 'server', id: target.server_id })) {
+          return reply.code(403).send({ error: '无权访问该服务器' });
         }
 
         // Validate format if provided
@@ -2922,7 +2913,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
           name: body.name,
           cron: body.cron,
           type: body.type,
-          instance_id: body.instance_id !== undefined ? Number(body.instance_id) : undefined,
+          instance_id: body.instance_id !== undefined ? body.instance_id : undefined,
           server_id: body.server_id !== undefined ? Number(body.server_id) : undefined,
           format: body.format,
           notification_channel_ids: notificationChannelIds,
@@ -3194,14 +3185,14 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
           metric_name: data.metric_name,
           operator: data.operator,
           threshold: Number(data.threshold),
-          duration_seconds: Number(data.duration_seconds) || 60,
+          duration_seconds: data.duration_seconds,
           severity: data.severity,
           notification_channels: data.notification_channels,
           threshold_type: data.threshold_type,
           threshold_template: data.threshold_template,
           dynamic_config: data.dynamic_config,
           silence_minutes: data.silence_minutes,
-          db_types: data.db_types || (metricDef ? metricDef.db_types : null),
+          db_types: data.db_types === undefined ? (metricDef?.db_types ?? null) : data.db_types,
           instance_ids: instanceIds,
           template_id: data.template_id ?? null,
           target_type: data.target_type || 'instance',
@@ -3270,7 +3261,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
         if (data.metric_name !== undefined) updateData.metric_name = data.metric_name;
         if (data.operator !== undefined) updateData.operator = data.operator;
         if (data.threshold !== undefined) updateData.threshold = Number(data.threshold);
-        if (data.duration_seconds !== undefined) updateData.duration_seconds = Number(data.duration_seconds);
+        if (data.duration_seconds !== undefined) updateData.duration_seconds = data.duration_seconds;
         if (data.severity !== undefined) updateData.severity = data.severity;
         if (data.enabled !== undefined) updateData.enabled = data.enabled;
         if (data.notification_channels !== undefined) updateData.notification_channels = data.notification_channels;
@@ -3357,19 +3348,23 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
     preHandler: [verifyToken, requirePermission('alert:manage')],
     handler: async (request, reply) => {
       try {
+        if (!request.body || typeof request.body !== 'object' || Array.isArray(request.body)) {
+          return reply.code(400).send({ error: '模板必须是对象' });
+        }
         const data = request.body as any;
         const check = strictBody(request.body as Record<string, unknown>,
-          ['name', 'metric_name', 'operator'], 'POST /api/alert-rule-templates');
+          ['name', 'description', 'target_type', 'metric_name', 'operator', 'threshold_template',
+           'duration_seconds', 'severity', 'silence_minutes', 'enabled'], 'POST /api/alert-rule-templates');
         if (check.error) return reply.code(400).send(check.error);
         const result = await alertRuleTemplateService.createTemplate({
           name: data.name,
           description: data.description,
-          target_type: data.target_type || 'instance',
+          target_type: data.target_type,
           metric_name: data.metric_name,
           operator: data.operator,
           threshold_template: data.threshold_template,
-          duration_seconds: Number(data.duration_seconds) || 60,
-          severity: data.severity || 'warning',
+          duration_seconds: data.duration_seconds,
+          severity: data.severity,
           silence_minutes: data.silence_minutes ?? 5,
           enabled: data.enabled !== undefined ? data.enabled : true,
           created_by: (request as any).user?.userId,
@@ -3391,6 +3386,9 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
     handler: async (request, reply) => {
       try {
         const { id } = request.params as any;
+        if (!request.body || typeof request.body !== 'object' || Array.isArray(request.body)) {
+          return reply.code(400).send({ error: '模板必须是对象' });
+        }
         const data = request.body as any;
         const updateData: Record<string, any> = {};
         if (data.name !== undefined) updateData.name = data.name;
@@ -3399,7 +3397,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
         if (data.metric_name !== undefined) updateData.metric_name = data.metric_name;
         if (data.operator !== undefined) updateData.operator = data.operator;
         if (data.threshold_template !== undefined) updateData.threshold_template = data.threshold_template;
-        if (data.duration_seconds !== undefined) updateData.duration_seconds = Number(data.duration_seconds);
+        if (data.duration_seconds !== undefined) updateData.duration_seconds = data.duration_seconds;
         if (data.severity !== undefined) updateData.severity = data.severity;
         if (data.silence_minutes !== undefined) updateData.silence_minutes = data.silence_minutes;
         if (data.enabled !== undefined) updateData.enabled = data.enabled;
@@ -3568,15 +3566,13 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
             field: 'type',
           });
         }
-        let validationType = data.type;
-        if (data.config !== undefined && validationType === undefined) {
-          const existing = await notificationDatabaseService.getChannelById(Number(id));
-          validationType = existing?.type;
-        }
+        const existing = data.config !== undefined || data.type !== undefined
+          ? await notificationDatabaseService.getChannelById(Number(id)) : null;
+        const validationType = data.type ?? existing?.type;
         let config = data.config;
         if (data.config !== undefined && validationType !== undefined) {
           const configValidation = validateNotificationChannelConfig(validationType, data.config, {
-            partial: true,
+            partial: data.type === undefined || data.type === existing?.type,
             allowEncryptedCredentials: false,
           });
           if (configValidation.valid === false) return notificationConfigError(reply, configValidation);
@@ -3672,6 +3668,9 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
     handler: async (request, reply) => {
       try {
         const { alert_id, channel_id, status, limit = '50', offset = '0' } = request.query as any;
+        if (status !== undefined && !['pending', 'sent', 'failed', 'suppressed'].includes(status)) {
+          return reply.code(400).send({ error: 'status 必须为 pending、sent、failed 或 suppressed' });
+        }
         const filters = {
           alert_id: alert_id ? Number(alert_id) : undefined,
           channel_id: channel_id ? Number(channel_id) : undefined,
@@ -3780,7 +3779,8 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
             if (!body.metric) {
               return reply.code(400).send({ error: '容量预测需要 metric 参数' });
             }
-            const horizon = body.horizon || '30d';
+            const { horizon = '30d' } = body;
+            assertPredictionHorizon(horizon);
             const predictResult = await capacityPredictor.predict(instance_id, body.metric, horizon);
             return reply.send({ success: true, result: predictResult });
           }
@@ -3797,7 +3797,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
           || (analysis_type in sessionKeyPrefix ? `${sessionKeyPrefix[analysis_type]}-${analysisId}` : undefined);
         reply.send({ id: analysisId, status: "pending", session_key });
       } catch (error: any) {
-        reply.code(500).send({ error: error.message });
+        reply.code(error instanceof PredictionHorizonError ? 400 : 500).send({ error: error.message });
       }
     }
   });
@@ -4105,8 +4105,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
           return reply.code(403).send({ error: '无权访问该实例' });
         }
 
-        const username = (request as any).user?.username || 'anonymous';
-        const result = await sqlAuditService.submitAudit(sql_text.trim(), instance_id, username);
+        const result = await sqlAuditService.submitAudit(sql_text.trim(), instance_id, (request as any).user);
 
         reply.send({
           success: true,
@@ -4204,8 +4203,6 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
         }
 
         const results: Array<{ slow_query_id: number; analysis_id: number; pre_audit_results: any[] }> = [];
-        const username = (request as any).user?.username || 'anonymous';
-
         const slowQueries = await metricsDatabaseService.getSlowQueries(instance_id, 1000);
         for (const sqId of slow_query_ids) {
           // 获取慢查询 SQL 文本
@@ -4215,7 +4212,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
             continue;
           }
 
-          const auditResult = await sqlAuditService.submitAudit(sq.sql_text, instance_id, username);
+          const auditResult = await sqlAuditService.submitAudit(sq.sql_text, instance_id, (request as any).user);
           results.push({
             slow_query_id: sqId,
             analysis_id: auditResult.analysisId,
@@ -4250,15 +4247,12 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
           return reply.code(403).send({ error: '无权访问该实例' });
         }
 
-        const validHorizons = ['7d', '30d', '90d'];
-        if (!validHorizons.includes(horizon)) {
-          return reply.code(400).send({ error: `horizon 必须为 ${validHorizons.join('/')} 之一` });
-        }
+        assertPredictionHorizon(horizon);
 
         const result = await capacityPredictor.predict(Number(instance_id), metric, horizon);
         reply.send(result);
       } catch (error: any) {
-        reply.code(500).send({ error: error.message });
+        reply.code(error instanceof PredictionHorizonError ? 400 : 500).send({ error: error.message });
       }
     }
   });
@@ -4282,10 +4276,11 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
           return reply.code(403).send({ error: '无权访问该实例' });
         }
 
-        const results = await capacityPredictor.predictAll(Number(instance_id), horizon as '7d' | '30d' | '90d');
+        assertPredictionHorizon(horizon);
+        const results = await capacityPredictor.predictAll(Number(instance_id), horizon);
         reply.send(results);
       } catch (error: any) {
-        reply.code(500).send({ error: error.message });
+        reply.code(error instanceof PredictionHorizonError ? 400 : 500).send({ error: error.message });
       }
     }
   });
@@ -4648,96 +4643,9 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
     }
   });
 
-  // ========== 索引管理 API ==========
-
-  // 触发索引采集
-  fastify.post('/api/index/collect/:instanceId', {
-    preHandler: [verifyToken, requirePermission('index:manage'), requireInstanceAccess()],
-    handler: async (request, reply) => {
-      try {
-        const { instanceId } = request.params as any;
-        const result = await indexService.collectIndexes(Number(instanceId));
-        if ('error' in result) {
-          return reply.code(400).send({ success: false, error: result.error });
-        }
-        reply.send({ success: true, data: result });
-      } catch (error: any) {
-        reply.code(500).send({ error: error.message });
-      }
-    }
-  });
-
-  // 触发冗余检测
-  fastify.post('/api/index/detect/:instanceId', {
-    preHandler: [verifyToken, requirePermission('index:manage'), requireInstanceAccess()],
-    handler: async (request, reply) => {
-      try {
-        const { instanceId } = request.params as any;
-        const result = await indexService.detectRedundantIndexes(Number(instanceId));
-        if ('error' in result) {
-          return reply.code(400).send({ success: false, error: result.error });
-        }
-        reply.send(result);
-      } catch (error: any) {
-        reply.code(500).send({ error: error.message });
-      }
-    }
-  });
-
-  // 获取实例所有索引
-  fastify.get('/api/indexes/:instanceId', {
-    preHandler: [verifyToken, requirePermission('index:view'), requireInstanceAccess()],
-    handler: async (request, reply) => {
-      try {
-        const { instanceId } = request.params as any;
-        const indexes = await indexDatabaseService.getIndexesByInstance(Number(instanceId));
-        reply.send(indexes);
-      } catch (error: any) {
-        reply.code(500).send({ error: error.message });
-      }
-    }
-  });
-
-  // 获取冗余索引报告（必须在 :tableName 之前）
-  fastify.get('/api/indexes/:instanceId/redundancy', {
-    preHandler: [verifyToken, requirePermission('index:view'), requireInstanceAccess()],
-    handler: async (request, reply) => {
-      try {
-        const { instanceId } = request.params as any;
-        const report = await indexDatabaseService.getRedundancyReport(Number(instanceId));
-        reply.send(report);
-      } catch (error: any) {
-        reply.code(500).send({ error: error.message });
-      }
-    }
-  });
-
-  // 获取未使用索引列表（必须在 :tableName 之前）
-  fastify.get('/api/indexes/:instanceId/unused', {
-    preHandler: [verifyToken, requirePermission('index:view'), requireInstanceAccess()],
-    handler: async (request, reply) => {
-      try {
-        const { instanceId } = request.params as any;
-        const unused = await indexDatabaseService.getUnusedIndexes(Number(instanceId));
-        reply.send(unused);
-      } catch (error: any) {
-        reply.code(500).send({ error: error.message });
-      }
-    }
-  });
-
-  // 获取指定表的索引
-  fastify.get('/api/indexes/:instanceId/:tableName', {
-    preHandler: [verifyToken, requirePermission('index:view'), requireInstanceAccess()],
-    handler: async (request, reply) => {
-      try {
-        const { instanceId, tableName } = request.params as any;
-        const indexes = await indexDatabaseService.getIndexesByTable(Number(instanceId), tableName);
-        reply.send(indexes);
-      } catch (error: any) {
-        reply.code(500).send({ error: error.message });
-      }
-    }
+  registerIndexRoutes(fastify, {
+    manage: [verifyToken, requirePermission('index:manage'), requireInstanceAccess()],
+    view: [verifyToken, requirePermission('index:view'), requireInstanceAccess()],
   });
 
   // ========================================
@@ -4847,7 +4755,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
       }
       const result = await metricDatabaseService.updateMetric(id, body, targetType);
       if (!result.success) {
-        reply.code(400).send(result);
+        reply.code(result.reason === 'not_found' ? 404 : 400).send(result);
         return;
       }
       await metricRegistry.refreshFromDB();
@@ -5281,6 +5189,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
     await startup.step(() => assertMetricSchedulerSchema(pool));
     await startup.assertOwned();
   }));
+  const notificationDispatchReconciler = new NotificationDispatchReconciler(workflowStore);
   const notificationScheduler = new NotificationDispatchScheduler(notificationDatabaseService, notificationService, workflowStore);
   const enqueueNotificationDispatch = async (availableAt = new Date()) => {
     await workflowStore.enqueue(createNotificationDispatchJob(availableAt));
@@ -5316,7 +5225,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
   const workflowRuntime = new BoundedWorkflowRuntime(excludeActionJobs(workflowStore), workflowWorkerId, workflowConcurrency(), (job, context) => workflowStore.resourcesFor(job, context));
   stopWorkflow = async () => await workflowRuntime.shutdown();
   await startup.assertOwned();
-  await startup.step(() => enqueueNotificationDispatch());
+  await startup.step(() => notificationDispatchReconciler.ensure(startup.signal));
   await startup.assertOwned();
   await startup.step(() => enqueueReportSchedule());
   await startup.assertOwned();
@@ -5368,10 +5277,31 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
   }
   await startup.step(() => cronManager!.start());
   await startup.assertOwned();
+  let notificationRepair: Promise<void> | undefined;
+  let workflowAdmission: Promise<void> | undefined;
   workflowTimer = setInterval(() => {
-    void startup.assertOwned().then(() => workflowRuntime.runOnce((job, context) => workflowRegistry.execute(job, context)))
-      .then(result => { if (!startup.signal.aborted && result !== 'running' && result !== 'cancelled') dispatchAvailable = true; })
-      .catch(() => { dispatchAvailable = false; console.error('[WorkerRuntime] WORKFLOW_TICK_FAILED'); });
+    if (startup.signal.aborted) return;
+    // Repair cannot hold up runnable lanes or accumulate one waiter per tick.
+    // startup.step retains the actual SQL until settlement, even after abort;
+    // recovery drains it before admitting a replacement worker generation.
+    if (!notificationRepair) {
+      notificationRepair = startup.assertOwned()
+        .then(() => startup.step(() => notificationDispatchReconciler.ensure(startup.signal)))
+        .catch(() => { if (!startup.signal.aborted) console.error('[NotificationDispatch] RECONCILIATION_FAILED'); })
+        .finally(() => { notificationRepair = undefined; });
+    }
+    if (workflowAdmission) return;
+    workflowAdmission = startup.assertOwned()
+      .then(() => {
+        startup.signal.throwIfAborted();
+        // Each runtime lane quarantines its own pending work. Do not wait for
+        // all lanes here: one blocked lane must not prevent the others polling.
+        void workflowRuntime.runOnce((job, context) => workflowRegistry.execute(job, context))
+          .then(result => { if (!startup.signal.aborted && result !== 'running' && result !== 'cancelled') dispatchAvailable = true; })
+          .catch(() => { dispatchAvailable = false; console.error('[WorkerRuntime] WORKFLOW_TICK_FAILED'); });
+      })
+      .catch(() => { dispatchAvailable = false; console.error('[WorkerRuntime] WORKFLOW_TICK_FAILED'); })
+      .finally(() => { workflowAdmission = undefined; });
   }, 1_000);
 
   // Legacy logs have no provable owner/expiry; leave them for manual review.

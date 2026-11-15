@@ -179,3 +179,23 @@ describe('Feishu notification settings', () => {
     expect(authFetch).toHaveBeenLastCalledWith('/api/notification/channels/14/test', { method: 'POST' });
   });
 });
+
+it('MAX-590 edits only the signature while preserving an encrypted URL omitted from the form', async () => {
+  authFetch.mockResolvedValue(response([{
+    id: 9, name: '飞书告警', type: 'feishu', enabled: false,
+    config: { hasWebhook: true, hasCredential: true },
+  }]));
+  const subject = page();
+  document.body.append(subject);
+  await subject.load();
+  expect(subject.endpoint).toBeTruthy();
+  expect(subject.webhookUrl).toBe('');
+  subject.secret = 'replacement-sentinel';
+  authFetch.mockResolvedValueOnce(response({ message: '更新成功' }));
+  await subject.save();
+  const [, options] = authFetch.mock.lastCall;
+  expect(JSON.parse(options.body)).toEqual({
+    name: '飞书告警', enabled: false, config: { secret: 'replacement-sentinel', severity: 'info' },
+  });
+  expect(subject.secret).toBe('');
+});
