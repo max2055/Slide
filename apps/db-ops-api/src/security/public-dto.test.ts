@@ -171,3 +171,12 @@ describe('public response DTOs', () => {
     expect(JSON.stringify(dto)).not.toContain('encrypted-smtp-password');
   });
 });
+
+it('MAX-590 never returns encrypted URLs, unknown aliases, or credentials owned by another channel type', () => {
+  const dto = publicNotificationDto({ id: 7, type: 'webhook', config: {
+    webhook_url_encrypted: 'sentinel-cipher', secret_encrypted: 'sentinel-signature', password: 'sentinel-password',
+    oauth2_refresh_token_encrypted: 'sentinel-refresh', alternateURL: 'sentinel-alias',
+  } });
+  expect(dto.config).toMatchObject({ hasWebhook: true, hasCredential: true });
+  expect(JSON.stringify(dto)).not.toContain('sentinel');
+});

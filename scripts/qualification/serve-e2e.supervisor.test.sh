@@ -165,9 +165,21 @@ run_scenario() {
   : >"$work/pids"
   local script_pid="" api_pid="" vite_pid="" api_child="" vite_child="" code=0
   local started_at=$SECONDS
+  # MAX-590 D1: legacy optional diagnostics must never own lifecycle I/O.
+  local diagnostic_path="$dir/lifecycle"
+  if [[ "$inject" == diagnostics-missing ]]; then
+    diagnostic_path="$dir/missing/lifecycle"
+  elif [[ "$inject" == diagnostics-unwritable ]]; then
+    diagnostic_path="/dev/null/lifecycle"
+  elif [[ "$inject" == diagnostics-directory ]]; then
+    mkdir -p "$diagnostic_path"
+  elif [[ "$inject" == diagnostics-invalidated ]]; then
+    : > "$diagnostic_path"
+  fi
 
   PATH="$bin:$PATH" \
   SERVE_E2E_DIR="$dir" \
+  SERVE_E2E_DIAGNOSTICS_FILE="$diagnostic_path" \
   SERVE_E2E_READY_FILE="$dir/ready" \
   SERVE_E2E_PYTHON="$real_python" \
   SERVE_E2E_COLLECT_GATE="$([[ "$inject" == collect ]] && echo 1 || echo 0)" \
@@ -222,6 +234,14 @@ os.execvp("bash", ["bash", *sys.argv[1:]])
       fi
       sleep 0.3 || true
       echo "SIGNAL $name target=$script_pid signal=$signal elapsed=$((SECONDS - started_at))" > "$dir/signal-sent"
+      if [[ "$inject" == diagnostics-invalidated ]]; then
+        # Invalidate the destination only after API/Vite and both children exist.
+        rm -f "$diagnostic_path"
+        if ! mkdir "$diagnostic_path"; then
+          echo "FAIL $name could not invalidate diagnostic destination"
+          result=1
+        fi
+      fi
       if kill "-$signal" "$script_pid" 2>/dev/null; then
         echo "signal_delivery=success" >> "$dir/signal-sent"
       else
@@ -495,7 +515,13 @@ run_scenario vite-exit stay exit none 1 "E2E服务异常：Vite退出 code=9"
 run_scenario signal-term stay stay TERM 0 "E2E服务停止：收到信号，清理本次进程"
 run_scenario signal-int stay stay INT 0 "E2E服务停止：收到信号，清理本次进程"
 run_scenario signal-during-collect stay stay TERM 0 "E2E服务停止：收到信号，清理本次进程" collect
+run_scenario signal-int-during-collect stay stay INT 0 "E2E服务停止：收到信号，清理本次进程" collect
 run_scenario unrelated-orphan stay stay TERM 0 "E2E服务停止：收到信号，清理本次进程" orphan
+# D1 startup and runtime I/O regressions retain the normal exit and tree audit.
+run_scenario diagnostics-missing stay stay INT 0 "E2E服务停止：收到信号，清理本次进程" diagnostics-missing
+run_scenario diagnostics-unwritable stay stay TERM 0 "E2E服务停止：收到信号，清理本次进程" diagnostics-unwritable
+run_scenario diagnostics-directory stay stay INT 0 "E2E服务停止：收到信号，清理本次进程" diagnostics-directory
+run_scenario diagnostics-invalidated stay stay INT 0 "E2E服务停止：收到信号，清理本次进程" diagnostics-invalidated
 
 # Playwright webServer: shell + detached, stdio pipes, SIGKILL of the launcher
 # process group, then wait for the child 'close' event. A service that left

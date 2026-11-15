@@ -6,10 +6,11 @@ import { publicMaintenanceTags } from './maintenance-public-tags.js';
  */
 import mysql from 'mysql2/promise';
 import { dbConnection, encryptData } from './db-connection';
-import type { NotificationChannelType } from './notification-channel-config.js';
+import { applicableNotificationConfig, type NotificationChannelType } from './notification-channel-config.js';
 
 export interface NotificationChannelConfig {
   webhook_url?: string;
+  webhook_url_encrypted?: string;
   idempotency_contract?: 'receiver-deduplicates';
   idempotency_retention_seconds?: number;
   secret?: string;
@@ -71,25 +72,15 @@ export interface PendingAlert {
 }
 
 class NotificationDatabaseService {
-  private prepareConfigForStorage(config: unknown): Record<string, unknown> {
-    const stored = { ...((config && typeof config === 'object' ? config : {}) as Record<string, unknown>) };
-    if (typeof stored.password === 'string') {
-      if (stored.password.length > 0) {
-        stored.password_encrypted = encryptData(stored.password);
+  private prepareConfigForStorage(type: string, config: Record<string, unknown>): Record<string, unknown> {
+    const stored = applicableNotificationConfig(type, config);
+    for (const field of ['webhook_url', 'password', 'secret', 'oauth2_refresh_token']) {
+      if (!Object.hasOwn(stored, field)) continue;
+      delete stored[field + '_encrypted'];
+      if (typeof stored[field] === 'string' && stored[field].length > 0) {
+        stored[field + '_encrypted'] = encryptData(stored[field]);
       }
-      delete stored.password;
-    }
-    if (typeof stored.oauth2_refresh_token === 'string') {
-      if (stored.oauth2_refresh_token.length > 0) {
-        stored.oauth2_refresh_token_encrypted = encryptData(stored.oauth2_refresh_token);
-      }
-      delete stored.oauth2_refresh_token;
-    }
-    if (typeof stored.secret === 'string') {
-      if (stored.secret.length > 0) {
-        stored.secret_encrypted = encryptData(stored.secret);
-      }
-      delete stored.secret;
+      delete stored[field];
     }
     return stored;
   }
@@ -129,15 +120,15 @@ class NotificationDatabaseService {
         [
           data.name,
           data.type,
-          JSON.stringify(this.prepareConfigForStorage(data.config)),
+          JSON.stringify(this.prepareConfigForStorage(data.type, data.config)),
           data.enabled !== undefined ? (data.enabled ? 1 : 0) : 1,
         ]
       ) as any;
 
       return { success: true, channelId: result.insertId };
     } catch (error: any) {
-      console.error('创建通知渠道失败:', error);
-      return { success: false, error: error.message };
+      console.error('创建通知渠道失败', { code: 'NOTIFICATION_CHANNEL_CREATE_FAILED' });
+      return { success: false, error: 'NOTIFICATION_CHANNEL_CREATE_FAILED' };
     }
   }
 
@@ -177,7 +168,7 @@ class NotificationDatabaseService {
         updated_at: row.updated_at,
       }));
     } catch (error) {
-      console.error('获取通知渠道失败:', error);
+      console.error('获取通知渠道失败', { code: 'NOTIFICATION_CHANNEL_UNAVAILABLE' });
       if (enabled === true) throw new Error('NOTIFICATION_CHANNELS_UNAVAILABLE');
       return [];
     }
@@ -213,7 +204,7 @@ class NotificationDatabaseService {
         updated_at: row.updated_at,
       };
     } catch (error) {
-      console.error('获取通知渠道失败:', error);
+      console.error('获取通知渠道失败', { code: 'NOTIFICATION_CHANNEL_UNAVAILABLE' });
       throw new Error('NOTIFICATION_CHANNEL_UNAVAILABLE');
     }
   }
@@ -235,6 +226,7 @@ class NotificationDatabaseService {
       return { success: false, error: '数据库未连接' };
     }
 
+    let connection: mysql.PoolConnection | undefined;
     try {
       const updates: string[] = [];
       const values: any[] = [];
@@ -247,47 +239,24 @@ class NotificationDatabaseService {
         updates.push('type = ?');
         values.push(data.type);
       }
-      if (data.config !== undefined) {
-        const suppliedConfig = data.config && typeof data.config === 'object'
-          ? data.config as Record<string, unknown>
-          : {};
-        const passwordWasSupplied = Object.prototype.hasOwnProperty.call(suppliedConfig, 'password')
-          || Object.prototype.hasOwnProperty.call(suppliedConfig, 'password_encrypted');
-        const secretWasSupplied = Object.prototype.hasOwnProperty.call(suppliedConfig, 'secret')
-          || Object.prototype.hasOwnProperty.call(suppliedConfig, 'secret_encrypted');
-        const oauthRefreshTokenWasSupplied = Object.prototype.hasOwnProperty.call(suppliedConfig, 'oauth2_refresh_token')
-          || Object.prototype.hasOwnProperty.call(suppliedConfig, 'oauth2_refresh_token_encrypted');
-        let existingConfig: Record<string, unknown> = {};
-        let existingType: string | undefined;
-        const completeChannelConfig = ['smtp_host', 'smtp_port', 'smtp_username', 'smtp_auth', 'from', 'to']
-          .every((field) => Object.prototype.hasOwnProperty.call(suppliedConfig, field));
-        if (!completeChannelConfig || !passwordWasSupplied || !secretWasSupplied || !oauthRefreshTokenWasSupplied) {
-          const [rows] = await pool.execute(
-            'SELECT type, config FROM notification_channels WHERE id = ?',
-            [id],
-          ) as any;
-          existingType = typeof rows[0]?.type === 'string' ? rows[0].type : undefined;
-          try {
-            const parsed = typeof rows[0]?.config === 'string' ? JSON.parse(rows[0].config) : rows[0]?.config;
-            if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) existingConfig = parsed as Record<string, unknown>;
-          } catch {
-            // An invalid legacy config will be rejected by the normal UPDATE path rather than exposing its contents.
-          }
+      if (data.config !== undefined || data.type !== undefined) {
+        // Serialize field edits with type switches and token rotation. All reads
+        // and writes use this connection, including with a one-connection pool.
+        connection = await pool.getConnection();
+        await connection.beginTransaction();
+        const [rows] = await connection.execute(
+          'SELECT type, config FROM notification_channels WHERE id = ? FOR UPDATE', [id],
+        ) as any;
+        if (!rows[0]) {
+          await connection.rollback();
+          return { success: false, error: '通知渠道不存在' };
         }
-        // PUT is also used by the settings UI for field-level edits. Preserve
-        // existing non-secret SMTP fields when the channel type is unchanged;
-        // replacing a channel with a different type still starts from scratch.
-        const sameType = !existingType || data.type === undefined || data.type === existingType;
-        const config = this.prepareConfigForStorage(sameType ? { ...existingConfig, ...suppliedConfig } : suppliedConfig);
-        if (!passwordWasSupplied && typeof existingConfig.password_encrypted === 'string') {
-          config.password_encrypted = existingConfig.password_encrypted;
-        }
-        if (!secretWasSupplied && typeof existingConfig.secret_encrypted === 'string') {
-          config.secret_encrypted = existingConfig.secret_encrypted;
-        }
-        if (!oauthRefreshTokenWasSupplied && typeof existingConfig.oauth2_refresh_token_encrypted === 'string') {
-          config.oauth2_refresh_token_encrypted = existingConfig.oauth2_refresh_token_encrypted;
-        }
+        const existingType = rows[0].type;
+        const existingConfig = typeof rows[0].config === 'string' ? JSON.parse(rows[0].config) : rows[0].config;
+        const suppliedConfig = data.config && typeof data.config === 'object' ? data.config : {};
+        const type = data.type ?? existingType;
+        const config = this.prepareConfigForStorage(type, type === existingType
+          ? { ...existingConfig, ...suppliedConfig } : suppliedConfig);
         updates.push('config = ?');
         values.push(JSON.stringify(config));
       }
@@ -305,37 +274,51 @@ class NotificationDatabaseService {
 
       values.push(id);
 
-      const [result] = await pool.execute(
+      const [result] = await (connection ?? pool).execute(
         `UPDATE notification_channels SET ${updates.join(', ')} WHERE id = ?`,
         values
       ) as any;
 
+      if (connection) await connection.commit();
       if (result.affectedRows === 0) {
         return { success: false, error: '通知渠道不存在' };
       }
 
       return { success: true };
     } catch (error: any) {
-      console.error('更新通知渠道失败:', error);
-      return { success: false, error: error.message };
+      if (connection) {
+        try { await connection.rollback(); } catch { /* Unknown writes are never replayed. */ }
+      }
+      console.error('更新通知渠道失败', { code: 'NOTIFICATION_CHANNEL_UPDATE_FAILED' });
+      return { success: false, error: 'NOTIFICATION_CHANNEL_UPDATE_FAILED' };
+    } finally {
+      connection?.release();
     }
   }
 
   /** Persists a Microsoft-issued rotated refresh token without reading or logging any channel secret. */
-  async updateOAuth2RefreshToken(id: number, refreshToken: string): Promise<{ success: boolean; error?: string }> {
+  async updateOAuth2RefreshToken(id: number, refreshToken: string, expected: NotificationChannelConfig): Promise<{ success: boolean; error?: string }> {
     const pool = this.getPool();
     if (!pool) return { success: false, error: '数据库未连接' };
 
+    // MAX-590 review F1: a returned token belongs to the exact credential used
+    // for the exchange. A single CAS also serializes competing rotations without
+    // another pool connection or replaying a write whose outcome is unknown.
+    if (!expected.oauth2_refresh_token_encrypted) return { success: false, error: 'NOTIFICATION_CREDENTIAL_CHANGED' };
+    const identityFields = ['smtp_auth', 'smtp_host', 'smtp_port', 'smtp_username', 'smtp_secure', 'smtp_require_tls',
+      'oauth2_tenant', 'oauth2_client_id', 'oauth2_refresh_token_encrypted'] as const;
+    const identity = JSON.stringify(Object.fromEntries(identityFields.map(field => [field, expected[field]])));
     try {
       const [result] = await pool.execute(
-        "UPDATE notification_channels SET config = JSON_SET(config, '$.oauth2_refresh_token_encrypted', ?), updated_at = CURRENT_TIMESTAMP WHERE id = ? AND type = 'email'",
-        [encryptData(refreshToken), id],
+        "UPDATE notification_channels SET config = JSON_SET(config, '$.oauth2_refresh_token_encrypted', ?), updated_at = CURRENT_TIMESTAMP WHERE id = ? AND type = 'email' AND "
+          + identityFields.map(field => `JSON_EXTRACT(config, '$.${field}') <=> JSON_EXTRACT(?, '$.${field}')`).join(' AND '),
+        [encryptData(refreshToken), id, ...identityFields.map(() => identity)],
       ) as any;
-      if (result.affectedRows === 0) return { success: false, error: '通知渠道不存在' };
+      if (result.affectedRows === 0) return { success: false, error: 'NOTIFICATION_CREDENTIAL_CHANGED' };
       return { success: true };
     } catch (error: any) {
-      console.error('更新 OAuth 刷新令牌失败:', error);
-      return { success: false, error: error.message };
+      console.error('更新 OAuth 刷新令牌失败', { code: 'NOTIFICATION_CREDENTIAL_UPDATE_FAILED' });
+      return { success: false, error: 'NOTIFICATION_CREDENTIAL_UPDATE_FAILED' };
     }
   }
 
