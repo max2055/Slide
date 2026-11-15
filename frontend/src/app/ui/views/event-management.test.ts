@@ -126,3 +126,42 @@ describe('event interaction recovery', () => {
     expect(page.eventLogs).toEqual(['fresh log']);
   });
 });
+
+// MAX-572 / #430 / #659
+ describe('event failure recovery', () => {
+  afterEach(() => { vi.clearAllMocks(); localStorage.clear(); document.body.replaceChildren(); });
+  const response = (body: unknown, ok = true) => ({ ok, status: ok ? 200 : 503, json: async () => body }) as Response;
+  it('offers retry after loading fails and clears the old load error on success', async () => {
+    const page = new EventManagementPage() as any;
+    vi.mocked(authFetch).mockResolvedValue(response({}, false));
+    await page._loadEvents();
+    expect(page.loadError).toContain('503');
+    expect(page.render().values).toBeDefined();
+    vi.mocked(authFetch).mockResolvedValue(response({ items: [], total: 0 }));
+    await page._loadEvents();
+    expect(page.loadError).toBeNull();
+  });
+  it.each([{}, { analysisIds: [] }, { analysisIds: 'bad', sessionKeys: [] }, { analysisIds: [1], sessionKeys: [null] }, { success: false, analysisIds: [], sessionKeys: [] }])('discards invalid persisted RCA %j', async value => {
+    localStorage.setItem('event_rca_result', JSON.stringify({ ...value, eventId: 1 }));
+    const page = new EventManagementPage() as any;
+    page._loadEvents = async () => {};
+    document.body.append(page);
+    await page.updateComplete;
+    expect(page.rcaResult).toBeNull();
+    expect(localStorage.getItem('event_rca_result')).toBeNull();
+  });
+  it('rejects business failure without persisting and accepts valid results', async () => {
+    const page = new EventManagementPage() as any;
+    page.selectedEvent = { id: '1' };
+    vi.mocked(authFetch).mockResolvedValue(response({ success: false }));
+    await page._triggerRCA();
+    expect(page.rcaResult).toBeNull();
+    expect(page.error).toContain('根因分析失败');
+    expect(localStorage.getItem('event_rca_result')).toBeNull();
+    vi.mocked(authFetch).mockResolvedValue(response({ success: true, analysisIds: [7], sessionKeys: ['session-7'] }));
+    await page._triggerRCA();
+    expect(page.error).toBeNull();
+    expect(page.rcaResult.analysisIds).toEqual([7]);
+    expect(JSON.parse(localStorage.getItem('event_rca_result')!).sessionKeys).toEqual(['session-7']);
+  });
+});
