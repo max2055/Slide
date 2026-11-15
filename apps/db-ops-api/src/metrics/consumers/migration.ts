@@ -22,7 +22,11 @@ const maps: Record<string, Record<string, string>> = {
     filesystem_available_bytes:'linux.filesystem.available_bytes',filesystem_inode_usage:'linux.filesystem.inode_used_percent' },
 };
 export function migrateReference(resource: Ref, engine: string, oldId: string) {
-  const metricId = oldId.includes('.') ? oldId : maps[resource.type === 'instance' ? engine : resource.type]?.[oldId];
+  const key = resource.type === 'instance' ? engine : resource.type;
+  const mapping = Object.hasOwn(maps, key) ? maps[key] : undefined;
+  const candidate = oldId.includes('.') ? oldId
+    : mapping && Object.hasOwn(mapping, oldId) ? mapping[oldId] : undefined;
+  const metricId = typeof candidate === 'string' && candidate.trim().length > 0 ? candidate : null;
   return { version: '1.0.0', resource, old_id: oldId, metric_id: metricId ?? null,
     status: metricId ? 'mapped' : 'review_required', threshold_conversion: 'none',
     reason: metricId ? 'Pinned definition; threshold and resource scope preserved' : 'No proven equivalent; never substitute ratio, Host CPU or zero' };
