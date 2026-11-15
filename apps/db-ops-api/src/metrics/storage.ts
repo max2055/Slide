@@ -157,11 +157,11 @@ export class MysqlMetricStorage {
   async prune(limit = 1000, guard?: RetentionGuard): Promise<Record<string, number>> {
     boundedLimit(limit);
     return this.transaction(async c => {
-      await guard?.(c);
+      await guard?.(c, 'check');
       const selections = observationSelections(this.clock(), this.retention);
       const result: Record<string, number> = {};
       for (const [name, selection] of Object.entries(selections)) {
-        await guard?.(c);
+        await guard?.(c, 'check');
         const ids = await retentionIds(c, selection, limit);
         if (name === 'rawPayload' && ids.length) {
           const [updated] = await c.execute<any>(`UPDATE metric_observations SET tombstone = JSON_OBJECT(
@@ -181,7 +181,7 @@ export class MysqlMetricStorage {
         if (name === 'rawPayload' && ids.length === limit) break;
       }
       Object.assign(result,await expireRetainedTrends(c,this.clock(),this.retention,limit));
-      await guard?.(c);
+      await guard?.(c, 'commit');
       return result;
     });
   }
