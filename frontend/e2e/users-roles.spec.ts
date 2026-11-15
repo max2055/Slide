@@ -22,6 +22,8 @@ for (const width of [1366, 1440, 1920]) test(`multi-role edit ${width}`, async (
   });
   await page.route('**/users-role-fixture', route => route.fulfill({ contentType: 'text/html', body:
     '<html><body><users-management></users-management><script type="module">import "/src/app/styles.css"; import "/src/app/ui/views/users-management.ts";</script></body></html>' }));
+  // MAX-672 D1: this fixture represents an authenticated administrator.
+  await page.addInitScript(() => localStorage.setItem('token', 'fixture-token'));
   await page.goto('/users-role-fixture');
   const edit = page.getByRole('button', { name: '编辑', exact: true });
   await edit.click();
