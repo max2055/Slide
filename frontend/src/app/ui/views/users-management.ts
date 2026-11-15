@@ -320,7 +320,10 @@ export class UsersManagement extends LitElement {
         this.error = `权限检查失败: ${message}`;
       }
     } finally {
-      if (revision === this.permissionRevision) this.checkingAdmin = false;
+      if (revision === this.permissionRevision) {
+        this.checkingAdmin = false;
+        if (this.isConnected && !isCurrent()) this.error = '权限检查失败: 登录状态已变化，请重新检查权限';
+      }
     }
   }
 

@@ -67,6 +67,7 @@ describe('MAX-672 / #687: user management permission states', () => {
     await flush();
     expect(view.shadowRoot!.querySelector('.btn-primary')).toBeNull();
     expect(get).toHaveBeenCalledTimes(1);
+    if (change === 'identity') expect(view.shadowRoot!.textContent).toContain('登录状态已变化');
   });
 
   it.each(['resolve', 'reject'])('keeps expired-session state when a users read later %s', async outcome => {
