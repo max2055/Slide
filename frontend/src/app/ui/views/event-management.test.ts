@@ -75,6 +75,13 @@ describe('event interaction recovery', () => {
     expect(JSON.parse(options.body as string)).toEqual(kind === 'note' ? { note: 'note' } : { postmortem: 'review' });
     if (kind === 'postmortem') expect(page.showPostmortemForm).toBe(false);
   });
+  it.each(['note', 'postmortem'])('preserves %s on HTTP 200 business failure', async kind => {
+    const page = pageWithDraft();
+    vi.mocked(authFetch).mockResolvedValueOnce(response({ success: false, error: 'write rejected' }));
+    await page[kind === 'note' ? '_addNote' : '_addPostmortem']();
+    expect(page[kind === 'note' ? 'noteText' : 'postmortemText']).not.toBe('');
+    expect(page.error).toBe('write rejected');
+  });
   it('does not erase edits made during a successful save', async () => {
     const page = pageWithDraft();
     let finish!: (r: Response) => void;
@@ -84,6 +91,19 @@ describe('event interaction recovery', () => {
     finish(response({}));
     await pending;
     expect(page.postmortemText).toBe('new draft');
+    expect(page.showPostmortemForm).toBe(true);
+  });
+  it.each(['note', 'postmortem'])('late %s save leaves another event draft intact', async kind => {
+    const page = pageWithDraft();
+    const field = kind === 'note' ? 'noteText' : 'postmortemText';
+    let finish!: (r: Response) => void;
+    vi.mocked(authFetch).mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+    const pending = page[kind === 'note' ? '_addNote' : '_addPostmortem']();
+    page.selectedEvent = { id: '2' };
+    // Even identical drafts must belong to the currently selected event.
+    finish(response({}));
+    await pending;
+    expect(page[field]).toBe(kind === 'note' ? ' note ' : ' review ');
     expect(page.showPostmortemForm).toBe(true);
   });
   it('ignores late detail and logs even when returning to the same event', async () => {

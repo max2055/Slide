@@ -571,7 +571,9 @@ export class EventManagementPage extends LitElement {
         body: JSON.stringify({ note }),
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      if (this.noteText === draft) this.noteText = "";
+      const result = await res.json();
+      if (result.success === false) throw new Error(result.error || "保存失败");
+      if (String(this.selectedEvent?.id) === String(eventId) && this.noteText === draft) this.noteText = "";
     });
   }
 
@@ -660,7 +662,9 @@ export class EventManagementPage extends LitElement {
         body: JSON.stringify({ postmortem }),
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      if (this.postmortemText === draft) {
+      const result = await res.json();
+      if (result.success === false) throw new Error(result.error || "保存失败");
+      if (String(this.selectedEvent?.id) === String(eventId) && this.postmortemText === draft) {
         this.postmortemText = "";
         this.showPostmortemForm = false;
       }

@@ -45,3 +45,31 @@ test('browser back restores missing-view default', async ({ page }) => {
   await page.goBack();
   await expect(page.getByRole('tab', { name: '活动告警' })).toHaveAttribute('aria-selected', 'true');
 });
+
+test('late browser detail and save responses cannot overwrite a newly selected event draft', async ({page})=>{
+ let release!:()=>void;
+ const gate=new Promise<void>(r=>{release=r});
+ await page.route('**/api/**',async route=>{
+  const path=new URL(route.request().url()).pathname;
+  if(!path.startsWith('/api/'))return route.continue();
+  if(path.includes('/events/1'))await gate;
+  await route.fulfill({json:path.endsWith('/logs')?[]:path.endsWith('/note')?{success:true}:{id:'2',title:'current',alerts:[],items:[],total:0}});
+ });
+ await page.goto('/');
+ await page.evaluate(async()=>{
+  await import('/src/app/ui/views/event-management.ts');
+  const el=document.createElement('event-management-page') as any;
+  document.body.replaceChildren(el);
+  el._selectEvent({id:'1',title:'old',severity:'warning'});
+  await el._selectEvent({id:'2',title:'current',severity:'warning'});
+  el.selectedEvent={id:'1'}; el.noteText='same';
+  (window as any).save=el._addNote();
+  el.selectedEvent={id:'2',title:'current',severity:'warning'};el.noteText='same';
+ });
+ release();
+ await page.evaluate(async()=>{
+  await (window as any).save;
+  const el=document.querySelector('event-management-page') as any;
+  if(el.noteText!=='same'||el.selectedEvent.id!=='2')throw Error('old response changed current event');
+ });
+});
