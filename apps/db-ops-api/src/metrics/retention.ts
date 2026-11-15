@@ -5,7 +5,8 @@ export const DEFAULT_TREND_RETENTION_MS = 365 * 86400000;
 export const RETENTION_VALUE_TYPES = ['float64','int64','uint64','histogram','summary'] as const;
 export type RetentionPolicy = typeof DEFAULT_RETENTION & { trendMs?: number; trendValueTypeMs?: Partial<Record<typeof RETENTION_VALUE_TYPES[number],number>>; valueTypeMs?: Partial<Record<typeof RETENTION_VALUE_TYPES[number],number>> };
 export type RetentionCounts = Record<string, { count: number; oldestAt: string | null; oldestAgeMs: number | null }>;
-export type RetentionGuard = (connection: PoolConnection) => Promise<void>;
+/** Checks must not hold the lease row during mutations; commit fences ownership through COMMIT. */
+export type RetentionGuard = (connection: PoolConnection, phase: 'check' | 'commit') => Promise<void>;
 export const retentionSqlTime = (date: Date) => date.toISOString().slice(0, 23).replace('T', ' ');
 export function validateRetention(policy: RetentionPolicy): RetentionPolicy {
   if(policy.trendMs!==undefined && (!Number.isSafeInteger(policy.trendMs)||policy.trendMs<300000||policy.trendMs>3650*86400000))throw new Error('RETENTION_INVALID');

@@ -52,6 +52,7 @@ export function describePGCollection(options: {
   collect: () => Promise<any>;
   loadInstance: Mock;
   save: Mock;
+  rejectPartial?: boolean;
 }): void {
   describe('PostgreSQL credentials and temporary client ownership', () => {
     let instance: Record<string, unknown>;
@@ -170,9 +171,16 @@ export function describePGCollection(options: {
 
     it('continues to the next database after a failed query and closes both', async () => {
       CollectionPgClient.plans = [{}, { queryError: new Error('app-query-failed') }, {}];
-      expect(await options.collect()).toMatchObject({ tables: 1, collected: 1 });
+      if (options.rejectPartial) {
+        expect(await options.collect()).toEqual({
+          error: expect.stringMatching(/不完整.*app: app-query-failed/),
+        });
+        expect(options.save).not.toHaveBeenCalled();
+      } else {
+        expect(await options.collect()).toMatchObject({ tables: 1, collected: 1 });
+        expect(options.save).toHaveBeenCalledWith(1, [expect.objectContaining({ table_name: 'analytics.public.widgets' })]);
+      }
       for (const client of CollectionPgClient.clients) expect(client.end).toHaveBeenCalledOnce();
-      expect(options.save).toHaveBeenCalledWith(1, [expect.objectContaining({ table_name: 'analytics.public.widgets' })]);
     });
 
     it('preserves a successful collection when cleanup rejects', async () => {

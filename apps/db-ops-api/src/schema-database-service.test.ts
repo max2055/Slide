@@ -21,6 +21,36 @@ describe('GitHub #368 atomic snapshot batches', () => {
     vi.spyOn(console, 'error').mockImplementation(() => {});
     return { connection, pool };
   }
+  it.each([499, 500, 501, 5041, 5042, 10085])('#554 saves %i columns within the prepared-statement parameter limit', async (count) => {
+    const { connection, pool } = setup();
+    const rows = Array.from({ length: count }, (_, i) => ({ ...column(`c${i}`), data_length: null }));
+    expect(await service.saveSnapshot(1, rows)).toEqual({ success: true, count });
+    const inserts = connection.execute.mock.calls.filter(([sql]) => sql.startsWith('INSERT'));
+    expect(inserts.length).toBeGreaterThan(0);
+    for (const [sql, params] of inserts) {
+      expect(params.length).toBeLessThanOrEqual(65535);
+      expect(sql.match(/\?/g)).toHaveLength(params.length);
+      expect(params.length % 13).toBe(0);
+    }
+    const values = inserts.flatMap(([, params]) => params);
+    expect(values).toHaveLength(count * 13);
+    const batchTime = values[1];
+    for (let i = 0; i < count; i++) {
+      expect(values.slice(i * 13, (i + 1) * 13)).toEqual([
+        1, batchTime, 'items', `c${i}`, 'int', 'YES', null, '', '', null, null, 0, null,
+      ]);
+    }
+    expect(pool.getConnection).toHaveBeenCalledOnce();
+    expect(connection.beginTransaction).toHaveBeenCalledOnce();
+    expect(connection.commit).toHaveBeenCalledOnce();
+    expect(connection.rollback).not.toHaveBeenCalled();
+    expect(connection.release).toHaveBeenCalledOnce();
+  });
+  it('#558 preserves unavailable size as SQL NULL instead of measured zero', async () => {
+    const { connection } = setup();
+    expect((await service.saveSnapshot(1, [{ ...column('id'), data_length: null }])).success).toBe(true);
+    expect(connection.execute.mock.calls[2][1][12]).toBeNull();
+  });
   it('allocates after the last committed batch even if the application clock moves backwards', async () => {
     const previous = new Date('2040-01-01T00:00:00.999Z');
     const { connection } = setup(previous);
@@ -61,4 +91,14 @@ describe('GitHub #368 atomic snapshot batches', () => {
     expect((await service.saveSnapshot(1, [])).success).toBe(false);
     expect(pool.getConnection).not.toHaveBeenCalled();
   });
+});
+
+// #558 SQL NULL must survive the aggregate/list conversion as well as INSERT.
+it('preserves unavailable allocation in the table list alongside measured zero', async () => {
+  const pool = { execute: vi.fn().mockResolvedValue([[
+    { table_name: 'unknown', data_length: null, table_rows: 0, column_count: 1, snapshot_time: new Date() },
+    { table_name: 'empty', data_length: '0', table_rows: 0, column_count: 1, snapshot_time: new Date() },
+  ]]) };
+  vi.spyOn(dbConnection, 'getPool').mockReturnValue(pool as any);
+  expect((await service.getTableList(1)).map(row => row.data_length)).toEqual([null, 0]);
 });

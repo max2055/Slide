@@ -1,8 +1,9 @@
 import { createHash } from 'node:crypto';
-import type { Pool, PoolConnection, RowDataPacket } from 'mysql2/promise';
+import type { Pool, RowDataPacket } from 'mysql2/promise';
 import { MysqlMetricStorage } from '../metrics/storage.js';
 import { RolloutControl } from '../metrics/rollout/control.js';
 import { configuredRetention, DEFAULT_TREND_RETENTION_MS, type RetentionPolicy } from '../metrics/retention.js';
+import type { RetentionGuard } from '../metrics/retention.js';
 import type { JobRegistry } from './job-registry.js';
 import type { ClaimedJob, JobExecutionContext, WorkflowJobInput } from './worker-runtime.js';
 
@@ -55,23 +56,31 @@ export async function startMetricRetention(pool: Pool, registry: JobRegistry,
     const policyHash = retentionPolicyHash(config);
     const storage = new MysqlMetricStorage(pool, clock, config);
     const rollout = new RolloutControl(pool, undefined, clock);
-    const guard = async (c: PoolConnection) => {
+    // Reuse the maintenance connection for current autocommit reads during pruning.
+    // A REPEATABLE READ pruning snapshot can otherwise miss successful renewals.
+    const owner = await pool.getConnection(); let locked = false;
+    const guard: RetentionGuard = async (c, phase) => {
       context.signal.throwIfAborted();
       const live=readMetricRetentionConfig(env);if (!live) throw new Error('RETENTION_DISABLED');
       if(retentionPolicyHash(live)!==policyHash || live.mode!==config.mode)throw new Error('RETENTION_POLICY_CHANGED');
-      const [rows] = await c.execute<RowDataPacket[]>(`SELECT id FROM workflow_jobs WHERE id = ? AND job_type = 'metrics.retention'
-        AND state = 'running' AND lease_owner = ? AND fencing_token = ? AND lease_expires_at > NOW() FOR UPDATE`,
+      if (phase === 'commit') {
+        // Fence only after the slow mutations. Hold ownership stable through COMMIT.
+        await c.execute('SELECT id FROM workflow_jobs WHERE id = ? FOR UPDATE', [job.id]);
+      }
+      const reader = phase === 'commit' ? c : owner;
+      // Evaluate expiry after acquiring the lock, including any lock wait.
+      const [rows] = await reader.execute<RowDataPacket[]>(`SELECT id FROM workflow_jobs WHERE id = ? AND job_type = 'metrics.retention'
+        AND state = 'running' AND lease_owner = ? AND fencing_token = ? AND lease_expires_at > NOW(3) ${phase === 'commit' ? 'FOR UPDATE' : ''}`,
       [job.id, context.workerId, context.fencingToken]);
       if (rows.length !== 1) throw new Error('WORKFLOW_LEASE_LOST');
       context.signal.throwIfAborted();
     };
     // One maintenance owner across bootstrap, periodic successors and recovered leases.
-    const owner = await pool.getConnection(); let locked = false;
     try {
       const [locks] = await owner.query<RowDataPacket[]>("SELECT GET_LOCK('slide:metric-retention', 0) AS acquired");
       locked = Number(locks[0].acquired) === 1;
       if (!locked) throw new Error('RETENTION_BUSY');
-      await guard(owner);
+      await guard(owner, 'check');
       // Commit the periodic successor before any work. Failure/shutdown leaves durable recovery.
       const nextTick = Math.floor(clock().getTime() / config.intervalMs) + 1;
       await enqueue(createMetricRetentionJob(new Date(nextTick * config.intervalMs), `periodic:${config.intervalMs}:${nextTick}`));
@@ -84,8 +93,8 @@ export async function startMetricRetention(pool: Pool, registry: JobRegistry,
       if (config.mode === 'apply') {
         for (; batches < config.maxBatches && Date.now() - started < config.maxRunMs;) {
           context.signal.throwIfAborted();
-          const mutationGuard = async (c: PoolConnection) => {
-            await guard(c);
+          const mutationGuard: RetentionGuard = async (c, phase) => {
+            await guard(c, phase);
             if (Date.now() - started >= config.maxRunMs) throw new Error('RETENTION_RUN_BUDGET');
           };
           const addCounts = (batch: Record<string, number>) => {
@@ -109,14 +118,14 @@ export async function startMetricRetention(pool: Pool, registry: JobRegistry,
       const data = { reason: 'configured_metric_retention', mode: config.mode, policyHash,
         policy: { rawMs: config.rawMs, historyMs: config.historyMs, attemptMs: config.attemptMs,trendMs:config.trendMs??DEFAULT_TREND_RETENTION_MS,valueTypeMs:config.valueTypeMs,trendValueTypeMs:config.trendValueTypeMs },
         batches, counts, preview, elapsedMs: Date.now() - started, pending, jobId: job.id, at: clock().toISOString() };
+      await guard(owner, 'check');
       await owner.beginTransaction();
       try {
-        await guard(owner);
         await owner.execute(`UPDATE metric_retention_state SET last_report = ?,
           preview_policy_hash = IF(? = 'dry-run', ?, preview_policy_hash),
           preview_at = IF(? = 'dry-run', UTC_TIMESTAMP(3), preview_at) WHERE id = 1`,
         [JSON.stringify(data), config.mode, policyHash, config.mode]);
-        await guard(owner); await owner.commit();
+        await guard(owner, 'commit'); await owner.commit();
       } catch (error) { await owner.rollback(); throw error; }
       if (pending) await enqueue(createMetricRetentionJob(new Date(clock().getTime() + 1000), `${job.id}:continuation`));
       report(data); return data;
