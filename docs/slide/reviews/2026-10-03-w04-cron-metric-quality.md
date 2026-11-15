@@ -55,11 +55,21 @@ MAX-107 v2 严格串行第 5/16 项。基线 `origin/main@263c22aa05f1abce2c3518
 
 示例在已获授权的诊断环境交互输入密码，连接参数由操作者填写，输出保存在其受控目录：
 
+使用没有活动事务的新连接，确认 `metrics_history` 使用 InnoDB，并完整执行脚本；任何 SQL 错误均应停止，不使用 `--force` 继续导出。脚本通过 `SET TRANSACTION ISOLATION LEVEL REPEATABLE READ` 仅指定下一事务的隔离级别，再以 `WITH CONSISTENT SNAPSHOT, READ ONLY` 开始事务，使汇总和明细读取同一快照。即使连接默认采用 READ COMMITTED，两次读取之间其他事务提交插入或删除，导出仍保持对应；结束后连接原有的会话隔离级别不变。该保证适用于 InnoDB 的事务数据读取，不覆盖并发 DDL。依据：[MySQL SET TRANSACTION](https://dev.mysql.com/doc/refman/8.4/en/set-transaction.html)、[一致性快照与只读事务](https://dev.mysql.com/doc/refman/8.4/en/commit.html)。
+
 ```sh
 mysql --host=<read-replica> --user=<readonly-user> --password --batch <database> \
   < apps/db-ops-api/sql/diagnostics/metric-quality-candidates.sql > metric-quality-candidates.tsv
 ```
 
 不将真实候选数据提交 Git 或公共 PR。只有逐行备份/原公式版本证明且用户确认具体批量范围后，才能恢复；未证明数据保持原标记。这份文件没有 UPDATE/DELETE，不需要数据回滚。
+
+GitHub #470 的隔离回归使用独立随机测试库，包含 READ COMMITTED、REPEATABLE READ、SERIALIZABLE 会话下的并发插入/删除、时间范围与明细一致、只读事务拒绝写入、历史值保全和空候选。默认测试收集不连接数据库；显式验收前通过环境注入 `MAX7_MYSQL_HOST`、`MAX7_MYSQL_PORT`、`MAX7_MYSQL_USER`、`MAX7_MYSQL_PASSWORD`（账号需有创建/删除本项测试库的权限），再执行：
+
+```sh
+MAX7_MYSQL_ACCEPTANCE=1 pnpm --filter slide-api exec vitest run src/lifecycle/metric-quality-candidates.mysql.test.ts
+```
+
+测试仅创建并清理本次 `max7_candidates_<随机ID>` 库，不对业务库执行写操作；显式启用但配置不完整时会报错。
 
 两项功能修改独立提交，RED 测试检查点另行保留。前端可独立 revert `47b85f9a`（保留回归，回退版本会重新暴露 ID 问题）。后端禁止直接 revert `ee83117c` 或恢复旧启动 SQL；若回退发布版本，须先将该 SQL 移除/禁用，再验证重复启动，保留所有质量标记和数据。启动修复没有 Schema/数据迁移，故无需反向迁移。

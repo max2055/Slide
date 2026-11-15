@@ -40,9 +40,9 @@ describe("event center navigation", () => {
     expect(new URL(window.location.href).searchParams.get("view")).toBe("notifications");
     expect(element.shadowRoot!.querySelector('alerts-page[mode="notifications"]')).not.toBeNull();
 
-    window.history.replaceState({}, "", "/events?view=notifications");
+    window.history.replaceState({}, "", "/events");
     window.dispatchEvent(new PopStateEvent("popstate"));
     await element.updateComplete;
-    expect(element.shadowRoot!.querySelector('.tab.active')?.textContent?.trim()).toBe("通知投递");
+    expect(element.shadowRoot!.querySelector('.tab.active')?.textContent?.trim()).toBe("活动告警");
   });
 });

@@ -111,6 +111,9 @@ export class AlertDetailModal extends LitElement {
               </div>
               ${this._renderAnalysisSummary()}
             </div>
+          ` : isAnalyzing && this.diagnosisStatus === 'unknown' ? html`
+            <p role="status">${this.diagnosisError}</p>
+            <button class="btn" @click=${() => this._emit('alert-rca', { id: a.id })}>继续观察</button>
           ` : analysisFailed ? html`
             <div style="padding:var(--space-md);background:var(--danger-subtle);border-radius:var(--radius-sm);color:var(--danger);">❌ ${this.diagnosisError || 'AI 分析失败'}</div>
           ` : html`
