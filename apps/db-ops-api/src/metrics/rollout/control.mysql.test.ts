@@ -24,9 +24,9 @@ describe.skipIf(!port)('isolated formal rollout and alert replay', () => {
     versions: { ...sample(definition.id).versions, config_revision: revision } });
   const series = observation();
   beforeAll(async () => {
-    root = mysql.createPool({ host: '127.0.0.1', port, user: 'root', password: '' });
+    root = mysql.createPool({ host: '127.0.0.1', port, user: 'root', password: process.env.METRICS_TEST_MYSQL_PASSWORD ?? '' });
     await root.query(`CREATE DATABASE ${database}`);
-    pool = mysql.createPool({ host: '127.0.0.1', port, user: 'root', password: '', database, connectionLimit: 24, timezone: '+05:30' });
+    pool = mysql.createPool({ host: '127.0.0.1', port, user: 'root', password: process.env.METRICS_TEST_MYSQL_PASSWORD ?? '', database, connectionLimit: 24, timezone: '+05:30' });
     await new MigrationRunner(pool as unknown as MigrationPool).run();
     await pool.query("INSERT INTO database_instances (id, name, db_type, host, port, username, password_encrypted) VALUES (1, 'isolated', 'mysql', '127.0.0.1', 33376, 'fixture', 'fixture')");
     control = new RolloutControl(pool); storage = new MysqlMetricStorage(pool);
@@ -34,6 +34,7 @@ describe.skipIf(!port)('isolated formal rollout and alert replay', () => {
   afterAll(async () => { await pool?.end(); if (root) { await root.query(`DROP DATABASE IF EXISTS ${database}`); await root.end(); } });
   beforeEach(async () => {
     for (const table of ['metric_alert_transitions', 'metric_alert_state', 'alerts', 'metric_rollout', 'metric_publications', 'metric_observations']) await pool.query(`DELETE FROM ${table}`);
+    await pool.query("UPDATE database_instances SET name = 'isolated' WHERE id = 1");
     await control.initialize(series, target); await control.applied(series, ticket);
   });
   it('selects compatibility consumers only from a uniform applied formal source', async () => {
@@ -53,6 +54,51 @@ describe.skipIf(!port)('isolated formal rollout and alert replay', () => {
     expect(await formal.sourceState(ref)).toBe('pending');
     await control.applied(series, { source: 'legacy', generation: 3, revision: 3 });
     expect(await formal.sourceState(ref)).toBe('pending');
+  });
+  it.each(['semantic', 'legacy'] as const)('MAX-519: %s first sample and rollback ignore the prior revision clock', async source => {
+    const legacyWrite = vi.fn(async (c: import('mysql2/promise').PoolConnection) => {
+      await c.execute("UPDATE database_instances SET name = 'published' WHERE id = 1");
+    });
+    const old = observation(2);
+    await control.publish(old, definition, ticket, legacyWrite);
+    await control.switch(series, 1, { ...target, source, read: source, revision: 2 });
+    // Preserve the old authority as historical evidence across the switch.
+    expect((await control.current(series)).latest).toEqual(old);
+    const nextTicket = { source, generation: 2, revision: 2 };
+    await control.applied(series, nextTicket);
+    legacyWrite.mockClear();
+    const first = observation(1, 2); // New collector is one second behind.
+    if (source === 'legacy') {
+      await expect(control.publish(first, definition, nextTicket, async c => {
+        await c.execute("UPDATE database_instances SET name = 'failed-first' WHERE id = 1");
+        throw new Error('first-write-fault');
+      })).rejects.toThrow('first-write-fault');
+      expect((await control.current(series)).latest).toEqual(old);
+      expect((await pool.query<RowDataPacket[]>('SELECT name FROM database_instances WHERE id=1'))[0][0].name).toBe('published');
+      expect((await pool.execute<RowDataPacket[]>('SELECT observation_id FROM metric_publications WHERE observation_id=?', [first.id]))[0]).toEqual([]);
+    }
+    await control.publish(first, definition, nextTicket, legacyWrite);
+    expect((await control.current(series)).latest).toEqual(first);
+    expect(legacyWrite).toHaveBeenCalledTimes(source === 'legacy' ? 1 : 0);
+    if (source === 'semantic') expect(await control.latest(series, async () => null)).toEqual(first);
+    await control.publish(observation(0, 2), definition, nextTicket, legacyWrite);
+    await control.publish(first, definition, nextTicket, legacyWrite);
+    expect((await control.current(series)).latest).toEqual(first);
+    expect(legacyWrite).toHaveBeenCalledTimes(source === 'legacy' ? 1 : 0);
+    await expect(control.publish(old, definition, ticket, legacyWrite)).rejects.toThrow('STALE_SOURCE');
+
+    await control.switch(series, 2, { ...target, revision: 3 });
+    await control.applied(series, { source: 'legacy', generation: 3, revision: 3 });
+    legacyWrite.mockClear();
+    const rolledBack = observation(-1, 3);
+    await control.publish(rolledBack, definition, { source: 'legacy', generation: 3, revision: 3 }, legacyWrite);
+    expect((await control.current(series)).latest).toEqual(rolledBack);
+    expect(legacyWrite).toHaveBeenCalledTimes(1);
+    expect((await pool.query<RowDataPacket[]>('SELECT name FROM database_instances WHERE id=1'))[0][0].name).toBe('published');
+    const [publications] = await pool.query<RowDataPacket[]>('SELECT generation, observation_id FROM metric_publications ORDER BY generation, observation_id');
+    expect(publications).toHaveLength(4);
+    expect(publications.map(row => Number(row.generation))).toEqual([1, 2, 2, 3]);
+    expect(await storage.evidence(old.id)).toMatchObject({ status: 'available' });
   });
   it('serializes competing switches, pending applied revision, late sources and rollback without deleting evidence', async () => {
     await control.publish(series, definition, ticket, async () => {});

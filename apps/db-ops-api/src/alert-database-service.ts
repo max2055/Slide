@@ -514,13 +514,16 @@ class AlertDatabaseService {
    * 清除告警（默认保留最近 30 天）
    */
   async clearAllAlerts(retentionDays: number = 30): Promise<{ success: boolean; error?: string; deletedCount?: number }> {
+    if (!Number.isSafeInteger(retentionDays) || retentionDays < 0) {
+      return { success: false, error: 'retentionDays 必须为非负整数' };
+    }
     const pool = this.getPool();
     if (!pool) {
       return { success: false, error: '数据库未连接' };
     }
 
     try {
-      if (retentionDays <= 0) {
+      if (retentionDays === 0) {
         // 显式传 0 才允许清除所有（需确认操作）
         const [rows] = await pool.execute('SELECT COUNT(*) as count FROM alerts WHERE NOT (source <=> \"template-trigger\")') as any;
         const total = rows[0]?.count || 0;
@@ -647,35 +650,35 @@ class AlertDatabaseService {
     dimensions?: Record<string, string>,
   ): Promise<Alert | null> {
     const pool = this.getPool();
-    if (!pool) return null;
+    if (!pool) throw new Error('RESOURCE_STORE_UNAVAILABLE');
     try {
       const [rows] = await pool.query<mysql.RowDataPacket[]>(
         `SELECT * FROM alerts
          WHERE network_device_id = ? AND target_type = 'network_device' AND metric_name = ?
          AND JSON_EXTRACT(tags, '$.rule_id') = CAST(? AS JSON)
          AND status IN ('unread', 'read', 'acknowledged')
-         ORDER BY created_at DESC LIMIT 100`,
+         ORDER BY created_at DESC, id DESC`,
         [networkDeviceId, metricName, ruleId],
       );
-      const canonical = dimensions ? JSON.stringify(Object.fromEntries(Object.entries(dimensions).sort(([a], [b]) => a.localeCompare(b)))) : undefined;
+      const canonical = dimensionKey(dimensions);
       for (const row of rows) {
         const tags = row.tags ? (typeof row.tags === 'string' ? JSON.parse(row.tags) : row.tags) : {};
-        const rowDimensions = tags?.dimensions ? JSON.stringify(Object.fromEntries(Object.entries(tags.dimensions).sort(([a], [b]) => a.localeCompare(b)))) : undefined;
+        const rowDimensions = dimensionKey(tags?.dimensions);
         if (canonical === rowDimensions) return this._rowToAlert(row);
       }
       return null;
     } catch (error) {
       console.error('查找网络设备活跃告警失败:', error);
-      return null;
+      throw error;
     }
   }
 
   /**
    * 更新已有告警的指标值和更新时间（去重 touch）
    */
-  async touchAlert(alertId: number, metricValue: number, observation?: { tags: Record<string, unknown>; message: string; thresholdValue?: string }): Promise<void> {
+  async touchAlert(alertId: number, metricValue: number, observation?: { tags: Record<string, unknown>; message: string; thresholdValue?: string }, strict = false): Promise<void> {
     const pool = this.getPool();
-    if (!pool) return;
+    if (!pool) { if (strict) throw new Error('RESOURCE_STORE_UNAVAILABLE'); return; }
 
     try {
       if (observation) await pool.execute(
@@ -689,6 +692,7 @@ class AlertDatabaseService {
         [metricValue, alertId]
       );
     } catch (error) {
+      if (strict) throw error;
       console.error('更新告警指标值失败:', error);
     }
   }
@@ -696,9 +700,9 @@ class AlertDatabaseService {
   /**
    * 获取所有未解决的告警
    */
-  async getActiveAlerts(): Promise<Alert[]> {
+  async getActiveAlerts(strict = false): Promise<Alert[]> {
     const pool = this.getPool();
-    if (!pool) return [];
+    if (!pool) { if (strict) throw new Error('RESOURCE_STORE_UNAVAILABLE'); return []; }
 
     try {
       const [rows] = await pool.query<mysql.RowDataPacket[]>(
@@ -706,6 +710,7 @@ class AlertDatabaseService {
       );
       return rows.map(r => this._rowToAlert(r));
     } catch (error) {
+      if (strict) throw error;
       console.error('获取活跃告警失败:', error);
       return [];
     }
@@ -757,9 +762,10 @@ class AlertDatabaseService {
   /**
    * 获取告警规则列表
    */
-  async getAlertRules(enabled?: boolean): Promise<AlertRule[]> {
+  async getAlertRules(enabled?: boolean, strict = false): Promise<AlertRule[]> {
     const pool = this.getPool();
     if (!pool) {
+      if (strict) throw new Error('RESOURCE_STORE_UNAVAILABLE');
       return [];
     }
 
@@ -788,6 +794,7 @@ class AlertDatabaseService {
         enabled: Boolean(row.enabled),
       })) as AlertRule[];
     } catch (error) {
+      if (strict) throw error;
       console.error('获取告警规则失败:', error);
       return [];
     }
