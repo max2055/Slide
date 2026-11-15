@@ -113,3 +113,16 @@ describe('106-04: sql-generator', () => {
     expect(messages[0].content).toContain('MySQL');
   });
 });
+
+describe('MAX-552 / #601 fenced SQL', () => {
+  it.each(['sql', 'SQL', 'SqL', ''])('strips %s and validates the generation result', async language => {
+    vi.mocked(llmService.chatWithTracking).mockResolvedValue({ success: true, content: `说明\n\`\`\`${language}\nSELECT 1\n\`\`\`` });
+    expect(await generateCollectionSql('mysql', '常数')).toEqual({ sql: 'SELECT 1' });
+  });
+  it('rejects multiple code blocks rather than choosing the first', async () => {
+    const content = '```sql\nSELECT 1\n```\n```SQL\nSELECT 2\n```';
+    expect(extractSqlFromResponse(content)).toBeNull();
+    vi.mocked(llmService.chatWithTracking).mockResolvedValue({ success: true, content });
+    expect(await generateCollectionSql('mysql', '常数')).toHaveProperty('error');
+  });
+});

@@ -5,7 +5,7 @@ import { customElement, state } from "lit/decorators.js";
 import "../components/app-dialog.js";
 import { basicSetup } from "codemirror";
 import { EditorView } from "@codemirror/view";
-import { EditorState } from "@codemirror/state";
+import { Compartment, EditorState } from "@codemirror/state";
 import { sql, MySQL, SQLDialect } from "@codemirror/lang-sql";
 import { autocompletion, CompletionContext, Completion } from "@codemirror/autocomplete";
 import { oneDark } from "@codemirror/theme-one-dark";
@@ -420,6 +420,20 @@ export class SqlConsolePage extends LitElement {
   @state() private explainError: string | null = null;
   private _expandedNodes: Set<PlanNode> = new Set();
 
+  private readonly _dialect = new Compartment();
+
+  private _sqlLanguage() {
+    const type = this.instances.find(i => i.id === this.selectedId)?.db_type;
+    const dialect = type === "oracle" ? OracleDialect : type === "dameng" ? DamengDialect : MySQL;
+    return sql({ dialect, upperCaseKeywords: dialect !== MySQL });
+  }
+
+  private _refreshDialect() {
+    for (const tab of this.tabs) {
+      tab.editorView?.dispatch({ effects: this._dialect.reconfigure(this._sqlLanguage()) });
+    }
+  }
+
   private readonly STORAGE_KEY = 'sql-console-tabs';
 
   private get activeTab(): Tab | undefined {
@@ -436,10 +450,19 @@ export class SqlConsolePage extends LitElement {
     this.loadInstances();
     document.addEventListener("keydown", this._globalKeyHandler);
     this._restoreTabs();
+    void this.updateComplete.then(() => {
+      if (this.isConnected) this._switchTab(this.activeTabId);
+    });
   }
   override disconnectedCallback() {
     super.disconnectedCallback();
     document.removeEventListener("keydown", this._globalKeyHandler);
+    for (const tab of this.tabs) {
+      if (!tab.editorView) continue;
+      tab.sql = tab.editorView.state.doc.toString();
+      tab.editorView.destroy();
+      tab.editorView = null;
+    }
   }
 
   private _globalKeyHandler = (e: KeyboardEvent) => {
@@ -467,16 +490,12 @@ export class SqlConsolePage extends LitElement {
     this.activeTabId = tabId;
 
     if (!tab.editorView) {
-      const instance = this.instances.find(i => i.id === this.selectedId);
-      const selectedDialect = instance?.db_type === 'oracle' ? OracleDialect
-        : instance?.db_type === 'dameng' ? DamengDialect
-        : MySQL;
       tab.editorView = new EditorView({
         state: EditorState.create({
           doc: tab.sql,
           extensions: [
             basicSetup,
-            sql({ dialect: selectedDialect, upperCaseKeywords: selectedDialect === OracleDialect || selectedDialect === DamengDialect }),
+            this._dialect.of(this._sqlLanguage()),
             oneDark,
             autocompletion({ override: [this._sqlCompletions.bind(this)] }),
             EditorView.updateListener.of((update) => { this.requestUpdate(); if (update.docChanged) this._saveTabs(); }),
@@ -602,6 +621,8 @@ export class SqlConsolePage extends LitElement {
     const textBefore = context.state.sliceDoc(0, context.pos);
 
     const completions: Completion[] = [];
+    const afterDot = textBefore.match(/([\w一-鿿]+)\.[\w一-鿿]*$/);
+    const columns = new Set<string>();
     for (const schema of this.schemas || []) {
       for (const table of (schema as any).tables || []) {
         completions.push({
@@ -609,20 +630,11 @@ export class SqlConsolePage extends LitElement {
           type: 'keyword',
           detail: `${(schema as any).schema || table.schema || 'public'}.${table.name}`,
         });
-        const afterDot = textBefore.match(/(\w+)\.\w*$/);
-        if (afterDot) {
-          const tableAlias = afterDot[1];
-          const matchedTable = (schema as any).tables?.find((t: any) =>
-            t.name === tableAlias || t.alias === tableAlias
-          );
-          if (matchedTable) {
-            for (const col of (matchedTable.columns || [])) {
-              completions.push({
-                label: col.name,
-                type: 'property',
-                detail: col.type || 'column',
-              });
-            }
+        if (afterDot && (table.name === afterDot[1] || table.alias === afterDot[1])) {
+          for (const col of table.columns || []) {
+            if (columns.has(col.name)) continue;
+            columns.add(col.name);
+            completions.push({ label: col.name, type: 'property', detail: col.type || 'column' });
           }
         }
       }
@@ -717,12 +729,16 @@ export class SqlConsolePage extends LitElement {
   private async loadInstances() {
     try {
       const res = await authFetch("/api/database/instances", { headers: this._headers() });
-      if (res.ok) this.instances = await res.json();
+      if (res.ok) {
+        this.instances = await res.json();
+        this._refreshDialect();
+      }
     } catch { /* */ }
   }
 
   private async _selectInstance(id: number) {
     this.selectedId = id;
+    this._refreshDialect();
     this.selectedDatabase = '';
     this.schemas = [];
     this.databases = [];
