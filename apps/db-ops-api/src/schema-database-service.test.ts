@@ -21,6 +21,31 @@ describe('GitHub #368 atomic snapshot batches', () => {
     vi.spyOn(console, 'error').mockImplementation(() => {});
     return { connection, pool };
   }
+  it.each([499, 500, 501, 5041, 5042, 10085])('#554 saves %i columns within the prepared-statement parameter limit', async (count) => {
+    const { connection, pool } = setup();
+    const rows = Array.from({ length: count }, (_, i) => ({ ...column(`c${i}`), data_length: null }));
+    expect(await service.saveSnapshot(1, rows)).toEqual({ success: true, count });
+    const inserts = connection.execute.mock.calls.filter(([sql]) => sql.startsWith('INSERT'));
+    expect(inserts.length).toBeGreaterThan(0);
+    for (const [sql, params] of inserts) {
+      expect(params.length).toBeLessThanOrEqual(65535);
+      expect(sql.match(/\?/g)).toHaveLength(params.length);
+      expect(params.length % 13).toBe(0);
+    }
+    const values = inserts.flatMap(([, params]) => params);
+    expect(values).toHaveLength(count * 13);
+    const batchTime = values[1];
+    for (let i = 0; i < count; i++) {
+      expect(values.slice(i * 13, (i + 1) * 13)).toEqual([
+        1, batchTime, 'items', `c${i}`, 'int', 'YES', null, '', '', null, null, 0, null,
+      ]);
+    }
+    expect(pool.getConnection).toHaveBeenCalledOnce();
+    expect(connection.beginTransaction).toHaveBeenCalledOnce();
+    expect(connection.commit).toHaveBeenCalledOnce();
+    expect(connection.rollback).not.toHaveBeenCalled();
+    expect(connection.release).toHaveBeenCalledOnce();
+  });
   it('#558 preserves unavailable size as SQL NULL instead of measured zero', async () => {
     const { connection } = setup();
     expect((await service.saveSnapshot(1, [{ ...column('id'), data_length: null }])).success).toBe(true);
