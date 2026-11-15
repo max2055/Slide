@@ -132,7 +132,7 @@ import { alertSilenceService } from './src/alert-silence-service.js';
 import { maintenanceWindowService } from './src/maintenance-window-service.js';
 import { alertEventService } from './src/alert-event-service.js';
 import { eventAggregator } from './src/event-aggregator.js';
-import { capacityPredictor } from './src/capacity-predictor.js';
+import { capacityPredictor, assertPredictionHorizon, PredictionHorizonError } from './src/capacity-predictor.js';
 import { aiAnalysisDatabaseService } from './src/ai-analysis-database-service.js';
 import { analysisAccessSql, canReadAnalysis } from './src/analysis/analysis-access.js';
 import { aiAnalysisConfigService } from './src/ai-analysis-config-service.js';
@@ -3779,7 +3779,8 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
             if (!body.metric) {
               return reply.code(400).send({ error: '容量预测需要 metric 参数' });
             }
-            const horizon = body.horizon || '30d';
+            const { horizon = '30d' } = body;
+            assertPredictionHorizon(horizon);
             const predictResult = await capacityPredictor.predict(instance_id, body.metric, horizon);
             return reply.send({ success: true, result: predictResult });
           }
@@ -3796,7 +3797,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
           || (analysis_type in sessionKeyPrefix ? `${sessionKeyPrefix[analysis_type]}-${analysisId}` : undefined);
         reply.send({ id: analysisId, status: "pending", session_key });
       } catch (error: any) {
-        reply.code(500).send({ error: error.message });
+        reply.code(error instanceof PredictionHorizonError ? 400 : 500).send({ error: error.message });
       }
     }
   });
@@ -4249,15 +4250,12 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
           return reply.code(403).send({ error: '无权访问该实例' });
         }
 
-        const validHorizons = ['7d', '30d', '90d'];
-        if (!validHorizons.includes(horizon)) {
-          return reply.code(400).send({ error: `horizon 必须为 ${validHorizons.join('/')} 之一` });
-        }
+        assertPredictionHorizon(horizon);
 
         const result = await capacityPredictor.predict(Number(instance_id), metric, horizon);
         reply.send(result);
       } catch (error: any) {
-        reply.code(500).send({ error: error.message });
+        reply.code(error instanceof PredictionHorizonError ? 400 : 500).send({ error: error.message });
       }
     }
   });
@@ -4281,10 +4279,11 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
           return reply.code(403).send({ error: '无权访问该实例' });
         }
 
-        const results = await capacityPredictor.predictAll(Number(instance_id), horizon as '7d' | '30d' | '90d');
+        assertPredictionHorizon(horizon);
+        const results = await capacityPredictor.predictAll(Number(instance_id), horizon);
         reply.send(results);
       } catch (error: any) {
-        reply.code(500).send({ error: error.message });
+        reply.code(error instanceof PredictionHorizonError ? 400 : 500).send({ error: error.message });
       }
     }
   });
