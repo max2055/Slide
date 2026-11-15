@@ -106,7 +106,7 @@ import { registerAnalysisBridgeRoutes } from './src/investigations/bridge-routes
 import { registerChatRoutes } from './src/chat-routes.js';
 import { reportService } from './src/report-service.js';
 import { reportDatabaseService } from './src/report-database-service.js';
-import { reportConfigService } from './src/report-config-database-service.js';
+import { reportConfigService, ReportConfigCreateOutcomeUnknownError } from './src/report-config-database-service.js';
 import { InvalidReportCronError } from './src/report-cron.js';
 import { ReportType } from './src/report-database-service.js';
 import { reportExporter } from './src/report-exporter.js';
@@ -2840,6 +2840,11 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
 
         reply.send({ id: result.id, message: '创建成功' });
       } catch (error: any) {
+        if (error instanceof ReportConfigCreateOutcomeUnknownError) {
+          return reply.code(409).send({
+            error: error.message, code: 'REPORT_CONFIG_CREATE_OUTCOME_UNKNOWN', retryable: false,
+          });
+        }
         if (error instanceof InvalidReportCronError) return reply.code(400).send({ error: error.message });
         reply.code(500).send({ error: error.message });
       }
