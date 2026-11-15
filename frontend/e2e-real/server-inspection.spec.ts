@@ -125,6 +125,8 @@ test('MAX-558 real page → generate endpoint → one persisted report and one n
   await page.addInitScript(token => {
     localStorage.setItem('token', token);
     localStorage.setItem('slide.control.settings.v1:default', JSON.stringify({ locale: 'zh-CN' }));
+    (window as any).permissionsReady = false;
+    window.addEventListener('slide-permissions-loaded', () => { (window as any).permissionsReady = true; });
     (window as any).reportNavigations = 0;
     window.addEventListener('slide-navigate', (e: any) => {
       if (e.detail.tab === 'reports') (window as any).reportNavigations++;
@@ -136,7 +138,12 @@ test('MAX-558 real page → generate endpoint → one persisted report and one n
       requests.push({ method: request.method(), path: '/api/servers/reports/generate', body: request.postDataJSON() });
     }
   });
-  await page.goto(origin + '/server-detail?id=558');
+  // Let real authentication/bootstrap finish before opening the target from its
+  // ordinary list entry. No cached permissions or synthetic navigation.
+  await page.goto(origin + '/servers');
+  await page.waitForFunction(() => (window as any).permissionsReady === true);
+  await page.locator('servers-page [data-resource-detail-id="558"]').click();
+  await expect(page).toHaveURL(/server-detail/);
   const button = page.locator('server-detail').getByRole('button', { name: /一键巡检|巡检中/ });
   await expect(button).toHaveAccessibleName('一键巡检');
   const [before] = await pool.query('SELECT COUNT(*) AS count FROM reports WHERE server_id=558');
