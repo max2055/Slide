@@ -8,7 +8,7 @@ const modal = readFileSync(resolve(views, '../components/instance-diagnosis-moda
 
 describe('Instance diagnosis UI contract', () => {
   it('loads bounded diagnosis history for the selected instance', () => {
-    expect(detail).toContain('/api/ai/analysis/history?instance_id=${this.instanceId}');
+    expect(detail).toContain('/api/ai/analysis/history?instance_id=${instanceId}');
     expect(detail).toContain('analysis_type=fault_diagnosis');
     expect(detail).toContain('limit=10');
     expect(detail).toContain('this.loadDiagnosisHistory()');
