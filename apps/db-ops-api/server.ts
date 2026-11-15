@@ -758,22 +758,17 @@ async function start() {
       if (check.error) return reply.code(400).send(check.error);
       const { status, email } = check.body as { status?: string; email?: string };
       const validStatuses = ['active', 'inactive', 'locked'];
-      if (status && !validStatuses.includes(String(status))) {
+      if (status !== undefined && !validStatuses.includes(status)) {
         return reply.code(400).send({ error: '无效的状态' });
       }
+      if (email !== undefined && typeof email !== 'string') {
+        return reply.code(400).send({ error: '邮箱必须是字符串' });
+      }
       // role 更新通过 RBAC API (POST /api/v1/rbac/users/:userId/roles) 完成
-      const result = await authDatabaseService.updateUserById(Number(id), { status: String(status) });
+      if (status === undefined && email === undefined) return reply.code(400).send({ error: '没有要更新的字段' });
+      const result = await authDatabaseService.updateUserById(Number(id), { status, email });
       if (!result.success) {
         return reply.code(400).send(result);
-      }
-      // email update if provided
-      if (email && email !== '') {
-        try {
-          const pool = dbConnection.getPool();
-          if (pool) {
-            await pool.execute('UPDATE users SET email = ? WHERE id = ?', [email, Number(id)]);
-          }
-        } catch (_) { /* non-critical */ }
       }
       reply.send(result);
     } catch (error: any) {

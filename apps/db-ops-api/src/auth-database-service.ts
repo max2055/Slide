@@ -79,6 +79,7 @@ export class AuthDatabaseService {
     userId: number,
     sql: string,
     values: any[],
+    revokeSessions = true,
   ): Promise<{ success: boolean; error?: string }> {
     const pool = this.getPool();
     if (!pool) return { success: false, error: '数据库未连接' };
@@ -91,10 +92,12 @@ export class AuthDatabaseService {
         await connection.rollback();
         return { success: false, error: '用户不存在' };
       }
-      await connection.execute(
-        'UPDATE refresh_tokens SET revoked = TRUE WHERE user_id = ?',
-        [userId],
-      );
+      if (revokeSessions) {
+        await connection.execute(
+          'UPDATE refresh_tokens SET revoked = TRUE WHERE user_id = ?',
+          [userId],
+        );
+      }
       await connection.commit();
       return { success: true };
     } catch (error: any) {
@@ -480,18 +483,33 @@ export class AuthDatabaseService {
   /**
    * 根据 ID 更新用户
    */
-  async updateUserById(id: number, updates: { status?: string }): Promise<{ success: boolean; error?: string }> {
+  async updateUserById(id: number, updates: { status?: string; email?: string }): Promise<{ success: boolean; error?: string }> {
     const pool = this.getPool();
     if (!pool) {
       return { success: false, error: '数据库未连接' };
     }
 
     try {
-      if (!updates.status) return { success: false, error: '没有要更新的字段' };
+      const fields: string[] = [];
+      const values: string[] = [];
+      if (updates.status) {
+        fields.push('status = ?');
+        values.push(updates.status);
+      }
+      // Omission preserves the email; an explicit empty string clears it.
+      if (updates.email !== undefined) {
+        fields.push('email = ?');
+        values.push(updates.email);
+      }
+      if (fields.length === 0) return { success: false, error: '没有要更新的字段' };
+      // Preserve the existing status/password session policy. Profile-only edits
+      // historically did not invalidate sessions.
+      if (updates.status) fields.push('session_version = session_version + 1');
       return await this.mutateUserAndRevokeSessions(
         id,
-        'UPDATE users SET status = ?, session_version = session_version + 1 WHERE id = ?',
-        [updates.status, id],
+        `UPDATE users SET ${fields.join(', ')} WHERE id = ?`,
+        [...values, id],
+        Boolean(updates.status),
       );
     } catch (error: any) {
       console.error('更新用户失败:', error);
@@ -509,8 +527,11 @@ export class AuthDatabaseService {
     }
 
     try {
-      // 不能删除 admin 用户
-      const user = await this.getUserById(id);
+      // 删除预检查包含所有状态；认证查询 getUserById 继续只返回 active 用户。
+      const [rows] = await pool.execute<mysql.RowDataPacket[]>(
+        'SELECT id, username FROM users WHERE id = ?', [id],
+      );
+      const user = rows[0];
       if (!user) {
         return { success: false, error: '用户不存在' };
       }
