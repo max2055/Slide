@@ -1,7 +1,7 @@
 import { expect, test } from '@playwright/test';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { createRequire } from 'node:module';
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { readFile, mkdir, open, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 
@@ -128,7 +128,11 @@ test('#625 / #686: real persistence and recoverable role binding', async ({ page
   await db.execute('INSERT INTO refresh_tokens(user_id,token_hash,expires_at,revoked) VALUES(?,?,NOW()+INTERVAL 1 DAY,TRUE)', [target, randomBytes(32).toString('hex')]);
   const snapshot = async () => ({
     user: (await db.execute('SELECT email,status,session_version FROM users WHERE id=?', [target]))[0][0],
-    tokens: (await db.execute('SELECT id,session_version,revoked FROM refresh_tokens WHERE user_id=? ORDER BY id', [target]))[0],
+    tokens: (await db.execute('SELECT * FROM refresh_tokens WHERE user_id=? ORDER BY id', [target]))[0].map((row: any) => {
+      const { revoked, ...metadata } = row;
+      return { id: row.id, session_version: row.session_version, revoked,
+        metadataHash: createHash('sha256').update(JSON.stringify(metadata)).digest('hex') };
+    }),
   });
   const beforeFailure = await snapshot();
   expect(beforeFailure.tokens.some((row: any) => !row.revoked)).toBe(true);
@@ -139,7 +143,7 @@ test('#625 / #686: real persistence and recoverable role binding', async ({ page
   expect(await snapshot()).toEqual(beforeFailure);
   await db.query('DROP TRIGGER max676_reject_email');
   // A later failure in refresh token revocation must roll back the user UPDATE too.
-  await db.query(`CREATE TRIGGER max676_reject_revoke BEFORE UPDATE ON refresh_tokens FOR EACH ROW BEGIN IF OLD.user_id=${target} THEN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='max676 controlled revoke failure'; END IF; END`);
+  await db.query(`CREATE TRIGGER max676_reject_revoke BEFORE UPDATE ON refresh_tokens FOR EACH ROW BEGIN IF OLD.id=${beforeFailure.tokens.find((row: any) => row.revoked).id} THEN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='max676 controlled revoke failure'; END IF; END`);
   const rejectedRevoke = await page.request.put('/api/users/' + target, { headers, data: { status: 'inactive', email: '' } });
   expect([400,500]).toContain(rejectedRevoke.status());
   expect(await snapshot()).toEqual(beforeFailure);
