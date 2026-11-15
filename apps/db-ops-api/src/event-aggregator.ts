@@ -34,21 +34,23 @@ class EventAggregator {
     const pool = this.getPool();
     if (!pool) return { eventsCreated: 0, alertsAggregated: 0 };
 
+    let connection: mysql.PoolConnection | undefined;
+    let locked = false;
+    let eventsCreated = 0;
+    let alertsAggregated = 0;
     try {
-      // Recovery is an independent sweep over persisted alerts. Admission for
-      // each alert is owned by its persistence path; a failed sweep must not
-      // suppress display aggregation of the same batch.
-      try { await recoverAutomaticAlertAdmissions(); }
-      catch (error) {
-        assertWorkflowActive();
-        // Codes only: never echo SQL or provider payloads from the sweep.
-        console.warn(`[EventAggregator] 自动分析恢复失败，继续事件聚合 (${(error as {code?: string}).code ?? 'UNKNOWN'})`);
-      }
+      connection = await pool.getConnection();
+      // All automatic aggregation entry points share this database-scoped lock.
+      // One reserved connection also works with a connectionLimit of one.
+      const [locks] = await connection.execute<mysql.RowDataPacket[]>(
+        "SELECT GET_LOCK(CONCAT('slide:aggregate:', LEFT(SHA2(DATABASE(), 256), 40)), 0) AS acquired");
+      locked = Number(locks[0]?.acquired) === 1;
+      if (!locked) return { eventsCreated: 0, alertsAggregated: 0 };
       // Phase 1: 查找候选已有事件
       // 查找 10 分钟内还有活动的 open/investigating 事件，
       // 新告警如果属于同一 instance+type+metric 则可能被吸收
       assertWorkflowActive();
-      const [existingEvents] = await pool.execute(
+      const [existingEvents] = await connection.execute(
         `SELECT e.id, e.event_id, e.instance_id, e.source_type, e.severity,
                 MAX(m.created_at) AS last_alert_at,
                 a.alert_type, a.metric_name
@@ -56,8 +58,8 @@ class EventAggregator {
          JOIN alert_event_members m ON m.event_id = e.id
          JOIN alerts a ON a.id = m.alert_id
          WHERE e.status IN ('open', 'investigating')
-           AND e.created_at >= DATE_SUB(NOW(), INTERVAL 10 MINUTE)
-         GROUP BY e.id, e.instance_id, e.source_type, a.alert_type, a.metric_name`
+         GROUP BY e.id, e.instance_id, e.source_type, a.alert_type, a.metric_name
+         HAVING MAX(m.created_at) >= DATE_SUB(NOW(), INTERVAL 10 MINUTE)`
       ) as any;
 
       // 构建事件查找 Map: key = instance_id:alert_type:metric_name
@@ -77,7 +79,7 @@ class EventAggregator {
 
       // Phase 2: 获取未聚合告警（按 key + created_at 排序）
       assertWorkflowActive();
-      const [alerts] = await pool.execute(
+      const [alerts] = await connection.execute(
         `SELECT a.id, a.instance_id, a.alert_type, a.metric_name, a.level, a.created_at
          FROM alerts a
          WHERE a.status IN ('unread', 'read')
@@ -191,16 +193,39 @@ class EventAggregator {
       }
 
       // Phase 4: 处理分组 —— 吸收到已有事件或创建新事件
-      let eventsCreated = 0;
-      let alertsAggregated = 0;
+
 
       for (const group of groupsToProcess) {
         try {
+          await connection.beginTransaction();
+          // Lock alert rows before checking ownership. Template events insert their
+          // alert and membership in one transaction, so cannot race this snapshot.
+          const placeholders = group.alert_ids.map(() => '?').join(',');
+          await connection.execute(`SELECT id FROM alerts WHERE id IN (${placeholders}) ORDER BY id FOR UPDATE`, group.alert_ids);
+          const [owned] = await connection.execute<mysql.RowDataPacket[]>(
+            `SELECT alert_id FROM alert_event_members WHERE alert_id IN (${placeholders}) FOR UPDATE`, group.alert_ids);
+          if (owned.length) {
+            await connection.rollback();
+            continue;
+          }
           let eventIdPk: number;
           let eventId: string;
           let isNewEvent = false;
 
           if (group.existingEventPk) {
+            const [targets] = await connection.execute<mysql.RowDataPacket[]>(
+              "SELECT id, severity FROM alert_events WHERE id=? AND status IN ('open','investigating') FOR UPDATE", [group.existingEventPk]);
+            if (!targets.length) {
+              await connection.rollback();
+              continue;
+            }
+            // Read the current severity under the row lock, never the scan snapshot.
+            // This update shares the membership/log transaction and cannot downgrade
+            // a severity raised by another caller while this group was waiting.
+            if (group.max_level > this._levelToRank(targets[0].severity)) {
+              await connection.execute('UPDATE alert_events SET severity=? WHERE id=?',
+                [this._rankToLevel(group.max_level), group.existingEventPk]);
+            }
             // 吸收到已有事件
             eventIdPk = group.existingEventPk;
             eventId = group.existingEventId!;
@@ -212,7 +237,7 @@ class EventAggregator {
             const title = `告警事件: ${group.alert_type} on Instance ${group.instance_id}`;
 
             assertWorkflowActive();
-            const [eventResult] = await pool.execute(
+            const [eventResult] = await connection.execute(
               `INSERT INTO alert_events (event_id, title, description, instance_id, source_type, severity, status)
                VALUES (?, ?, ?, ?, ?, ?, 'open')`,
               [eventId, title,
@@ -225,7 +250,7 @@ class EventAggregator {
           // 关联告警（两种路径共用）
           for (const alertId of group.alert_ids) {
             assertWorkflowActive();
-            await pool.execute(
+            await connection.execute(
               `INSERT INTO alert_event_members (event_id, alert_id, role)
                VALUES (?, ?, 'triggered')`,
               [eventIdPk, alertId]
@@ -234,7 +259,7 @@ class EventAggregator {
 
           // 事件日志（两种路径共用）
           assertWorkflowActive();
-          await pool.execute(
+          await connection.execute(
             `INSERT INTO alert_event_logs (event_id, action, details, created_at)
              VALUES (?, 'note_added', ?, NOW())`,
             [eventIdPk, JSON.stringify({
@@ -247,19 +272,45 @@ class EventAggregator {
           // RCA admission is owned by persisted alerts, independently of
           // whether two database alerts happen to form a display event.
 
+          assertWorkflowActive();
+          await connection.commit();
           if (isNewEvent) eventsCreated++;
           alertsAggregated += group.alert_ids.length;
         } catch (error) {
+          try { await connection.rollback(); }
+          catch {
+            connection.destroy();
+            connection = undefined;
+            // Stop using an unknown transaction; never replay its writes.
+            break;
+          }
           assertWorkflowActive();
-          console.error(`聚合事件失败 [实例 ${group.instance_id}]:`, error);
+          console.error(`聚合事件失败 [实例 ${group.instance_id}] (${(error as { code?: string }).code ?? 'UNKNOWN'})`);
         }
       }
 
       return { eventsCreated, alertsAggregated };
     } catch (error) {
       assertWorkflowActive();
-      console.error('事件聚合失败:', error);
-      return { eventsCreated: 0, alertsAggregated: 0 };
+      console.error(`事件聚合失败 (${(error as { code?: string }).code ?? 'UNKNOWN'})`);
+      return { eventsCreated, alertsAggregated };
+    } finally {
+      if (connection) {
+        try {
+          if (locked) await connection.execute("SELECT RELEASE_LOCK(CONCAT('slide:aggregate:', LEFT(SHA2(DATABASE(), 256), 40)))");
+          connection.release();
+        } catch {
+          // Never return a session with unknown named-lock ownership to the pool.
+          connection.destroy();
+        }
+      }
+      // Admission reads committed alerts, outside group transactions and locks.
+      // The persisted alert owner makes repeated recovery sweeps idempotent.
+      try { await recoverAutomaticAlertAdmissions(); }
+      catch (error) {
+        assertWorkflowActive();
+        console.warn(`[EventAggregator] 自动分析恢复失败 (${(error as {code?: string}).code ?? 'UNKNOWN'})`);
+      }
     }
   }
 

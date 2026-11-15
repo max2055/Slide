@@ -473,15 +473,13 @@ export class IndexManagementPage extends LitElement {
         headers: { ...this.authHeaders(), "Content-Type": "application/json" },
       });
       const data = await res.json();
-      if (res.ok) {
-        if (Array.isArray(data)) {
-          this.msgType = "success";
-          this.message = `检测完成：发现 ${data.length} 个冗余索引`;
-          this.redundancyReport = data;
-        } else if (data.error) {
-          this.msgType = "error";
-          this.message = data.error;
-        }
+      if (!res.ok || data.error) {
+        this.msgType = "error";
+        this.message = data.error || `检测失败 (HTTP ${res.status})`;
+      } else if (Array.isArray(data)) {
+        this.msgType = "success";
+        this.message = `检测完成：发现 ${data.length} 个冗余索引`;
+        await this.loadIndexes();
       }
     } catch (e: any) {
       this.msgType = "error";
