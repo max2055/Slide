@@ -123,6 +123,38 @@ test('#625 / #686: real persistence and recoverable role binding', async ({ page
   expect(create.status()).toBe(201);
   const target = (await create.json()).userId;
   const profile = async () => (await db.execute('SELECT email,status FROM users WHERE id=?', [target]))[0][0];
+  // MAX-676 D1: both profile fields and session invalidation must commit together.
+  expect((await page.request.post('/api/auth/login', { data: { username: 'max676-existing', password } })).status()).toBe(200);
+  await db.execute('INSERT INTO refresh_tokens(user_id,token_hash,expires_at,revoked) VALUES(?,?,NOW()+INTERVAL 1 DAY,TRUE)', [target, randomBytes(32).toString('hex')]);
+  const snapshot = async () => ({
+    user: (await db.execute('SELECT email,status,session_version FROM users WHERE id=?', [target]))[0][0],
+    tokens: (await db.execute('SELECT id,session_version,revoked FROM refresh_tokens WHERE user_id=? ORDER BY id', [target]))[0],
+  });
+  const beforeFailure = await snapshot();
+  expect(beforeFailure.tokens.some((row: any) => !row.revoked)).toBe(true);
+  expect(beforeFailure.tokens.some((row: any) => row.revoked)).toBe(true);
+  await db.query(`CREATE TRIGGER max676_reject_email BEFORE UPDATE ON users FOR EACH ROW BEGIN IF OLD.id=${target} AND NOT (NEW.email <=> OLD.email) THEN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='max676 controlled email failure'; END IF; END`);
+  const rejectedEmail = await page.request.put('/api/users/' + target, { headers, data: { status: 'inactive', email: '' } });
+  expect([400,500]).toContain(rejectedEmail.status());
+  expect(await snapshot()).toEqual(beforeFailure);
+  await db.query('DROP TRIGGER max676_reject_email');
+  // A later failure in refresh token revocation must roll back the user UPDATE too.
+  await db.query(`CREATE TRIGGER max676_reject_revoke BEFORE UPDATE ON refresh_tokens FOR EACH ROW BEGIN IF OLD.user_id=${target} THEN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='max676 controlled revoke failure'; END IF; END`);
+  const rejectedRevoke = await page.request.put('/api/users/' + target, { headers, data: { status: 'inactive', email: '' } });
+  expect([400,500]).toContain(rejectedRevoke.status());
+  expect(await snapshot()).toEqual(beforeFailure);
+  await db.query('DROP TRIGGER max676_reject_revoke');
+  expect((await page.request.put('/api/users/' + target, { headers, data: { status: 'inactive', email: '' } })).status()).toBe(200);
+  const recovered = await snapshot();
+  expect(recovered.user).toEqual({ email: '', status: 'inactive', session_version: beforeFailure.user.session_version + 1 });
+  expect(recovered.tokens).toEqual(beforeFailure.tokens.map((row: any) => ({ ...row, revoked: 1 })));
+  const sameSessions = await snapshot();
+  expect((await page.request.put('/api/users/' + target, { headers, data: { email: 'before@example.test' } })).status()).toBe(200);
+  const emailOnly = await snapshot();
+  expect(emailOnly.user).toEqual({ ...sameSessions.user, email: 'before@example.test' });
+  expect(emailOnly.tokens).toEqual(sameSessions.tokens);
+  report.atomicProfile = { beforeFailure, recovered, emailOnly, rejectedEmailStatus: rejectedEmail.status(), rejectedRevokeStatus: rejectedRevoke.status() };
+  report.checks.push('D1 real MySQL email UPDATE failure and refresh revocation failure each preserve status/email/session_version/all refresh token flags; recovery commits fields + session increment + revocation; email-only preserves session behavior');
   const update = await page.request.put('/api/users/' + target, { headers, data: { status: 'inactive' } });
   expect(update.status()).toBe(200);
   expect(await profile()).toMatchObject({ email: 'before@example.test', status: 'inactive' });

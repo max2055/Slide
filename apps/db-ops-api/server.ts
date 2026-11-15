@@ -766,17 +766,9 @@ async function start() {
       }
       // role 更新通过 RBAC API (POST /api/v1/rbac/users/:userId/roles) 完成
       if (status === undefined && email === undefined) return reply.code(400).send({ error: '没有要更新的字段' });
-      const result = status === undefined ? { success: true }
-        : await authDatabaseService.updateUserById(Number(id), { status });
+      const result = await authDatabaseService.updateUserById(Number(id), { status, email });
       if (!result.success) {
         return reply.code(400).send(result);
-      }
-      // An omitted email preserves its value; an explicit empty string clears it.
-      if (email !== undefined) {
-        const pool = dbConnection.getPool();
-        if (!pool) throw new Error('数据库未连接');
-        const [updated] = await pool.execute('UPDATE users SET email = ? WHERE id = ?', [email, Number(id)]) as any;
-        if (!updated.affectedRows) return reply.code(400).send({ success: false, error: '用户不存在' });
       }
       reply.send(result);
     } catch (error: any) {
