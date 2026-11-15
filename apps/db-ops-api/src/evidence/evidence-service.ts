@@ -10,6 +10,8 @@ export class EvidenceService {
   constructor(private readonly store: EvidenceStore = evidenceStore, private readonly collect: Collector = (actor, ref, options) => resourceDiagnosticService.getObservations(actor, ref, options), private readonly clock: () => Date = () => new Date()) {}
   async getBundle(actor: ActorContext, ref: ResourceRef, options: EvidenceBundleOptions = {}): Promise<EvidenceBundle> {
     authorizeEvidence(actor, ref);
+    if ((options.from !== undefined && typeof options.from !== 'string')
+      || (options.to !== undefined && typeof options.to !== 'string')) throw new Error('EVIDENCE_QUERY_INVALID');
     const now = this.clock();
     const query = { from: options.from ?? new Date(now.getTime() - 86400_000).toISOString(), to: options.to ?? now.toISOString(), limit: options.limit ?? 100, correlationId: options.correlationId };
     validateEvidenceQuery(query);

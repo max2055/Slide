@@ -59,4 +59,41 @@ describe('list_active_alerts boundary scenarios', () => {
       success: true, data: { total: 1, alerts: [{ id: 1 }] },
     });
   });
+  it('#393 pushes the authorized intersection down before the database applies LIMIT', async () => {
+    const rows = [{ id: 30, instance_id: 30 }, { id: 20, instance_id: 20 }, { id: 10, instance_id: 10 }];
+    alertService.getAlerts.mockImplementation(async (options) => ({ items: rows
+      .filter(row => options.allowed_instance_ids === null || options.allowed_instance_ids?.includes(row.instance_id))
+      .slice(0, options.limit) }));
+    const scoped = { ...actor, roles: ['viewer'], permissions: ['alert:view'],
+      instanceScopes: { 10: 'read-only', 20: 'read-write' }, resourceBoundary: { instanceIds: [10, 30] } };
+    expect(await listActiveAlertsTool.handler({ limit: 1 }, { actor: scoped })).toMatchObject({
+      success: true, data: { total: 1, alerts: [{ id: 10 }] },
+    });
+    expect(alertService.getAlerts).toHaveBeenCalledWith({ allowed_instance_ids: [10], instance_only: true,
+      level: undefined, limit: 1, strict: true });
+  });
+
+  it('pushes an empty scope for a disjoint task boundary', async () => {
+    await listActiveAlertsTool.handler({}, { actor: { ...actor, roles: ['viewer'], permissions: ['alert:view'],
+      instanceScopes: { 10: 'read-only' }, resourceBoundary: { instanceIds: [20] } } });
+    expect(alertService.getAlerts).toHaveBeenCalledWith(expect.objectContaining({ allowed_instance_ids: [] }));
+  });
+
+  it('leaves global admins unrestricted unless a task boundary is present', async () => {
+    await listActiveAlertsTool.handler({}, { actor });
+    expect(alertService.getAlerts).toHaveBeenLastCalledWith(expect.objectContaining({ allowed_instance_ids: null }));
+    await listActiveAlertsTool.handler({}, { actor: { ...actor, resourceBoundary: { instanceIds: [10] } } });
+    expect(alertService.getAlerts).toHaveBeenLastCalledWith(expect.objectContaining({ allowed_instance_ids: [10] }));
+  });
+
+  it('reports service errors instead of a successful empty collection', async () => {
+    alertService.getAlerts.mockRejectedValue(new Error('ALERTS_QUERY_FAILED'));
+    expect(await listActiveAlertsTool.handler({}, { actor })).toMatchObject({ success: false });
+  });
+
+  it.each([0, -1, 101, 1.5])('rejects invalid limit %s before reading alerts', async limit => {
+    expect(await listActiveAlertsTool.handler({ limit }, { actor })).toMatchObject({ success: false, errorCode: 'INVALID_ARGUMENTS' });
+    expect(alertService.getAlerts).not.toHaveBeenCalled();
+  });
+
 });

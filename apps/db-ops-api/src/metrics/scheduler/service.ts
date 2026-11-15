@@ -7,11 +7,39 @@ import type { Resource } from '../../contracts/metrics/index.js';
 import type { JobRegistry } from '../../workflows/job-registry.js';
 import { runPackage, type PackageExecution } from '../packages/runner.js';
 import type { PackageRegistry } from '../packages/model.js';
-import { type Ref, RefSchema, refKey, rule } from '../policy/model.js';
+import { type Ref, RefSchema, refKey, rule, PolicyError } from '../policy/model.js';
 import { bindingReadCode, isTemplateBindingUnsupported } from '../bindings/package-reader.js';
 import { compilePlan } from './compiler.js';
 import { COLLECT_NOW_JOB_TYPE, JOB_TYPE, MysqlScheduleStore, type CollectAttempt, type TemplateExecutionSnapshot } from './store.js';
 import type { ClaimedJob, JobExecutionContext } from '../../workflows/worker-runtime.js';
+
+// These driver errors describe one row's data, not loss of the shared store.
+const resourceSqlFailures = new Set(['ER_DATA_TOO_LONG', 'ER_TRUNCATED_WRONG_VALUE', 'ER_BAD_NULL_ERROR',
+  'ER_INVALID_JSON_TEXT', 'ER_CHECK_CONSTRAINT_VIOLATED', 'ER_DUP_ENTRY', 'ER_NO_REFERENCED_ROW_2']);
+
+/** SQL/transport/pool and shared lock failures belong to the whole tick. Never
+ * turn an unavailable control-plane database into a successful empty scan. */
+function globalSchedulingFailure(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false;
+  const failure = error as { code?: unknown; errno?: unknown; sqlState?: unknown; fatal?: unknown };
+  if (typeof failure.code === 'string' && resourceSqlFailures.has(failure.code)) return false;
+  if (typeof failure.errno === 'number' || typeof failure.sqlState === 'string' || failure.fatal === true) return true;
+  if (typeof failure.code === 'string' && /^(ER_|ECONN|EHOST|ENET|EPIPE|ETIMEDOUT|PROTOCOL_)/.test(failure.code)) return true;
+  if (error instanceof PolicyError && ['SCHEDULE_STORE_UNAVAILABLE', 'SOURCE_POLICY_LOCK_UNAVAILABLE'].includes(error.code)) return true;
+  // mysql2 pool exhaustion/closure errors have no driver code.
+  return error instanceof Error && /^(Pool is closed\.?|No connections available\.?|Queue limit reached\.?)$/.test(error.message);
+}
+
+function schedulingFailureCode(error: unknown): string {
+  const binding = bindingReadCode(error);
+  if (binding) return binding;
+  if (error instanceof PolicyError && /^[A-Z][A-Z0-9_]{0,63}$/.test(error.code)) return error.code;
+  if (error instanceof z.ZodError || error instanceof SyntaxError) return 'METRIC_RESOURCE_CONFIG_INVALID';
+  if (error && typeof error === 'object' && 'code' in error
+    && typeof error.code === 'string' && resourceSqlFailures.has(error.code)) return error.code;
+  // Arbitrary exception text can include SQL, payloads or credentials.
+  return 'METRIC_RESOURCE_SCHEDULE_FAILED';
+}
 
 const Payload = z.strictObject({ resource: RefSchema, revision: z.number().int().positive() });
 const CollectNowPayload = Payload.extend({ request_id: z.string().uuid() });
@@ -61,26 +89,27 @@ export class MetricScheduler {
         errorCode: rejected.code, correlationId: rejected.resource_key });
     }
     for (const template of scan.templates) {
+      let phase = 'formalization';
       try {
         await this.formalization?.reconcile(template.decoded.binding.resource, template.decoded.binding.revision);
+        phase = 'enqueue';
         if (await this.store.enqueueTemplate(template, this.clock())) count++;
       } catch (error) {
-        const code = bindingReadCode(error);
-        if (code === null) throw error;
-        platformLogs.record({ component: 'metrics', eventType: 'collection.scan_skipped', status: 'failed',
-          errorCode: code, correlationId: template.resource_key });
+        if (globalSchedulingFailure(error)) throw error;
+        platformLogs.record({ component: 'metrics', eventType: `collection.${phase}_failed`, status: 'failed',
+          errorCode: schedulingFailureCode(error), correlationId: template.resource_key });
       }
     }
     for (const published of scan.published) {
+      let phase = 'formalization';
       try {
         await this.formalization?.reconcile(published.binding.resource, published.binding.revision);
+        phase = 'enqueue';
         if (await this.store.enqueue(published, this.clock())) count++;
       } catch (error) {
-        // The row was replaced between the scan and the fenced re-read.
-        const code = bindingReadCode(error);
-        if (code === null) throw error;
-        platformLogs.record({ component: 'metrics', eventType: 'collection.scan_skipped', status: 'failed',
-          errorCode: code, correlationId: refKey(published.binding.resource) });
+        if (globalSchedulingFailure(error)) throw error;
+        platformLogs.record({ component: 'metrics', eventType: `collection.${phase}_failed`, status: 'failed',
+          errorCode: schedulingFailureCode(error), correlationId: refKey(published.binding.resource) });
       }
     }
     return count;

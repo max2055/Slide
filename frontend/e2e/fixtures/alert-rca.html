@@ -1,0 +1,10 @@
+<!doctype html><html lang="zh-CN"><meta charset="UTF-8"><title>RCA观察隔离验收</title>
+<link rel="stylesheet" href="/src/app/styles/tokens.css">
+<script type="module">
+window.ready = async () => {
+  await import('/src/app/ui/views/alerts.ts');
+  const el = document.createElement('alerts-page');
+  document.body.replaceChildren(el); window.alerts = el;
+  await el.updateComplete;
+};
+</script></html>

@@ -313,6 +313,7 @@ export class ReportsPage extends LitElement {
   @state() private selectedServerId: number | null = null;
   @state() private configs: ReportConfig[] = [];
   @state() private configsLoading = true;
+  @state() private configsError = false;
   @state() private editingConfig: ReportConfig | null = null;
   @state() private showConfigDialog = false;
   @state() private showDeleteConfirm = false;
@@ -366,18 +367,18 @@ export class ReportsPage extends LitElement {
   }
 
   private async loadConfigs() {
+    this.configsLoading = true;
     try {
       const res = await authFetch('/api/reports/configs');
-      if (res.ok) {
-        const data: ReportConfig[] = await res.json();
-        // next_run is pre-computed by the API — no client-side CronJob needed
-        this.configs = data;
-      } else {
-        showToast('Failed to load schedule config', 'error');
-      }
-      this.configsLoading = false;
-    } catch (err: any) {
-      showToast('Failed to load schedule config', 'error');
+      if (!res.ok) throw new Error('REPORT_CONFIG_LIST_UNAVAILABLE');
+      const data: ReportConfig[] = await res.json();
+      if (!Array.isArray(data)) throw new Error('REPORT_CONFIG_LIST_INVALID');
+      // next_run is pre-computed by the API — no client-side CronJob needed
+      this.configs = data;
+      this.configsError = false;
+    } catch {
+      this.configsError = true;
+    } finally {
       this.configsLoading = false;
     }
   }
@@ -516,9 +517,13 @@ export class ReportsPage extends LitElement {
         <app-card variant="default">
           <div slot="header" style="display:flex;align-items:center;justify-content:space-between;gap:var(--space-md);">
             <span>${icons['clock']} 定时报表</span>
-            <button class="btn-primary" @click=${this._openCreateDialog}>新建计划</button>
+            <button class="btn-primary" ?disabled=${this.configsLoading || this.configsError} @click=${this._openCreateDialog}>新建计划</button>
           </div>
-          ${this.configsLoading ? html`<div class="loading"><div class="skeleton" style="width:100%;height:36px;"></div></div>` : this.configs.length ? html`
+          ${this.configsLoading ? html`<div class="loading"><div class="skeleton" style="width:100%;height:36px;"></div></div>` : this.configsError ? html`
+            <div role="alert" style="text-align:center;padding-bottom:var(--space-lg);">
+              <app-empty-state title="定时报表读取失败" description="无法确认当前配置，请重新读取核对，勿重复创建。"></app-empty-state>
+              <button class="btn btn-refresh" @click=${this._refreshConfigs}>重新读取</button>
+            </div>` : this.configs.length ? html`
             <div class="table-container"><table class="table"><thead><tr><th>名称</th><th>类型</th><th>目标</th><th>计划</th><th>下次运行</th><th>状态</th><th>操作</th></tr></thead><tbody>
               ${this.configs.map(cfg => html`<tr>
                 <td class="report-title">${cfg.name}</td><td>${this._reportTypeLabel(cfg.type)}</td>

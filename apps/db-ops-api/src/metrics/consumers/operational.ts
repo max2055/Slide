@@ -11,7 +11,7 @@ const actorFor = (ref: Ref): ActorContext => ({ userId: 0, username: 'metric-pol
   permissions: [ref.type === 'instance' ? 'instance:view' : ref.type === 'server' ? 'servers:view' : 'network_devices:view'],
   instanceScopes: ref.type === 'instance' ? { [ref.id]: 'read-only' } : {}, sessionVersion: 0, requestId: `metric-evaluation:${ref.type}:${ref.id}` });
 type Rule = Parameters<typeof compileAlertRule>[0] & { missing_policy?: 'unknown'; threshold_type?: string; recovery_threshold?: number; dimensions?: Record<string, string> };
-export async function evaluateOperationalRule(ref: Ref, rule: Rule, seconds: number, macros: Record<string, number> = {}) {
+export async function evaluateOperationalRule(ref: Ref, rule: Rule, seconds: number, macros: Record<string, number> = {}, strictErrors = false) {
   const unavailable = { handled: true, state: 'unknown', level: null as 'warning' | 'error' | 'critical' | null,
     observation: null as {from:string;to:string;observedAt:string|null;quality:'good'|'partial'} | null,
     recovery: false, value: null as number | null, dimensions: null as Record<string, string> | null, migration: null as ReturnType<typeof migrateReference> | null };
@@ -72,7 +72,7 @@ export async function evaluateOperationalRule(ref: Ref, rule: Rule, seconds: num
       if (evaluation.state !== 'healthy') state = evaluation.state;
     }
     return { handled: true, state, level: null, recovery, value, migration, dimensions: null, observation: null };
-  } catch { return unavailable; }
+  } catch (error) { if (strictErrors) throw error; return unavailable; }
 }
 
 /** Existing score names are not numeric contracts. Unproven ratios/engine-specific checks require review. */

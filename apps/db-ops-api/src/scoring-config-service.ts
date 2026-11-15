@@ -81,18 +81,22 @@ class ScoringConfigService {
    * @returns 保存结果
    */
   async saveWeights(
-    weights: Record<string, number>,
-  ): Promise<{ success: boolean; error?: string }> {
+    weights: unknown,
+  ): Promise<{ success: boolean; error?: string; statusCode?: 400 | 500 }> {
+    if (weights === null || typeof weights !== 'object' || Array.isArray(weights)) {
+      return { success: false, error: '评分权重必须是对象' };
+    }
+    const values = weights as Record<string, unknown>;
     // 验证所有维度存在
     for (const dim of VALID_DIMENSIONS) {
-      if (weights[dim] === undefined || weights[dim] === null) {
+      if (!Object.hasOwn(values, dim) || values[dim] === undefined || values[dim] === null) {
         return { success: false, error: `缺少维度: ${dim}` };
       }
     }
 
     // 验证每个值在 0.0-1.0 范围内
     for (const dim of VALID_DIMENSIONS) {
-      const val = weights[dim];
+      const val = values[dim];
       if (typeof val !== 'number' || isNaN(val)) {
         return { success: false, error: `${dim} 必须是数字` };
       }
@@ -105,7 +109,7 @@ class ScoringConfigService {
     }
 
     // 验证权值之和 ≈ 1.0
-    const sum = VALID_DIMENSIONS.reduce((s, dim) => s + weights[dim], 0);
+    const sum = VALID_DIMENSIONS.reduce((s, dim) => s + (values[dim] as number), 0);
     if (Math.abs(sum - 1.0) > 0.01) {
       return {
         success: false,
@@ -115,18 +119,21 @@ class ScoringConfigService {
 
     const pool = this.getPool();
     if (!pool) {
-      return { success: false, error: '数据库未连接' };
+      return { success: false, error: '数据库未连接', statusCode: 500 };
     }
 
     try {
       await pool.execute(
-        `REPLACE INTO system_config (config_key, config_value) VALUES (?, ?)`,
+        // 此接口不写操作者：保留已有 updated_by，新记录使用表默认值 NULL。
+        // 仅更新值和类型，保留 id、description 等已有元数据。
+        `INSERT INTO system_config (config_key, config_value, value_type) VALUES (?, ?, 'json')
+         ON DUPLICATE KEY UPDATE config_value = VALUES(config_value), value_type = 'json'`,
         [CONFIG_KEY, JSON.stringify(weights)],
       );
       return { success: true };
     } catch (error: any) {
       console.error('保存评分权重失败:', error);
-      return { success: false, error: error.message };
+      return { success: false, error: '保存评分权重失败', statusCode: 500 };
     }
   }
 }
