@@ -174,6 +174,8 @@ class AlertDatabaseService {
    */
   async getAlerts(options?: {
     instance_id?: number;
+    /** Only alerts bound to database instances, excluding global/server/network rows. */
+    instance_only?: boolean;
     allowed_instance_ids?: readonly number[] | null;
     /** Target-specific scopes: null is unrestricted, [] denies that target class. */
     allowed_server_ids?: readonly number[] | null;
@@ -198,6 +200,10 @@ class AlertDatabaseService {
       const buildWhere = (includeStatusAndLevel = true, includeLevel = true): { clause: string; params: any[] } => {
         const whereParts: string[] = [];
         const whereParams: any[] = [];
+
+        if (options?.instance_only) {
+          whereParts.push("(a.target_type = 'instance' OR a.target_type IS NULL) AND a.instance_id IS NOT NULL AND a.server_id IS NULL AND a.network_device_id IS NULL");
+        }
 
         if (options?.instance_id !== undefined) {
           whereParts.push('a.instance_id = ?');
