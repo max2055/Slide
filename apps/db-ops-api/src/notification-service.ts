@@ -478,6 +478,7 @@ export class NotificationService {
         const persisted = await notificationDatabaseService.updateOAuth2RefreshToken(channelId, oauth.refreshToken);
         if (!persisted.success) throw new Error('OAUTH_REFRESH_TOKEN_PERSIST_FAILED');
       }
+      if (oauth.interruption) throw oauth.interruption.reason;
       auth = { type: 'OAuth2', user: config.smtp_username!, accessToken: oauth.accessToken };
     } else {
       auth = { user: config.smtp_username!, pass: this.getSmtpPassword(config) };
@@ -553,7 +554,7 @@ export class NotificationService {
   }
 
   /**
-   * 带重试的发送，最多 3 次，指数退避
+   * 带重试的发送，最多 3 次，指数退避；SMTP 开始后的未知结果停止重试。
    * delay = 5000 * 3^(attempt-1) → 5s, 15s, 45s
    */
   async sendWithRetry(
@@ -564,13 +565,19 @@ export class NotificationService {
   ): Promise<{ success: boolean; error?: string }> {
     signal?.throwIfAborted();
     const maxAttempts = 3;
+    let transportStarted = false;
 
     try {
-      const result = await this.send(channel, message, ...(signal ? [signal] : []));
+      // F2: approval callers use this entry without a durable delivery gate.
+      // Once SMTP starts, an error cannot prove the recipient rejected DATA.
+      const result = channel.type === 'email'
+        ? await this.send(channel, message, signal, undefined, undefined, () => { transportStarted = true; })
+        : await this.send(channel, message, ...(signal ? [signal] : []));
       signal?.throwIfAborted();
       if (result.success) {
         return result;
       }
+      if (transportStarted) return { success: false, error: 'DELIVERY_OUTCOME_UNCERTAIN' };
 
       if (attempt >= maxAttempts) {
         return { success: false, error: `重试 ${maxAttempts} 次后仍失败: ${result.error}` };
@@ -584,6 +591,7 @@ export class NotificationService {
       return this.sendWithRetry(channel, message, attempt + 1, signal);
     } catch (error: any) {
       signal?.throwIfAborted();
+      if (transportStarted) return { success: false, error: 'DELIVERY_OUTCOME_UNCERTAIN' };
       if (attempt >= maxAttempts) {
         return { success: false, error: `重试 ${maxAttempts} 次后仍失败: ${error.message}` };
       }
