@@ -125,6 +125,7 @@ try {
   const scoped = await clear('?retentionDays=0', 403, reader.token);
   assert.equal(scoped.error, '清除全局告警需要不受限的实例管理权限');
   assert.deepEqual(await titles(), before);
+  await pool.execute("INSERT IGNORE INTO permissions (code,name,resource,action) VALUES ('instance:*','retention fixture unrestricted','instance','*')");
   await pool.execute("INSERT INTO role_permissions (role_id,permission_id) SELECT ?,id FROM permissions WHERE code='instance:*'", [role.insertId]);
   await clear('?retentionDays=0', 200, reader.token);
   await seed();
