@@ -178,11 +178,19 @@ run_scenario() {
   QUALIFICATION_FRONTEND_PORT=39733 \
   QUALIFICATION_DEEPSEEK_API_KEY="" \
   QUALIFICATION_CANCELLATION_E2E=0 \
-    bash "$script" >"$dir/stdout" 2>"$err" &
+    "$real_python" -c '
+import os, signal, sys
+# Async shell jobs inherit SIGINT=SIG_IGN on GNU Bash. Reset it before exec
+# so this fixture tests the requested INT, not its later TERM watchdog.
+signal.signal(signal.SIGINT, signal.SIG_DFL)
+os.execvp("bash", ["bash", *sys.argv[1:]])
+' "$script" >"$dir/stdout" 2>"$err" &
   script_pid=$!
+  echo "START $name script_pid=$script_pid signal=$signal"
   echo "$script_pid" >>"$work/pids"
   (
     sleep 12
+    : > "$dir/watchdog-fired"
     kill -TERM "$script_pid" 2>/dev/null || true
   ) >/dev/null 2>&1 &
   local local_watchdog=$!
@@ -255,6 +263,10 @@ run_scenario() {
   } | tee "$report"
 
   local ok=1
+  if [[ -f "$dir/watchdog-fired" ]]; then
+    echo "FAIL $name reached the watchdog instead of the expected exit" | tee -a "$report"
+    ok=0
+  fi
   if [[ "$inject" == collect && ! -f "$dir/collect-entered" ]]; then
     echo "FAIL $name signal missed the collect boundary" | tee -a "$report"
     ok=0

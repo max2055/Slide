@@ -4,7 +4,11 @@
 -- touched them at any prior startup, not only during the current 30-day window.
 -- TRUE may also be a legitimate collector flag; neither time nor this flag proves
 -- a row was mislabeled. The legacy table has no persisted formula version.
-START TRANSACTION READ ONLY;
+-- Use a fresh connection with no active transaction; stop on any SQL error.
+-- InnoDB only: READ ONLY alone does not pin a snapshot under READ COMMITTED.
+-- Override isolation for this transaction only, preserving the session default.
+SET TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+START TRANSACTION WITH CONSISTENT SNAPSHOT, READ ONLY;
 
 SELECT
   'metrics_history' AS source_table,

@@ -1,0 +1,14 @@
+<!doctype html><html lang="zh-CN"><meta charset="UTF-8"><title>Metric policy regression fixture</title>
+<link rel="stylesheet" href="/src/app/styles/tokens.css">
+<metric-policy-fields></metric-policy-fields>
+<script type="module">
+import '/src/app/ui/components/metric-policy-fields.ts';
+const fields = document.querySelector('metric-policy-fields');
+fields.disabled = false;
+fields.values = { interval_ms: 60000, timeout_ms: 5000, max_rows: 100 };
+window.policyEvents = [];
+fields.addEventListener('policy-change', event => {
+  window.policyEvents.push(event.detail);
+  fields.overrides = event.detail;
+});
+</script></html>
