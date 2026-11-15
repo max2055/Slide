@@ -39,7 +39,20 @@ export class CapacityConsistencyMonitor {
     const activeIds = await this.activeAlertIds();
     signal?.throwIfAborted();
     if (check.status === 'pass') {
-      await Promise.all(activeIds.map((id) => this.alerts.resolveAlert(id)));
+      const failures: Error[] = [];
+      for (const id of activeIds) {
+        signal?.throwIfAborted();
+        try {
+          const result = await this.alerts.resolveAlert(id);
+          if (!result.success) throw new Error(result.error || 'UNKNOWN');
+        } catch (error) {
+          failures.push(new Error(`CAPACITY_CONSISTENCY_ALERT_RESOLVE_FAILED:${id}:${error instanceof Error ? error.message : String(error)}`));
+        }
+        // A write already in flight must settle; cancellation prevents the next one.
+        signal?.throwIfAborted();
+      }
+      // Alert synchronization failure is a retryable job failure, not capacity drift.
+      if (failures.length) throw new AggregateError(failures, failures.map(error => error.message).join('; '));
       return check;
     }
     if (activeIds.length === 0) {
