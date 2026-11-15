@@ -6,10 +6,11 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // ── Shared mock state ───────────────────────────────────
 const mockExecute = vi.fn();
+const poolState = vi.hoisted(() => ({ available: true }));
 
 vi.mock('./db-connection', () => ({
   dbConnection: {
-    getPool: () => ({ execute: mockExecute }),
+    getPool: () => poolState.available ? ({ execute: mockExecute }) : null,
     isConnected: () => true,
   },
 }));
@@ -22,6 +23,7 @@ describe('ConsistencyChecker', () => {
   beforeEach(() => {
     checker = new ConsistencyChecker();
     vi.clearAllMocks();
+    poolState.available = true;
   });
 
   // ── checkSafe wrapper ─────────────────────────────────
@@ -139,6 +141,65 @@ describe('ConsistencyChecker', () => {
       expect(result.severity).toBe('critical');
       expect(result.details).toMatchObject({ stuck_jobs: 2, dead_letter_jobs: 1, stale_attempts: 1, unpersisted_sent: 1 });
       expect(result.recommendation).toContain('死信');
+    });
+  });
+
+  describe('MAX-2 resource observation failures', () => {
+    for (const failedSql of ['FROM database_instances di', 'FROM servers s']) {
+      it(`preserves diagnostics when ${failedSql} fails and recovers on refresh/expiry`, async () => {
+        let failing = true;
+        mockExecute.mockImplementation(async (sql: string) => {
+          if (failing && sql.includes(failedSql)) throw new Error('private SQL detail');
+          if (sql.includes('FROM database_instances di') && sql.includes('latest_metric')) {
+            return [[{ id: 1, health_status: 'healthy', latest_metric: new Date() }], []];
+          }
+          return [[], []];
+        });
+        const first = await checker.healthOverview();
+        expect(first.checks).toHaveLength(10);
+        expect(first.summary.total).toBe(10);
+        expect(first.truth.managedAvailability).toMatchObject({
+          status: 'unknown', numerator: 0, denominator: 0, reason: 'resource_health_query_failed',
+        });
+        expect(first.truth.dataFreshness.status).toBe('unknown');
+        expect(first.truth.workflow.status).toBe('healthy');
+        expect(JSON.stringify(first.truth)).not.toContain('private SQL detail');
+        expect(await checker.healthOverview()).toBe(first);
+        failing = false;
+        const recovered = await checker.healthOverview(true);
+        expect(recovered.truth.managedAvailability).toMatchObject({ status: 'healthy', numerator: 1, denominator: 1 });
+        failing = true;
+        await checker.healthOverview(true);
+        failing = false;
+        const now = Date.now();
+        const clock = vi.spyOn(Date, 'now').mockReturnValue(now + 10_001);
+        try {
+          expect((await checker.healthOverview()).truth.managedAvailability.status).toBe('healthy');
+        } finally { clock.mockRestore(); }
+      });
+    }
+
+    it('returns all failed checks and unknown resource counts without a pool', async () => {
+      poolState.available = false;
+      const result = await checker.healthOverview();
+      expect(result.summary.fail).toBe(10);
+      expect(result.readiness.db_reachable).toBe(false);
+      expect(result.truth.managedAvailability).toMatchObject({
+        status: 'unknown', numerator: 0, denominator: 0, reason: 'database_pool_unavailable',
+      });
+      expect(result.truth.workflow.status).toBe('unknown');
+    });
+
+    it('keeps successful checks when another consistency check fails', async () => {
+      mockExecute.mockResolvedValue([[], []]);
+      vi.spyOn(checker, '_checkInstanceCountMatch').mockRejectedValue(new Error('single check failed'));
+      vi.spyOn(checker, '_checkCapacitySumMatch').mockResolvedValue({
+        id: 'capacity_sum_match', label: 'capacity', category: 'capacity', status: 'pass', severity: 'info', summary: 'ok',
+      });
+      const result = await checker.healthOverview();
+      expect(result.checks.find(c => c.id === 'instance_count_match')?.status).toBe('fail');
+      expect(result.checks.find(c => c.id === 'capacity_sum_match')?.status).toBe('pass');
+      expect(result.truth).toBeDefined();
     });
   });
 
