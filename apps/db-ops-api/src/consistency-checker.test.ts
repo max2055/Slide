@@ -298,6 +298,15 @@ describe('ConsistencyChecker', () => {
   // ── _checkAlertRuleMetricRefs ─────────────────────────
 
   describe('_checkAlertRuleMetricRefs', () => {
+    it.each(['instance', 'server', 'network_device'])('MAX-8: retains %s metric identity in aggregate failure details', async (target_type) => {
+      const invalid = { id: 42, name: 'broken', target_type, metric_name: 'missing_metric' };
+      mockExecute.mockImplementation(async (sql: string) => [sql.includes('FROM alert_rules ar') ? [invalid] : [], []]);
+      const snapshot = await checker.runAllChecks();
+      expect(snapshot.checks.find(check => check.id === 'alert_rule_metric_refs')).toMatchObject({
+        status: 'fail', severity: 'major', summary: '1 条告警规则引用了无效指标', details: [invalid],
+      });
+    });
+
     it('returns pass when no orphan refs', async () => {
       mockExecute.mockResolvedValue([[], []]);
       const result = await checker._checkAlertRuleMetricRefs();
