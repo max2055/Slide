@@ -90,7 +90,7 @@ class AlertEscalationService {
     for (const rule of rules) {
       // Unsupported legacy rules must never silently become timeout rules.
       if (rule.trigger_condition !== 'timeout_minutes' ||
-          !Number.isFinite(rule.trigger_value) || rule.trigger_value <= 0) continue;
+          !Number.isInteger(rule.trigger_value) || rule.trigger_value <= 0 || rule.trigger_value > 2147483647) continue;
       const [alerts] = await pool.execute(
         `SELECT id, level FROM alerts
          WHERE status IN ('unread', 'read', 'acknowledged') AND level = ?
@@ -193,8 +193,8 @@ class AlertEscalationService {
   }): Promise<{ success: boolean; ruleId?: number; error?: string }> {
     if (data.trigger_condition !== 'timeout_minutes')
       return { success: false, error: '仅支持 timeout_minutes 升级条件' };
-    if (data.trigger_value !== undefined && (!Number.isFinite(data.trigger_value) || data.trigger_value <= 0))
-      return { success: false, error: '升级等待分钟数必须大于零' };
+    if (data.trigger_value !== undefined && (!Number.isInteger(data.trigger_value) || data.trigger_value <= 0 || data.trigger_value > 2147483647))
+      return { success: false, error: '升级等待分钟数必须是 1 至 2147483647 的整数' };
     const pool = this.getPool();
     if (!pool) return { success: false, error: '数据库未连接' };
 
@@ -220,8 +220,8 @@ class AlertEscalationService {
   }): Promise<{ success: boolean; error?: string }> {
     if (data.trigger_condition !== undefined && data.trigger_condition !== 'timeout_minutes')
       return { success: false, error: '仅支持 timeout_minutes 升级条件' };
-    if (data.trigger_value !== undefined && (!Number.isFinite(data.trigger_value) || data.trigger_value <= 0))
-      return { success: false, error: '升级等待分钟数必须大于零' };
+    if (data.trigger_value !== undefined && (!Number.isInteger(data.trigger_value) || data.trigger_value <= 0 || data.trigger_value > 2147483647))
+      return { success: false, error: '升级等待分钟数必须是 1 至 2147483647 的整数' };
     const pool = this.getPool();
     if (!pool) return { success: false, error: '数据库未连接' };
 

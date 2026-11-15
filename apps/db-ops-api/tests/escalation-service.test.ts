@@ -121,4 +121,12 @@ describe('alert-escalation-service.ts', () => {
     expect(connection.commit).not.toHaveBeenCalled();
   });
 
+  it.each([0.1, 0.5, 1.1, 0, -1, 2147483648, Infinity, NaN])('Chief precision review: rejects unrepresentable wait %s', async (value) => {
+    const { alertEscalationService: service } = await import('../src/alert-escalation-service');
+    expect((await service.createEscalationRule({name:'invalid',from_level:'warning',
+      to_level:'error',trigger_condition:'timeout_minutes',trigger_value:value})).success).toBe(false);
+    expect((await service.updateEscalationRule(1,{trigger_value:value})).success).toBe(false);
+    expect(mockPool.execute).not.toHaveBeenCalled();
+  });
+
 });
