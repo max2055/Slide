@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { assertSourceClock, assertSourceDeadline, sourceDefinitions, sourcePackageSchema } from './config.js';
@@ -30,5 +30,18 @@ describe('source package configuration and UTC gates', () => {
     expect(() => assertSourceDeadline({ ...sourceTestConfig(), deadline: new Date(now + 3_600_000).toISOString() }, now)).not.toThrow();
     expect(() => assertSourceDeadline({ ...sourceTestConfig(), deadline: new Date(now + 3_600_001).toISOString() }, now)).toThrow('DEADLINE');
     expect(() => assertSourceDeadline(sourceTestConfig(), NaN)).toThrow('DEADLINE');
+  });
+  it('MAX-559: covers deadline boundaries with the default clock held fixed', () => {
+    const now = 1_000_000;
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(now);
+    try {
+      const config = sourceTestConfig();
+      for (const remaining of [1, 3_600_000])
+        expect(() => assertSourceDeadline({ ...config, deadline: new Date(now + remaining).toISOString() })).not.toThrow();
+      for (const remaining of [-1, 0, 3_600_001])
+        expect(() => assertSourceDeadline({ ...config, deadline: new Date(now + remaining).toISOString() })).toThrow('DEADLINE');
+    } finally {
+      clock.mockRestore();
+    }
   });
 });
