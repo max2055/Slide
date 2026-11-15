@@ -28,6 +28,8 @@ export interface AuthorizedNetworkDeviceTarget {
 }
 
 const ALWAYS_DENIED_CIDRS = [
+  // Transition routes can translate an otherwise denied IPv4 destination.
+  '64:ff9b::/96', '2002::/16',
   '0.0.0.0/8',
   '100.100.100.200/32',
   '127.0.0.0/8',
