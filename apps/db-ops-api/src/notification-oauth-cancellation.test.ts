@@ -164,7 +164,7 @@ describe('MAX-592 OAuth cancellation through notification delivery', () => {
     });
     const mark = vi.fn();
     await expect(service.send(channel, message, controller.signal, undefined, undefined, mark)).rejects.toBe(reason);
-    expect(notificationDatabaseService.updateOAuth2RefreshToken).toHaveBeenCalledWith(channel.id, 'test-rotated');
+    expect(notificationDatabaseService.updateOAuth2RefreshToken).toHaveBeenCalledWith(channel.id, 'test-rotated', expect.objectContaining({ oauth2_client_id: channel.config.oauth2_client_id }));
     expect(decryptData(channel.config.oauth2_refresh_token_encrypted)).toBe('test-rotated');
     expect(mark).not.toHaveBeenCalled();
     expect(smtp.messages).toHaveLength(0);
@@ -279,8 +279,8 @@ describe('MAX-592 OAuth cancellation through notification delivery', () => {
           return response;
         }));
       }
-      vi.spyOn(notificationDatabaseService, 'updateOAuth2RefreshToken').mockImplementation(async (id, token) => {
-        const result = await update(id, token);
+      vi.spyOn(notificationDatabaseService, 'updateOAuth2RefreshToken').mockImplementation(async (id, token, expected) => {
+        const result = await update(id, token, expected);
         if (phase === 'persistence') controller.abort(reason);
         return result;
       });

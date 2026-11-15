@@ -402,12 +402,11 @@ export class NotificationService {
       }
     }
 
-    const webhookUrl = channel.config?.webhook_url;
-    if (!webhookUrl) {
-      return { success: false, error: '渠道未配置 webhook_url' };
-    }
-
     try {
+      // An encrypted value is authoritative: never fall back after a bad envelope.
+      const webhookUrl = channel.config?.webhook_url_encrypted
+        ? decryptData(channel.config.webhook_url_encrypted) : channel.config?.webhook_url;
+      if (!webhookUrl) return { success: false, error: '渠道未配置 webhook_url' };
       const target = await resolveOutboundTarget(webhookUrl);
       signal?.throwIfAborted();
       const secret = this.getWebhookSecret(channel.config);
@@ -436,10 +435,10 @@ export class NotificationService {
       try { result = response.body ? JSON.parse(response.body) : {}; } catch { result = {}; }
       // 检查各平台的错误码
       if (result.errcode !== undefined && result.errcode !== 0) {
-        return { success: false, error: result.errmsg || `平台错误码: ${result.errcode}` };
+        return { success: false, error: 'OUTBOUND_PLATFORM_REJECTED' };
       }
       if (result.code !== undefined && result.code !== 0) {
-        return { success: false, error: result.msg || `平台错误码: ${result.code}` };
+        return { success: false, error: 'OUTBOUND_PLATFORM_REJECTED' };
       }
 
       return { success: true };
@@ -466,16 +465,17 @@ export class NotificationService {
     const port = Number(config.smtp_port);
     let auth: { user: string; pass: string } | { type: 'OAuth2'; user: string; accessToken: string };
     if (config.smtp_auth === 'oauth2') {
+      const credential = { ...config };
       const oauth = await exchangeMicrosoftSmtpRefreshToken({
-          tenant: config.oauth2_tenant!,
-          clientId: config.oauth2_client_id!,
-          refreshToken: decryptData(config.oauth2_refresh_token_encrypted!),
+          tenant: credential.oauth2_tenant!,
+          clientId: credential.oauth2_client_id!,
+          refreshToken: decryptData(credential.oauth2_refresh_token_encrypted!),
           signal,
       });
       // Save an already returned rotation even if cancellation arrived meanwhile.
       // The next cancellation check still prevents SMTP from starting.
       if (oauth.refreshToken && channelId !== undefined) {
-        const persisted = await notificationDatabaseService.updateOAuth2RefreshToken(channelId, oauth.refreshToken);
+        const persisted = await notificationDatabaseService.updateOAuth2RefreshToken(channelId, oauth.refreshToken, credential);
         if (!persisted.success) throw new Error('OAUTH_REFRESH_TOKEN_PERSIST_FAILED');
       }
       if (oauth.interruption) throw oauth.interruption.reason;
