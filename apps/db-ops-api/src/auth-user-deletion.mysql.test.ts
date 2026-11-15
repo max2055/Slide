@@ -112,16 +112,27 @@ describe.skipIf(process.env.SLIDE_USER_DELETE_MYSQL !== '1')('MAX-669 / #299 and
     observations.push({ phase: 'listeners', apiPort: address.port, frontend: origin });
   }, 120000); // Full repository schema migration, separate from request assertions.
   afterAll(async () => {
+    const cleanupStarted = Date.now();
+    const cleanupStep = (step: string) => {
+      const entry = { phase: 'cleanup', step, elapsedMs: Date.now() - cleanupStarted };
+      observations.push(entry);
+      console.info('User deletion cleanup', entry);
+    };
     // Stop request producers before the API/store; each cleanup failure remains a failing hook.
+    cleanupStep('browser close');
     try { await browser?.close(); }
     finally {
+      cleanupStep('vite stop');
       try { if (vite && vite.exitCode === null) { vite.kill('SIGTERM'); await viteExited; } }
       finally {
+        cleanupStep('api close');
         try { await app.close(); }
         finally {
+          cleanupStep('pool close');
           vi.restoreAllMocks();
           try { await pool?.end(); }
           finally {
+            cleanupStep('schema drop');
             try {
               await owned?.drop();
               observations.push({ phase: 'cleanup', ownedSchemaRemoved: !!owned });
