@@ -54,11 +54,20 @@ describe.skipIf(!profilePath)('MAX-568 production tool on owned MySQL schema', (
   afterAll(async () => {
     vi.restoreAllMocks();
     const errors: unknown[] = [];
-    try { await pool?.end(); } catch (error) { errors.push(error); }
-    try { await owned?.drop(); console.log('MAX568 owned schema cleaned'); } catch (error) { errors.push(error); }
-    try { await admin?.end(); } catch (error) { errors.push(error); }
+    const cleanup = async (stage: string, action: () => Promise<unknown>) => {
+      const started = performance.now();
+      let passed = false;
+      try { await action(); passed = true; } catch (error) { errors.push(error); }
+      finally { console.log('MAX568 cleanup', { stage, passed, elapsedMs: Math.round(performance.now() - started) }); }
+    };
+    await cleanup('pool-end', async () => pool?.end());
+    await cleanup('owned-schema-drop', async () => { await owned?.drop(); console.log('MAX568 owned schema cleaned'); });
+    await cleanup('admin-end', async () => admin?.end());
     if (errors.length) throw new AggregateError(errors, 'MAX568 cleanup failed');
-  });
+  // MAX-259 integration: the full migrated schema exceeded the default 10s
+  // cleanup hook under concurrent qualification I/O. Keep a bounded local
+  // budget and report each stage; business test and migration budgets stay as-is.
+  }, 60_000);
   it('#393: latest N other-instance alerts cannot hide older authorized rows', async () => {
     expect(ids(await run({ ...actor, instanceScopes: { 1: 'read-only' } }))).toEqual([2, 1]);
   });

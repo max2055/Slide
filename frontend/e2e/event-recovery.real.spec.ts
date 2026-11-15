@@ -98,3 +98,48 @@ test('MAX-572 delayed real GET cannot overwrite latest tab or page', async ({ pa
  await page.unrouteAll({ behavior: 'wait' });
  await expect(page.locator('.event-title').filter({ hasText: '验收事件55' })).toBeVisible();
 });
+
+test('MAX-259 / #656 delayed real detail and logs stay with their selected event', async ({ page }) => {
+ const login = await page.request.post('/api/auth/login', { data: { username: 'admin', password: process.env.INITIAL_ADMIN_PASSWORD } });
+ expect(login.status()).toBe(200);
+ const { token } = await login.json();
+ await page.goto('/');
+ await page.evaluate(async token => {
+  document.querySelector('slide-app')?.remove(); localStorage.setItem('token', token);
+  await import('/src/app/ui/views/event-management.ts');
+  document.body.replaceChildren(document.createElement('event-management-page'));
+ }, token);
+ await expect(page.locator('.event-title').filter({ hasText: '验收事件55' })).toBeVisible();
+ let release!: () => void;
+ const gate = new Promise<void>(resolve => { release = resolve; });
+ let delayed = 0;
+ // Fetch both genuine responses first, then delay only delivery to the browser.
+ await page.route(/\/api\/alerts\/events\/55(?:\/logs)?$/, async route => {
+  const response = await route.fetch();
+  expect(response.status()).toBe(200);
+  delayed++;
+  await gate;
+  await route.fulfill({ response });
+ });
+ try {
+  await page.locator('.event-title').filter({ hasText: '验收事件55' }).click();
+  await expect.poll(() => delayed).toBe(2);
+  await page.locator('.event-title').filter({ hasText: '验收事件54' }).click();
+  const state = () => page.evaluate(() => {
+   const el = document.querySelector('event-management-page') as any;
+   return { id: Number(el.selectedEvent?.id), title: el.selectedEvent?.title,
+    members: el.eventMembers, logs: el.eventLogs, loaded: Object.hasOwn(el.selectedEvent ?? {}, 'alerts') };
+  });
+  await expect.poll(async () => (await state()).loaded).toBe(true);
+  const current = await state();
+  expect(current.id).toBe(54);
+  expect(current.title).toBe('验收事件54');
+  release();
+  await page.unrouteAll({ behavior: 'wait' });
+  expect(await state()).toEqual(current);
+  await expect(page.locator('.event-item.selected .event-title')).toHaveText('验收事件54');
+ } finally {
+  release();
+  await page.unrouteAll({ behavior: 'wait' });
+ }
+});
