@@ -62,3 +62,17 @@ it('keeps loading until the successful collection refresh finishes', async () =>
   expect(element.collecting).toBe(false);
   expect(authFetch).toHaveBeenCalledTimes(1);
 });
+
+it('#558 renders unavailable size distinctly from measured zero', async () => {
+  const element = await page();
+  element.tableList = [
+    { table_name: 'unknown', data_length: null, table_rows: 0, column_count: 1 },
+    { table_name: 'empty', data_length: 0, table_rows: 0, column_count: 1 },
+    { table_name: 'allocated', data_length: 131072, table_rows: 1, column_count: 1 },
+  ];
+  await element.updateComplete;
+  const rows = [...element.shadowRoot.querySelectorAll('tbody tr')].map((r: any) => r.textContent);
+  expect(rows.find((r: string) => r.includes('unknown'))).toContain('不可用');
+  expect(rows.find((r: string) => r.includes('empty'))).toContain('0 B');
+  expect(rows.find((r: string) => r.includes('allocated'))).toContain('128 KB');
+});

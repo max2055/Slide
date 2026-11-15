@@ -338,12 +338,25 @@ class SchemaService {
       }
     } catch { /* 部分版本可能没有这些视图 */ }
 
+    // Older DM8 compatibility views report CHAR_USED='B' for CHAR semantics
+    // and CHAR_LENGTH=0 for national character types. SCALE=7 uses character
+    // allocation (4 bytes on Unicode, 2 otherwise); SCALE=8 is fixed CHAR.
+    // Recover those declarations without requiring direct SYS table access.
+    // https://eco.dameng.com/document/dm/zh-cn/pm/dm8-admin-manual-appendix1.html
     // 获取列信息
     const colRows = await dmConnection.execute(`
       SELECT
         c.OWNER, c.TABLE_NAME, c.COLUMN_NAME, c.DATA_TYPE,
         c.DATA_LENGTH, c.NULLABLE, c.DATA_DEFAULT, c.COLUMN_ID,
-        m.COMMENTS as column_comment
+        m.COMMENTS as column_comment,
+        c.DATA_PRECISION, c.DATA_SCALE,
+        CASE WHEN c.CHAR_LENGTH > 0 THEN c.CHAR_LENGTH
+             WHEN c.DATA_TYPE IN ('NCHAR', 'NVARCHAR', 'NVARCHAR2') THEN
+               CASE WHEN c.DATA_SCALE = 7
+                    THEN c.DATA_LENGTH / CASE WHEN UNICODE() = 1 THEN 4 ELSE 2 END
+                    ELSE c.DATA_LENGTH END
+             ELSE c.CHAR_LENGTH END as char_length,
+        CASE WHEN c.DATA_SCALE IN (7, 8) AND c.DATA_TYPE IN ('CHAR', 'VARCHAR', 'VARCHAR2', 'NCHAR', 'NVARCHAR', 'NVARCHAR2') THEN 'C' ELSE c.CHAR_USED END as char_used
       FROM ALL_TAB_COLUMNS c
       LEFT JOIN ALL_COL_COMMENTS m ON m.OWNER = c.OWNER AND m.TABLE_NAME = c.TABLE_NAME AND m.COLUMN_NAME = c.COLUMN_NAME
       WHERE c.OWNER = :owner
@@ -357,7 +370,7 @@ class SchemaService {
       allColumns.push({
         table_name: tableKey,
         column_name: row[2],
-        column_type: row[3] + (row[4] ? `(${row[4]})` : ''),
+        column_type: this.formatDictionaryColumnType(row),
         is_nullable: row[5] === 'Y' ? 'YES' : 'NO',
         column_default: row[6] || null,
         column_key: pkMap.get(colKey) || '',
@@ -379,17 +392,27 @@ class SchemaService {
     const owner = username.toUpperCase();
     const allColumns: any[] = [];
 
-    // DBA_SEGMENTS 可能无权限，降级
-    let segJoin = '';
+    // Table allocation excludes indexes/LOBs; aggregate partitions without
+    // multiplying columns. Only dictionary-access errors mean unavailable.
+    let segmentSizes: Map<string, number> | null = null;
     try {
-      await oracleConnection.execute('SELECT 1 FROM DBA_SEGMENTS WHERE ROWNUM = 1');
-      segJoin = `LEFT JOIN DBA_SEGMENTS s ON s.OWNER = t.OWNER AND s.SEGMENT_NAME = t.TABLE_NAME AND s.SEGMENT_TYPE = 'TABLE'`;
-    } catch { /* 无 DBA 权限时不查询表大小 */ }
+      const segments = await oracleConnection.execute(`
+        SELECT OWNER, SEGMENT_NAME, SUM(BYTES)
+        FROM DBA_SEGMENTS
+        WHERE OWNER = :owner
+          AND SEGMENT_TYPE IN ('TABLE', 'TABLE PARTITION', 'TABLE SUBPARTITION')
+        GROUP BY OWNER, SEGMENT_NAME
+      `, [owner]);
+      segmentSizes = new Map(segments.rows.map((row: any[]) =>
+        [`${row[0]}.${row[1]}`, Number(row[2])]));
+    } catch (error: any) {
+      if (error.errorNum !== 942 && error.errorNum !== 1031) throw error;
+    }
 
     const tableRows = await oracleConnection.execute(`
       SELECT
         t.OWNER, t.TABLE_NAME, t.NUM_ROWS as table_rows,
-        0 as data_length,
+        NULL as data_length,
         c.COMMENTS as table_comment
       FROM ALL_TABLES t
       LEFT JOIN ALL_TAB_COMMENTS c ON c.OWNER = t.OWNER AND c.TABLE_NAME = t.TABLE_NAME
@@ -430,7 +453,8 @@ class SchemaService {
       SELECT
         c.OWNER, c.TABLE_NAME, c.COLUMN_NAME, c.DATA_TYPE,
         c.DATA_LENGTH, c.NULLABLE, c.DATA_DEFAULT, c.COLUMN_ID,
-        m.COMMENTS as column_comment
+        m.COMMENTS as column_comment,
+        c.DATA_PRECISION, c.DATA_SCALE, c.CHAR_LENGTH, c.CHAR_USED
       FROM ALL_TAB_COLUMNS c
       LEFT JOIN ALL_COL_COMMENTS m ON m.OWNER = c.OWNER AND m.TABLE_NAME = c.TABLE_NAME AND m.COLUMN_NAME = c.COLUMN_NAME
       WHERE c.OWNER = :owner
@@ -444,7 +468,7 @@ class SchemaService {
       allColumns.push({
         table_name: tableKey,
         column_name: row[2],
-        column_type: row[3] + (row[4] ? `(${row[4]})` : ''),
+        column_type: this.formatDictionaryColumnType(row),
         is_nullable: row[5] === 'Y' ? 'YES' : 'NO',
         column_default: row[6] || null,
         column_key: pkMap.get(colKey) || '',
@@ -452,11 +476,34 @@ class SchemaService {
         column_comment: row[8] || null,
         table_comment: meta?.table_comment || null,
         table_rows: meta?.table_rows || 0,
-        data_length: 0,
+        data_length: segmentSizes === null ? null : (segmentSizes.get(tableKey) ?? 0),
       });
     }
 
     return allColumns;
+  }
+
+  /** Dictionary precision is distinct from the byte storage length. */
+  private formatDictionaryColumnType(row: any[]): string {
+    const type = String(row[3]);
+    const [precision, scale, charLength, charUsed] = row.slice(9, 13);
+    if (['NUMBER', 'NUMERIC', 'DECIMAL', 'DEC'].includes(type)) {
+      if (precision == null && scale == null) return type;
+      return `${type}(${precision ?? '*'}${scale == null ? '' : `,${scale}`})`;
+    }
+    if (type === 'FLOAT') return precision == null ? type : `${type}(${precision})`;
+    if (['CHAR', 'VARCHAR', 'VARCHAR2'].includes(type)) {
+      const length = charUsed === 'C' ? charLength : row[4];
+      const semantics = charUsed === 'C' ? ' CHAR' : charUsed === 'B' ? ' BYTE' : '';
+      return length == null ? type : `${type}(${length}${semantics})`;
+    }
+    if (['NCHAR', 'NVARCHAR2'].includes(type)) {
+      return charLength == null ? type : `${type}(${charLength})`;
+    }
+    if (['RAW', 'BINARY', 'VARBINARY'].includes(type)) return `${type}(${row[4]})`;
+    // DATE, LOBs and types whose DATA_TYPE already embeds precision (TIMESTAMP,
+    // INTERVAL) must never acquire a byte length suffix.
+    return type;
   }
 
   /**
@@ -488,7 +535,7 @@ class SchemaService {
   /**
    * 获取当前表的列表
    */
-  async getTableList(instanceId: number): Promise<{ table_name: string; table_comment: string | null; table_rows: number; data_length: number; column_count: number }[] | { error: string }> {
+  async getTableList(instanceId: number): Promise<{ table_name: string; table_comment: string | null; table_rows: number; data_length: number | null; column_count: number }[] | { error: string }> {
     try {
       const tableList = await schemaDatabaseService.getTableList(instanceId);
       if (tableList.length === 0) {
