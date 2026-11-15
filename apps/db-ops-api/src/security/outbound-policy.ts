@@ -1,4 +1,4 @@
-import { isIP } from 'node:net';
+import { BlockList, isIP } from 'node:net';
 import { promises as dns } from 'node:dns';
 
 export type OutboundReasonCode =
@@ -23,28 +23,22 @@ export interface AuthorizedOutboundTarget {
   addresses: string[];
 }
 
-function isPrivateIpv4(address: string): boolean {
-  const parts = address.split('.').map(Number);
-  if (parts.length !== 4 || parts.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) return true;
-  const [a, b] = parts;
-  return a === 0 || a === 10 || a === 127 || a >= 224 ||
-    (a === 100 && b >= 64 && b <= 127) ||
-    (a === 169 && b === 254) || (a === 172 && b >= 16 && b <= 31) ||
-    (a === 192 && b === 168) || (a === 198 && (b === 18 || b === 19));
-}
-
-function isPrivateIpv6(address: string): boolean {
-  const normalized = address.toLowerCase().replace(/^::ffff:/, '');
-  if (isIP(normalized) === 4) return isPrivateIpv4(normalized);
-  return normalized === '::' || normalized === '::1' || normalized.startsWith('fe80:') ||
-    normalized.startsWith('fc') || normalized.startsWith('fd') || normalized.startsWith('ff');
-}
+const nonPublicAddresses = new BlockList();
+for (const [address, prefix] of [
+  ['0.0.0.0', 8], ['10.0.0.0', 8], ['127.0.0.0', 8],
+  ['100.64.0.0', 10], ['169.254.0.0', 16], ['172.16.0.0', 12],
+  ['192.168.0.0', 16], ['198.18.0.0', 15], ['224.0.0.0', 4], ['240.0.0.0', 4],
+] as const) nonPublicAddresses.addSubnet(address, prefix, 'ipv4');
+for (const [address, prefix] of [
+  ['::', 128], ['::1', 128], ['fe80::', 10], ['fc00::', 7], ['ff00::', 8],
+] as const) nonPublicAddresses.addSubnet(address, prefix, 'ipv6');
 
 export function isPublicIp(address: string): boolean {
   const version = isIP(address);
-  if (version === 4) return !isPrivateIpv4(address);
-  if (version === 6) return !isPrivateIpv6(address);
-  return false;
+  if (!version) return false;
+  // Node parses all IPv6 spellings and applies IPv4 subnets to IPv4-mapped
+  // addresses too, including hexadecimal and fully expanded representations.
+  return !nonPublicAddresses.check(address, version === 4 ? 'ipv4' : 'ipv6');
 }
 
 function isFeishuMihomoFakeIp(hostname: string, address: string): boolean {
