@@ -64,13 +64,14 @@ export function registerNotificationHandlers(
           if (identity.kind === 'notification' && await maintenanceBlocksDelivery(identity.sourceId,identity.transition?.at)) {
             throw new Error('MAINTENANCE_SUPPRESSED');
           }
-          transportStarted = true;
           // One transport invocation only. SMTP and ordinary webhooks have no receiver deduplication contract.
           const sendSignal = claim.retryDeadline === undefined ? signal
             : AbortSignal.any([signal, AbortSignal.timeout(Math.max(0, claim.retryDeadline - Date.now()))]);
-          const result = await notificationService.send(claim.request.channel, claim.request.message, sendSignal, claim.key, claim.retryDeadline);
+          const result = await notificationService.send(claim.request.channel, claim.request.message, sendSignal, claim.key, claim.retryDeadline, () => { transportStarted = true; });
           signal.throwIfAborted();
-          if (!result.success) throw new Error('DELIVERY_TRANSPORT_UNCERTAIN');
+          if (!result.success) throw new Error(transportStarted ? 'DELIVERY_TRANSPORT_UNCERTAIN' : result.error || 'DELIVERY_PREPARATION_FAILED');
+          // A successful sender has confirmed acceptance, including injected senders.
+          transportStarted = true;
         };
         const outcome = identity.kind === 'notification' && claim.request.rolloutFence
           ? await publicationGate.run(identity.sourceId, claim.request.rolloutFence, publish)
@@ -85,10 +86,20 @@ export function registerNotificationHandlers(
           await gate.finish(job, context, claim, 'skipped', 'MAINTENANCE_SUPPRESSED');
           return;
         }
-        // Failures before transport are retryable; after invocation the receiver outcome is uncertain.
-        if (!signal.aborted) await gate.finish(job, context, claim, transportStarted ? 'unknown' : 'retryable',
-          transportStarted ? 'DELIVERY_OUTCOME_UNCERTAIN' : 'ROLLOUT_ALERT_FENCE_UNAVAILABLE').catch(() => {});
-        throw error;
+        // Persist only safe codes, and use the same preparation error in the job and delivery audit.
+        const candidate = error instanceof Error ? error.message : undefined;
+        const code = candidate && /^[A-Z][A-Z0-9_]{0,127}$/.test(candidate)
+          ? candidate : 'DELIVERY_PREPARATION_FAILED';
+        // Cancellation stops transport, not settlement of a known outcome. The SQL gate
+        // still checks worker, fencing token and live lease before accepting this write.
+        const settlementContext = signal.aborted ? { ...context, signal: new AbortController().signal } : context;
+        // A contracted retry cannot erase uncertainty from an earlier send.
+        const uncertain = transportStarted || claim.retryDeadline !== undefined;
+        if (!signal.aborted || !uncertain) {
+          await gate.finish(job, settlementContext, claim, uncertain ? 'unknown' : 'retryable',
+            uncertain ? 'DELIVERY_OUTCOME_UNCERTAIN' : code).catch(() => {});
+        }
+        throw transportStarted ? error : new Error(code);
       }
     });
   }
