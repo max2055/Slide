@@ -2,7 +2,7 @@
  * 品牌配置服务
  *
  * 管理 branding.config 在 system_config 表中的读写。
- * 遵循 scoring-config-service.ts 和 ai-analysis-config-service.ts 的模式（CRUD + 验证 + 默认值合并）。
+ * 部分更新在单连接事务内锁定、读取并合并，读取兜底不参与写入。
  */
 import mysql from 'mysql2/promise';
 import { dbConnection } from './db-connection.js';
@@ -29,19 +29,44 @@ const CONFIG_KEY = 'branding.config';
 const CLI_NAME_REGEX = /^[a-z][a-z0-9-]*$/;
 const ENV_PREFIX_REGEX = /^[A-Z][A-Z0-9_]*$/;
 
+const FIELDS = Object.keys(DEFAULTS) as (keyof BrandingConfig)[];
+
+function validatePatch(value: unknown): Partial<BrandingConfig> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('品牌配置必须是对象');
+  }
+  const patch: Partial<BrandingConfig> = {};
+  for (const field of Object.keys(value)) {
+    if (!FIELDS.includes(field as keyof BrandingConfig)) {
+      throw new Error(`未知品牌配置字段: ${field}`);
+    }
+    const key = field as keyof BrandingConfig;
+    const val = (value as Record<string, unknown>)[key];
+    if (typeof val !== 'string') throw new Error(`${key} 必须是字符串`);
+    if (!val.trim()) throw new Error(`${key} 不能为空`);
+    if (key === 'cli_name' && !CLI_NAME_REGEX.test(val)) {
+      throw new Error('cli_name 只允许小写字母开头，包含小写字母、数字和连字符');
+    }
+    if (key === 'env_prefix' && !ENV_PREFIX_REGEX.test(val)) {
+      throw new Error('env_prefix 只允许大写字母开头，包含大写字母、数字和下划线');
+    }
+    patch[key] = val;
+  }
+  return patch;
+}
+
+function parseStored(value: unknown): BrandingConfig {
+  try {
+    const parsed = typeof value === 'string' ? JSON.parse(value) : value;
+    return { ...DEFAULTS, ...validatePatch(parsed) };
+  } catch {
+    throw new Error('已存品牌配置无效，请修复存储后重试');
+  }
+}
+
 class BrandingConfigService {
-  /**
-   * 获取数据库连接池
-   */
   private getPool(): mysql.Pool | null {
     return dbConnection.getPool();
-  }
-
-  /**
-   * 检查数据库是否已连接
-   */
-  private isConnected(): boolean {
-    return dbConnection.isConnected();
   }
 
   /**
@@ -65,13 +90,7 @@ class BrandingConfigService {
       ) as any;
 
       if (Array.isArray(rows) && rows.length > 0) {
-        const configValue = rows[0].config_value;
-        if (configValue) {
-          const parsed = typeof configValue === 'string'
-            ? JSON.parse(configValue)
-            : configValue;
-          return { ...DEFAULTS, ...parsed };
-        }
+        return parseStored(rows[0].config_value);
       }
 
       return { ...DEFAULTS };
@@ -95,70 +114,53 @@ class BrandingConfigService {
   async saveBranding(
     config: Partial<BrandingConfig>,
   ): Promise<{ success: boolean; error?: string }> {
-    const fields: (keyof BrandingConfig)[] = [
-      'cli_name',
-      'product_name',
-      'env_prefix',
-      'state_dir',
-    ];
-
-    // 至少提供一个字段
-    const hasAnyField = fields.some(f => config[f] !== undefined && config[f] !== null);
-    if (!hasAnyField) {
-      return { success: false, error: '至少需要提供一个配置字段' };
-    }
-
-    // 验证每个提供的字段
-    for (const field of fields) {
-      const val = config[field];
-      if (val === undefined || val === null) {
-        continue; // 未提供的字段跳过验证
+    let patch: Partial<BrandingConfig>;
+    try {
+      patch = validatePatch(config);
+      if (Object.keys(patch).length === 0) {
+        return { success: false, error: '至少需要提供一个配置字段' };
       }
-
-      if (typeof val !== 'string') {
-        return { success: false, error: `${field} 必须是字符串` };
-      }
-
-      if (val.trim().length === 0) {
-        return { success: false, error: `${field} 不能为空` };
-      }
-
-      if (field === 'cli_name' && !CLI_NAME_REGEX.test(val)) {
-        return {
-          success: false,
-          error: `cli_name 只允许小写字母开头，包含小写字母、数字和连字符（当前值: ${val}）`,
-        };
-      }
-
-      if (field === 'env_prefix' && !ENV_PREFIX_REGEX.test(val)) {
-        return {
-          success: false,
-          error: `env_prefix 只允许大写字母开头，包含大写字母、数字和下划线（当前值: ${val}）`,
-        };
-      }
+    } catch (error) {
+      return { success: false, error: (error as Error).message };
     }
 
     const pool = this.getPool();
-    if (!pool) {
-      return { success: false, error: '数据库未连接' };
-    }
+    if (!pool) return { success: false, error: '数据库未连接' };
 
+    let connection: mysql.PoolConnection | undefined;
     try {
-      // 读取当前值，合并后再写入（部分更新支持）
-      const current = await this.getBranding();
-      const merged = { ...current, ...config };
-
-      await pool.execute(
-        `REPLACE INTO system_config (config_key, config_value) VALUES (?, ?)`,
-        [CONFIG_KEY, JSON.stringify(merged)],
+      connection = await pool.getConnection();
+      await connection.beginTransaction();
+      // Upsert takes the unique-key write lock even for the first concurrent save.
+      // A duplicate keeps the original row and all system_config metadata.
+      await connection.execute(
+        `INSERT INTO system_config (config_key, config_value) VALUES (?, ?)
+         ON DUPLICATE KEY UPDATE config_key = config_key`,
+        [CONFIG_KEY, JSON.stringify(DEFAULTS)],
       );
+      const [rows] = await connection.execute<mysql.RowDataPacket[]>(
+        `SELECT config_value FROM system_config WHERE config_key = ? FOR UPDATE`,
+        [CONFIG_KEY],
+      );
+      if (rows.length !== 1) throw new Error('品牌配置读取失败');
+      const current = parseStored(rows[0].config_value);
+      await connection.execute(
+        `UPDATE system_config SET config_value = ? WHERE config_key = ?`,
+        [JSON.stringify({ ...current, ...patch }), CONFIG_KEY],
+      );
+      await connection.commit();
       return { success: true };
-    } catch (error: any) {
+    } catch (error) {
+      if (connection) {
+        try { await connection.rollback(); }
+        catch (rollbackError) { console.error('回滚品牌配置失败:', rollbackError); }
+      }
       console.error('保存品牌配置失败:', error);
-      return { success: false, error: error.message };
+      return { success: false, error: (error as Error).message };
+    } finally {
+      connection?.release();
     }
   }
 }
 
-// 单例
 export const brandingConfigService = new BrandingConfigService();
