@@ -101,6 +101,37 @@ export const NETWORK_DEVICE_ALERT_TEMPLATES = Object.freeze([
   },
 ] as const);
 
+/** Validate untrusted input before acquiring a pool or issuing any SQL. */
+export function validateAlertTemplateInput(data: unknown): string | undefined {
+  if (!data || typeof data !== 'object' || Array.isArray(data)) return '模板必须是对象';
+  const input = data as Record<string, unknown>;
+  for (const [field, allowed] of [
+    ['operator', ['>', '<', '>=', '<=', '=', '!=']],
+    ['target_type', ['instance', 'server', 'network_device']],
+    ['severity', ['info', 'warning', 'error', 'critical']],
+  ] as const) {
+    if (input[field] !== undefined && !allowed.some(value => value === input[field])) return field + ' 无效';
+  }
+  for (const field of ['duration_seconds', 'silence_minutes']) {
+    const value = input[field];
+    // SQL INT storage: reject fractions and overflow instead of silently rounding.
+    if (value !== undefined && (typeof value !== 'number' || !Number.isInteger(value) || value < 0 || value > 2147483647)) {
+      return field + ' 必须是 0 到 2147483647 的整数';
+    }
+  }
+  const thresholds = input.threshold_template;
+  // Null/empty thresholds are historical nullable template values.
+  if (thresholds !== undefined && thresholds !== null) {
+    if (typeof thresholds !== 'object' || Array.isArray(thresholds)) return 'threshold_template 必须是阈值对象或 null';
+    for (const [level, value] of Object.entries(thresholds)) {
+      if (!['warning', 'error', 'critical'].includes(level) || typeof value !== 'number' || !Number.isFinite(value)) {
+        return 'threshold_template 仅允许 warning/error/critical 的有限数值';
+      }
+    }
+  }
+  return undefined;
+}
+
 class AlertRuleTemplateDatabaseService {
   private getPool(): mysql.Pool | null {
     return dbConnection.getPool();
@@ -179,6 +210,9 @@ class AlertRuleTemplateDatabaseService {
     enabled?: boolean;
     created_by?: number;
   }): Promise<{ success: boolean; id?: number; error?: string }> {
+    if (!data || typeof data.operator !== 'string') return { success: false, error: 'operator 无效' };
+    const validationError = validateAlertTemplateInput(data);
+    if (validationError) return { success: false, error: validationError };
     const pool = this.getPool();
     if (!pool) return { success: false, error: '数据库未连接' };
 
@@ -195,7 +229,7 @@ class AlertRuleTemplateDatabaseService {
           data.metric_name,
           data.operator,
           data.threshold_template ? JSON.stringify(data.threshold_template) : null,
-          data.duration_seconds || 60,
+          data.duration_seconds ?? 60,
           data.severity || 'warning',
           data.silence_minutes ?? 5,
           data.enabled !== undefined ? (data.enabled ? 1 : 0) : 1,
@@ -224,6 +258,8 @@ class AlertRuleTemplateDatabaseService {
     silence_minutes?: number;
     enabled?: boolean;
   }): Promise<{ success: boolean; error?: string }> {
+    const validationError = validateAlertTemplateInput(data);
+    if (validationError) return { success: false, error: validationError };
     const pool = this.getPool();
     if (!pool) return { success: false, error: '数据库未连接' };
 

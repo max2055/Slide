@@ -2427,6 +2427,7 @@ class DatabaseService {
    */
   async getQueryAnalytics(id: number, limit: number = 20): Promise<Array<{
     fingerprint: string;
+    sql_text?: string | null;
     calls: number;
     avg_time_ms: number;
     max_time_ms: number;
@@ -2436,8 +2437,12 @@ class DatabaseService {
     return this._withAutoReconnect(id, async (conn) => {
       try {
         if (conn.db_type === 'mysql' && conn.pool) {
-          const [rows] = await conn.pool.query<RowDataPacket[]>(
-            `SELECT DIGEST_TEXT as fingerprint, COUNT_STAR as calls,
+          // Samples must be complete and refer to the connection's current schema.
+          // DIGEST_TEXT is normalized and cannot be used as executable SQL.
+          const sample = `IF(OCTET_LENGTH(QUERY_SAMPLE_TEXT) < @@performance_schema_max_sql_text_length
+                    AND (SCHEMA_NAME <=> DATABASE()), QUERY_SAMPLE_TEXT, NULL)`;
+          const query = (sampleExpression: string) => conn.pool!.query<RowDataPacket[]>(
+            `SELECT DIGEST_TEXT as fingerprint, ${sampleExpression} as sql_text, COUNT_STAR as calls,
                     ROUND(AVG_TIMER_WAIT/1000000000, 2) as avg_time_ms,
                     ROUND(MAX_TIMER_WAIT/1000000000, 2) as max_time_ms,
                     ROUND(SUM_TIMER_WAIT/1000000000, 2) as total_time_ms,
@@ -2447,7 +2452,25 @@ class DatabaseService {
              ORDER BY SUM_TIMER_WAIT DESC LIMIT ?`,
             [limit]
           );
-          return (rows as any[]).map(r => ({ ...r, fingerprint: r.fingerprint || '' }));
+          let rows: RowDataPacket[];
+          try {
+            [rows] = await query(sample);
+          } catch (error: any) {
+            // MySQL versions without QUERY_SAMPLE_TEXT still provide statistics.
+            if (error.code !== 'ER_BAD_FIELD_ERROR' && error.code !== 'ER_UNKNOWN_SYSTEM_VARIABLE') throw error;
+            [rows] = await query('NULL');
+          }
+          const hasPlaceholder = (node: any): boolean => {
+            if (!node || typeof node !== 'object') return false;
+            if (node.type === 'origin' && node.value === '?') return true;
+            return Object.values(node).some(hasPlaceholder);
+          };
+          return rows.map(r => {
+            const classification = typeof r.sql_text === 'string' ? classifySql(r.sql_text, 'mysql') : null;
+            return { ...r, fingerprint: r.fingerprint || '', sql_text:
+              classification?.commandType === 'read' && !hasPlaceholder(classification.ast) ? r.sql_text : null,
+            };
+          }) as any;
         } else if (conn.db_type === 'postgresql' && conn.pgClient) {
           const result = await conn.pgClient.query(
             `SELECT query as fingerprint, calls,
@@ -2460,7 +2483,8 @@ class DatabaseService {
              ORDER BY total_exec_time DESC LIMIT $1`,
             [limit]
           );
-          return result.rows.map(r => ({ ...r, fingerprint: r.fingerprint || '' }));
+          // pg_stat_statements contains normalized SQL with unbound $n parameters.
+          return result.rows.map(r => ({ ...r, fingerprint: r.fingerprint || '', sql_text: null }));
         } else if (conn.db_type === 'oracle' && conn.oracleConnection) {
           return this.getOracleQueryAnalytics(conn, limit);
         } else if (conn.db_type === 'dameng' && conn.dmConnection) {

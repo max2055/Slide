@@ -153,6 +153,8 @@ export class ServerDetailPage extends LitElement {
   @state() private lastUpdated: Date | null = null;
   @state() private detailReadError = '';
   @state() private isRefreshing = false;
+  @state() private isInspecting = false;
+  @state() private inspectionError = "";
   @state() private hostedInstances: HostedInstance[] = [];
   @state() private hostedInstancesLoading = false;
   @state() private hostedInstancesError: string | null = null;
@@ -168,6 +170,7 @@ export class ServerDetailPage extends LitElement {
   private onPermissionsChanged = () => {
     ++this.contextVersion; ++this.overviewRequest;
     this.server = null; this.overview = null; this.hostedInstances = []; this.diagnostics = null;
+    this.isInspecting = false; this.inspectionError = "";
     this.loading = false; this.isRefreshing = false; this.diagnosticsCollecting = false; this.diagnosticsError = null;
     this.error = '权限或登录状态已变更，请重新打开资源。';
   };
@@ -212,6 +215,7 @@ export class ServerDetailPage extends LitElement {
   }
 
   override disconnectedCallback() {
+    this.isInspecting = false; this.inspectionError = "";
     ++this.contextVersion; ++this.overviewRequest;
     window.removeEventListener('slide-permissions-loaded', this.onPermissionsChanged);
     window.removeEventListener('slide-session-expired', this.onPermissionsChanged);
@@ -233,6 +237,7 @@ export class ServerDetailPage extends LitElement {
 
   private async loadServerContext(id: number): Promise<void> {
     const version = ++this.contextVersion;
+    this.isInspecting = false; this.inspectionError = "";
     this.server = null; this.diagnostics = null; this.diagnosticsError = null;
     this.diagnosticsCollecting = false; this.isRefreshing = false;
     void this.loadOverview(id, version);
@@ -355,24 +360,34 @@ export class ServerDetailPage extends LitElement {
   }
 
   private async _oneClickInspection() {
-    if (!this.serverId) return;
+    if (!this.serverId || !this.isConnected || this.isInspecting) return;
+    const serverId = this.serverId, version = this.contextVersion;
+    const current = () => this.isConnected && version === this.contextVersion && serverId === this.serverId;
+    this.isInspecting = true;
+    this.inspectionError = "";
     try {
       const res = await authFetch(`/api/servers/reports/generate`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ server_id: this.serverId }),
+        body: JSON.stringify({ server_id: serverId }),
       });
-      if (res.ok) {
-        showToast('巡检报告已生成', 'success');
-        window.dispatchEvent(new CustomEvent("slide-navigate", {
-          detail: { tab: "reports" },
-        }));
-      } else {
+      if (!current()) return;
+      if (!res.ok) {
         const err = await res.json().catch(() => ({}));
-        showToast(err.error || '巡检失败', 'error');
+        if (!current()) return;
+        throw new Error(err.error || '巡检失败');
       }
-    } catch (err: any) {
-      showToast(err.message || '巡检失败', 'error');
+      showToast('巡检报告已生成', 'success');
+      window.dispatchEvent(new CustomEvent("slide-navigate", {
+        detail: { tab: "reports" },
+      }));
+    } catch (err) {
+      if (current()) {
+        this.inspectionError = err instanceof Error ? err.message : '巡检失败';
+        showToast(this.inspectionError, 'error');
+      }
+    } finally {
+      if (current()) this.isInspecting = false;
     }
   }
 
@@ -444,7 +459,8 @@ export class ServerDetailPage extends LitElement {
           <div class="header-right"><button class="btn" @click=${() => this._setTab('collection')}>监控配置</button>
             <span class="last-updated">详情成功读取：${this._formatTimeAgo(this.lastUpdated)}（非资源观测）</span>
             ${this.detailReadError ? html`<span role="alert">${this.detailReadError}，成功读取时间未更新</span>` : nothing}
-            <button class="btn" @click=${() => this._oneClickInspection()} .disabled=${this.isRefreshing}>${icons['clipboard']} 一键巡检</button>
+            <button class="btn" aria-busy=${String(this.isInspecting)} @click=${() => this._oneClickInspection()} .disabled=${this.isInspecting}>${icons['clipboard']} ${this.isInspecting ? '巡检中…' : '一键巡检'}</button>
+            ${this.inspectionError ? html`<span role="alert">${this.inspectionError}</span>` : nothing}
             <button aria-busy=${String(this.isRefreshing)} class="btn btn-refresh" @click=${this.refreshCurrentTab} .disabled=${this.isRefreshing}>
                刷新
             </button>

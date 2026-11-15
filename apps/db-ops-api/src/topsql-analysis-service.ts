@@ -23,8 +23,7 @@ class TopSQLAnalysisService {
     actor?: ActorContext,
   ): Promise<number> {
     // 获取慢查询详情
-    const slowQueries = await metricsDatabaseService.getSlowQueries(instanceId, 100);
-    const slowQuery = slowQueries.find((q) => q.id === slowQueryId);
+    const slowQuery = await metricsDatabaseService.getSlowQueryById(instanceId, slowQueryId);
 
     if (!slowQuery) {
       throw new Error(`慢查询 #${slowQueryId} 不存在`);
@@ -34,8 +33,7 @@ class TopSQLAnalysisService {
   }
 
   async reanalyzeSlowQuery(slowQueryId: number, instanceId: number, trigger: 'manual' | 'auto' = 'manual', actor?: ActorContext, retryOf?: number): Promise<number> {
-    const slowQueries = await metricsDatabaseService.getSlowQueries(instanceId, 100);
-    const slowQuery = slowQueries.find(q => q.id === slowQueryId);
+    const slowQuery = await metricsDatabaseService.getSlowQueryById(instanceId, slowQueryId);
     if (!slowQuery) throw new Error(`慢查询 #${slowQueryId} 不存在`);
     return this._runAnalysis(slowQuery, instanceId, trigger, actor, retryOf, false);
   }
