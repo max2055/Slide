@@ -88,10 +88,15 @@ describe('query_metrics error codes', () => {
       data: { selection: { series_index: 1, total_series: 2 }, metrics: [{ series: [{ dimensions: { mount: '/data' } }] }] } });
     expect(await tool.handler({ ...input, series_index: 2 }, { actor: admin })).toMatchObject({ success: false, errorCode: 'SERIES_INDEX_UNAVAILABLE' });
   });
-  it.each([{ metrics: [] }, { metrics: [{ state: 'available', series: [] }] }])('rejects selecting a nonexistent series in $metrics', async ({ metrics }) => {
-    const s = service(); s.query.mockResolvedValue({ metrics });
+  it('rejects selecting a series when the metric itself is absent', async () => {
+    const s = service(); s.query.mockResolvedValue({ metrics: [] });
     expect(await createQueryMetricsTool(s as any).handler({ instance_id: 1, metric_ids: ['db.uptime_seconds'], series_index: 0 }, { actor: admin }))
       .toMatchObject({ success: false, errorCode: 'SERIES_INDEX_UNAVAILABLE' });
+  });
+  it('retains index zero as a warning when a failed collection has no series', async () => {
+    const s = service(); s.query.mockResolvedValue({ metrics: [{ state: 'temporary_failure', series: [] }] });
+    expect(await createQueryMetricsTool(s as any).handler({ instance_id: 1, metric_ids: ['host.network.bytes_total'], series_index: 0 }, { actor: admin }))
+      .toMatchObject({ success: true, status: 'warning', data: { selection: { series_index: 0, total_series: 0 } } });
   });
   it.each([
     [new ActorAuthenticationError(), 'AUTH_REQUIRED'],

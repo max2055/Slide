@@ -75,9 +75,9 @@ export function createQueryMetricsTool(service: MetricConsumerService = metricCo
         let selection: { series_index: number; total_series: number } | undefined;
         if (args.series_index !== undefined) {
           const metric = data.metrics[0];
-          if (data.metrics.length !== 1 || !metric || args.series_index >= metric.series.length) throw new QueryMetricsArgumentError('SERIES_INDEX_UNAVAILABLE');
+          if (data.metrics.length !== 1 || !metric || args.series_index >= Math.max(1, metric.series.length)) throw new QueryMetricsArgumentError('SERIES_INDEX_UNAVAILABLE');
           selection = { series_index: args.series_index, total_series: metric.series.length };
-          data = { ...data, metrics: [{ ...metric, series: [metric.series[args.series_index]] }] };
+          data = { ...data, metrics: [{ ...metric, series: metric.series.length ? [metric.series[args.series_index]] : [] }] };
         }
         const complete = data.metrics.length > 0 && data.metrics.every(m => m.state === 'available' && m.series.length > 0
           && m.series.every(s => s.buckets.length > 0 && s.buckets.every(b => b.value !== null && b.quality.status === 'good' && b.freshness === 'fresh' && b.accuracy === 'exact')));
