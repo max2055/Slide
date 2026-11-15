@@ -73,8 +73,8 @@ describe.skipIf(process.env.MAX675_MYSQL !== '1')('real MySQL preference preserv
       .toEqual({ success: false, error: '用户偏好数据损坏：必须是 JSON 对象' });
     expect(await raw()).toEqual(before);
   });
-  it('#626 rolls back when SELECT fails and leaves the original row byte-for-byte intact', async () => {
-    await seed({ navWidth: 333, notificationEnabled: false, themeMode: 'dark' });
+  it.each([true, false])('#626 rolls back SELECT failure with existing=%s and preserves all rows', async (existing) => {
+    if (existing) await seed({ navWidth: 333, notificationEnabled: false, themeMode: 'dark' });
     const before = await raw();
     const getConnection = pool.getConnection.bind(pool);
     vi.spyOn(pool, 'getConnection').mockImplementation(async () => {
@@ -120,8 +120,8 @@ describe.skipIf(process.env.MAX675_MYSQL !== '1')('real MySQL preference preserv
     const pending: Array<Promise<{ success: boolean; error?: string }>> = [];
     try {
       const held = await peer.getConnection();
-      await held.beginTransaction();
       try {
+        await held.beginTransaction();
         await held.execute('INSERT INTO user_preferences (user_id, preferences) VALUES (7, ?) ON DUPLICATE KEY UPDATE user_id = VALUES(user_id)',
           [JSON.stringify(DEFAULT_PREFERENCES)]);
         // A second independent single-connection pool competes with the first.
