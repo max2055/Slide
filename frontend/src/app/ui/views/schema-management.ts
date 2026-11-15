@@ -1,5 +1,5 @@
 import { ListBrowser, renderListBrowser, listBrowserStyles } from '../components/list-browser.js';
-import { LitElement, html, css } from "lit";
+import { LitElement, html, css, type PropertyValues } from "lit";
 import { sharedBtnStyles } from "../../styles/shared-btn-styles.ts";
 import { customElement, state, property } from "lit/decorators.js";
 import "../components/app-card.js";
@@ -277,6 +277,9 @@ export class SchemaManagementPage extends LitElement {
   @state() private tablesLoading = false;
   @state() private tablesError: string | null = null;
   private tableRequest = 0;
+  private contextVersion = 0;
+  private snapshotRequest = 0;
+  private changesRequest = 0;
   @state() private tableList: TableListEntry[] = [];
   @state() private changes: SchemaChange[] = [];
   @state() private expandedTable: string | null = null;
@@ -310,6 +313,37 @@ export class SchemaManagementPage extends LitElement {
 
   override firstUpdated() {
     void this.loadInstances();
+  }
+
+  override willUpdate(changed: PropertyValues<this>) {
+    if (changed.has('instanceId') && changed.get('instanceId') !== undefined) {
+      this.resetInstanceData();
+      if (!this.loading) void this.refreshData();
+    }
+  }
+
+  private resetInstanceData() {
+    this.contextVersion++;
+    this.tableRequest++;
+    this.snapshotRequest++;
+    this.changesRequest++;
+    this.detailRequest++;
+    this.tableBrowser.page = 1;
+    this.selectedInstanceName = this.instances.find(i => i.id === this._activeInstanceId)?.name || "";
+    this.snapshotTimes = [];
+    this.tableList = [];
+    this.changes = [];
+    this.expandedTable = null;
+    this.tableDetail = [];
+    this.snapshotDetail = [];
+    this.detailError = null;
+    this.tablesError = null;
+    this.readAt = null;
+    this.collectResult = null;
+    this.hint = null;
+    this.error = null;
+    this.collecting = false;
+    this.detecting = false;
   }
 
   private async loadInstances() {
@@ -347,18 +381,15 @@ export class SchemaManagementPage extends LitElement {
   }
 
   private async loadSnapshotTimes() {
-    if (!this._activeInstanceId) return;
+    const id = this._activeInstanceId;
+    const request = ++this.snapshotRequest;
+    if (!id) return;
     try {
-      const res = await authFetch(`/api/schema/snapshots/${this._activeInstanceId}`, {
-        headers: this._authHeaders(),
-      });
-      if (res.ok) {
-        this.snapshotTimes = await res.json();
-      } else {
-        this.snapshotTimes = [];
-      }
-    } catch (err) {
-      this.snapshotTimes = [];
+      const res = await authFetch(`/api/schema/snapshots/${id}`, { headers: this._authHeaders() });
+      const data = res.ok ? await res.json() : [];
+      if (request === this.snapshotRequest && id === this._activeInstanceId) this.snapshotTimes = data;
+    } catch {
+      if (request === this.snapshotRequest && id === this._activeInstanceId) this.snapshotTimes = [];
     }
   }
 
@@ -377,48 +408,54 @@ export class SchemaManagementPage extends LitElement {
       if (!res.ok) throw new Error(res.status === 403 ? '无权限查看表结构' : `表结构加载失败 (HTTP ${res.status})`);
       const data = await res.json();
       if (!Array.isArray(data.tables)) throw new Error('表结构响应无效');
-      if (request === this.tableRequest) { this.tableList = data.tables; this.readAt = new Date().toISOString(); }
+      if (request === this.tableRequest && id === this._activeInstanceId) { this.tableList = data.tables; this.readAt = new Date().toISOString(); }
     } catch (err: any) {
-      if (request === this.tableRequest) this.tablesError = err.message;
+      if (request === this.tableRequest && id === this._activeInstanceId) this.tablesError = err.message;
     } finally {
-      if (request === this.tableRequest) this.tablesLoading = false;
+      if (request === this.tableRequest && id === this._activeInstanceId) this.tablesLoading = false;
     }
   }
 
   private async loadChanges() {
-    if (!this._activeInstanceId) return;
+    const id = this._activeInstanceId;
+    const request = ++this.changesRequest;
+    if (!id) return;
     try {
-      const res = await authFetch(`/api/schema/changes/${this._activeInstanceId}`, {
-        headers: this._authHeaders(),
-      });
-      if (res.ok) {
-        const data = await res.json();
-        this.changes = Array.isArray(data.changes) ? data.changes : [];
-        this.hint = data.hint || data.changes?.hint || null;
-      } else {
+      const res = await authFetch(`/api/schema/changes/${id}`, { headers: this._authHeaders() });
+      if (!res.ok) throw new Error(`变更加载失败 (HTTP ${res.status})`);
+      const data = await res.json();
+      if (request !== this.changesRequest || id !== this._activeInstanceId) return;
+      this.changes = Array.isArray(data.changes) ? data.changes : [];
+      this.hint = data.hint || data.changes?.hint || null;
+    } catch {
+      if (request === this.changesRequest && id === this._activeInstanceId) {
         this.changes = [];
+        this.hint = null;
       }
-    } catch (err) {
-      this.changes = [];
     }
   }
 
   private async handleCollect() {
-    if (!this._activeInstanceId) return;
+    const id = this._activeInstanceId;
+    if (!id || this.collecting) return;
+    const version = this.contextVersion;
+    const isCurrent = () => version === this.contextVersion && id === this._activeInstanceId;
     this.collecting = true;
     this.collectResult = null;
     try {
-      const res = await authFetch(`/api/schema/collect/${this._activeInstanceId}`, {
+      const res = await authFetch(`/api/schema/collect/${id}`, {
         method: "POST",
         headers: { ...this._authHeaders(), "Content-Type": "application/json" },
         body: "{}",
       });
       if (!res.ok) {
         const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+        if (!isCurrent()) return;
         this.error = err.error || `请求失败 (${res.status})`;
         return;
       }
       const data = await res.json();
+      if (!isCurrent()) return;
       if (data.success) {
         this.collectResult = data.data;
         await this.refreshData();
@@ -426,40 +463,46 @@ export class SchemaManagementPage extends LitElement {
         this.error = data.error || "采集失败";
       }
     } catch (err: any) {
-      this.error = err.message;
+      if (isCurrent()) this.error = err.message;
     } finally {
-      this.collecting = false;
+      if (isCurrent()) this.collecting = false;
     }
   }
 
   private async handleDetect() {
-    if (!this._activeInstanceId) return;
+    const id = this._activeInstanceId;
+    if (!id || this.detecting) return;
+    const version = this.contextVersion;
+    const isCurrent = () => version === this.contextVersion && id === this._activeInstanceId;
+    ++this.changesRequest;
+    this.hint = null;
+    this.error = null;
     this.detecting = true;
     try {
-      const res = await authFetch(`/api/schema/changes/${this._activeInstanceId}`, {
+      const res = await authFetch(`/api/schema/changes/${id}`, {
         method: "POST",
         headers: { ...this._authHeaders(), "Content-Type": "application/json" },
         body: "{}",
       });
       if (!res.ok) {
         const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+        if (!isCurrent()) return;
         this.error = err.error || `请求失败 (${res.status})`;
-        this.detecting = false;
+        if (isCurrent()) this.detecting = false;
         return;
       }
       const data = await res.json();
+      if (!isCurrent()) return;
       if (data.success) {
-        this.changes = data.changes || [];
-        if (data.hint) {
-          this.hint = data.hint;  // 非错误提示
-        }
+        this.changes = Array.isArray(data.changes) ? data.changes : [];
+        this.hint = data.hint || data.changes?.hint || null;
       } else {
         this.error = data.error || "检测变更失败";
       }
     } catch (err: any) {
-      this.error = err.message;
+      if (isCurrent()) this.error = err.message;
     }
-    this.detecting = false;
+    if (isCurrent()) this.detecting = false;
   }
 
   private async handleTableClick(tableName: string) {
@@ -485,13 +528,7 @@ export class SchemaManagementPage extends LitElement {
   private handleInstanceChange(e: Event) {
     const id = Number((e.target as HTMLSelectElement).value);
     this.selectedInstance = id;
-    this.tableBrowser.page = 1;
-    const inst = this.instances.find(i => i.id === id);
-    this.selectedInstanceName = inst?.name || "";
-    this.expandedTable = null;
-    this.tableDetail = [];
-    this.collectResult = null;
-    this.error = null;
+    this.resetInstanceData();
     this.refreshData();
   }
 
@@ -526,10 +563,11 @@ export class SchemaManagementPage extends LitElement {
     if (!change.details) return "";
     const parts: string[] = [];
     for (const [key, val] of Object.entries(change.details)) {
-      if (val.old && val.new) {
-        parts.push(`${key}: ${val.old} → ${val.new}`);
-      } else if (val.new) {
-        parts.push(`${key}: ${val.new}`);
+      const format = (value: unknown) => value === null ? "NULL" : value === "" ? '""' : String(value);
+      if (Object.hasOwn(val, 'old') && Object.hasOwn(val, 'new')) {
+        parts.push(`${key}: ${format(val.old)} → ${format(val.new)}`);
+      } else if (Object.hasOwn(val, 'new')) {
+        parts.push(`${key}: ${format(val.new)}`);
       }
     }
     return parts.join(", ");
@@ -570,6 +608,7 @@ export class SchemaManagementPage extends LitElement {
             <button class="btn small" @click=${() => { this.error = null; }} style="flex-shrink: 0;">&times;</button>
           </div>
         ` : ""}
+        ${this.hint ? html`<p role="status" style="color:var(--muted);padding:var(--space-md) var(--space-lg);">${this.hint}</p>` : ""}
         <!-- 统计概览 -->
         <div style="display:grid;gap:var(--space-md);grid-template-columns:repeat(4,1fr);margin-bottom:var(--space-xl)">
           <stat-card label="表数量" value="${this.tablesLoading || this.tablesError ? '未知' : this.stats.totalTables}" hint="已存快照"></stat-card>
