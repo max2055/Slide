@@ -248,7 +248,8 @@ describe('MAX-592 OAuth cancellation through notification delivery', () => {
 
   // Explicit opt-in credentials, never developer files or the application's DB.
   // This tests the production encrypted UPDATE with a task-exclusive schema.
-  it.skipIf(!process.env.MAX592_MYSQL_CONFIG)('persists rotation encrypted in real MySQL before cancelled delivery exits', async () => {
+  it.skipIf(!process.env.MAX592_MYSQL_CONFIG).each(['persistence', 'parsed-json'] as const)(
+    'persists rotation encrypted in real MySQL before cancelled delivery exits (%s)', async phase => {
     const config = JSON.parse(process.env.MAX592_MYSQL_CONFIG!);
     const database = `max592_${randomUUID().replaceAll('-', '')}`;
     const admin = mysql.createPool({ ...config, database: undefined });
@@ -265,9 +266,22 @@ describe('MAX-592 OAuth cancellation through notification delivery', () => {
       const update = notificationDatabaseService.updateOAuth2RefreshToken.bind(notificationDatabaseService);
       const controller = new AbortController();
       const reason = new Error('cancel while encrypted update commits');
+      if (phase === 'parsed-json') {
+        const fetchEndpoint = globalThis.fetch;
+        vi.stubGlobal('fetch', vi.fn(async (input: Parameters<typeof fetch>[0], init?: RequestInit) => {
+          const response = await fetchEndpoint(input, init);
+          const parse = response.json.bind(response);
+          vi.spyOn(response, 'json').mockImplementation(async () => {
+            const payload = await parse();
+            controller.abort(reason);
+            return payload;
+          });
+          return response;
+        }));
+      }
       vi.spyOn(notificationDatabaseService, 'updateOAuth2RefreshToken').mockImplementation(async (id, token) => {
         const result = await update(id, token);
-        controller.abort(reason);
+        if (phase === 'persistence') controller.abort(reason);
         return result;
       });
       await expect(service.send(channel, message, controller.signal)).rejects.toBe(reason);

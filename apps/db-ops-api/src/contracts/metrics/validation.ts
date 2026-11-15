@@ -197,11 +197,12 @@ function lookup(ref: { id: string; semantic_version: string }, definitions: Metr
 }
 export function validateDerived(inputs: unknown[], definitions: MetricDefinition[]): DerivedMetric[] {
   const nodes = inputs.map(i => DerivedMetricSchema.parse(i));
+  const refKey = (ref: { id: string; semantic_version: string }): string => `${ref.id}@${ref.semantic_version}`;
   const outputs = new Map<string, DerivedMetric>();
   requireRule(new Set(nodes.map(n => n.id)).size === nodes.length, 'DERIVED_ID_CONFLICT');
   for (const n of nodes) {
     const output = lookup(n.output, definitions), args = n.inputs.map(i => lookup(i, definitions));
-    requireRule(!outputs.has(output.id), 'DUPLICATE_SOURCE'); outputs.set(output.id, n);
+    requireRule(!outputs.has(refKey(n.output)), 'DUPLICATE_SOURCE'); outputs.set(refKey(n.output), n);
     requireRule(output.kind === 'gauge' && !['histogram', 'summary'].includes(output.value_type), 'DERIVED_OUTPUT');
     requireRule(args.every(d => d.resource_type === output.resource_type && stable(d.dimensions) === stable(output.dimensions)), 'DERIVED_JOIN');
     if (['sum', 'difference'].includes(n.operation)) requireRule(args.every(d => d.unit === output.unit) && (n.operation !== 'difference' || args.length === 2), 'DERIVED_UNIT');
@@ -218,7 +219,7 @@ export function validateDerived(inputs: unknown[], definitions: MetricDefinition
     requireRule(!visiting.has(id), 'DERIVED_CYCLE');
     if (visited.has(id)) return;
     visiting.add(id);
-    for (const ref of outputs.get(id)?.inputs ?? []) if (outputs.has(ref.id)) visit(ref.id);
+    for (const ref of outputs.get(id)?.inputs ?? []) if (outputs.has(refKey(ref))) visit(refKey(ref));
     visiting.delete(id); visited.add(id);
   }
   for (const id of outputs.keys()) visit(id);

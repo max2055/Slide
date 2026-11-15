@@ -6,7 +6,7 @@ export async function exchangeMicrosoftSmtpRefreshToken(input: {
   refreshToken: string;
   signal?: AbortSignal;
   timeoutMs?: number;
-}): Promise<{ accessToken: string; refreshToken?: string }> {
+}): Promise<{ accessToken: string; refreshToken?: string; interruption?: { reason: unknown } }> {
   input.signal?.throwIfAborted();
   const timeoutMs = input.timeoutMs ?? 10_000;
   if (!Number.isInteger(timeoutMs) || timeoutMs <= 0 || timeoutMs > 10_000) {
@@ -33,12 +33,14 @@ export async function exchangeMicrosoftSmtpRefreshToken(input: {
     });
     if (!response.ok) throw new Error('MICROSOFT_OAUTH_TOKEN_EXCHANGE_FAILED');
     const payload = await response.json() as { access_token?: unknown; refresh_token?: unknown };
-    controller.signal.throwIfAborted();
     if (typeof payload.access_token !== 'string' || payload.access_token.length === 0) {
       throw new Error('MICROSOFT_OAUTH_TOKEN_INVALID');
     }
     return {
       accessToken: payload.access_token,
+      // F1: a fully parsed, validated rotation must survive cancellation at the
+      // json continuation. The sender saves it before propagating interruption.
+      ...(controller.signal.aborted ? { interruption: { reason: controller.signal.reason } } : {}),
       ...(typeof payload.refresh_token === 'string' && payload.refresh_token.length > 0
         ? { refreshToken: payload.refresh_token }
         : {}),
