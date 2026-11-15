@@ -1,21 +1,26 @@
+import { dbConnection } from './db-connection.js';
+import { metricsDatabaseService } from './metrics-database-service.js';
 import { spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { once } from 'node:events';
 import { createServer } from 'node:net';
 import mysql from 'mysql2/promise';
 import bcrypt from 'bcrypt';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { MigrationRunner } from './migrations/runner.js';
 
 // Explicit opt-in: injected configuration only; never read private credentials
 // during default test collection. Full server + real JWT + disposable MySQL schema.
 describe.skipIf(!process.env.CAPACITY_TEST_MYSQL_CONFIG)('MAX-511 / #501 / #527 real HTTP/JWT/MySQL', () => {
-  it('rejects invalid prediction periods and returns only one complete latest snapshot', async () => {
+  it('rejects invalid prediction periods and preserves complete capacity snapshots across failed and concurrent writes (D1)', async () => {
     const config = JSON.parse(process.env.CAPACITY_TEST_MYSQL_CONFIG!);
     if (Number(config.port) === 3306) throw new Error('Use an isolated test MySQL, not the platform database');
     const schema = `max511_${randomBytes(6).toString('hex')}`;
     const admin = mysql.createPool(config);
     const pool = mysql.createPool({ ...config, database: schema, timezone: 'Z' });
+    // Two real writer connections expose leaks and concurrent uncommitted snapshots.
+    const writers = mysql.createPool({ ...config, database: schema, timezone: 'Z', connectionLimit: 2 });
+    const poolSpy = vi.spyOn(dbConnection, 'getPool').mockReturnValue(writers);
     const password = randomBytes(24).toString('hex');
     const secret = randomBytes(32).toString('hex');
     const encryptionKey = randomBytes(32).toString('hex');
@@ -74,6 +79,11 @@ describe.skipIf(!process.env.CAPACITY_TEST_MYSQL_CONFIG)('MAX-511 / #501 / #527 
         expect(response.status).toBe(200);
         return (await response.json() as any).databases;
       };
+      const history = async () => {
+        const response = await fetch(base + '/api/database/instances/10/capacity/history?hours=8784', { headers });
+        expect(response.status).toBe(200);
+        return (await response.json() as any).history;
+      };
       const snapshot = async (at: string, names: string[], instance = 10) => {
         const [result] = await pool.execute<mysql.ResultSetHeader>(
           'INSERT INTO capacity_history(instance_id,recorded_at,db_count) VALUES (?,?,?)', [instance, at, names.length]);
@@ -120,6 +130,109 @@ describe.skipIf(!process.env.CAPACITY_TEST_MYSQL_CONFIG)('MAX-511 / #501 / #527 
       }
       const [[after]] = await pool.query<any[]>('SELECT COUNT(*) AS n FROM ai_analysis');
       expect(after.n).toBe(before.n);
+      const [[version]] = await pool.query<any[]>('SELECT VERSION() AS version, @@transaction_isolation AS isolation');
+      console.info('SQL environment', JSON.stringify(version));
+      const good = await metricsDatabaseService.recordCapacity({instance_id:10,total_size_gb:21,db_count:1,databases:[{name:'previous_complete',size_gb:21}]});
+      expect(good.success).toBe(true);
+      const previous = await details(); expect(previous.map((r:any)=>r.db_name)).toEqual(['previous_complete']);
+      const previousHistory = await history();
+      const [[beforeFault]] = await pool.query<any[]>('SELECT COUNT(*) AS n FROM capacity_history WHERE instance_id=10');
+      await pool.query("CREATE TRIGGER max257_reject_capacity_detail BEFORE INSERT ON capacity_databases FOR EACH ROW SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='MAX257_CONTROLLED_DETAIL_FAILURE'");
+      const failedWrite = await metricsDatabaseService.recordCapacity({instance_id:10,total_size_gb:99,db_count:1,databases:[{name:'should_not_publish',size_gb:99}]});
+      expect(failedWrite.success).toBe(false);
+      const actual = await details();
+      const [[afterFault]] = await pool.query<any[]>('SELECT COUNT(*) AS n FROM capacity_history WHERE instance_id=10');
+      console.log('MAX257_CAPACITY_ATOMICITY',JSON.stringify({before:previous,after:actual,beforeHeaders:beforeFault.n,afterHeaders:afterFault.n,failedWrite:failedWrite.success}));
+      expect(actual).toEqual(previous);
+      expect(afterFault.n).toBe(beforeFault.n);
+      expect(await history()).toEqual(previousHistory);
+      // More failures than the pool size, then success: failed transactions return
+      // their connections and never leave an uncommitted header in the next lease.
+      for (let i = 0; i < 3; i++) {
+        expect((await metricsDatabaseService.recordCapacity({ instance_id: 10, total_size_gb: 99,
+          databases: [{ name: 'rejected', size_gb: 99 }] })).success).toBe(false);
+      }
+      await pool.query('DROP TRIGGER max257_reject_capacity_detail');
+      expect(await metricsDatabaseService.recordCapacity({ instance_id: 10, total_size_gb: 22,
+        databases: [{ name: 'after_rollback', size_gb: 22 }] })).toEqual({ success: true });
+      expect(await details()).toEqual([{ db_name: 'after_rollback', size_gb: 22, table_count: 0 }]);
+      const [[counts]] = await pool.query<any[]>('SELECT db_count FROM capacity_history WHERE instance_id=10 ORDER BY recorded_at DESC,id DESC LIMIT 1');
+      expect(counts.db_count).toBe(1);
+      console.info('PASS D1: 4 detail failures rolled back; two-connection pool reused; SQL count and authenticated HTTP preserved complete results');
+
+      // Pause both production commits after real INSERTs. Every HTTP read while
+      // those transactions are in flight must still observe one old full snapshot.
+      let resume!: () => void, bothInserted!: () => void;
+      const gate = new Promise<void>(resolve => { resume = resolve; });
+      const inserted = new Promise<void>(resolve => { bothInserted = resolve; });
+      let arrivals = 0;
+      const acquire = writers.getConnection.bind(writers);
+      const acquireSpy = vi.spyOn(writers, 'getConnection').mockImplementation(async () => {
+        const connection = await acquire();
+        const commit = connection.commit.bind(connection);
+        connection.commit = async () => {
+          if (++arrivals === 2) bothInserted();
+          await gate;
+          await commit();
+        };
+        return connection;
+      });
+      const pending = ['a', 'b'].map(prefix => metricsDatabaseService.recordCapacity({ instance_id: 10,
+        total_size_gb: 151, databases: Array.from({ length: 151 }, (_, i) => ({ name: `${prefix}_${i}`, size_gb: 1 })) }));
+      try {
+        await Promise.race([inserted, new Promise<never>((_, reject) => {
+          const timer = setTimeout(() => reject(new Error('concurrent writers did not reach commit')), 5000);
+          inserted.finally(() => clearTimeout(timer));
+        })]);
+        for (let i = 0; i < 5; i++) expect(await details()).toEqual([{ db_name: 'after_rollback', size_gb: 22, table_count: 0 }]);
+      } finally {
+        resume();
+        acquireSpy.mockRestore();
+        expect(await Promise.all(pending)).toEqual([{ success: true }, { success: true }]);
+      }
+      const [[latest]] = await pool.query<any[]>('SELECT id FROM capacity_history WHERE instance_id=10 ORDER BY recorded_at DESC,id DESC LIMIT 1');
+      const [latestDetails] = await pool.query<any[]>('SELECT db_name FROM capacity_databases WHERE capacity_id=?', [latest.id]);
+      const concurrent = await details();
+      expect(concurrent).toHaveLength(151);
+      expect(new Set(concurrent.map((r: any) => r.db_name))).toEqual(new Set(latestDetails.map((r: any) => r.db_name)));
+      const [audit] = await pool.query<any[]>(`SELECT h.id,h.db_count,COUNT(d.id) AS details
+        FROM capacity_history h LEFT JOIN capacity_databases d ON d.capacity_id=h.id
+        WHERE h.instance_id=10 GROUP BY h.id ORDER BY h.id`);
+      expect(audit.every(row => Number(row.db_count) === Number(row.details))).toBe(true);
+      console.info('SQL snapshot completeness audit', JSON.stringify(audit));
+      console.info('PASS D1 concurrency: 2 real same-instance transactions; 5 JWT/HTTP reads before commits; final SQL-selected snapshot has all 151 databases');
+
+      // Historical headers with a positive count prove missing details; a zero
+      // or NULL count supplies no such evidence and must remain compatible.
+      await pool.execute('DELETE FROM capacity_databases WHERE instance_id=10');
+      await pool.execute('DELETE FROM capacity_history WHERE instance_id=10');
+      const legacy = await snapshot('2026-01-01 00:00:00', ['legacy_complete']);
+      await pool.execute('UPDATE capacity_history SET db_count=NULL WHERE id=?', [legacy]);
+      await pool.execute("UPDATE capacity_databases SET recorded_at='2026-01-01 00:00:01' WHERE capacity_id=?", [legacy]);
+      expect((await details()).map((r: any) => r.db_name)).toEqual(['legacy_complete']);
+      expect((await metricsDatabaseService.getCapacityDatabases(10, new Date('2026-01-01T00:00:00Z'))).map(r => r.db_name)).toEqual(['legacy_complete']);
+      const half = await snapshot('2026-01-02 00:00:00', ['partial']);
+      await pool.execute('UPDATE capacity_history SET db_count=2 WHERE id=?', [half]);
+      await pool.execute("INSERT INTO capacity_history(instance_id,recorded_at,db_count,total_size_gb) VALUES(10,'2026-01-03',1,99)");
+      expect((await details()).map((r: any) => r.db_name)).toEqual(['legacy_complete']);
+      expect(await metricsDatabaseService.getCapacityDatabases(10, new Date('2026-01-02T00:00:00Z'))).toEqual([]);
+      const tie = await snapshot('2026-01-01 00:00:00', ['legacy_tie']);
+      expect((await metricsDatabaseService.getCapacityDatabases(10, new Date('2026-01-01T00:00:00Z'))).map(r => r.db_name)).toEqual(['legacy_tie']);
+      expect(await metricsDatabaseService.getCapacityHistory(10, 24 * 366)).toHaveLength(2);
+      expect(await history()).toHaveLength(2);
+      await snapshot('2026-01-04 00:00:00', []);
+      expect(await details()).toEqual([]);
+      expect(await metricsDatabaseService.getCapacityHistory(10, 24 * 366)).toHaveLength(3);
+      expect(await history()).toHaveLength(3);
+      await pool.execute('UPDATE capacity_history SET db_count=0 WHERE id=?', [tie]);
+      expect((await metricsDatabaseService.getCapacityDatabases(10, new Date('2026-01-01T00:00:00Z'))).map(r => r.db_name)).toEqual(['legacy_tie']);
+      // Real writer empty snapshot (including an omitted databases argument)
+      // must publish and supersede the previous full result.
+      for (const databases of [[], undefined]) {
+        expect(await metricsDatabaseService.recordCapacity({ instance_id: 10, total_size_gb: 0, databases })).toEqual({ success: true });
+        expect(await details()).toEqual([]);
+      }
+      console.info('PASS D1 legacy: NULL/zero counts, header/detail time drift, count-positive missing/partial details, timestamp tie, real empty and omitted lists; history excludes only identifiable incomplete snapshots');
       // The same JWT must observe live instance-scope revocation.
       await pool.execute('DELETE FROM instance_permissions WHERE user_id=?', [user.insertId]);
       expect((await fetch(base + '/api/database/instances/10/capacity/databases', { headers })).status).toBe(403);
@@ -132,6 +245,8 @@ describe.skipIf(!process.env.CAPACITY_TEST_MYSQL_CONFIG)('MAX-511 / #501 / #527 
         }, 15000);
         try { await closed; } finally { clearTimeout(timer); }
       }
+      poolSpy.mockRestore();
+      await writers.end();
       await pool.end();
       if (created) {
         await admin.query(`DROP DATABASE ${schema}`);

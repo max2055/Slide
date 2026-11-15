@@ -875,15 +875,18 @@ class MetricsDatabaseService {
       return { success: false, error: '数据库未连接' };
     }
 
+    let connection: mysql.PoolConnection | undefined;
     try {
-      const [result] = await pool.execute(
+      connection = await pool.getConnection();
+      await connection.beginTransaction();
+      const [result] = await connection.execute(
         `INSERT INTO capacity_history
          (instance_id, total_size_gb, db_count, table_count)
          VALUES (?, ?, ?, ?)`,
         [
           data.instance_id,
           data.total_size_gb,
-          data.db_count ?? 0,
+          data.db_count ?? data.databases?.length ?? 0,
           data.table_count ?? 0,
         ]
       ) as any;
@@ -901,7 +904,7 @@ class MetricsDatabaseService {
           db.table_count ?? 0,
         ]);
 
-        await pool.execute(
+        await connection.execute(
           `INSERT INTO capacity_databases
            (capacity_id, instance_id, db_name, size_gb, table_count, recorded_at)
            VALUES ${placeholders}`,
@@ -909,10 +912,16 @@ class MetricsDatabaseService {
         );
       }
 
+      await connection.commit();
       return { success: true };
     } catch (error: any) {
+      if (connection) {
+        try { await connection.rollback(); } catch { connection.destroy(); }
+      }
       console.error('记录容量数据失败:', error);
       return { success: false, error: error.message };
+    } finally {
+      connection?.release();
     }
   }
 
@@ -931,10 +940,14 @@ class MetricsDatabaseService {
     try {
       const [rows] = await pool.execute(
         `SELECT total_size_gb, db_count, table_count, recorded_at
-         FROM capacity_history
-         WHERE instance_id = ?
-           AND recorded_at >= NOW() - INTERVAL ? HOUR
-         ORDER BY recorded_at ASC`,
+         FROM capacity_history h
+         WHERE h.instance_id = ?
+           AND h.recorded_at >= NOW() - INTERVAL ? HOUR
+           AND (COALESCE(h.db_count, 0) <= 0 OR h.db_count = (
+             SELECT COUNT(*) FROM capacity_databases d
+             WHERE d.capacity_id = h.id AND d.instance_id = h.instance_id
+           ))
+         ORDER BY h.recorded_at ASC, h.id ASC`,
         [instanceId, hours]
       ) as any;
 
@@ -963,39 +976,31 @@ class MetricsDatabaseService {
     }
 
     try {
-      if (recordedAt) {
-        const [rows] = await pool.execute(
-          `SELECT db_name, size_gb, table_count
-           FROM capacity_databases
-           WHERE instance_id = ? AND recorded_at = ?
-           ORDER BY size_gb DESC`,
-          [instanceId, recordedAt]
-        ) as any;
-        return rows.map((row: any) => ({
-          db_name: row.db_name,
-          size_gb: Number(row.size_gb),
-          table_count: Number(row.table_count),
-        }));
-      } else {
-        // 在同一语句视图中选择单个最新快照，空快照也不能回退到历史明细。
-        const [rows] = await pool.execute(
-          `SELECT d.db_name, d.size_gb, d.table_count
-           FROM capacity_databases d
-           WHERE d.capacity_id = (
-             SELECT h.id FROM capacity_history h
-             WHERE h.instance_id = ?
-             ORDER BY h.recorded_at DESC, h.id DESC
-             LIMIT 1
-           )
-           ORDER BY d.size_gb DESC, d.db_name ASC, d.id ASC`,
-          [instanceId]
-        ) as any;
-        return rows.map((row: any) => ({
-          db_name: row.db_name,
-          size_gb: Number(row.size_gb),
-          table_count: Number(row.table_count),
-        }));
-      }
+      // 仅跳过数量明确不符的旧半快照；旧记录默认/空数量无法证明失败，
+      // 必须保留，尤其不能将合法零库快照回退到历史明细。
+      // 时间查询同样按汇总时间和 id 选一批，避免同秒采集混入多份明细。
+      const [rows] = await pool.execute(
+        `SELECT d.db_name, d.size_gb, d.table_count
+         FROM capacity_databases d
+         WHERE d.capacity_id = (
+           SELECT h.id FROM capacity_history h
+           WHERE h.instance_id = ?
+             ${recordedAt ? 'AND h.recorded_at = ?' : ''}
+             AND (COALESCE(h.db_count, 0) <= 0 OR h.db_count = (
+               SELECT COUNT(*) FROM capacity_databases complete
+               WHERE complete.capacity_id = h.id AND complete.instance_id = h.instance_id
+             ))
+           ORDER BY h.recorded_at DESC, h.id DESC
+           LIMIT 1
+         ) AND d.instance_id = ?
+         ORDER BY d.size_gb DESC, d.db_name ASC, d.id ASC`,
+        recordedAt ? [instanceId, recordedAt, instanceId] : [instanceId, instanceId]
+      ) as any;
+      return rows.map((row: any) => ({
+        db_name: row.db_name,
+        size_gb: Number(row.size_gb),
+        table_count: Number(row.table_count),
+      }));
     } catch (error) {
       console.error('获取容量明细失败:', error);
       return [];
