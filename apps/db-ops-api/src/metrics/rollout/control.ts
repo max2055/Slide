@@ -84,10 +84,10 @@ export class RolloutControl {
     return this.transaction(async c => {
       const result: Record<string, number> = {};
       for (const [name, selection] of Object.entries(rolloutSelections(this.clock(), historyMs))) {
-        await guard?.(c);
+        await guard?.(c, 'check');
         result[name] = await deleteRetentionIds(c, selection, await retentionIds(c, selection, limit));
       }
-      await guard?.(c);
+      await guard?.(c, 'commit');
       return result;
     });
   }
