@@ -408,6 +408,8 @@ export class SqlConsolePage extends LitElement {
   @state() private sidebarView: 'schema' | 'history' = 'schema';
   @state() private historyItems: HistoryItem[] = [];
   @state() private historyLoading = false;
+  @state() private historyError = '';
+  private _historyRequestId = 0;
   @state() private historySearch = '';
   @state() private historyInstanceFilter = 0;
   @state() private historyOffset = 0;
@@ -456,6 +458,8 @@ export class SqlConsolePage extends LitElement {
   }
   override disconnectedCallback() {
     super.disconnectedCallback();
+    this._historyRequestId++;
+    this.historyLoading = false;
     document.removeEventListener("keydown", this._globalKeyHandler);
     for (const tab of this.tabs) {
       if (!tab.editorView) continue;
@@ -677,8 +681,15 @@ export class SqlConsolePage extends LitElement {
   }
 
   private async _loadHistory(reset: boolean = false) {
-    if (this.historyLoading || (!this.historyHasMore && !reset)) return;
-    if (reset) { this.historyOffset = 0; this.historyItems = []; this.historyHasMore = true; }
+    if (!reset && (this.historyLoading || this.historyError || !this.historyHasMore)) return;
+    const requestId = ++this._historyRequestId;
+    if (reset) { this.historyOffset = 0; this.historyItems = []; this.historyTotal = 0; this.historyHasMore = true; }
+    this.historyError = '';
+    if (!this.historyInstanceFilter) {
+      this.historyLoading = false;
+      this.historyHasMore = false;
+      return;
+    }
     this.historyLoading = true;
     try {
       const instanceFilter = this.historyInstanceFilter;
@@ -692,6 +703,7 @@ export class SqlConsolePage extends LitElement {
       });
       if (!res.ok) throw new Error('加载失败');
       const data = await res.json();
+      if (requestId !== this._historyRequestId) return;
       if (reset) {
         this.historyItems = data.items;
       } else {
@@ -701,9 +713,10 @@ export class SqlConsolePage extends LitElement {
       this.historyOffset += data.items.length;
       this.historyHasMore = this.historyItems.length < data.total;
     } catch {
-      // silently fail — history is best-effort
+      if (requestId === this._historyRequestId) this.historyError = '查询历史加载失败，请重试';
+    } finally {
+      if (requestId === this._historyRequestId) this.historyLoading = false;
     }
-    this.historyLoading = false;
   }
 
   private _onHistoryScroll(e: Event) {
@@ -1299,25 +1312,34 @@ export class SqlConsolePage extends LitElement {
           ` : html`
             <div class="history-panel">
               <div class="history-search">
-                <input class="history-search-input" type="text" placeholder="搜索 SQL..."
+                <input class="history-search-input" type="text" placeholder="搜索 SQL..." aria-label="搜索查询历史"
                   .value=${this.historySearch}
                   @input=${(e: InputEvent) => {
                     this.historySearch = (e.target as HTMLInputElement).value;
                     this._loadHistory(true);
                   }} />
-                <select class="history-instance-filter"
+                <select class="history-instance-filter" aria-label="查询历史实例"
                   @change=${(e: Event) => {
                     this.historyInstanceFilter = parseInt((e.target as HTMLSelectElement).value);
                     this._loadHistory(true);
                   }}>
-                  <option value="0">全部实例</option>
+                  <option value="0" ?selected=${this.historyInstanceFilter === 0}>全部实例</option>
                   ${this.instances.map(inst => html`
-                    <option value=${inst.id} ?selected=${inst.id === this.selectedId}>${inst.name}</option>
+                    <option value=${inst.id} ?selected=${inst.id === this.historyInstanceFilter}>${inst.name}</option>
                   `)}
                 </select>
               </div>
               <div class="history-list" @scroll=${this._onHistoryScroll}>
-                ${this.historyItems.length === 0 && !this.historyLoading ? html`
+                ${!this.historyInstanceFilter ? html`
+                  <div class="history-empty" role="status">当前不支持跨实例查看查询历史，请选择具体实例</div>
+                ` : this.historyError ? html`
+                  <div role="alert">${this.historyError}</div>
+                  <button class="btn btn-refresh" @click=${() => {
+                    this.historyError = '';
+                    this._loadHistory(false);
+                  }}>重试</button>
+                ` : nothing}
+                ${this.historyInstanceFilter && !this.historyError && this.historyItems.length === 0 && !this.historyLoading ? html`
                   <div class="history-empty">
                     ${this.historySearch ? '' : html`<div class="history-empty-icon">${icons['clock']}</div>`}
                     <div class="history-empty-text">${this.historySearch ? '无匹配结果' : '暂无查询记录'}</div>

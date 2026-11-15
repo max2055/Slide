@@ -159,6 +159,7 @@ describe('SQL Console', () => {
 
     it('appends the next history batch rather than replacing loaded entries', async () => {
       const subject = page();
+      subject.historyInstanceFilter = 7;
       subject.historyItems = [{ id: 1 }];
       subject.historyOffset = 1;
       const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ items: [{ id: 2 }], total: 2 }) });
