@@ -39,7 +39,7 @@ interface TableSchemaRow {
   column_comment: string | null;
   table_comment: string | null;
   table_rows: number;
-  data_length: number;
+  data_length: number | null;
 }
 
 interface TableListEntry {
@@ -47,7 +47,7 @@ interface TableListEntry {
   table_name: string;
   table_comment: string | null;
   table_rows: number;
-  data_length: number;
+  data_length: number | null;
   column_count: number;
 }
 
@@ -506,7 +506,8 @@ export class SchemaManagementPage extends LitElement {
     return `${Math.floor(hours / 24)} 天前`;
   }
 
-  private _formatBytes(bytes: number): string {
+  private _formatBytes(bytes: number | null): string {
+    if (bytes == null) return "不可用";
     if (bytes === 0) return "0 B";
     const k = 1024;
     const sizes = ["B", "KB", "MB", "GB"];
