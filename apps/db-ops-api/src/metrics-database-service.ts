@@ -642,6 +642,35 @@ class MetricsDatabaseService {
     }
   }
 
+  /** 精确读取当前实例的慢查询；只有查询成功且无记录时返回 null。 */
+  async getSlowQueryById(instanceId: number, slowQueryId: number): Promise<SlowQueryRecord | null> {
+    const pool = this.getPool();
+    if (!pool) throw new Error('SLOW_QUERIES_UNAVAILABLE');
+
+    try {
+      const [rows] = await pool.execute(
+        `SELECT id, instance_id, sql_text, sql_hash, avg_time_ms, max_time_ms,
+                min_time_ms, execution_count, total_time_ms, rows_examined,
+                rows_sent, first_seen, last_seen, digest_text, schema_name,
+                user_name, host_name, created_at, updated_at
+         FROM slow_queries
+         WHERE instance_id = ? AND id = ?`,
+        [instanceId, slowQueryId],
+      ) as [SlowQueryRecord[], unknown];
+      const row = rows[0];
+      if (!row) return null;
+      return {
+        ...row,
+        avg_time_ms: Number(row.avg_time_ms),
+        max_time_ms: row.max_time_ms == null ? null : Number(row.max_time_ms),
+        min_time_ms: row.min_time_ms == null ? null : Number(row.min_time_ms),
+        total_time_ms: Number(row.total_time_ms),
+      };
+    } catch (error) {
+      throw new Error('SLOW_QUERIES_QUERY_FAILED', { cause: error });
+    }
+  }
+
   /**
    * 获取慢查询列表
    */
