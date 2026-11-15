@@ -150,3 +150,36 @@ describe('NotificationService outbound delivery', () => {
     expect(sendEmail).toHaveBeenCalledWith(oauthChannel.config, { subject: 'test', text: 'test' }, oauthChannel.id);
   });
 });
+
+describe('MAX-590 encrypted webhook delivery', () => {
+  it('decrypts before URL/DNS authorization and passes only the authorized URL to transport', async () => {
+    vi.stubEnv('ENCRYPTION_KEY', '0123456789abcdef0123456789abcdef');
+    try {
+      const { encryptData } = await import('./db-connection.js');
+      const url = 'https://hooks.example.test/secret-sentinel?arbitrary=sentinel-token';
+      vi.mocked(resolveOutboundTarget).mockResolvedValue({ url: new URL(url), addresses: ['203.0.113.10'] });
+      const service = new NotificationService();
+      const post = vi.spyOn(service as any, 'postJsonToVerifiedTarget').mockResolvedValue({ statusCode: 200, body: '{}' });
+      expect(await service.send({ ...channel, config: { webhook_url_encrypted: encryptData(url) } }, {})).toEqual({ success: true });
+      expect(resolveOutboundTarget).toHaveBeenLastCalledWith(url);
+      expect(post).toHaveBeenCalledWith(url, ['203.0.113.10'], {});
+    } finally { vi.unstubAllEnvs(); }
+  });
+
+  it('fails closed on a damaged envelope even if a legacy plaintext URL is also present', async () => {
+    const service = new NotificationService();
+    const post = vi.spyOn(service as any, 'postJsonToVerifiedTarget');
+    expect(await service.send({ ...channel, config: { ...channel.config, webhook_url_encrypted: 'damaged-sentinel' } }, {}))
+      .toEqual({ success: false, error: 'OUTBOUND_REQUEST_FAILED' });
+    expect(post).not.toHaveBeenCalled();
+  });
+
+  it('does not return a receiver error body that echoes the bearer URL', async () => {
+    vi.mocked(resolveOutboundTarget).mockResolvedValue({ url: new URL(channel.config.webhook_url), addresses: ['203.0.113.10'] });
+    const service = new NotificationService();
+    vi.spyOn(service as any, 'postJsonToVerifiedTarget').mockResolvedValue({
+      statusCode: 200, body: JSON.stringify({ code: 123, msg: 'sentinel-private-url' }),
+    });
+    expect(await service.send(channel, {})).toEqual({ success: false, error: 'OUTBOUND_PLATFORM_REJECTED' });
+  });
+});

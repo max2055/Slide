@@ -13,6 +13,7 @@ type EmailAuth = 'password' | 'oauth2';
 
 interface NotificationChannelConfig {
   endpoint?: string;
+  hasWebhook?: boolean;
   hasCredential?: boolean;
   severity?: string;
   smtp_host?: string;
@@ -155,7 +156,7 @@ export class FeishuNotificationSettings extends LitElement {
     this.enabled = channel?.enabled ?? false;
 
     if (type === 'feishu') {
-      this.endpoint = channel?.config?.endpoint || '';
+      this.endpoint = channel?.config?.hasWebhook ? '已安全保存' : channel?.config?.endpoint || '';
       this.hasStoredCredential = Boolean(channel?.config?.hasCredential);
       // Never hydrate a secret returned by a legacy/non-redacting endpoint.
       this.webhookUrl = '';
@@ -206,8 +207,8 @@ export class FeishuNotificationSettings extends LitElement {
     }
     this.saving = true;
     try {
-      const config = normalizedUrl ? {
-        webhook_url: normalizedUrl,
+      const config = normalizedUrl || trimmedSecret ? {
+        ...(normalizedUrl ? { webhook_url: normalizedUrl } : {}),
         ...(trimmedSecret ? { secret: trimmedSecret } : {}),
         severity: 'info',
       } : undefined;
@@ -325,7 +326,7 @@ export class FeishuNotificationSettings extends LitElement {
         hasCredential: this.emailHasStoredCredential,
       }
       : {
-        endpoint: this.endpoint,
+        hasWebhook: Boolean(this.endpoint),
         severity: 'info',
         hasCredential: this.hasStoredCredential,
       };
@@ -361,7 +362,7 @@ export class FeishuNotificationSettings extends LitElement {
     if (this.loading) return html`<div class="loading">加载通知配置…</div>`;
     return html`
       <h1>通知配置</h1>
-      <p class="intro">配置告警通知渠道。SMTP 密码、OAuth2 刷新令牌和飞书签名密钥只会通过受保护接口提交，保存后不会回显。</p>
+      <p class="intro">配置告警通知渠道。Webhook 地址、SMTP 密码、OAuth2 刷新令牌和飞书签名密钥只会通过受保护接口提交，保存后不会回显。</p>
       <div class="channel-tabs" role="tablist" aria-label="通知渠道">
         <button class="channel-tab ${this.selectedType === 'feishu' ? 'active' : ''}" role="tab" aria-selected=${this.selectedType === 'feishu'} @click=${() => this.selectType('feishu')}>飞书</button>
         <button class="channel-tab ${this.selectedType === 'email' ? 'active' : ''}" role="tab" aria-selected=${this.selectedType === 'email'} @click=${() => this.selectType('email')}>邮件</button>

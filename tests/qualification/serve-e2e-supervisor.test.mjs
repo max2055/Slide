@@ -44,6 +44,11 @@ test('serve-e2e stops its service tree and stays in the launcher group (#460)', 
   assert.match(result.stdout, /PASS signal-term/);
   assert.match(result.stdout, /PASS signal-int/);
   assert.match(result.stdout, /PASS signal-during-collect/);
+  assert.match(result.stdout, /PASS signal-int-during-collect/);
+  // MAX-590 D1: withdrawn optional diagnostics cannot break startup or cleanup.
+  for (const scenario of ['missing', 'unwritable', 'directory', 'invalidated']) {
+    assert.match(result.stdout, new RegExp(`PASS diagnostics-${scenario}`));
+  }
   assert.match(result.stdout, /PASS unrelated-orphan/);
   assert.match(result.stdout, /unrelated_orphan_after=alive/);
   assert.match(result.stdout, /PASS relative-fork-gap/);
