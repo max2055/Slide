@@ -15,7 +15,7 @@ describe.skipIf(!port)('MAX-347 approval event integrity on real MySQL', () => {
   const database = `max347_${process.pid}`;
   const checker = new ConsistencyChecker();
   beforeAll(async () => {
-    connection = await mysql.createConnection({ host: '127.0.0.1', port, user: 'root', password: '', timezone: 'Z' });
+    connection = await mysql.createConnection({ host: '127.0.0.1', port, user: 'root', password: process.env.METRICS_TEST_MYSQL_PASSWORD ?? '', timezone: 'Z' });
     await connection.query(`CREATE DATABASE ${database}`);
     await connection.query(`USE ${database}`);
     const schema = readFileSync(new URL('../sql/schema.sql', import.meta.url), 'utf8');
@@ -92,7 +92,7 @@ describe.skipIf(!port)('resource health truth with legacy mixed collations', () 
   const database = `max210_${process.pid}`;
   const checker = new ConsistencyChecker();
   beforeAll(async () => {
-    connection = await mysql.createConnection({ host: '127.0.0.1', port, user: 'root', password: '', charset: 'utf8mb4', timezone: 'Z' });
+    connection = await mysql.createConnection({ host: '127.0.0.1', port, user: 'root', password: process.env.METRICS_TEST_MYSQL_PASSWORD ?? '', charset: 'utf8mb4', timezone: 'Z' });
     await connection.query(`CREATE DATABASE ${database}`);
     await connection.query(`USE ${database}`);
     await connection.query("CREATE TABLE database_instances (id INT PRIMARY KEY, health_status VARCHAR(32), status VARCHAR(32))");
@@ -157,6 +157,40 @@ describe.skipIf(!port)('resource health truth with legacy mixed collations', () 
       expect((await checker.resourceHealthTruth()).dataFreshness).toMatchObject({ numerator: 0, denominator: 1 });
     });
   }
+  it('MAX-2: serves retained checks over HTTP after a real resource SQL error and recovers', async () => {
+    const { default: Fastify } = await import('fastify');
+    const { registerHealthRoutes } = await import('./health-routes.js');
+    const app = Fastify();
+    const localChecker = new ConsistencyChecker();
+    registerHealthRoutes(app, async (request) => {
+      (request as any).user = { userId: 1, username: 'fixture', roles: [], permissions: ['config:view'] };
+    }, localChecker, async () => true);
+    await seed('instance');
+    await connection.query('RENAME TABLE servers TO servers_max2_hidden');
+    try {
+      for (const route of ['overview', 'consistency', 'readiness']) {
+        const response = await app.inject(`/api/health/${route}`);
+        expect(response.statusCode).toBe(200);
+        const result = response.json();
+        if (route !== 'readiness') {
+          expect(result.checks).toHaveLength(10);
+          expect(result.checks.some((check: { status: string }) => check.status === 'fail')).toBe(true);
+        }
+        if (route !== 'consistency') {
+          expect((result.truth ?? result).managedAvailability).toMatchObject({
+            status: 'unknown', numerator: 0, denominator: 0, reason: 'resource_health_query_failed',
+          });
+        }
+      }
+      expect((await app.inject('/api/health/ready')).json()).toEqual({ ready: true });
+    } finally {
+      await connection.query('RENAME TABLE servers_max2_hidden TO servers');
+      await app.close();
+    }
+    const recovered = await localChecker.healthOverview(true);
+    expect(recovered.truth.managedAvailability).toMatchObject({ status: 'healthy', numerator: 1, denominator: 1 });
+  });
+
   it('keeps workflow observation failure explicitly unknown', async () => {
     await seed('instance');
     await connection.query('DROP TABLE cron_job_logs');
