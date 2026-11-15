@@ -13,6 +13,9 @@ import { MysqlDeliveryStore } from './delivery-store.js';
 import { JobRegistry } from './job-registry.js';
 import { registerWorkflowHandlers } from './register-workflow-handlers.js';
 import { createNotificationDispatchJob, NotificationDispatchReconciler, NotificationDispatchScheduler } from './notification-dispatch.js';
+import { WorkerStartup } from '../lifecycle/worker-startup.js';
+import { BoundedWorkflowRuntime } from './bounded-worker.js';
+import { mountWorkflowTimer } from './notification-dispatch-timer-fixture.js';
 import { smtpRecipient } from './delivery-test-recipients.js';
 
 // Explicit configuration only. No developer .env, default DB or private credential reads.
@@ -62,7 +65,10 @@ describe.skipIf(!config)('MAX-593 isolated MySQL notification lifecycle (#396/#5
       capacityConsistencyMonitor: { runOnce: async () => {} }, notificationScheduler: scheduler,
       enqueueNotificationDispatch: at => workflows.enqueue(createNotificationDispatchJob(at)),
       reportSchedule: {} as any, notificationDatabaseService: source, notificationService: service,
-      reportDatabaseService: { getReportById: async () => ({ id: 1, name: 'report', type: 'health', format: 'html', status: 'completed' }) as any },
+      reportDatabaseService: { getReportById: async reportId => {
+        const [reports] = await pool.execute<any[]>('SELECT * FROM reports WHERE id=?', [reportId]);
+        return reports[0] ?? null;
+      } },
     });
     // The production registrar's default gate also resolves dbConnection's injected pool.
     await pool.execute("INSERT INTO notification_channels (id,name,type,config,enabled,delivery_start_at) VALUES (1,'isolated','email',?,1,'2020-01-01')", [JSON.stringify(smtp.channel.config)]);
@@ -226,4 +232,82 @@ describe.skipIf(!config)('MAX-593 isolated MySQL notification lifecycle (#396/#5
     expect((await gate.inspect(id))?.delivery.state).toBe(state === 'interrupted' ? 'unknown' : state);
     expect(smtp.messages).toHaveLength(0);
   });
+
+  it.each([false, true])('R1: actual server timer keeps independent MySQL lanes running under a repair row lock (cancel=%s)', async cancel => {
+    let at = new Date(Date.now() + 60_000);
+    const seed = createNotificationDispatchJob(at);
+    await workflows.enqueue(seed);
+    // Two distinct report business keys ensure two polling passes can send.
+    await pool.query("INSERT INTO reports VALUES (2,'independent','health','html','completed')");
+    for (const reportId of [1, 2]) await workflows.enqueue({
+      id: randomUUID(), type: 'report.notify', schemaVersion: 1,
+      payload: { reportId, channelId: 1 }, idempotencyKey: `r1-report-${reportId}`, availableAt: new Date(0),
+    });
+    const lock = await pool.getConnection();
+    let locked = true;
+    await lock.beginTransaction();
+    await lock.execute('SELECT id FROM workflow_jobs WHERE id=? FOR UPDATE', [seed.id]);
+    const enqueue = vi.spyOn(workflows, 'enqueue');
+    const repair = new NotificationDispatchReconciler(workflows);
+    const runtime = new BoundedWorkflowRuntime(workflows, randomUUID(), 3, async job => [job.type]);
+    const startup = new WorkerStartup({ acquire: async () => true, renew: async () => true, release: async () => {} }, async () => { await runtime.shutdown(); });
+    await startup.start(async () => {}, async () => {});
+    const timer = mountWorkflowTimer(startup, { ensure: s => repair.ensure(s, at) }, runtime, registry);
+    let nextStartup: WorkerStartup | undefined;
+    let nextTimer: ReturnType<typeof mountWorkflowTimer> | undefined;
+    const pending = (s: WorkerStartup) => (s as unknown as { pending: Set<unknown> }).pending.size;
+    const sqlWaiting = async () => (await admin.execute<any[]>(
+      "SELECT STATE FROM information_schema.PROCESSLIST WHERE DB=? AND INFO LIKE 'INSERT INTO workflow_jobs%'", [database],
+    ))[0];
+    try {
+      for (let i = 0; i < 25; i++) { timer.tick(); await new Promise(resolve => setTimeout(resolve, 3)); }
+      await vi.waitFor(async () => {
+        expect(await sqlWaiting()).toHaveLength(1);
+        expect(await rows("SELECT id FROM workflow_jobs WHERE job_type='report.notify' AND state='completed'")).toHaveLength(2);
+      }, { timeout: 2000, interval: 10 });
+      const observed = { simulatedTicks: 25, SQLWrites: enqueue.mock.calls.length, pending: pending(startup),
+        completedReports: 2, receivedMessages: smtp.messages.length, pendingSql: await sqlWaiting() };
+      console.info('R1_REAL_MYSQL_LOCK', observed);
+      expect(observed).toMatchObject({ SQLWrites: 1, pending: 1, receivedMessages: 2 });
+      expect(timer.ready()).toBe(true);
+      if (cancel) {
+        await startup.stop();
+        for (let i = 0; i < 25; i++) timer.tick();
+        expect(enqueue).toHaveBeenCalledTimes(1);
+        expect(pending(startup)).toBe(1);
+        let drained = false;
+        const draining = startup.drain().then(() => { drained = true; });
+        await new Promise(resolve => setImmediate(resolve));
+        expect(drained).toBe(false); // No replacement while the original SQL is unknown.
+        await lock.rollback(); locked = false;
+        await draining;
+        expect(pending(startup)).toBe(0);
+        timer.close();
+        const nextRuntime = new BoundedWorkflowRuntime(workflows, randomUUID(), 3, async job => [job.type]);
+        nextStartup = new WorkerStartup({ acquire: async () => true, renew: async () => true, release: async () => {} }, async () => { await nextRuntime.shutdown(); });
+        await nextStartup.start(async () => {}, async () => {});
+        nextTimer = mountWorkflowTimer(nextStartup, { ensure: s => repair.ensure(s, at) }, nextRuntime, registry);
+        nextTimer.tick();
+        await vi.waitFor(() => { expect(enqueue).toHaveBeenCalledTimes(2); expect(pending(nextStartup!)).toBe(0); });
+        expect(await rows("SELECT id FROM workflow_jobs WHERE job_type='notification.dispatch'")).toHaveLength(1);
+      } else {
+        await lock.rollback(); locked = false;
+        await vi.waitFor(() => expect(pending(startup)).toBe(0));
+      }
+      at = new Date(at.getTime() + 20_000);
+      (nextTimer ?? timer).tick();
+      await vi.waitFor(async () => {
+        expect(pending(nextStartup ?? startup)).toBe(0);
+        expect(await rows("SELECT id FROM workflow_jobs WHERE job_type='notification.dispatch'")).toHaveLength(2);
+      });
+      expect(enqueue).toHaveBeenCalledTimes(cancel ? 3 : 2);
+      expect(smtp.messages).toHaveLength(2);
+    } finally {
+      timer.close(); nextTimer?.close();
+      if (locked) await lock.rollback();
+      lock.release();
+      await startup.drain(); await nextStartup?.drain();
+    }
+  });
+
 });

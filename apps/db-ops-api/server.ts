@@ -5255,15 +5255,31 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
   }
   await startup.step(() => cronManager!.start());
   await startup.assertOwned();
+  let notificationRepair: Promise<void> | undefined;
+  let workflowAdmission: Promise<void> | undefined;
   workflowTimer = setInterval(() => {
-    void startup.assertOwned()
-      .then(() => startup.step(() => notificationDispatchReconciler.ensure(startup.signal)).catch(() => {
+    if (startup.signal.aborted) return;
+    // Repair cannot hold up runnable lanes or accumulate one waiter per tick.
+    // startup.step retains the actual SQL until settlement, even after abort;
+    // recovery drains it before admitting a replacement worker generation.
+    if (!notificationRepair) {
+      notificationRepair = startup.assertOwned()
+        .then(() => startup.step(() => notificationDispatchReconciler.ensure(startup.signal)))
+        .catch(() => { if (!startup.signal.aborted) console.error('[NotificationDispatch] RECONCILIATION_FAILED'); })
+        .finally(() => { notificationRepair = undefined; });
+    }
+    if (workflowAdmission) return;
+    workflowAdmission = startup.assertOwned()
+      .then(() => {
         startup.signal.throwIfAborted();
-        console.error('[NotificationDispatch] RECONCILIATION_FAILED');
-      }))
-      .then(() => workflowRuntime.runOnce((job, context) => workflowRegistry.execute(job, context)))
-      .then(result => { if (!startup.signal.aborted && result !== 'running' && result !== 'cancelled') dispatchAvailable = true; })
-      .catch(() => { dispatchAvailable = false; console.error('[WorkerRuntime] WORKFLOW_TICK_FAILED'); });
+        // Each runtime lane quarantines its own pending work. Do not wait for
+        // all lanes here: one blocked lane must not prevent the others polling.
+        void workflowRuntime.runOnce((job, context) => workflowRegistry.execute(job, context))
+          .then(result => { if (!startup.signal.aborted && result !== 'running' && result !== 'cancelled') dispatchAvailable = true; })
+          .catch(() => { dispatchAvailable = false; console.error('[WorkerRuntime] WORKFLOW_TICK_FAILED'); });
+      })
+      .catch(() => { dispatchAvailable = false; console.error('[WorkerRuntime] WORKFLOW_TICK_FAILED'); })
+      .finally(() => { workflowAdmission = undefined; });
   }, 1_000);
 
   // Legacy logs have no provable owner/expiry; leave them for manual review.
