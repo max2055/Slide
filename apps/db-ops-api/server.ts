@@ -2430,15 +2430,15 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
     preHandler: [verifyToken, requirePermission('metric:manage')],
     handler: async (request, reply) => {
       try {
-        const body = request.body as any;
-        const result = await scoringConfigService.saveWeights(body);
+        const result = await scoringConfigService.saveWeights(request.body);
         if (result.success) {
           reply.send({ success: true });
         } else {
-          reply.code(400).send({ error: result.error });
+          reply.code(result.statusCode ?? 400).send({ error: result.error });
         }
-      } catch (error: any) {
-        reply.code(500).send({ error: error.message });
+      } catch (error) {
+        request.log.error({ err: error }, '保存评分权重失败');
+        reply.code(500).send({ error: '保存评分权重失败' });
       }
     },
   });
