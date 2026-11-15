@@ -49,3 +49,14 @@ it('does not queue an RCA after workflow cancellation during evidence loading', 
   try { await expect(workflowExecution.run({ signal: controller.signal, workerId: 'a', fencingToken: 1 }, () => service.analyzeAlert(991))).rejects.toThrow('WORKFLOW_LEASE_LOST'); }
   finally { vi.restoreAllMocks(); }
 });
+
+// #485: infrastructure faults must never masquerade as a missing alert.
+it.each(['no-pool', 'ECONNREFUSED', 'ETIMEDOUT', 'ER_BAD_FIELD_ERROR'])('reports unavailable for %s and retains a server log', async fault => {
+  const { dbConnection } = await import('./db-connection.js');
+  const log = vi.spyOn(console, 'error').mockImplementation(() => {});
+  vi.spyOn(dbConnection, 'getPool').mockReturnValue(fault === 'no-pool' ? null : { execute: vi.fn().mockRejectedValue(new Error(fault)) } as any);
+  try {
+    await expect(new AlertRCAService().analyzeAlert(123)).rejects.toThrow('ALERT_RCA_SERVICE_UNAVAILABLE');
+    expect(log).toHaveBeenCalled();
+  } finally { vi.restoreAllMocks(); }
+});

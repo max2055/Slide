@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { assertSourceClock, assertSourceDeadline, sourceDefinitions, sourcePackageSchema } from './config.js';
@@ -24,11 +24,24 @@ describe('source package configuration and UTC gates', () => {
     expect(() => assertSourceClock(10000, 10200, 10100)).not.toThrow();
     for (const clock of [[0, 1001, 500], [0, 1, 2002], [100, 99, 100], [0, 0, NaN]])
       expect(() => assertSourceClock(...clock as [number, number, number])).toThrow('CLOCK_UNTRUSTED');
-    expect(() => assertSourceDeadline({ ...sourceTestConfig(), deadline: new Date(0).toISOString() })).toThrow('DEADLINE');
-    expect(() => assertSourceDeadline({ ...sourceTestConfig(), deadline: new Date(Date.now() + 3_600_001).toISOString() })).toThrow('DEADLINE');
+    // PR #972 CI: use one injected clock for all deadline boundaries.
     const now = 1_000_000;
+    expect(() => assertSourceDeadline({ ...sourceTestConfig(), deadline: new Date(0).toISOString() }, now)).toThrow('DEADLINE');
     expect(() => assertSourceDeadline({ ...sourceTestConfig(), deadline: new Date(now + 3_600_000).toISOString() }, now)).not.toThrow();
     expect(() => assertSourceDeadline({ ...sourceTestConfig(), deadline: new Date(now + 3_600_001).toISOString() }, now)).toThrow('DEADLINE');
     expect(() => assertSourceDeadline(sourceTestConfig(), NaN)).toThrow('DEADLINE');
+  });
+  it('MAX-559: covers deadline boundaries with the default clock held fixed', () => {
+    const now = 1_000_000;
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(now);
+    try {
+      const config = sourceTestConfig();
+      for (const remaining of [1, 3_600_000])
+        expect(() => assertSourceDeadline({ ...config, deadline: new Date(now + remaining).toISOString() })).not.toThrow();
+      for (const remaining of [-1, 0, 3_600_001])
+        expect(() => assertSourceDeadline({ ...config, deadline: new Date(now + remaining).toISOString() })).toThrow('DEADLINE');
+    } finally {
+      clock.mockRestore();
+    }
   });
 });
