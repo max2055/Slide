@@ -60,3 +60,13 @@ describe('list failure and compatibility', () => {
     expect(browser.page).toBe(1); browser.query = 'absent'; expect(browser.select([{ name: 'remaining' }], row => row.name, row => row.name).total).toBe(0);
   });
 });
+
+it('MAX-3: redundancy persistence failure is visible and never announces completion', async () => {
+  const view = new IndexManagementPage() as any;
+  view.selectedInstanceId = 1;
+  authFetch.mockResolvedValue(response({ success: false, error: '索引存储更新失败' }, 400));
+  await view.detectRedundancy();
+  expect(view.msgType).toBe('error');
+  expect(view.message).toBe('索引存储更新失败');
+  expect(view.message).not.toContain('检测完成');
+});
