@@ -1,3 +1,4 @@
+import { refreshBrandingCache, resetBrandingCache, subscribeBranding } from "../src/branding.js";
 import { clearChatViewCaches } from "./views/chat.ts";
 import { LitElement, type PropertyValues } from "lit";
 import { customElement, state } from "lit/decorators.js";
@@ -492,8 +493,12 @@ export class SlideApp extends LitElement {
     }
   };
 
+  private unsubscribeBranding?: () => void;
+
   connectedCallback() {
     super.connectedCallback();
+    this.unsubscribeBranding = subscribeBranding(() => this.requestUpdate());
+    void refreshBrandingCache();
     window.addEventListener("slide-navigate", this.navigateHandler);
     window.addEventListener("slide-permissions-loaded", this.permissionsLoadedHandler);
     window.addEventListener("slide-settings-change", this.settingsChangeHandler);
@@ -553,6 +558,8 @@ export class SlideApp extends LitElement {
   }
 
   disconnectedCallback() {
+    this.unsubscribeBranding?.();
+    this.unsubscribeBranding = undefined;
     window.removeEventListener("slide-navigate", this.navigateHandler);
     window.removeEventListener("slide-permissions-loaded", this.permissionsLoadedHandler);
     window.removeEventListener("slide-settings-change", this.settingsChangeHandler);
@@ -567,6 +574,7 @@ export class SlideApp extends LitElement {
   }
 
   logout() {
+    resetBrandingCache();
     clearChatViewCaches();
     if (this.client) {
       this.client.disconnect();
