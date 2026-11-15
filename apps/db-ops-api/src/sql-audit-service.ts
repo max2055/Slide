@@ -9,6 +9,37 @@ import { aiAnalysisDatabaseService } from './ai-analysis-database-service.js';
 import { dbConnection } from './db-connection.js';
 import crypto from 'crypto';
 
+interface AuditToken {
+  text: string;
+  keyword: string;
+  depth: number;
+  identifier?: string;
+}
+
+// Lightweight lexical context for advisory rules, not an execution validator.
+// Keep literals atomic so their keywords, commas and parentheses cannot alter
+// statement shape. Quoted identifiers remain available for metadata lookup.
+function auditTokens(sql: string): AuditToken[] {
+  const tokens: AuditToken[] = [];
+  const parts = /--[^\r\n]*|#[^\r\n]*|\/\*[\s\S]*?\*\/|\$([A-Za-z_]\w*|)\$[\s\S]*?\$\1\$|'(?:''|\\[\s\S]|[^'\\])*'|"(?:""|\\[\s\S]|[^"\\])*"|`(?:``|[^`])*`|[\p{L}_][\p{L}\p{N}_$]*|[^\s]/gu;
+  let depth = 0;
+  for (const match of sql.matchAll(parts)) {
+    const text = match[0];
+    if (text.startsWith('--') || text.startsWith('#') || text.startsWith('/*')) continue;
+    if (text === ')') depth = Math.max(0, depth - 1);
+    const word = /^[\p{L}_][\p{L}\p{N}_$]*$/u.test(text);
+    const quoted = text.startsWith('`') || text.startsWith('"');
+    tokens.push({
+      text,
+      keyword: word ? text.toUpperCase() : '',
+      depth,
+      identifier: word ? text : quoted ? text.slice(1, -1).replaceAll(text[0].repeat(2), text[0]) : undefined,
+    });
+    if (text === '(') depth += 1;
+  }
+  return tokens;
+}
+
 export interface SqlRiskItem {
   level: 'warning' | 'error';
   pattern: string;
@@ -237,6 +268,7 @@ class SqlAuditService {
     const results: SqlRiskItem[] = [];
     const normalized = sqlText.replace(/\s+/g, ' ').trim();
     const upper = normalized.toUpperCase();
+    const tokens = auditTokens(sqlText);
 
     // SELECT *
     if (/SELECT\s+\*/i.test(upper)) {
@@ -247,17 +279,29 @@ class SqlAuditService {
       });
     }
 
-    // 缺少 WHERE 子句（有 FROM 但无 WHERE 的 SELECT/UPDATE/DELETE）
-    if (
-      /(SELECT|UPDATE|DELETE)\s+.*FROM\s+\w+/i.test(normalized) &&
-      !/WHERE/i.test(upper)
-    ) {
+    // WHERE must belong to the same statement, outside subqueries/literals.
+    let statement: AuditToken[] = [];
+    const checkWhere = () => {
+      const command = statement.find(t => ['SELECT', 'UPDATE', 'DELETE', 'INSERT', 'REPLACE', 'MERGE'].includes(t.keyword));
+      if (!command || !['SELECT', 'UPDATE', 'DELETE'].includes(command.keyword)) return;
+      if (statement.some(t => t.keyword === 'WHERE')) return;
+      if (command.keyword === 'SELECT' && !statement.some(t => t.keyword === 'FROM')) return;
       results.push({
-        level: 'error',
+        level: command.keyword === 'SELECT' ? 'warning' : 'error',
         pattern: 'MISSING WHERE',
         message: '缺少 WHERE 条件，可能影响全表数据，请确认是否需要过滤条件',
       });
+    };
+    for (const token of tokens) {
+      if (token.depth !== 0) continue;
+      if (token.text === ';') {
+        checkWhere();
+        statement = [];
+      } else {
+        statement.push(token);
+      }
     }
+    checkWhere();
 
     // LIKE 前缀通配符
     const likeMatches = normalized.match(/LIKE\s+'([^']*)'/gi);
@@ -313,21 +357,34 @@ class SqlAuditService {
     }
 
     // IN (...) 超过 100 个值
-    const inMatches = normalized.match(/IN\s*\(([^)]+)\)/gi);
-    if (inMatches) {
-      for (const m of inMatches) {
-        // Count values, ignoring commas inside string literals
-        const content = m.replace(/IN\s*\(/i, '').replace(/\)$/, '');
-        const cleaned = content.replace(/'[^']*'/g, "'x'");
-        const valueCount = cleaned.split(',').filter(s => s.trim().length > 0).length;
-        if (valueCount > 100) {
-          results.push({
-            level: 'warning',
-            pattern: 'LARGE IN CLAUSE',
-            message: `大量 IN 值（${valueCount} 个）可能超出优化器处理能力，建议用临时表或 JOIN`,
-          });
+    for (let i = 0; i < tokens.length; i++) {
+      if (tokens[i].keyword !== 'IN' || tokens[i + 1]?.text !== '(') continue;
+      const depth = tokens[i + 1].depth + 1;
+      if (['SELECT', 'WITH'].includes(tokens[i + 2]?.keyword)) continue;
+      let valueCount = 0;
+      let hasValue = false;
+      let closed = false;
+      for (let j = i + 2; j < tokens.length; j++) {
+        const token = tokens[j];
+        if (token.depth < depth) {
+          closed = token.text === ')';
+          if (hasValue) valueCount++;
           break;
         }
+        if (token.text === ',' && token.depth === depth) {
+          if (hasValue) valueCount++;
+          hasValue = false;
+        } else {
+          hasValue = true;
+        }
+      }
+      if (closed && valueCount > 100) {
+        results.push({
+          level: 'warning',
+          pattern: 'LARGE IN CLAUSE',
+          message: `大量 IN 值（${valueCount} 个）可能超出优化器处理能力，建议用临时表或 JOIN`,
+        });
+        break;
       }
     }
 
@@ -389,44 +446,21 @@ class SqlAuditService {
    */
   private _extractTableNames(sql: string): string[] {
     const tables = new Set<string>();
-    const normalized = sql.replace(/\s+/g, ' ').trim();
-
-    // FROM table_name
-    const fromMatches = normalized.match(/FROM\s+`?(\w+)`?/gi);
-    fromMatches?.forEach((m) => {
-      const name = m.replace(/FROM\s+`?/i, '').replace(/`$/, '');
-      if (
-        name &&
-        ![
-          'SELECT',
-          'WHERE',
-          'JOIN',
-          'ON',
-          'GROUP',
-          'ORDER',
-          'LIMIT',
-          'HAVING',
-          'INTO',
-        ].includes(name.toUpperCase())
-      ) {
-        tables.add(name);
+    const tokens = auditTokens(sql);
+    for (let i = 0; i < tokens.length; i++) {
+      const keyword = tokens[i].keyword;
+      if (!['FROM', 'JOIN', 'UPDATE'].includes(keyword)
+        && !(keyword === 'INTO' && tokens[i - 1]?.keyword === 'INSERT')) continue;
+      let cursor = i + 1;
+      let name = tokens[cursor]?.identifier;
+      if (!name || ['SELECT', 'WHERE', 'JOIN', 'ON', 'GROUP', 'ORDER', 'LIMIT', 'HAVING', 'SET'].includes(tokens[cursor].keyword)) continue;
+      // Metadata stores TABLE_NAME, not the database/schema prefix.
+      while (tokens[cursor + 1]?.text === '.' && tokens[cursor + 2]?.identifier) {
+        cursor += 2;
+        name = tokens[cursor].identifier;
       }
-    });
-
-    // JOIN table_name
-    const joinMatches = normalized.match(/JOIN\s+`?(\w+)`?/gi);
-    joinMatches?.forEach((m) => {
-      const name = m.replace(/JOIN\s+`?/i, '').replace(/`$/, '');
       if (name) tables.add(name);
-    });
-
-    // INSERT INTO table_name / UPDATE table_name
-    const insertMatch = normalized.match(/INSERT\s+INTO\s+`?(\w+)`?/i);
-    if (insertMatch) tables.add(insertMatch[1]);
-
-    const updateMatch = normalized.match(/^UPDATE\s+`?(\w+)`?/i);
-    if (updateMatch) tables.add(updateMatch[1]);
-
+    }
     return Array.from(tables);
   }
 

@@ -48,7 +48,41 @@ export class ConsistencyChecker {
 
   async resourceHealthTruth(): Promise<HealthTruth> {
     const pool = dbConnection.getPool();
-    if (!pool) throw new Error('数据库未连接');
+    try {
+      if (!pool) throw new Error('database_pool_unavailable');
+      return await this.collectResourceHealthTruth(pool);
+    } catch {
+      // Counts are unavailable, not zero healthy resources out of a known total.
+      // Keep SQL/driver error text out of the response; the stable reason identifies
+      // the failed observation without exposing query parameters or credentials.
+      const unknown = (): HealthDimension => ({
+        status: 'unknown', numerator: 0, denominator: 0,
+        observedAt: new Date().toISOString(),
+        reason: pool ? 'resource_health_query_failed' : 'database_pool_unavailable',
+        failedRefs: [{ type: 'system', id: 'resource_health' }],
+      });
+      return aggregateHealth({
+        controlPlane: this.controlPlaneDimension(),
+        managedAvailability: unknown(),
+        dataFreshness: unknown(),
+        workflow: pool ? await this.workflowDimension(pool) : {
+          ...unknown(), reason: 'workflow_state_unavailable',
+          failedRefs: [{ type: 'system', id: 'workflow' }],
+        },
+      });
+    }
+  }
+
+  private controlPlaneDimension(): HealthDimension {
+    const connected = dbConnection.isConnected();
+    return {
+      status: connected ? 'healthy' : 'critical', numerator: connected ? 1 : 0, denominator: 1,
+      failedRefs: connected ? [] : [{ type: 'system', id: 'mysql' }],
+      observedAt: new Date().toISOString(), reason: connected ? undefined : 'primary_database_unavailable',
+    };
+  }
+
+  private async collectResourceHealthTruth(pool: NonNullable<ReturnType<typeof dbConnection.getPool>>): Promise<HealthTruth> {
     // Legacy rollout columns may use a different collation from this connection.
     // Compare canonical resource IDs byte-for-byte; numeric coercion or padded
     // text comparisons would incorrectly accept aliases such as "01" or "1 ".
@@ -72,10 +106,7 @@ export class ConsistencyChecker {
     ];
     const availability = this.resourceDimension(resources, 'available', 'managed_resource_unavailable');
     const freshness = this.resourceDimension(resources, 'fresh', 'required_metric_stale_or_missing');
-    const controlPlane: HealthDimension = {
-      status: dbConnection.isConnected() ? 'healthy' : 'critical', numerator: dbConnection.isConnected() ? 1 : 0, denominator: 1,
-      failedRefs: dbConnection.isConnected() ? [] : [{ type: 'system', id: 'mysql' }], observedAt: new Date().toISOString(), reason: dbConnection.isConnected() ? undefined : 'primary_database_unavailable',
-    };
+    const controlPlane = this.controlPlaneDimension();
     const workflow = await this.workflowDimension(pool);
     return aggregateHealth({
       controlPlane,
@@ -304,9 +335,9 @@ export class ConsistencyChecker {
     if (!pool) throw new Error('数据库未连接');
 
     const [rows] = await pool.execute(
-      `SELECT ar.id, ar.name, ar.metric_name
+      `SELECT ar.id, ar.name, ar.target_type, ar.metric_name
        FROM alert_rules ar
-       LEFT JOIN metric_definitions md ON ar.metric_name = md.id
+       LEFT JOIN metric_definitions md ON ar.metric_name = md.id AND ar.target_type = md.target_type
        WHERE md.id IS NULL AND ar.metric_name IS NOT NULL`,
       [],
     ) as any;
@@ -329,7 +360,7 @@ export class ConsistencyChecker {
       status: 'fail',
       severity: 'major',
       summary: `${count} 条告警规则引用了无效指标`,
-      details: rows.map((r: any) => ({ id: r.id, name: r.name, metric_name: r.metric_name })),
+      details: rows.map((r: any) => ({ id: r.id, name: r.name, target_type: r.target_type, metric_name: r.metric_name })),
       recommendation: '请修复告警规则中引用的无效指标名',
     };
   }
