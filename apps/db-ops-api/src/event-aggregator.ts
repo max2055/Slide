@@ -58,8 +58,8 @@ class EventAggregator {
          JOIN alert_event_members m ON m.event_id = e.id
          JOIN alerts a ON a.id = m.alert_id
          WHERE e.status IN ('open', 'investigating')
-           AND e.created_at >= DATE_SUB(NOW(), INTERVAL 10 MINUTE)
-         GROUP BY e.id, e.instance_id, e.source_type, a.alert_type, a.metric_name`
+         GROUP BY e.id, e.instance_id, e.source_type, a.alert_type, a.metric_name
+         HAVING MAX(m.created_at) >= DATE_SUB(NOW(), INTERVAL 10 MINUTE)`
       ) as any;
 
       // 构建事件查找 Map: key = instance_id:alert_type:metric_name
@@ -214,10 +214,17 @@ class EventAggregator {
 
           if (group.existingEventPk) {
             const [targets] = await connection.execute<mysql.RowDataPacket[]>(
-              "SELECT id FROM alert_events WHERE id=? AND status IN ('open','investigating') FOR UPDATE", [group.existingEventPk]);
+              "SELECT id, severity FROM alert_events WHERE id=? AND status IN ('open','investigating') FOR UPDATE", [group.existingEventPk]);
             if (!targets.length) {
               await connection.rollback();
               continue;
+            }
+            // Read the current severity under the row lock, never the scan snapshot.
+            // This update shares the membership/log transaction and cannot downgrade
+            // a severity raised by another caller while this group was waiting.
+            if (group.max_level > this._levelToRank(targets[0].severity)) {
+              await connection.execute('UPDATE alert_events SET severity=? WHERE id=?',
+                [this._rankToLevel(group.max_level), group.existingEventPk]);
             }
             // 吸收到已有事件
             eventIdPk = group.existingEventPk;
