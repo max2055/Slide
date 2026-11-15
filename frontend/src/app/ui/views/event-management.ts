@@ -490,8 +490,10 @@ export class EventManagementPage extends LitElement {
     localStorage.removeItem('event_rca_result');
   }
 
+  private listRequest = 0;
+
   private async _loadEvents() {
-    if (this.retryLoading) return;
+    const request = ++this.listRequest;
     this.retryLoading = true;
     try {
       const offset = this.eventsPage * this.eventsPageSize;
@@ -506,18 +508,21 @@ export class EventManagementPage extends LitElement {
       if (!eventsRes.ok) throw new Error(`Failed to load events: ${eventsRes.status}`);
       if (!statsRes.ok) throw new Error(`Failed to load stats: ${statsRes.status}`);
       const data = await eventsRes.json();
+      const stats = await statsRes.json();
+      const mttr = mttrRes.ok ? await mttrRes.json() : null;
+      if (request !== this.listRequest) return;
       this.loadError = null;
       this.events = data.items ?? data;
       this.eventsTotal = data.total ?? 0;
-      this.stats = await statsRes.json();
-      if (mttrRes.ok) {
-        this.mttr = await mttrRes.json();
-      }
+      this.stats = stats;
+      this.mttr = mttr;
     } catch (e: any) {
-      this.loadError = e.message;
+      if (request === this.listRequest) this.loadError = e.message;
     } finally {
-      this.loading = false;
-      this.retryLoading = false;
+      if (request === this.listRequest) {
+        this.loading = false;
+        this.retryLoading = false;
+      }
     }
   }
 
@@ -829,7 +834,7 @@ export class EventManagementPage extends LitElement {
         </div>
 
         ${this.events.length === 0
-          ? html`
+          ? this.loadError || this.retryLoading ? nothing : html`
               <div class="empty-state">
                 <div class="empty-icon">${this.activeListTab === 'resolved' ? renderIcon('check-circle') : renderIcon('triangle-alert')}</div>
                 <div>${this.activeListTab === 'resolved' ? '没有已解决事件' : '暂无活跃事件'}</div>

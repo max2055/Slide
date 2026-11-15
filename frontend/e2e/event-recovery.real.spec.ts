@@ -19,6 +19,8 @@ test('MAX-572 real load retry, failed write context, empty-event RCA and corrupt
   document.body.replaceChildren(document.createElement('event-management-page'));
  }, token);
  await expect(page.getByRole('button', { name: '重试加载' })).toBeVisible();
+ await expect(page.getByText('系统运行正常')).toHaveCount(0);
+ await expect(page.getByText('暂无活跃事件', { exact: true })).toHaveCount(0);
  await page.getByRole('button', { name: '重试加载' }).click();
  await expect(page.getByText('加载失败:', { exact: false })).toHaveCount(0);
  await page.locator('.event-title').filter({ hasText: '验收事件55' }).click();
@@ -45,7 +47,54 @@ test('MAX-572 real load retry, failed write context, empty-event RCA and corrupt
  await page.getByRole('link', { name: '查看 →' }).click();
  expect(await page.evaluate(() => (window as any).rcaNavigation.session)).toBe('session-7');
  for (const width of [1366,1440,1920]) {
-  await page.setViewportSize({ width, height: width === 1366 ? 768 : 900 });
+  await page.setViewportSize({ width, height: width === 1366 ? 768 : width === 1920 ? 1080 : 900 });
   await expect(note).toBeVisible();
  }
+});
+
+test('MAX-572 delayed real GET cannot overwrite latest tab or page', async ({ page }) => {
+ const login = await page.request.post('/api/auth/login', { data: { username: 'admin', password: process.env.INITIAL_ADMIN_PASSWORD } });
+ const { token } = await login.json();
+ await page.goto('/');
+ await page.evaluate(async token => {
+  document.querySelector('slide-app')?.remove(); localStorage.setItem('token', token);
+  await import('/src/app/ui/views/event-management.ts');
+  document.body.replaceChildren(document.createElement('event-management-page'));
+ }, token);
+ await expect(page.locator('.event-title').filter({ hasText: '验收事件55' })).toBeVisible();
+ let release!: () => void;
+ let entered!: () => void;
+ let mode = 'tab';
+ let held = false;
+ let started = new Promise<void>(resolve => { entered = resolve; });
+ let gate = new Promise<void>(resolve => { release = resolve; });
+ const urls: string[] = [];
+ await page.route('**/api/alerts/events?*', async route => {
+  const url = route.request().url(); urls.push(url);
+  if (!held && (mode === 'tab' ? url.includes('status=open') : url.includes('offset=50'))) {
+   held = true;
+   const response = await route.fetch(); entered(); await gate;
+   await route.fulfill({ response });
+  } else await route.continue();
+ });
+ await page.getByRole('button', { name: /^活跃事件/ }).click();
+ await started;
+ await page.getByRole('button', { name: /^已解决/ }).click();
+ await expect(page.getByText('没有已解决事件', { exact: true })).toBeVisible();
+ release();
+ await expect.poll(() => page.evaluate(() => (document.querySelector('event-management-page') as any).retryLoading)).toBe(false);
+ expect(urls.some(url => url.includes('status=resolved,closed'))).toBe(true);
+ await expect(page.locator('.event-title')).toHaveCount(0);
+ await page.getByRole('button', { name: /^活跃事件/ }).click();
+ await expect(page.locator('.event-title').filter({ hasText: '验收事件55' })).toBeVisible();
+ mode = 'page'; held = false;
+ started = new Promise<void>(resolve => { entered = resolve; });
+ gate = new Promise<void>(resolve => { release = resolve; });
+ await page.getByRole('button', { name: '下一页 →' }).click(); await started;
+ await page.getByRole('button', { name: '← 上一页' }).click();
+ await expect(page.getByText('第 1/2 页，共 55 条')).toBeVisible();
+ release();
+ await expect(page.locator('.event-title').filter({ hasText: '验收事件55' })).toBeVisible();
+ await page.unrouteAll({ behavior: 'wait' });
+ await expect(page.locator('.event-title').filter({ hasText: '验收事件55' })).toBeVisible();
 });
