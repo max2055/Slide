@@ -41,19 +41,26 @@ export interface NetworkDeviceAlertStore {
 
 export interface NetworkDeviceAlertEvaluatorOptions { store?: NetworkDeviceAlertStore }
 
+export interface NetworkDeviceAlertEvaluation {
+  evaluated: number;
+  matched: number;
+  triggered: number;
+  skipped: number;
+  failed: number;
+  status: 'complete' | 'partial' | 'failed';
+  failures: { phase: 'setup' | 'evaluation' | 'recovery'; deviceId?: number; ruleId?: number; alertId?: number }[];
+}
+
 type AlertRuleLike = AlertRule & { target_type?: 'network_device' | 'instance' | 'server'; network_device_id?: number | null };
 
 function parseDimensions(value: unknown): Record<string, string> | undefined {
-  if (!value) return undefined;
-  try {
-    const parsed = typeof value === 'string' ? JSON.parse(value) : value;
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return undefined;
-    const dimensions = Object.fromEntries(Object.entries(parsed).filter(([, item]) => typeof item === 'string')) as Record<string, string>;
-    return canonicalDimensions(dimensions);
-  } catch {
-    assertWorkflowActive();
-    return undefined;
+  if (value == null) return undefined;
+  const parsed = typeof value === 'string' ? JSON.parse(value) : value;
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)
+      || Object.values(parsed).some(item => typeof item !== 'string')) {
+    throw new Error('OBSERVATION_DIMENSIONS_INVALID');
   }
+  return canonicalDimensions(parsed);
 }
 
 function macroContext(metricId: string): Record<string, number> {
@@ -81,95 +88,115 @@ export class NetworkDeviceAlertEvaluator {
     this.store = options?.store ?? new MysqlNetworkDeviceAlertStore();
   }
 
-  async evaluateNetworkDeviceRules(): Promise<{ evaluated: number; triggered: number; skipped: number }> {
-    let evaluated = 0;
-    let triggered = 0;
-    let skipped = 0;
+  async evaluateNetworkDeviceRules(): Promise<NetworkDeviceAlertEvaluation> {
+    const result: NetworkDeviceAlertEvaluation = {
+      evaluated: 0, matched: 0, triggered: 0, skipped: 0, failed: 0, status: 'complete', failures: [],
+    };
+    let setupComplete = false;
     try {
       assertWorkflowActive();
-      const allRules = await alertDatabaseService.getAlertRules(true) as AlertRuleLike[];
+      const allRules = await alertDatabaseService.getAlertRules(true, true) as AlertRuleLike[];
       const rules = allRules.filter((rule) => rule.enabled && rule.target_type === 'network_device') as NetworkDeviceAlertRule[];
-      if (rules.length === 0) return { evaluated, triggered, skipped };
+      if (rules.length === 0) return result;
       assertWorkflowActive();
       const devices = await this.store.getCollectionEnabledDevices();
+      setupComplete = true;
       for (const device of devices) {
         if (device.collectionEnabled === false) continue;
         assertWorkflowActive();
         for (const rule of rules) {
           if (rule.network_device_id != null && Number(rule.network_device_id) !== device.id) continue;
-          const semantic = await evaluateOperationalRule({ type: 'network_device', id: device.id }, rule, rule.duration_seconds, macroContext(rule.metric_name));
-          if (!semantic.handled) { skipped++; continue; }
-          {
-            if (!['firing','healthy'].includes(semantic.state)) { skipped++; continue; }
-            evaluated++;
-            if (semantic.level && semantic.value !== null) {
-              triggered++;
-              await this.persistAlert(device, rule, { metricId: rule.metric_name, value: semantic.value, dimensions: semantic.dimensions ?? undefined, quality: semantic.observation?.quality === 'good' ? 'good' : 'unknown',
-                aggregateQuality: semantic.observation?.quality,
-                observedAt: semantic.observation?.observedAt ? new Date(semantic.observation.observedAt) : null,
-                observedFrom: semantic.observation?.from ? new Date(semantic.observation.from) : null,
-                observedTo: semantic.observation?.to ? new Date(semantic.observation.to) : null, validUntil: null, reason: JSON.stringify(semantic.migration) }, semantic.level,
-                semantic.value, compileAlertRule(rule, 'network_device', macroContext(rule.metric_name)));
-            } else {
-              const recovery = await evaluateOperationalRule({ type: 'network_device', id: device.id }, rule,
-                rule.recovery_seconds ?? rule.duration_seconds, macroContext(rule.metric_name));
-              if (!recovery.recovery) skipped++;
+          try {
+            assertWorkflowActive();
+            const semantic = await evaluateOperationalRule({ type: 'network_device', id: device.id }, rule, rule.duration_seconds, macroContext(rule.metric_name), true);
+            if (!semantic.handled) { result.skipped++; continue; }
+            {
+              if (!['firing','healthy'].includes(semantic.state) || semantic.value === null || !Number.isFinite(semantic.value)) { result.skipped++; continue; }
+              result.evaluated++;
+              if (semantic.level && semantic.value !== null) {
+                result.matched++;
+                await this.persistAlert(device, rule, { metricId: rule.metric_name, value: semantic.value, dimensions: semantic.dimensions ?? undefined, quality: semantic.observation?.quality === 'good' ? 'good' : 'unknown',
+                  aggregateQuality: semantic.observation?.quality,
+                  observedAt: semantic.observation?.observedAt ? new Date(semantic.observation.observedAt) : null,
+                  observedFrom: semantic.observation?.from ? new Date(semantic.observation.from) : null,
+                  observedTo: semantic.observation?.to ? new Date(semantic.observation.to) : null, validUntil: null, reason: JSON.stringify(semantic.migration) }, semantic.level,
+                  semantic.value, compileAlertRule(rule, 'network_device', macroContext(rule.metric_name)));
+                result.triggered++;
+              } else {
+                const recovery = await evaluateOperationalRule({ type: 'network_device', id: device.id }, rule,
+                  rule.recovery_seconds ?? rule.duration_seconds, macroContext(rule.metric_name), true);
+                if (!recovery.recovery) result.skipped++;
+              }
+              continue;
             }
-            continue;
+          } catch (error) {
+            this.recordFailure(result, { phase: 'evaluation', deviceId: device.id, ruleId: rule.id }, error);
           }
         }
       }
       assertWorkflowActive();
-      await this.resolveRecoveredAlerts(rules, new Set(devices.filter(d => d.collectionEnabled !== false).map(d => d.id)));
+      await this.resolveRecoveredAlerts(rules, new Set(devices.filter(d => d.collectionEnabled !== false).map(d => d.id)), result);
     } catch (error) {
-      assertWorkflowActive();
-      // A failed query must never be converted into an alert. Keep the
-      // evaluator available for the next cycle and expose only a stable count.
-      console.error('[NetworkDeviceAlertEvaluator] evaluation failed:', error instanceof Error ? error.message : String(error));
+      this.recordFailure(result, { phase: setupComplete ? 'recovery' : 'setup' }, error);
+      if (!setupComplete) result.status = 'failed';
     }
-    return { evaluated, triggered, skipped };
+    return result;
   }
 
   /** Short alias used by lifecycle integrations. */
-  evaluate(): Promise<{ evaluated: number; triggered: number; skipped: number }> {
+  evaluate(): Promise<NetworkDeviceAlertEvaluation> {
     return this.evaluateNetworkDeviceRules();
   }
 
-  private async resolveRecoveredAlerts(rules: NetworkDeviceAlertRule[], enabledDevices: Set<number>): Promise<void> {
-    const listActive = (alertDatabaseService as any).getActiveAlerts as undefined | (() => Promise<any[]>);
-    const resolve = (alertDatabaseService as any).resolveAlert as undefined | ((alertId: number) => Promise<unknown>);
-    if (!listActive || !resolve) return;
+  private async resolveRecoveredAlerts(rules: NetworkDeviceAlertRule[], enabledDevices: Set<number>, result: NetworkDeviceAlertEvaluation): Promise<void> {
     assertWorkflowActive();
-    const active = await listActive.call(alertDatabaseService);
+    const active = await alertDatabaseService.getActiveAlerts(true);
     for (const alert of active ?? []) {
       if (alert?.target_type !== 'network_device' || !enabledDevices.has(Number(alert?.network_device_id))) continue;
-      let tags: Record<string, any> = {};
-      if (alert.tags && typeof alert.tags === 'object' && !Array.isArray(alert.tags)) tags = alert.tags;
-      else if (typeof alert.tags === 'string') {
-        try {
-          const parsed = JSON.parse(alert.tags);
-          if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) tags = parsed;
-        } catch { /* malformed tags cannot identify a recovery target */ }
+      try {
+        let tags: Record<string, any> = {};
+        if (alert.tags && typeof alert.tags === 'object' && !Array.isArray(alert.tags)) tags = alert.tags;
+        else if (typeof alert.tags === 'string') {
+          try {
+            const parsed = JSON.parse(alert.tags);
+            if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) tags = parsed;
+          } catch { /* malformed tags cannot identify a recovery target */ }
+        }
+        const ruleId = Number(tags.rule_id);
+        if (!Number.isSafeInteger(ruleId) || ruleId <= 0 || !alert.metric_name) continue;
+        const dimensions = parseDimensions(tags.dimensions);
+        // Unknown or stale evidence must not resolve an alert. Only a fresh
+        // sample that no longer matches the rule is sufficient.
+        assertWorkflowActive();
+        const rule = rules.find(r => r.id === ruleId);
+        if (rule) {
+          const semantic = await evaluateOperationalRule({ type: 'network_device', id: Number(alert.network_device_id) },
+            { ...rule, dimensions }, rule.recovery_seconds ?? rule.duration_seconds, macroContext(rule.metric_name), true);
+          if (semantic.handled) {
+            if (semantic.state === 'healthy' && semantic.recovery && semantic.value !== null && Number.isFinite(semantic.value)) {
+              assertWorkflowActive();
+              const resolved = await alertDatabaseService.resolveAlert(Number(alert.id));
+              if (!resolved?.success) throw new Error('NETWORK_ALERT_RESOLVE_FAILED');
+            }
+            continue;
+          }
+        }
+      } catch (error) {
+        this.recordFailure(result, { phase: 'recovery', deviceId: Number(alert.network_device_id), alertId: Number(alert.id) }, error);
       }
-      const ruleId = Number(tags.rule_id);
-      if (!Number.isSafeInteger(ruleId) || ruleId <= 0 || !alert.metric_name) continue;
-      const dimensions = parseDimensions(tags.dimensions);
-      // Unknown or stale evidence must not resolve an alert. Only a fresh
-      // sample that no longer matches the rule is sufficient.
-      assertWorkflowActive();
-      const rule = rules.find(r => r.id === ruleId);
-      if (rule) {
-        const semantic = await evaluateOperationalRule({ type: 'network_device', id: Number(alert.network_device_id) },
-          { ...rule, dimensions }, rule.recovery_seconds ?? rule.duration_seconds, macroContext(rule.metric_name));
-        if (semantic.handled) { if (semantic.recovery) await resolve.call(alertDatabaseService, Number(alert.id)); continue; }
-      }
-
     }
   }
 
+  private recordFailure(result: NetworkDeviceAlertEvaluation, failure: NetworkDeviceAlertEvaluation['failures'][number], error: unknown): void {
+    assertWorkflowActive();
+    result.failed++;
+    result.status = 'partial';
+    result.failures.push(failure);
+    console.error('[NetworkDeviceAlertEvaluator] evaluation failed:', failure, error instanceof Error ? error.message : String(error));
+  }
+
   private async persistAlert(device: NetworkDeviceAlertDevice, rule: NetworkDeviceAlertRule, observation: NetworkDeviceAlertObservation, level: AlertLevel, currentValue: number, compiled: ReturnType<typeof compileAlertRule>): Promise<void> {
-    let dimensions: Record<string, string> | undefined;
-    try { dimensions = canonicalDimensions(observation.dimensions); } catch { return; }
+    const dimensions = canonicalDimensions(observation.dimensions);
     const tags = {
       rule_id: rule.id,
       rule_name: rule.name,
@@ -184,16 +211,15 @@ export class NetworkDeviceAlertEvaluator {
       ...(dimensions ? { dimensions } : {}),
     };
     const message = `网络设备指标 "${rule.metric_name}" 当前值为 ${currentValue}，超过阈值 (${rule.operator})`;
-    const finder = (alertDatabaseService as any).findActiveNetworkDeviceAlert as undefined | ((deviceId: number, metricId: string, ruleId: number, dimensions?: Record<string, string>) => Promise<unknown>);
     assertWorkflowActive();
-    const existing = finder ? await finder.call(alertDatabaseService, device.id, rule.metric_name, rule.id, dimensions) : null;
-    if (existing && typeof (alertDatabaseService as any).touchAlert === 'function') {
+    const existing = await alertDatabaseService.findActiveNetworkDeviceAlert(device.id, rule.metric_name, rule.id, dimensions);
+    if (existing) {
       assertWorkflowActive();
-      await alertDatabaseService.touchAlert((existing as any).id, currentValue, {tags, message});
+      await alertDatabaseService.touchAlert(existing.id, currentValue, {tags, message}, true);
       return;
     }
     assertWorkflowActive();
-    await (alertDatabaseService as any).createAlert({
+    const created = await alertDatabaseService.createAlert({
       target_type: 'network_device',
       network_device_id: device.id,
       alert_type: alertTypeForMetric(rule.metric_name),
@@ -207,6 +233,7 @@ export class NetworkDeviceAlertEvaluator {
       threshold_value: String(compiled.thresholds[level] ?? rule.threshold),
       tags,
     });
+    if (!created.success) throw new Error('NETWORK_ALERT_CREATE_FAILED');
   }
 }
 
