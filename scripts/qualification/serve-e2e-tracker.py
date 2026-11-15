@@ -694,15 +694,6 @@ def serve(work_dir: str) -> int:
             connection.close()
 
 
-def collect_checkpoint(phase: str) -> None:
-    # #978: distinguish an in-flight RPC from a shell that lost the stop flag.
-    # Only fixed phase names and process identity; never RPC arguments/env.
-    path = os.environ.get("SERVE_E2E_DIAGNOSTICS_FILE")
-    if path:
-        with open(path, "a", encoding="utf-8") as handle:
-            handle.write(f"phase={phase} pid={os.getpid()} ppid={os.getppid()}\n")
-
-
 def handle_connection(tracker: Tracker, connection: socket.socket) -> None:
     buffer = b""
     while b"\n" not in buffer:
@@ -722,7 +713,6 @@ def handle_connection(tracker: Tracker, connection: socket.socket) -> None:
         )
         response = {"ok": True, "pid": pid}
     elif op == "collect":
-        collect_checkpoint("tracker-collect-received")
         response = {"ok": True, "pids": tracker.collect()}
     elif op == "status":
         report = tracker.status(int(request["pid"]))
@@ -730,8 +720,6 @@ def handle_connection(tracker: Tracker, connection: socket.socket) -> None:
     else:
         response = {"ok": False, "error": f"unknown op {op}"}
     connection.sendall((json.dumps(response) + "\n").encode())
-    if op == "collect":
-        collect_checkpoint("tracker-collect-sent")
 
 
 def read_response(sock: socket.socket) -> dict[str, object]:

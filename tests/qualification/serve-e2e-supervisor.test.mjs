@@ -45,12 +45,10 @@ test('serve-e2e stops its service tree and stays in the launcher group (#460)', 
   assert.match(result.stdout, /PASS signal-int/);
   assert.match(result.stdout, /PASS signal-during-collect/);
   assert.match(result.stdout, /PASS signal-int-during-collect/);
-  // #978 diagnostics must survive fixture cleanup and reach the CI failure.
-  assert.match(result.stdout, /phase=traps-installed /);
-  assert.match(result.stdout, /phase=rpc-collect-enter /);
-  assert.match(result.stdout, /phase=tracker-collect-received /);
-  assert.match(result.stdout, /phase=tracker-collect-sent /);
-  assert.match(result.stdout, /phase=check-stop .*stop=1 /);
+  // MAX-590 D1: withdrawn optional diagnostics cannot break startup or cleanup.
+  for (const scenario of ['missing', 'unwritable', 'directory', 'invalidated']) {
+    assert.match(result.stdout, new RegExp(`PASS diagnostics-${scenario}`));
+  }
   assert.match(result.stdout, /PASS unrelated-orphan/);
   assert.match(result.stdout, /unrelated_orphan_after=alive/);
   assert.match(result.stdout, /PASS relative-fork-gap/);

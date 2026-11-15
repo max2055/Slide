@@ -36,17 +36,6 @@ tracker_dir=""
 tracker_py=""
 tracker_sock=""
 
-# Opt-in lifecycle evidence for #978. Only fixed phase names and shell state
-# are recorded: never service arguments, configuration, or credentials.
-supervisor_checkpoint() {
-  [[ -n "${SERVE_E2E_DIAGNOSTICS_FILE:-}" ]] || return 0
-  {
-    printf 'phase=%s pid=%s bashpid=%s elapsed=%s stop=%s cleaned=%s bash=%s\n' \
-      "$1" "$$" "${BASHPID:-$$}" "$SECONDS" "$stop_requested" "$cleaned_up" "$BASH_VERSION"
-    trap -p INT TERM
-  } >> "$SERVE_E2E_DIAGNOSTICS_FILE"
-}
-
 capture_baseline() {
   local pid pgid
   group_pgid="$(ps -o pgid= -p "$$" 2>/dev/null | tr -d '[:space:]' || true)"
@@ -120,7 +109,6 @@ ensure_tracker() {
 }
 
 tracker_rpc() {
-  supervisor_checkpoint "rpc-$1-enter"
   python3 "$(tracker_script)" --rpc "$tracker_sock" "$@"
 }
 
@@ -129,9 +117,7 @@ tracker_rpc() {
 collect_tracked_pids() {
   local reply id
   [[ -n "${tracker_sock:-}" && -S "$tracker_sock" ]] || return 0
-  supervisor_checkpoint collect-enter
   reply="$(tracker_rpc collect 2>/dev/null || true)"
-  supervisor_checkpoint collect-return
   for id in $reply; do
     remember_owned "$id"
   done
@@ -315,7 +301,6 @@ gap_probe() {
 }
 
 cleanup() {
-  supervisor_checkpoint cleanup-enter
   if [[ "$cleaned_up" == 1 ]]; then
     return 0
   fi
@@ -330,7 +315,6 @@ cleanup() {
 }
 
 check_stop() {
-  supervisor_checkpoint check-stop
   if [[ "$stop_requested" == 1 ]]; then exit 0; fi
 }
 
@@ -338,7 +322,6 @@ check_stop() {
 # the handler to a builtin assignment; run EXIT cleanup at a parsed boundary.
 trap 'stop_requested=1' INT TERM
 trap cleanup EXIT
-supervisor_checkpoint traps-installed
 
 if [[ "${SERVE_E2E_FUNCTION_PROBE:-}" == "fork-gap" ]]; then
   gap_probe fork-gap 7 /bin/bash -c 'sleep 60 & echo $! > "$1"; exit 7' bash "${SERVE_E2E_DIR:?}/child"
