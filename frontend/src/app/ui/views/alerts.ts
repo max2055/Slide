@@ -517,12 +517,14 @@ export class AlertsPage extends LitElement {
   @state() private page = 0;
   @state() private total = 0;
   private readonly pageSize = 50;
-  @state() private diagnosisStatus: "idle" | "running" | "completed" | "failed" = "idle";
+  @state() private diagnosisStatus: "idle" | "running" | "completed" | "failed" | "unknown" = "idle";
   @state() private diagnosisResult: any = null;
   @state() private diagnosisError: string | null = null;
-  private diagnosisPollTimer: ReturnType<typeof setInterval> | null = null;
-  private pollRetries = 0;
-  private readonly maxPollRetries = 20;  // 60 seconds max at 3s interval
+  private diagnosisPollTimer: ReturnType<typeof setTimeout> | null = null;
+  private diagnosisDeadlineTimer: ReturnType<typeof setTimeout> | null = null;
+  private diagnosisController: AbortController | null = null;
+  private diagnosisGeneration = 0;
+  private readonly diagnosisObservationMs = 60_000;
 
   // Tab state
   @state() private activeAlertTab: 'alerts' | 'rules' | 'escalation' | 'dependencies' | 'maintenance' | 'silence' | 'baselines' | 'notifications' = 'alerts';
@@ -685,6 +687,10 @@ export class AlertsPage extends LitElement {
 
     return html`
       ${tabContent}
+      ${this.diagnosisStatus === 'unknown' ? html`
+        <p role="status">告警 #${this.activeRCAAnalysis?.alertId}：${this.diagnosisError}
+          ${this.activeRCAAnalysis?.analysisId ? html`<button class="btn" @click=${() => this._startDiagnosisPolling(this.activeRCAAnalysis!.analysisId!)}>继续观察</button>` : ''}
+        </p>` : ''}
       <alert-detail-modal .alert=${this.detailAlert} .open=${this.detailAlert !== null}
         .activeRCAAnalysis=${this.activeRCAAnalysis} .diagnosisStatus=${this.diagnosisStatus}
         .diagnosisResult=${this.diagnosisResult} .diagnosisError=${this.diagnosisError}
@@ -1062,7 +1068,8 @@ export class AlertsPage extends LitElement {
     try {
       const res = await authFetch(`/api/ai/analysis?analysis_type=alert_rca&related_id=${alertId}&limit=5`);
       if (res.ok) {
-        this.analysisHistory = await res.json();
+        const history = await res.json();
+        if (this.isConnected && this.detailAlert?.id === alertId) this.analysisHistory = history;
       }
     } catch (err) {
       showToast('Failed to load analysis history', 'error');
@@ -1072,17 +1079,33 @@ export class AlertsPage extends LitElement {
   }
 
   private async _startRCA(alert: Alert) {
+    if (this.activeRCAAnalysis?.alertId === alert.id && this.activeRCAAnalysis.analysisId
+      && this.diagnosisStatus === 'unknown') {
+      this._startDiagnosisPolling(this.activeRCAAnalysis.analysisId);
+      return;
+    }
+    this._stopDiagnosisPolling();
+    const generation = this.diagnosisGeneration;
+    const controller = new AbortController();
+    this.diagnosisController = controller;
+    const current = () => this.diagnosisGeneration === generation && this.isConnected;
+    this.diagnosisStatus = 'running';
+    this.diagnosisError = null;
+    this.diagnosisResult = null;
     this.activeRCAAnalysis = { alertId: alert.id };
     this.requestUpdate();
     // Direct API call — bypasses DOM query timing issues
     try {
       const res = await authFetch(`/api/alerts/${alert.id}/investigation`, {
+        signal: controller.signal,
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({}),
       });
+      if (!current()) return;
       if (res.ok) {
         const data = await res.json();
+        if (!current()) return;
         if (data.investigationId) {
           this.activeRCAAnalysis = null;
           window.dispatchEvent(new CustomEvent('slide-navigate', { detail: { tab: 'investigations', investigationId: data.investigationId } }));
@@ -1107,6 +1130,7 @@ export class AlertsPage extends LitElement {
         throw new Error(errBody.error || `HTTP ${res.status}`);
       }
     } catch (e: any) {
+      if (!current()) return;
       this.diagnosisStatus = "failed";
       this.diagnosisError = e.message || "启动 AI 分析失败";
       this.requestUpdate();
@@ -1115,55 +1139,76 @@ export class AlertsPage extends LitElement {
 
   private _startDiagnosisPolling(analysisId: number) {
     this._stopDiagnosisPolling();
-    this.pollRetries = 0;
-    this.diagnosisPollTimer = setInterval(async () => {
+    const generation = this.diagnosisGeneration;
+    const context = this.activeRCAAnalysis;
+    const controller = new AbortController();
+    this.diagnosisController = controller;
+    const deadline = Date.now() + this.diagnosisObservationMs;
+    const current = () => this.diagnosisGeneration === generation && this.isConnected
+      && this.activeRCAAnalysis === context;
+    const unknown = () => {
+      if (!current()) return;
+      this.diagnosisStatus = 'unknown';
+      this.diagnosisError = '观察已停止，分析状态未知。可继续观察已有分析，不会重新提交分析请求。';
+      this._stopDiagnosisPolling();
+    };
+    this.diagnosisStatus = 'running';
+    this.diagnosisError = null;
+    // The deadline also bounds a hanging status/body/result read. Completion of
+    // an aborted or superseded read cannot publish into a newer context.
+    this.diagnosisDeadlineTimer = setTimeout(unknown, this.diagnosisObservationMs);
+    const poll = async () => {
+      if (!current()) return;
+      if (Date.now() >= deadline) { unknown(); return; }
       try {
-        const res = await authFetch(`/api/ai/analysis/${analysisId}/status`);
-        if (!res.ok) return;
-        const data = await res.json();
-        if (data.status === "completed") {
-          const fullRes = await authFetch(`/api/ai/analysis/${analysisId}`);
-          if (fullRes.ok) {
+        const res = await authFetch(`/api/ai/analysis/${analysisId}/status`, { signal: controller.signal });
+        if (!current()) return;
+        if (res.ok) {
+          const data = await res.json();
+          if (!current()) return;
+          if (Date.now() >= deadline) { unknown(); return; }
+          if (data.status === 'completed') {
+            const fullRes = await authFetch(`/api/ai/analysis/${analysisId}`, { signal: controller.signal });
+            if (!current()) return;
+            if (!fullRes.ok) throw new Error('Result read unavailable');
             const fullData = await fullRes.json();
+            if (!current()) return;
+            if (Date.now() >= deadline) { unknown(); return; }
             this.diagnosisResult = fullData.result || fullData;
-            this.diagnosisStatus = "completed";
-            if (this.activeRCAAnalysis?.alertId) {
-              this._loadAnalysisHistory(this.activeRCAAnalysis.alertId);
-              // Update analyzedStatuses so badge persists after activeRCAAnalysis changes
-              this.analyzedStatuses = new Map(this.analyzedStatuses).set(
-                this.activeRCAAnalysis.alertId,
-                { id: analysisId, status: 'completed', trigger_type: 'manual', result: fullData.result }
-              );
+            this.diagnosisStatus = 'completed';
+            if (context?.alertId) {
+              if (this.detailAlert?.id === context.alertId) void this._loadAnalysisHistory(context.alertId);
+              this.analyzedStatuses = new Map(this.analyzedStatuses).set(context.alertId,
+                { id: analysisId, status: 'completed', trigger_type: 'manual', result: fullData.result });
             }
-          } else {
-            this.diagnosisStatus = "failed";
-            this.diagnosisError = "获取分析结果失败";
+            this._stopDiagnosisPolling();
+            return;
           }
-          this._stopDiagnosisPolling();
-          this.requestUpdate();
-        } else if (data.status === "failed") {
-          this.diagnosisStatus = "failed";
-          this.diagnosisError = data.error_message || "AI 分析失败";
-          this._stopDiagnosisPolling();
-          this.requestUpdate();
+          if (data.status === 'failed') {
+            this.diagnosisStatus = 'failed';
+            this.diagnosisError = data.error_message || 'AI 分析失败';
+            this._stopDiagnosisPolling();
+            return;
+          }
+          if (!['running', 'pending', 'queued'].includes(data.status)) { unknown(); return; }
         }
       } catch {
-        this.pollRetries++;
-        if (this.pollRetries >= this.maxPollRetries) {
-          this.diagnosisStatus = "failed";
-          this.diagnosisError = "分析超时，请稍后重试";
-          this._stopDiagnosisPolling();
-          this.requestUpdate();
-        }
+        // Read failures and ongoing execution share the same wall-clock bound.
+        // This loop only observes an existing analysis; it never submits work.
       }
-    }, 3000);
+      if (current()) this.diagnosisPollTimer = setTimeout(poll, 3000);
+    };
+    this.diagnosisPollTimer = setTimeout(poll, 3000);
   }
 
   private _stopDiagnosisPolling() {
-    if (this.diagnosisPollTimer) {
-      clearInterval(this.diagnosisPollTimer);
-      this.diagnosisPollTimer = null;
-    }
+    this.diagnosisGeneration++;
+    if (this.diagnosisPollTimer !== null) clearTimeout(this.diagnosisPollTimer);
+    if (this.diagnosisDeadlineTimer !== null) clearTimeout(this.diagnosisDeadlineTimer);
+    this.diagnosisPollTimer = null;
+    this.diagnosisDeadlineTimer = null;
+    this.diagnosisController?.abort();
+    this.diagnosisController = null;
   }
 
   override disconnectedCallback() {
