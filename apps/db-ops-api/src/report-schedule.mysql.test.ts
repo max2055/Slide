@@ -8,7 +8,7 @@ import Fastify from 'fastify';
 import { dbConnection } from './db-connection.js';
 import { MigrationRunner } from './migrations/runner.js';
 import { createOwnedDatabase } from './testing/owned-fixture.js';
-import { reportConfigService } from './report-config-database-service.js';
+import { reportConfigService, ReportConfigCreateOutcomeUnknownError } from './report-config-database-service.js';
 import { InvalidReportCronError } from './report-cron.js';
 import { ReportSchedulePartialFailure, MysqlReportOccurrenceStore, createReportScheduleJob } from './report-scheduler.js';
 import { registerReportScheduleHandler } from './workflows/report-schedule-handler.js';
@@ -53,7 +53,7 @@ describe.skipIf(process.env.SLIDE_REPORT_MYSQL !== '1')('MAX-411 real MySQL conf
     const end = source.indexOf('  // 删除报表配置', start);
     if (start < 0 || end < 0) throw Error('production config route boundaries missing');
     const code = ts.transpileModule(source.slice(start, end), { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext } }).outputText;
-    new Function('fastify', 'verifyToken', 'requirePermission', 'hasInstanceAccess', 'reportConfigService', 'notificationDatabaseService', 'InvalidReportCronError', 'assertReportTarget', 'canReadResource', code)(app, createVerifyToken(secret), requirePermission, hasInstanceAccess, reportConfigService, notificationDatabaseService, InvalidReportCronError, assertReportTarget, canReadResource);
+    new Function('fastify', 'verifyToken', 'requirePermission', 'hasInstanceAccess', 'reportConfigService', 'notificationDatabaseService', 'InvalidReportCronError', 'ReportConfigCreateOutcomeUnknownError', 'assertReportTarget', 'canReadResource', code)(app, createVerifyToken(secret), requirePermission, hasInstanceAccess, reportConfigService, notificationDatabaseService, InvalidReportCronError, ReportConfigCreateOutcomeUnknownError, assertReportTarget, canReadResource);
   }, 120000);
   afterAll(async () => {
     console.info('MAX411 phase: cleanup');
