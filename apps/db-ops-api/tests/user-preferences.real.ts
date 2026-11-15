@@ -96,7 +96,7 @@ try {
   const modelAddress = modelEndpoint.address();
   assert.ok(modelAddress && typeof modelAddress === 'object');
   await pool.query('UPDATE llm_providers SET enabled=FALSE, is_default=FALSE');
-  await pool.execute("UPDATE llm_providers SET enabled=TRUE, is_default=TRUE, api_format='ollama', api_base_url=? WHERE name='ollama'",
+  await pool.execute("UPDATE llm_providers SET enabled=TRUE, is_default=TRUE, api_format='openai-completions', api_base_url=? WHERE name='ollama'",
     [`http://127.0.0.1:${modelAddress.port}`]);
   api = start('http-api', ['--import', 'tsx', 'server.ts'], env);
   record('environment', { database: owned.database, cwd, port, wsPort, pid: api.pid,
