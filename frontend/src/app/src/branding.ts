@@ -12,7 +12,7 @@
 // Types
 // ---------------------------------------------------------------------------
 
-import { authFetch } from '../../api/index.js';
+import { apiClient, authFetch } from '../../api/index.js';
 
 /** Shape returned by GET /api/branding/config */
 export interface BrandingConfig {
@@ -34,7 +34,7 @@ const DEFAULTS = {
 } as const;
 
 // ---------------------------------------------------------------------------
-// Memory cache (populated asynchronously on first import)
+// Memory cache (loaded when authentication is ready)
 // ---------------------------------------------------------------------------
 
 let _cache: BrandingConfig | null = null;
@@ -43,14 +43,53 @@ let _cache: BrandingConfig | null = null;
 // Internal helpers
 // ---------------------------------------------------------------------------
 
+let requestVersion = 0;
+let activeRequest: AbortController | null = null;
+const listeners = new Set<() => void>();
+
+/** Subscribe to cache replacement, including logout reset. */
+export function subscribeBranding(listener: () => void): () => void {
+  listeners.add(listener);
+  return () => { listeners.delete(listener); };
+}
+
+function notifyConsumers(): void {
+  for (const listener of listeners) listener();
+}
+
+/** Invalidate pending reads before another authentication session can start. */
+export function resetBrandingCache(): void {
+  activeRequest?.abort();
+  activeRequest = null;
+  requestVersion++;
+  _cache = null;
+  notifyConsumers();
+}
+
 async function _loadFromApi(): Promise<void> {
+  activeRequest?.abort();
+  activeRequest = null;
+  const version = ++requestVersion;
+  if (typeof window === "undefined") return;
+  const controller = new AbortController();
+  activeRequest = controller;
   try {
-    const resp = await authFetch("/api/branding/config");
-    if (resp.ok) {
-      _cache = (await resp.json()) as BrandingConfig;
-    }
+    if (!apiClient.getToken()) return;
+    const session = apiClient.getSessionContext();
+    const resp = await authFetch("/api/branding/config", { signal: controller.signal });
+    if (!resp.ok) return;
+    const data: unknown = await resp.json();
+    if (version !== requestVersion || session !== apiClient.getSessionContext() || !apiClient.getToken()) return;
+    if (!data || typeof data !== "object") return;
+    const config = data as BrandingConfig;
+    if (![config.cli_name, config.product_name, config.env_prefix, config.state_dir]
+      .every(value => typeof value === "string")) return;
+    _cache = config;
+    notifyConsumers();
   } catch {
-    // API unavailable — keep using DEFAULTS
+    // One attempt per explicit refresh; keep defaults or the last valid snapshot.
+  } finally {
+    if (activeRequest === controller) activeRequest = null;
   }
 }
 
@@ -124,9 +163,3 @@ export function getBrandingSnapshot(): BrandingConfig {
     state_dir: getStateDir(),
   };
 }
-
-// ---------------------------------------------------------------------------
-// Kick off async fetch on first import (non-blocking)
-// ---------------------------------------------------------------------------
-
-_loadFromApi();
