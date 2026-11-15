@@ -27,7 +27,10 @@ export function registerNotificationHandlers(
       if (request) {
         const currentChannel = await notificationDatabaseService.getChannelById(identity.channelId);
         signal.throwIfAborted();
-        if (!currentChannel?.enabled) throw new Error('DELIVERY_CHANNEL_DISABLED');
+        if (!currentChannel?.enabled) {
+          await gate.skipDisabled(job, context);
+          return;
+        }
       }
       if (!request) {
         try {

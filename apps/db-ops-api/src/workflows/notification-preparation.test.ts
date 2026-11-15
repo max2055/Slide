@@ -36,6 +36,7 @@ function setup(channel = webhook as typeof email | typeof webhook, publicationGa
   let frozen: DeliveryRequest | null = null;
   let state = 'ready';
   const gate: DeliveryGate = {
+    skipDisabled: async () => {},
     preflightFailed: async () => {},
     snapshot: async () => frozen,
     acquire: vi.fn(async (_job, context, request) => {

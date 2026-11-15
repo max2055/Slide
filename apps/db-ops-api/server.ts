@@ -171,7 +171,7 @@ import { MysqlWorkflowStore } from './src/workflows/worker-runtime.js';
 import { BoundedWorkflowRuntime, workflowConcurrency } from './src/workflows/bounded-worker.js';
 import { createMetricSchedulerLifecycle, assertMetricSchedulerSchema } from './src/metrics/scheduler/runtime.js';
 import type { MetricSchedulerLifecycle } from './src/metrics/scheduler/lifecycle.js';
-import { createNotificationDispatchJob, NotificationDispatchScheduler } from './src/workflows/notification-dispatch.js';
+import { createNotificationDispatchJob, NotificationDispatchReconciler, NotificationDispatchScheduler } from './src/workflows/notification-dispatch.js';
 import { createReportScheduleJob, MysqlReportOccurrenceStore } from './src/report-scheduler.js';
 import { assertCreatableDatabaseType, listAdapterCapabilities } from './src/adapters/capability-matrix.js';
 import { approvalService } from './src/approval-service.js';
@@ -5167,6 +5167,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
     await startup.step(() => assertMetricSchedulerSchema(pool));
     await startup.assertOwned();
   }));
+  const notificationDispatchReconciler = new NotificationDispatchReconciler(workflowStore);
   const notificationScheduler = new NotificationDispatchScheduler(notificationDatabaseService, notificationService, workflowStore);
   const enqueueNotificationDispatch = async (availableAt = new Date()) => {
     await workflowStore.enqueue(createNotificationDispatchJob(availableAt));
@@ -5202,7 +5203,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
   const workflowRuntime = new BoundedWorkflowRuntime(excludeActionJobs(workflowStore), workflowWorkerId, workflowConcurrency(), (job, context) => workflowStore.resourcesFor(job, context));
   stopWorkflow = async () => await workflowRuntime.shutdown();
   await startup.assertOwned();
-  await startup.step(() => enqueueNotificationDispatch());
+  await startup.step(() => notificationDispatchReconciler.ensure(startup.signal));
   await startup.assertOwned();
   await startup.step(() => enqueueReportSchedule());
   await startup.assertOwned();
@@ -5255,7 +5256,12 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
   await startup.step(() => cronManager!.start());
   await startup.assertOwned();
   workflowTimer = setInterval(() => {
-    void startup.assertOwned().then(() => workflowRuntime.runOnce((job, context) => workflowRegistry.execute(job, context)))
+    void startup.assertOwned()
+      .then(() => startup.step(() => notificationDispatchReconciler.ensure(startup.signal)).catch(() => {
+        startup.signal.throwIfAborted();
+        console.error('[NotificationDispatch] RECONCILIATION_FAILED');
+      }))
+      .then(() => workflowRuntime.runOnce((job, context) => workflowRegistry.execute(job, context)))
       .then(result => { if (!startup.signal.aborted && result !== 'running' && result !== 'cancelled') dispatchAvailable = true; })
       .catch(() => { dispatchAvailable = false; console.error('[WorkerRuntime] WORKFLOW_TICK_FAILED'); });
   }, 1_000);

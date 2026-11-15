@@ -21,7 +21,7 @@ it('retains server lifecycle ownership and orders assembly before runtime creati
     'registerWorkflowHandlers(workflowRegistry, {',
     'new BoundedWorkflowRuntime(',
     'stopWorkflow = async () => await workflowRuntime.shutdown()',
-    'await startup.step(() => enqueueNotificationDispatch())',
+    'await startup.step(() => notificationDispatchReconciler.ensure(startup.signal))',
     'await startup.step(() => enqueueReportSchedule())',
     'await startup.step(() => workflowStore.enqueue(createCapacityConsistencyJob()))',
     'registerCronRunHandler(workflowRegistry',
@@ -38,7 +38,8 @@ it('retains server lifecycle ownership and orders assembly before runtime creati
   expect(server).not.toContain('workflowRegistry.register(');
   expect(server).not.toContain('monitorCollector.start()');
   expect(server).not.toContain('networkDeviceCollector.start()');
-  expect(server).toContain('startup.assertOwned().then(() => workflowRuntime.runOnce');
+  expect(server).toContain('startup.step(() => notificationDispatchReconciler.ensure(startup.signal))');
+  expect(server).toContain('.then(() => workflowRuntime.runOnce');
   expect(server).toContain("}, 1_000);");
   expect(server).toContain('recovery.ready && dispatchAvailable');
   expect(server).toContain('dispatchAvailable = false;');
