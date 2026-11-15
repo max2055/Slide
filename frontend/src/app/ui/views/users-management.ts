@@ -173,15 +173,6 @@ export class UsersManagement extends LitElement {
       color: var(--muted);
     }
 
-    .no-permission {
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      min-height: 300px;
-      color: var(--muted);
-      font-size: 14px;
-    }
-
     .error-msg {
       color: var(--danger);
       font-size: 13px;
@@ -250,6 +241,14 @@ export class UsersManagement extends LitElement {
   @state() private loading = true;
   @state() private error: string | null = null;
   @state() private isAdmin = false;
+  @state() private checkingAdmin = true;
+  private permissionRevision = 0;
+  private readonly sessionExpiredHandler = () => {
+    this.permissionRevision++;
+    this.isAdmin = false;
+    this.checkingAdmin = false;
+    this.error = '未登录';
+  };
   @state() private userRoles: Map<number, UserRoleBinding[]> = new Map();
   @state() private allRoles: RoleInfo[] = [];
   @state() private showModal = false;
@@ -275,23 +274,48 @@ export class UsersManagement extends LitElement {
 
   override connectedCallback() {
     super.connectedCallback();
-    this._checkAdmin();
+    window.addEventListener('slide-session-expired', this.sessionExpiredHandler);
+    void this._checkAdmin();
+  }
+
+  override disconnectedCallback() {
+    this.permissionRevision++;
+    this.isAdmin = false;
+    window.removeEventListener('slide-session-expired', this.sessionExpiredHandler);
+    super.disconnectedCallback();
   }
 
   private async _checkAdmin() {
+    const revision = ++this.permissionRevision;
+    const session = apiClient.getSessionContext();
+    this.isAdmin = false;
+    this.checkingAdmin = true;
+    this.error = null;
+    const isCurrent = () => this.isConnected && revision === this.permissionRevision
+      && session === apiClient.getSessionContext();
+    if (!apiClient.getToken()) {
+      this.error = '未登录';
+      this.checkingAdmin = false;
+      return;
+    }
     try {
       await apiClient.get("/v1/rbac/roles");
+      if (!isCurrent()) return;
       this.isAdmin = true;
-      this._init();
-    } catch (e: any) {
+      void this._init();
+    } catch (e: unknown) {
+      if (!isCurrent()) return;
       this.isAdmin = false;
-      if (e.message?.startsWith("HTTP 403")) {
-        // 403 means not admin, no error shown
-      } else if (e.message?.startsWith("HTTP 401")) {
+      const message = e instanceof Error ? e.message : String(e);
+      if (message.startsWith("HTTP 403")) {
+        // A confirmed denial is distinct from an unavailable permission check.
+      } else if (message.startsWith("HTTP 401")) {
         this.error = "未登录";
       } else {
-        this.error = `权限检查失败: ${e.message}`;
+        this.error = `权限检查失败: ${message}`;
       }
+    } finally {
+      if (revision === this.permissionRevision) this.checkingAdmin = false;
     }
   }
 
@@ -299,22 +323,34 @@ export class UsersManagement extends LitElement {
     await Promise.all([this._loadUsers(), this._loadAllRoles()]);
   }
 
+  private accessGuard() {
+    const revision = this.permissionRevision;
+    const session = apiClient.getSessionContext();
+    return () => this.isConnected && this.isAdmin && revision === this.permissionRevision
+      && session === apiClient.getSessionContext();
+  }
+
   private async _loadAllRoles() {
+    const isCurrent = this.accessGuard();
     try {
-      this.allRoles = await apiClient.get<RoleInfo[]>("/v1/rbac/roles");
+      const roles = await apiClient.get<RoleInfo[]>("/v1/rbac/roles");
+      if (isCurrent()) this.allRoles = roles;
     } catch (_) {
       // non-critical; dropdown will fall back to hardcoded labels
     }
   }
 
   private async _loadUsers() {
+    const isCurrent = this.accessGuard();
     this.loading = true;
     this.error = null;
     try {
       const data = await apiClient.get<UserInfo[]>('/users');
+      if (!isCurrent()) return;
       this.users = Array.isArray(data) ? data : [];
       await this._loadUserRoles();
     } catch (e: any) {
+      if (!isCurrent()) return;
       if (e.message?.startsWith("HTTP 401")) {
         this.error = "未登录";
         this.isAdmin = false;
@@ -325,11 +361,12 @@ export class UsersManagement extends LitElement {
         this.error = `加载失败: ${e.message}`;
       }
     } finally {
-      this.loading = false;
+      if (isCurrent()) this.loading = false;
     }
   }
 
   private async _loadUserRoles() {
+    const isCurrent = this.accessGuard();
     const userIds = this.users.map(u => u.id);
     if (userIds.length === 0) return;
     const results = await Promise.allSettled(
@@ -347,7 +384,7 @@ export class UsersManagement extends LitElement {
         newMap.set(userIds[i], []);
       }
     }
-    this.userRoles = newMap;
+    if (isCurrent()) this.userRoles = newMap;
   }
 
   private _navigateToRbac(userId: number) {
@@ -555,8 +592,13 @@ export class UsersManagement extends LitElement {
             <h1>用户管理</h1>
           </div>
           <app-card variant="default">
-            <div class="no-permission">
-              无权限访问此页面，需要 admin 角色
+            <div role="status" aria-busy=${this.checkingAdmin}>
+              <app-empty-state icon="lock"
+                title=${this.checkingAdmin ? '正在检查权限' : this.error || '无权限访问此页面，需要 admin 角色'}
+                description=${this.checkingAdmin ? '确认权限后加载用户数据。' : this.error === '未登录' ? '请登录后重新检查权限。' : ''}
+              >
+                ${this.checkingAdmin ? '' : html`<button slot="actions" class="btn" type="button" @click=${() => void this._checkAdmin()}>重新检查权限</button>`}
+              </app-empty-state>
             </div>
           </app-card>
         </div>

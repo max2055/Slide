@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import './settings-shell.js';
 import { apiClient } from '../../../api/index.ts';
-import { permissionMatches } from '../settings-navigation.ts';
+import { canAccessSettingsItem, permissionMatches, settingsItemById, visibleSettingsViews } from '../settings-navigation.ts';
 
 describe('settings navigation and routing', () => {
   afterEach(() => {
@@ -28,6 +28,21 @@ describe('settings navigation and routing', () => {
     expect(permissionMatches(null)).toBe(true);
     expect(permissionMatches(new Set(['*']), 'admin:*')).toBe(true);
     expect(permissionMatches(new Set(['ai:*']), 'ai:view')).toBe(true);
+  });
+
+  // #423: scalar requirements, merged subviews and arrays all fail closed.
+  it.each([
+    [null, false, false, false],
+    [[], false, false, false],
+    [['ai:view'], false, true, false],
+    [['admin:*'], true, false, true],
+    [['*'], true, true, true],
+  ] as const)('checks navigation permission matrix %j', (grants, users, policy, budget) => {
+    const permissions = grants === null ? null : new Set<string>(grants);
+    expect(canAccessSettingsItem(settingsItemById('users')!, permissions)).toBe(users);
+    expect(visibleSettingsViews(settingsItemById('security')!, permissions).some(view => view.id === 'policy')).toBe(policy);
+    expect(canAccessSettingsItem(settingsItemById('budget')!, permissions)).toBe(budget);
+    expect(permissionMatches(permissions, 'admin:*')).toBe(users);
   });
 
   it.each([null, '{', '{}', '[1]', '["*"]'])('does not mount restricted views from cache %s before a real response', async cache => {
