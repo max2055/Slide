@@ -1,3 +1,4 @@
+import { subscribeBranding } from "../../src/branding.js";
 import { html, nothing, type TemplateResult } from "lit";
 import { ref } from "lit/directives/ref.js";
 import { repeat } from "lit/directives/repeat.js";
@@ -417,6 +418,16 @@ function createChatEphemeralState(): ChatEphemeralState {
 }
 
 const vs = createChatEphemeralState();
+
+subscribeBranding(() => {
+  // A commands.list refresh may have replaced the objects since this menu
+  // opened. Rebind the visible snapshot before the app requests its render.
+  const commands = new Map(SLASH_COMMANDS.map(command => [command.name, command]));
+  vs.slashMenuItems = vs.slashMenuItems.map(command => commands.get(command.name) ?? command);
+  if (vs.slashMenuCommand) {
+    vs.slashMenuCommand = commands.get(vs.slashMenuCommand.name) ?? vs.slashMenuCommand;
+  }
+});
 
 /**
  * Reset chat view ephemeral state when navigating away.

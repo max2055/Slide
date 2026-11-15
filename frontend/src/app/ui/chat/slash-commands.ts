@@ -1,3 +1,4 @@
+import { subscribeBranding } from "../../src/branding.js";
 import { buildBuiltinChatCommands } from "../../src/auto-reply/commands-registry.shared.ts";
 import type { DirectGatewayClient } from "../direct-gateway.ts";
 import type { IconName } from "../../../icons.js";
@@ -386,6 +387,15 @@ function buildFallbackSlashCommands(): SlashCommandDef[] {
 export const SLASH_COMMANDS: SlashCommandDef[] = buildFallbackSlashCommands();
 
 let _refreshSeq = 0;
+// Open menus retain command objects. Update descriptions in place so those
+// consumers see the new branding on the application's next render.
+subscribeBranding(() => {
+  const local = new Map(buildLocalSlashCommands().map(command => [command.name, command]));
+  for (const command of SLASH_COMMANDS) {
+    const updated = local.get(command.name);
+    if (updated) command.description = updated.description;
+  }
+});
 
 export async function refreshSlashCommands(params: {
   client: DirectGatewayClient | null;

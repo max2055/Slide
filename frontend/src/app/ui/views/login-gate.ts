@@ -1,3 +1,4 @@
+import { refreshBrandingCache } from "../../src/branding.js";
 import { html } from "lit";
 import { t } from "../../i18n/index.ts";
 import type { AppViewState } from "../app-view-state.ts";
@@ -45,6 +46,7 @@ export function renderLoginGate(state: AppViewState) {
       state.lastError = t("login.invalidCredentials");
       return;
     }
+    void refreshBrandingCache();
     fetch('/api/auth/permissions', {
       headers: { 'Authorization': `Bearer ${token}` }
     }).then(r => r.json()).then((perms: string[]) => {
