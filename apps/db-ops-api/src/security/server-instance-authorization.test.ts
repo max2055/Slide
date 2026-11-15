@@ -3,7 +3,8 @@ import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 const source = readFileSync(resolve(import.meta.dirname, '../../server.ts'), 'utf8')
-  + readFileSync(resolve(import.meta.dirname, '../cron/cron-routes.ts'), 'utf8');
+  + readFileSync(resolve(import.meta.dirname, '../cron/cron-routes.ts'), 'utf8')
+  + readFileSync(resolve(import.meta.dirname, '../query-analysis-routes.ts'), 'utf8');
 const eventReads = readFileSync(resolve(import.meta.dirname, '../alert-event-access.ts'), 'utf8');
 
 function routeBlocks(prefix: string): Array<{ method: string; path: string; block: string }> {
@@ -17,6 +18,15 @@ function routeBlocks(prefix: string): Array<{ method: string; path: string; bloc
 }
 
 describe('server instance authorization coverage', () => {
+  // MAX-537: route extraction must not silently remove QAN/EXPLAIN coverage.
+  it.each([['qan', 'instance:view'], ['explain', 'instance:query']])('keeps extracted %s authorization in the route scan', (endpoint, permission) => {
+    expect(source).toContain('await registerQueryAnalysisRoutes(fastify, verifyToken)');
+    const routes = routeBlocks(`/api/database/instances/:id/${endpoint}`);
+    expect(routes).toHaveLength(1);
+    expect(routes[0].block).toContain(`requirePermission('${permission}')`);
+    expect(routes[0].block).toContain("requireInstanceAccess('read-only')");
+  });
+
   it('requires instance scope on every explicit database instance route', () => {
     const routes = routeBlocks('/api/database/instances/:id');
     expect(routes.length).toBeGreaterThan(10);

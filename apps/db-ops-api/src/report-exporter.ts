@@ -2,7 +2,50 @@
  * 报表导出服务
  */
 import PDFDocument from 'pdfkit';
+import ejs from 'ejs';
+import { fileURLToPath } from 'node:url';
+import { parseFragment, type DefaultTreeAdapterMap } from 'parse5';
 import type { Report, ReportFormat } from './report-database-service';
+
+const reportFont = fileURLToPath(new URL('../assets/fonts/NotoSansCJKsc-Regular.otf', import.meta.url));
+
+// Escape literal text separately from URL labels/destinations: backslashes inside
+// bare URLs are interpreted differently by Markdown automatic link parsers.
+function markdownText(text: string): string {
+  const literal = (value: string) => value
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/([\\`*_{}\[\]()#+\-.!|])/g, '\\$1');
+  return String(text).split(/(https?:\/\/[^\s<>"'`]+)/gi).map((part, index) => {
+    if (index % 2 === 0) return literal(part);
+    // Leave sentence punctuation and unmatched closing delimiters outside links.
+    let url = part.replace(/[.,!?]+$/, '');
+    for (const [open, close] of [['(', ')'], ['[', ']'], ['{', '}']]) {
+      let extra = url.split(close).length - url.split(open).length;
+      let end = url.length;
+      while (extra > 0 && url[end - 1] === close) { end--; extra--; }
+      url = url.slice(0, end);
+    }
+    const suffix = part.slice(url.length);
+    const destination = url.replace(/&/g, '&amp;').replace(/\\/g, '\\\\');
+    return `[${literal(url)}](<${destination}>)${literal(suffix)}`;
+  }).join('');
+}
+
+// Parse before decoding: encoded angle brackets belong to text, not HTML tags.
+function reportMarkdownContent(content: string): string {
+  const parts: string[] = [];
+  const visit = (node: DefaultTreeAdapterMap['node']) => {
+    if (node.nodeName === '#text') {
+      parts.push((node as DefaultTreeAdapterMap['textNode']).value);
+      return;
+    }
+    if ('tagName' in node && ['script', 'style', 'template', 'head'].includes(node.tagName)) return;
+    if ('childNodes' in node) node.childNodes.forEach(visit);
+    if ('tagName' in node && /^(br|div|p|tr|li|h[1-6]|blockquote|pre|th|td)$/.test(node.tagName)) parts.push('\n');
+  };
+  visit(parseFragment(content));
+  return markdownText(parts.join('').replace(/\n{3,}/g, '\n\n').trim());
+}
 
 class ReportExporter {
   /**
@@ -23,14 +66,14 @@ class ReportExporter {
       // 标题
       doc
         .fontSize(24)
-        .font('Helvetica-Bold')
+        .font(reportFont)
         .text(report.name, { align: 'center' })
         .moveDown(0.5);
 
       // 元信息
       doc
         .fontSize(10)
-        .font('Helvetica')
+        .font(reportFont)
         .text(`类型：${report.type} | 格式：${report.format}`, { align: 'center' })
         .text(`生成时间：${report.created_at}`, { align: 'center' })
         .moveDown(1);
@@ -42,7 +85,7 @@ class ReportExporter {
       // 内容
       doc
         .fontSize(12)
-        .font('Helvetica')
+        .font(reportFont)
         .text(report.content || '无内容', {
           align: 'left',
           width: 500,
@@ -59,13 +102,13 @@ class ReportExporter {
     const lines: string[] = [];
 
     // 标题
-    lines.push(`# ${report.name}`);
+    lines.push(`# ${markdownText(report.name).replace(/[\r\n]/g, char => char === '\r' ? '&#13;' : '&#10;')}`);
     lines.push('');
 
     // 元信息
-    lines.push(`**类型**: ${report.type}`);
-    lines.push(`**格式**: ${report.format}`);
-    lines.push(`**生成时间**: ${report.created_at}`);
+    lines.push(`**类型**: ${markdownText(report.type)}`);
+    lines.push(`**格式**: ${markdownText(report.format)}`);
+    lines.push(`**生成时间**: ${markdownText(report.created_at)}`);
     lines.push('');
     lines.push('---');
     lines.push('');
@@ -83,26 +126,7 @@ class ReportExporter {
     if (report.content) {
       lines.push('## 详细内容');
       lines.push('');
-      // 改进的 HTML 转纯文本处理
-      let textContent = report.content
-        // 替换 <br> 为换行
-        .replace(/<br\s*\/?>/gi, '\n')
-        // 替换块级结束标签
-        .replace(/<\/(div|p|tr|li|h[1-6]|blockquote|pre|th|td)>/gi, '\n')
-        // 解码常见 HTML 实体
-        .replace(/&amp;/g, '&')
-        .replace(/&lt;/g, '<')
-        .replace(/&gt;/g, '>')
-        .replace(/&nbsp;/g, ' ')
-        .replace(/&quot;/g, '"')
-        .replace(/&#39;/g, "'")
-        .replace(/&#x27;/g, "'")
-        // 移除剩余 HTML 标签
-        .replace(/<[^>]*>/g, '')
-        // 压缩多余空白行
-        .replace(/\n{3,}/g, '\n\n')
-        .trim();
-      lines.push(textContent);
+      lines.push(reportMarkdownContent(report.content));
     }
 
     return lines.join('\n');
@@ -112,6 +136,9 @@ class ReportExporter {
    * 导出为 HTML
    */
   async exportToHTML(report: Report): Promise<string> {
+    // content is a complete HTML document persisted by the report generators.
+    // Generators must escape untrusted values at interpolation; this is not a sanitizer
+    // for arbitrary uploaded HTML. Preserve markup and avoid double-escaping on export.
     if (report.content) {
       return report.content;
     }
@@ -122,7 +149,7 @@ class ReportExporter {
 <html>
 <head>
   <meta charset="UTF-8">
-  <title>${report.name}</title>
+  <title>${ejs.escapeXML(report.name)}</title>
   <style>
     body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; padding: 20px; }
     h1 { color: #333; }
@@ -132,9 +159,9 @@ class ReportExporter {
   </style>
 </head>
 <body>
-  <h1>${report.name}</h1>
-  <p class="meta">类型：${report.type} | 生成时间：${report.created_at}</p>
-  <pre>${JSON.stringify(report.data, null, 2)}</pre>
+  <h1>${ejs.escapeXML(report.name)}</h1>
+  <p class="meta">类型：${ejs.escapeXML(report.type)} | 生成时间：${ejs.escapeXML(report.created_at)}</p>
+  <pre>${ejs.escapeXML(JSON.stringify(report.data, null, 2))}</pre>
 </body>
 </html>`;
   }

@@ -79,12 +79,15 @@ jobs:
         run: pnpm audit --audit-level=high
 
   backend:
-    runs-on: ubuntu-latest
+    # Exercise supervisor lifecycle on the supported ARM64 target (MAX-572).
+    runs-on: ubuntu-24.04-arm
     needs: plan
     if: needs.plan.outputs.code == 'true'
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
+      - name: Verify native ARM64 runner
+        run: test "$(uname -m)" = aarch64
       - uses: pnpm/action-setup@v4
         with:
           version: 11.19.0
@@ -169,7 +172,8 @@ jobs:
       - run: pnpm --filter slide-sandbox-controller test
 
   browser:
-    runs-on: ubuntu-latest
+    # Keep Playwright 1.60 browser jobs on its supported Ubuntu release (MAX-579).
+    runs-on: ubuntu-24.04
     needs: plan
     if: needs.plan.outputs.browser == 'true'
     timeout-minutes: 15
@@ -205,7 +209,7 @@ jobs:
         run: pnpm --filter slide-frontend exec playwright test streaming-render.spec.ts --config playwright.streaming.config.ts --grep 'real phases'
 
   browser-qualification:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     needs: plan
     if: needs.plan.outputs.integration == 'true'
     timeout-minutes: 25
@@ -303,7 +307,7 @@ jobs:
   # from the job above. Splitting them keeps the browser critical path below
   # the API shard ceiling instead of stacking both slow steps in one job.
   browser-edge-qualification:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     needs: plan
     if: needs.plan.outputs.integration == 'true'
     timeout-minutes: 20
@@ -366,7 +370,7 @@ jobs:
   # Playwright shards the 79 tests across two runners so a slow spec cannot
   # hold the whole job.
   investigation-workspace-qualification:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     needs: plan
     if: needs.plan.outputs.integration == 'true'
     timeout-minutes: 20
@@ -492,7 +496,7 @@ jobs:
   # Every leg still uses its own isolated MySQL pair (the exec leg needs only
   # the 8.4 server), so the isolated-database contract is unchanged.
   investigation-api-qualification:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     needs: plan
     if: needs.plan.outputs.api == 'true'
     timeout-minutes: 40

@@ -24,6 +24,9 @@ it('registers a fixed handler, cooperates with cancellation and leaves recovery 
   await expect(registry.execute(job, context)).rejects.toThrow('stopped'); expect(run).toHaveBeenCalledTimes(1);
 });
 
+import { randomUUID } from 'node:crypto';
+import { setTimeout as delay } from 'node:timers/promises';
+import type { RetentionGuard } from '../metrics/retention.js';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import mysql, { type Pool, type RowDataPacket } from 'mysql2/promise';
@@ -36,10 +39,12 @@ import { MysqlMetricStorage } from '../metrics/storage.js';
 import { RolloutControl } from '../metrics/rollout/control.js';
 import { definitions, rawObservation, observations, identify, timeoutAttempt } from '../contracts/metrics/fixtures.js';
 
+const mysqlConfig = process.env.METRIC_RETENTION_MYSQL_CONFIG;
 const port = Number(process.env.METRICS_TEST_MYSQL_PORT);
-describe.skipIf(!port)('production retention assembly through real MySQL workflow leases', () => {
+const mysqlOptions = () => mysqlConfig ? JSON.parse(mysqlConfig) : { host: '127.0.0.1', port, user: 'root', password: '' };
+describe.skipIf(!port && !mysqlConfig)('production retention assembly through real MySQL workflow leases', () => {
   let root: Pool, pool: Pool; let now: Date;
-  const database = `max117_${process.pid}`;
+  const database = `max524_${randomUUID().replaceAll('-', '')}`;
   let config: NodeJS.ProcessEnv;
   let store: MysqlWorkflowStore;
   const run = async (report = vi.fn(), workerId = 'retention-test') => {
@@ -50,9 +55,9 @@ describe.skipIf(!port)('production retention assembly through real MySQL workflo
   };
   const state = async () => (await pool.query<RowDataPacket[]>('SELECT * FROM metric_retention_state WHERE id = 1'))[0][0];
   beforeAll(async () => {
-    root = mysql.createPool({ host: '127.0.0.1', port, user: 'root', password: '' });
+    root = mysql.createPool(mysqlOptions());
     await root.query(`CREATE DATABASE ${database}`);
-    pool = mysql.createPool({ host: '127.0.0.1', port, user: 'root', password: '', database, connectionLimit: 12, timezone: 'Z' });
+    pool = mysql.createPool({ ...mysqlOptions(), database, connectionLimit: 3, timezone: 'Z' });
     await new MigrationRunner(pool as unknown as MigrationPool).run();
     await pool.query("INSERT INTO database_instances (id, name, db_type, host, port, username, password_encrypted) VALUES (1, 'isolated', 'mysql', 'localhost', 3306, 'fake', 'fake')");
   }, 120000);
@@ -140,14 +145,15 @@ describe.skipIf(!port)('production retention assembly through real MySQL workflo
       import { JobRegistry } from './src/workflows/job-registry.ts';
       import { MysqlWorkflowStore, WorkerRuntime } from './src/workflows/worker-runtime.ts';
       import { startMetricRetention } from './src/workflows/metric-retention-handler.ts';
-      const pool = mysql.createPool({host:'127.0.0.1', port:Number(process.env.METRICS_TEST_MYSQL_PORT), user:'root', password:'', database:process.env.RETENTION_TEST_DATABASE, timezone:'Z', connectionLimit:12});
+      const options = process.env.METRIC_RETENTION_MYSQL_CONFIG ? JSON.parse(process.env.METRIC_RETENTION_MYSQL_CONFIG) : {host:'127.0.0.1', port:Number(process.env.METRICS_TEST_MYSQL_PORT), user:'root', password:''};
+      const pool = mysql.createPool({...options, database:process.env.RETENTION_TEST_DATABASE, timezone:'Z', connectionLimit:12});
       const store = new MysqlWorkflowStore(() => pool), registry = new JobRegistry();
       await startMetricRetention(pool, registry, j => store.enqueue(j), {clock:() => new Date(process.env.RETENTION_TEST_NOW), report:() => process.exit(73)});
       await new WorkerRuntime(store, 'crashing-process').runOnce((job, ctx) => registry.execute(job, ctx));
       process.exit(74);
     `;
     await expect(promisify(execFile)(process.execPath, ['--import', 'tsx', '--input-type=module', '--eval', script], {
-      env: { PATH: process.env.PATH, ...config, METRICS_TEST_MYSQL_PORT: String(port), RETENTION_TEST_DATABASE: database, RETENTION_TEST_NOW: now.toISOString() }, timeout: 20000,
+      env: { PATH: process.env.PATH, ...config, METRICS_TEST_MYSQL_PORT: String(port), ...(mysqlConfig ? { METRIC_RETENTION_MYSQL_CONFIG: mysqlConfig } : {}), RETENTION_TEST_DATABASE: database, RETENTION_TEST_NOW: now.toISOString() }, timeout: 20000,
     })).rejects.toMatchObject({ code: 73 });
     expect((await pool.query<RowDataPacket[]>('SELECT * FROM metric_observations'))[0]).toHaveLength(0);
     expect((await state()).last_report).toMatchObject({ mode: 'apply', counts: { rawPayload: 1, rawIdentity: 1 } });
@@ -214,4 +220,98 @@ describe.skipIf(!port)('production retention assembly through real MySQL workflo
     expect((await run()).result).toBe('completed');
     expect(await new MysqlMetricStorage(pool, () => now).evidence(rawObservation.id)).toEqual({ status: 'not_retained' });
   });
+
+  const prepareApply = async () => {
+    const old = new MysqlMetricStorage(pool, () => new Date(now.getTime() - 20000), { rawMs: 1000, historyMs: 10000, attemptMs: 5000 });
+    await old.write(rawObservation, definitions[0]); await run();
+    config.METRICS_RETENTION_MODE = 'apply'; now = new Date(now.getTime() + 1000);
+    const registry = new JobRegistry();
+    await startMetricRetention(pool, registry, j => store.enqueue(j), { env: config, clock: () => now, report: vi.fn() });
+    return registry;
+  };
+  it('MAX-524 renews inside the runtime timeout while a deletion transaction spans the initial lease expiry', async () => {
+    const registry = await prepareApply();
+    const heartbeat = store.heartbeat.bind(store);
+    const renewals: number[] = [];
+    let holding = false, renewalsWhileHolding = 0;
+    const heartbeatSpy = vi.spyOn(store, 'heartbeat').mockImplementation(async (...args) => {
+      const started = performance.now();
+      const result = await heartbeat(...args);
+      renewals.push(performance.now() - started);
+      if (holding && result) renewalsWhileHolding++;
+      return result;
+    });
+    const prune = MysqlMetricStorage.prototype.prune;
+    let held = false;
+    const spy = vi.spyOn(MysqlMetricStorage.prototype, 'prune').mockImplementation(function (limit, guard) {
+      return prune.call(this, limit, async (c, phase) => {
+        if (phase === 'commit' && !held) {
+          held = true; holding = true;
+          // Actual uncommitted mutations must be invisible to other connections.
+          expect((await pool.query<RowDataPacket[]>('SELECT payload FROM metric_observations WHERE id=?', [rawObservation.id]))[0][0].payload).not.toBeNull();
+          await delay(3500); holding = false;
+        }
+        await guard!(c, phase);
+      });
+    });
+    const worker = new WorkerRuntime(store, 'renewing-worker', 3);
+    try {
+      expect(await worker.runOnce((job, ctx) => registry.execute(job, ctx))).toBe('completed');
+      expect(held).toBe(true); expect(renewalsWhileHolding).toBeGreaterThanOrEqual(3);
+      expect(Math.max(...renewals)).toBeLessThan(500); // runtime: lease / 3 / 2
+      expect((await pool.query<RowDataPacket[]>('SELECT id FROM metric_observations'))[0]).toHaveLength(0);
+      process.stdout.write('MAX524_HEARTBEAT ' + JSON.stringify({ heldMs: 3500, leaseMs: 3000, timeoutMs: 500, renewalsWhileHolding, renewalMs: renewals }) + '\n');
+    } finally { spy.mockRestore(); heartbeatSpy.mockRestore(); await worker.shutdown(); }
+  }, 12000);
+
+  it.each(['expiry', 'fencing', 'cancelled', 'failure', 'lock-wait-expiry'] as const)('MAX-524 rolls back mutations on %s before commit and releases maintenance ownership', async fault => {
+    const registry = await prepareApply();
+    const job = (await store.claim('guarded-worker', 30))!;
+    const controller = new AbortController();
+    let injected = false;
+    const prune = MysqlMetricStorage.prototype.prune;
+    const spy = vi.spyOn(MysqlMetricStorage.prototype, 'prune').mockImplementation(function (limit, guard) {
+      const wrapped: RetentionGuard = async (c, phase) => {
+        if (phase === 'commit' && !injected) {
+          injected = true;
+          if (fault === 'lock-wait-expiry') {
+            const blocker = await pool.getConnection();
+            try {
+              await blocker.beginTransaction();
+              await blocker.execute('UPDATE workflow_jobs SET lease_expires_at=DATE_ADD(NOW(3), INTERVAL 1 SECOND) WHERE id=?', [job.id]);
+              const checked = guard!(c, phase);
+              // Attach the rejection handler before yielding, then release the lock
+              // after the lease expires. A pre-wait NOW() must not authorize commit.
+              const settled = checked.then(() => null, error => error as Error);
+              await delay(1500); await blocker.commit();
+              const error = await settled; if (error) throw error;
+              return;
+            } finally { await blocker.rollback(); blocker.release(); }
+          }
+          if (fault === 'expiry') await pool.execute('UPDATE workflow_jobs SET lease_expires_at=DATE_SUB(NOW(), INTERVAL 1 SECOND) WHERE id=?', [job.id]);
+          if (fault === 'fencing') await pool.execute("UPDATE workflow_jobs SET fencing_token=fencing_token+1, lease_owner='replacement-worker' WHERE id=?", [job.id]);
+          if (fault === 'cancelled') controller.abort(new Error('TEST_CANCELLED'));
+          if (fault === 'failure') throw new Error('TEST_DELETE_FAILURE');
+        }
+        await guard!(c, phase);
+      };
+      return prune.call(this, limit, wrapped);
+    });
+    try {
+      await expect(registry.execute(job, { signal: controller.signal, workerId: 'guarded-worker', fencingToken: job.fencingToken }))
+        .rejects.toThrow(fault === 'cancelled' ? 'TEST_CANCELLED' : fault === 'failure' ? 'TEST_DELETE_FAILURE' : 'WORKFLOW_LEASE_LOST');
+      expect(injected).toBe(true);
+      const [rows] = await pool.query<RowDataPacket[]>('SELECT payload,tombstone FROM metric_observations WHERE id=?', [rawObservation.id]);
+      expect(rows[0].payload).not.toBeNull(); expect(rows[0].tombstone).toBeNull();
+      expect((await state()).last_report.mode).toBe('dry-run');
+      // A different connection can immediately acquire the global maintenance lock.
+      const c = await pool.getConnection();
+      try {
+        expect(Number((await c.query<RowDataPacket[]>("SELECT GET_LOCK('slide:metric-retention',0) acquired"))[0][0].acquired)).toBe(1);
+        await c.query("SELECT RELEASE_LOCK('slide:metric-retention')");
+      } finally { c.release(); }
+      process.stdout.write('MAX524_ROLLBACK ' + JSON.stringify({ fault, payloadRetained: true, tombstoneRolledBack: true, lockReleased: true }) + '\n');
+    } finally { spy.mockRestore(); }
+  });
+
 });

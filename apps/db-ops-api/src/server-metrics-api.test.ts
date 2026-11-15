@@ -29,7 +29,8 @@ const instanceLatestRoute = routeSource(
 );
 const instanceHistoryRoute = routeSource(
   "fastify.get('/api/database/instances/:id/metrics/history'",
-  '// 查询性能分析（QAN）',
+  // MAX-537: QAN moved to its own registrar; end at the next remaining route.
+  "fastify.get('/api/database/instances/:id/databases'",
 );
 
 describe('resource metric entrypoints use only the formal service', () => {

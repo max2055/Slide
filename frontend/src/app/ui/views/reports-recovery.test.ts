@@ -6,6 +6,7 @@ afterEach(() => { document.body.replaceChildren(); vi.resetAllMocks(); });
 async function page() {
   const element = new ReportsPage();
   vi.spyOn(element, 'firstUpdated').mockImplementation(() => {});
+  (element as any).loading = false;
   document.body.append(element); await element.updateComplete;
   return element as any;
 }
@@ -26,4 +27,35 @@ it('cannot replace a newer history range loaded while recovery reads were in fli
   // A newer range must win, so recovery must not proceed to a stats request.
   await pending;
   expect(element.historyBatch).toBe(2); expect(element.reports).toEqual([{ id: 99 }]);
+});
+
+// MAX-615 R1 / #361: failed reconciliation must never look like confirmed absence.
+it.each([
+  () => Promise.resolve(Response.json({ error: 'REPORT_CONFIG_LIST_UNAVAILABLE' }, { status: 503 })),
+  () => Promise.reject(new Error('network unavailable')),
+  () => Promise.resolve(Response.json({ invalid: true })),
+])('shows unknown list state on read failure and recovers without replaying creation', async fail => {
+  const element = await page();
+  vi.mocked(authFetch).mockImplementationOnce(fail);
+  await element.loadConfigs(); await element.updateComplete;
+  expect(element.shadowRoot.querySelector('[role="alert"]').textContent).toBeTruthy();
+  expect(element.shadowRoot.querySelector('app-empty-state[title="定时报表读取失败"]')).not.toBeNull();
+  expect(element.shadowRoot.querySelector('app-empty-state[title="暂无定时报表"]')).toBeNull();
+  const create = [...element.shadowRoot.querySelectorAll('button')].find((button: any) => button.textContent.includes('新建计划')) as HTMLButtonElement;
+  expect(create.disabled).toBe(true);
+  vi.mocked(authFetch).mockResolvedValueOnce(Response.json([{ id: 42, name: 'already committed', cron: '@daily', type: 'health', enabled: false }]));
+  await element.loadConfigs(); await element.updateComplete;
+  expect(element.shadowRoot.querySelector('[role="alert"]')).toBeNull();
+  expect(element.shadowRoot.textContent).toContain('already committed');
+  expect(create.disabled).toBe(false);
+  expect(vi.mocked(authFetch).mock.calls.every(([, options]) => !options?.method || options.method === 'GET')).toBe(true);
+});
+
+it('keeps a healthy empty list distinct from failure', async () => {
+  const element = await page();
+  vi.mocked(authFetch).mockResolvedValueOnce(Response.json([]));
+  await element.loadConfigs(); await element.updateComplete;
+  expect(element.shadowRoot.querySelector('app-empty-state[title="暂无定时报表"]')).not.toBeNull();
+  expect(element.shadowRoot.querySelector('[role="alert"]')).toBeNull();
+  expect(element.shadowRoot.querySelector('button.btn-primary').disabled).toBe(false);
 });

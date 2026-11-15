@@ -73,6 +73,9 @@ export async function registerResourceRoutes(
     if (!ref) return reply.code(400).send({ error: 'RESOURCE_REF_INVALID' });
     const query = request.query as Record<string, unknown>;
     const metricIds = typeof query.metricIds === 'string' ? query.metricIds.split(',').map((value) => value.trim()).filter(Boolean) : undefined;
+    if (query.limit !== undefined && (typeof query.limit !== 'string' || query.limit.trim() === '' || !Number.isSafeInteger(Number(query.limit)))) {
+      return reply.code(400).send({ error: 'OBSERVATION_LIMIT_INVALID' });
+    }
     const limit = query.limit === undefined ? undefined : Number(query.limit);
     try {
       return reply.send({ resource: ref, observations: await service.getObservations(actor(request), ref, { metricIds, limit }) });

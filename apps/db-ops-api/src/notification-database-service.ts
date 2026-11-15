@@ -147,6 +147,7 @@ class NotificationDatabaseService {
   async getChannels(enabled?: boolean): Promise<NotificationChannel[]> {
     const pool = this.getPool();
     if (!pool) {
+      if (enabled === true) throw new Error('NOTIFICATION_CHANNELS_UNAVAILABLE');
       return [];
     }
 
@@ -177,6 +178,7 @@ class NotificationDatabaseService {
       }));
     } catch (error) {
       console.error('获取通知渠道失败:', error);
+      if (enabled === true) throw new Error('NOTIFICATION_CHANNELS_UNAVAILABLE');
       return [];
     }
   }
@@ -186,9 +188,7 @@ class NotificationDatabaseService {
    */
   async getChannelById(id: number): Promise<NotificationChannel | null> {
     const pool = this.getPool();
-    if (!pool) {
-      return null;
-    }
+    if (!pool) throw new Error('NOTIFICATION_CHANNEL_UNAVAILABLE');
 
     try {
       const [rows] = await pool.execute(
@@ -214,7 +214,7 @@ class NotificationDatabaseService {
       };
     } catch (error) {
       console.error('获取通知渠道失败:', error);
-      return null;
+      throw new Error('NOTIFICATION_CHANNEL_UNAVAILABLE');
     }
   }
 
@@ -292,9 +292,11 @@ class NotificationDatabaseService {
         values.push(JSON.stringify(config));
       }
       if (data.enabled !== undefined) {
+        // Evaluate against the locked row's old enabled value, before assigning it.
+        // A repeated save must not move pending alerts behind the activation fence.
+        if (data.enabled) updates.push('delivery_start_at = IF(enabled = 0, CURRENT_TIMESTAMP, delivery_start_at)');
         updates.push('enabled = ?');
         values.push(data.enabled ? 1 : 0);
-        if (data.enabled) updates.push('delivery_start_at = CURRENT_TIMESTAMP');
       }
 
       if (updates.length === 0) {
@@ -364,9 +366,7 @@ class NotificationDatabaseService {
    */
   async getPendingAlerts(): Promise<PendingAlert[]> {
     const pool = this.getPool();
-    if (!pool) {
-      return [];
-    }
+    if (!pool) throw new Error('NOTIFICATION_ALERTS_UNAVAILABLE');
 
     try {
       const [rows] = await pool.execute(
@@ -398,7 +398,7 @@ class NotificationDatabaseService {
       }));
     } catch (error) {
       console.error('获取待推送告警失败:', error);
-      return [];
+      throw new Error('NOTIFICATION_ALERTS_UNAVAILABLE');
     }
   }
 

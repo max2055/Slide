@@ -61,6 +61,19 @@ describe('ScoringConfigService', () => {
   });
 
   describe('saveWeights', () => {
+    it.each([null, undefined, false, 0, 'weights', []])('#369 rejects non-object %j', async input => {
+      expect((await scoringConfigService.saveWeights(input)).success).toBe(false);
+      expect(dbConnection.getPool).not.toHaveBeenCalled();
+    });
+
+    it('#369 requires own dimension fields', async () => {
+      expect((await scoringConfigService.saveWeights(Object.create(DEFAULT_WEIGHTS))).success).toBe(false);
+    });
+
+    it.each([NaN, Infinity, -Infinity])('rejects invalid numeric value %s', async value => {
+      expect((await scoringConfigService.saveWeights({ ...DEFAULT_WEIGHTS, security: value })).success).toBe(false);
+    });
+
     it('should reject invalid weight (>1.0) with error message', async () => {
       const invalidWeights = {
         availability: 1.50,

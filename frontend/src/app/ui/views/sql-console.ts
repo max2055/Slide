@@ -5,7 +5,7 @@ import { customElement, state } from "lit/decorators.js";
 import "../components/app-dialog.js";
 import { basicSetup } from "codemirror";
 import { EditorView } from "@codemirror/view";
-import { EditorState } from "@codemirror/state";
+import { Compartment, EditorState } from "@codemirror/state";
 import { sql, MySQL, SQLDialect } from "@codemirror/lang-sql";
 import { autocompletion, CompletionContext, Completion } from "@codemirror/autocomplete";
 import { oneDark } from "@codemirror/theme-one-dark";
@@ -408,6 +408,8 @@ export class SqlConsolePage extends LitElement {
   @state() private sidebarView: 'schema' | 'history' = 'schema';
   @state() private historyItems: HistoryItem[] = [];
   @state() private historyLoading = false;
+  @state() private historyError = '';
+  private _historyRequestId = 0;
   @state() private historySearch = '';
   @state() private historyInstanceFilter = 0;
   @state() private historyOffset = 0;
@@ -419,6 +421,20 @@ export class SqlConsolePage extends LitElement {
   @state() private explainLoading = false;
   @state() private explainError: string | null = null;
   private _expandedNodes: Set<PlanNode> = new Set();
+
+  private readonly _dialect = new Compartment();
+
+  private _sqlLanguage() {
+    const type = this.instances.find(i => i.id === this.selectedId)?.db_type;
+    const dialect = type === "oracle" ? OracleDialect : type === "dameng" ? DamengDialect : MySQL;
+    return sql({ dialect, upperCaseKeywords: dialect !== MySQL });
+  }
+
+  private _refreshDialect() {
+    for (const tab of this.tabs) {
+      tab.editorView?.dispatch({ effects: this._dialect.reconfigure(this._sqlLanguage()) });
+    }
+  }
 
   private readonly STORAGE_KEY = 'sql-console-tabs';
 
@@ -436,10 +452,21 @@ export class SqlConsolePage extends LitElement {
     this.loadInstances();
     document.addEventListener("keydown", this._globalKeyHandler);
     this._restoreTabs();
+    void this.updateComplete.then(() => {
+      if (this.isConnected) this._switchTab(this.activeTabId);
+    });
   }
   override disconnectedCallback() {
     super.disconnectedCallback();
+    this._historyRequestId++;
+    this.historyLoading = false;
     document.removeEventListener("keydown", this._globalKeyHandler);
+    for (const tab of this.tabs) {
+      if (!tab.editorView) continue;
+      tab.sql = tab.editorView.state.doc.toString();
+      tab.editorView.destroy();
+      tab.editorView = null;
+    }
   }
 
   private _globalKeyHandler = (e: KeyboardEvent) => {
@@ -467,16 +494,12 @@ export class SqlConsolePage extends LitElement {
     this.activeTabId = tabId;
 
     if (!tab.editorView) {
-      const instance = this.instances.find(i => i.id === this.selectedId);
-      const selectedDialect = instance?.db_type === 'oracle' ? OracleDialect
-        : instance?.db_type === 'dameng' ? DamengDialect
-        : MySQL;
       tab.editorView = new EditorView({
         state: EditorState.create({
           doc: tab.sql,
           extensions: [
             basicSetup,
-            sql({ dialect: selectedDialect, upperCaseKeywords: selectedDialect === OracleDialect || selectedDialect === DamengDialect }),
+            this._dialect.of(this._sqlLanguage()),
             oneDark,
             autocompletion({ override: [this._sqlCompletions.bind(this)] }),
             EditorView.updateListener.of((update) => { this.requestUpdate(); if (update.docChanged) this._saveTabs(); }),
@@ -602,6 +625,8 @@ export class SqlConsolePage extends LitElement {
     const textBefore = context.state.sliceDoc(0, context.pos);
 
     const completions: Completion[] = [];
+    const afterDot = textBefore.match(/([\w一-鿿]+)\.[\w一-鿿]*$/);
+    const columns = new Set<string>();
     for (const schema of this.schemas || []) {
       for (const table of (schema as any).tables || []) {
         completions.push({
@@ -609,20 +634,11 @@ export class SqlConsolePage extends LitElement {
           type: 'keyword',
           detail: `${(schema as any).schema || table.schema || 'public'}.${table.name}`,
         });
-        const afterDot = textBefore.match(/(\w+)\.\w*$/);
-        if (afterDot) {
-          const tableAlias = afterDot[1];
-          const matchedTable = (schema as any).tables?.find((t: any) =>
-            t.name === tableAlias || t.alias === tableAlias
-          );
-          if (matchedTable) {
-            for (const col of (matchedTable.columns || [])) {
-              completions.push({
-                label: col.name,
-                type: 'property',
-                detail: col.type || 'column',
-              });
-            }
+        if (afterDot && (table.name === afterDot[1] || table.alias === afterDot[1])) {
+          for (const col of table.columns || []) {
+            if (columns.has(col.name)) continue;
+            columns.add(col.name);
+            completions.push({ label: col.name, type: 'property', detail: col.type || 'column' });
           }
         }
       }
@@ -665,8 +681,15 @@ export class SqlConsolePage extends LitElement {
   }
 
   private async _loadHistory(reset: boolean = false) {
-    if (this.historyLoading || (!this.historyHasMore && !reset)) return;
-    if (reset) { this.historyOffset = 0; this.historyItems = []; this.historyHasMore = true; }
+    if (!reset && (this.historyLoading || this.historyError || !this.historyHasMore)) return;
+    const requestId = ++this._historyRequestId;
+    if (reset) { this.historyOffset = 0; this.historyItems = []; this.historyTotal = 0; this.historyHasMore = true; }
+    this.historyError = '';
+    if (!this.historyInstanceFilter) {
+      this.historyLoading = false;
+      this.historyHasMore = false;
+      return;
+    }
     this.historyLoading = true;
     try {
       const instanceFilter = this.historyInstanceFilter;
@@ -680,6 +703,7 @@ export class SqlConsolePage extends LitElement {
       });
       if (!res.ok) throw new Error('加载失败');
       const data = await res.json();
+      if (requestId !== this._historyRequestId) return;
       if (reset) {
         this.historyItems = data.items;
       } else {
@@ -689,9 +713,10 @@ export class SqlConsolePage extends LitElement {
       this.historyOffset += data.items.length;
       this.historyHasMore = this.historyItems.length < data.total;
     } catch {
-      // silently fail — history is best-effort
+      if (requestId === this._historyRequestId) this.historyError = '查询历史加载失败，请重试';
+    } finally {
+      if (requestId === this._historyRequestId) this.historyLoading = false;
     }
-    this.historyLoading = false;
   }
 
   private _onHistoryScroll(e: Event) {
@@ -717,12 +742,16 @@ export class SqlConsolePage extends LitElement {
   private async loadInstances() {
     try {
       const res = await authFetch("/api/database/instances", { headers: this._headers() });
-      if (res.ok) this.instances = await res.json();
+      if (res.ok) {
+        this.instances = await res.json();
+        this._refreshDialect();
+      }
     } catch { /* */ }
   }
 
   private async _selectInstance(id: number) {
     this.selectedId = id;
+    this._refreshDialect();
     this.selectedDatabase = '';
     this.schemas = [];
     this.databases = [];
@@ -1283,25 +1312,34 @@ export class SqlConsolePage extends LitElement {
           ` : html`
             <div class="history-panel">
               <div class="history-search">
-                <input class="history-search-input" type="text" placeholder="搜索 SQL..."
+                <input class="history-search-input" type="text" placeholder="搜索 SQL..." aria-label="搜索查询历史"
                   .value=${this.historySearch}
                   @input=${(e: InputEvent) => {
                     this.historySearch = (e.target as HTMLInputElement).value;
                     this._loadHistory(true);
                   }} />
-                <select class="history-instance-filter"
+                <select class="history-instance-filter" aria-label="查询历史实例"
                   @change=${(e: Event) => {
                     this.historyInstanceFilter = parseInt((e.target as HTMLSelectElement).value);
                     this._loadHistory(true);
                   }}>
-                  <option value="0">全部实例</option>
+                  <option value="0" ?selected=${this.historyInstanceFilter === 0}>全部实例</option>
                   ${this.instances.map(inst => html`
-                    <option value=${inst.id} ?selected=${inst.id === this.selectedId}>${inst.name}</option>
+                    <option value=${inst.id} ?selected=${inst.id === this.historyInstanceFilter}>${inst.name}</option>
                   `)}
                 </select>
               </div>
               <div class="history-list" @scroll=${this._onHistoryScroll}>
-                ${this.historyItems.length === 0 && !this.historyLoading ? html`
+                ${!this.historyInstanceFilter ? html`
+                  <div class="history-empty" role="status">当前不支持跨实例查看查询历史，请选择具体实例</div>
+                ` : this.historyError ? html`
+                  <div role="alert">${this.historyError}</div>
+                  <button class="btn btn-refresh" @click=${() => {
+                    this.historyError = '';
+                    this._loadHistory(false);
+                  }}>重试</button>
+                ` : nothing}
+                ${this.historyInstanceFilter && !this.historyError && this.historyItems.length === 0 && !this.historyLoading ? html`
                   <div class="history-empty">
                     ${this.historySearch ? '' : html`<div class="history-empty-icon">${icons['clock']}</div>`}
                     <div class="history-empty-text">${this.historySearch ? '无匹配结果' : '暂无查询记录'}</div>
