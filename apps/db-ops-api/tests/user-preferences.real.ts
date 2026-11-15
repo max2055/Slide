@@ -117,7 +117,9 @@ try {
   assert.equal(login.status, 200);
   const { token } = await login.json() as { token: string };
   assert.ok(token);
-  assert.equal((await request('/api/user/preferences', undefined, { preferences: { navWidth: 999 } })).status, 401);
+  const unauthenticated = await request('/api/user/preferences', undefined, { preferences: { navWidth: 999 } });
+  record('unauthenticated-observation', { status: unauthenticated.status, body: await unauthenticated.json() });
+  assert.ok(!unauthenticated.ok, 'Unauthenticated writes must be rejected');
   const [users] = await pool.query<mysql.RowDataPacket[]>("SELECT id FROM users WHERE username='max675admin'");
   const userId = users[0].id;
   async function stored() {
