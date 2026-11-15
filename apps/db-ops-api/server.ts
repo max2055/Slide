@@ -1,3 +1,4 @@
+import { registerIndexRoutes } from './src/index-routes.js';
 import { recordSshTrustRequest } from './src/security/ssh-trust-audit.js';
 import { SystemEventWorkflow } from './src/investigations/system-event-workflow.js';
 import { registerResourceIdentityRoutes } from './src/resources/resource-identity-routes.js';
@@ -113,8 +114,6 @@ import { notificationDatabaseService } from './src/notification-database-service
 import { notificationService } from './src/notification-service.js';
 import { schemaService } from './src/schema-service.js';
 import { schemaDatabaseService } from './src/schema-database-service.js';
-import { indexService } from './src/index-service.js';
-import { indexDatabaseService } from './src/index-database-service.js';
 import { topsqlAnalysisService } from './src/topsql-analysis-service.js';
 import { alertRCAService } from './src/alert-rca-service.js';
 import { faultDiagnosisService } from './src/fault-diagnosis-service.js';
@@ -133,7 +132,7 @@ import { alertSilenceService } from './src/alert-silence-service.js';
 import { maintenanceWindowService } from './src/maintenance-window-service.js';
 import { alertEventService } from './src/alert-event-service.js';
 import { eventAggregator } from './src/event-aggregator.js';
-import { capacityPredictor } from './src/capacity-predictor.js';
+import { capacityPredictor, assertPredictionHorizon, PredictionHorizonError } from './src/capacity-predictor.js';
 import { aiAnalysisDatabaseService } from './src/ai-analysis-database-service.js';
 import { analysisAccessSql, canReadAnalysis } from './src/analysis/analysis-access.js';
 import { aiAnalysisConfigService } from './src/ai-analysis-config-service.js';
@@ -1026,9 +1025,15 @@ async function start() {
       if (!hasUnrestrictedInstanceAccess((request as any).user)) {
         return reply.code(403).send({ error: '清除全局告警需要不受限的实例管理权限' });
       }
-      const { retentionDays } = request.query as { retentionDays?: number };
+      const { retentionDays } = request.query as { retentionDays?: unknown };
       // 默认保留最近 30 天；前端主动传 0 可强制清除全部
+      if (retentionDays !== undefined && (typeof retentionDays !== 'string' || retentionDays.trim() === '')) {
+        return reply.code(400).send({ error: 'retentionDays 必须为非负整数' });
+      }
       const days = retentionDays !== undefined ? Number(retentionDays) : 30;
+      if (!Number.isSafeInteger(days) || days < 0) {
+        return reply.code(400).send({ error: 'retentionDays 必须为非负整数' });
+      }
       const result = await alertDatabaseService.clearAllAlerts(days);
       if (result.success) {
         reply.send({ message: '已清除告警', deletedCount: result.deletedCount });
@@ -2431,15 +2436,15 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
     preHandler: [verifyToken, requirePermission('metric:manage')],
     handler: async (request, reply) => {
       try {
-        const body = request.body as any;
-        const result = await scoringConfigService.saveWeights(body);
+        const result = await scoringConfigService.saveWeights(request.body);
         if (result.success) {
           reply.send({ success: true });
         } else {
-          reply.code(400).send({ error: result.error });
+          reply.code(result.statusCode ?? 400).send({ error: result.error });
         }
-      } catch (error: any) {
-        reply.code(500).send({ error: error.message });
+      } catch (error) {
+        request.log.error({ err: error }, '保存评分权重失败');
+        reply.code(500).send({ error: '保存评分权重失败' });
       }
     },
   });
@@ -3194,14 +3199,14 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
           metric_name: data.metric_name,
           operator: data.operator,
           threshold: Number(data.threshold),
-          duration_seconds: Number(data.duration_seconds) || 60,
+          duration_seconds: data.duration_seconds,
           severity: data.severity,
           notification_channels: data.notification_channels,
           threshold_type: data.threshold_type,
           threshold_template: data.threshold_template,
           dynamic_config: data.dynamic_config,
           silence_minutes: data.silence_minutes,
-          db_types: data.db_types || (metricDef ? metricDef.db_types : null),
+          db_types: data.db_types === undefined ? (metricDef?.db_types ?? null) : data.db_types,
           instance_ids: instanceIds,
           template_id: data.template_id ?? null,
           target_type: data.target_type || 'instance',
@@ -3270,7 +3275,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
         if (data.metric_name !== undefined) updateData.metric_name = data.metric_name;
         if (data.operator !== undefined) updateData.operator = data.operator;
         if (data.threshold !== undefined) updateData.threshold = Number(data.threshold);
-        if (data.duration_seconds !== undefined) updateData.duration_seconds = Number(data.duration_seconds);
+        if (data.duration_seconds !== undefined) updateData.duration_seconds = data.duration_seconds;
         if (data.severity !== undefined) updateData.severity = data.severity;
         if (data.enabled !== undefined) updateData.enabled = data.enabled;
         if (data.notification_channels !== undefined) updateData.notification_channels = data.notification_channels;
@@ -3780,7 +3785,8 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
             if (!body.metric) {
               return reply.code(400).send({ error: '容量预测需要 metric 参数' });
             }
-            const horizon = body.horizon || '30d';
+            const { horizon = '30d' } = body;
+            assertPredictionHorizon(horizon);
             const predictResult = await capacityPredictor.predict(instance_id, body.metric, horizon);
             return reply.send({ success: true, result: predictResult });
           }
@@ -3797,7 +3803,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
           || (analysis_type in sessionKeyPrefix ? `${sessionKeyPrefix[analysis_type]}-${analysisId}` : undefined);
         reply.send({ id: analysisId, status: "pending", session_key });
       } catch (error: any) {
-        reply.code(500).send({ error: error.message });
+        reply.code(error instanceof PredictionHorizonError ? 400 : 500).send({ error: error.message });
       }
     }
   });
@@ -4250,15 +4256,12 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
           return reply.code(403).send({ error: '无权访问该实例' });
         }
 
-        const validHorizons = ['7d', '30d', '90d'];
-        if (!validHorizons.includes(horizon)) {
-          return reply.code(400).send({ error: `horizon 必须为 ${validHorizons.join('/')} 之一` });
-        }
+        assertPredictionHorizon(horizon);
 
         const result = await capacityPredictor.predict(Number(instance_id), metric, horizon);
         reply.send(result);
       } catch (error: any) {
-        reply.code(500).send({ error: error.message });
+        reply.code(error instanceof PredictionHorizonError ? 400 : 500).send({ error: error.message });
       }
     }
   });
@@ -4282,10 +4285,11 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
           return reply.code(403).send({ error: '无权访问该实例' });
         }
 
-        const results = await capacityPredictor.predictAll(Number(instance_id), horizon as '7d' | '30d' | '90d');
+        assertPredictionHorizon(horizon);
+        const results = await capacityPredictor.predictAll(Number(instance_id), horizon);
         reply.send(results);
       } catch (error: any) {
-        reply.code(500).send({ error: error.message });
+        reply.code(error instanceof PredictionHorizonError ? 400 : 500).send({ error: error.message });
       }
     }
   });
@@ -4648,96 +4652,9 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
     }
   });
 
-  // ========== 索引管理 API ==========
-
-  // 触发索引采集
-  fastify.post('/api/index/collect/:instanceId', {
-    preHandler: [verifyToken, requirePermission('index:manage'), requireInstanceAccess()],
-    handler: async (request, reply) => {
-      try {
-        const { instanceId } = request.params as any;
-        const result = await indexService.collectIndexes(Number(instanceId));
-        if ('error' in result) {
-          return reply.code(400).send({ success: false, error: result.error });
-        }
-        reply.send({ success: true, data: result });
-      } catch (error: any) {
-        reply.code(500).send({ error: error.message });
-      }
-    }
-  });
-
-  // 触发冗余检测
-  fastify.post('/api/index/detect/:instanceId', {
-    preHandler: [verifyToken, requirePermission('index:manage'), requireInstanceAccess()],
-    handler: async (request, reply) => {
-      try {
-        const { instanceId } = request.params as any;
-        const result = await indexService.detectRedundantIndexes(Number(instanceId));
-        if ('error' in result) {
-          return reply.code(400).send({ success: false, error: result.error });
-        }
-        reply.send(result);
-      } catch (error: any) {
-        reply.code(500).send({ error: error.message });
-      }
-    }
-  });
-
-  // 获取实例所有索引
-  fastify.get('/api/indexes/:instanceId', {
-    preHandler: [verifyToken, requirePermission('index:view'), requireInstanceAccess()],
-    handler: async (request, reply) => {
-      try {
-        const { instanceId } = request.params as any;
-        const indexes = await indexDatabaseService.getIndexesByInstance(Number(instanceId));
-        reply.send(indexes);
-      } catch (error: any) {
-        reply.code(500).send({ error: error.message });
-      }
-    }
-  });
-
-  // 获取冗余索引报告（必须在 :tableName 之前）
-  fastify.get('/api/indexes/:instanceId/redundancy', {
-    preHandler: [verifyToken, requirePermission('index:view'), requireInstanceAccess()],
-    handler: async (request, reply) => {
-      try {
-        const { instanceId } = request.params as any;
-        const report = await indexDatabaseService.getRedundancyReport(Number(instanceId));
-        reply.send(report);
-      } catch (error: any) {
-        reply.code(500).send({ error: error.message });
-      }
-    }
-  });
-
-  // 获取未使用索引列表（必须在 :tableName 之前）
-  fastify.get('/api/indexes/:instanceId/unused', {
-    preHandler: [verifyToken, requirePermission('index:view'), requireInstanceAccess()],
-    handler: async (request, reply) => {
-      try {
-        const { instanceId } = request.params as any;
-        const unused = await indexDatabaseService.getUnusedIndexes(Number(instanceId));
-        reply.send(unused);
-      } catch (error: any) {
-        reply.code(500).send({ error: error.message });
-      }
-    }
-  });
-
-  // 获取指定表的索引
-  fastify.get('/api/indexes/:instanceId/:tableName', {
-    preHandler: [verifyToken, requirePermission('index:view'), requireInstanceAccess()],
-    handler: async (request, reply) => {
-      try {
-        const { instanceId, tableName } = request.params as any;
-        const indexes = await indexDatabaseService.getIndexesByTable(Number(instanceId), tableName);
-        reply.send(indexes);
-      } catch (error: any) {
-        reply.code(500).send({ error: error.message });
-      }
-    }
+  registerIndexRoutes(fastify, {
+    manage: [verifyToken, requirePermission('index:manage'), requireInstanceAccess()],
+    view: [verifyToken, requirePermission('index:view'), requireInstanceAccess()],
   });
 
   // ========================================
@@ -4847,7 +4764,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
       }
       const result = await metricDatabaseService.updateMetric(id, body, targetType);
       if (!result.success) {
-        reply.code(400).send(result);
+        reply.code(result.reason === 'not_found' ? 404 : 400).send(result);
         return;
       }
       await metricRegistry.refreshFromDB();

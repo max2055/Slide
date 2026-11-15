@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { createServer, loadConfigFromFile, mergeConfig } from 'vite';
-import { chromium } from '@playwright/test';
+import { chromium, expect } from '@playwright/test';
 import { after, test } from 'node:test';
 import net from 'node:net';
 import path from 'node:path';
@@ -61,8 +61,8 @@ test('streaming page ignores source and evidence writes; dev config still reload
       assert.equal(await loads(streaming.page), '1');
       assert.equal(await fullReloads(streaming.page), 0);
     } finally {
-      await streaming.server.close();
       await streaming.page.context().close();
+      await streaming.server.close();
     }
 
     await writeFile(sourceFile, originalSource);
@@ -76,10 +76,12 @@ test('streaming page ignores source and evidence writes; dev config still reload
       assert.ok(ignored.some((item) => String(item).includes('test-results')));
       await waitForWatcher(dev.server);
       await writeFile(sourceFile, `${originalSource}// dev probe ${Date.now()}\n`);
-      assert.equal(await waitForLoads(dev.page, '2', 8000), '2');
+      // MAX-511 CI: a full reload destroys the context used by page.evaluate polling.
+      // Locator assertions follow navigation while still requiring exactly one reload.
+      await expect(dev.page.locator('html')).toHaveAttribute('data-loads', '2', { timeout: 8000 });
     } finally {
-      await dev.server.close();
       await dev.page.context().close();
+      await dev.server.close();
     }
   } finally {
     await browser.close();
@@ -136,17 +138,6 @@ function loads(page) {
 
 function fullReloads(page) {
   return page.evaluate(() => window.__fullReloads || 0);
-}
-
-async function waitForLoads(page, expected, timeoutMs) {
-  const started = Date.now();
-  let value;
-  while (Date.now() - started < timeoutMs) {
-    value = await loads(page);
-    if (value === expected) return value;
-    await delay(100);
-  }
-  return value;
 }
 
 function waitForWatcher(server) {
