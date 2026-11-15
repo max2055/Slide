@@ -197,8 +197,9 @@ class SchemaService {
       }
     }
 
-    if (allTables.length === 0 && errors.length > 0) {
-      throw new Error('所有数据库采集失败: ' + errors.join('; '));
+    if (errors.length > 0) {
+      // 不完整采集不得覆盖旧快照，否则后续差异会把失败库误判为删除。
+      throw new Error('数据库结构采集不完整，未保存快照: ' + errors.join('; '));
     }
 
     return allTables;
@@ -255,12 +256,12 @@ class SchemaService {
       LEFT JOIN pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum
       LEFT JOIN LATERAL (
         SELECT con.contype FROM pg_constraint con
-        WHERE con.conrelid = c.oid AND con.conkey[1] = a.attnum AND con.contype IN ('p', 'u')
+        WHERE con.conrelid = c.oid AND a.attnum = ANY(con.conkey) AND con.contype = 'p'
         LIMIT 1
       ) pk ON true
       LEFT JOIN LATERAL (
         SELECT con.contype FROM pg_constraint con
-        WHERE con.conrelid = c.oid AND con.conkey[1] = a.attnum AND con.contype = 'u'
+        WHERE con.conrelid = c.oid AND a.attnum = ANY(con.conkey) AND con.contype = 'u'
         LIMIT 1
       ) uk ON true
       WHERE n.nspname NOT IN ('pg_catalog', 'pg_toast', 'information_schema')
