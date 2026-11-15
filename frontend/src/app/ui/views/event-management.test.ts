@@ -126,3 +126,104 @@ describe('event interaction recovery', () => {
     expect(page.eventLogs).toEqual(['fresh log']);
   });
 });
+
+// MAX-572 / #430 / #659
+ describe('event failure recovery', () => {
+  afterEach(() => { vi.clearAllMocks(); localStorage.clear(); document.body.replaceChildren(); });
+  const response = (body: unknown, ok = true) => ({ ok, status: ok ? 200 : 503, json: async () => body }) as Response;
+  it('offers retry after loading fails and clears the old load error on success', async () => {
+    const page = new EventManagementPage() as any;
+    vi.mocked(authFetch).mockResolvedValue(response({}, false));
+    await page._loadEvents();
+    expect(page.loadError).toContain('503');
+    expect(page.render().values).toBeDefined();
+    vi.mocked(authFetch).mockResolvedValue(response({ items: [], total: 0 }));
+    await page._loadEvents();
+    expect(page.loadError).toBeNull();
+  });
+  it.each([{}, { analysisIds: [] }, { analysisIds: 'bad', sessionKeys: [] }, { analysisIds: [1], sessionKeys: [null] }, { success: false, analysisIds: [], sessionKeys: [] }])('discards invalid persisted RCA %j', async value => {
+    localStorage.setItem('event_rca_result', JSON.stringify({ ...value, eventId: 1 }));
+    const page = new EventManagementPage() as any;
+    page._loadEvents = async () => {};
+    document.body.append(page);
+    await page.updateComplete;
+    expect(page.rcaResult).toBeNull();
+    expect(localStorage.getItem('event_rca_result')).toBeNull();
+  });
+  it('rejects business failure without persisting and accepts valid results', async () => {
+    const page = new EventManagementPage() as any;
+    page.selectedEvent = { id: '1' };
+    vi.mocked(authFetch).mockResolvedValue(response({ success: false }));
+    await page._triggerRCA();
+    expect(page.rcaResult).toBeNull();
+    expect(page.error).toContain('根因分析失败');
+    expect(localStorage.getItem('event_rca_result')).toBeNull();
+    vi.mocked(authFetch).mockResolvedValue(response({ success: true, analysisIds: [7], sessionKeys: ['session-7'] }));
+    await page._triggerRCA();
+    expect(page.error).toBeNull();
+    expect(page.rcaResult.analysisIds).toEqual([7]);
+    expect(JSON.parse(localStorage.getItem('event_rca_result')!).sessionKeys).toEqual(['session-7']);
+  });
+});
+
+// Chief review MAX-572: queries must preserve the latest tab/page/refresh intent.
+describe('latest event list query', () => {
+  afterEach(() => { vi.resetAllMocks(); document.body.replaceChildren(); });
+  const response = (body: unknown, ok = true) => ({ ok, status: ok ? 200 : 503, json: async () => body }) as Response;
+  it.each(['tab', 'page', 'action'])('keeps latest %s result when older GET finishes last', async kind => {
+    const page = new EventManagementPage() as any;
+    const finish: Array<(r: Response) => void> = [];
+    vi.mocked(authFetch).mockImplementation(() => new Promise(resolve => finish.push(resolve)));
+    const old = page._loadEvents();
+    if (kind === 'tab') page.activeListTab = 'resolved';
+    if (kind === 'page') page.eventsPage = 1;
+    const write = vi.fn(async () => {});
+    const current = kind === 'action' ? page._action(write) : page._loadEvents();
+    await Promise.resolve();
+    const urls = vi.mocked(authFetch).mock.calls.map(call => String(call[0]));
+    expect(urls.filter(url => url.includes('events?'))).toHaveLength(2);
+    if (kind === 'tab') expect(urls[3]).toContain('status=resolved,closed');
+    if (kind === 'page') expect(urls[3]).toContain('offset=50');
+    finish[3](response({ items: [{ id: 'new' }], total: 1 }));
+    finish[4](response({ open: 1 })); finish[5](response({ value: 'new' }));
+    await current;
+    finish[0](response({ items: [{ id: 'old' }], total: 2 }));
+    finish[1](response({ open: 2 })); finish[2](response({ value: 'old' }));
+    await old;
+    expect(page.events).toEqual([{ id: 'new' }]);
+    expect(page.eventsTotal).toBe(1);
+    expect(page.stats).toEqual({ open: 1 });
+    expect(page.mttr).toEqual({ value: 'new' });
+    expect(page.retryLoading).toBe(false);
+    expect(write).toHaveBeenCalledTimes(kind === 'action' ? 1 : 0);
+  });
+  it('ignores an older failure while latest GET is pending', async () => {
+    const page = new EventManagementPage() as any;
+    const finish: Array<(r: Response) => void> = [];
+    vi.mocked(authFetch).mockImplementation(() => new Promise(resolve => finish.push(resolve)));
+    const old = page._loadEvents();
+    const current = page._loadEvents();
+    finish[0](response({}, false)); finish[1](response({})); finish[2](response({}));
+    await old;
+    expect(page.loadError).toBeNull();
+    expect(page.retryLoading).toBe(true);
+    finish[3](response({ items: [], total: 0 })); finish[4](response({})); finish[5](response({}));
+    await current;
+    expect(page.retryLoading).toBe(false);
+  });
+  it.each([{ items: [] }, { items: [{ id: '1', title: 'recovered', severity: 'warning', status: 'open' }] }])('renders healthy empty state only after successful retry %j', async ({ items }) => {
+    vi.mocked(authFetch).mockResolvedValue(response({}, false));
+    const page = new EventManagementPage() as any;
+    document.body.append(page);
+    await new Promise(resolve => setTimeout(resolve, 0));
+    await page.updateComplete;
+    expect(page.shadowRoot.textContent).toContain('重试加载');
+    expect(page.shadowRoot.textContent).not.toContain('系统运行正常');
+    expect(page.shadowRoot.textContent).not.toContain('暂无活跃事件');
+    vi.mocked(authFetch).mockResolvedValue(response({ items, total: items.length }));
+    await page._loadEvents(); await page.updateComplete;
+    expect(page.shadowRoot.textContent).not.toContain('加载失败:');
+    expect(page.shadowRoot.textContent.includes('系统运行正常')).toBe(items.length === 0);
+    if (items.length) expect(page.shadowRoot.textContent).toContain('recovered');
+  });
+});

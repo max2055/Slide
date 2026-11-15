@@ -79,12 +79,15 @@ jobs:
         run: pnpm audit --audit-level=high
 
   backend:
-    runs-on: ubuntu-latest
+    # Exercise supervisor lifecycle on the supported ARM64 target (MAX-572).
+    runs-on: ubuntu-24.04-arm
     needs: plan
     if: needs.plan.outputs.code == 'true'
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
+      - name: Verify native ARM64 runner
+        run: test "$(uname -m)" = aarch64
       - uses: pnpm/action-setup@v4
         with:
           version: 11.19.0

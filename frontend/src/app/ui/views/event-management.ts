@@ -440,6 +440,8 @@ export class EventManagementPage extends LitElement {
   @state() private eventLogs: EventLog[] = [];
   @state() private loading = true;
   @state() private error: string | null = null;
+  @state() private loadError: string | null = null;
+  @state() private retryLoading = false;
   @state() private activeListTab: 'active' | 'resolved' = 'active';
   @state() private filterSeverity = "all";
   @state() private filterSearch = "";
@@ -460,8 +462,21 @@ export class EventManagementPage extends LitElement {
     // Restore persisted RCA result
     try {
       const saved = localStorage.getItem('event_rca_result');
-      if (saved) this.rcaResult = JSON.parse(saved);
-    } catch {}
+      if (saved) {
+        const result = JSON.parse(saved);
+        if (this._validRCAResult(result)) this.rcaResult = result;
+        else localStorage.removeItem('event_rca_result');
+      }
+    } catch {
+      try { localStorage.removeItem('event_rca_result'); } catch {}
+    }
+  }
+
+  private _validRCAResult(value: any): value is NonNullable<typeof this.rcaResult> {
+    return value !== null && typeof value === 'object' && value.success !== false
+      && Number.isSafeInteger(value.eventId) && value.eventId > 0
+      && Array.isArray(value.analysisIds) && value.analysisIds.every((id: unknown) => typeof id === 'number' && Number.isSafeInteger(id) && id > 0)
+      && Array.isArray(value.sessionKeys) && value.sessionKeys.every((key: unknown) => typeof key === 'string' && key.trim().length > 0);
   }
 
   private _saveRCAResult() {
@@ -475,7 +490,11 @@ export class EventManagementPage extends LitElement {
     localStorage.removeItem('event_rca_result');
   }
 
+  private listRequest = 0;
+
   private async _loadEvents() {
+    const request = ++this.listRequest;
+    this.retryLoading = true;
     try {
       const offset = this.eventsPage * this.eventsPageSize;
       const statusFilter = this.activeListTab === 'active'
@@ -489,16 +508,21 @@ export class EventManagementPage extends LitElement {
       if (!eventsRes.ok) throw new Error(`Failed to load events: ${eventsRes.status}`);
       if (!statsRes.ok) throw new Error(`Failed to load stats: ${statsRes.status}`);
       const data = await eventsRes.json();
+      const stats = await statsRes.json();
+      const mttr = mttrRes.ok ? await mttrRes.json() : null;
+      if (request !== this.listRequest) return;
+      this.loadError = null;
       this.events = data.items ?? data;
       this.eventsTotal = data.total ?? 0;
-      this.stats = await statsRes.json();
-      if (mttrRes.ok) {
-        this.mttr = await mttrRes.json();
-      }
+      this.stats = stats;
+      this.mttr = mttr;
     } catch (e: any) {
-      this.error = e.message;
+      if (request === this.listRequest) this.loadError = e.message;
     } finally {
-      this.loading = false;
+      if (request === this.listRequest) {
+        this.loading = false;
+        this.retryLoading = false;
+      }
     }
   }
 
@@ -584,18 +608,22 @@ export class EventManagementPage extends LitElement {
   }
 
   private async _triggerRCA() {
+    if (this.rcaLoading) return;
     const eventId = this.selectedEvent?.id;
     if (!eventId) { this.error = "未选择事件"; return; }
     this.rcaLoading = true;
     this.rcaResult = null;
     this.error = null;
     try {
+      localStorage.removeItem('event_rca_result');
       const res = await authFetch(`${API_BASE}/alerts/events/${eventId}/rca`, {
         method: "POST",
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
-      this.rcaResult = { ...data, eventId: Number(eventId) };
+      const result = { ...data, eventId: Number(eventId) };
+      if (!this._validRCAResult(result)) throw new Error(data?.error || '根因分析失败，未返回有效分析结果');
+      this.rcaResult = result;
       this._saveRCAResult();
     } catch (e: any) {
       this.error = e.message;
@@ -756,6 +784,9 @@ export class EventManagementPage extends LitElement {
 
     return html`
       <div class="page">
+        ${this.loadError ? html`<div class="error" role="alert">加载失败: ${this.loadError}
+          <button class="btn btn-refresh" ?disabled=${this.retryLoading} @click=${this._loadEvents}>${this.retryLoading ? '重试中...' : '重试加载'}</button>
+        </div>` : nothing}
         ${this.error ? html`<div class="error" role="alert">操作失败: ${this.error}</div>` : nothing}
         <div class="page-top">
         <div class="header"></div>
@@ -803,7 +834,7 @@ export class EventManagementPage extends LitElement {
         </div>
 
         ${this.events.length === 0
-          ? html`
+          ? this.loadError || this.retryLoading ? nothing : html`
               <div class="empty-state">
                 <div class="empty-icon">${this.activeListTab === 'resolved' ? renderIcon('check-circle') : renderIcon('triangle-alert')}</div>
                 <div>${this.activeListTab === 'resolved' ? '没有已解决事件' : '暂无活跃事件'}</div>
