@@ -57,6 +57,8 @@ export class EventCenterPage extends LitElement {
     if (requested === "rules") { this.activeView = "aggregate"; return; }
     if (EVENT_VIEWS.some((view) => view.id === requested)) {
       this.activeView = requested as EventCenterView;
+    } else {
+      this.activeView = "active";
     }
   }
 

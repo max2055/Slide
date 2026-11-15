@@ -366,7 +366,7 @@ class AlertEventService {
     if (!pool) return { success: false, error: '数据库未连接' };
 
     try {
-      await this._logEvent(eventId, 'handled', userId, { note, user_id: userId });
+      await this._logEvent(eventId, 'note_added', userId, { note, user_id: userId });
       return { success: true };
     } catch (error: any) {
       return { success: false, error: error.message };
