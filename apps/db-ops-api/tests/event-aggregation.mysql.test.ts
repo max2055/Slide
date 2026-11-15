@@ -1,3 +1,8 @@
+import { randomBytes } from 'node:crypto';
+import { actorContextService, signAccessToken } from '../src/auth/actor-context.js';
+import { createVerifyToken } from '../src/auth-middleware.js';
+import { requirePermission } from '../src/auth/require-permission.js';
+import { requireUnrestrictedInstanceAccess } from '../src/auth/require-instance-access.js';
 import Fastify from 'fastify';
 import { transpileModule } from 'typescript';
 import mysql, { type Pool } from 'mysql2/promise';
@@ -47,19 +52,37 @@ describe.skipIf(!profilePath)('MAX-566 full-schema MySQL aggregation', () => {
     const source = readFileSync(new URL('../server.ts', import.meta.url), 'utf8');
     const start = source.indexOf("  fastify.post('/api/alerts/aggregate'");
     const routes = source.slice(start, source.indexOf('  const startWorkers', start));
-    // Real production route handler; auth guards are isolated stubs (not auth acceptance).
+    await pool.query("INSERT INTO users(id,username,password_hash) VALUES(566,'aggregate-operator','no-login')");
+    await pool.query("INSERT INTO roles(id,name) VALUES(566,'aggregate-test')");
+    await pool.query("INSERT INTO user_roles(user_id,role_id) VALUES(566,566)");
+    await pool.query("INSERT IGNORE INTO permissions(code,name,resource,action) VALUES('instance:*','fixture global instances','instance','*')");
+    await pool.query("INSERT INTO role_permissions(role_id,permission_id) SELECT 566,id FROM permissions WHERE code IN ('alert:manage','instance:*')");
+    const secret = randomBytes(32).toString('hex');
+    const token = signAccessToken((await actorContextService.loadActiveActor(566))!,secret);
     new Function('fastify','verifyToken','requirePermission','requireUnrestrictedInstanceAccess','eventAggregator',
-      transpileModule(routes, {}).outputText)(app, async () => {}, () => async () => {}, () => async () => {}, eventAggregator);
+      transpileModule(routes, {}).outputText)(app, createVerifyToken(secret), requirePermission, requireUnrestrictedInstanceAccess, eventAggregator);
     let results;
     try {
-      const [http, scheduled] = await Promise.all([app.inject({method:'POST',url:'/api/alerts/aggregate'}), eventAggregator.aggregate()]);
+      const [http, scheduled] = await Promise.all([app.inject({method:'POST',url:'/api/alerts/aggregate',headers:{authorization:`Bearer ${token}`}}), eventAggregator.aggregate()]);
       expect(http.statusCode).toBe(200);
       results = [http.json(), scheduled];
+      expect((await app.inject({method:'POST',url:'/api/alerts/aggregate'})).statusCode).toBe(401);
+      await pool.query('DELETE FROM role_permissions WHERE role_id=566');
+      expect((await app.inject({method:'POST',url:'/api/alerts/aggregate',headers:{authorization:`Bearer ${token}`}})).statusCode).toBe(403);
     } finally { await app.close(); }
     expect(results.reduce((n,r) => n+r.eventsCreated,0)).toBe(1);
     expect(results.reduce((n,r) => n+r.alertsAggregated,0)).toBe(2);
     expect(await counts()).toEqual({events:1,members:2,logs:1});
     expect(await eventAggregator.aggregate()).toEqual({eventsCreated:0,alertsAggregated:0});
+  });
+  it('MAX-566 counts only the first committed group when the second log fails', async () => {
+    await pool.query("INSERT INTO alerts(instance_id,alert_type,metric_name,level,title,message) VALUES (1,'performance','disk','warning','next','next'),(1,'performance','disk','warning','next','next')");
+    await pool.query(`CREATE TRIGGER fail_log BEFORE INSERT ON alert_event_logs FOR EACH ROW BEGIN
+      IF EXISTS(SELECT 1 FROM alert_event_members m JOIN alerts a ON a.id=m.alert_id WHERE m.event_id=NEW.event_id AND a.metric_name='disk') THEN
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='injected';
+      END IF; END`);
+    expect(await eventAggregator.aggregate()).toEqual({eventsCreated:1,alertsAggregated:2});
+    expect(await counts()).toEqual({events:1,members:2,logs:1});
   });
   it('supports pool size one without nested acquisition', async () => {
     state.pool = smallPool;

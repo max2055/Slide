@@ -119,6 +119,25 @@ describe('event-aggregator.ts', () => {
     });
   }
 
+  for (const rollbackFails of [false, true]) {
+    it(`MAX-566 retains committed group counts when next group fails (rollback failure=${rollbackFails})`, async () => {
+      let inserted = 0;
+      mockPool.execute.mockImplementation(async (sql: string) => {
+        if (sql.includes('SELECT e.id')) return [[]];
+        if (sql.includes('SELECT a.id')) return [[alert(10,2),alert(11,1),
+          {...alert(12,2),metric_name:'disk'}, {...alert(13,1),metric_name:'disk'}]];
+        if (sql.includes('INSERT INTO alert_events') && ++inserted === 2) throw new Error('write failure');
+        return [{insertId:77}];
+      });
+      if (rollbackFails) mockPool.rollback.mockRejectedValueOnce(new Error('connection lost'));
+      const { eventAggregator } = await import('../src/event-aggregator');
+      expect(await eventAggregator.aggregate()).toEqual({eventsCreated:1,alertsAggregated:2});
+      expect(mockPool.commit).toHaveBeenCalledOnce();
+      expect(mockPool.rollback).toHaveBeenCalledOnce();
+      if (rollbackFails) expect(mockPool.destroy).toHaveBeenCalled();
+    });
+  }
+
   it('getPendingAggregation returns list of pending alerts', async () => {
     mockPool.execute.mockResolvedValueOnce([[]]);
     const { eventAggregator } = await import('../src/event-aggregator');

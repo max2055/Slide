@@ -36,6 +36,8 @@ class EventAggregator {
 
     let connection: mysql.PoolConnection | undefined;
     let locked = false;
+    let eventsCreated = 0;
+    let alertsAggregated = 0;
     try {
       connection = await pool.getConnection();
       // All automatic aggregation entry points share this database-scoped lock.
@@ -191,8 +193,7 @@ class EventAggregator {
       }
 
       // Phase 4: 处理分组 —— 吸收到已有事件或创建新事件
-      let eventsCreated = 0;
-      let alertsAggregated = 0;
+
 
       for (const group of groupsToProcess) {
         try {
@@ -269,7 +270,13 @@ class EventAggregator {
           if (isNewEvent) eventsCreated++;
           alertsAggregated += group.alert_ids.length;
         } catch (error) {
-          await connection.rollback();
+          try { await connection.rollback(); }
+          catch {
+            connection.destroy();
+            connection = undefined;
+            // Stop using an unknown transaction; never replay its writes.
+            break;
+          }
           assertWorkflowActive();
           console.error(`聚合事件失败 [实例 ${group.instance_id}] (${(error as { code?: string }).code ?? 'UNKNOWN'})`);
         }
@@ -279,7 +286,7 @@ class EventAggregator {
     } catch (error) {
       assertWorkflowActive();
       console.error(`事件聚合失败 (${(error as { code?: string }).code ?? 'UNKNOWN'})`);
-      return { eventsCreated: 0, alertsAggregated: 0 };
+      return { eventsCreated, alertsAggregated };
     } finally {
       if (connection) {
         try {
