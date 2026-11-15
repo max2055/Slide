@@ -24,7 +24,7 @@ interface AwrReportArgs {
 
 export const oracleAwrReportTool: AnyAgentTool = {
   name: 'slide_oracle_awr_report',
-  description: '获取 Oracle AWR (Automatic Workload Repository) 自动工作负载报告，需要 Oracle Enterprise Edition + Diagnostics Pack 许可证。可以通过 V$ACTIVE_SESSION_HISTORY 查询快照 ID',
+  description: '获取 Oracle AWR (Automatic Workload Repository) 自动工作负载报告，需要 Oracle Enterprise Edition + Diagnostics Pack 许可证。可以通过 DBA_HIST_SNAPSHOT 查询快照 ID',
   parameters: {
     type: 'object',
     properties: {
@@ -96,8 +96,8 @@ export const oracleAwrReportTool: AnyAgentTool = {
         `SELECT * FROM TABLE(DBMS_WORKLOAD_REPOSITORY.AWR_REPORT_HTML(
           l_dbid => :dbid,
           l_inst_num => 1,
-          l_bnstime => :begin,
-          l_instime => :end
+          l_bid => :begin,
+          l_eid => :end
         ))`,
         { dbid, begin: typedArgs.begin_snap_id, end: typedArgs.end_snap_id }
       );
@@ -140,7 +140,7 @@ export const oracleAwrReportTool: AnyAgentTool = {
     } catch (error: unknown) {
       const errMsg = error instanceof Error ? error.message : String(error);
       // Diagnostics Pack 许可证检查
-      if (errMsg.includes('ORA-00942') || errMsg.includes('DBMS_WORKLOAD_REPOSITORY') || errMsg.includes('insufficient privileges')) {
+      if (errMsg.includes('ORA-00942') || errMsg.includes('ORA-01031') || errMsg.includes('insufficient privileges')) {
         return {
           success: false,
           status: 'error',

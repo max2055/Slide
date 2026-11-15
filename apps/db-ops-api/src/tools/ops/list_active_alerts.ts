@@ -6,7 +6,7 @@
 import type { AnyAgentTool } from '../types.js';
 import { toolCatalog } from '../catalog.js';
 import { alertDatabaseService } from '../../alert-database-service.js';
-import { hasInstanceAccess } from '../../auth/require-instance-access.js';
+import { getAccessibleInstanceIds, hasInstanceAccess } from '../../auth/require-instance-access.js';
 
 
 export const listActiveAlertsTool: AnyAgentTool = {
@@ -60,10 +60,13 @@ export const listActiveAlertsTool: AnyAgentTool = {
         return { success: false, status: 'error', error: 'limit 必须为 1-100 的整数', errorCode: 'INVALID_ARGUMENTS' };
       }
 
-      // 获取告警列表（alertDatabaseService.getAlerts 支持 level/limit 过滤）
+      // 在 LIMIT 前应用当前权限与任务边界的交集；只查询绑定数据库实例的告警。
       const result = await alertDatabaseService.getAlerts({
+        allowed_instance_ids: getAccessibleInstanceIds(context.actor),
+        instance_only: true,
         level: severity,
         limit,
+        strict: true,
       });
       const alerts = Array.isArray(result) ? result : result?.items;
       if (!Array.isArray(alerts)) throw new Error('ALERTS_UNAVAILABLE');

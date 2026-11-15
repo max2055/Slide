@@ -136,3 +136,34 @@ describe('MetricsDatabaseService.getHistoricalMetrics', () => {
     expect(execute.mock.calls[0][0]).toMatch(/ORDER BY recorded_at DESC, id DESC\s+LIMIT 1000[\s\S]*ORDER BY recorded_at ASC, id ASC/);
   });
 });
+
+describe('MAX-536 MetricsDatabaseService.getSlowQueryById', () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it('scopes the parameterized primary-key lookup to the requested instance and normalizes decimals', async () => {
+    const row = { id: 101, instance_id: 7, sql_text: 'SELECT 1', avg_time_ms: '1.25', max_time_ms: null, min_time_ms: '0.00', total_time_ms: '2.50' };
+    const execute = vi.fn().mockResolvedValue([[row], []]);
+    vi.spyOn(dbConnection, 'getPool').mockReturnValue({ execute } as any);
+    await expect(metricsDatabaseService.getSlowQueryById(7, 101)).resolves.toMatchObject({
+      id: 101, instance_id: 7, avg_time_ms: 1.25, max_time_ms: null, min_time_ms: 0, total_time_ms: 2.5,
+    });
+    expect(execute.mock.calls[0][0]).toMatch(/WHERE instance_id = \? AND id = \?/);
+    expect(execute.mock.calls[0][1]).toEqual([7, 101]);
+  });
+
+  it('returns null only for a successful empty read', async () => {
+    vi.spyOn(dbConnection, 'getPool').mockReturnValue({ execute: vi.fn().mockResolvedValue([[], []]) } as any);
+    await expect(metricsDatabaseService.getSlowQueryById(7, 101)).resolves.toBeNull();
+  });
+
+  it('keeps storage unavailability distinct from absence', async () => {
+    vi.spyOn(dbConnection, 'getPool').mockReturnValue(null);
+    await expect(metricsDatabaseService.getSlowQueryById(7, 101)).rejects.toThrow('SLOW_QUERIES_UNAVAILABLE');
+  });
+
+  it('preserves the query failure cause without exposing backend details in the message', async () => {
+    const cause = new Error('backend details');
+    vi.spyOn(dbConnection, 'getPool').mockReturnValue({ execute: vi.fn().mockRejectedValue(cause) } as any);
+    await expect(metricsDatabaseService.getSlowQueryById(7, 101)).rejects.toMatchObject({ message: 'SLOW_QUERIES_QUERY_FAILED', cause });
+  });
+});

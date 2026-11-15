@@ -1,4 +1,6 @@
+import { NotificationDispatchReconciler } from '../workflows/notification-dispatch.js';
 import { excludeActionJobs } from '../operations/actions/worker.js';
+import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { runInNewContext } from 'node:vm';
 import ts from 'typescript';
@@ -43,7 +45,7 @@ async function startWorkers(pool: Pick<Pool, 'execute'>) {
     },
     resumeAgentEngine: vi.fn(), stopWorkersPromise: undefined, stopWorkflow: undefined, metricLifecycle: undefined, cronManager: undefined, engine: undefined,
     initializeLeaderConnections: vi.fn(), startSessionCleanup: vi.fn(),
-    startup: { assertOwned: vi.fn(async () => {}), step: async (operation: () => Promise<unknown>) => operation() },
+    startup: { signal: new AbortController().signal, assertOwned: vi.fn(async () => {}), step: async (operation: () => Promise<unknown>) => operation() },
     process: { env: { PROMPT_HOT_RELOAD: 'false' } }, promptManager: { startWatch: vi.fn() },
     getAgentEngine: vi.fn(async () => service),
     createMetricSchedulerLifecycle: () => service, assertMetricSchedulerSchema: vi.fn(),
@@ -57,7 +59,7 @@ async function startWorkers(pool: Pick<Pool, 'execute'>) {
     apiInitialized: true, systemComposition: { enabled: false, toolsForInvestigation: vi.fn() },
     registerAnalysisDispatchHandler: vi.fn(), registerAnalysisRecoveryHandler: vi.fn(),
     authorizeAnalysisRequest: vi.fn(), analysisConfigurationVersion: vi.fn(), createAnalysisRecoveryJob: vi.fn(),
-    workflowConcurrency: () => 3, excludeActionJobs,
+    workflowConcurrency: () => 3, excludeActionJobs, NotificationDispatchReconciler,
     setInterval: vi.fn(), clearInterval: vi.fn(),
   };
   for (const name of ['metricRegistry', 'notificationDatabaseService', 'notificationService',
@@ -86,14 +88,17 @@ describe('metric quality at worker startup', () => {
 
 // Explicit opt-in uses only a dedicated disposable localhost MySQL, no .env.
 const port = Number(process.env.METRIC_QUALITY_TEST_MYSQL_PORT);
-describe.skipIf(!port)('metric quality startup with isolated MySQL', () => {
+const mysqlConfig = process.env.METRIC_QUALITY_TEST_MYSQL;
+describe.skipIf(!port && !mysqlConfig)('metric quality startup with isolated MySQL', () => {
   let admin: Pool;
   let pool: Pool;
-  const database = `metric_quality_${process.pid}`;
+  const database = `metric_quality_${process.pid}_${randomUUID().slice(0, 8)}`;
   beforeAll(async () => {
-    admin = mysql.createPool({ host: '127.0.0.1', port, user: 'root', password: '' });
+    const connection = mysqlConfig ? JSON.parse(mysqlConfig) : { host: '127.0.0.1', port, user: 'root', password: '' };
+    if (connection.database) throw new Error('INJECT_SERVER_CONFIG_WITHOUT_DATABASE');
+    admin = mysql.createPool(connection);
     await admin.query(`CREATE DATABASE ${database}`);
-    pool = mysql.createPool({ host: '127.0.0.1', port, user: 'root', password: '', database });
+    pool = mysql.createPool({ ...connection, database });
     const baseline = readFileSync(new URL('../../sql/migrations/000_schema_baseline.sql', import.meta.url), 'utf8');
     const metricsTable = splitSqlStatements(baseline).find(sql => /CREATE TABLE IF NOT EXISTS `metrics_history`/.test(sql));
     if (!metricsTable) throw new Error('metrics_history baseline not found');
@@ -105,6 +110,7 @@ describe.skipIf(!port)('metric quality startup with isolated MySQL', () => {
     await pool?.end();
     if (admin) {
       await admin.query(`DROP DATABASE IF EXISTS ${database}`);
+      console.info('METRIC_QUALITY_CLEANUP', { schema: database, dropped: true });
       await admin.end();
     }
   });
