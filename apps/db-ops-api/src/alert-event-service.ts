@@ -736,11 +736,11 @@ class AlertEventService {
       const [rows] = await pool.execute(
         `SELECT
           COUNT(*) AS total,
-          SUM(CASE WHEN status = 'open' THEN 1 ELSE 0 END) AS open,
-          SUM(CASE WHEN status = 'investigating' THEN 1 ELSE 0 END) AS investigating,
-          SUM(CASE WHEN status = 'handled' THEN 1 ELSE 0 END) AS handled,
-          SUM(CASE WHEN status = 'resolved' THEN 1 ELSE 0 END) AS resolved,
-          SUM(CASE WHEN status = 'closed' THEN 1 ELSE 0 END) AS closed
+          COUNT(CASE WHEN status = 'open' THEN 1 END) AS open,
+          COUNT(CASE WHEN status = 'investigating' THEN 1 END) AS investigating,
+          COUNT(CASE WHEN status = 'handled' THEN 1 END) AS handled,
+          COUNT(CASE WHEN status = 'resolved' THEN 1 END) AS resolved,
+          COUNT(CASE WHEN status = 'closed' THEN 1 END) AS closed
          FROM alert_events
          WHERE 1 = 1 ${scope.sql}`,
         scope.params,
