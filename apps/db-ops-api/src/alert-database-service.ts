@@ -174,6 +174,8 @@ class AlertDatabaseService {
    */
   async getAlerts(options?: {
     instance_id?: number;
+    /** Only alerts bound to database instances, excluding global/server/network rows. */
+    instance_only?: boolean;
     allowed_instance_ids?: readonly number[] | null;
     /** Target-specific scopes: null is unrestricted, [] denies that target class. */
     allowed_server_ids?: readonly number[] | null;
@@ -198,6 +200,10 @@ class AlertDatabaseService {
       const buildWhere = (includeStatusAndLevel = true, includeLevel = true): { clause: string; params: any[] } => {
         const whereParts: string[] = [];
         const whereParams: any[] = [];
+
+        if (options?.instance_only) {
+          whereParts.push("(a.target_type = 'instance' OR a.target_type IS NULL) AND a.instance_id IS NOT NULL AND a.server_id IS NULL AND a.network_device_id IS NULL");
+        }
 
         if (options?.instance_id !== undefined) {
           whereParts.push('a.instance_id = ?');
@@ -514,13 +520,16 @@ class AlertDatabaseService {
    * 清除告警（默认保留最近 30 天）
    */
   async clearAllAlerts(retentionDays: number = 30): Promise<{ success: boolean; error?: string; deletedCount?: number }> {
+    if (!Number.isSafeInteger(retentionDays) || retentionDays < 0) {
+      return { success: false, error: 'retentionDays 必须为非负整数' };
+    }
     const pool = this.getPool();
     if (!pool) {
       return { success: false, error: '数据库未连接' };
     }
 
     try {
-      if (retentionDays <= 0) {
+      if (retentionDays === 0) {
         // 显式传 0 才允许清除所有（需确认操作）
         const [rows] = await pool.execute('SELECT COUNT(*) as count FROM alerts WHERE NOT (source <=> \"template-trigger\")') as any;
         const total = rows[0]?.count || 0;
@@ -647,35 +656,35 @@ class AlertDatabaseService {
     dimensions?: Record<string, string>,
   ): Promise<Alert | null> {
     const pool = this.getPool();
-    if (!pool) return null;
+    if (!pool) throw new Error('RESOURCE_STORE_UNAVAILABLE');
     try {
       const [rows] = await pool.query<mysql.RowDataPacket[]>(
         `SELECT * FROM alerts
          WHERE network_device_id = ? AND target_type = 'network_device' AND metric_name = ?
          AND JSON_EXTRACT(tags, '$.rule_id') = CAST(? AS JSON)
          AND status IN ('unread', 'read', 'acknowledged')
-         ORDER BY created_at DESC LIMIT 100`,
+         ORDER BY created_at DESC, id DESC`,
         [networkDeviceId, metricName, ruleId],
       );
-      const canonical = dimensions ? JSON.stringify(Object.fromEntries(Object.entries(dimensions).sort(([a], [b]) => a.localeCompare(b)))) : undefined;
+      const canonical = dimensionKey(dimensions);
       for (const row of rows) {
         const tags = row.tags ? (typeof row.tags === 'string' ? JSON.parse(row.tags) : row.tags) : {};
-        const rowDimensions = tags?.dimensions ? JSON.stringify(Object.fromEntries(Object.entries(tags.dimensions).sort(([a], [b]) => a.localeCompare(b)))) : undefined;
+        const rowDimensions = dimensionKey(tags?.dimensions);
         if (canonical === rowDimensions) return this._rowToAlert(row);
       }
       return null;
     } catch (error) {
       console.error('查找网络设备活跃告警失败:', error);
-      return null;
+      throw error;
     }
   }
 
   /**
    * 更新已有告警的指标值和更新时间（去重 touch）
    */
-  async touchAlert(alertId: number, metricValue: number, observation?: { tags: Record<string, unknown>; message: string; thresholdValue?: string }): Promise<void> {
+  async touchAlert(alertId: number, metricValue: number, observation?: { tags: Record<string, unknown>; message: string; thresholdValue?: string }, strict = false): Promise<void> {
     const pool = this.getPool();
-    if (!pool) return;
+    if (!pool) { if (strict) throw new Error('RESOURCE_STORE_UNAVAILABLE'); return; }
 
     try {
       if (observation) await pool.execute(
@@ -689,6 +698,7 @@ class AlertDatabaseService {
         [metricValue, alertId]
       );
     } catch (error) {
+      if (strict) throw error;
       console.error('更新告警指标值失败:', error);
     }
   }
@@ -696,9 +706,9 @@ class AlertDatabaseService {
   /**
    * 获取所有未解决的告警
    */
-  async getActiveAlerts(): Promise<Alert[]> {
+  async getActiveAlerts(strict = false): Promise<Alert[]> {
     const pool = this.getPool();
-    if (!pool) return [];
+    if (!pool) { if (strict) throw new Error('RESOURCE_STORE_UNAVAILABLE'); return []; }
 
     try {
       const [rows] = await pool.query<mysql.RowDataPacket[]>(
@@ -706,6 +716,7 @@ class AlertDatabaseService {
       );
       return rows.map(r => this._rowToAlert(r));
     } catch (error) {
+      if (strict) throw error;
       console.error('获取活跃告警失败:', error);
       return [];
     }
@@ -757,9 +768,10 @@ class AlertDatabaseService {
   /**
    * 获取告警规则列表
    */
-  async getAlertRules(enabled?: boolean): Promise<AlertRule[]> {
+  async getAlertRules(enabled?: boolean, strict = false): Promise<AlertRule[]> {
     const pool = this.getPool();
     if (!pool) {
+      if (strict) throw new Error('RESOURCE_STORE_UNAVAILABLE');
       return [];
     }
 
@@ -788,6 +800,7 @@ class AlertDatabaseService {
         enabled: Boolean(row.enabled),
       })) as AlertRule[];
     } catch (error) {
+      if (strict) throw error;
       console.error('获取告警规则失败:', error);
       return [];
     }
@@ -818,6 +831,10 @@ class AlertDatabaseService {
     network_device_id?: number;
     created_by?: number;
   }): Promise<{ success: boolean; ruleId?: number; error?: string }> {
+    if (data.duration_seconds !== undefined && (!Number.isInteger(data.duration_seconds)
+      || data.duration_seconds === null || data.duration_seconds < 0 || data.duration_seconds > 2147483647)) {
+      return { success: false, error: '持续秒数必须为 0–2147483647 的整数；不能为 null' };
+    }
     if ((data.threshold_type !== undefined && data.threshold_type !== 'static' && data.threshold_type !== 'dynamic')
       || (data.silence_minutes !== undefined && (!Number.isInteger(data.silence_minutes) || data.silence_minutes === null || data.silence_minutes < 0 || data.silence_minutes > 2147483647))) {
       return { success: false, error: '阈值类型必须为 static/dynamic，静默分钟必须为 0–2147483647 的整数；不能为 null' };
@@ -845,7 +862,7 @@ class AlertDatabaseService {
           data.threshold_type || 'static',
           data.dynamic_config ? JSON.stringify(data.dynamic_config) : null,
           data.silence_minutes ?? 5,
-          data.duration_seconds || 60,
+          data.duration_seconds ?? 60,
           data.severity,
           data.notification_channels ? JSON.stringify(data.notification_channels) : null,
           data.db_types ? JSON.stringify(data.db_types) : null,
@@ -893,6 +910,10 @@ class AlertDatabaseService {
       network_device_id?: number | null;
     }
   ): Promise<{ success: boolean; error?: string }> {
+    if (data.duration_seconds !== undefined && (!Number.isInteger(data.duration_seconds)
+      || data.duration_seconds === null || data.duration_seconds < 0 || data.duration_seconds > 2147483647)) {
+      return { success: false, error: '持续秒数必须为 0–2147483647 的整数；不能为 null' };
+    }
     if ((data.threshold_type !== undefined && data.threshold_type !== 'static' && data.threshold_type !== 'dynamic')
       || (data.silence_minutes !== undefined && (!Number.isInteger(data.silence_minutes) || data.silence_minutes === null || data.silence_minutes < 0 || data.silence_minutes > 2147483647))) {
       return { success: false, error: '阈值类型必须为 static/dynamic，静默分钟必须为 0–2147483647 的整数；不能为 null' };

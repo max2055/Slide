@@ -13,6 +13,7 @@
  *   - 通过 PROMPT_VERSION 环境变量切换版本（export PROMPT_VERSION=1）
  *   - 通过 PROMPT_AB_TEST=true 启用 A/B 测试（v1/v2 随机各 50%）
  */
+import type { SqlAuditAdmission } from './analysis/analysis-dispatch-store.js';
 import type { ActorContext } from './auth/actor-context.js';
 import type { PoolConnection } from 'mysql2/promise';
 import { analysisDispatchStore } from './analysis/analysis-runtime.js';
@@ -34,6 +35,7 @@ const DEFAULT_TTL: Record<string, number> = {
 
 interface DispatchOrReuseBaseParams {
   evidenceData?: unknown;
+  sqlAuditRecord?: SqlAuditAdmission;
   cacheKey: string; instanceId?: number; serverId?: number; networkDeviceId?: number;
   sessionKey: string; userMessage: string; systemPrompt?: string;
   triggerType?: 'manual' | 'auto'; onCacheHit?: (result: any) => void;
@@ -51,7 +53,7 @@ export type DispatchOrReuseParams =
       diagnosticContext: InstanceDiagnosticContext;
     })
   | (DispatchOrReuseBaseParams & {
-      type: 'alert_rca' | 'topsql_analysis' | 'sql_approval';
+      type: 'alert_rca' | 'topsql_analysis' | 'sql_approval' | 'sql_audit';
       diagnosticContext?: never;
     })
   | (DispatchOrReuseBaseParams & {
@@ -103,7 +105,7 @@ export async function dispatchOrReuse(
   const accepted = await analysisDispatchStore.enqueue({
     analysisType: params.type === 'resource_diagnosis' ? 'fault_diagnosis' : params.type,
     cacheKey: params.cacheKey, triggerType: params.triggerType ?? 'manual',
-    existingAnalysisId: params.existingAnalysisId, retryOf: params.retryOf, relatedId: params.relatedId,
+    sqlAuditRecord: params.sqlAuditRecord, existingAnalysisId: params.existingAnalysisId, retryOf: params.retryOf, relatedId: params.relatedId,
     ttlMs: params.reuseCompleted !== false && Number.isFinite(ttl) ? ttl : 0,
     request: {
       purpose: params.type,

@@ -384,14 +384,15 @@ export class NotificationService {
   /**
    * 发送通知
    */
-  async send(channel: NotificationChannel, message: any, signal?: AbortSignal, businessKey?: string, retryDeadline?: number): Promise<{ success: boolean; error?: string }> {
+  async send(channel: NotificationChannel, message: any, signal?: AbortSignal, businessKey?: string, retryDeadline?: number, onTransportStart?: () => void): Promise<{ success: boolean; error?: string }> {
     signal?.throwIfAborted();
     if (channel.type === 'email') {
       if (!this.isValidEmailConfiguration(channel.config)) {
         return { success: false, error: 'EMAIL_CONFIGURATION_INVALID' };
       }
       try {
-        if (businessKey) await this.sendEmail(channel.config, message, channel.id, signal, businessKey);
+        if (onTransportStart) await this.sendEmail(channel.config, message, channel.id, signal, businessKey, onTransportStart);
+        else if (businessKey) await this.sendEmail(channel.config, message, channel.id, signal, businessKey);
         else await this.sendEmail(channel.config, message, channel.id, ...(signal ? [signal] : []));
         signal?.throwIfAborted();
         return { success: true };
@@ -416,7 +417,9 @@ export class NotificationService {
         : message;
       if (retryDeadline !== undefined && Date.now() >= retryDeadline) throw new Error('DELIVERY_RETENTION_EXPIRED');
       const stableKey = channel.type === 'webhook' && channel.config.idempotency_contract === 'receiver-deduplicates' ? businessKey : undefined;
-      const response = stableKey
+      const response = onTransportStart
+        ? await this.postJsonToVerifiedTarget(url, target.addresses, payload, signal, stableKey, onTransportStart)
+        : stableKey
         ? await this.postJsonToVerifiedTarget(url, target.addresses, payload, signal, stableKey)
         : await this.postJsonToVerifiedTarget(url, target.addresses, payload, ...(signal ? [signal] : []));
 
@@ -457,6 +460,7 @@ export class NotificationService {
     channelId?: number,
     signal?: AbortSignal,
     businessKey?: string,
+    onTransportStart?: () => void,
   ): Promise<void> {
     signal?.throwIfAborted();
     const port = Number(config.smtp_port);
@@ -490,13 +494,16 @@ export class NotificationService {
     });
     try {
       signal?.throwIfAborted();
-      await transport.sendMail({
+      const mail = {
         ...(businessKey ? { messageId: `<${crypto.createHash('sha256').update(businessKey).digest('hex')}@slide.local>` } : {}),
         from: config.from!,
         to: config.to!,
         subject: message.subject || '数据库运维助手通知',
         text: message.text || '',
-      });
+      };
+      signal?.throwIfAborted();
+      onTransportStart?.();
+      await transport.sendMail(mail);
     } finally {
       transport.close();
     }
@@ -515,20 +522,23 @@ export class NotificationService {
   }
 
   /** Pin requests to validated DNS results while retaining TLS hostname verification. */
-  private postJsonToVerifiedTarget(urlText: string, addresses: string[], message: unknown, signal?: AbortSignal, businessKey?: string): Promise<{ statusCode: number; body: string }> {
+  private postJsonToVerifiedTarget(urlText: string, addresses: string[], message: unknown, signal?: AbortSignal, businessKey?: string, onTransportStart?: () => void): Promise<{ statusCode: number; body: string }> {
     signal?.throwIfAborted();
     const url = new URL(urlText);
     const payload = JSON.stringify(message);
     const address = addresses[0];
     return new Promise((resolve, reject) => {
-      const request = https.request({
+      const options = {
         signal,
         protocol: 'https:', hostname: url.hostname, port: 443,
         path: `${url.pathname}${url.search}`, method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload), ...(businessKey ? { 'Idempotency-Key': businessKey } : {}) },
         servername: url.hostname, rejectUnauthorized: true,
         lookup: createPinnedLookup(address),
-      }, (response) => {
+      };
+      signal?.throwIfAborted();
+      onTransportStart?.();
+      const request = https.request(options, (response) => {
         let body = '';
         response.setEncoding('utf8');
         response.on('data', (chunk) => { body += chunk; });

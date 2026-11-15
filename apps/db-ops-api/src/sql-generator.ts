@@ -83,8 +83,19 @@ SQL 示例：
 export function extractSqlFromResponse(response: string): string | null {
   if (!response || !response.trim()) return null;
 
-  // Strip markdown code blocks if present
-  const codeBlockMatch = response.match(/```(?:sql)?\s*([\s\S]*?)```/);
-  const sql = codeBlockMatch ? codeBlockMatch[1].trim() : response.trim();
-  return sql || null;
+  // Ambiguous replies must not silently choose one of several alternatives.
+  const fenceCount = (response.match(/```/g) || []).length;
+  if (fenceCount !== 0 && fenceCount !== 2) return null;
+  const blocks = [...response.matchAll(/```([^\n\r`]*)(?:\r?\n)([\s\S]*?)```/g)];
+  if (blocks.length > 1) return null;
+  if (blocks.length === 1) {
+    const [, language, body] = blocks[0];
+    if (language.trim() && !/^sql$/i.test(language.trim())) return null;
+    return body.trim() || null;
+  }
+  // Preserve inline unlabelled fences and reject incomplete/unknown fences.
+  const inline = response.match(/^```(?:sql\s+)?([\s\S]*?)```$/i);
+  if (inline) return inline[1].trim() || null;
+  if (response.includes('```')) return null;
+  return response.trim() || null;
 }

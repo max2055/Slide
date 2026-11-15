@@ -257,13 +257,32 @@ await pipeline.run({ scope, boundary: input.id, completed: true, messages: [{...
   expect(result?.state).toBe('failed'); expect(result?.attempts).toBe(1); expect(result?.reservedTokens).toBe(before.reservedTokens);
   expect((await store.transaction(s => s.jobs[0])).owner).toBeUndefined(); expect(await p.list(scope)).toEqual([]);
 });
+// MAX-563 / PR #958 CI: advance the deadline only after provider admission.
 it('late output after deadline is fenced from memory, settled and drained', async () => {
+  vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
+  let entered!: () => void;
   let release!: () => void;
-  const e: MemoryExtractor = { extract: async inputs => { await new Promise<void>(r => { release = r; }); return { candidates: inputs.map(i => candidate(i)), usage: { input_tokens: 25, output_tokens: 5, cached_input_tokens: 10 }, requestId: 'late_req' }; } };
-  const p = make(e, true, { deadlineMs: 50 }); const result = await p.run(snapshot(source('I prefer blue.')));
-  expect(result?.state).toBe('timed_out'); expect(result?.reservedTokens).toBeGreaterThan(0); expect(await p.list(scope)).toEqual([]);
-  release(); await p.close(); const job = await store.transaction(s => s.jobs[0]); expect(job.state).toBe('timed_out'); expect(job.reservedTokens).toBe(0); expect(job.requests[0].requestId).toBe('late_req');
-  expect((await store.transaction(s => s.budgets[scopeKey(scope)])).tokens).toBe(30); expect(await p.list(scope)).toEqual([]);
+  const ready = new Promise<void>(resolve => { entered = resolve; });
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  const e: MemoryExtractor = { extract: vi.fn(async (inputs: readonly MemoryInput[]) => {
+    entered(); await gate;
+    return { candidates: inputs.map(i => candidate(i)), usage: { input_tokens: 25, output_tokens: 5, cached_input_tokens: 10 }, requestId: 'late_req' };
+  }) };
+  const p = make(e, true, { deadlineMs: 50 });
+  try {
+    const pending = p.run(snapshot(source('I prefer blue.')));
+    await Promise.race([ready, pending.then(() => { throw new Error('Expected provider admission before completion'); })]);
+    expect(e.extract).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(50);
+    const result = await pending;
+    expect(result?.state).toBe('timed_out'); expect(result?.reservedTokens).toBeGreaterThan(0); expect(await p.list(scope)).toEqual([]);
+    release(); await p.close(); const job = await store.transaction(s => s.jobs[0]); expect(job.state).toBe('timed_out'); expect(job.reservedTokens).toBe(0); expect(job.requests[0].requestId).toBe('late_req');
+    expect((await store.transaction(s => s.budgets[scopeKey(scope)])).tokens).toBe(30); expect(await p.list(scope)).toEqual([]);
+  } finally {
+    release();
+    try { await p.close(); }
+    finally { vi.useRealTimers(); }
+  }
 });
 it.each(['Maybe the migration succeeded.', 'I am not sure the backup exists.', '备份可能成功。'])('uncertainty is recorded as uncertainty: %s', async content => {
   const p = make(fake(inputs => inputs.map(i => candidate(i)))); await p.run(snapshot(source(content)));

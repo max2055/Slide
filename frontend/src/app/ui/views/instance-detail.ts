@@ -133,6 +133,10 @@ export class InstanceDetailPage extends LitElement {
   @state() private slowQueries: SlowQuery[] = [];
   @state() private sessions: Session[] = [];
   @state() private capacity: CapacityInfo | null = null;
+  @state() private capacityLoading = false;
+  @state() private capacityError = '';
+  @state() private capacityHistoryError = '';
+  private capacityRequest = 0;
   @state() private capHistory: { time: string[]; size: number[] } = { time: [], size: [] };
   @state() private lastUpdated: Date | null = null;
   @state() private detailReadError = '';
@@ -155,6 +159,9 @@ export class InstanceDetailPage extends LitElement {
     this.error = '权限或登录状态已变更，请重新打开资源。'; this.stopAutoRefresh();
   };
   private _resetEvidence() {
+    ++this.capacityRequest; ++this.diagnosisHistoryRequest;
+    this.capacityLoading = false; this.capacityError = ''; this.capacityHistoryError = '';
+    this.diagnosisHistoryLoading = false; this.diagnosisHistoryError = '';
     this.capacity = null; this.capHistory = { time: [], size: [] };
     this._stopDiagnosisPolling(); this.diagnosisHistory = []; this.diagnosisResult = null;
     this.diagnosisStatus = 'idle'; this.diagnosisError = null;
@@ -196,6 +203,8 @@ export class InstanceDetailPage extends LitElement {
   @state() private showDiagnosisResult = false;
   @state() private diagnosisHistory: any[] = [];
   @state() private diagnosisHistoryLoading = false;
+  @state() private diagnosisHistoryError = '';
+  private diagnosisHistoryRequest = 0;
   @state() private activeDiagnosisRecord: any = null;
   @state() private showDiagnosisModal = false;
   @state() private diagnosisExecutionTrace: any = null;
@@ -305,23 +314,7 @@ export class InstanceDetailPage extends LitElement {
           break;
         }
         case "capacity": {
-          this.capacity = null; this.capHistory = { time: [], size: [] };
-          const version = this.contextVersion, instanceId = this.instanceId;
-          const current = () => version === this.contextVersion && instanceId === this.instanceId;
-          const [cr, chr] = await Promise.all([
-            authFetch(`/api/database/instances/${instanceId}/capacity`),
-            authFetch(`/api/database/instances/${instanceId}/capacity/history?hours=168`),
-          ]);
-          if (!current()) return;
-          const capacity = cr.ok ? await cr.json() : null;
-          if (!current()) return;
-          const history = chr.ok ? await chr.json() : null;
-          if (!current()) return;
-          if (cr.ok) this.capacity = capacity;
-          if (history?.history) this.capHistory = {
-            time: history.history.map((x: any) => x.recorded_at?.substring(0, 16) || ""),
-            size: history.history.map((x: any) => x.total_size_gb || 0),
-          };
+          await this.loadCapacity();
           break;
         }
         case "diagnosis":
@@ -457,13 +450,52 @@ export class InstanceDetailPage extends LitElement {
     }, 2000);
   }
   private _stopDiagnosisPolling() { if (this.diagnosisPollTimer) { clearInterval(this.diagnosisPollTimer); this.diagnosisPollTimer = null; } }
+  private async loadCapacity() {
+    if (!this.instanceId) return;
+    const request = ++this.capacityRequest, version = this.contextVersion, instanceId = this.instanceId;
+    const current = () => request === this.capacityRequest && version === this.contextVersion && instanceId === this.instanceId;
+    this.capacity = null; this.capHistory = { time: [], size: [] };
+    this.capacityError = ''; this.capacityHistoryError = ''; this.capacityLoading = true;
+    await Promise.all([
+      (async () => {
+        try {
+          const response = await authFetch(`/api/database/instances/${instanceId}/capacity`);
+          if (!response.ok) throw new Error(`容量读取失败（HTTP ${response.status}）`);
+          const data = await response.json();
+          if (current()) this.capacity = data;
+        } catch (error) {
+          if (current()) this.capacityError = error instanceof Error && error.message.startsWith('容量读取失败') ? error.message : '容量读取失败，请检查网络或服务状态。';
+        }
+      })(),
+      (async () => {
+        try {
+          const response = await authFetch(`/api/database/instances/${instanceId}/capacity/history?hours=168`);
+          if (!response.ok) throw new Error(`容量历史读取失败（HTTP ${response.status}）`);
+          const data = await response.json();
+          if (current() && data?.history) this.capHistory = {
+            time: data.history.map((x: any) => x.recorded_at?.substring(0, 16) || ''),
+            size: data.history.map((x: any) => x.total_size_gb || 0),
+          };
+        } catch (error) {
+          if (current()) this.capacityHistoryError = error instanceof Error && error.message.startsWith('容量历史读取失败') ? error.message : '容量历史读取失败，请检查网络或服务状态。';
+        }
+      })(),
+    ]);
+    if (current()) this.capacityLoading = false;
+  }
   private async loadDiagnosisHistory() {
     if (!this.instanceId) return;
-    const version = this.contextVersion;
-    this.diagnosisHistoryLoading = true;
-    try { const r = await authFetch(`/api/ai/analysis/history?instance_id=${this.instanceId}&analysis_type=fault_diagnosis&limit=10`); if (r.ok) { const data = await r.json(); if (version === this.contextVersion) this.diagnosisHistory = data.records || []; } }
-    catch { /* ignore */ }
-    finally { if (version === this.contextVersion) this.diagnosisHistoryLoading = false; }
+    const request = ++this.diagnosisHistoryRequest, version = this.contextVersion, instanceId = this.instanceId;
+    const current = () => request === this.diagnosisHistoryRequest && version === this.contextVersion && instanceId === this.instanceId;
+    this.diagnosisHistoryLoading = true; this.diagnosisHistoryError = ''; this.diagnosisHistory = [];
+    try {
+      const response = await authFetch(`/api/ai/analysis/history?instance_id=${instanceId}&analysis_type=fault_diagnosis&limit=10`);
+      if (!response.ok) throw new Error(`诊断历史读取失败（HTTP ${response.status}）`);
+      const data = await response.json();
+      if (current()) this.diagnosisHistory = data.records || [];
+    } catch (error) {
+      if (current()) this.diagnosisHistoryError = error instanceof Error && error.message.startsWith('诊断历史读取失败') ? error.message : '诊断历史读取失败，请检查网络或服务状态。';
+    } finally { if (current()) this.diagnosisHistoryLoading = false; }
   }
   private _formatDiagnosisTime(dateStr: string): string {
     const diffMs = Date.now() - new Date(dateStr).getTime();
@@ -587,10 +619,10 @@ export class InstanceDetailPage extends LitElement {
   }
 
   private _renderDiagnosisHistory() {
-    // Only show when there's history or an active diagnosis
-    if (this.diagnosisHistory.length === 0 && this.diagnosisStatus !== "running") return nothing;
-
     if (this.diagnosisHistoryLoading) return html`<app-card style="margin-bottom:var(--space-lg);"><span slot="header">AI 诊断历史</span><div style="display:flex;align-items:center;justify-content:center;gap:10px;padding:24px;color:var(--muted);"><div class="spinner"></div><span>加载中...</span></div></app-card>`;
+
+    if (this.diagnosisHistoryError) return html`<app-card style="margin-bottom:var(--space-lg);"><span slot="header">AI 诊断历史</span><div role="alert"><p>${this.diagnosisHistoryError}</p><button class="btn btn-refresh" @click=${this.loadDiagnosisHistory}>重试诊断历史</button></div></app-card>`;
+    if (this.diagnosisHistory.length === 0 && this.diagnosisStatus !== "running") return nothing;
 
     return html`
       <app-card style="margin-bottom:var(--space-lg);">
@@ -674,9 +706,12 @@ export class InstanceDetailPage extends LitElement {
   }
 
   private _renderCapacity() {
-    if (!this.capacity) return html`<app-card><div class="empty-state"><div class="empty-title">暂无容量数据</div><div class="empty-desc">实例可能未连接或暂无数据</div></div></app-card>`;
+    if (this.capacityLoading) return html`<app-card><div role="status">容量加载中...</div></app-card>`;
+    const errors = html`${this.capacityError || this.capacityHistoryError ? html`<app-card><div role="alert"><p>${this.capacityError}</p><p>${this.capacityHistoryError}</p><button class="btn btn-refresh" @click=${this.loadCapacity}>重试容量读取</button></div></app-card>` : nothing}`;
+    if (!this.capacity) return html`${errors}${this.capacityError ? nothing : html`<app-card><app-empty-state title="暂无容量数据" description="容量接口未返回数据"></app-empty-state></app-card>`}`;
     const cap = this.capacity;
     return html`
+      ${errors}
       ${this.capHistory.time.length > 0 ? html`<metric-chart title="历史容量采样（过去7天，非当前读取）" height="220px" yAxisLabel="GB" .timeData=${this.capHistory.time} .series=${[{ name: "容量", data: this.capHistory.size, color: "var(--accent)" }]}></metric-chart><div style="height:16px"></div>` : nothing}
       <app-card>
         <span slot="header">容量读取结果：${cap.total_size_gb.toFixed(2)} GB</span>
