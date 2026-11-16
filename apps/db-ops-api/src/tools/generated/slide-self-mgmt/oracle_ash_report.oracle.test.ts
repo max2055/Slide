@@ -64,7 +64,7 @@ describe.skipIf(process.env.SLIDE_MAX534_ORACLE !== '1')('MAX-534/535/548 real O
     databaseService.getConnection.mockReturnValue({ connected: true, db_type: 'oracle', oracleConnection: admin });
     const result = await tool.handler({ instance_id: 534, start_time, end_time });
     if (!result.success) console.log('MAX534 report failure', result);
-    expect(result).toMatchObject({ success: true, data: { dbid: identity[0], database_name: identity[1], instance_number: identity[2], instance_name: identity[3], service_name: identity[4], time_semantics: 'database_wall_clock', start_time, end_time } });
+    expect(result, result.error).toMatchObject({ success: true, data: { dbid: identity[0], database_name: identity[1], instance_number: identity[2], instance_name: identity[3], service_name: identity[4], time_semantics: 'database_wall_clock', start_time, end_time } });
     const data = result.data as { html: string };
     expect(data.html).toMatch(/<html/i);
     expect(data.html).toContain(String(identity[0]));
@@ -89,23 +89,52 @@ describe.skipIf(process.env.SLIDE_MAX534_ORACLE !== '1')('MAX-534/535/548 real O
           await admin!.execute(`ALTER SESSION SET TIME_ZONE = '${session}'`);
           const result = await tool.handler({ instance_id: 534, start_time, end_time });
           if (!result.success) console.log('MAX535 report failure', result);
-          expect(result).toMatchObject({ success: true, data: { start_time, end_time, session_timezone: session } });
+          expect(result, result.error).toMatchObject({ success: true, data: { start_time, end_time, session_timezone: session } });
           const current = await admin!.execute('SELECT SESSIONTIMEZONE FROM dual');
           expect((current.rows as string[][])[0][0]).toBe(session);
-          for (const offset of ['Z', '+08:00']) {
-            expect(await tool.handler({ instance_id: 534, start_time: start_time.replace(' ', 'T') + offset, end_time })).toMatchObject({ success: false, errorCode: 'INVALID_ARGUMENTS' });
+          // Derive absolute instants from the actual database host clock, never
+          // from the API/session/storage timezone.
+          const utc = await admin!.execute(`SELECT
+            TO_CHAR(FROM_TZ(TO_TIMESTAMP(:s, 'YYYY-MM-DD HH24:MI:SS'), :z) AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS'),
+            TO_CHAR(FROM_TZ(TO_TIMESTAMP(:e, 'YYYY-MM-DD HH24:MI:SS'), :z) AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS') FROM dual`,
+            { s: start_time, e: end_time, z: String(identity[7]) });
+          const [utcStart, utcEnd] = (utc.rows as string[][])[0];
+          const expectedEnd = new Date(Date.parse(end_time.replace(' ', 'T') + 'Z') + 1000).toISOString().slice(0, 19).replace('T', ' ');
+          for (const [minutes, offset] of [[0, 'Z'], [480, '+08:00'], [-360, '-06:00']] as const) {
+            const shifted = (value: string, fraction: string) => new Date(Date.parse(value + 'Z') + minutes * 60000).toISOString().slice(0, 19) + fraction + offset;
+            const absolute = await tool.handler({ instance_id: 534, start_time: shifted(utcStart, '.123456789'), end_time: shifted(utcEnd, '.456789123') });
+            expect(absolute, absolute.error).toMatchObject({ success: true, data: { start_time, end_time: expectedEnd,
+              converted_start_time: start_time + '.123456789', converted_end_time: end_time + '.456789123',
+              start_input_semantics: 'absolute', conversion_time_zone: identity[7], session_timezone: session } });
           }
-          console.log('MAX535 real timezone case', { apiTimezone, session, start_time, end_time, offsetsRejected: true });
+          console.log('MAX535 real timezone case', { apiTimezone, session, start_time, end_time, absoluteOffsets: ['Z', '+08:00', '-06:00'], fractions: '9 digits preserved; range outward to seconds' });
         }
       }
-      expect(calls).toHaveLength(4);
-      expect(calls.every(binds => binds.b_start_time === start_time && binds.b_end_time === end_time)).toBe(true);
+      const reportCalls = calls.filter(binds => 'b_start_time' in binds);
+      expect(reportCalls).toHaveLength(16);
+      expect(reportCalls.every(binds => binds.b_start_time === start_time)).toBe(true);
       expect(execute.mock.calls.every(([sql]) => !sql.includes('ALTER SESSION'))).toBe(true);
     } finally {
       if (originalTZ === undefined) delete process.env.TZ; else process.env.TZ = originalTZ;
       await admin!.execute(`ALTER SESSION SET TIME_ZONE = '${sessionTimezone.replaceAll("'", "''")}'`);
     }
   }, 60000);
+
+  it('applies Oracle historical region rules and validates mixed inputs with real SQL', async () => {
+    databaseService.getConnection.mockReturnValue({ connected: true, db_type: 'oracle', oracleConnection: admin });
+    // This tests the caller-declared conversion zone, not a claim that the host
+    // itself runs in London or that a cluster was tested.
+    for (const [date, hour] of [['2026-01-19', '10'], ['2026-07-19', '11']]) {
+      const result = await tool.handler({ instance_id: 534, start_time: `${date}T10:00:00.25Z`, end_time: `${date} 12:00:00.5`, database_time_zone: 'Europe/London' });
+      expect(result, result.error).toMatchObject({ success: true, data: { converted_start_time: `${date} ${hour}:00:00.250000000`,
+        start_time: `${date} ${hour}:00:00`, end_time: `${date} 12:00:01`, conversion_time_zone: 'Europe/London', end_input_semantics: 'database_wall_clock' } });
+    }
+    const subsecond = await tool.handler({ instance_id: 534, start_time: start_time + '.000000001', end_time: start_time + '.000000002' });
+    expect(subsecond).toMatchObject({ success: true, data: { start_time, converted_start_time: start_time + '.000000001' } });
+    const invalid = await tool.handler({ instance_id: 534, start_time: '2026-05-19T04:00:00Z', end_time: '2026-05-19 03:00:00', database_time_zone: '+00:00' });
+    expect(invalid).toMatchObject({ success: false, errorCode: 'INVALID_ARGUMENTS' });
+    console.log('MAX535 region, mixed and nanosecond acceptance', { winterHour: '10', summerHour: '11', subsecond: subsecond.success, invalid: invalid.errorCode });
+  }, 30000);
 
   it('preserves real dictionary denial, package denial and driver connection errors', async () => {
     databaseService.getConnection.mockReturnValue({ connected: true, db_type: 'oracle', oracleConnection: restricted });

@@ -83,9 +83,7 @@ describe('MAX-535 / #392 database wall-clock contract', () => {
     expect(execute.mock.calls[1][1].b_start_time).toBe('2026-05-19 10:00:00');
   });
 
-  // ASH takes DATE: offsets/precision cannot be silently discarded. Callers must
-  // explicitly provide the intended database clock reading instead.
-  it.each(['2026-05-19T10:00:00Z', '2026-05-19T10:00:00+08:00', '2026-05-19T02:00:00-06:00', '2026-05-19 10:00:00.001', '2026-02-29 10:00:00', '2026-04-31 10:00:00', '2026-05-19 24:00:00', '2026-05-19 10:60:00', '2026-05-19 10:00:60', '0000-01-01 00:00:00', '', null, 1779184800000, "2026-05-19 10:00:00' OR 1=1"] )('rejects ambiguous or invalid input %j before connection access', async start_time => {
+  it.each(['2026-05-19T10:00:00+15:00', '2026-05-19T10:00:00+08:60', '2026-05-19T10:00:00.1234567890Z', '2026-02-29 10:00:00', '2026-04-31 10:00:00', '2026-05-19 24:00:00', '2026-05-19 10:60:00', '2026-05-19 10:00:60', '0000-01-01 00:00:00', '', null, 1779184800000, "2026-05-19 10:00:00' OR 1=1"] )('rejects ambiguous or invalid input %j before connection access', async start_time => {
     expect(await tool.handler({ ...args, start_time })).toMatchObject({ success: false, errorCode: 'INVALID_ARGUMENTS' });
     expect(databaseService.getConnection).not.toHaveBeenCalled();
   });
@@ -101,6 +99,70 @@ describe('MAX-535 / #392 database wall-clock contract', () => {
 
   it.each([['2024-02-29 10:00:00', '2024-03-07 10:00:00'], ['2026-03-08 01:00:00', '2026-03-15 01:00:00']])('accepts leap-day and exact 7-day wall-clock ranges', async (start_time, end_time) => {
     expect(await tool.handler({ ...args, start_time, end_time })).toMatchObject({ success: true });
+  });
+
+  it.each(['UTC', 'Asia/Shanghai'])('preserves fractions and covers a sub-second wall-clock interval under %s', async timezone => {
+    process.env.TZ = timezone;
+    const result = await tool.handler({ ...args, start_time: '2026-05-19T10:00:00.123456789', end_time: '2026-05-19 10:00:00.123456790' });
+    expect(result).toMatchObject({ success: true, data: { requested_start_time: '2026-05-19T10:00:00.123456789', converted_start_time: '2026-05-19 10:00:00.123456789', start_time: '2026-05-19 10:00:00', end_time: '2026-05-19 10:00:01', precision_policy: 'outward_to_seconds' } });
+    expect(execute.mock.calls[1][1]).toMatchObject({ b_start_time: '2026-05-19 10:00:00', b_end_time: '2026-05-19 10:00:01' });
+  });
+
+  it.each(['UTC', 'Asia/Shanghai'])('converts equivalent offset/Z inputs using the host zone, never the API/session/storage TZ under %s', async timezone => {
+    process.env.TZ = timezone;
+    const starts = ['2026-05-19T02:00:00.123Z', '2026-05-19T10:00:00.123+08:00', '2026-05-18T20:00:00.123-0600'];
+    for (const start_time of starts) {
+      execute.mockReset().mockResolvedValueOnce({ rows: [identity] })
+        .mockResolvedValueOnce({ rows: [['2026-05-19 10:00:00.123000000', '2026-05-19 11:00:00.456000000']] })
+        .mockResolvedValueOnce({ rows: [['native report']] });
+      expect(await tool.handler({ ...args, start_time, end_time: '2026-05-19T03:00:00.456Z' })).toMatchObject({ success: true, data: { start_input_semantics: 'absolute', conversion_time_zone: '+08:00', start_time: '2026-05-19 10:00:00', end_time: '2026-05-19 11:00:01' } });
+      expect(execute.mock.calls[1][0]).toContain('AT TIME ZONE (:b_timezone)');
+      expect(execute.mock.calls[1][1]).toEqual({ b_start: '2026-05-19 02:00:00.123000000 +00:00', b_end: '2026-05-19 03:00:00.456000000 +00:00', b_timezone: '+08:00' });
+    }
+  });
+
+  it('accepts mixed wall-clock/absolute input and a bound historical region override', async () => {
+    execute.mockReset().mockResolvedValueOnce({ rows: [identity] })
+      .mockResolvedValueOnce({ rows: [['2026-07-19 11:00:00.000000000', '2026-07-19 12:00:00.000000000']] })
+      .mockResolvedValueOnce({ rows: [['report']] });
+    expect(await tool.handler({ ...args, start_time: '2026-07-19T10:00:00Z', end_time: '2026-07-19 12:00:00', database_time_zone: 'Europe/London' })).toMatchObject({ success: true, data: { conversion_time_zone_source: 'caller_database_time_zone', end_input_semantics: 'database_wall_clock', start_time: '2026-07-19 11:00:00' } });
+    expect(execute.mock.calls[1][1]).toMatchObject({ b_timezone: 'Europe/London', b_end: '2026-07-19 12:00:00.000000000' });
+    expect(execute.mock.calls[1][0]).not.toContain('Europe/London');
+  });
+
+  it('validates mixed ranges after conversion and propagates conversion failure without a report query', async () => {
+    execute.mockReset().mockResolvedValueOnce({ rows: [identity] }).mockResolvedValueOnce({ rows: [['2026-05-19 12:00:00.000000000', '2026-05-19 11:00:00.000000000']] });
+    expect(await tool.handler({ ...args, start_time: '2026-05-19T04:00:00Z' })).toMatchObject({ success: false, errorCode: 'INVALID_ARGUMENTS' });
+    expect(execute).toHaveBeenCalledTimes(2);
+    execute.mockReset().mockResolvedValueOnce({ rows: [identity] }).mockRejectedValueOnce(new Error('ORA-01882: timezone region not found'));
+    expect(await tool.handler({ ...args, start_time: '2026-05-19T02:00:00Z', database_time_zone: 'Invalid/Zone' })).toMatchObject({ success: false, errorCode: 'ORA-01882' });
+    expect(execute).toHaveBeenCalledTimes(2);
+  });
+
+  it('checks absolute ranges at nanosecond precision and never treats differing offsets as wall clocks', async () => {
+    for (const [start_time, end_time, errorCode] of [
+      ['2026-05-19T10:00:00+08:00', '2026-05-19T01:00:00Z', 'INVALID_ARGUMENTS'],
+      ['2026-05-19T10:00:00+08:00', '2026-05-26T02:00:00.000000001Z', 'TIME_RANGE_TOO_LARGE'],
+    ]) expect(await tool.handler({ ...args, start_time, end_time })).toMatchObject({ success: false, errorCode });
+    expect(databaseService.getConnection).not.toHaveBeenCalled();
+  });
+
+  it('fails closed for unavailable host zone and malformed conversion results', async () => {
+    execute.mockReset().mockResolvedValueOnce({ rows: [[...identity.slice(0, 7), null]] });
+    expect(await tool.handler({ ...args, start_time: '2026-05-19T02:00:00Z' })).toMatchObject({ success: false, errorCode: 'ASH_TIME_ZONE_UNAVAILABLE' });
+    expect(execute).toHaveBeenCalledTimes(1);
+    execute.mockReset().mockResolvedValueOnce({ rows: [identity] }).mockResolvedValueOnce({ rows: [] });
+    expect(await tool.handler({ ...args, start_time: '2026-05-19T02:00:00Z' })).toMatchObject({ success: false, errorCode: 'ASH_TIME_CONVERSION_FAILED' });
+    expect(execute).toHaveBeenCalledTimes(2);
+  });
+
+  it('rejects a DST-fold range unrepresentable by native DATE and timezone injection before reporting', async () => {
+    execute.mockReset().mockResolvedValueOnce({ rows: [identity] }).mockResolvedValueOnce({ rows: [['2026-11-01 01:45:00.000000000', '2026-11-01 01:15:00.000000000']] });
+    expect(await tool.handler({ ...args, start_time: '2026-11-01T05:45:00Z', end_time: '2026-11-01T06:15:00Z', database_time_zone: 'America/New_York' })).toMatchObject({ success: false, errorCode: 'INVALID_ARGUMENTS' });
+    expect(execute).toHaveBeenCalledTimes(2);
+    databaseService.getConnection.mockClear();
+    expect(await tool.handler({ ...args, database_time_zone: "UTC') OR 1=1 --" })).toMatchObject({ success: false, errorCode: 'INVALID_ARGUMENTS' });
+    expect(databaseService.getConnection).not.toHaveBeenCalled();
   });
 });
 
