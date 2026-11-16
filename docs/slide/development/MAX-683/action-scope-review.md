@@ -6,11 +6,13 @@
 
 | 入口 | 基线 | 当前候选 |
 |---|---|---|
-| GET actions/plans/:id | verifyToken → ActionPlanService.get/readIn → PlanSources.scope → InvestigationAuthorization.authorize(content) → OperationsAuthorization.authorize(actions:read) | 仅 scope 内的 content 改为 action-scope；后续 actions:read 不变 |
-| GET actions/plans（发现、计划过滤） | verifyToken → discover 双重检查调用时与当前 actions:view → 指定调查时 authorize(content) → 每条 readIn → 授权绑定游标 | 指定调查和 readIn 的范围核验使用 action-scope；全局统计仍仅可见记录，拒绝项不贡献标识或计数 |
+| GET actions/plans/:id | verifyToken → ActionPlanService.get/readIn → PlanSources.scope → InvestigationAuthorization.authorize(content) → OperationsAuthorization.authorize(actions:read) | scope 对有chat调用者保留content原检查；仅无chat调用者使用action-scope；后续 actions:read 不变 |
+| GET actions/plans（发现、计划过滤） | verifyToken → discover 双重检查调用时与当前 actions:view → 指定调查时 authorize(content) → 每条 readIn → 授权绑定游标 | 指定调查的范围核验使用action-scope，readIn按上行选择；全局统计仍仅可见记录，拒绝项不贡献标识或计数 |
 | GET execution-context/:id、验证读取 | 原执行记录 → 原历史计划及其完整范围 → 行动资源鉴权 | 共用 scope 的读取可不要求 chat；原执行/计划/报告绑定仍保留，不返回调查正文 |
 | 提出/修订、提交/审批、执行、验证准备 | sources.lock → 调查 content、来源有效版本/证据/环境 → 原操作权限、独立审批、有效期/版本/hash/实时授权 | lock 路径保持 content，没有替换成 action-scope；scope 的改变不跳过后续写操作检查 |
 | GET /api/investigations、结果/证据、工具/模型入口 | 原 read/content/watch/create/continue 等调查权限 | 不改。没有把 action-scope 暴露成可由 HTTP 指定的调查操作，不授予 chat:view |
+
+有chat权限的调用者继续原content路径，保留后续行动层拒绝的OPERATIONS_NOT_FOUND错误码；不让新检查改变旧验证/执行读取接口的拒绝契约。
 
 与基线相比，唯一有意放宽的是“具有行动查看权限且满足原成员和资源边界的用户，读取原授权计划时不再额外要求 chat:view”。不是通过补授 chat 权限实现。
 
@@ -44,4 +46,4 @@ apps/db-ops-api/src/operations/actions/plan-service.mysql.test.ts：
 - MAX-683 action-scope retains the original %s boundary without chat：六个真实SQL变体覆盖成员过期、实时资源撤权、调用上限、证据完整范围、历史范围、会话撤销。
 - 同套件既有自批、版本/hash、过期、来源范围、实时JWT/SQL用例保留。
 
-新增六个变体与原90项合计96项真实SQL用例通过。用户名/角色是隔离测试身份，不冒充真实审批人；此处证明生产授权代码和SQL行为，不代替正式登录的完整处置恢复闭环或独立复核。
+新增六个拒绝变体及一条旧错误码契约回归；最终结果见证据包。用户名/角色是隔离测试身份，不冒充真实审批人；此处证明生产授权代码和SQL行为，不代替正式登录的完整处置恢复闭环或独立复核。

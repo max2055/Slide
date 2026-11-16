@@ -405,6 +405,11 @@ describe.skipIf(!port)('P06 SQL + JWT domain composition', () => {
         await sql('UPDATE investigation_evidence SET metadata_json=? WHERE id=?',[typeof evidence.metadata_json==='string'?evidence.metadata_json:JSON.stringify(evidence.metadata_json),ids.evidence]);
       }
     });
+  it('MAX-683 preserves the operations denial contract for legacy chat readers after action permission withdrawal',async()=>{
+    const plan=await service.create(author,proposal(),600000);
+    await sql("DELETE rp FROM role_permissions rp JOIN permissions p ON p.id=rp.permission_id WHERE rp.role_id=2 AND p.code='operations:actions:view'");
+    await expect(store.transaction(c=>service.readIn(c,reviewer,plan.id))).rejects.toMatchObject({code:'OPERATIONS_NOT_FOUND'});
+  });
   it('attention reuses independent approval authority; refresh follows reviewed originals',async()=>{
     const p=await pending();
     await expect(attention(author,p.plan.id)).rejects.toMatchObject({code:'OPERATIONS_FORBIDDEN'});
