@@ -5,6 +5,7 @@ import { open } from 'node:fs/promises';
 import { constants } from 'node:fs';
 import { Client } from 'ssh2';
 import { z } from 'zod';
+import { demoTargetHostSchema } from './demo-target-hosts.js';
 import { createSshHostVerifier, normalizeSshHostKeyFingerprint } from '../security/ssh-host-key.js';
 import { actionPlanContentSchema, OperationsError, operationsContentHash, type ActionPlanContent } from './contracts.js';
 import { planRows, type ActionEnvironment, type PlanConnection } from './actions/plan-store.js';
@@ -14,7 +15,7 @@ const hash = z.string().regex(/^[a-f0-9]{64}$/);
  * fields here: the helper computes the hash over exactly this registration. */
 export const pilotTargetSchema = z.strictObject({
   protocol: z.literal(1), serverId: z.number().int().positive().safe(),
-  host: z.literal('192.168.49.130'), port: z.literal(22), username: z.literal('slide-action'),
+  host: demoTargetHostSchema, port: z.literal(22), username: z.literal('slide-action'),
   unit: z.literal('slide-action-demo.service'), helper: z.literal('/usr/local/libexec/slide-action-demo-helper'),
   helperHash: hash, unitHash: hash, hostFingerprint: z.string(), toolVersion: z.literal('1'), eligible: z.literal(true),
 });
