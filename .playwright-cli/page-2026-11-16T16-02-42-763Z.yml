@@ -1,0 +1,68 @@
+- generic [ref=f3e2]:
+  - complementary [ref=f3e3]:
+    - text: Slide
+    - paragraph [ref=f3e4]: AI 工作空间
+    - paragraph [ref=f3e5]: AI 工作台
+    - paragraph [ref=f3e6]: 运维对话
+    - paragraph [ref=f3e7]: 基础设施
+    - paragraph [ref=f3e8]: 资源管理
+    - paragraph [ref=f3e9]: 事件中心
+    - paragraph [ref=f3e10]: 审批中心
+  - main [ref=f3e11]:
+    - generic [ref=f3e12]:
+      - generic [ref=f3e13]: AI 工作空间 / 工作台
+      - generic [ref=f3e14]: 桌面设计提案 · 供确认
+    - generic [ref=f3e15]:
+      - generic [ref=f3e16]:
+        - heading "AI 工作台" [level=1] [ref=f3e17]
+        - text: 先处理待决策事项，再追踪调查与恢复进展。
+      - button "创建调查（示意）" [disabled] [ref=f3e18] [cursor=pointer]
+    - generic [ref=f3e19]: 原型仅支持静态导航；返回不恢复筛选、游标、滚动与焦点。设计演示数据，未连接业务 API。当前示例的对象、状态与时间仅用于说明布局。
+    - generic [ref=f3e20]:
+      - paragraph [ref=f3e21]:
+        - link "← 返回需要处理" [ref=f3e22] [cursor=pointer]:
+          - /url: "?"
+      - heading "完整行动列表（授权范围）" [level=2] [ref=f3e23]
+      - paragraph [ref=f3e24]: 按计划逐条发现；无状态过滤示例，包含同调查的其他计划及已关闭调查的授权历史计划。更新时间来自 plan.updatedAt。
+      - generic [ref=f3e25]:
+        - generic [ref=f3e26]:
+          - generic [ref=f3e27]:
+            - strong [ref=f3e28]: A1 · 专用演练服务重启计划
+            - generic [ref=f3e29]: 来源：调查 A · 待审批
+          - generic [ref=f3e30]: 首页选中的当前下一步
+          - generic [ref=f3e31]: 计划更新 15:42
+          - link "审阅 A1 →" [ref=f3e32] [cursor=pointer]:
+            - /url: "?view=detail"
+        - generic [ref=f3e33]:
+          - generic [ref=f3e34]:
+            - strong [ref=f3e35]: A2 · 专用服务配置核对计划
+            - generic [ref=f3e36]: 来源：同一调查 A · 待审批
+          - generic [ref=f3e37]: 第二个计划；不在首页投影出现
+          - generic [ref=f3e38]: 计划更新 15:46
+          - link "审阅 A2 →" [ref=f3e39] [cursor=pointer]:
+            - /url: "?view=detail&mode=second"
+        - generic [ref=f3e40]:
+          - generic [ref=f3e41]:
+            - strong [ref=f3e42]: H1 · 历史服务处置计划
+            - generic [ref=f3e43]: 来源：已关闭调查 H · 已过期
+          - generic [ref=f3e44]: 授权历史记录；首页不覆盖
+          - generic [ref=f3e45]: 未提供
+          - link "读取历史 →" [ref=f3e46] [cursor=pointer]:
+            - /url: "?view=detail&mode=history"
+      - paragraph [ref=f3e47]: 设计演示，无 API。实际逐页查询保留 nextCursor/partial/countScope；不显示全域总数，不扩大权限。
+    - generic [ref=f3e48]:
+      - text: 方案状态示例：
+      - link "待审批" [ref=f3e49] [cursor=pointer]:
+        - /url: "?view=detail"
+      - link "可继续调查" [ref=f3e50] [cursor=pointer]:
+        - /url: "?view=detail&mode=continue"
+      - link "运行中调查（独立示例）" [ref=f3e51] [cursor=pointer]:
+        - /url: "?view=detail&mode=running"
+      - link "验证失败" [ref=f3e52] [cursor=pointer]:
+        - /url: "?view=detail&mode=failed"
+      - link "证据不足" [ref=f3e53] [cursor=pointer]:
+        - /url: "?view=detail&mode=missing"
+      - link "空状态" [ref=f3e54] [cursor=pointer]:
+        - /url: "?view=empty"
+      - link "权限受限" [ref=f3e55] [cursor=pointer]:
+        - /url: "?view=empty&mode=forbidden"
