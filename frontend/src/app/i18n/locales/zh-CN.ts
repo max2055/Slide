@@ -248,7 +248,7 @@ export const zh_CN: TranslationMap = {
     "operations-knowledge": "可信运维知识",
     "operations-actions": "行动中心",
     attention: "关注事项",
-    investigations: "AI 工作空间",
+    investigations: "AI 工作台",
     // Slide 菜单组
     dashboard: "资源概览",
     docs: "文档",

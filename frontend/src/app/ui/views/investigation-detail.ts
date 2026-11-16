@@ -1,3 +1,5 @@
+import { hasSlidePermission } from '../app-settings.ts';
+import './operations-actions.ts';
 import '../components/system-investigation-facts.ts';
 import { resourceDetailUrl } from '../components/resource-investigation-links.ts';
 import { html, nothing } from 'lit';
@@ -25,7 +27,7 @@ const stopLabels: Record<string, string> = {
 };
 const problemLabels = { unconfirmed: '未确认', in_progress: '处理中', resolved: '已验证恢复', not_applicable: '不适用' };
 export function renderInvestigationDetail(controller: InvestigationsController, options: {
-  draft: string; onDraft: (value: string) => void; onContinue: () => void; onEvidence: () => void;
+  permissions?: Set<string> | null; draft: string; onDraft: (value: string) => void; onContinue: () => void; onEvidence: () => void;
 }) {
   const detail = controller.detail;
   if (controller.detailLoading) return html`<p role="status">正在加载调查…</p>`;
@@ -82,6 +84,9 @@ export function renderInvestigationDetail(controller: InvestigationsController, 
       .disabled=${active || controller.busy || controller.operationForbidden || !controller.online || detail.lifecycle === 'closed' || detail.lifecycle === 'archived'}
       @platform-verification-saved=${() => void controller.select(detail.id)}></system-investigation-facts>` : nothing}
     <investigation-workflow .investigationId=${detail.id} .version=${detail.version} .eventIds=${detail.context?.entry?.sourceEventIds??[]} .originUntil=${detail.context?.to??''} .active=${active} .readonly=${controller.operationForbidden||!controller.online||controller.acceptanceUnknown||['closed','archived'].includes(detail.lifecycle)} @investigation-workflow-saved=${()=>void controller.refreshAfterWorkflow()}></investigation-workflow>
+    ${hasSlidePermission(options.permissions ?? null, 'operations:actions:view') ? html`<section aria-label="行动与验证"><h2>行动与验证</h2>
+      <a class="btn" href=${`/workbench?workspaceTab=actions&sourceInvestigation=${encodeURIComponent(detail.id)}&resultVersion=${result?.version ?? 0}&returnTo=${encodeURIComponent('/workbench?investigation='+detail.id)}`}>查看关联计划或整理当前结果草案</a>
+      <investigation-action-list .investigationId=${detail.id}></investigation-action-list></section>` : nothing}
     <investigation-handoff .detail=${detail} .result=${result}></investigation-handoff>
     <investigation-operation-context .investigationId=${detail.id} .resultVersion=${result?.version ?? 0} .resources=${detail.resources}></investigation-operation-context>
     ${result && !detail.legacyAnalysis ? html`<investigation-supplement .investigationId=${detail.id} .resultId=${result.id} .resultVersion=${result.version} .gaps=${result.result.unresolvedQuestions}

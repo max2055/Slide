@@ -46,11 +46,11 @@ export class OperationsUiIntegration {
       const position = q.cursor ? this.cursors.decode(q.cursor, fingerprint, authority, +now) : null;
       if (q.investigationId) {
         const inv = await this.investigations.load(c,q.investigationId);
-        await this.investigations.authorize(c,caller,inv,'content');
+        await this.investigations.authorize(c,caller,inv,'action-scope');
       }
       // Bounded scan; invisible records contribute no count or identifier. The
       // encrypted continuation is filter/authority bound, never a global ordinal.
-      const candidates = await planRows(c, `SELECT id FROM action_plans WHERE id>? AND created_at<=?
+      const candidates = await planRows(c, `SELECT id,updated_at FROM action_plans WHERE id>? AND created_at<=?
         ${q.investigationId ? 'AND investigation_id=?' : ''} ${q.planId ? 'AND id=?' : ''} ORDER BY id LIMIT 301 FOR SHARE`,
         [position?.after ?? '', new Date(position?.asOf ?? now), ...(q.investigationId ? [q.investigationId] : []), ...(q.planId ? [q.planId] : [])]);
       const items = []; let scanned = '', consumed = 0;
@@ -64,7 +64,10 @@ export class OperationsUiIntegration {
             AND JSON_UNQUOTE(JSON_EXTRACT(args_redacted,'$.planId'))=?
             AND JSON_EXTRACT(args_redacted,'$.version')=?
             AND JSON_UNQUOTE(JSON_EXTRACT(args_redacted,'$.contentHash'))=? ORDER BY id DESC LIMIT 1 FOR SHARE`,[plan.id,plan.version,plan.contentHash]);
-          items.push({ ...plan, approvalId:approval?String(approval.id):null, executions: executions.map(e => ({id:e.id,planVersion:Number(e.plan_version),state:e.state})) });
+          const [target] = plan.content.target.type === 'server' ? await planRows(c,'SELECT label FROM servers WHERE id=? FOR SHARE',[plan.content.target.id]) : [];
+          const latestExecution = executions.find(e => Number(e.plan_version) === plan.version);
+          const [report] = latestExecution ? await planRows(c, 'SELECT state FROM action_verification_reports WHERE execution_id=? ORDER BY version DESC LIMIT 1 FOR SHARE', [latestExecution.id]) : [];
+          items.push({ ...plan, targetName: target?.label || null, updatedAt: new Date(row.updated_at).toISOString(), verificationState: report?.state ?? null, approvalId:approval?String(approval.id):null, executions: executions.map(e => ({id:e.id,planVersion:Number(e.plan_version),state:e.state})) });
           if (items.length === q.limit) break;
         } catch (error) {
           if ((error instanceof OperationsError || error instanceof InvestigationStoreError) && [403,404].includes(error.statusCode)) continue;

@@ -54,7 +54,7 @@ export class SystemEventsPageElement extends LitElement {
       const response = await authFetch(`/api/platform/system-events/${encodeURIComponent(eventId)}/investigation`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
       if (!response.ok) throw new Error([401,403,404].includes(response.status) ? '原异常或已有调查无访问权限，请联系管理员授权。' : '调查保存回执未确认，请从同一异常重试。');
       const data = await response.json();
-      if (g === this.generation) location.assign(`/investigations?investigation=${encodeURIComponent(data.id)}`);
+      if (g === this.generation) location.assign(`/workbench?investigation=${encodeURIComponent(data.id)}`);
     } catch (e) { if (g === this.generation) this.error = e instanceof Error ? e.message : '调查入口暂不可用。'; }
     finally { if (g === this.generation) this.loading = false; }
   }
@@ -69,7 +69,7 @@ export class SystemEventsPageElement extends LitElement {
         <span slot="header">${event.summary}</span><p>${event.component} · ${event.occurredAt}</p>
         <app-badge>${event.disposition === 'suppressed' ? '自动调查未派发' : '已关联调查'}</app-badge>
         <div class="actions"><button class="btn" ?disabled=${this.loading} @click=${() => void this.load(event.eventId)}>查看原始事实</button>
-        ${event.investigationId ? html`<a class="btn" href=${`/investigations?investigation=${encodeURIComponent(event.investigationId)}`}>打开调查</a>` : html`<button class="btn" ?disabled=${this.loading} @click=${() => void this.openDraft(event.eventId)}>打开只读调查</button>`}</div>
+        ${event.investigationId ? html`<a class="btn" href=${`/workbench?investigation=${encodeURIComponent(event.investigationId)}`}>打开调查</a>` : html`<button class="btn" ?disabled=${this.loading} @click=${() => void this.openDraft(event.eventId)}>打开只读调查</button>`}</div>
       </app-card>`)}</div>
       ${this.detail ? html`<app-card><span slot="header">原始错误事实</span><pre>${JSON.stringify(this.detail.fact, null, 2)}</pre></app-card>` : nothing}`;
   }

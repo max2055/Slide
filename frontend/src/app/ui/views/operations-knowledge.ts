@@ -147,7 +147,7 @@ export class OperationsKnowledge extends LitElement {
         <section><h2>问题与已确认事实</h2><p>${r.content?.symptoms}</p><p>${r.content?.confirmedCause}</p><p class="notice">案例记录历史结论；当前问题仍需独立核验证据。</p></section>
         <section><h2>处理与验证</h2><p>${r.content?.actions}</p><p>${r.content?.actualEffect}</p></section>
         <section><h2>不适用与反面证据</h2><p>${r.content?.counterexamples}</p></section>
-        <section><h2>引用的原始记录</h2>${r.source ? html`<a href=${`/investigations?investigation=${encodeURIComponent(r.source.investigationId)}`}>查看来源调查 · 结果版本 ${r.source.resultVersion}</a><p class="muted">${r.source.evidence.length} 条来源证据，打开原记录时重新检查权限。</p>
+        <section><h2>引用的原始记录</h2>${r.source ? html`<a href=${`/workbench?investigation=${encodeURIComponent(r.source.investigationId)}`}>查看来源调查 · 结果版本 ${r.source.resultVersion}</a><p class="muted">${r.source.evidence.length} 条来源证据，打开原记录时重新检查权限。</p>
           ${r.source.evidence.map(e=>html`<div class="row"><p>原观测 ${e.observedFrom??'未知'} — ${e.observedTo??'未知'} · 采集 ${e.collectedAt??'未知'}</p>
           <p class="notice warn">来源完整性：${e.quality?.partial===false?'非部分结果':e.quality?.partial===true?'部分结果':'部分标记未知'} · ${e.quality?.truncated===false?'未截断':e.quality?.truncated===true?'已截断':'截断标记未知'} · ${e.quality?.hasMore===true?'仍有后续数据':e.quality?.hasMore===false?'无后续页':'后续页未知'}</p>
           <p>分页窗口：offset ${e.page?.offset??'未知'} · limit ${e.page?.limit??'未知'} · 下一窗口 ${e.page?.nextOffset??'未知'}</p></div>`) }` : nothing}</section>`}

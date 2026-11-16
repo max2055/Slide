@@ -3,7 +3,7 @@ export type { InvestigationEntryContext };
 /** Public producer contract: absolute UTC endpoints, exact identity, no inferred scope. */
 export function investigationEntryHref(context: InvestigationEntryContext, basePath = ''): string {
   if (basePath && basePath !== '/' && !/^\/(?:[a-zA-Z0-9_-]+\/)*[a-zA-Z0-9_-]+\/?$/.test(basePath)) throw new Error('INVALID_BASE_PATH');
-  return `${basePath.replace(/\/$/, '')}/investigations?entry=${encodeURIComponent(JSON.stringify(context))}`;
+  return `${basePath.replace(/\/$/, '')}/workbench?entry=${encodeURIComponent(JSON.stringify(context))}`;
 }
 export function readInvestigationEntry(search: string): InvestigationEntryContext | null {
   const params = new URLSearchParams(search), raw = params.get('entry');

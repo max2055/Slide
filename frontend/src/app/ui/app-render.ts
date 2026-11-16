@@ -59,6 +59,7 @@ import "./views/event-center.ts";
 import "./views/platform-status.ts";
 import "./views/platform-observations.ts";
 import "./views/investigations.ts";
+import "./views/workbench.ts";
 import "./components/chat-investigation-convert.ts";
 import { icons } from "../../icons.js";
 import { normalizeBasePath, TAB_GROUPS, TAB_REQUIRED_PERMISSIONS, UTILITY_TABS, subtitleForTab, titleForTab } from "./navigation.ts";
@@ -111,7 +112,6 @@ const heavyViewLoaders: Partial<Record<AppViewState["tab"], () => Promise<unknow
   "sql-console": () => import("./views/sql-console.ts"),
   approval: () => import("./views/approval-dashboard.ts"),
   "operations-knowledge": () => import("./views/operations-knowledge.ts"),
-  "operations-actions": () => import("./views/operations-actions.ts"),
 };
 const heavyViews = new Map<AppViewState["tab"], ReturnType<typeof createLazy<unknown>>>();
 
@@ -273,6 +273,10 @@ export function renderApp(state: AppViewState) {
   const isNavigationTabVisible = (tab: import("./navigation.ts").Tab) => {
     const visibleTabs = state.settings.visibleTabs;
     if (visibleTabs && (state.settings.visibleTabsConfigured || visibleTabs.length > 0) && !visibleTabs.includes(tab)) return false;
+    if (tab === 'investigations') {
+      const p = state.userPermissions || loadPermissionsFromStorage();
+      return hasSlidePermission(p, 'chat:view') || hasSlidePermission(p, 'operations:actions:view');
+    }
     const required = TAB_REQUIRED_PERMISSIONS[tab];
     if (!required) return true;
     const permissions = state.userPermissions || loadPermissionsFromStorage();
@@ -787,10 +791,8 @@ export function renderApp(state: AppViewState) {
         ${state.tab === "dashboard"
           ? html`<dashboard-page></dashboard-page>`
           : nothing}
-        ${state.tab === 'attention' ? html`<attention-page .permissions=${state.userPermissions ?? loadPermissionsFromStorage()}></attention-page>` : nothing}
         ${state.tab === 'operations-knowledge' ? html`<operations-knowledge .permissions=${state.userPermissions ?? loadPermissionsFromStorage()}></operations-knowledge>` : nothing}
-        ${state.tab === 'operations-actions' ? html`<operations-actions .permissions=${state.userPermissions ?? loadPermissionsFromStorage()}></operations-actions>` : nothing}
-        ${state.tab === 'investigations' ? html`<investigations-page .client=${state.client} .permissions=${state.userPermissions ?? loadPermissionsFromStorage()}></investigations-page>` : nothing}
+        ${state.tab === 'investigations' ? html`<workbench-page .client=${state.client} .permissions=${state.userPermissions ?? loadPermissionsFromStorage()}></workbench-page>` : nothing}
         ${state.tab === "instances-db"
           ? html`<instances-page></instances-page>`
           : nothing}

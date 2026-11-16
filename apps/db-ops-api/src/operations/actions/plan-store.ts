@@ -350,7 +350,7 @@ export class PlanSources {
       resources.push(...metadata.resources);
     }
     resources.push(...(await this.references(c, content)));
-    await this.investigations.authorize(c, actor, investigation, 'content', resources);
+    await this.investigations.authorize(c, actor, investigation, 'action-scope', resources);
     return [
       ...new Map(
         resources.map((ref) => [ref.type + ':' + ref.id, { type: ref.type, id: ref.id }]),
