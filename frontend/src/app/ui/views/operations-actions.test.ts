@@ -93,7 +93,7 @@ it('stale reminder plan bindings expose current-record confirmation and never re
  expect(root.querySelector('a[href="/workbench?workspaceTab=actions&plan=p"]')).not.toBeNull();expect(api.mock.calls.every(([,init])=>!init?.method)).toBe(true);
 });
 it.each(['//evil.invalid','/workbench?investigation=restricted'])('explains an invalid or unauthorized return target %s and offers the authorized list',async returnTo=>{
-  api.mockImplementation(()=>Promise.resolve(json({plan:plan()})));
+  api.mockImplementation(url=>Promise.resolve(json(String(url).includes('/unified') || String(url).includes('/plans?') ? {items:[]} : {plan:plan()})));
   await mount();
   history.replaceState({},'',`/workbench?workspaceTab=actions&plan=p&returnTo=${encodeURIComponent(returnTo)}`);
   view.requestUpdate();await flush();
