@@ -92,3 +92,12 @@ it('stale reminder plan bindings expose current-record confirmation and never re
  const root=view.shadowRoot!;expect(root.textContent).toContain('提醒引用的计划版本已变化');expect([...root.querySelectorAll('button')].some(b=>b.textContent==='批准当前版本')).toBe(false);
  expect(root.querySelector('a[href="/workbench?workspaceTab=actions&plan=p"]')).not.toBeNull();expect(api.mock.calls.every(([,init])=>!init?.method)).toBe(true);
 });
+it.each(['//evil.invalid','/workbench?investigation=restricted'])('explains an invalid or unauthorized return target %s and offers the authorized list',async returnTo=>{
+  api.mockImplementation(()=>Promise.resolve(json({plan:plan()})));
+  await mount();
+  history.replaceState({},'',`/workbench?workspaceTab=actions&plan=p&returnTo=${encodeURIComponent(returnTo)}`);
+  view.requestUpdate();await flush();
+  expect(view.shadowRoot!.textContent).toContain('来源位置无效或当前无权访问');
+  expect(view.shadowRoot!.querySelector('a[href="/workbench?workspaceTab=actions"]')).not.toBeNull();
+  expect(view.shadowRoot!.querySelector('a[href="//evil.invalid"]')).toBeNull();
+});
