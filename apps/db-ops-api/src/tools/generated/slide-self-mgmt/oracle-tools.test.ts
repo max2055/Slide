@@ -9,10 +9,10 @@ import { oracleTablespaceDetailTool } from './oracle_tablespace_detail.js';
 
 describe('Oracle diagnostic tool guardrails', () => {
   it('rejects reversed or oversized ASH time ranges before opening a query', async () => {
-    const reversed = await oracleAshReportTool.handler({ instance_id: 1, start_time: '2026-01-02T00:00:00Z', end_time: '2026-01-01T00:00:00Z' });
+    const reversed = await oracleAshReportTool.handler({ instance_id: 1, start_time: '2026-01-02T00:00:00', end_time: '2026-01-01T00:00:00' });
     expect(reversed).toMatchObject({ success: false, errorCode: 'INVALID_ARGUMENTS' });
 
-    const oversized = await oracleAshReportTool.handler({ instance_id: 1, start_time: '2026-01-01T00:00:00Z', end_time: '2026-01-10T00:00:00Z' });
+    const oversized = await oracleAshReportTool.handler({ instance_id: 1, start_time: '2026-01-01T00:00:00', end_time: '2026-01-10T00:00:00' });
     expect(oversized).toMatchObject({ success: false, errorCode: 'TIME_RANGE_TOO_LARGE' });
     expect(databaseService.getConnection).not.toHaveBeenCalled();
   });
