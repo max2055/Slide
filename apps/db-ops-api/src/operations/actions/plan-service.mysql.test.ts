@@ -377,6 +377,34 @@ describe.skipIf(!port)('P06 SQL + JWT domain composition', () => {
     await sql("DELETE rp FROM role_permissions rp JOIN permissions p ON p.id=rp.permission_id WHERE rp.role_id=2 AND p.code='operations:actions:view'");
     await expect(ui.discover(actionOnly,{planId:plan.id})).rejects.toMatchObject({code:'OPERATIONS_NOT_FOUND'});
   });
+  it.each(['expired-member','resource-revoked','bounded-resource','evidence-resource','historical-resource','session-revoked'])(
+    'MAX-683 action-scope retains the original %s boundary without chat', async change => {
+      const plan=await service.create(author,proposal(),600000);
+      await sql("DELETE rp FROM role_permissions rp JOIN permissions p ON p.id=rp.permission_id WHERE rp.role_id=2 AND p.code='chat:view'");
+      let reader=await loadActor(2);
+      const [evidence]=await planRows({execute:sql},'SELECT metadata_json FROM investigation_evidence WHERE id=?',[ids.evidence]);
+      try {
+        if(change==='expired-member') await sql("UPDATE investigation_members SET expires_at=DATE_SUB(NOW(),INTERVAL 1 SECOND) WHERE investigation_id=? AND user_id=2",[ids.investigation]);
+        if(change==='resource-revoked') await sql("DELETE rp FROM role_permissions rp JOIN permissions p ON p.id=rp.permission_id WHERE rp.role_id=2 AND p.code='servers:view'");
+        if(change==='bounded-resource') reader={...reader,resourceBoundary:{instanceIds:[],serverIds:[],networkDeviceIds:[]}};
+        if(change==='evidence-resource') {
+          reader={...reader,resourceBoundary:{instanceIds:[],serverIds:[1],networkDeviceIds:[]}};
+          await sql('UPDATE investigation_evidence SET metadata_json=? WHERE id=?',[JSON.stringify({resources:[{type:'server',id:1},{type:'server',id:2}]}),ids.evidence]);
+        }
+        if(change==='historical-resource') {
+          reader={...reader,resourceBoundary:{instanceIds:[],serverIds:[1],networkDeviceIds:[]}};
+          await sql('UPDATE investigations SET scope_revision=1 WHERE id=?',[ids.investigation]);
+          await sql("INSERT INTO investigation_scope_resources VALUES(?,'server',2)",[ids.investigation]);
+        }
+        if(change==='session-revoked') await sql('UPDATE users SET session_version=2 WHERE id=2');
+        await expect(store.transaction(c=>service.readIn(c,reader,plan.id))).rejects.toMatchObject({statusCode:404});
+      } finally {
+        await sql('UPDATE investigation_members SET expires_at=NULL WHERE investigation_id=? AND user_id=2',[ids.investigation]);
+        await sql('UPDATE investigations SET scope_revision=0 WHERE id=?',[ids.investigation]);
+        await sql('DELETE FROM investigation_scope_resources WHERE investigation_id=?',[ids.investigation]);
+        await sql('UPDATE investigation_evidence SET metadata_json=? WHERE id=?',[typeof evidence.metadata_json==='string'?evidence.metadata_json:JSON.stringify(evidence.metadata_json),ids.evidence]);
+      }
+    });
   it('attention reuses independent approval authority; refresh follows reviewed originals',async()=>{
     const p=await pending();
     await expect(attention(author,p.plan.id)).rejects.toMatchObject({code:'OPERATIONS_FORBIDDEN'});
