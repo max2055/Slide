@@ -5,7 +5,8 @@
 <body><button id="search">全局搜索</button><main></main><div id="palette"></div>
 <script type="module">
 import {html, render} from '/node_modules/lit/index.js';
-import '/src/app/ui/views/investigations.ts';
+import '/src/app/ui/views/event-center.ts';
+history.replaceState({}, '', '/events?view=aggregate&eventList=active');
 import '/src/app/ui/components/server-diagnostic-panel.ts';
 import {renderCommandPalette} from '/src/app/ui/views/command-palette.ts';
 import {i18n} from '/src/app/i18n/index.ts';
@@ -16,7 +17,7 @@ await i18n.setLocale('zh-CN');
 function setTheme(themeMode) { applyResolvedTheme({themeMode}, resolveTheme('claw', themeMode)); }
 setTheme('light');
 const permissions = new Set(['*']);
-const page = document.createElement('attention-page'); page.permissions = permissions;
+const page = document.createElement('event-center-page'); page.permissions = permissions;
 document.querySelector('main').append(page);
 const panel = document.createElement('server-diagnostic-panel'); document.querySelector('main').append(panel);
 const props = {permissions,open:false,query:'',activeIndex:0,onToggle(){props.open=!props.open;draw()},onQueryChange(query){props.query=query;draw()},onActiveIndexChange(index){props.activeIndex=index;draw()},onNavigate(tab){window.selectedTab=tab},onSlashCommand(){throw new Error('No upstream commands expected')}};

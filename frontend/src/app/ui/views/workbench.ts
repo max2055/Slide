@@ -1,4 +1,4 @@
-import { LitElement, html, nothing } from 'lit';
+import { LitElement, html, nothing, type PropertyValues } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 import { keyed } from 'lit/directives/keyed.js';
 import { hasSlidePermission } from '../app-settings.ts';
@@ -14,8 +14,9 @@ export class WorkbenchPage extends LitElement {
   @state() private actions = new URL(location.href).searchParams.get('workspaceTab') === 'actions';
   @state() private epoch = 0;
   @state() private expired = false;
+  private selectedTab = false;
   createRenderRoot() { return this; }
-  private pop = () => { this.actions = new URL(location.href).searchParams.get('workspaceTab') === 'actions'; this.epoch++; };
+  private pop = () => { this.selectedTab = false; this.actions = new URL(location.href).searchParams.get('workspaceTab') === 'actions'; this.selectDefault(); this.epoch++; };
   private authority = (event: Event) => {
     this.permissions = new Set((event as CustomEvent<{permissions: string[]}>).detail.permissions);
     this.epoch++;
@@ -26,8 +27,17 @@ export class WorkbenchPage extends LitElement {
     window.addEventListener('popstate', this.pop);
     window.addEventListener('slide-permissions-loaded', this.authority);
     window.addEventListener('slide-session-expired', this.expire);
-    // A plain workbench entry chooses the first accessible capability only.
-    if (!new URL(location.href).searchParams.has('workspaceTab') && !new URL(location.href).searchParams.has('investigation') && this.permissions && !hasSlidePermission(this.permissions, 'chat:view') && hasSlidePermission(this.permissions, 'operations:actions:view')) this.choose(true, true);
+    this.selectDefault();
+  }
+  protected override willUpdate(changed: PropertyValues) {
+    if (changed.has('permissions')) this.selectDefault();
+  }
+  private selectDefault() {
+    // Resolve the plain entry after either cached or asynchronous authority arrives.
+    // Queries carry explicit context; a user's tab choice also survives later grants.
+    if (!this.expired && !this.selectedTab && !new URL(location.href).search && this.permissions
+      && !hasSlidePermission(this.permissions, 'chat:view')
+      && hasSlidePermission(this.permissions, 'operations:actions:view')) this.choose(true, true);
   }
   disconnectedCallback() {
     window.removeEventListener('popstate', this.pop);
@@ -36,6 +46,7 @@ export class WorkbenchPage extends LitElement {
     super.disconnectedCallback();
   }
   private choose(actions: boolean, replace = false) {
+    this.selectedTab = true;
     const u = new URL(location.href);
     if (actions) u.searchParams.set('workspaceTab', 'actions'); else u.searchParams.delete('workspaceTab');
     history[replace ? 'replaceState' : 'pushState']({}, '', u);

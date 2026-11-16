@@ -253,10 +253,28 @@ export async function startInvestigationServer(optionsInput: { attentionPilot?: 
     if (!wsServer.address()) await new Promise<void>(r => wsServer.once('listening', r));
     const verify = createVerifyToken(secret, contexts);
     if (optionsInput.attentionPilot) {
+      app.get('/api/metrics/template-events/:id', { preHandler: [verify, requirePermission('alert:view')] }, async (_request: any, reply: any) => reply.code(404).send({ error: 'NOT_FOUND' }));
       // Same live authorization and event service as the production list route.
       // This harness only needs its unfiltered instance-scope branch.
       app.get('/api/alerts/events', { preHandler: [verify, requirePermission('alert:view')] }, async (request: any) =>
         alertEventService.getEvents({ ...request.query, allowed_instance_ids: getAccessibleInstanceIds(request.user) }));
+      app.get('/api/alerts/events/stats', { preHandler: [verify, requirePermission('alert:view')] }, async (request: any) =>
+        alertEventService.getEventStats(getAccessibleInstanceIds(request.user)));
+      app.get('/api/alerts/events/mttr', { preHandler: [verify, requirePermission('alert:view')] }, async (request: any) =>
+        alertEventService.getMTTRStats(getAccessibleInstanceIds(request.user)));
+      const scopedEvent = async (request: any, reply: any) => {
+        const event = await alertEventService.getEventById(Number(request.params.id));
+        const scope = getAccessibleInstanceIds(request.user);
+        if (!event || (scope !== null && !scope.includes(event.instance_id))) {
+          reply.code(404).send({ error: 'NOT_FOUND' }); return null;
+        }
+        return event;
+      };
+      app.get('/api/alerts/events/:id', { preHandler: [verify, requirePermission('alert:view')] }, scopedEvent);
+      app.get('/api/alerts/events/:id/logs', { preHandler: [verify, requirePermission('alert:view')] }, async (request: any, reply: any) => {
+        if (!await scopedEvent(request, reply)) return;
+        return alertEventService.getEventLogs(Number(request.params.id));
+      });
     }
     if (system) {
       await installPlatformObservation(app,verify,platformLogs,undefined,() => system!.observation());

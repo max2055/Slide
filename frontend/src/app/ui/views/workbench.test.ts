@@ -26,3 +26,25 @@ it('revocation unmounts action records, retains disabled labelled controls',asyn
   expect([...page.querySelectorAll('nav button')].every(b=>(b as HTMLButtonElement).disabled)).toBe(true);
   expect(page.querySelector('nav')?.getAttribute('aria-label')).toBe('工作台页签');
 });
+for (const delivery of ['event', 'property']) it(`selects actions when initial permissions arrive by ${delivery}`,async()=>{
+  const page=await mount('/workbench',[]);
+  if(delivery==='event') window.dispatchEvent(new CustomEvent('slide-permissions-loaded',{detail:{permissions:['operations:actions:view']}}));
+  else page.permissions=new Set(['operations:actions:view']);
+  await page.updateComplete;
+  expect(page.querySelector('operations-actions')).not.toBeNull();
+  expect(new URL(location.href).searchParams.get('workspaceTab')).toBe('actions');
+});
+for (const query of ['investigation=exact&version=7', 'entry=exact', 'workspaceTab=investigations']) it(`retains explicit investigation context ${query} on async permissions`,async()=>{
+  const page=await mount(`/workbench?${query}`,[]);
+  page.permissions=new Set(['operations:actions:view']);await page.updateComplete;
+  expect(page.querySelector('operations-actions')).toBeNull();
+  expect(location.search).toBe(`?${query}`);
+  expect(page.textContent).toContain('无访问权限');
+});
+it('retains a manually selected investigation tab after authority changes',async()=>{
+  const page=await mount('/workbench',['chat:view','operations:actions:view']);
+  page.querySelector<HTMLButtonElement>('nav button')!.click();
+  page.permissions=new Set(['operations:actions:view']);await page.updateComplete;
+  expect(page.querySelector('operations-actions')).toBeNull();
+  expect(location.search).toBe('');expect(page.textContent).toContain('无访问权限');
+});

@@ -17,11 +17,20 @@ async function capture(page: Page, name: string) {
 }
 async function load(page: Page, status = 200, data: unknown = { items }) {
   await page.route('**/api/branding/config', route => route.fulfill({ json: {} }));
+  await page.route('**/api/metrics/template-events/*', route => route.fulfill({ status: 404, json: {error:'NOT_FOUND'} }));
   await page.addInitScript(() => { localStorage.setItem('token', 'controlled-browser-token'); });
-  await page.route('**/api/alerts/events*', route => route.fulfill({ status, json: data }));
+  await page.route('**/api/alerts/events*', route => {
+    const states = new URL(route.request().url()).searchParams.get('status')?.split(',');
+    const body = data as {items?: typeof items};
+    return route.fulfill({ status, json: states && Array.isArray(body.items) ? {...body, items:body.items.filter(item=>states.includes(item.status))} : data });
+  });
   await page.route('**/api/alerts/events/*', route => {
-    const id = Number(new URL(route.request().url()).pathname.split('/').pop());
-    return route.fulfill({ json: { ...items.find(item => item.id === id), alerts: [{ id: id * 100, title: `事件 ${id} 专属告警` }] } });
+    const path = new URL(route.request().url()).pathname;
+    if (path.endsWith('/stats')) return route.fulfill({json:{total:2,open:1,investigating:1,handled:0,resolved:0,closed:0}});
+    if (path.endsWith('/mttr')) return route.fulfill({json:{avg_mttr_minutes:0}});
+    if (path.endsWith('/logs')) return route.fulfill({json:[]});
+    const id = Number(path.split('/').pop());
+    return route.fulfill({ json: { ...items.find(item => item.id === id), alerts: [{ id: id * 100, title: `事件 ${id} 专属告警`, level: 'warning', metric_name: 'cpu', metric_value: '80', created_at: '2026-10-20T00:00:00Z' }] } });
   });
   await page.goto('/e2e/fixtures/workbench-clarity.html');
   await page.waitForFunction(() => !!(window as any).workbench);
@@ -34,19 +43,24 @@ for (const width of [1440, 375]) for (const theme of ['light', 'dark']) {
     await expect(page.getByRole('button', { name: '查看事件 #1 详情' })).toBeVisible();
     await capture(page, `attention-${width}-${theme}`);
     const open = page.getByRole('button', { name: '查看事件 #2 详情' }); await open.focus(); await page.keyboard.press('Enter');
-    await expect(page.getByRole('heading', { name: items[1].title })).toBeVisible();
+    await expect(page.getByRole('heading', { name: `事件 #2：${items[1].title}` })).toBeVisible();
     await expect(page.getByText('事件 2 专属告警')).toBeVisible();
     await expect(page.getByText('事件 1 专属告警')).toHaveCount(0);
     await capture(page, `detail-keyboard-${width}-${theme}`);
     await page.keyboard.press('Escape'); await expect(open).toBeFocused();
-    await page.getByLabel('搜索事项', { exact: true }).fill('#2');
-    await expect(page.locator('attention-page tbody tr')).toHaveCount(1);
-    await page.getByLabel('搜索事项', { exact: true }).fill('摘要 2');
-    await expect(page.locator('attention-page tbody tr')).toHaveCount(1);
-    await open.click(); await page.getByRole('button', { name: '返回关注事项' }).click();
-    await expect(page.getByLabel('搜索事项', { exact: true })).toHaveValue('摘要 2');
-    await page.getByLabel('事项状态', { exact: true }).selectOption('open');
-    await expect(page.getByText('暂无匹配事项')).toBeVisible();
+    await page.getByLabel('搜索本页事件', { exact: true }).fill('#2');
+    await expect(page.locator('event-management-page .event-item')).toHaveCount(1);
+    await page.getByLabel('搜索本页事件', { exact: true }).fill('摘要 2');
+    await expect(page.locator('event-management-page .event-item')).toHaveCount(1);
+    await open.click(); await page.getByRole('button', { name: '返回事件列表' }).click();
+    await expect(page.getByLabel('搜索本页事件', { exact: true })).toHaveValue('摘要 2');
+    await page.getByRole('button', { name: /^已解决/ }).click();
+    await expect(page.getByText('没有已解决事件', { exact: true })).toBeVisible();
+    await page.getByRole('button', { name: /^活跃事件/ }).click();
+    await expect(page.getByLabel('搜索本页事件', { exact: true })).toHaveValue('摘要 2');
+    await expect(page.locator('event-management-page .event-item')).toHaveCount(1);
+    await page.getByLabel('本页严重度', { exact: true }).selectOption('critical');
+    await expect(page.getByText('暂无匹配的事件')).toBeVisible();
     await page.getByRole('button', { name: '全局搜索' }).click();
     const dialog = page.getByRole('dialog', { name: '全局搜索' });
     const input = page.getByRole('combobox', { name: '搜索产品入口' });
@@ -56,8 +70,8 @@ for (const width of [1440, 375]) for (const theme of ['light', 'dark']) {
     await expect(dialog).toHaveCSS('opacity', '1');
     await expect(page.locator('.cmd-palette-overlay')).toHaveCSS('opacity', '1');
     await page.keyboard.press('ArrowDown');
-    await expect(input).toHaveAttribute('aria-activedescendant', 'palette-nav-attention');
-    await expect(page.locator('#palette-nav-attention')).toHaveAttribute('aria-selected', 'true');
+    await expect(input).toHaveAttribute('aria-activedescendant', 'palette-nav-investigations');
+    await expect(page.locator('#palette-nav-investigations')).toHaveAttribute('aria-selected', 'true');
     const bounds = await dialog.boundingBox();
     expect(bounds!.x).toBeGreaterThanOrEqual(0); expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(width);
     await capture(page, `palette-${width}-${theme}`);
@@ -76,11 +90,12 @@ for (const width of [1440, 375]) for (const theme of ['light', 'dark']) {
 for (const scenario of ['empty', 'error', 'forbidden', 'loading']) test(`attention ${scenario} state`, async ({ page }) => {
   if (scenario === 'loading') {
     await load(page); await page.route('**/api/alerts/events*', () => {});
-    await page.getByRole('button', { name: '刷新事项' }).click();
-    await expect(page.locator('attention-page .skeleton').first()).toBeVisible();
+    await page.getByRole('button', { name: '刷新事件' }).click();
+    await expect(page.getByRole('button', { name: '刷新事件' })).toBeDisabled();
+    await expect(page.getByText('暂无活跃事件')).toHaveCount(0);
   } else await load(page, scenario === 'error' ? 500 : scenario === 'forbidden' ? 403 : 200, { items: [] });
-  if (scenario === 'empty') await expect(page.getByText('暂无关注事项')).toBeVisible();
-  if (scenario === 'error' || scenario === 'forbidden') { await expect(page.locator('attention-page [role="alert"]')).toBeVisible(); await expect(page.getByText('暂无关注事项')).toHaveCount(0); }
+  if (scenario === 'empty') await expect(page.getByText('暂无活跃事件')).toBeVisible();
+  if (scenario === 'error' || scenario === 'forbidden') { await expect(page.locator('event-management-page [role="alert"]')).toBeVisible(); await expect(page.getByText('暂无活跃事件')).toHaveCount(0); }
   await capture(page, `attention-${scenario}`);
 });
 test('revoking permissions closes detail and clears visible names', async ({ page }) => {
@@ -94,6 +109,7 @@ test('reads current real MySQL events over HTTP and opens an exact event with re
   test.skip(!process.env.SLIDE_REAL_API || !process.env.SLIDE_REAL_TOKEN, 'Requires an explicit read-only authenticated HTTP harness');
   const headers = { Authorization: `Bearer ${process.env.SLIDE_REAL_TOKEN}` };
   await page.route('**/api/branding/config', route => route.fulfill({ json: {} }));
+  await page.route('**/api/metrics/template-events/*', route => route.fulfill({ status: 404, json: {error:'NOT_FOUND'} }));
   await page.addInitScript(() => localStorage.setItem('token', 'browser-harness-token'));
   await page.route('**/api/alerts/**', async route => {
     const path = new URL(route.request().url());
@@ -101,11 +117,10 @@ test('reads current real MySQL events over HTTP and opens an exact event with re
     await route.fulfill({ response });
   });
   await page.goto('/e2e/fixtures/workbench-clarity.html');
-  const first = page.locator('attention-page tbody button').first(); await expect(first).toBeVisible();
+  const first = page.locator('event-management-page .event-item').first(); await expect(first).toBeVisible();
   const identity = await first.getAttribute('aria-label'); await first.click();
-  await expect(page.getByRole('dialog')).toBeVisible();
-  await expect(page.locator('app-dialog')).toContainText(identity!.replace('查看', '').replace(' 详情', ''));
-  await expect(page.locator('app-dialog [role="alert"]')).toHaveCount(0);
+  await expect(page.locator('event-management-page h3')).toContainText(identity!.replace('查看', '').replace(' 详情', ''));
+  await expect(page.locator('event-management-page [role="alert"]')).toHaveCount(0);
   await capture(page, 'real-mysql-event-detail');
   expect((await request.get(`${process.env.SLIDE_REAL_API}/api/alerts/events`)).status()).toBe(401);
 });

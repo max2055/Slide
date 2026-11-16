@@ -8,6 +8,29 @@ vi.mock('../../../api/index.js', () => ({ authFetch: vi.fn(async (url: string) =
 import { authFetch } from '../../../api/index.js';
 import { EventManagementPage } from './event-management.js';
 
+describe('migrated attention event states', () => {
+  afterEach(() => { document.body.replaceChildren(); vi.mocked(authFetch).mockReset(); });
+  it.each([403, 503, 200])('clears facts and never renders a successful empty state on invalid read %s', async status => {
+    const page = new EventManagementPage() as any;
+    Object.assign(page, {events:[{id:1,title:'private',severity:'warning',status:'open'}], selectedEvent:{id:1}, eventMembers:[{title:'secret'}], loading:false});
+    vi.mocked(authFetch).mockResolvedValue({ok:status===200,status,json:async()=>({})} as Response);
+    await page._loadEvents();
+    expect(page.events).toEqual([]); expect(page.selectedEvent).toBeNull(); expect(page.eventMembers).toEqual([]);
+    expect(page.loadError).toBeTruthy();
+    expect(page.stats).toBeNull();
+  });
+  it('invalidates a pending list on unmount', async () => {
+    const page = new EventManagementPage() as any;
+    let release!:(value:Response)=>void;
+    vi.mocked(authFetch).mockImplementationOnce(()=>new Promise(resolve=>release=resolve));
+    vi.mocked(authFetch).mockResolvedValue({ok:true,json:async()=>({})} as Response);
+    const pending=page._loadEvents();
+    page.disconnectedCallback();
+    release({ok:true,json:async()=>({items:[{id:99,title:'late private'}]})} as Response);
+    await pending; expect(page.events).toEqual([]);
+  });
+});
+
 describe('manual recovery confirmation', () => {
   afterEach(() => document.body.replaceChildren());
 
