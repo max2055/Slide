@@ -21,7 +21,7 @@ if(['actions','investigations'].includes(view)) {
 }
 if(mode==='forbidden'){set('emptytitle','当前内容不可访问');set('emptyreason','未展示记录、目标或数量。请核对登录状态及相应读取权限。')}
 if(['failed','missing'].includes(mode)) {
- set('status',mode==='failed'?'验证失败':'证据不足');
+ set('title',mode==='failed'?'专用服务恢复验证报告':'恢复采样验证报告');set('breadcrumb','　/ 行动恢复验证详情');document.querySelector('.actionbox > p.muted').textContent='仅查看原执行的验证证据，不发起审批或执行。';set('status',mode==='failed'?'验证失败':'证据不足');
  set('conclusion',mode==='failed'?'执行成功；恢复验证未通过':'证据不足，无法判断业务是否恢复');
  set('reason',mode==='failed'?'reason：观察窗口内 HTTP 失败；missingSamples：0。':'reason：观察样本不足；missingSamples：12。');
  set('next','先读取绑定当前执行与版本的报告，核对观察窗口和证据；不重复发送原动作。');set('cta','读取验证报告（示意）');
@@ -44,5 +44,5 @@ if(['continue','running'].includes(mode)) {
 }
 if(['failed','missing'].includes(mode)) document.querySelector('#detail .detail > .panel:first-child > p').textContent='来源调查：'+(mode==='failed'?'专用服务恢复调查 B':'服务采样缺口调查 C')+' · 结果 v1';
 if(mode==='second'){set('title','A2 · 专用服务配置核对计划');set('reason','同调查 A 的第二个待审批计划，从完整行动列表发现。');set('conclusion','当前结论：配置核对计划尚未批准');}
-if(mode==='history'){set('title','H1 · 历史服务处置计划');set('status','已过期 · 历史只读');set('conclusion','来源调查 H 已关闭；计划保持授权只读');set('reason','历史记录可经完整行动列表发现，不进入首页下一步投影。');set('next','读取历史版本与证据；不得沿用过期计划执行。');set('cta','只读历史（示意）');document.querySelector('.steps').innerHTML='<h3>当前进展</h3><p>来源调查：已关闭</p><p>计划：已过期</p><p>操作：禁用</p>';}
+if(mode==='history'){document.querySelector('#detail .detail > .panel:first-child > p').textContent='来源调查：已关闭调查 H · 历史结果 v1';document.querySelector('.actionbox > p.muted').textContent='过期计划只读，不能用于新审批或执行。';set('title','H1 · 历史服务处置计划');set('status','已过期 · 历史只读');set('conclusion','来源调查 H 已关闭；计划保持授权只读');set('reason','历史记录可经完整行动列表发现，不进入首页下一步投影。');set('next','读取历史版本与证据；不得沿用过期计划执行。');set('cta','只读历史（示意）');document.querySelector('.steps').innerHTML='<h3>当前进展</h3><p>来源调查：已关闭</p><p>计划：已过期</p><p>操作：禁用</p>';}
 </script></body></html>
