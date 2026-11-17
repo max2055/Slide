@@ -2166,6 +2166,9 @@ describe.skipIf(!port)('T04 investigation workflow execution / real MySQL', () =
       silent: true,
       env: {
         ...process.env,
+        // MAX-684: the crash harness signs its own HTTP receipt after restart.
+        // Supply a task key even when the invoking shell has no application env.
+        JWT_SECRET_KEY: 't04-crash-fixture-jwt-key-at-least-32-bytes',
         T04_CHILD_DATABASE: database,
         T04_CHILD_LENGTH: outputLength ? '1' : '',
         T04_CHILD_COMMAND: JSON.stringify(childCommand()),

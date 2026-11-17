@@ -1,7 +1,7 @@
 // Test-process preload. Inspector supplies engine frames; never read exception properties.
 import inspector from 'node:inspector';
 import { fileURLToPath } from 'node:url';
-import { resolve, relative } from 'node:path';
+import { relative } from 'node:path';
 import { types } from 'node:util';
 export function safeFrame(frame, root) {
   try {
@@ -17,14 +17,42 @@ export function safeFrame(frame, root) {
 }
 if (process.env.SLIDE_TEST_PROCESS_EVIDENCE === '1') {
   try {
+    const root = fileURLToPath(new URL('../../', import.meta.url));
+    const role = /(?:^|\/)server\.ts$/.test(process.argv[1] ?? '') ? 'api' : 'test-process';
+    const emit = value => {
+      try { process.stderr.write(JSON.stringify({ role, ...value }) + '\n'); } catch { /* Preserve original process behavior. */ }
+    };
+    emit({ event: 'test-observer-ready' });
+    process.on('exit', code => emit({ event: 'test-observer-exit', code }));
     const session = new inspector.Session(); session.connect();
     session.on('Runtime.exceptionThrown', ({ params }) => {
       try {
         const frames = (params.exceptionDetails.stackTrace?.callFrames ?? []).slice(0, 8)
-          .map(frame => safeFrame(frame, resolve(process.cwd(), '../..'))).filter(Boolean);
-        process.stderr.write(JSON.stringify({ event: 'test-exception', type: 'unknown', frames }) + '\n');
+          .map(frame => safeFrame(frame, root)).filter(Boolean);
+        emit({ event: 'test-exception', type: 'unknown', frames });
       } catch { /* Diagnostics must not change exception handling. */ }
     });
     session.post('Runtime.enable'); session.unref?.();
+    // A Node rejection listener makes V8 classify the rejection as caught.
+    // Observe all pauses, emit only Promise rejection locations, always resume.
+    // These observations do not themselves establish that a rejection is fatal.
+    const scripts = new Map();
+    session.on('Debugger.scriptParsed', ({ params }) => {
+      if (safeFrame({ url: params.url, lineNumber: 0, columnNumber: 0 }, root)) scripts.set(params.scriptId, params.url);
+    });
+    session.on('Debugger.paused', ({ params }) => {
+      try {
+        if (params.reason !== 'promiseRejection') return;
+        const synchronous = (params.callFrames ?? []).slice(0, 32).map(frame => ({
+          url: scripts.get(frame.location.scriptId), lineNumber: frame.location.lineNumber, columnNumber: frame.location.columnNumber,
+        }));
+        const asynchronous = (params.asyncStackTrace?.callFrames ?? []).slice(0, 32);
+        const frames = [...synchronous, ...asynchronous].map(frame => safeFrame(frame, root)).filter(Boolean);
+        emit({ event: 'test-engine-pause', type: 'unknown', frameCount: synchronous.length + asynchronous.length, frames });
+      } catch { /* Never inspect the exception remote object. */ }
+      finally { try { session.post('Debugger.resume'); } catch { /* Original fatal path remains authoritative. */ } }
+    });
+    session.post('Debugger.enable');
+    session.post('Debugger.setPauseOnExceptions', { state: 'all' });
   } catch { /* Optional observation only. */ }
 }

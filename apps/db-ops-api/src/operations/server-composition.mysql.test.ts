@@ -4,6 +4,7 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import { once } from 'node:events';
 import { createServer } from 'node:net';
 import { randomBytes } from 'node:crypto';
+import { fileURLToPath } from 'node:url';
 import { writeFile } from 'node:fs/promises';
 import { describe, expect, it } from 'vitest';
 import { startFeedbackFixture } from '../investigations/feedback-test-fixture.js';
@@ -17,9 +18,16 @@ describe.skipIf(!port)('P10 actual server process registration', () => {
     const httpPort = (listener.address() as { port: number }).port;
     await new Promise<void>(resolve => listener.close(() => resolve()));
     let child: ChildProcess | undefined, output = '';
+    const dependencySnapshots: Array<{ id: string; phase: string; activeLease: boolean; reservedOwner: boolean; readiness: number }> = [];
+    const dependencies = async (id: string, phase: string) => {
+      const [lease] = await fixture.rows("SELECT owner_id, expires_at > NOW() AS active FROM worker_leases WHERE lease_name='slide-singleton-workers'");
+      const readiness = await fetch(`http://127.0.0.1:${httpPort}/api/health/ready`, { signal: AbortSignal.timeout(7_000) });
+      dependencySnapshots.push({ id, phase, activeLease: lease?.active === 1, reservedOwner: lease?.owner_id === 'p10-test-reserved', readiness: readiness.status });
+    };
     try {
       await fixture.rows("INSERT INTO worker_leases(lease_name,owner_id,fencing_token,expires_at) VALUES('slide-singleton-workers','p10-test-reserved',1,DATE_ADD(NOW(),INTERVAL 5 MINUTE))");
-      child = spawn(process.execPath, ['--import', 'tsx', 'server.ts'], { cwd: process.cwd(), env: {
+      child = spawn(process.execPath, ['--import', fileURLToPath(new URL('../../../../scripts/diagnostics/request-evidence.mjs', import.meta.url)), '--import', 'tsx', 'server.ts'], { cwd: process.cwd(), env: {
+        SLIDE_TEST_REQUEST_EVIDENCE: '1',
         ...process.env, NODE_ENV: 'test', DB_HOST: '127.0.0.1', DB_PORT: String(port), DB_USER: 'root',
         DB_PASSWORD: process.env.T11_TEST_MYSQL_PASSWORD, DB_NAME: fixture.database,
         PORT: String(httpPort), JWT_SECRET_KEY: fixture.secret, ENCRYPTION_KEY: randomBytes(32).toString('hex'),
@@ -47,11 +55,16 @@ describe.skipIf(!port)('P10 actual server process registration', () => {
           standby: output.includes('API-only standby'), exited: child?.exitCode !== null }));
         return response;
       };
-      for (const path of metricPaths) {
+      for (const [index, path] of metricPaths.entries()) {
         const result = await read(path);
         expect(result.status, `${path}: ${await result.text()}`).toBe(200);
         expect(result.headers.get('cache-control')).toContain('no-store');
-        expect((await fetch(`http://127.0.0.1:${httpPort}${path}`)).status).toBe(401);
+        const id = `p10-anon-${index + 1}`;
+        await dependencies(id, 'before');
+        const anonymous = await fetch(`http://127.0.0.1:${httpPort}${path}`, { headers: { 'x-slide-test-request': id } });
+        await dependencies(id, 'after');
+        // Retain the original 401 assertion; the preload correlates the rejecting hook.
+        expect(anonymous.status).toBe(401);
       }
       expect((await read('/api/metrics/discovery/instance/999')).status).toBe(403);
       const invalidPreview = await fetch(`http://127.0.0.1:${httpPort}/api/metrics/templates/unknown/discovery-preview`, {
@@ -85,7 +98,8 @@ describe.skipIf(!port)('P10 actual server process registration', () => {
           try { const value = JSON.parse(match[1]); return ['starting','ready','standby','degraded','recovering','blocked','stopping'].includes(value.state) ? value.state : 'unknown'; }
           catch { return 'unknown'; }
         });
-        await writeFile('.p10-recovery-evidence.json', JSON.stringify({ states, exitCode: child?.exitCode }));
+        const requests = output.split('\n').filter(line => line.startsWith('{"event":"test-request"')).map(line => JSON.parse(line));
+        await writeFile('.p10-recovery-evidence.json', JSON.stringify({ states, requests, dependencySnapshots, exitCode: child?.exitCode }));
       } catch { console.error('P10_EVIDENCE_UNAVAILABLE'); }
       await writeFile('.p10-server-process.log', output);
       await fixture.close();
