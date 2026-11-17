@@ -2834,16 +2834,14 @@
       "path": "docs/slide/development/MAX-181/reference/r11-docs-desktop.png",
       "sha256": "6a301ca4800584bd316a36ccb4ed62590eeade45143b1dd5875a99823193784a",
       "bytes": 92155,
-      "kind": "font",
+      "kind": "JPEG",
       "owner": "15-BackendDev-01",
       "risk": "Unknown-format secrets and embedded metadata not covered by text scanner.",
-      "status": "font-table-directory-audited",
+      "status": "jpeg-magic-verified",
       "disposition": "Retain font and license; verify provenance checksum and inspect metadata/tables before content clearance.",
       "evidence": "Font provenance in adjacent README.md/OFL.txt",
       "magicVerified": true,
-      "sfntSignature": "ffd8ffe0",
-      "tableCount": 16,
-      "reason": "OpenType signature and table directory inventoried; provenance/license supplied; binary table contents not fully decoded."
+      "reason": "JPEG SOI/APP0 signature despite .png suffix; previously grouped by filename/unknown fallback incorrectly."
     },
     {
       "id": "B151",

@@ -7,7 +7,7 @@
 | 文件 | 覆盖与使用规则 |
 |---|---|
 | text-findings.json | 343 条：每条保留位置、规则、指纹、当前整文件哈希、owner、理由、风险及处置。261 条与旧指纹及整文件哈希均相同，才复用既有证据；82 条标为当前上下文待裁定，不能算分类通过 |
-| binary-files.json | 225 个：223 PNG、1 OTF、1 gzip；逐个哈希、大小、内容类型及处置。gzip 有解压哈希与产物关联；PNG 像素/元数据与字体表尚未完整审计 |
+| binary-files.json | 225 个：222 PNG + 1 JPEG、1 OTF、1 gzip；逐个哈希、大小、内容类型及处置。gzip 有解压哈希与产物关联；PNG 像素/元数据与字体表尚未完整审计 |
 | platform-same-value-files.json | 24 个文件：逐项区分迁移、bootstrap/schema、测试/手工/CI 路径，明确迁移 checksum/拒绝策略保护及窗口轮换要求。每个文件关联文本和产物条目，不能把文件命中推定为每一行均是秘密 |
 | artifact-fields.json | 657 条独立宽匹配：保留原位置，按相邻行关联 T 编号；源码哈希来自已被 Reviewer 证明字节一致的 4884 源码文件。相邻行仅作调查线索，未自动判定相同秘密 |
 | coverage.json | 远端 refs、全部 Actions 元数据、Release/fork、本地 LFS 范围及限制 |
@@ -44,7 +44,7 @@
 
 657条宽匹配补包内文件哈希及逐行词法结果：25引用/schema表达式、179夹具/断言表达式、453字面上下文仍需来源核实。174相邻行关联保留为线索，新增 confirmedTextLinks 仅表示同路径同行；不宣称同一行必为同一个值。11条构建文件发生位置已补实际包内文件哈希，文件级清单在受控 build-files.json；仍缺构建变量/源映射语义追踪。不能将词法分类当作秘密真实性或端点隔离裁定。
 
-225二进制已逐个验证格式和结构：223 PNG 的 chunk类型及文本元数据哈希、OTF签名/表数、gzip解压。PNG像素内容和字体表深度审计未完成；结构检查不能关闭像素秘密风险。24文件补 sourceContextEvidence，区分schema历史、bootstrap/拒绝策略及测试/手工认证调用方；有效端点可覆盖，活动消费者仍须owner确认。
+225二进制已逐个验证格式和结构：222 PNG + 1 JPEG 的 chunk类型及文本元数据哈希、OTF签名/表数、gzip解压。PNG像素内容和字体表深度审计未完成；结构检查不能关闭像素秘密风险。24文件补 sourceContextEvidence，区分schema历史、bootstrap/拒绝策略及测试/手工认证调用方；有效端点可覆盖，活动消费者仍须owner确认。
 
 R3修正：原快照保持不变，1081为广告行数，1079为命名ref（517 heads、561 pull、1附注tag），另有HEAD别名和一条peeled广告。peeled OID挂到tag，更新集合排除HEAD/peeled及托管pull refs，写权限仍需单独批准。coverage与历史方案同步修正，受控新版ref-disposition另存，旧错误版本仅作历史证据。
 
