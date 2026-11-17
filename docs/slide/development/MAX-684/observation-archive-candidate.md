@@ -10,7 +10,7 @@ main base `451ab8c9969f18d94f17392a74301294de82b5e1`；本轮起点 `e6712d3973e
 
 ## 结构化归档实现和验证
 
-runtime步骤通过 `node scripts/qualification/runtime-browser-evidence.mjs` 执行，仍只运行原agent-runtime三个用例、单worker、managed装配及受控Provider。新增配置将原Playwright产物置于独占 `test-results-agent-runtime-private/`，retain-on-failure沿用；原始trace/DOM/error-context不上传。runner在下一业务步骤前读取该fixture自身的events.ndjson，严格检查字段、枚举、HMAC格式、数值、条数/大小、每场景唯一result；只向 `test-results-agent-runtime-sanitized/evidence.json` 写正向允许的记录。
+runtime步骤通过 `node scripts/qualification/runtime-browser-evidence.mjs` 执行，仍只运行原agent-runtime三个用例、单worker、managed装配及受控Provider。新增配置将原Playwright产物置于独占 `test-results-agent-runtime-private/`，retain-on-failure沿用；原始trace/DOM/error-context不上传；最终runner在子进程执行期间设置umask077并恢复原mask，私有产物只供owner读取。runner在下一业务步骤前读取该fixture自身的events.ndjson，严格检查字段、枚举、HMAC格式、数值、条数/大小、每场景唯一result；只向 `test-results-agent-runtime-sanitized/evidence.json` 写正向允许的记录。
 
 HTTP只选该fixture的history类别和status/count/固定样本匹配布尔/长度；WS只选watch、run/stream状态等允许类型及session/run/message HMAC，不记录auth帧、token、Cookie、密码、任意正文/DOM。HMAC密钥仅存worker内存，刷新前后同fixture关联一致；不同worker的键不可交叉比较。Node侧同时记录wallBefore/mono/wallAfter，mono以当前worker为域，不跨worker或与Linux容器生减。当前记录wall采样跨度0–1ms，另有Date.now约1ms量化误差；不冒称浏览器内部事件发生时刻。dropped仅指允许事件的采集/写入，不证明所有网络帧无损。
 
@@ -54,7 +54,7 @@ Python离线校验 **2/2 PASS**（有效、丢行/身份非法、unsupported边�
 
 ## 最终候选验证、清理与交付限制
 
-运行时fixture观察器、harness和产品源码按实际被测副本保存哈希。真实验证后只完善collector对信号退出/一致性/显式错误的处理及workflow跳过条件；最终collector离线重收同一events，结果与原26条摘要逐字结构一致、业务仍退出1，未再跑浏览器。8项collector测试及YAML校验对应最终代码；增量/远端基线补丁分别提供，明确这些验证层次而非声称最终所有文件都在同一次e2e执行。
+运行时fixture观察器、harness和产品源码按实际被测副本保存哈希。真实验证后只完善collector对信号退出/一致性/显式错误和私有产物umask077的处理及workflow跳过条件；最终collector离线重收同一events，结果与原26条摘要逐字结构一致、业务仍退出1，未再跑浏览器。8项collector测试及YAML校验对应最终代码；增量/远端基线补丁分别提供，明确这些验证层次而非声称最终所有文件都在同一次e2e执行。
 
 原runtime expect、60/15秒预算、原服务/tracker/mjs/DEBUG与12/120秒预算逐项核对；source-policy、diff及相应语法检查通过。无产品UI/公开契约/服务逻辑变更，不机械重跑TLS、原整套浏览器或无关模块；候选的独立脱敏/归档/失败传播审查仍交原Reviewer，不自审放行。
 

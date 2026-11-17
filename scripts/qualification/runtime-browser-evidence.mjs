@@ -69,8 +69,13 @@ export function run({ root, env = process.env, launch = spawnSync }) {
   mkdirSync(dirname(output), { recursive: true });
   writeFileSync(output, JSON.stringify({ version: 1, collection: 'failed', code: 'RUNTIME_EVIDENCE_NOT_COLLECTED' }) + '\n', { mode: 0o600 });
   if (existsSync(input)) { console.error('RUNTIME_EVIDENCE_COLLECTION_FAILED'); return 2; } // Refuse stale evidence rather than attributing it to a new run.
-  const result = launch('pnpm', ['--filter', 'slide-frontend', 'exec', 'playwright', 'test', 'agent-runtime.spec.ts', '--config', 'playwright.agent-runtime.config.ts', '--workers=1'],
-    { cwd: root, env: { ...env, RUNTIME_EVIDENCE_FILE: input }, stdio: 'inherit' });
+  // Playwright's private trace/DOM inherit owner-only creation permissions.
+  const previousMask = process.umask(0o077);
+  let result;
+  try {
+    result = launch('pnpm', ['--filter', 'slide-frontend', 'exec', 'playwright', 'test', 'agent-runtime.spec.ts', '--config', 'playwright.agent-runtime.config.ts', '--workers=1'],
+      { cwd: root, env: { ...env, RUNTIME_EVIDENCE_FILE: input }, stdio: 'inherit' });
+  } finally { process.umask(previousMask); }
   const businessExit = Number.isInteger(result.status) ? result.status : result.signal && constants.signals[result.signal] ? 128 + constants.signals[result.signal] : 1;
   return collect(input, output, businessExit);
 }

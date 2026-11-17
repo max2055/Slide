@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, statSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { run, collect } from './runtime-browser-evidence.mjs';
@@ -16,6 +16,7 @@ for (const [label, code, corrupt, expected] of [['success', 0, false, 0], ['busi
         assert.ok(args.includes('playwright.agent-runtime.config.ts'));
         mkdirSync(dirname(options.env.RUNTIME_EVIDENCE_FILE), { recursive: true });
         writeFileSync(options.env.RUNTIME_EVIDENCE_FILE, corrupt ? '{"password":"SENSITIVE_SENTINEL"}' : records(code ? 'failed' : 'passed').map(JSON.stringify).join('\n'));
+        assert.equal(statSync(options.env.RUNTIME_EVIDENCE_FILE).mode & 0o777, 0o600);
         return { status: code };
       } });
       assert.equal(exit, expected);
