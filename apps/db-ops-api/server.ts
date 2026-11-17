@@ -1,3 +1,4 @@
+import { drainWorkers } from './src/lifecycle/drain-workers.js';
 import { registerIndexRoutes } from './src/index-routes.js';
 import { recordSshTrustRequest } from './src/security/ssh-trust-audit.js';
 import { SystemEventWorkflow } from './src/investigations/system-event-workflow.js';
@@ -323,19 +324,21 @@ async function start() {
     dispatchAvailable = false;
     notificationWorkflowStore = undefined;
     if (workflowTimer) clearInterval(workflowTimer);
-    monitorCollector.stop();
-    networkDeviceCollector.stop();
-    stopSessionCleanup();
-    promptManager.stopWatch();
-    const results = await Promise.allSettled([
-      alertEngine.stopEvaluationLoop(), alertEscalationService.stop(), maintenanceWindowService.stopCacheRefresh(),
-      configBackupScheduler.stop(), cronManager?.stop(), disposeAgentEngine(),
-      metricLifecycle && waitForDrain(() => metricLifecycle!.stop()),
-      stopWorkflow && waitForDrain(stopWorkflow),
-      ...Array.from(recoveredConnections, id => databaseService.removeConnection(id)),
-    ]);
-    const failed = results.find(result => result.status === 'rejected');
-    if (failed?.status === 'rejected') throw new Error('WORKER_DRAIN_FAILED', { cause: failed.reason });
+    await drainWorkers([
+      { name: 'monitor-collector', stop: () => monitorCollector.stop() },
+      { name: 'network-collector', stop: () => networkDeviceCollector.stop() },
+      { name: 'session-cleanup', stop: () => stopSessionCleanup() },
+      { name: 'prompt-watch', stop: () => promptManager.stopWatch() },
+      { name: 'alerts', stop: () => alertEngine.stopEvaluationLoop() },
+      { name: 'escalation', stop: () => alertEscalationService.stop() },
+      { name: 'maintenance', stop: () => maintenanceWindowService.stopCacheRefresh() },
+      { name: 'config-backup', stop: () => configBackupScheduler.stop() },
+      { name: 'cron', stop: () => cronManager?.stop() },
+      { name: 'agent-engine', stop: () => disposeAgentEngine() },
+      { name: 'metrics', stop: () => metricLifecycle && waitForDrain(() => metricLifecycle!.stop()) },
+      { name: 'workflow', stop: () => stopWorkflow && waitForDrain(stopWorkflow) },
+      ...Array.from(recoveredConnections, id => ({ name: `connection:${id}`, stop: () => databaseService.removeConnection(id) })),
+    ], event => console.info('[WorkerDrain]', JSON.stringify(event)));
     recoveredConnections.clear();
   })();
   const recovery = new WorkerRecovery({
