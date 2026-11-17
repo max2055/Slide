@@ -11,6 +11,7 @@ export function canonicalWorkspaceUrl(input: URL, base = ''): URL {
   } else if (['investigations', 'operations-actions'].includes(entry)) {
     url.pathname = `${base}/workbench`;
     if (entry === 'operations-actions') url.searchParams.set('workspaceTab', 'actions');
+    else if (![...url.searchParams.keys()].some(key => key !== 'tab')) url.searchParams.set('workspaceTab', 'investigations');
   } else return url;
   if (legacyTab) url.searchParams.delete('tab');
   return url;

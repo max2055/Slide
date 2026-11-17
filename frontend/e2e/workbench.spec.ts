@@ -45,9 +45,9 @@ for(const [width,height] of [[1440,900],[1366,768],[1920,1080]]) {
       const view=document.createElement('workbench-page');view.permissions=new Set(['operations:actions:view']);document.body.append(view);
       </script></body></html>`}));
     await page.goto('/workbench?workspaceTab=actions');
-    await expect(page.getByRole('heading',{name:'AI 工作台',exact:true})).toBeVisible();
-    await expect(page.getByRole('button',{name:'调查',exact:true})).toBeDisabled();
-    const action=page.getByRole('button',{name:'行动计划',exact:true});
+    await expect(page.getByRole('heading',{name:'行动计划',exact:true})).toBeVisible();
+    await expect(page.getByRole('button',{name:'调查列表',exact:true})).toBeDisabled();
+    const action=page.getByRole('button',{name:'行动列表',exact:true});
     await action.focus();await expect(action).toBeFocused();await page.keyboard.press('Tab');
     await expect(page.getByText('没有匹配计划',{exact:true})).toBeVisible();
     expect(calls.every(c=>c.startsWith('GET ')&&!c.includes('/api/investigations'))).toBe(true);

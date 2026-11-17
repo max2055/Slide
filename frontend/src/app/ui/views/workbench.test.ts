@@ -41,10 +41,21 @@ for (const query of ['investigation=exact&version=7', 'entry=exact', 'workspaceT
   expect(location.search).toBe(`?${query}`);
   expect(page.textContent).toContain('无访问权限');
 });
-it('retains a manually selected investigation tab after authority changes',async()=>{
+it('retains a manually selected home tab after authority changes',async()=>{
   const page=await mount('/workbench',['chat:view','operations:actions:view']);
   page.querySelector<HTMLButtonElement>('nav button')!.click();
   page.permissions=new Set(['operations:actions:view']);await page.updateComplete;
   expect(page.querySelector('operations-actions')).toBeNull();
   expect(location.search).toBe('');expect(page.textContent).toContain('无访问权限');
+});
+
+it('separates the summary homepage from the full investigation list',async()=>{
+ const page=await mount('/workbench',['chat:view']);
+ expect(page.querySelector('investigation-attention')).not.toBeNull();
+ expect(page.querySelector('investigations-page')).toBeNull();
+ const list=[...page.querySelectorAll<HTMLButtonElement>('nav button')].find(b=>b.textContent==='调查列表')!;
+ list.click();await page.updateComplete;
+ expect(page.querySelector('investigation-attention')).toBeNull();
+ expect(page.querySelector('investigations-page')).not.toBeNull();
+ expect(location.search).toBe('?workspaceTab=investigations');
 });

@@ -99,7 +99,7 @@ test('synthetic plan uses real version-bound submission and independent approval
   await own.getByRole('button',{name:'提交当前版本审批',exact:true}).click();
   await expect(own).toContainText('待独立审批');await expect(own.getByRole('button',{name:'批准当前版本',exact:true})).toBeDisabled();
   await reviewer.goto(`${env.url}/operations-actions`);const view=reviewer.locator('operations-actions');
-  await view.getByRole('button',{name:`计划 ${env.plan.id} · v1`,exact:true}).click();
+  await view.locator(`button[data-plan="${env.plan.id}"]`).click();
   await view.getByLabel('审批备注',{exact:true}).fill('SYNTHETIC 独立身份核对目标、影响、不可回退能力与版本。');
   const approve=view.getByRole('button',{name:'批准当前版本',exact:true});await approve.click();
   await expect(view.getByRole('dialog',{name:'确认当前计划审批'})).toBeVisible();

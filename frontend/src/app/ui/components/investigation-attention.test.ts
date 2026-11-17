@@ -1,3 +1,4 @@
+import {displayTime} from '../views/diagnosis-presentation.ts';
 import {authFetch} from '../../../api/index.ts';
 vi.mock('../../../api/index.ts',()=>({authFetch:vi.fn()}));
 import {afterEach,expect,it,vi} from 'vitest';
@@ -21,10 +22,24 @@ it('clears records on revocation, including an in-flight late response',async()=
  let done!:(r:Response)=>void;const api=vi.mocked(authFetch);api.mockImplementation(()=>new Promise(r=>done=r));
  const view=new InvestigationAttention();document.body.append(view);await view.updateComplete;
  window.dispatchEvent(new CustomEvent('slide-permissions-loaded',{detail:{permissions:[]}}));done(reply({items:[item],nextCursor:null}));
- await vi.waitFor(()=>expect(view.shadowRoot!.textContent).toContain('内容已清除'));expect(view.shadowRoot!.querySelector('a')).toBeNull();
+ await vi.waitFor(()=>expect(view.shadowRoot!.textContent).toContain('内容已清除'));expect(view.shadowRoot!.querySelector('a[href*=attentionVersion]')).toBeNull();
 });
 it('refresh projects disappearance of processed originals and exposes partial errors',async()=>{
  const api=vi.mocked(authFetch);api.mockResolvedValueOnce(reply({items:[item],nextCursor:null})).mockResolvedValueOnce(reply({items:[],nextCursor:null,unavailable:true}));
  const view=new InvestigationAttention();document.body.append(view);await vi.waitFor(()=>expect(view.shadowRoot!.querySelector('a')).not.toBeNull());
- view.shadowRoot!.querySelector('button')!.click();await vi.waitFor(()=>expect(view.shadowRoot!.textContent).toContain('部分行动资格暂无法核验'));expect(view.shadowRoot!.querySelector('a')).toBeNull();
+ view.shadowRoot!.querySelector('button')!.click();await vi.waitFor(()=>expect(view.shadowRoot!.textContent).toContain('部分行动资格暂无法核验'));expect(view.shadowRoot!.querySelector('a[href*=attentionVersion]')).toBeNull();
+});
+it('distinguishes result, plan and investigation clocks without inventing chart samples', async()=>{
+ const api=vi.mocked(authFetch);api.mockResolvedValue(reply({items:[{...item,kind:'approve',planId:'p',planVersion:3,
+ planUpdatedAt:'2026-11-03T03:00:00Z',expiresAt:null,decisionSummary:{
+ conclusion:'授权旧结果的结论',recommendation:null,asOf:'2026-11-01T01:00:00Z',
+ sourceRef:{type:'investigation_result',id:'old',version:1},targetRef:null,displayName:null,impact:null,stage:'pending_approval'
+ }}],nextCursor:null,unavailable:false}));
+ const view=new InvestigationAttention();document.body.append(view);
+ await vi.waitFor(()=>expect(view.shadowRoot!.textContent).toContain('授权旧结果的结论'));
+ const text=view.shadowRoot!.textContent!;
+ expect(text).toContain('暂无可靠建议');expect(text).toContain('结果 V1');
+ expect(text).toContain(displayTime('2026-11-01T01:00:00Z'));expect(text).toContain(displayTime('2026-11-03T03:00:00Z'));
+ expect(text).toContain(displayTime(item.updatedAt));expect(text).toContain('暂无可信时序证据');
+ expect(view.shadowRoot!.querySelector('svg,canvas')).toBeNull();
 });

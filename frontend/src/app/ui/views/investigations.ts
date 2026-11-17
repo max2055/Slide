@@ -1,4 +1,4 @@
-import '../components/investigation-attention.ts';
+import {rememberWorkbenchPosition, restoreWorkbenchPosition} from '../workbench-position.ts';
 import '../components/investigation-entry.ts';
 import { readInvestigationEntry } from '../controllers/investigation-entry.ts';
 import { LitElement, html, nothing } from 'lit';
@@ -49,9 +49,13 @@ export class InvestigationsPage extends LitElement {
     this.requestUpdate();
   }
   private popState = () => {
+    const next = new URL(location.href);
+    const returnToLoadedList = !next.searchParams.has('investigation') && !!this.controller.detail
+      && (next.searchParams.get('query') ?? '') === this.query && (next.searchParams.get('state') ?? '') === this.lifecycle
+      && (next.searchParams.get('profile') ?? '') === this.profile && JSON.stringify(next.searchParams.getAll('resource')) === JSON.stringify(this.resources);
     const url = new URL(location.href); this.query = url.searchParams.get('query') ?? ''; this.lifecycle = url.searchParams.get('state') ?? '';
     this.profile = url.searchParams.get('profile') ?? ''; this.resources = url.searchParams.getAll('resource'); this.resource = '';
-    void this.filter(false); const id = url.searchParams.get('investigation');
+    if (!returnToLoadedList) void this.filter(false); const id = url.searchParams.get('investigation');
     if (id) void this.openInvestigation(id, false); else { this.controller.deselect(); this.draft = ''; this.evidenceOpen = false; }
   };
   private permissionsChanged = (e: Event) => {
@@ -76,6 +80,7 @@ export class InvestigationsPage extends LitElement {
     super.disconnectedCallback();
   }
   protected updated(changed: Map<string, unknown>) {
+    if(this.controller.listLoaded && !this.controller.loading && !this.controller.detail && !this.controller.detailLoading) restoreWorkbenchPosition(this);
     if (changed.has('client')) {
       this.controller.dispose(); this.controller = new InvestigationsController(() => this.refreshControllerView(), this.client);
       if (this.canView) this.reload();
@@ -108,8 +113,10 @@ export class InvestigationsPage extends LitElement {
   }
   private async openInvestigation(id: string, push = true) {
     this.draft = ''; this.evidenceOpen = false;
-    if (push) { const url = new URL(location.href); url.searchParams.set('investigation', id); history.pushState({}, '', url); }
+    if (push) { const origin=rememberWorkbenchPosition(id); const url = new URL(location.href); url.searchParams.set('returnTo', origin); url.searchParams.set('investigation', id); history.pushState({workbenchOrigin:origin}, '', url); }
     await this.controller.select(id);
+    await this.updateComplete;
+    this.querySelector<HTMLElement>('.investigation-detail-title')?.focus();
     const url=new URL(location.href),d=this.controller.detail,r=this.controller.results.items[0];
     if(d && url.searchParams.has('attentionVersion') && url.searchParams.get('attentionVersion')===String(d.version)
       && (!url.searchParams.has('attentionResult') || url.searchParams.get('attentionResult')===r?.id)
@@ -131,8 +138,15 @@ export class InvestigationsPage extends LitElement {
     const advancedCount = Number(!!this.profile) + this.resources.length + Number(!!this.resource.trim());
     const firstUse = !entry && !entryError && c.listLoaded && !c.loading && !c.listError && !c.error && !c.list.items.length && !filtered && !c.detail && !c.detailLoading;
     return html`<style>${sharedBtnStyles.cssText}${workspaceShellStyles}
+      investigations-page [hidden] { display:none !important; }
+      investigations-page .investigation-decision { --card:color-mix(in srgb,var(--accent) 9%,var(--bg-elevated)); }
       investigations-page { display:block; min-width:0; }
       investigations-page .workspace { display:grid; grid-template-columns:minmax(180px, 240px) minmax(0, 1fr) minmax(240px, 320px); gap:var(--space-md); align-items:start; }
+      investigations-page .workspace.workspace-list { display:block; }
+      investigations-page .workspace-list .workspace-main, investigations-page .workspace-list .workspace-context { display:none; }
+      investigations-page .workspace.workspace-detail { grid-template-columns:minmax(0,1.98fr) minmax(280px,1fr); }
+      investigations-page .workspace-detail > aside[aria-label="调查导航"] { display:none; }
+      investigations-page .workspace-detail .workspace-context { display:block; }
       investigations-page .workspace > * { min-width:0; }
       investigations-page .workspace-main { display:grid; gap:var(--space-md); }
       investigations-page .workspace-header, investigations-page .workspace-actions { display:flex; align-items:center; justify-content:space-between; gap:var(--space-sm); flex-wrap:wrap; margin-bottom:var(--space-md); }
@@ -194,13 +208,13 @@ export class InvestigationsPage extends LitElement {
       @media(max-width:767px) { investigations-page .workspace { grid-template-columns:minmax(0,1fr); } investigations-page .investigation-list { max-height:220px; overflow:auto; } }
     </style>
     ${!this.canView ? html`<app-empty-state title="无访问权限" description="需要对话读取权限。"></app-empty-state>` : html`
-      <div class="workspace-header"><div><h2>调查</h2><p>明确范围，保留过程，用证据支持判断。</p></div><button class="btn-primary" @click=${() => this.createOpen = true}>创建手动调查</button></div>
+      <div class="workspace-header"><div><h2>调查记录</h2><p>明确范围，保留过程，用证据支持判断。</p></div><button class="btn-primary" @click=${() => this.createOpen = true}>创建手动调查</button></div>
       ${c.error || c.acceptanceUnknown ? html`<div class="workspace-error" role="alert">${c.error || "提交结果尚未确认，请核对原请求。"}${c.acceptanceUnknown ? html`<button class="btn" ?disabled=${c.busy} @click=${() => void c.retryPending()}>核对原请求</button>` : nothing}<button class="btn" @click=${this.reload}>重试读取</button></div>` : nothing}
       ${entryError ? html`<p role="alert">${entryError}</p>` : entry || (c.detail as any)?.context?.entry ? html`<investigation-entry
         .context=${entry ?? null} .investigationId=${entry ? '' : c.detail!.id}
         @investigation-entry-denied=${() => { this.controller.clearSensitive(); this.refreshControllerView(); }}
         @investigation-draft-created=${(e: CustomEvent<{ id: string }>) => { void this.openInvestigation(e.detail.id, false); void this.filter(false); }}></investigation-entry>` : nothing}
-      <form class="workspace-filters" aria-label="调查筛选" @submit=${(e: Event) => { e.preventDefault(); void this.filter(); }}>
+      <form ?hidden=${!!c.detail || c.detailLoading} class="workspace-filters" aria-label="调查筛选" @submit=${(e: Event) => { e.preventDefault(); void this.filter(); }}>
         <div class="workspace-filter-common">
           <label class="workspace-search"><span class="workspace-filter-label">搜索调查</span><input aria-label="搜索调查" placeholder="按调查名称查找" .value=${this.query} @input=${(e: Event) => this.query = (e.target as HTMLInputElement).value}></label>
           <label class="workspace-status"><span class="workspace-filter-label">调查状态</span><select aria-label="调查状态" .value=${this.lifecycle} @change=${(e: Event) => { this.lifecycle = (e.target as HTMLSelectElement).value; void this.filter(); }}><option value="">全部状态</option><option value="open">开放</option><option value="waiting">等待处理</option><option value="closed">已关闭</option><option value="archived">归档</option></select></label>
@@ -216,7 +230,6 @@ export class InvestigationsPage extends LitElement {
           <app-form-field label="高级资源筛选" hint="instance:ID / server:ID / network_device:ID，逗号分隔；与所选资源合并。"><input aria-label="资源筛选" .value=${this.resource} @input=${(e: Event) => this.resource = (e.target as HTMLInputElement).value}></app-form-field>
         </div>
       </form>
-      ${this.canView&&!c.forbidden&&!c.detail&&!c.detailLoading?html`<investigation-attention></investigation-attention>`:nothing}
       ${reminder.has('attentionSourcePlan')&&reminder.has('attentionExecution')?html`<p>续查来源：原行动计划 V${reminder.get('attentionSourcePlanVersion')}。<a href=${`/workbench?workspaceTab=actions&plan=${encodeURIComponent(reminder.get('attentionSourcePlan')!)}&attentionExecution=${encodeURIComponent(reminder.get('attentionExecution')!)}`}>核对原执行与验证记录</a></p>`:nothing}
       ${reminderStale?html`<p role="alert">提醒引用的原版本已变化。请先核对当前记录，再继续处理。<a href=${`/workbench?investigation=${encodeURIComponent(c.detail!.id)}`}>打开当前原调查并重新确认</a></p>`:nothing}
       ${firstUse ? html`<div class="workspace-start"><app-card class="start-intro"><div class="start-panel">
@@ -226,9 +239,17 @@ export class InvestigationsPage extends LitElement {
         <ol class="start-steps">${[['选择范围', '按名称选择一个或多个有权限的资源。'], ['说明问题', '补充现象与时间窗口，避免泛泛地分析一切。'], ['核对证据', '区分事实、推断与缺口，再决定下一步。']].map(([title, text], index) => html`<li><span class="step-number">${index + 1}</span><div><h3>${title}</h3><p>${text}</p></div></li>`)}</ol>
       </div></app-card><aside><app-card><span slot="header">创建前，先明确范围</span>
         ${[['调查与对话', '临时交流可进入对话；需要保留过程与证据时，创建调查。'], ['不会扩大资源权限', '仅显示当前可读取的资源，提交时仍需核验当前授权与操作权限。'], ['没有证据，不代表正常', '缺失、失效和未知结果会单独提示。']].map(([title, text]) => html`<div class="start-note"><h3>${title}</h3><p>${text}</p></div>`)}
-      </app-card></aside></div>` : html`<div class="workspace">
+      </app-card></aside></div>` : html`<div class="workspace ${c.detail || c.detailLoading ? 'workspace-detail' : 'workspace-list'}">
         <aside aria-label="调查导航"><app-card><span slot="header">调查列表</span>
-          <div class="investigation-list">${c.list.items.map(row => html`<button class="btn" aria-current=${row.id === c.detail?.id ? 'true' : 'false'} @click=${() => void this.openInvestigation(row.id)}>${row.title}<br><span class="muted">${row.profileId === 'system' ? '平台调查' : '资源调查'} · ${lifecycleLabels[row.lifecycle]}</span></button>`)}</div>
+          <app-data-table .loading=${c.loading} .columns=${[
+            {key:'title',label:'调查 / 当前结论'}, {key:'stage',label:'阶段'},
+            {key:'updated',label:'调查更新'}, {key:'open',label:'操作'}
+          ]} .rows=${c.list.items.map(row=>({
+            title:html`<strong>${row.title}</strong><p class="muted">${row.latestOutcome?.summary || '尚未提供可靠结论'}</p>`,
+            stage:row.activeRequestId ? '调查进行中' : lifecycleLabels[row.lifecycle],
+            updated:displayTime(row.updatedAt),
+            open:html`<button class="btn-ghost" data-investigation=${row.id} data-workbench-key=${row.id} @click=${()=>void this.openInvestigation(row.id)}>查看调查</button>`
+          }))}></app-data-table>
           ${c.listLoaded && !c.loading && !c.listError && !c.list.items.length ? html`<app-empty-state title="暂无匹配调查" description="更换名称、状态或资源筛选；也可清除筛选查看全部调查。"></app-empty-state>` : nothing}
           ${c.list.nextCursor ? html`<button class="btn" ?disabled=${c.loading} @click=${() => void c.loadList(undefined, true)}>加载更多调查</button>` : nothing}
         </app-card></aside>

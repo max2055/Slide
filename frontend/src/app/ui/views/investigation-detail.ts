@@ -2,6 +2,8 @@ import { hasSlidePermission } from '../app-settings.ts';
 import './operations-actions.ts';
 import '../components/system-investigation-facts.ts';
 import { resourceDetailUrl } from '../components/resource-investigation-links.ts';
+import {returnToWorkbench} from '../workbench-position.ts';
+import { workspaceReturnTo } from '../workbench-routing.ts';
 import { html, nothing } from 'lit';
 import { investigationMessages, type InvestigationsController } from '../controllers/investigations.ts';
 import { messagePartsRenderRows, messagePartsToolOutputs } from '../chat/message-normalizer.ts';
@@ -39,8 +41,11 @@ export function renderInvestigationDetail(controller: InvestigationsController, 
   const tools = messagePartsToolOutputs(messages);
   const result = controller.results.items.reduce<(typeof controller.results.items)[number] | undefined>((latest, item) =>
     !latest || item.version > latest.version ? item : latest, undefined);
+  const returnTo=workspaceReturnTo(new URL(location.href).searchParams.get('returnTo')) || '/workbench?workspaceTab=investigations';
   return html`
-    <app-card><span slot="header">${detail.title}</span>
+    <a @click=${(e:MouseEvent)=>returnToWorkbench(e,returnTo)} href=${returnTo}>返回来源页面</a>
+    <app-card class="investigation-decision"><span slot="header">调查判断 · V${detail.version}</span>
+      <h2 class="investigation-detail-title" tabindex="-1">${detail.title}</h2>
       <dl class="investigation-states">
         <div><dt>本次执行</dt><dd><app-badge variant=${execution === 'unknown' ? 'warn' : 'info'}>${execution ? executionLabels[execution] ?? '状态未知' : '尚未执行'}</app-badge></dd></div>
         <div><dt>调查进度</dt><dd><app-badge>${lifecycleLabels[detail.lifecycle]}</app-badge></dd></div>

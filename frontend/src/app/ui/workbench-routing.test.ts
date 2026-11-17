@@ -32,3 +32,7 @@ it.each([['attention','events','/events?view=aggregate&eventList=active'],['oper
   expect(host.tab).toBe(tab);expect(location.pathname+location.search).toBe(expected);
   history.replaceState({},'','/');
 });
+
+it.each(['/investigations','/?tab=investigations'])('keeps the full list for plain historical entry %s',path=>{
+ expect(canonicalWorkspaceUrl(new URL(path,location.origin)).searchParams.get('workspaceTab')).toBe('investigations');
+});
