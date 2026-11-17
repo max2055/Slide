@@ -73,7 +73,7 @@ export async function registerChatRoutes(
   };
   const preHandler = [deps.verifyToken, async (request: any, reply: any) => {
     try { await requireChat(authenticatedActor(request)); }
-    catch (error) { if (!reject(error, reply)) throw error; }
+    catch (error) { if (!reject(error, reply)) throw error; await reply; }
   }];
   // Fastify awaits preSerialization before it writes the response body. This
   // includes slow history queries and HTTP sends crossing exp or revocation.
@@ -124,7 +124,7 @@ export async function registerChatRoutes(
         sessionKey: result.sessionKey,
       });
     } catch (error) {
-      if (reject(error, reply)) return;
+      if (reject(error, reply)) return reply;
       return reply.code(500).send({ error: `Chat send failed: ${String((error as Error).message)}` });
     }
   });
@@ -163,7 +163,7 @@ export async function registerChatRoutes(
         thinkingLevel: typeof metadata?.thinkingLevel === 'string' ? metadata.thinkingLevel : null,
       });
     } catch (error) {
-      if (reject(error, reply)) return;
+      if (reject(error, reply)) return reply;
       return reply.code(500).send({ error: `获取聊天历史失败：${String((error as Error).message)}` });
     }
   });
@@ -214,7 +214,7 @@ export async function registerChatRoutes(
         defaults: {},
       });
     } catch (error) {
-      if (reject(error, reply)) return;
+      if (reject(error, reply)) return reply;
       return reply.code(500).send({ error: `获取会话列表失败：${String((error as Error).message)}` });
     }
   });
@@ -229,7 +229,7 @@ export async function registerChatRoutes(
       });
       return reply.send({ ok: true });
     } catch (error) {
-      if (reject(error, reply)) return;
+      if (reject(error, reply)) return reply;
       return reply.code(500).send({ error: `更新会话设置失败：${String((error as Error).message)}` });
     }
   });
@@ -240,7 +240,7 @@ export async function registerChatRoutes(
       const deleted = await deps.service.deleteSession(authenticatedActor(request as any), key);
       return reply.send({ ok: deleted });
     } catch (error) {
-      if (reject(error, reply)) return;
+      if (reject(error, reply)) return reply;
       return reply.code(500).send({ error: `删除会话失败：${String((error as Error).message)}` });
     }
   });
@@ -260,7 +260,7 @@ export async function registerChatRoutes(
       );
       return reply.send({ ok: true, deleted });
     } catch (error) {
-      if (reject(error, reply)) return;
+      if (reject(error, reply)) return reply;
       return reply.code(500).send({ error: `限制消息数量失败：${String((error as Error).message)}` });
     }
   });

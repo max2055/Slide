@@ -49,6 +49,24 @@ function routeDependencies() {
 }
 
 describe('chat REST actor boundary', () => {
+  it('MAX-684 preserves rejected history JSON over a real socket with serialization hooks', async () => {
+    const registerChatRoutes = await loadRegisterChatRoutes();
+    if (!registerChatRoutes) throw new Error('chat routes unavailable');
+    const app = Fastify();
+    app.addHook('preSerialization', async (_request, _reply, payload) => payload);
+    const deps = routeDependencies();
+    deps.service.getMessages.mockRejectedValue(new ChatSessionNotFoundError());
+    await registerChatRoutes(app, deps);
+    try {
+      const address = await app.listen({ host: '127.0.0.1', port: 0 });
+      const response = await fetch(`${address}/api/chat/history?sessionKey=private`);
+      expect(response.status).toBe(404);
+      expect(await response.json()).toEqual({ error: 'Session not found', code: 'CHAT_SESSION_NOT_FOUND' });
+    } finally {
+      await app.close();
+    }
+  });
+
   it('registers injectable routes and passes request.user to every chat operation', async () => {
     const registerChatRoutes = await loadRegisterChatRoutes();
     expect(registerChatRoutes).toBeTypeOf('function');
