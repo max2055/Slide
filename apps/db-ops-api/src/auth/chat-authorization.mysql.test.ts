@@ -1,3 +1,5 @@
+import { createRequire } from 'node:module';
+import { PlatformUnavailableError } from '../lifecycle/platform-unavailable.js';
 import { randomUUID } from 'node:crypto';
 import { createServer, type Server } from 'node:http';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
@@ -208,6 +210,84 @@ describe.skipIf(!port)('MAX-684 real SQL/JWT/HTTP/WS; controlled model endpoint'
     expect(messages).toHaveLength(0); expect(modelCalls).toBe(count);
     observed.push({ id: 'completion-recovery-original-authority', status: 'passed' });
   });
+  it('integrated frontend uses real HTTP/WS denial, clears late content and reconnects without execution replay', async () => {
+    const requireFrontend = createRequire(new URL('../../../../frontend/package.json', import.meta.url));
+    const { JSDOM } = requireFrontend('jsdom');
+    const dom = new JSDOM('', { url: String(app.listeningOrigin) });
+    const nativeFetch = globalThis.fetch;
+    for (const key of ['window', 'document', 'HTMLElement', 'customElements', 'localStorage', 'sessionStorage', 'location', 'navigator', 'CustomEvent']) vi.stubGlobal(key, dom.window[key]);
+    vi.stubGlobal('WebSocket', WebSocket);
+    vi.stubGlobal('fetch', (input: any, options?: any) => nativeFetch(typeof input === 'string' ? new URL(input, String(app.listeningOrigin)) : input, options));
+    const apiPath = new URL('../../../../frontend/src/api/index.ts', import.meta.url).href;
+    const gatewayPath = new URL('../../../../frontend/src/app/ui/direct-gateway.ts', import.meta.url).href;
+    const controllerPath = new URL('../../../../frontend/src/app/ui/controllers/chat.ts', import.meta.url).href;
+    const { apiClient } = await import(apiPath);
+    const { DirectGatewayClient, handleDirectAdapterEvent, clearExpiredChatState } = await import(gatewayPath);
+    const { loadChatHistory } = await import(controllerPath);
+    const state: any = { client: null, connected: false, sessionKey: session, chatMessages: [], chatMessage: '', chatAttachments: [],
+      chatLoading: false, chatSending: false, chatThinkingLevel: null, chatRunId: null, chatStream: null, chatStreamStartedAt: null,
+      chatThinkingText: '', chatToolMessages: [], chatStreamSegments: [], toolStreamById: new Map(), toolStreamOrder: [], toolStreamSyncTimer: null,
+      chatQueue: [], lastError: null, settings: {}, applySettings() {}, refreshSessionsAfterChat: new Set() };
+    const changes: string[] = [];
+    const sent = vi.spyOn(WebSocket.prototype, 'send');
+    const gateway = new DirectGatewayClient({ url: `ws://127.0.0.1:${(adapter as any).wsServer.address().port}`, chatAcceptTimeoutMs: 500,
+      onEvent: (event: any) => handleDirectAdapterEvent(state, event), onStateChange: (change: string) => {
+        changes.push(change); state.connected = change === 'connected';
+        if (change === 'auth_failed') clearExpiredChatState(state);
+      } });
+    const frames = () => sent.mock.calls.map(([raw]) => { try { return JSON.parse(String(raw)); } catch { return {}; } }).filter(frame => frame.type === 'chat.send').length;
+    state.client = gateway;
+    apiClient.setToken(await token()); (dom.window as any).__apiClient = apiClient;
+    try {
+      gateway.connect(); await vi.waitFor(() => expect(state.connected).toBe(true));
+      await loadChatHistory(state); expect(JSON.stringify(state.chatMessages)).toContain('PRIVATE_OWNER_HISTORY');
+      state.chatStream = 'stale private stream'; state.chatToolMessages = [{ content: 'stale private tool' }];
+      await revoke();
+      await expect(gateway.sendChat(session, 'must be refused before model')).rejects.toThrow();
+      await vi.waitFor(() => expect(state.chatMessages).toEqual([]));
+      expect(state.chatStream).toBeNull(); expect(state.chatToolMessages).toEqual([]);
+      const peer = [...(adapter as any).wsServer.clients].find((ws: any) => ws._actorContext?.userId === 68401) as WebSocket;
+      // Transport fault injection: a late frame bypasses the server writer solely
+      // to test the released frontend's stale receiver. Real output is guarded.
+      peer.send(JSON.stringify({ type: 'complete', sessionKey: session, runId: 'retired', finalContent: 'FAULT_INJECTED_LATE_PRIVATE' }));
+      await new Promise(resolve => setTimeout(resolve, 30)); expect(JSON.stringify(state.chatMessages)).not.toContain('FAULT_INJECTED_LATE_PRIVATE');
+      await grant(); await loadChatHistory(state); expect(JSON.stringify(state.chatMessages)).toContain('PRIVATE_OWNER_HISTORY');
+      const originalMessages = state.chatMessages;
+      const outage = vi.spyOn(actors, 'authenticateAccessToken').mockRejectedValueOnce(new PlatformUnavailableError());
+      await loadChatHistory(state); expect(state.chatMessages).toBe(originalMessages); outage.mockRestore();
+      // Lose the admission receipt after the actual server admitted one request.
+      const sendEvent = (adapter as any).sendSocketEvent.bind(adapter);
+      const lostReceipt = vi.spyOn(adapter as any, 'sendSocketEvent').mockImplementation((ws: any, event: any) => event.type === 'run.started' ? true : sendEvent(ws, event));
+      const startFrames = frames(), startCalls = modelCalls; hold = true;
+      const acknowledgement = gateway.sendChat(session, 'unknown receipt, never replay').then(() => null, (error: Error) => error);
+      await vi.waitFor(() => expect(modelCalls).toBe(startCalls + 1));
+      const failOnce = vi.spyOn(actors, 'revalidateActor').mockRejectedValueOnce(new PlatformUnavailableError());
+      gateway.watchSession(session);
+      await vi.waitFor(() => expect(changes).toContain('service_unavailable'));
+      failOnce.mockRestore();
+      await vi.waitFor(() => expect(changes.filter(change => change === 'connected').length).toBeGreaterThan(1), { timeout: 2500 });
+      expect(frames()).toBe(startFrames + 1); expect(modelCalls).toBe(startCalls + 1);
+      expect(await acknowledgement).toBeInstanceOf(Error);
+      lostReceipt.mockRestore(); hold = false; for (const release of releases.splice(0)) release();
+      // A new token uses a new connection; exp of A cannot clear newer B.
+      gateway.disconnect();
+      const a = await token(68401, 1), b = await token(68401, 60); apiClient.setToken(a);
+      const secondChanges: string[] = [];
+      const renewed = new DirectGatewayClient({ url: `ws://127.0.0.1:${(adapter as any).wsServer.address().port}`,
+        onEvent: () => {}, onStateChange: (change: string) => secondChanges.push(change) });
+      try {
+        renewed.connect(); await vi.waitFor(() => expect(secondChanges).toContain('connected'));
+        apiClient.setToken(b);
+        await vi.waitFor(() => expect(secondChanges).toContain('credentials_changed'), { timeout: 1800 });
+        await vi.waitFor(() => expect(secondChanges.filter(change => change === 'connected').length).toBe(2), { timeout: 2500 });
+        expect(apiClient.getToken()).toBe(b); expect(secondChanges).not.toContain('auth_failed');
+      } finally { renewed.disconnect(); }
+      observed.push({ id: 'integrated-frontend-real-authority', status: 'passed' });
+    } finally {
+      gateway.disconnect(); sent.mockRestore(); hold = false; for (const release of releases.splice(0)) release();
+      vi.unstubAllGlobals(); dom.window.close();
+    }
+  }, 12000);
   it('MF1-parent-completed: child retains original scope after parent release', () => caseDone('MF1-parent-completed', async () => {
     const a = await actor(); const s = scope(a); const registry = new SubagentRegistry();
     const manager = new SubagentManager(new AgentRunner(guardedChatProvider(provider)), undefined, undefined, registry);
