@@ -29,9 +29,16 @@ export async function restoreWorkbenchPosition(root: ParentNode) {
   const position = history.state?.workbenchPosition;
   if (!position || typeof position.key !== 'string' || !Number.isFinite(position.y)) return;
   const match = [...root.querySelectorAll<HTMLElement>('[data-workbench-key]')].find(el=>el.dataset.workbenchKey===position.key);
-  const fallback = root.querySelector<HTMLElement>('button,a,h2');
-  (match ?? fallback)?.focus({preventScroll:true});
-  window.scrollTo(0,position.y);
+  const visible = (el:HTMLElement) => el.getClientRects().length > 0
+    && getComputedStyle(el).visibility !== 'hidden' && !el.matches(':disabled');
+  const fallback = [...root.querySelectorAll<HTMLElement>('button,a[href],h2')].find(visible);
+  const target = match && visible(match) ? match : fallback;
+  if (target) {
+    if (target.tagName === 'H2') target.tabIndex = -1;
+    target.focus({preventScroll:true});
+    if (target === match) window.scrollTo(0,position.y);
+    else target.scrollIntoView({block:'nearest'});
+  }
   const {workbenchPosition: _position,...state} = history.state;
   history.replaceState(state,'',location.href);
 }
