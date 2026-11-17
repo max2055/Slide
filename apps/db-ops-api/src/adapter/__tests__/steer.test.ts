@@ -1,3 +1,4 @@
+import { recordVerifiedCredential } from '../../auth/chat-credential.js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -12,7 +13,8 @@ import { canonicalStore } from '../canonical-store.js';
 import { chatDatabaseService } from '../../chat-database-service.js';
 import type { ActorContext } from '../../auth/actor-context.js';
 
-const actor: ActorContext = { userId: 626, username: 'steer', roles: [], permissions: [], sessionVersion: 1, instanceScopes: {}, requestId: 'steer' };
+const actor: ActorContext = { userId: 626, username: 'steer', roles: [], permissions: ['chat:view'], sessionVersion: 1, instanceScopes: {}, requestId: 'steer' };
+recordVerifiedCredential(actor, 'unit-token', Date.now() / 1000 + 3600);
 const run = { id: 'run626', actorId: actor.userId, sessionId: 's626', messageId: 'm626', idempotencyKey: 'k626', state: 'running' as const };
 const final: LLMResponse = { content: 'answer', finishReason: 'stop', toolCalls: [], usage: {}, shouldExecuteTools: false, hasToolCalls: false };
 let workspace: string;
@@ -49,7 +51,7 @@ beforeEach(async () => {
   await once(client, 'open');
   const socket = [...server.clients][0] as WebSocket;
   sent = vi.spyOn(socket, 'send');
-  handle = async msg => { await socket.listeners('message')[0].call(socket, Buffer.from(JSON.stringify(msg)), false); };
+  handle = async msg => { await socket.listeners('message')[0].call(socket, Buffer.from(JSON.stringify(msg)), false); await (adapter as any).socketWriter.queued.get(socket)?.tail; };
   await handle({ type: 'auth', token: 'test-token' });
   active = { actorId: actor.userId, sessionId: run.sessionId, controller: new AbortController(), injections: [] };
   (adapter as any).activeRuns.set(run.id, active);

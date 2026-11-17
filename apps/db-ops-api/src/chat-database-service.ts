@@ -1,3 +1,5 @@
+import { PlatformUnavailableError } from './lifecycle/platform-unavailable.js';
+import { ChatAuthorization } from './auth/chat-authorization.js';
 /**
  * Actor-scoped chat persistence and sharing boundary.
  */
@@ -24,6 +26,7 @@ export type ChatAction =
 export type ChatSharePermission = 'read';
 
 export class ChatSessionNotFoundError extends Error {
+  readonly code = 'CHAT_SESSION_NOT_FOUND';
   constructor() {
     super('Chat session not found');
     this.name = 'ChatSessionNotFoundError';
@@ -99,11 +102,12 @@ export class ChatDatabaseService {
   constructor(
     private readonly poolProvider: () => ChatPool | null = () => dbConnection.getPool() as ChatPool | null,
     private readonly investigations: InvestigationAuthorization = investigationAuthorization,
+    private readonly chatAccess = new ChatAuthorization(),
   ) {}
 
   private getPool(): ChatPool {
     if (!this.pool) this.pool = this.poolProvider();
-    if (!this.pool) throw new Error('Chat database is unavailable');
+    if (!this.pool) throw new PlatformUnavailableError();
     return this.pool;
   }
 
@@ -129,6 +133,7 @@ export class ChatDatabaseService {
     executor: QueryExecutor = this.getPool(),
     lock = false,
   ): Promise<ChatSessionRecord> {
+    await this.chatAccess.require(actor, { execute: (sql, values) => executor.query(sql, values) });
     const [rows] = await executor.query<RowDataPacket[]>(
       `SELECT cs.* FROM chat_sessions cs
        WHERE cs.session_id = ?
@@ -137,6 +142,8 @@ export class ChatDatabaseService {
       [sessionId, ...this.accessValues(actor, action)],
     );
     if (!rows[0]) throw new ChatSessionNotFoundError();
+    if (Number(rows[0].user_id) !== actor.userId
+      && !await this.chatAccess.ownerReadable(Number(rows[0].user_id), { execute: (sql, values) => executor.query(sql, values) })) throw new ChatSessionNotFoundError();
     await this.authorizeLinkedInvestigation(actor, sessionId, action, executor);
     return this.mapSessionRow(rows[0]);
   }
@@ -156,11 +163,21 @@ export class ChatDatabaseService {
     }
   }
 
+  /** Cancellation carries no content and does not restore chat authority. */
+  async authorizeCancellation(actor: ActorContext, sessionId: string): Promise<void> {
+    const executor = { execute: (sql: string, values?: unknown[]) => this.getPool().query(sql, values) };
+    await this.chatAccess.actors.revalidateActorOn(executor, actor);
+    const [rows] = await this.getPool().query<any[]>(`SELECT session_id FROM chat_sessions
+      WHERE session_id = ? AND user_id = ? AND NOT EXISTS (SELECT 1 FROM investigations i WHERE i.session_id = chat_sessions.session_id)`, [sessionId, actor.userId]);
+    if (!rows.length) throw new ChatSessionNotFoundError();
+  }
+
   async createSession(
     actor: ActorContext,
     input: { title?: string; instanceId?: number | null } = {},
   ): Promise<ChatSessionRecord> {
     const pool = this.getPool();
+    await this.chatAccess.require(actor, { execute: (sql, values) => pool.query(sql, values) });
     const sessionId = randomUUID();
     const title = input.title?.trim() || '新会话';
     const instanceId = input.instanceId ?? null;
@@ -186,6 +203,7 @@ export class ChatDatabaseService {
   }
 
   async getSessions(actor: ActorContext, limit = 20): Promise<ChatSessionRecord[]> {
+    await this.chatAccess.require(actor, { execute: (sql, values) => this.getPool().query(sql, values) });
     const [rows] = await this.getPool().query<RowDataPacket[]>(
       `SELECT cs.* FROM chat_sessions cs
        WHERE ${this.accessPredicate('read')}
@@ -194,7 +212,7 @@ export class ChatDatabaseService {
     );
     const visible: ChatSessionRecord[] = [];
     for (const row of rows) {
-      try { await this.authorizeLinkedInvestigation(actor, row.session_id, 'read', this.getPool()); }
+      try { await this.authorizeSession(actor, row.session_id, 'read'); }
       catch (error) { if (error instanceof ChatSessionNotFoundError) continue; throw error; }
       visible.push(this.mapSessionRow(row));
       if (visible.length >= limit) break;

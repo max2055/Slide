@@ -1064,6 +1064,7 @@ async function start() {
     verifyToken,
     service: chatDatabaseService,
     handleChatSend,
+    getGreeting: getAgentGreeting,
   });
 
   fastify.get('/api/resources/:type/:id', { preHandler: [verifyToken] }, async (request, reply) => {
@@ -4064,15 +4065,6 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
       } catch (error: any) {
         reply.code(500).send({ error: error.message });
       }
-    }
-  });
-
-  // 获取 Agent 问候语
-  fastify.get('/api/chat/greeting', { preHandler: [verifyToken] }, async (_request, reply) => {
-    try {
-      reply.send({ greeting: getAgentGreeting() });
-    } catch (error: any) {
-      reply.code(500).send({ error: error.message });
     }
   });
 

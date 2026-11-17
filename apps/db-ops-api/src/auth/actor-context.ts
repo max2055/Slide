@@ -1,3 +1,4 @@
+import { carryChatCredential, recordVerifiedCredential } from './chat-credential.js';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import jwt from 'jsonwebtoken';
 import type { Pool, PoolConnection } from 'mysql2/promise';
@@ -59,6 +60,7 @@ interface ActorSnapshotRow {
 interface AccessTokenClaims {
   userId: number;
   sessionVersion: number;
+  exp?: number;
 }
 
 const ACTOR_SNAPSHOT_SQL = `
@@ -221,7 +223,8 @@ export class ActorContextService {
     try { decoded = jwt.verify(token, secret); }
     catch (error) { throw new ActorAuthenticationError({ cause: error }); }
     if (!isAccessTokenClaims(decoded)) throw new ActorAuthenticationError();
-    return this.loadActiveActor(decoded.userId, decoded.sessionVersion, requestId);
+    const actor = await this.loadActiveActor(decoded.userId, decoded.sessionVersion, requestId);
+    return Number.isFinite(decoded.exp) ? recordVerifiedCredential(actor, token, decoded.exp!) : actor;
   }
 
   /** Trusted investigation port. The same transaction performs current grant
@@ -256,7 +259,7 @@ export class ActorContextService {
       ? await this.loadInvestigationActorFrom(servicePool!,
         actor.userId, 'service', actor.sessionVersion, requestId)
       : await this.loadActiveActor(actor.userId, actor.sessionVersion, requestId);
-    return resourceBoundary ? Object.freeze({ ...current, resourceBoundary }) : current;
+    return carryChatCredential(actor, resourceBoundary ? Object.freeze({ ...current, resourceBoundary }) : current);
   }
 
   /**
@@ -278,7 +281,7 @@ export class ActorContextService {
       ? await this.loadInvestigationActorFrom(executor,
         actor.userId, 'service', actor.sessionVersion, requestId)
       : await this.loadActorFrom(executor, actor.userId, actor.sessionVersion, requestId, 'user', locking);
-    return resourceBoundary ? Object.freeze({ ...current, resourceBoundary }) : current;
+    return carryChatCredential(actor, resourceBoundary ? Object.freeze({ ...current, resourceBoundary }) : current);
   }
 
   async issueRefreshToken(

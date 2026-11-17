@@ -7,7 +7,7 @@ const actor: ActorContext = Object.freeze({
   userId: 7,
   username: 'alice',
   roles: Object.freeze([]),
-  permissions: Object.freeze([]),
+  permissions: Object.freeze(['chat:view']),
   sessionVersion: 1,
   instanceScopes: Object.freeze({}),
   requestId: 'route-request',
@@ -45,7 +45,7 @@ function routeDependencies() {
   const verifyToken = vi.fn(async (request: any) => {
     request.user = actor;
   });
-  return { service, handleChatSend, verifyToken };
+  return { service, handleChatSend, verifyToken, authorizeChat: async (a: ActorContext) => a };
 }
 
 describe('chat REST actor boundary', () => {
@@ -133,11 +133,11 @@ describe('chat REST actor boundary', () => {
     expect(patch.statusCode).toBe(404);
     expect(remove.statusCode).toBe(404);
     expect(cap.statusCode).toBe(404);
-    expect(send.json()).toEqual({ error: 'Session not found' });
-    expect(history.json()).toEqual({ error: 'Session not found' });
-    expect(patch.json()).toEqual({ ok: false, error: 'Session not found' });
-    expect(remove.json()).toEqual({ ok: false, error: 'Session not found' });
-    expect(cap.json()).toEqual({ ok: false, error: 'Session not found' });
+    expect(send.json()).toEqual({ error: 'Session not found', code: 'CHAT_SESSION_NOT_FOUND' });
+    expect(history.json()).toEqual({ error: 'Session not found', code: 'CHAT_SESSION_NOT_FOUND' });
+    expect(patch.json()).toEqual({ error: 'Session not found', code: 'CHAT_SESSION_NOT_FOUND' });
+    expect(remove.json()).toEqual({ error: 'Session not found', code: 'CHAT_SESSION_NOT_FOUND' });
+    expect(cap.json()).toEqual({ error: 'Session not found', code: 'CHAT_SESSION_NOT_FOUND' });
     expect(deps.handleChatSend).toHaveBeenCalledWith(actor, {
       message: 'forbidden',
       sessionKey: 'other-session',

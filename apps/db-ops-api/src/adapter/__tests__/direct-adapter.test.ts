@@ -1,3 +1,5 @@
+import { recordVerifiedCredential } from '../../auth/chat-credential.js';
+import { actorContextService } from '../../auth/actor-context.js';
 /**
  * DirectAdapter Unit Tests
  *
@@ -36,6 +38,7 @@ import { platformLogs } from '../../platform/structured-log-evidence-adapter.js'
 // Persistence-boundary mocks; these tests exercise transport/tool policy.
 // Real actor-scoped canonical SQL and failure recovery use the MySQL qualification.
 beforeEach(() => {
+  vi.spyOn(actorContextService, 'revalidateActor').mockImplementation(async actor => actor);
   vi.spyOn(canonicalStore, 'getPage').mockResolvedValue({ messages: [], nextBefore: null });
   vi.spyOn(canonicalStore, 'appendToolFacts').mockResolvedValue(undefined);
   vi.spyOn(canonicalStore, 'saveCheckpoint').mockResolvedValue(undefined);
@@ -388,7 +391,7 @@ describe('DirectAdapter', () => {
       vi.unstubAllEnvs();
     });
 
-    async function connect(authenticateAccessToken = vi.fn().mockResolvedValue({ userId: 1 })) {
+    async function connect(authenticateAccessToken = vi.fn().mockResolvedValue(recordVerifiedCredential({ userId: 1, username: 'fixture', permissions: ['chat:view'], roles: [], sessionVersion: 1, instanceScopes: {}, requestId: 'fixture' }, 'fixture-token', Math.floor(Date.now() / 1000) + 3600))) {
       vi.stubEnv('AGENT_WS_PORT', '0');
       vi.stubEnv('AGENT_WS_AUTH_TIMEOUT_MS', '1000');
       vi.stubEnv('JWT_SECRET_KEY', 'test-secret-for-ws-ingress');
@@ -653,7 +656,7 @@ describe('DirectAdapter', () => {
         userId: 73,
         username: 'ws-catalog-viewer',
         roles: Object.freeze(['viewer']),
-        permissions: Object.freeze([]),
+        permissions: Object.freeze(['chat:view']),
         sessionVersion: 1,
         instanceScopes: Object.freeze({}),
         requestId: 'ws-catalog-policy-test',
@@ -672,7 +675,7 @@ describe('DirectAdapter', () => {
         toolsForActor: () => actorTools,
         llmProvider: new CatalogToolCallingProvider('get_instance_connection', { instance_id: 999_999 }),
         actorContextService: {
-          authenticateAccessToken: vi.fn().mockResolvedValue(viewer),
+          authenticateAccessToken: vi.fn().mockResolvedValue(recordVerifiedCredential(viewer, 'unit-token', Math.floor(Date.now() / 1000) + 3600)),
           revalidateActor: vi.fn().mockResolvedValue(viewer),
         },
       });
@@ -731,7 +734,7 @@ describe('DirectAdapter', () => {
       process.env.AGENT_WS_PORT = String(port);
       process.env.JWT_SECRET_KEY = 'test-websocket-secret-that-is-long-enough';
       const actor: ActorContext = Object.freeze({
-        userId: 74, username: 'ws-failure-user', roles: Object.freeze(['viewer']), permissions: Object.freeze([]),
+        userId: 74, username: 'ws-failure-user', roles: Object.freeze(['viewer']), permissions: Object.freeze(['chat:view']),
         sessionVersion: 1, instanceScopes: Object.freeze({}), requestId: 'ws-provider-failure-test',
       });
       const metadata = vi.spyOn(chatDatabaseService, 'getSessionMetadata').mockResolvedValue(null);
@@ -748,7 +751,7 @@ describe('DirectAdapter', () => {
         tools: new ToolRegistry(),
         llmProvider: new FailingProvider(),
         actorContextService: {
-          authenticateAccessToken: vi.fn().mockResolvedValue(actor),
+          authenticateAccessToken: vi.fn().mockResolvedValue(recordVerifiedCredential(actor, 'unit-token', Math.floor(Date.now() / 1000) + 3600)),
           revalidateActor: vi.fn().mockResolvedValue(actor),
         },
       });
@@ -804,7 +807,7 @@ describe('DirectAdapter', () => {
       process.env.AGENT_WS_PORT = String(port);
       process.env.JWT_SECRET_KEY = 'test-websocket-secret-that-is-long-enough';
       const actor: ActorContext = Object.freeze({
-        userId: 74, username: 'ws-failure-user', roles: Object.freeze(['viewer']), permissions: Object.freeze([]),
+        userId: 74, username: 'ws-failure-user', roles: Object.freeze(['viewer']), permissions: Object.freeze(['chat:view']),
         sessionVersion: 1, instanceScopes: Object.freeze({}), requestId: 'ws-provider-failure-test',
       });
       const metadata = vi.spyOn(chatDatabaseService, 'getSessionMetadata').mockResolvedValue(null);
@@ -844,7 +847,7 @@ describe('DirectAdapter', () => {
         tools: new ToolRegistry(),
         llmProvider: provider,
         actorContextService: {
-          authenticateAccessToken: vi.fn().mockResolvedValue(actor),
+          authenticateAccessToken: vi.fn().mockResolvedValue(recordVerifiedCredential(actor, 'unit-token', Math.floor(Date.now() / 1000) + 3600)),
           revalidateActor: vi.fn().mockResolvedValue(actor),
         },
       });
@@ -1071,7 +1074,7 @@ describe('DirectAdapter', () => {
         userId: 71,
         username: 'viewer',
         roles: Object.freeze(['viewer']),
-        permissions: Object.freeze([]),
+        permissions: Object.freeze(['chat:view']),
         sessionVersion: 1,
         instanceScopes: Object.freeze({}),
         requestId: 'adapter-policy-test',
@@ -1101,7 +1104,7 @@ describe('DirectAdapter', () => {
 
       try {
         vi.spyOn(chatDatabaseService, 'addMessage').mockResolvedValue(1);
-        await adapter.chat('adapter-policy-session', 'run the dangerous tool', (event) => events.push(event), viewer);
+        await adapter.chat('adapter-policy-session', 'run the dangerous tool', (event) => events.push(event), recordVerifiedCredential(viewer, 'unit-token', Math.floor(Date.now() / 1000) + 3600));
         expect(handler).not.toHaveBeenCalled();
         expect(events.some((event) => event.type === 'tool_error')).toBe(true);
       } finally {
@@ -1116,7 +1119,7 @@ describe('DirectAdapter', () => {
         userId: 72,
         username: 'catalog-viewer',
         roles: Object.freeze(['viewer']),
-        permissions: Object.freeze([]),
+        permissions: Object.freeze(['chat:view']),
         sessionVersion: 1,
         instanceScopes: Object.freeze({}),
         requestId: 'catalog-policy-test',
@@ -1136,7 +1139,7 @@ describe('DirectAdapter', () => {
 
       try {
         vi.spyOn(chatDatabaseService, 'addMessage').mockResolvedValue(1);
-        await adapter.chat('catalog-policy-session', 'show the connection', (event) => events.push(event), viewer);
+        await adapter.chat('catalog-policy-session', 'show the connection', (event) => events.push(event), recordVerifiedCredential(viewer, 'unit-token', Math.floor(Date.now() / 1000) + 3600));
         const result = events.find((event) => event.type === 'tool_error');
         expect(result).toMatchObject({
           toolName: 'get_instance_connection',

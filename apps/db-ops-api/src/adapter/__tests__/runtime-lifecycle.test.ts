@@ -1,3 +1,4 @@
+import { recordVerifiedCredential } from '../../auth/chat-credential.js';
 vi.mock('../../cron/cron-authority.js', () => ({ cronAuthorityService: { authorize: async () => ({ audit: {}, refreshActor: async () => ({ userId: 7 }) }) }, CRON_MAINTENANCE_HANDLERS: new Set() }));
 import { canonicalStore } from '../canonical-store.js';
 import { afterEach, expect, it, vi } from 'vitest';
@@ -8,13 +9,14 @@ import { AgentRunner, ToolRegistry, SessionManager, type LLMProvider, type LLMRe
 import { DirectAdapter } from '../direct-adapter.js';
 import { CronExecutor } from '../../cron/cron-executor.js';
 import { CronManager } from '../../cron/cron-manager.js';
-import { SubagentManager } from '../../agents/subagent-manager.js';
+import { ChatBoundSubagentManager as SubagentManager } from '../../agents/subagent-manager.fixture.js';
 import { subagentRegistry } from '../../agents/subagent-registry.js';
 import { chatDatabaseService } from '../../chat-database-service.js';
 import type { ActorContext } from '../../auth/actor-context.js';
 const directories: string[] = [];
 const ok: LLMResponse = { content: 'done', finishReason: 'stop', toolCalls: [], hasToolCalls: false, shouldExecuteTools: false, usage: { prompt_tokens: 10, completion_tokens: 2 } };
-const actor: ActorContext = { userId: 71, username: 'test', roles: ['admin'], permissions: [], sessionVersion: 1, instanceScopes: {}, requestId: 'runtime-test' };
+const actor: ActorContext = { userId: 71, username: 'test', roles: ['admin'], permissions: ['chat:view'], sessionVersion: 1, instanceScopes: {}, requestId: 'runtime-test' };
+recordVerifiedCredential(actor, 'unit-token', Date.now() / 1000 + 3600);
 afterEach(async () => { vi.useRealTimers(); vi.unstubAllEnvs(); vi.restoreAllMocks(); subagentRegistry.clear(); await Promise.all(directories.splice(0).map(p => rm(p, { recursive: true, force: true }))); });
 async function adapter(provider: LLMProvider, tools = new ToolRegistry()) {
   const directory = await mkdtemp(join(tmpdir(), 'runtime-lifecycle-')); directories.push(directory);

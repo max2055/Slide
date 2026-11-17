@@ -1,3 +1,6 @@
+import { chatAuthorization, ChatForbiddenError, assertChatCredential } from './auth/chat-authorization.js';
+import { ActorAuthenticationError } from './auth/actor-context.js';
+import { PlatformUnavailableError, platformUnavailableResponse } from './lifecycle/platform-unavailable.js';
 import type { FastifyInstance, preHandlerHookHandler } from 'fastify';
 import type { ActorContext } from './auth/actor-context.js';
 import {
@@ -27,6 +30,8 @@ export interface ChatRouteDependencies {
   verifyToken: preHandlerHookHandler;
   service: ChatRouteService;
   handleChatSend: ChatSendHandler;
+  authorizeChat?: typeof chatAuthorization.require;
+  getGreeting?: () => string;
 }
 
 function authenticatedActor(request: { user?: ActorContext }): ActorContext {
@@ -54,7 +59,50 @@ export async function registerChatRoutes(
   fastify: FastifyInstance,
   deps: ChatRouteDependencies,
 ): Promise<void> {
-  const preHandler = [deps.verifyToken];
+  const requireChat = deps.authorizeChat ?? (async (actor: ActorContext) => {
+    assertChatCredential(actor, true);
+    return chatAuthorization.require(actor);
+  });
+  const reject = (error: unknown, reply: any): boolean => {
+    if (error instanceof ChatForbiddenError) reply.code(403).send({ error: '权限不足', code: 'CHAT_FORBIDDEN' });
+    else if (error instanceof ActorAuthenticationError) reply.code(401).send({ error: '无效的认证令牌' });
+    else if (error instanceof PlatformUnavailableError) reply.code(503).send(platformUnavailableResponse);
+    else if (isNotFound(error)) reply.code(404).send({ error: 'Session not found', code: 'CHAT_SESSION_NOT_FOUND' });
+    else return false;
+    return true;
+  };
+  const preHandler = [deps.verifyToken, async (request: any, reply: any) => {
+    try { await requireChat(authenticatedActor(request)); }
+    catch (error) { if (!reject(error, reply)) throw error; }
+  }];
+  // Fastify awaits preSerialization before it writes the response body. This
+  // includes slow history queries and HTTP sends crossing exp or revocation.
+  fastify.addHook('preSerialization', async (request, reply, payload) => {
+    if (!['/api/chat/send', '/api/chat/history', '/api/chat/greeting', '/api/sessions', '/api/sessions/:key', '/api/sessions/:key/cap'].includes(request.routeOptions.url ?? '') || reply.statusCode >= 400) return payload;
+    try {
+      await requireChat(authenticatedActor(request as any));
+      const key = (request.query as any)?.sessionKey;
+      if (key && typeof deps.service.getSessionMetadata === 'function') await deps.service.getSessionMetadata(authenticatedActor(request as any), key);
+      const sessions = (payload as { sessions?: Array<{ key: string }> })?.sessions;
+      if (sessions && typeof deps.service.getSessionMetadata === 'function') {
+        const visible = [];
+        for (const session of sessions) {
+          try { await deps.service.getSessionMetadata(authenticatedActor(request as any), session.key); visible.push(session); }
+          catch (error) { if (!isNotFound(error)) throw error; }
+        }
+        return { ...(payload as object), sessions: visible };
+      }
+      return payload;
+    } catch (error) {
+      if (error instanceof ChatForbiddenError) { reply.code(403); return { error: '权限不足', code: 'CHAT_FORBIDDEN' }; }
+      if (error instanceof ActorAuthenticationError) { reply.code(401); return { error: '无效的认证令牌' }; }
+      if (error instanceof PlatformUnavailableError) { reply.code(503); return platformUnavailableResponse; }
+      if (isNotFound(error)) { reply.code(404); return { error: 'Session not found', code: 'CHAT_SESSION_NOT_FOUND' }; }
+      throw error;
+    }
+  });
+
+  if (deps.getGreeting) fastify.get('/api/chat/greeting', { preHandler }, async () => ({ greeting: deps.getGreeting!() }));
 
   fastify.post('/api/chat/send', { preHandler }, async (request, reply) => {
     try {
@@ -76,7 +124,7 @@ export async function registerChatRoutes(
         sessionKey: result.sessionKey,
       });
     } catch (error) {
-      if (isNotFound(error)) return reply.code(404).send({ error: 'Session not found' });
+      if (reject(error, reply)) return;
       return reply.code(500).send({ error: `Chat send failed: ${String((error as Error).message)}` });
     }
   });
@@ -115,7 +163,7 @@ export async function registerChatRoutes(
         thinkingLevel: typeof metadata?.thinkingLevel === 'string' ? metadata.thinkingLevel : null,
       });
     } catch (error) {
-      if (isNotFound(error)) return reply.code(404).send({ error: 'Session not found' });
+      if (reject(error, reply)) return;
       return reply.code(500).send({ error: `获取聊天历史失败：${String((error as Error).message)}` });
     }
   });
@@ -166,6 +214,7 @@ export async function registerChatRoutes(
         defaults: {},
       });
     } catch (error) {
+      if (reject(error, reply)) return;
       return reply.code(500).send({ error: `获取会话列表失败：${String((error as Error).message)}` });
     }
   });
@@ -180,9 +229,7 @@ export async function registerChatRoutes(
       });
       return reply.send({ ok: true });
     } catch (error) {
-      if (isNotFound(error)) {
-        return reply.code(404).send({ ok: false, error: 'Session not found' });
-      }
+      if (reject(error, reply)) return;
       return reply.code(500).send({ error: `更新会话设置失败：${String((error as Error).message)}` });
     }
   });
@@ -193,9 +240,7 @@ export async function registerChatRoutes(
       const deleted = await deps.service.deleteSession(authenticatedActor(request as any), key);
       return reply.send({ ok: deleted });
     } catch (error) {
-      if (isNotFound(error)) {
-        return reply.code(404).send({ ok: false, error: 'Session not found' });
-      }
+      if (reject(error, reply)) return;
       return reply.code(500).send({ error: `删除会话失败：${String((error as Error).message)}` });
     }
   });
@@ -215,9 +260,7 @@ export async function registerChatRoutes(
       );
       return reply.send({ ok: true, deleted });
     } catch (error) {
-      if (isNotFound(error)) {
-        return reply.code(404).send({ ok: false, error: 'Session not found' });
-      }
+      if (reject(error, reply)) return;
       return reply.code(500).send({ error: `限制消息数量失败：${String((error as Error).message)}` });
     }
   });

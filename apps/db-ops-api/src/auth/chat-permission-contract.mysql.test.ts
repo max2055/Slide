@@ -16,9 +16,9 @@ const engine = vi.hoisted(() => ({ chat: vi.fn() }));
 vi.mock('../adapter/get-agent-engine.js', () => ({ getAgentEngine: async () => engine }));
 import { handleChatSend } from '../chat-handler.js';
 
-// Characterization of existing behavior, not acceptance of a chat:view deny policy.
+// MAX-683 historical bypass regression: MAX-684 now denies ordinary chat without chat:view.
 const port = Number(process.env.MAX683_CHAT_MYSQL_PORT);
-describe.skipIf(!port)('MAX-683 baseline ordinary chat permission contract', () => {
+describe.skipIf(!port)('MAX-683 bypass regression under MAX-684', () => {
   const database='max683_chat_'+randomUUID().replaceAll('-',''),secret=randomUUID();
   let admin:any,pool:any,app:any,a:any,b:any,tokenA:string,tokenB:string,sessionA:string,sessionB:string,bound:string;
   const observations:any[]=[];
@@ -44,6 +44,7 @@ describe.skipIf(!port)('MAX-683 baseline ordinary chat permission contract', () 
     a=await contexts.loadInvestigationActorFrom(sql as any,68311,'user',1);
     b=await contexts.loadInvestigationActorFrom(sql as any,68312,'user',1);
     expect(a.permissions).toContain('operations:actions:view');expect(a.permissions).not.toContain('chat:view');
+    for (const id of [68311,68312]) await pool.execute("INSERT INTO role_permissions(role_id,permission_id) SELECT ?,id FROM permissions WHERE code='chat:view'",[id]);
     vi.spyOn(dbConnection,'getPool').mockReturnValue(pool);
     sessionA=(await chatDatabaseService.createSession(a)).session_id;
     sessionB=(await chatDatabaseService.createSession(b)).session_id;
@@ -53,6 +54,7 @@ describe.skipIf(!port)('MAX-683 baseline ordinary chat permission contract', () 
     }
     await pool.execute("INSERT INTO investigations(id,title,goal,profile_id,profile_version,session_id,owner_kind,owner_id,scope_version) VALUES(?,'bound','bound','ops',1,?,'user',?,?)",[randomUUID(),bound,a.userId,'a'.repeat(64)]);
     engine.chat.mockResolvedValue({finalContent:'CONTROLLED_ENGINE_BOUNDARY',stopReason:'completed'});
+    await pool.execute("DELETE rp FROM role_permissions rp JOIN permissions p ON p.id=rp.permission_id WHERE rp.role_id IN (68311,68312) AND p.code='chat:view'");
     tokenA=signAccessToken(a,secret);tokenB=signAccessToken(b,secret);
     app=Fastify();await registerChatRoutes(app,{verifyToken:createVerifyToken(secret,contexts),service:chatDatabaseService,handleChatSend});
   },60000);
@@ -61,25 +63,25 @@ describe.skipIf(!port)('MAX-683 baseline ordinary chat permission contract', () 
     if(admin){await admin.query('DROP DATABASE IF EXISTS '+database);await admin.end();}
     if(process.env.MAX683_CHAT_EVIDENCE)await writeFile(process.env.MAX683_CHAT_EVIDENCE,JSON.stringify({observations,realProviderCalls:0,model:'controlled engine boundary only',schemaDropped:true},null,2));
   });
-  it('rejects missing JWT and another user body; permits own body without chat:view',async()=>{
+  it('rejects missing JWT and another user body; denies own body without chat:view',async()=>{
     await observe('no JWT','GET','/api/chat/history?sessionKey='+sessionA,undefined,401);
-    const own=await observe('action-only own history','GET','/api/chat/history?sessionKey='+sessionA,tokenA,200);
-    expect(own.body).toContain('PRIVATE_A');
-    const foreign=await observe('cross-user history','GET','/api/chat/history?sessionKey='+sessionB,tokenA,404);
+    const own=await observe('action-only own history','GET','/api/chat/history?sessionKey='+sessionA,tokenA,403);
+    expect(own.body).not.toContain('PRIVATE_A');
+    const foreign=await observe('cross-user history','GET','/api/chat/history?sessionKey='+sessionB,tokenA,403);
     expect(foreign.body).not.toContain('PRIVATE_B');
   });
-  it('admits own and new ordinary chat to engine without chat:view; rejects foreign and identity spoofing',async()=>{
-    await observe('action-only own send','POST','/api/chat/send',tokenA,200,{sessionKey:sessionA,message:'probe'});
-    await observe('action-only new send','POST','/api/chat/send',tokenA,200,{message:'probe'});
-    await observe('cross-user send','POST','/api/chat/send',tokenB,404,{sessionKey:sessionA,message:'probe'});
-    await observe('body identity spoofing','POST','/api/chat/send',tokenB,400,{sessionKey:sessionA,message:'probe',userId:a.userId});
-    expect(observations.slice(-4).map(x=>x.engineAdmissions)).toEqual([1,1,0,0]);
+  it('denies own, new, foreign and spoofed requests before engine without chat:view',async()=>{
+    await observe('action-only own send','POST','/api/chat/send',tokenA,403,{sessionKey:sessionA,message:'probe'});
+    await observe('action-only new send','POST','/api/chat/send',tokenA,403,{message:'probe'});
+    await observe('cross-user send','POST','/api/chat/send',tokenB,403,{sessionKey:sessionA,message:'probe'});
+    await observe('body identity spoofing','POST','/api/chat/send',tokenB,403,{sessionKey:sessionA,message:'probe',userId:a.userId});
+    expect(observations.slice(-4).map(x=>x.engineAdmissions)).toEqual([0,0,0,0]);
   });
-  it('permits explicit read-only share but never shared append or linked investigation body',async()=>{
-    await chatDatabaseService.grantSessionShare(a,sessionA,b.userId,'read');
-    await observe('explicit read share','GET','/api/chat/history?sessionKey='+sessionA,tokenB,200);
-    await observe('read share cannot append','POST','/api/chat/send',tokenB,404,{sessionKey:sessionA,message:'probe'});
-    const r=await observe('linked investigation history without chat:view','GET','/api/chat/history?sessionKey='+bound,tokenA,404);
+  it('does not let read share or linked investigation bypass the chat gate',async()=>{
+    await pool.execute("INSERT INTO chat_session_shares(session_id,granted_by,recipient_user_id,permission) VALUES(?,?,?,'read')",[sessionA,a.userId,b.userId]);
+    await observe('explicit read share','GET','/api/chat/history?sessionKey='+sessionA,tokenB,403);
+    await observe('read share cannot append','POST','/api/chat/send',tokenB,403,{sessionKey:sessionA,message:'probe'});
+    const r=await observe('linked investigation history without chat:view','GET','/api/chat/history?sessionKey='+bound,tokenA,403);
     expect(r.body).not.toContain('INVESTIGATION_PRIVATE');
   });
   it('does not turn operations permission into protected tool discovery or execution permission',()=>{
@@ -92,9 +94,9 @@ describe.skipIf(!port)('MAX-683 baseline ordinary chat permission contract', () 
       observations.push({name:'protected tool '+name,discoverable:false,allow:x.allow,reasonCode:x.reasonCode});
     }
   });
-  it('chat admission is unchanged by action permission withdrawal; session revocation is enforced',async()=>{
+  it('chat remains denied after action permission withdrawal; session revocation is enforced',async()=>{
     await pool.execute("DELETE rp FROM role_permissions rp JOIN permissions p ON p.id=rp.permission_id WHERE rp.role_id=68311 AND p.code='operations:actions:view'");
-    await observe('no action or chat permission own send','POST','/api/chat/send',tokenA,200,{sessionKey:sessionA,message:'probe'});
+    await observe('no action or chat permission own send','POST','/api/chat/send',tokenA,403,{sessionKey:sessionA,message:'probe'});
     await pool.execute('UPDATE users SET session_version=2 WHERE id=68311');
     await observe('stale JWT after session revocation','GET','/api/chat/history?sessionKey='+sessionA,tokenA,401);
   });

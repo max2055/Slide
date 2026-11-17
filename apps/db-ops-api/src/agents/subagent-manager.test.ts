@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { AgentRunner } from '@slide/agent-core';
 import type { ActorContext } from '../auth/actor-context.js';
-import { SubagentManager } from './subagent-manager.js';
+import { ChatBoundSubagentManager as SubagentManager } from './subagent-manager.fixture.js';
 import { subagentRegistry } from './subagent-registry.js';
 
 const actor = (userId: number): ActorContext => Object.freeze({

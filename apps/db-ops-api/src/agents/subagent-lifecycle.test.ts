@@ -6,7 +6,7 @@ const { withBudgetContext }: {
   withBudgetContext: <T>(spec: AgentRunSpec, state: RecoverySnapshot, task: () => T, persist: () => Promise<void>) => T;
 } = await import(new URL('../../../../packages/agent-core/src/runtime/budget.js', import.meta.url).href);
 import type { ActorContext } from '../auth/actor-context.js';
-import { SubagentManager } from './subagent-manager.js';
+import { ChatBoundSubagentManager as SubagentManager } from './subagent-manager.fixture.js';
 import { SubagentRegistry } from './subagent-registry.js';
 import { createSubagentAccessTool, createSpawnSubagentTool, setSubagentManager } from './subagent-spawn-tool.js';
 
@@ -43,6 +43,7 @@ it('rejects racing admission before irreversible allocation and lets another act
   const state = new RecoveryPolicy().state;
   const save = vi.fn(() => persist.promise);
   const first = withBudgetContext(parent(), state, () => manager.spawn('agent', 'one', 'p', owner), save);
+  await vi.waitFor(() => expect(state.delegated?.tokens).toBeGreaterThan(0));
   const allocated = state.delegated!.tokens;
   await expect(withBudgetContext(parent(), state, () => manager.spawn('agent', 'two', 'p', owner), save))
     .rejects.toThrow('SUBAGENT_CONCURRENCY_LIMIT');
@@ -90,6 +91,7 @@ it.each(['persistence failure', 'cancel before persistence', 'cancel during pers
   if (scenario === 'cancel before persistence') controller.abort(new Error('cancelled'));
   const spawn = withBudgetContext(parent(controller.signal), state, () => manager.spawn('agent', 'one', 'p', owner), save);
   const assertion = expect(spawn).rejects.toThrow();
+  if (scenario !== 'cancel before persistence') await vi.waitFor(() => expect(state.delegated?.tokens).toBeGreaterThan(0));
   if (scenario === 'persistence failure') persist.reject(new Error('save failed'));
   else { controller.abort(new Error('cancelled')); persist.resolve(); }
   await assertion;
@@ -143,7 +145,7 @@ it('bounds settled history and expires owners, runs and shared sessions together
   const { manager, registry } = setup();
   const ids: string[] = [];
   for (let i = 0; i < 1000; i++) ids.push(await manager.spawn('agent', 'task', 'p', owner));
-  expect(registry.listRuns()).toHaveLength(3);
+  await vi.waitFor(() => expect(registry.listRuns()).toHaveLength(3));
   expect(registry.listSessions()).toHaveLength(3);
   expect(await manager.access(ids[0], owner)).toEqual(await manager.access('missing', owner));
   expect((await manager.access(ids.at(-1)!, owner)).found).toBe(true);

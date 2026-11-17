@@ -58,7 +58,7 @@
 | `chat.cancel`（944） | 当前身份有效、run actorId/session 匹配；没有 `authorizeSession`/chat 门禁 | 建议保留本人已有 run 的最小取消能力，属于 D4；不能返回 run 正文或让共享接收者取消 |
 | `chat.unwatch`（995） | 当前身份有效后移除订阅，无正文 | 允许清理自身订阅，即使失去 chat 权限；认证失效直接服务端清理 |
 | `memory.list/export/delete/share/import/stop/retry`（960） | 功能开启时均要求 `append`，read 分享不能使用；`retry` 可发起提取模型 | 读写/重试增加同聊天门禁，保持独立 memory scope；stop 建议允许本人最小清理；完成后自动提取也须重验 |
-| `investigation.watch` / `investigation.unwatch`（636/669） | 独立调查授权、连接初始权限上限、成员/资源检查 | 不替换为普通聊天 ACL；保留独立授权与撤权机制 |
+| `investigation.watch` / `investigation.unwatch`（669/685） | 独立调查授权、连接初始权限上限、成员/资源检查 | 不替换为普通聊天 ACL；保留独立授权与撤权机制 |
 
 内部调用边界：
 

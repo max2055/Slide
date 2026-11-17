@@ -1,3 +1,5 @@
+import { checkChatExecution } from '../auth/chat-execution.js';
+import { actorContextService } from '../auth/actor-context.js';
 /**
  * getAgentEngine() — IAgentEngine factory, DirectAdapter-only.
  *
@@ -253,7 +255,19 @@ export function createActorBoundToolRegistry(actor: ActorContext, agentId = DEFA
       requiresApproval: anyTool.requiresApproval,
       dangerLevel: anyTool.dangerLevel,
       execute: async (params: Record<string, unknown>, context?: CoreToolExecutionContext) => {
-        const { decision, result } = await executeToolWithPolicy(actor, anyTool, params, undefined, undefined, undefined, agentId, {
+        await checkChatExecution();
+        await actorContextService.revalidateActor(actor);
+        const guardedTool: AnyAgentTool = { ...anyTool, handler: async (args, toolContext) => {
+          await checkChatExecution();
+          const live = await actorContextService.revalidateActor(actor);
+          const { resolveToolResource } = await import('../tools/resource-resolver.js');
+          const decision = decideToolPolicy(live, anyTool, args, await resolveToolResource(anyTool.name, args, undefined, live), true, false);
+          if (!decision.allow) throw new ToolPolicyDeniedError(live, decision);
+          await checkChatExecution();
+          context?.signal?.throwIfAborted();
+          return anyTool.handler(args, { ...toolContext, actor: live, userId: live.userId, policyDecision: decision });
+        } };
+        const { decision, result } = await executeToolWithPolicy(actor, guardedTool, params, undefined, undefined, undefined, agentId, {
           sessionKey: context?.sessionKey,
           signal: context?.signal,
           idempotencyKey: context?.idempotencyKey,
