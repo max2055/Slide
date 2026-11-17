@@ -6,7 +6,7 @@ import { join, dirname } from 'node:path';
 import { run, collect } from './runtime-browser-evidence.mjs';
 
 function records(status = 'passed') {
-  return ['recovery', 'length', 'reject'].map(scenario => ({ scenario, kind: 'result', status, wallBefore: 10, mono: 1, wallAfter: 11 }));
+  return ['recovery', 'length', 'reject'].map(scenario => ({ scenario, kind: 'result', status, collectionFailed: false, dropped: 0, wallBefore: 10, mono: 1, wallAfter: 11 }));
 }
 for (const [label, code, corrupt, expected] of [['success', 0, false, 0], ['business failure', 7, false, 7], ['collection failure', 0, true, 2], ['both failures', 7, true, 7]]) {
   test(`runtime archive preserves ${label}`, () => {
@@ -71,5 +71,17 @@ test('stale private evidence is refused before another business launch', () => {
     assert.equal(launches, 0);
     const output = readFileSync(join(root, 'frontend/test-results-agent-runtime-sanitized/evidence.json'), 'utf8');
     assert.equal(JSON.parse(output).collection, 'failed'); assert.ok(!output.includes('SENSITIVE_STALE_INPUT'));
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+test('MF-R1 rejects coerced event kinds, non-own enums and array HMACs', () => {
+  const root = mkdtempSync(join(tmpdir(), 'runtime-schema-'));
+  try {
+    const base = { scenario: 'recovery', kind: 'phase', phase: 'started', wallBefore: 1, mono: 1, wallAfter: 1 };
+    for (const row of [{ ...base, kind: ['phase'] }, { ...base, kind: 'constructor' }, { ...base, kind: '__proto__' },
+      { ...base, kind: 'ws', phase: undefined, direction: 'received', event: 'run.snapshot', session: ['a'.repeat(64)] }]) {
+      writeFileSync(join(root, 'input'), [...records(), row].map(JSON.stringify).join('\n'));
+      assert.equal(collect(join(root, 'input'), join(root, 'output'), 0), 2);
+      assert.equal(JSON.parse(readFileSync(join(root, 'output'), 'utf8')).collection, 'failed');
+    }
   } finally { rmSync(root, { recursive: true, force: true }); }
 });

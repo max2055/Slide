@@ -14,6 +14,7 @@ export function runtimeEvidence(page: Page, scenario: string, testInfo: TestInfo
   let failed = false;
   let dropped = 0;
   let businessFailed = false;
+  const closeSockets: Array<() => void> = [];
   const tasks = new Set<Promise<void>>();
   const emit = (kind: string, data: Record<string, unknown>) => {
     if (!file) return;
@@ -48,7 +49,7 @@ export function runtimeEvidence(page: Page, scenario: string, testInfo: TestInfo
   page.on('response', response);
   const ws = (socket: any) => {
     for (const [event, direction] of [['framesent', 'sent'], ['framereceived', 'received']]) {
-      socket.on(event, ({ payload }: any) => {
+      const handler = ({ payload }: any) => {
         try {
           if (typeof payload !== 'string') return;
           if (payload.length > 1_000_000) { failed = true; dropped++; return; }
@@ -63,7 +64,9 @@ export function runtimeEvidence(page: Page, scenario: string, testInfo: TestInfo
           if (['running', 'completed', 'failed', 'cancelled', 'timed_out', 'partial'].includes(frame.run?.state)) data.state = frame.run.state;
           emit('ws', data);
         } catch { /* Unrelated/non-JSON frames never enter evidence. */ }
-      });
+      };
+      socket.on(event, handler);
+      closeSockets.push(() => socket.off(event, handler));
     }
   };
   page.on('websocket', ws);
@@ -79,9 +82,10 @@ export function runtimeEvidence(page: Page, scenario: string, testInfo: TestInfo
     testFailed() { businessFailed = true; },
     async finish() {
       page.off('response', response); page.off('websocket', ws);
+      closeSockets.forEach(close => close());
       await Promise.allSettled([...tasks]);
       if (failed) emit('collection', { failed: true, count: dropped });
-      emit('result', { status: businessFailed ? 'failed' : testInfo.status ?? 'interrupted' });
+      emit('result', { status: businessFailed ? 'failed' : testInfo.status ?? 'interrupted', collectionFailed: failed, dropped });
     },
   };
 }
