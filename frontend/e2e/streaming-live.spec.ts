@@ -1,5 +1,6 @@
 import { test, expect, type Page } from '@playwright/test';
 import { randomUUID } from 'node:crypto';
+import { writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { spawnSync } from 'node:child_process';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
@@ -34,6 +35,114 @@ function combinedFailure(primary: unknown, cleanup: unknown[]) {
     'Live stream test or cleanup failed', { cause: primary ?? cleanup[0] }) : primary;
 }
 
+// MAX-684: test-only observation. No payload/identifier/error strings survive
+// aggregation; fixed enums and finite numbers are the entire export schema.
+function streamObservation(now: () => number) {
+  const types = ['auth_ok', 'run.started', 'stream.delta', 'stream.snapshot', 'text_delta', 'chat', 'error', 'protocol.error', 'other'];
+  const boundaries = ['tool99-paused', 'tool99-before-refresh', 'finally-before-cleanup'];
+  const connections: any[] = [], snapshots: any[] = [];
+  let collectionFailed = 0, dropped = 0;
+  const safe = (fn: () => void) => { try { fn(); } catch { collectionFailed++; } };
+  const numeric = (value: unknown) => typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
+  const metrics = (event: any) => {
+    let bodyBytes = 0;
+    const text = (value: any, key = '') => {
+      if (typeof value === 'string' && ['delta', 'partText', 'finalContent', 'thinkingContent', 'text', 'content'].includes(key)) bodyBytes += Buffer.byteLength(JSON.stringify(value));
+      else if (value && typeof value === 'object') for (const [k, v] of Object.entries(value)) text(v, k);
+    };
+    text(event);
+    return { bodyBytes, jsonBytes: Buffer.byteLength(JSON.stringify(event)) };
+  };
+  const totals = () => ({ frames: 0, bodyBytes: 0, jsonBytes: 0, eventCounts: types.map(() => 0) });
+  const frame = (target: any, event: any) => {
+    const size = metrics(event); target.frames++; target.bodyBytes += size.bodyBytes; target.jsonBytes += size.jsonBytes;
+    const index = types.indexOf(event.type); target.eventCounts[index < 0 ? types.length - 1 : index]++;
+  };
+  const queue = (writer: any, socket: any) => ({
+    queuedEvents: numeric(writer.queued.get(socket)?.events ?? 0), queuedBytes: numeric(writer.queued.get(socket)?.bytes ?? 0),
+    pendingEvents: numeric(writer.pending.get(socket)?.events ?? 0), pendingBytes: numeric(writer.pending.get(socket)?.bytes ?? 0),
+    bufferedAmount: numeric(socket.bufferedAmount), maxEvents: numeric(writer.maxEvents), maxBytes: numeric(writer.maxBytes),
+  });
+  const reasonCode = (reason: unknown) => {
+    // Recognize only exact product literals. Never retain the original reason.
+    const value = typeof reason === 'string' ? reason : Buffer.isBuffer(reason) ? reason.toString() : '';
+    return value === 'Slow consumer' ? 'guard-queue-limit' : value === 'Slow consumer; reconnect for history/snapshot' ? 'raw-pending-limit'
+      : value === 'Service unavailable' ? 'guard-failed' : value === '' ? 'empty' : 'other';
+  };
+  const observers = new WeakMap<object, any>();
+  const samplers: Array<() => void> = [];
+  return {
+    connect(writer: any, socket: any) {
+      if (connections.length >= 16) { dropped++; return undefined; }
+      const entry: any = { connectionIndex: connections.length + 1,
+        // This fixture opens legacy first, then the original browser and refreshes.
+        mode: connections.length === 0 ? 'legacy' : 'parts', admissionCalls: 0, admissionAccepted: 0, admissionRejected: 0,
+        actualSend: totals(), clientReceive: connections.length === 0 ? totals() : null, callbackOK: 0, callbackFailed: 0, closeCode: null, reasonCode: 'not-closed',
+        closed: 0, closeRequests: 0, lastQueue: null, peakQueue: null, closeQueue: null, closeAt: null };
+      connections.push(entry);
+      const sample = () => {
+        const value = queue(writer, socket); entry.lastQueue = value;
+        entry.peakQueue ??= { ...value };
+        for (const key of Object.keys(value)) entry.peakQueue[key] = Math.max(entry.peakQueue[key] ?? 0, value[key] ?? 0);
+      };
+      const originalSend = writer.send;
+      // One wrapper per writer, installed when the first socket is observed.
+      if (connections.length === 1) {
+        writer.send = function (ws: any, data: string) {
+          const observer = observers.get(ws);
+          observer?.before();
+          try { const result = originalSend.call(this, ws, data); observer?.admitted(result); return result; }
+          finally { observer?.sample(); }
+        };
+      }
+      const observation = {
+        before() { safe(() => { entry.admissionCalls++; sample(); }); },
+        admitted(result: boolean) { safe(() => { entry[result ? 'admissionAccepted' : 'admissionRejected']++; }); },
+        sample() { safe(sample); },
+        sent(event: any) { safe(() => { frame(entry.actualSend, event); sample(); }); },
+        callback(error?: Error) { safe(() => { entry[error ? 'callbackFailed' : 'callbackOK']++; sample(); }); },
+        closing(code: number, reason: unknown) { safe(() => { entry.closeRequests++; entry.closeCode = numeric(code); entry.reasonCode = reasonCode(reason); entry.closeAt = numeric(now()); entry.closeQueue = queue(writer, socket); }); },
+        closed(code: number, reason: unknown) { safe(() => { entry.closed = 1; entry.closeCode = numeric(code); if (!entry.closeRequests) entry.reasonCode = reasonCode(reason); sample(); }); },
+      };
+      observers.set(socket, observation);
+      samplers.push(observation.sample); observation.sample(); return observation;
+    },
+    legacyReceived(event: any) { safe(() => { if (connections[0]) frame(connections[0].clientReceive, event); }); },
+    legacyClosed(code: number, reason: unknown) { safe(() => {
+      if (connections[0]) { connections[0].closed = 1; connections[0].closeCode = numeric(code);
+        if (!connections[0].closeRequests) connections[0].reasonCode = reasonCode(reason); }
+    }); },
+    boundary(boundary: string, prefix?: { parts: object[]; legacy: object[] }) { safe(() => {
+      if (!boundaries.includes(boundary)) throw new Error('Unknown numeric boundary');
+      if (snapshots.length >= 3) { dropped++; return; }
+      for (const sample of samplers) sample();
+      // Copy now: later callbacks, closes and refreshes cannot rewrite a prefix.
+      const summarize = (events: object[]) => {
+        let bodyBytes = 0, jsonBytes = 0;
+        for (const event of events) { const size = metrics(event); bodyBytes += size.bodyBytes; jsonBytes += size.jsonBytes; }
+        return { prefixFrameCount: events.length, bodyBytes, jsonBytes };
+      };
+      const parts = prefix ? summarize(prefix.parts) : null, legacy = prefix ? summarize(prefix.legacy) : null;
+      const comparison = parts && legacy ? { parts, legacy, reduction: legacy.bodyBytes > 0 ? 1 - parts.bodyBytes / legacy.bodyBytes : null } : null;
+      snapshots.push(JSON.parse(JSON.stringify({ boundary, mono: numeric(now()), comparison, connections })));
+    }); },
+    save(path: string, sourceHead: string, businessExit: number, persist: (path: string, data: string) => void) {
+      for (const sample of samplers) sample();
+      const document = { version: 1, sourceHead: /^[a-f0-9]{40}$/.test(sourceHead) ? sourceHead : null,
+        scenario: 'MAX-129', clockDomain: 'node-performance', eventTypes: types,
+        collectionFailed, dropped, overflow: 0, businessExit, snapshots, connections };
+      let serialized = JSON.stringify(document);
+      if (Buffer.byteLength(serialized) > 65536) {
+        document.overflow = 1; document.dropped += snapshots.length + connections.length;
+        document.snapshots = []; document.connections = []; serialized = JSON.stringify(document);
+      }
+      persist(path, serialized);
+      if (document.collectionFailed || document.dropped || document.overflow) throw new Error('Numeric observation incomplete');
+    },
+  };
+  // Socket identities remain memory-only; no run/session HMAC is needed.
+}
+
 test('MAX-129 real MySQL → Adapter → WS → Gateway → reducer → UI, refresh and unique completion', async ({ page, browser }) => {
   const require = createRequire(new URL('../../apps/db-ops-api/package.json', import.meta.url));
   const mysql = require('mysql2/promise'); const WebSocket = require('ws');
@@ -42,6 +151,7 @@ test('MAX-129 real MySQL → Adapter → WS → Gateway → reducer → UI, refr
   const workspace = await mkdtemp(join(tmpdir(), 'slide-stream-live-'));
   let adapter: DirectAdapter | undefined; let legacy: any; let rest: any; let releaseTool: (() => void) | undefined;
   const raw: Record<string, object[]> = { legacy: [], parts: [] };
+  const observation = streamObservation(() => performance.now());
   // MAX-279: numeric metadata only; no SQL, arguments, messages or credentials.
   const serverTimings: object[] = [];
   const stages: Array<{ stage: string; start: number; end?: number }> = [];
@@ -111,7 +221,7 @@ test('MAX-129 real MySQL → Adapter → WS → Gateway → reducer → UI, refr
         await pool.execute('INSERT INTO fixture_tool_effects VALUES (?)', [index]);
         const [rows] = await pool.query('SELECT 1 AS result');
         await ctx?.progressCallback?.({ completed: 1, total: 1 });
-        if (index === 99) await new Promise<void>(resolve => { releaseTool = resolve; });
+        if (index === 99) { observation.boundary('tool99-paused'); await new Promise<void>(resolve => { releaseTool = resolve; }); }
         return { success: true, rows };
       } });
     const chunks = Array.from({ length: 1000 }, (_, i) => `Result ${String(i).padStart(4, '0')}: SELECT ${i}; verified database row.\n`.padEnd(100, ' '));
@@ -139,9 +249,14 @@ test('MAX-129 real MySQL → Adapter → WS → Gateway → reducer → UI, refr
     if (!server.address()) await once(server, 'listening'); const port = server.address().port;
     // Observe both modes on the same run, including actual server writer bytes.
     server.on('connection', (socket: any) => {
+      const numeric = observation.connect((adapter as any).socketWriter, socket);
+      const close = socket.close;
+      socket.close = function (code: number, reason: unknown) { numeric?.closing(code, reason); return close.call(this, code, reason); };
+      socket.on('close', (code: number, reason: Buffer) => numeric?.closed(code, reason));
       const send = socket.send.bind(socket);
       socket.send = (data: string, callback: (error?: Error) => void) => {
         const event = JSON.parse(data); const at = performance.now();
+        numeric?.sent(event);
         if (event.type === 'stream.delta' || event.type === 'stream.snapshot') raw.parts.push(event);
         const phase = event.snapshot?.phase ?? event.projection?.operations?.find((op: any) => op.type === 'run.status')?.phase;
         if (event.type === 'run.started' && startupStart === undefined) {
@@ -151,11 +266,12 @@ test('MAX-129 real MySQL → Adapter → WS → Gateway → reducer → UI, refr
           startupEnd = at;
           startupUsage = { cpuMicros: process.cpuUsage(startupCpu), eventLoop: performance.eventLoopUtilization(startupLoop) };
         }
-        send(data, (error?: Error) => { serverTimings.push({ type: event.type, phase, at, sendCallbackMs: performance.now() - at }); callback?.(error); });
+        send(data, (error?: Error) => { serverTimings.push({ type: event.type, phase, at, sendCallbackMs: performance.now() - at }); numeric?.callback(error); callback?.(error); });
       };
     });
     legacy = new WebSocket(`ws://127.0.0.1:${port}`);
-    legacy.on('message', (data: Buffer) => { const event = JSON.parse(data.toString()); raw.legacy.push(event); if (event.type === 'auth_ok') legacy.send(JSON.stringify({ type: 'chat.watch', sessionKey: session.session_id })); });
+    legacy.on('message', (data: Buffer) => { const event = JSON.parse(data.toString()); raw.legacy.push(event); observation.legacyReceived(event); if (event.type === 'auth_ok') legacy.send(JSON.stringify({ type: 'chat.watch', sessionKey: session.session_id })); });
+    legacy.on('close', (code: number, reason: Buffer) => observation.legacyClosed(code, reason));
     await once(legacy, 'open'); legacy.send(JSON.stringify({ type: 'auth', token }));
     await expect.poll(() => raw.legacy.some((e: any) => e.type === 'auth_ok')).toBe(true);
     const cdp = await page.context().newCDPSession(page);
@@ -200,6 +316,7 @@ test('MAX-129 real MySQL → Adapter → WS → Gateway → reducer → UI, refr
     await expect(page.locator('.chat-tool-msg-collapse')).toHaveCount(100, { timeout: 15000 });
     const before = await page.evaluate(() => ({ samples: (window as any).live.samples, received: (window as any).live.received }));
     const uninterrupted = { parts: [...raw.parts], legacy: [...raw.legacy] };
+    observation.boundary('tool99-before-refresh', uninterrupted);
     await page.screenshot({ path: test.info().outputPath('MAX-129-live-tools.png'), fullPage: true });
     await page.evaluate(() => (window as any).live.gateway.disconnect());
     await mount(); // browser navigation discards all projection state: genuine refresh snapshot
@@ -270,6 +387,7 @@ test('MAX-129 real MySQL → Adapter → WS → Gateway → reducer → UI, refr
     } catch (diagnosticError) { cleanupFailure = diagnosticError; }
     throw error;
   } finally {
+    observation.boundary('finally-before-cleanup');
     const errors: unknown[] = cleanupFailure === undefined ? [] : [cleanupFailure];
     const step = async (stage: string, task: () => Promise<unknown>) => {
       cleanup.push({ stage: `${stage}-start`, at: performance.now() });
@@ -302,6 +420,11 @@ test('MAX-129 real MySQL → Adapter → WS → Gateway → reducer → UI, refr
         failed: failure !== undefined, primaryFailure: failure === undefined ? undefined : describe(failure),
         cleanupFailed: errors.length > 0, cleanupFailures: errors.map(describe),
       }, null, 2));
+    } catch (error) { errors.push(error); }
+    try {
+      observation.save(test.info().outputPath('MAX-684-streaming-numeric.json'),
+        spawnSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).stdout.trim(),
+        failure !== undefined || errors.length ? 1 : 0, writeFileSync);
     } catch (error) { errors.push(error); }
     if (errors.length) throw combinedFailure(failure, errors);
   }
