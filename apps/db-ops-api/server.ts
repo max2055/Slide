@@ -653,7 +653,7 @@ async function start() {
         userAgent: request.headers['user-agent'],
       }).catch(error => console.error('记录登录审计失败:', error));
 
-      reply.send({
+      return reply.send({
         token,
         refreshToken,
         expiresIn: 3600,
@@ -665,7 +665,7 @@ async function start() {
     } catch (error: any) {
       if (error instanceof PlatformUnavailableError) return reply.code(503).send(platformUnavailableResponse);
       console.error('登录失败:', error);
-      reply.code(500).send({ error: '登录失败：' + error.message });
+      return reply.code(500).send({ error: '登录失败：' + error.message });
     }
   });
 
