@@ -1,5 +1,6 @@
 /** B15 thin domain ports. No dispatcher, model invocation or client-supplied registration. */
 import { z } from 'zod';
+import { decisionSummary } from './decision-summary.js';
 import type { FastifyInstance } from 'fastify';
 import { ActorContextService, type ActorContext } from '../auth/actor-context.js';
 import { hasPermission } from '../auth/require-permission.js';
@@ -126,14 +127,28 @@ export class OperationsUiIntegration {
           }
           if (action) {
             if(action.kind==='continue')await this.investigations.authorize(c,caller,inv,'patch');
-            const [bound]=await planRows(c,'SELECT id FROM investigation_results WHERE investigation_id=? AND version=? FOR SHARE',[inv.id,action.plan.content.resultVersion]);
-            items.push({...source,resultId:bound?.id ?? null,kind:action.kind,planId:action.plan.id,planVersion:action.plan.version,
+            const [bound]=await planRows(c,'SELECT * FROM investigation_results WHERE investigation_id=? AND version=? FOR SHARE',[inv.id,action.plan.content.resultVersion]);
+            // The selected plan can bind an older result than the investigation head.
+            // Authorize that exact result's evidence before projecting any text.
+            const boundResult=bound ? decodePlanJson(bound.result_json) : null;
+            const evidenceIds=boundResult ? resultEvidenceIds(boundResult) : [];
+            if(bound) await new InvestigationResultStore(undefined,this.investigations).authorizedBindings(c as never,caller,inv,
+              {investigationId:inv.id,requestId:bound.request_id,runId:bound.run_id},evidenceIds);
+            const [planHead]=await planRows(c,'SELECT updated_at FROM action_plans WHERE id=? FOR SHARE',[action.plan.id]);
+            const [target]=await planRows(c,'SELECT label FROM servers WHERE id=? FOR SHARE',[action.plan.content.target.id]);
+            const summary=decisionSummary({result:boundResult,resultId:bound?.id ?? null,resultVersion:bound ? Number(bound.version) : null,
+              evidenceIds,asOf:bound?.created_at ? new Date(bound.created_at).toISOString() : null,plan:action.plan,displayName:target?.label ?? null});
+            items.push({...source,decisionSummary:summary,planUpdatedAt:planHead?.updated_at ? new Date(planHead.updated_at).toISOString() : null,
+            expiresAt:action.plan.content.validUntil,resultId:bound?.id ?? null,kind:action.kind,planId:action.plan.id,planVersion:action.plan.version,
             planHash:action.plan.contentHash,approvalId:action.approvalId,executionId:action.executionId,
             reportId:'reportId' in action?action.reportId:null,reportVersion:'reportVersion' in action?action.reportVersion:null,
             resultVersion:action.plan.content.resultVersion});
           } else if (!row.active_request_id && row.problem_status!=='resolved') {
             await this.investigations.authorize(c,caller,inv,'patch');
-            items.push({...source,kind:'continue' as const,planId:null,planVersion:null,planHash:null,approvalId:null,executionId:null});
+            items.push({...source,decisionSummary:decisionSummary({result:result ? decodePlanJson(result.result_json) : null,
+              resultId:result?.id ?? null,resultVersion:result ? Number(result.version) : null,
+              evidenceIds:result ? resultEvidenceIds(decodePlanJson(result.result_json)) : [],
+              asOf:result?.created_at ? new Date(result.created_at).toISOString() : null}),planUpdatedAt:null,expiresAt:null,kind:'continue' as const,planId:null,planVersion:null,planHash:null,approvalId:null,executionId:null});
           }
           if(items.length===q.limit)break;
         } catch(error) {
