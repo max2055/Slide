@@ -48,14 +48,13 @@ export class InvestigationsPage extends LitElement {
     if (this.controller.forbidden) { this.draft = ''; this.evidenceOpen = false; this.createOpen = false; }
     this.requestUpdate();
   }
+  private restoringList = false;
+  private listRestoreGeneration = 0;
+  private loadedPages = 1;
   private popState = () => {
-    const next = new URL(location.href);
-    const returnToLoadedList = !next.searchParams.has('investigation') && !!this.controller.detail
-      && (next.searchParams.get('query') ?? '') === this.query && (next.searchParams.get('state') ?? '') === this.lifecycle
-      && (next.searchParams.get('profile') ?? '') === this.profile && JSON.stringify(next.searchParams.getAll('resource')) === JSON.stringify(this.resources);
     const url = new URL(location.href); this.query = url.searchParams.get('query') ?? ''; this.lifecycle = url.searchParams.get('state') ?? '';
     this.profile = url.searchParams.get('profile') ?? ''; this.resources = url.searchParams.getAll('resource'); this.resource = '';
-    if (!returnToLoadedList) void this.filter(false); const id = url.searchParams.get('investigation');
+    void this.filter(false); const id = url.searchParams.get('investigation');
     if (id) void this.openInvestigation(id, false); else { this.controller.deselect(); this.draft = ''; this.evidenceOpen = false; }
   };
   private permissionsChanged = (e: Event) => {
@@ -73,6 +72,7 @@ export class InvestigationsPage extends LitElement {
     window.addEventListener('slide-session-expired', this.sessionExpired);
   }
   disconnectedCallback() {
+    this.listRestoreGeneration++;
     this.controller.dispose();
     window.removeEventListener('popstate', this.popState);
     window.removeEventListener('slide-permissions-loaded', this.permissionsChanged);
@@ -80,7 +80,7 @@ export class InvestigationsPage extends LitElement {
     super.disconnectedCallback();
   }
   protected updated(changed: Map<string, unknown>) {
-    if(this.controller.listLoaded && !this.controller.loading && !this.controller.detail && !this.controller.detailLoading) restoreWorkbenchPosition(this);
+    if(!this.restoringList && this.controller.listLoaded && !this.controller.loading && !this.controller.detail && !this.controller.detailLoading) restoreWorkbenchPosition(this);
     if (changed.has('client')) {
       this.controller.dispose(); this.controller = new InvestigationsController(() => this.refreshControllerView(), this.client);
       if (this.canView) this.reload();
@@ -90,11 +90,11 @@ export class InvestigationsPage extends LitElement {
     }
   }
   private reload() {
-    this.controller.forbidden = false; void this.filter();
+    this.controller.forbidden = false; void this.filter(false);
     const id = new URL(location.href).searchParams.get('investigation');
     if (id) void this.openInvestigation(id, false);
   }
-  private filter(push = true) {
+  private async filter(push = true) {
     const query = new URLSearchParams();
     if (this.query.trim()) query.set('query', this.query.trim());
     if (this.lifecycle) query.set('state', this.lifecycle);
@@ -109,11 +109,32 @@ export class InvestigationsPage extends LitElement {
       query.forEach((value, key) => url.searchParams.set(key, value)); resources.forEach(ref => url.searchParams.append('resource', ref));
       if (url.href !== location.href) history.pushState({}, '', url);
     }
-    return this.controller.loadList(query.toString(), false, resources);
+    const generation = ++this.listRestoreGeneration;
+    const pages = push ? 1 : history.state?.investigationPages;
+    const targetPages = Number.isSafeInteger(pages) && pages > 0 ? Math.min(pages, 100) : 1;
+    this.restoringList = true;
+    this.loadedPages = 1;
+    await this.controller.loadList(query.toString(), false, resources);
+    while (generation === this.listRestoreGeneration && this.loadedPages < targetPages
+      && this.controller.list.nextCursor && !this.controller.listError && !this.controller.forbidden) {
+      await this.controller.loadList(undefined, true);
+      this.loadedPages++;
+    }
+    if (generation !== this.listRestoreGeneration || !this.isConnected) return;
+    this.restoringList = false;
+    history.replaceState({...history.state, investigationPages:this.loadedPages}, '', location.href);
+    this.requestUpdate();
+  }
+  private async loadMore() {
+    const generation = this.listRestoreGeneration;
+    await this.controller.loadList(undefined, true);
+    if (generation !== this.listRestoreGeneration || !this.isConnected || this.controller.listError || this.controller.forbidden) return;
+    this.loadedPages++;
+    history.replaceState({...history.state, investigationPages:this.loadedPages}, '', location.href);
   }
   private async openInvestigation(id: string, push = true) {
     this.draft = ''; this.evidenceOpen = false;
-    if (push) { const origin=rememberWorkbenchPosition(id); const url = new URL(location.href); url.searchParams.set('returnTo', origin); url.searchParams.set('investigation', id); history.pushState({workbenchOrigin:origin}, '', url); }
+    if (push) { history.replaceState({...history.state, investigationPages:this.loadedPages}, '', location.href); const origin=rememberWorkbenchPosition(id); const url = new URL(location.href); url.searchParams.set('returnTo', origin); url.searchParams.set('investigation', id); history.pushState({workbenchOrigin:origin}, '', url); }
     await this.controller.select(id);
     await this.updateComplete;
     this.querySelector<HTMLElement>('.investigation-detail-title')?.focus();
@@ -251,7 +272,7 @@ export class InvestigationsPage extends LitElement {
             open:html`<button class="btn-ghost" data-investigation=${row.id} data-workbench-key=${row.id} @click=${()=>void this.openInvestigation(row.id)}>查看调查</button>`
           }))}></app-data-table>
           ${c.listLoaded && !c.loading && !c.listError && !c.list.items.length ? html`<app-empty-state title="暂无匹配调查" description="更换名称、状态或资源筛选；也可清除筛选查看全部调查。"></app-empty-state>` : nothing}
-          ${c.list.nextCursor ? html`<button class="btn" ?disabled=${c.loading} @click=${() => void c.loadList(undefined, true)}>加载更多调查</button>` : nothing}
+          ${c.list.nextCursor ? html`<button class="btn" ?disabled=${c.loading} @click=${() => void this.loadMore()}>加载更多调查</button>` : nothing}
         </app-card></aside>
         <section class="workspace-main" aria-label="执行协作">${renderInvestigationDetail(c, { permissions: this.permissions, draft: this.draft, onDraft: v => this.draft = v,
           onContinue: () => void c.continue(this.draft).then(result => { if (result) this.draft = ''; }), onEvidence: () => this.evidenceOpen = true })}</section>

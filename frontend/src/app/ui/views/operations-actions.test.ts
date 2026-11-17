@@ -101,3 +101,17 @@ it.each(['//evil.invalid','/workbench?investigation=restricted'])('explains an i
   expect(view.shadowRoot!.querySelector('a[href="/workbench?workspaceTab=actions"]')).not.toBeNull();
   expect(view.shadowRoot!.querySelector('a[href="//evil.invalid"]')).toBeNull();
 });
+
+it('MAX-683: action-only detail presents missing conclusions and separate outcomes without reading investigations',async()=>{
+  api.mockImplementation(url=>Promise.resolve(json(String(url).includes('/unified')?{items:[row()]}:{plan:plan()})));
+  const root=await mount();
+  expect(root.querySelector('.plan-title')?.textContent).toContain('未提供绑定结果的结论摘要');
+  expect(root.textContent).toContain('具体调查建议未提供');
+  expect(root.querySelector('[aria-label="行动结果状态"]')?.textContent).toContain('业务恢复');
+  expect(root.querySelector('[aria-label="行动结果状态"]')?.textContent).toContain('未知');
+  expect(api.mock.calls.some(([url])=>String(url).includes('/api/investigations'))).toBe(false);
+  expect(root.querySelector('a[href*="investigation="]')).toBeNull();
+  const conditions=root.getElementById('plan-conditions')!; conditions.scrollIntoView=vi.fn();
+  [...root.querySelectorAll('button')].find(b=>b.textContent==='审阅行动条件')!.click();
+  expect(root.activeElement).toBe(conditions);
+});

@@ -29,8 +29,14 @@ export async function restoreWorkbenchPosition(root: ParentNode) {
   const position = history.state?.workbenchPosition;
   if (!position || typeof position.key !== 'string' || !Number.isFinite(position.y)) return;
   const match = [...root.querySelectorAll<HTMLElement>('[data-workbench-key]')].find(el=>el.dataset.workbenchKey===position.key);
-  const visible = (el:HTMLElement) => el.getClientRects().length > 0
-    && getComputedStyle(el).visibility !== 'hidden' && !el.matches(':disabled');
+  const visible = (el:HTMLElement) => {
+    // Chromium can return layout rectangles for content inside closed details.
+    for (let parent = el.parentElement; parent; parent = parent.parentElement) {
+      if (parent instanceof HTMLDetailsElement && !parent.open
+        && !parent.querySelector(':scope > summary')?.contains(el)) return false;
+    }
+    return el.getClientRects().length > 0 && getComputedStyle(el).visibility !== 'hidden' && !el.matches(':disabled');
+  };
   const fallback = [...root.querySelectorAll<HTMLElement>('button,a[href],h2')].find(visible);
   const target = match && visible(match) ? match : fallback;
   if (target) {

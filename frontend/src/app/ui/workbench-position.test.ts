@@ -14,3 +14,13 @@ it('skips hidden or disabled controls when the original row disappears',async()=
  expect(heading.scrollIntoView).toHaveBeenCalled();
  expect(history.state.workbenchPosition).toBeUndefined();
 });
+it('MAX-683: skips collapsed details even when Chromium reports a layout rectangle',async()=>{
+ const root=document.createElement('section');
+ root.innerHTML='<details><summary>高级</summary><button>隐藏读取</button></details><button id="visible">查找计划</button>';
+ document.body.append(root);
+ for(const button of root.querySelectorAll('button'))vi.spyOn(button,'getClientRects').mockReturnValue([{width:100,height:20}] as unknown as DOMRectList);
+ const target=root.querySelector<HTMLElement>('#visible')!;target.scrollIntoView=vi.fn();
+ history.replaceState({workbenchPosition:{key:'gone',y:900}},'','/');
+ await restoreWorkbenchPosition(root);
+ expect(document.activeElement).toBe(target);expect(target.scrollIntoView).toHaveBeenCalled();
+});

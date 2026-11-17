@@ -46,6 +46,10 @@ export class OperationsActions extends LitElement {
     .table-title { display:block; font-weight:600; color:var(--accent); }
     .layout { grid-template-columns:minmax(0,1.98fr) minmax(280px,1fr); }
     .approval-conditions { margin-block:var(--space-md); }
+    .outcome-strip { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); padding:var(--space-md); border:1px solid var(--border); border-radius:var(--radius-md); margin-bottom:var(--space-lg); }
+    .outcome-strip > div + div { border-left:1px solid var(--border); padding-left:var(--space-md); }
+    .outcome-strip dt { color:var(--muted); }
+    .outcome-strip dd { margin:var(--space-xs) 0 0; }
   `];
   @property({ attribute:false }) permissions: Set<string> | null = null;
   @state() private planId = '';
@@ -196,12 +200,24 @@ export class OperationsActions extends LitElement {
     const result=await this.plans.write<{plan:PlanRecord}>(`/actions/plans/${encodeURIComponent(p.id)}/versions`,{expectedVersion:p.version,content:{...content,impact:this.impact.trim()}});
     if(result) {this.plans.data=result;this.clearDrafts();this.requestUpdate();}
   }
+  private focusPlanSection(id:string) {
+    const target=this.shadowRoot?.getElementById(id);
+    target?.focus({preventScroll:true}); target?.scrollIntoView({block:'nearest'});
+  }
   private renderPlan(p:PlanRecord) {
     const c=p.content,own=[c.author.id,c.requester.id].includes(currentUserId() ?? -1),fresh=validRecord(c);
     return html`<app-card class="decision"><span slot="header">行动判断 · 计划 V${p.version}</span>
-      <h2 class="plan-title" tabindex="-1">${c.impact}</h2><p>计划影响说明；不代表根因或业务恢复已确认。请核对下方参数、依据与独立审批条件。</p>
+      <h2 class="plan-title" tabindex="-1">当前计划未提供绑定结果的结论摘要</h2>
+      <p>建议下一步：具体调查建议未提供。请先审阅当前版本的参数、依据及审批条件。</p>
+      <div class="toolbar"><button class="btn-primary" @click=${() => this.focusPlanSection('plan-conditions')}>审阅行动条件</button><button class="btn" @click=${() => this.focusPlanSection('plan-evidence')}>核对依据</button></div>
       <p class="muted">目标：${p.targetName || resourceLabel(c.target)} · 计划更新：${p.updatedAt ? new Date(p.updatedAt).toLocaleString('zh-CN') : '未提供'} · 有效至：${new Date(c.validUntil).toLocaleString('zh-CN')}</p>
-    </app-card><div class="layout"><div class="stack"><app-card><span slot="header">行动条件 · 重启专用演练服务</span>
+    </app-card>
+    <dl class="outcome-strip" aria-label="行动结果状态"><div><dt>执行结果</dt><dd>${p.executions?.length ? p.executions.filter(e=>e.planVersion===p.version).map(e=>operationLabels[e.state] || e.state).join('、') || '当前版本未提供执行记录' : '未提供执行记录'}</dd></div><div><dt>恢复验证</dt><dd>${p.verificationState ? operationLabels[p.verificationState] || p.verificationState : '尚未读取验证报告'}</dd></div><div><dt>业务恢复</dt><dd>未知，请核对原执行与观察窗口</dd></div></dl>
+    <div class="layout"><div class="stack"><app-card><h3 slot="header" id="plan-evidence" tabindex="-1">判断依据</h3>
+      <p>以下为当前计划绑定的依据引用；未提供事实摘要与限制，不能据此确认根因或恢复。</p>
+      ${c.evidence.length ? c.evidence.map(ref=>html`<dl><dt>证据 ${ref.id} · V${ref.version}</dt><dd>有效至 ${new Date(ref.validUntil).toLocaleString('zh-CN')}</dd><dd>内容标识：${ref.hash}</dd></dl>`) : html`<p>当前计划未提供证据引用。</p>`}
+      ${hasSlidePermission(this.permissions,'chat:view') ? html`<a href=${`/workbench?investigation=${encodeURIComponent(c.investigationId)}`}>读取来源调查，核对结果版本 ${c.resultVersion}</a>` : html`<p>当前身份仅可读取授权行动内容。</p>`}
+    </app-card><app-card><h3 slot="header" id="plan-conditions" tabindex="-1">行动条件 · 重启专用演练服务</h3>
       <div class="toolbar" aria-label="行动步骤"><span>1 确认计划</span><span>2 独立审批</span><span>3 受控执行</span><span>4 效果验证</span></div>
       <dl><dt>目标资源</dt><dd><a href=${resourceDetailUrl(c.target.type,c.target.id)}>${resourceLabel(c.target)}</a></dd><dt>目标服务</dt><dd>${c.parameters.unit}</dd>
       <dt>预计影响</dt><dd>${c.impact}</dd><dt>风险</dt><dd>${operationLabels[c.risk] ?? c.risk}</dd><dt>有效期至</dt><dd>${new Date(c.validUntil).toLocaleString('zh-CN')}</dd><dt>回退能力</dt><dd>${c.rollback.description}</dd></dl>
@@ -210,7 +226,7 @@ export class OperationsActions extends LitElement {
     </app-card><app-card><span slot="header">执行前置与验证标准</span><ul>${c.preconditions.map(v=>html`<li>${v.kind}：${v.expected}</li>`)}</ul>
       <dl><dt>执行前观测</dt><dd>${c.verifier.beforeSeconds} 秒</dd><dt>就绪等待</dt><dd>${c.verifier.readinessSeconds} 秒</dd><dt>恢复观察</dt><dd>${c.verifier.observationSeconds} 秒 · 每 ${c.verifier.intervalSeconds} 秒采样</dd><dt>额外重启上限</dt><dd>${c.verifier.maxExtraRestarts}</dd></dl>
       <p>执行成功与业务恢复分别判断；缺数据保持无法确认，未改善为验证失败。</p>
-    </app-card><operations-action-outcome .plan=${p} .approvalId=${this.approvalId} .executionIds=${this.executionIds} .canExecute=${this.can("execute")} .canReadInvestigation=${hasSlidePermission(this.permissions,"chat:view")} .blocked=${this.plans.locked}></operations-action-outcome></div><aside class="stack"><app-card><span slot="header">不可变计划与职责分离</span><dl><dt>计划状态</dt><dd><app-badge variant=${p.state==='approved'&&fresh?'ok':'warn'}>${fresh?operationLabels[p.state]:'已过期'}</app-badge></dd><dt>当前版本</dt><dd>v${p.version}</dd><dt>作者</dt><dd>#${c.author.id}</dd><dt>提交者</dt><dd>#${c.requester.id}</dd></dl>
+    </app-card><operations-action-outcome .plan=${p} .approvalId=${this.approvalId} .executionIds=${this.executionIds} .canExecute=${this.can("execute")} .canReadInvestigation=${hasSlidePermission(this.permissions,"chat:view")} .blocked=${this.plans.locked}></operations-action-outcome></div><aside class="stack"><app-card><span slot="header">行动范围与职责分离</span><dl><dt>影响目标</dt><dd>${p.targetName || resourceLabel(c.target)}</dd><dt>计划影响</dt><dd>${c.impact}</dd><dt>风险</dt><dd>${operationLabels[c.risk] || c.risk}</dd><dt>有效至</dt><dd>${new Date(c.validUntil).toLocaleString('zh-CN')}</dd><dt>计划状态</dt><dd><app-badge variant=${p.state==='approved'&&fresh?'ok':'warn'}>${fresh?operationLabels[p.state]:'已过期'}</app-badge></dd><dt>当前版本</dt><dd>v${p.version}</dd><dt>作者</dt><dd>#${c.author.id}</dd><dt>提交者</dt><dd>#${c.requester.id}</dd></dl>
       <details><summary>计划标识、摘要与来源</summary><pre>${JSON.stringify({id:p.id,version:p.version,hash:p.contentHash,tool:c.tool,evidence:c.evidence,relations:c.relations,baselines:c.baselines},null,2)}</pre></details>
       ${p.state==='draft'&&this.can('propose') ? html`<button class="btn-primary" ?disabled=${this.plans.locked||!fresh} @click=${this.submit}>提交当前版本审批</button>`:nothing}
       ${this.can('propose') ? html`<button class="btn" ?disabled=${this.plans.locked} @click=${()=>{this.editing=true;this.impact=c.impact;}}>编辑为新计划版本</button>`:nothing}

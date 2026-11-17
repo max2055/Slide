@@ -473,7 +473,7 @@ export function setTabFromRoute(host: SettingsHost, next: Tab) {
 
 function updateBrowserHistory(url: URL, replace: boolean) {
   if (replace) {
-    return window.history.replaceState({}, "", url.toString());
+    return window.history.replaceState(url.href === window.location.href ? window.history.state : {}, "", url.toString());
   }
   return window.history.pushState({}, "", url.toString());
 }
