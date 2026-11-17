@@ -8,6 +8,7 @@ import { createServer as createHttpServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { resolve, join } from 'node:path';
 import { promisify } from 'node:util';
+import bcrypt from '../../apps/db-ops-api/node_modules/bcrypt/bcrypt.js';
 import mysql from '../../apps/db-ops-api/node_modules/mysql2/promise.js';
 import { WorkerLease } from '../../apps/db-ops-api/src/lifecycle/worker-lease.js';
 import { CronRunStore } from '../../apps/db-ops-api/src/cron/cron-run-store.js';
@@ -96,7 +97,7 @@ function start(env: NodeJS.ProcessEnv) {
 }
 
 try {
-  await exec('docker', ['run', '-d', '--name', container, '--memory', '512m', '-e', 'MYSQL_ALLOW_EMPTY_PASSWORD=yes', '-p', '127.0.0.1::3306', 'mysql:8.4',
+  await exec('docker', ['run', '-d', '--name', container, '--memory', '1g', '-e', 'MYSQL_ALLOW_EMPTY_PASSWORD=yes', '-p', '127.0.0.1::3306', 'mysql:8.4',
     '--innodb-buffer-pool-size=32M', '--performance-schema=ON', '--max-connections=60']);
   const mapped = (await exec('docker', ['port', container, '3306/tcp'])).stdout.trim();
   const port = Number(mapped.split(':').at(-1));
@@ -117,6 +118,12 @@ try {
   // Pool connections must all use the test database (USE affects only one).
   await pool.end(); pool = mysql.createPool({ host: '127.0.0.1', port, user: 'root', password: '', database: 'db_ops_ai_qualification_w07' });
   await pool.query("UPDATE llm_providers SET api_base_url = ? WHERE name = 'deepseek'", [`http://127.0.0.1:${fakeProviderPort}/v1`]);
+  async function accountEvidence(phase: string) {
+    const [rows] = await pool!.query<any[]>("SELECT password_hash, status FROM users WHERE username='admin'");
+    console.error(JSON.stringify({ event: 'startup-account', phase, visible: rows.length === 1,
+      active: rows[0]?.status === 'active', passwordMatches: rows[0] ? await bcrypt.compare('qualification-admin-password', rows[0].password_hash) : false }));
+  }
+  await accountEvidence('after-bootstrap');
   // Dedicated task principals attribute server connections across Docker NAT.
   // Only the matching API child receives each principal; the observer stays root.
   for (const principal of ['w07_api_1', 'w07_api_2']) {
@@ -152,7 +159,8 @@ try {
   assert.equal(leader.output().includes('qualification-private-workspace'), false);
   events.push('slow API dependency >35s: lease renewed; two real API processes: one background engine');
 
-  const login = await fetch(`http://127.0.0.1:${standbyPort}/api/auth/login`, { method: 'POST', headers: { 'content-type': 'application/json' },
+  await accountEvidence('before-login');
+  const login = await fetch(`http://127.0.0.1:${standbyPort}/api/auth/login`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-slide-test-request': 'startup-login' },
     body: JSON.stringify({ username: 'admin', password: 'qualification-admin-password' }) });
   assert.equal(login.status, 200); const auth = await login.json() as any;
   const token = auth.token ?? auth.accessToken;
