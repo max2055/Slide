@@ -13,18 +13,18 @@ export interface WorkspaceAttentionItem {
 interface Page {items:WorkspaceAttentionItem[];nextCursor:string|null;unavailable:boolean}
 const labels={continue:'继续原调查',approve:'独立审批当前计划',execute:'核对已批准计划',verify:'核对原执行与效果验证',reconcile:'核对原执行回执'};
 export function attentionUrl(item:WorkspaceAttentionItem) {
-  const q=new URLSearchParams({investigation:item.investigationId,attentionVersion:String(item.investigationVersion),returnTo:'/investigations'});
+  const q=new URLSearchParams({investigation:item.investigationId,attentionVersion:String(item.investigationVersion),returnTo:'/workbench'});
   if(item.resultId)q.set('attentionResult',item.resultId);
   if(item.resultVersion!==null)q.set('attentionResultVersion',String(item.resultVersion));
   if(item.reportId){q.set('attentionReport',item.reportId);q.set('attentionReportVersion',String(item.reportVersion));}
   if(item.executionId)q.set('attentionExecution',item.executionId);
   if(item.kind==='continue'&&item.planId){q.set('attentionSourcePlan',item.planId);q.set('attentionSourcePlanVersion',String(item.planVersion));}
-  if(!item.planId||item.kind==='continue')return `/investigations?${q}`;
+  if(!item.planId||item.kind==='continue')return `/workbench?${q}`;
   q.delete('investigation');q.set('sourceInvestigation',item.investigationId);q.set('plan',item.planId);
   q.set('attentionPlanVersion',String(item.planVersion));q.set('attentionPlanHash',item.planHash!);
   if(item.executionId)q.set('attentionExecution',item.executionId);
   if(item.approvalId)q.set('attentionApproval',item.approvalId);
-  return `/operations-actions?${q}`;
+  return `/workbench?workspaceTab=actions&${q}`;
 }
 /** A read projection, with its own server page. No client-wide list scan or task state. */
 @customElement('investigation-attention')

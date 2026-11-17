@@ -1,18 +1,21 @@
 import { chmod, readFile, writeFile } from 'node:fs/promises';
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 import { RegisteredActionEnvironment } from './action-environment.js';
+import { DEMO_TARGET_HOSTS } from './demo-target-hosts.js';
 import { syntheticPilot } from './action-environment.fixture.js';
 import { proposedContent } from './actions/approval-binding.js';
 import type { PlanConnection } from './actions/plan-store.js';
 import type { ActorContext } from '../auth/actor-context.js';
+import { createPublicKey } from 'node:crypto';
+import { RestartDemoServiceAdapter } from './actions/adapters/restart-demo-service.js';
 
-describe('P10 trusted action environment', () => {
+describe.each(DEMO_TARGET_HOSTS)('P10 trusted action environment %s', host => {
   let f: Awaited<ReturnType<typeof syntheticPilot>>, environment: RegisteredActionEnvironment;
   let server: any, clock: Date, inspect: Mock<(target: unknown, key: string) => Promise<unknown>>, connection: PlanConnection;
   const actor = { userId: 101, principalKind: 'user', roles: [], permissions: [], instanceScopes: {} } as unknown as ActorContext;
   const content = () => proposedContent(f.proposal(), actor, new Date());
   beforeEach(async () => {
-    f = await syntheticPilot(); clock = new Date();
+    f = await syntheticPilot(host); clock = new Date();
     server = { id: 501, host: f.manifest.target.host, port: 22, host_key_fingerprint: f.manifest.target.hostFingerprint };
     inspect = vi.fn(async () => f.inspection());
     environment = new RegisteredActionEnvironment(f.env, inspect);
@@ -32,6 +35,16 @@ describe('P10 trusted action environment', () => {
     const {validUntil:_expiry,...input}=draft;
     const proposal=proposedContent({...input,schemaVersion:1,investigationId:'synthetic',resultVersion:1,target:{type:'server',id:501},evidence:f.proposal().evidence,relations:[],baselines:[],impact:'controlled'},actor,new Date(),1000);
     await expect(environment.validate(connection,proposal,new Date())).resolves.toBeUndefined();
+  });
+  it('cannot deploy the pending real-environment draft through either boundary', async () => {
+    const draft = JSON.parse(await readFile(new URL('../../../../docs/slide/development/MAX-683/kylin-registration.pending.json',import.meta.url),'utf8'));
+    await writeFile(f.env.OPERATIONS_PILOT_MANIFEST_FILE,JSON.stringify(draft));
+    await expect(environment.proposal(501)).rejects.toThrow('OPERATIONS_DEPENDENCY_UNAVAILABLE');
+    const credentials = vi.fn(async()=>({privateKey:'never-read'}));
+    const publicKey = createPublicKey(await readFile(f.env.OPERATIONS_PILOT_PUBLIC_KEY_FILE));
+    expect(()=>new RestartDemoServiceAdapter(draft.targetProposal,Buffer.alloc(64),
+      publicKey,credentials)).toThrow();
+    expect(credentials).not.toHaveBeenCalled(); expect(inspect).not.toHaveBeenCalled();
   });
   it('rejects wrong target and altered unsigned registration during draft construction', async () => {
     await expect(environment.proposal(502)).rejects.toThrow('OPERATIONS_PRECONDITION_FAILED');
@@ -67,6 +80,35 @@ describe('P10 trusted action environment', () => {
     await expect(environment.validate(connection, content(), new Date())).rejects.toThrow('OPERATIONS_PRECONDITION_FAILED');
     expect(inspect).not.toHaveBeenCalled();
   });
+  it('rejects the other allowed address in the SQL binding before SSH', async () => {
+    server.host = DEMO_TARGET_HOSTS.find(value => value !== host);
+    await expect(environment.validate(connection, content(), new Date())).rejects.toThrow('OPERATIONS_PRECONDITION_FAILED');
+    expect(inspect).not.toHaveBeenCalled();
+  });
+  it('rejects an address without a registered server row before SSH', async () => {
+    server = null;
+    await expect(environment.validate(connection, content(), new Date())).rejects.toThrow('OPERATIONS_PRECONDITION_FAILED');
+    expect(inspect).not.toHaveBeenCalled();
+  });
+  it('rejects inspection bound to the other allowed address', async () => {
+    const { operationsContentHash } = await import('./contracts.js');
+    inspect.mockResolvedValue({...f.inspection(),configHash:operationsContentHash({...f.manifest.target,
+      host:DEMO_TARGET_HOSTS.find(value=>value!==host)})});
+    await expect(environment.validate(connection, content(), new Date())).rejects.toThrow('OPERATIONS_PRECONDITION_FAILED');
+  });
+  it('cannot move a registration to the other allowed address without a fresh signature', async () => {
+    const envelope = JSON.parse(await readFile(f.env.OPERATIONS_PILOT_MANIFEST_FILE, 'utf8'));
+    envelope.manifest.target.host = DEMO_TARGET_HOSTS.find(value => value !== host);
+    await writeFile(f.env.OPERATIONS_PILOT_MANIFEST_FILE, JSON.stringify(envelope));
+    await expect(environment.proposal(501)).rejects.toThrow('OPERATIONS_PRECONDITION_FAILED');
+    expect(inspect).not.toHaveBeenCalled();
+  });
+  it.each(['172.16.51.129', '127.0.0.1', 'kylin.local', '172.16.51.128.example', '::1'])(
+    'rejects even a signed unregistered address %s', async address => {
+      Object.assign(f.manifest.target, { host: address }); await f.save();
+      await expect(environment.proposal(501)).rejects.toThrow('OPERATIONS_DEPENDENCY_UNAVAILABLE');
+      expect(inspect).not.toHaveBeenCalled();
+    });
   it.each(['configHash', 'helperHash', 'unitHash', 'serverId', 'unit'])('rejects changed helper %s', async field => {
     inspect.mockResolvedValue({ ...f.inspection(), [field]: field === 'serverId' ? 502 : field === 'unit' ? 'ssh.service' : 'f'.repeat(64) });
     await expect(environment.validate(connection, content(), new Date())).rejects.toThrow();

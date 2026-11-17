@@ -346,7 +346,7 @@ for (const entry of ['creation', 'conversion'] as const) {
         await expect(page).toHaveURL(new RegExp(`session=${session.session_id}`));
         const [messages] = await env.pool.query('SELECT message_id,content FROM chat_messages WHERE session_id=?', [session.session_id]);
         expect(messages).toEqual([{ message_id: messageId, content: '撤权前的原消息' }]);
-      } else await expect(page).toHaveURL(`${env.url}/investigations`);
+      } else await expect(page).toHaveURL(`${env.url}/workbench`);
     } finally { await env.pool.query("INSERT IGNORE INTO instance_permissions (user_id,instance_id,access_level) VALUES (101,101,'read-only')"); }
   });
 }

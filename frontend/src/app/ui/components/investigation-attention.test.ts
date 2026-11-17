@@ -9,13 +9,13 @@ it('reads its own server page and preserves exact original references and safe r
  const api=vi.mocked(authFetch);api.mockResolvedValue(reply({items:[item],nextCursor:'next',unavailable:false}));
  const view=new InvestigationAttention();document.body.append(view);await vi.waitFor(()=>expect(view.shadowRoot!.textContent).toContain('跨页调查'));await view.updateComplete;
  expect(api).toHaveBeenCalledTimes(1);expect(String(api.mock.calls[0][0])).toContain('/api/operations/workspace-attention');
- const link=new URL(view.shadowRoot!.querySelector('a')!.href);expect(link.searchParams.get('attentionVersion')).toBe('8');expect(link.searchParams.get('attentionResult')).toBe('result');expect(link.searchParams.get('returnTo')).toBe('/investigations');
+ const link=new URL(view.shadowRoot!.querySelector('a')!.href);expect(link.searchParams.get('attentionVersion')).toBe('8');expect(link.searchParams.get('attentionResult')).toBe('result');expect(link.searchParams.get('returnTo')).toBe('/workbench');
  const next=[...view.shadowRoot!.querySelectorAll('button')].find(b=>b.textContent==='下一页待处理事项')!;next.click();await vi.waitFor(()=>expect(api).toHaveBeenCalledTimes(2));expect(String(api.mock.calls[1][0])).toContain('cursor=next');
  expect(api.mock.calls.every(([,init])=>!init?.method)).toBe(true);
 });
 it('action URLs bind current plan hash/version and original approval/execution',()=>{
  const url=new URL(attentionUrl({...item,kind:'reconcile',planId:'plan',planVersion:4,planHash:'hash',approvalId:'11',executionId:'send'}),'http://localhost');
- expect(url.pathname).toBe('/operations-actions');expect(Object.fromEntries(url.searchParams)).toMatchObject({plan:'plan',attentionPlanVersion:'4',attentionPlanHash:'hash',attentionExecution:'send',attentionApproval:'11',sourceInvestigation:'inv'});
+ expect(url.pathname).toBe('/workbench');expect(Object.fromEntries(url.searchParams)).toMatchObject({plan:'plan',attentionPlanVersion:'4',attentionPlanHash:'hash',attentionExecution:'send',attentionApproval:'11',sourceInvestigation:'inv'});
 });
 it('clears records on revocation, including an in-flight late response',async()=>{
  let done!:(r:Response)=>void;const api=vi.mocked(authFetch);api.mockImplementation(()=>new Promise(r=>done=r));

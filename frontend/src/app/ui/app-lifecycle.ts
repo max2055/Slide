@@ -77,11 +77,11 @@ type PreferenceHost = { settings: UiSettings; connectGeneration?: number; tab?: 
 
 function applyDefaultTab(host: { settings?: { defaultTab?: string }; tab?: Tab }) {
   const defaultTab = host.settings?.defaultTab;
-  if (!defaultTab || defaultTab === host.tab || !(DEFAULT_TAB_OPTIONS as readonly string[]).includes(defaultTab)) return;
+  if (!defaultTab || defaultTab === host.tab || !([...DEFAULT_TAB_OPTIONS, 'attention', 'operations-actions'] as readonly string[]).includes(defaultTab)) return;
   // Automatic landing resolution replaces the startup entry, preserving Back behavior.
   const settingsHost = host as Parameters<typeof setTabFromRoute>[0];
   setTabFromRoute(settingsHost, defaultTab as Tab);
-  syncUrlWithTab(settingsHost, defaultTab as Tab, true);
+  syncUrlWithTab(settingsHost, defaultTab === 'attention' ? 'events' : defaultTab === 'operations-actions' ? 'investigations' : defaultTab as Tab, true);
 }
 
 export async function syncUserPreferences(host: PreferenceHost, applyLandingDefault = false) {

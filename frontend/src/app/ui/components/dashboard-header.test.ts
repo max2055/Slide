@@ -27,13 +27,13 @@ describe('dashboard breadcrumb language subscription', () => {
     await loading;
     await header.updateComplete;
     expect(header.tab).toBe('investigations');
-    expect(label(header)).toBe('AI 工作空间');
+    expect(label(header)).toBe('AI 工作台');
   });
 
   it('follows language switches and retains the effective language on remount', async () => {
     await i18n.setLocale('zh-CN');
     const header = await mount();
-    expect(label(header)).toBe('AI 工作空间');
+    expect(label(header)).toBe('AI 工作台');
     await i18n.setLocale('en');
     await header.updateComplete;
     expect(label(header)).toBe('AI Workspace');
@@ -42,7 +42,7 @@ describe('dashboard breadcrumb language subscription', () => {
     expect(label(restored)).toBe('AI Workspace');
     await i18n.setLocale('zh-CN');
     await restored.updateComplete;
-    expect(label(restored)).toBe('AI 工作空间');
+    expect(label(restored)).toBe('AI 工作台');
   });
 
   it('unsubscribes on disconnect and reconnects without changing navigation', async () => {
@@ -55,7 +55,7 @@ describe('dashboard breadcrumb language subscription', () => {
     await i18n.setLocale('en');
     await i18n.setLocale('zh-CN');
     await header.updateComplete;
-    expect(label(header)).toBe('AI 工作空间');
+    expect(label(header)).toBe('AI 工作台');
     const navigate = vi.fn();
     header.addEventListener('slide-navigate', navigate);
     header.querySelector<HTMLElement>('.dashboard-header__breadcrumb-link')!.click();

@@ -194,7 +194,7 @@ export class InvestigationsPage extends LitElement {
       @media(max-width:767px) { investigations-page .workspace { grid-template-columns:minmax(0,1fr); } investigations-page .investigation-list { max-height:220px; overflow:auto; } }
     </style>
     ${!this.canView ? html`<app-empty-state title="无访问权限" description="需要对话读取权限。"></app-empty-state>` : html`
-      <div class="workspace-header"><div><h1>AI 工作空间</h1><p>明确范围，保留过程，用证据支持判断。</p></div><button class="btn-primary" @click=${() => this.createOpen = true}>创建手动调查</button></div>
+      <div class="workspace-header"><div><h2>调查</h2><p>明确范围，保留过程，用证据支持判断。</p></div><button class="btn-primary" @click=${() => this.createOpen = true}>创建手动调查</button></div>
       ${c.error || c.acceptanceUnknown ? html`<div class="workspace-error" role="alert">${c.error || "提交结果尚未确认，请核对原请求。"}${c.acceptanceUnknown ? html`<button class="btn" ?disabled=${c.busy} @click=${() => void c.retryPending()}>核对原请求</button>` : nothing}<button class="btn" @click=${this.reload}>重试读取</button></div>` : nothing}
       ${entryError ? html`<p role="alert">${entryError}</p>` : entry || (c.detail as any)?.context?.entry ? html`<investigation-entry
         .context=${entry ?? null} .investigationId=${entry ? '' : c.detail!.id}
@@ -217,8 +217,8 @@ export class InvestigationsPage extends LitElement {
         </div>
       </form>
       ${this.canView&&!c.forbidden&&!c.detail&&!c.detailLoading?html`<investigation-attention></investigation-attention>`:nothing}
-      ${reminder.has('attentionSourcePlan')&&reminder.has('attentionExecution')?html`<p>续查来源：原行动计划 V${reminder.get('attentionSourcePlanVersion')}。<a href=${`/operations-actions?plan=${encodeURIComponent(reminder.get('attentionSourcePlan')!)}&attentionExecution=${encodeURIComponent(reminder.get('attentionExecution')!)}`}>核对原执行与验证记录</a></p>`:nothing}
-      ${reminderStale?html`<p role="alert">提醒引用的原版本已变化。请先核对当前记录，再继续处理。<a href=${`/investigations?investigation=${encodeURIComponent(c.detail!.id)}`}>打开当前原调查并重新确认</a></p>`:nothing}
+      ${reminder.has('attentionSourcePlan')&&reminder.has('attentionExecution')?html`<p>续查来源：原行动计划 V${reminder.get('attentionSourcePlanVersion')}。<a href=${`/workbench?workspaceTab=actions&plan=${encodeURIComponent(reminder.get('attentionSourcePlan')!)}&attentionExecution=${encodeURIComponent(reminder.get('attentionExecution')!)}`}>核对原执行与验证记录</a></p>`:nothing}
+      ${reminderStale?html`<p role="alert">提醒引用的原版本已变化。请先核对当前记录，再继续处理。<a href=${`/workbench?investigation=${encodeURIComponent(c.detail!.id)}`}>打开当前原调查并重新确认</a></p>`:nothing}
       ${firstUse ? html`<div class="workspace-start"><app-card class="start-intro"><div class="start-panel">
         <div class="start-signature">${icons.activity}<span>从一个具体问题开始</span></div>
         <h2>让资源证据，汇成可追溯的调查。</h2><p>选择需要关注的资源，描述你观察到的现象。调查将保留执行过程、证据与结论，便于后续核对。</p>
@@ -232,7 +232,7 @@ export class InvestigationsPage extends LitElement {
           ${c.listLoaded && !c.loading && !c.listError && !c.list.items.length ? html`<app-empty-state title="暂无匹配调查" description="更换名称、状态或资源筛选；也可清除筛选查看全部调查。"></app-empty-state>` : nothing}
           ${c.list.nextCursor ? html`<button class="btn" ?disabled=${c.loading} @click=${() => void c.loadList(undefined, true)}>加载更多调查</button>` : nothing}
         </app-card></aside>
-        <section class="workspace-main" aria-label="执行协作">${renderInvestigationDetail(c, { draft: this.draft, onDraft: v => this.draft = v,
+        <section class="workspace-main" aria-label="执行协作">${renderInvestigationDetail(c, { permissions: this.permissions, draft: this.draft, onDraft: v => this.draft = v,
           onContinue: () => void c.continue(this.draft).then(result => { if (result) this.draft = ''; }), onEvidence: () => this.evidenceOpen = true })}</section>
         <aside class="workspace-context" aria-label="证据成果"><investigation-context .results=${c.results} .evidence=${c.evidence} .onMore=${() => void c.loadResults()}></investigation-context></aside>
       </div>`}

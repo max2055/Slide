@@ -6,7 +6,7 @@ import { isSettingsPath } from "./settings-navigation.ts";
 export const TAB_GROUPS = [
   {
     label: "workspace",
-    tabs: ["attention", "investigations", "chat"],
+    tabs: ["investigations", "chat"],
   },
   {
     label: "resources",
@@ -18,7 +18,7 @@ export const TAB_GROUPS = [
   },
   {
     label: "securityGovernance",
-    tabs: ["approval", "operations-actions", "audit-center"],
+    tabs: ["approval", "audit-center"],
   },
 ] as const;
 
@@ -84,7 +84,7 @@ const TAB_PATHS: Record<Tab, string> = {
   sessions: "/sessions",
   chat: "/chat",
   attention: "/attention",
-  investigations: "/investigations",
+  investigations: "/workbench",
   config: "/config",
   "cron-jobs": "/cron-jobs",
   "health-center": "/health",
@@ -112,6 +112,7 @@ const TAB_PATHS: Record<Tab, string> = {
 };
 
 const PATH_TO_TAB = new Map<string, Tab>([
+  ["/investigations", "investigations"],
   ...Object.entries(TAB_PATHS).map(([tab, path]) => [path, tab as Tab] as const),
 ]);
 /** Slide permission codes required for each tab.
@@ -120,12 +121,11 @@ const PATH_TO_TAB = new Map<string, Tab>([
  */
 /** Tabs suitable as a default landing page (excludes context-dependent tabs). */
 export const DEFAULT_TAB_OPTIONS: Tab[] = [
-  "chat", "dashboard", "attention", "investigations", "instances-db", "servers", "network-devices", "sql-console",
+  "chat", "dashboard", "investigations", "instances-db", "servers", "network-devices", "sql-console",
   "reports", "events", "approval", "audit-center", "cron-jobs", "health-center", "feedback", "settings",
 ];
 
 export const TAB_REQUIRED_PERMISSIONS: Partial<Record<Tab, string>> = {
-  'investigations': 'chat:view',
   'operations-knowledge': 'operations:cases:view',
   'operations-actions': 'operations:actions:view',
   // Slide tabs — require specific permission codes

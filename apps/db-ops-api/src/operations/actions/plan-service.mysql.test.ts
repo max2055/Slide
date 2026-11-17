@@ -1,3 +1,6 @@
+import { InvestigationAuthorization } from '../../investigations/authorization.js';
+import { OperationsUiIntegration } from '../ui-integration.js';
+import { CaseCursorCodec } from '../knowledge/search.js';
 /** Real SQL + JWT/HTTP domain composition. No product model or target writes. */
 import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
@@ -177,7 +180,7 @@ describe.skipIf(!port)('P06 SQL + JWT domain composition', () => {
       CREATE TABLE chat_sessions(session_id VARCHAR(100) PRIMARY KEY);
       INSERT INTO users VALUES(1,'admin','disabled','active',1),(2,'reviewer','disabled','active',1),(3,'outsider','disabled','active',1);
       INSERT INTO roles VALUES(1,'admin'),(2,'reviewer'),(3,'outsider');INSERT INTO user_roles VALUES(1,1,NULL),(2,2,NULL),(3,3,NULL);
-      INSERT INTO servers VALUES(1),(2);INSERT INTO chat_sessions VALUES('p06-session');`);
+      INSERT INTO servers(id) VALUES(1),(2);INSERT INTO chat_sessions VALUES('p06-session');`);
     for (const [i, code] of [
       'chat:view',
       'servers:view',
@@ -252,6 +255,7 @@ describe.skipIf(!port)('P06 SQL + JWT domain composition', () => {
       '1',
       'c'.repeat(64),
     ]);
+    await sql("ALTER TABLE servers ADD COLUMN label VARCHAR(255) DEFAULT '隔离演练服务器'");
     store = new PlanStore(pool as any);
     sources = new PlanSources(
       {
@@ -351,6 +355,61 @@ describe.skipIf(!port)('P06 SQL + JWT domain composition', () => {
     reviewer = await loadActor(2);
   });
   const attention=(actor:ActorContext,id:string)=>store.transaction(c=>service.attentionIn(c,actor,id));
+  it('MAX-683 discovers authorized plans without chat permission and exposes metadata without investigation bodies',async()=>{
+    const plan=await service.create(author,proposal(),600000);
+    await sql("DELETE rp FROM role_permissions rp JOIN permissions p ON p.id=rp.permission_id WHERE rp.role_id=2 AND p.code='chat:view'");
+    const actionOnly=await loadActor(2);
+    const ui=new OperationsUiIntegration(store,service,undefined as any,new CaseCursorCodec(Buffer.alloc(32,7)));
+    const page=await ui.discover(actionOnly,{planId:plan.id,investigationId:ids.investigation});
+    const authorization=new InvestigationAuthorization();
+    await store.transaction(async c=>{
+      const inv=await authorization.load(c,ids.investigation);
+      await expect(authorization.authorize(c,actionOnly,inv,'content')).rejects.toMatchObject({statusCode:404});
+      const proof=await authorization.authorize(c,actionOnly,inv,'action-scope');
+      expect(proof.tools).toEqual([]);
+      expect(proof.actor.permissions).not.toContain('chat:view');
+    });
+    await expect(ui.discover(await loadActor(3),{planId:plan.id})).resolves.toMatchObject({items:[]});
+    expect(page.items).toHaveLength(1);
+    expect(page.items[0]).toMatchObject({id:plan.id,version:plan.version,contentHash:plan.contentHash,verificationState:null});
+    expect(Number.isFinite(Date.parse(page.items[0].updatedAt))).toBe(true);
+    expect(page.items[0]).not.toHaveProperty('investigation');
+    await sql("DELETE rp FROM role_permissions rp JOIN permissions p ON p.id=rp.permission_id WHERE rp.role_id=2 AND p.code='operations:actions:view'");
+    await expect(ui.discover(actionOnly,{planId:plan.id})).rejects.toMatchObject({code:'OPERATIONS_NOT_FOUND'});
+  });
+  it.each(['expired-member','resource-revoked','bounded-resource','evidence-resource','historical-resource','session-revoked'])(
+    'MAX-683 action-scope retains the original %s boundary without chat', async change => {
+      const plan=await service.create(author,proposal(),600000);
+      await sql("DELETE rp FROM role_permissions rp JOIN permissions p ON p.id=rp.permission_id WHERE rp.role_id=2 AND p.code='chat:view'");
+      let reader=await loadActor(2);
+      const [evidence]=await planRows({execute:sql},'SELECT metadata_json FROM investigation_evidence WHERE id=?',[ids.evidence]);
+      try {
+        if(change==='expired-member') await sql("UPDATE investigation_members SET expires_at=DATE_SUB(NOW(),INTERVAL 1 SECOND) WHERE investigation_id=? AND user_id=2",[ids.investigation]);
+        if(change==='resource-revoked') await sql("DELETE rp FROM role_permissions rp JOIN permissions p ON p.id=rp.permission_id WHERE rp.role_id=2 AND p.code='servers:view'");
+        if(change==='bounded-resource') reader={...reader,resourceBoundary:{instanceIds:[],serverIds:[],networkDeviceIds:[]}};
+        if(change==='evidence-resource') {
+          reader={...reader,resourceBoundary:{instanceIds:[],serverIds:[1],networkDeviceIds:[]}};
+          await sql('UPDATE investigation_evidence SET metadata_json=? WHERE id=?',[JSON.stringify({resources:[{type:'server',id:1},{type:'server',id:2}]}),ids.evidence]);
+        }
+        if(change==='historical-resource') {
+          reader={...reader,resourceBoundary:{instanceIds:[],serverIds:[1],networkDeviceIds:[]}};
+          await sql('UPDATE investigations SET scope_revision=1 WHERE id=?',[ids.investigation]);
+          await sql("INSERT INTO investigation_scope_resources VALUES(?,'server',2)",[ids.investigation]);
+        }
+        if(change==='session-revoked') await sql('UPDATE users SET session_version=2 WHERE id=2');
+        await expect(store.transaction(c=>service.readIn(c,reader,plan.id))).rejects.toMatchObject({statusCode:404});
+      } finally {
+        await sql('UPDATE investigation_members SET expires_at=NULL WHERE investigation_id=? AND user_id=2',[ids.investigation]);
+        await sql('UPDATE investigations SET scope_revision=0 WHERE id=?',[ids.investigation]);
+        await sql('DELETE FROM investigation_scope_resources WHERE investigation_id=?',[ids.investigation]);
+        await sql('UPDATE investigation_evidence SET metadata_json=? WHERE id=?',[typeof evidence.metadata_json==='string'?evidence.metadata_json:JSON.stringify(evidence.metadata_json),ids.evidence]);
+      }
+    });
+  it('MAX-683 preserves the operations denial contract for legacy chat readers after action permission withdrawal',async()=>{
+    const plan=await service.create(author,proposal(),600000);
+    await sql("DELETE rp FROM role_permissions rp JOIN permissions p ON p.id=rp.permission_id WHERE rp.role_id=2 AND p.code='operations:actions:view'");
+    await expect(store.transaction(c=>service.readIn(c,reviewer,plan.id))).rejects.toMatchObject({code:'OPERATIONS_NOT_FOUND'});
+  });
   it('attention reuses independent approval authority; refresh follows reviewed originals',async()=>{
     const p=await pending();
     await expect(attention(author,p.plan.id)).rejects.toMatchObject({code:'OPERATIONS_FORBIDDEN'});
@@ -759,7 +818,7 @@ describe.skipIf(!port)('P06 SQL + JWT domain composition', () => {
   it('P06-R1 checks underlying evidence source ACL, not just relation endpoints', async () => {
     const input = await relationProposal();
     // Both endpoints are allowed; the evidence source contains an additional resource.
-    await sql('INSERT INTO servers VALUES(3)');
+    await sql('INSERT INTO servers(id) VALUES(3)');
     await sql('UPDATE investigation_evidence SET metadata_json=? WHERE id=?', [
       JSON.stringify({ resources: [{ type: 'server', id: 3 }] }),
       ids.relationEvidence,

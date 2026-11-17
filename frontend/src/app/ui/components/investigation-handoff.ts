@@ -78,7 +78,7 @@ export class InvestigationHandoff extends LitElement {
       <button class="btn btn-refresh" ?disabled=${this.actions.locked||this.feedback.locked||this.workflow.locked} @click=${this.readReferences}>读取关联行动与人工记录</button>
       ${this.actions.loading||this.feedback.loading||this.workflow.loading?html`<p role="status">正在读取原记录…</p>`:nothing}
       ${this.actions.error?html`<p role="status">${this.actions.error}</p>`:nothing}${this.feedback.error?html`<p role="status">${this.feedback.error}</p>`:nothing}
-      ${this.actions.data?.items.length?html`<section aria-label="原计划待办投影"><h3>关联原计划记录</h3>${this.actions.data.items.filter(p=>['pending_approval','approved'].includes(p.state)).map(p=>html`<p><a href=${`/operations-actions?plan=${encodeURIComponent(p.id)}`}>${p.content.resultVersion!==this.result?.version?'旧结果计划，仅供核对':p.state==='pending_approval'?'计划等待独立审批':'计划已批准，请核对原执行与验证状态'} · V${p.version}</a></p>`)}</section>`:nothing}
+      ${this.actions.data?.items.length?html`<section aria-label="原计划待办投影"><h3>关联原计划记录</h3>${this.actions.data.items.filter(p=>['pending_approval','approved'].includes(p.state)).map(p=>html`<p><a href=${`/workbench?workspaceTab=actions&plan=${encodeURIComponent(p.id)}`}>${p.content.resultVersion!==this.result?.version?'旧结果计划，仅供核对':p.state==='pending_approval'?'计划等待独立审批':'计划已批准，请核对原执行与验证状态'} · V${p.version}</a></p>`)}</section>`:nothing}
       <details><summary>核对交接内容</summary><pre style="white-space:pre-wrap;overflow-wrap:anywhere">${this.text()}</pre></details>
       <button class="btn" @click=${this.copy}>复制交接草案</button>${this.copied?html`<p role="status">已复制当前草案。</p>`:nothing}
       ${this.error?html`<p role="alert">${this.error}</p>`:nothing}</app-card>`;

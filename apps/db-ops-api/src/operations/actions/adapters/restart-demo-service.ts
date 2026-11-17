@@ -1,6 +1,7 @@
 import { verify, type KeyObject } from 'node:crypto';
 import { Client, type ConnectConfig } from 'ssh2';
 import { z } from 'zod';
+import { demoTargetHostSchema } from '../../demo-target-hosts.js';
 import {
   createSshHostVerifier,
   normalizeSshHostKeyFingerprint,
@@ -17,7 +18,7 @@ const hash = z.string().regex(/^[a-f0-9]{64}$/);
 const registrationSchema = z.strictObject({
   protocol: z.literal(1),
   serverId: z.number().int().positive().safe(),
-  host: z.literal('192.168.49.130'),
+  host: demoTargetHostSchema,
   port: z.literal(22),
   username: z.literal('slide-action'),
   unit: z.literal('slide-action-demo.service'),

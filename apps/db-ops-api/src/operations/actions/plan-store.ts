@@ -1,3 +1,4 @@
+import { hasPermission } from '../../auth/require-permission.js';
 import { z } from 'zod';
 import { dbConnection } from '../../db-connection.js';
 import type { ActorContext } from '../../auth/actor-context.js';
@@ -350,7 +351,10 @@ export class PlanSources {
       resources.push(...metadata.resources);
     }
     resources.push(...(await this.references(c, content)));
-    await this.investigations.authorize(c, actor, investigation, 'content', resources);
+    // Keep the original content check and downstream error contract for legacy
+    // chat callers. The new scope-only path is needed only by action-only readers.
+    const readAction = hasPermission(new Set(actor.permissions), 'chat:view') ? 'content' : 'action-scope';
+    await this.investigations.authorize(c, actor, investigation, readAction, resources);
     return [
       ...new Map(
         resources.map((ref) => [ref.type + ':' + ref.id, { type: ref.type, id: ref.id }]),
