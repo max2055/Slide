@@ -122,7 +122,7 @@ export class InvestigationsPage extends LitElement {
       && (!url.searchParams.has('attentionResult') || url.searchParams.get('attentionResult')===r?.id)
       && (!url.searchParams.has('attentionResultVersion') || url.searchParams.get('attentionResultVersion')===String(r?.version))) {
       for(const name of ['attentionVersion','attentionResult','attentionResultVersion'])url.searchParams.delete(name);
-      history.replaceState({},'',url);
+      history.replaceState(history.state,'',url);
     }
   }
   render() {

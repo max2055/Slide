@@ -25,6 +25,7 @@ export function openWorkbenchRecord(event: MouseEvent, destination: string, key:
 
 export async function restoreWorkbenchPosition(root: ParentNode) {
   await Promise.all([...root.querySelectorAll('app-data-table')].map(table=>(table as HTMLElement & {updateComplete:Promise<unknown>}).updateComplete));
+  if (root instanceof Node && !root.isConnected) return;
   const position = history.state?.workbenchPosition;
   if (!position || typeof position.key !== 'string' || !Number.isFinite(position.y)) return;
   const match = [...root.querySelectorAll<HTMLElement>('[data-workbench-key]')].find(el=>el.dataset.workbenchKey===position.key);
