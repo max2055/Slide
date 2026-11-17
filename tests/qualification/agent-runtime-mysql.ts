@@ -13,7 +13,7 @@ import { chatDatabaseService } from '../../apps/db-ops-api/src/chat-database-ser
 import { AgentRunService } from '../../apps/db-ops-api/src/adapter/agent-run-service.js';
 import { dbConnection } from '../../apps/db-ops-api/src/db-connection.js';
 import { platformLogs } from '../../apps/db-ops-api/src/platform/structured-log-evidence-adapter.js';
-import type { ActorContext } from '../../apps/db-ops-api/src/auth/actor-context.js';
+import { ActorContextService, signAccessToken } from '../../apps/db-ops-api/src/auth/actor-context.js';
 const require = createRequire(new URL('../../apps/db-ops-api/package.json', import.meta.url));
 const mysql = require('mysql2/promise');
 const WebSocket = require('ws');
@@ -32,7 +32,15 @@ try {
   assert.equal(init.status, 0, 'isolated schema initialization failed');
   assert(await dbConnection.initialize()); const pool = dbConnection.getPool()!;
   const [created] = await pool.execute("INSERT INTO users (username, password_hash, status) VALUES (?, 'not-a-login', 'active')", [`runtime-${randomUUID()}`]) as any;
-  const actor: ActorContext = { userId: Number(created.insertId), username: 'runtime-qualification', roles: ['viewer'], permissions: [], sessionVersion: 1, instanceScopes: {}, requestId: randomUUID() };
+  // MAX-684: use the real credential/SQL authority path; leave the default viewer unchanged.
+  const actorId = Number(created.insertId);
+  const [role] = await pool.execute("INSERT INTO roles(name,description) VALUES(?, 'runtime qualification only')", [`runtime-${randomUUID()}`]) as any;
+  await pool.execute('INSERT INTO role_permissions(role_id,permission_id) SELECT ?,id FROM permissions WHERE code=?', [role.insertId, 'chat:view']);
+  await pool.execute('INSERT INTO user_roles(user_id,role_id) VALUES(?,?)', [actorId, role.insertId]);
+  const actors = new ActorContextService(() => pool);
+  const token = signAccessToken(await actors.loadActiveActor(actorId), process.env.JWT_SECRET_KEY!);
+  const actor = await actors.authenticateAccessToken(token, process.env.JWT_SECRET_KEY!, randomUUID());
+  process.env.QUALIFICATION_CRASH_ACCESS_TOKEN = token;
   const bad = '正在分析数据库状态……\n'.repeat(20);
   let activeScenario = '';
   let notifySnapshot!: () => void; let releaseSnapshot!: () => void;
@@ -60,7 +68,7 @@ try {
       if (activeScenario === 'snapshot-reset') { notifySnapshot(); await snapshotRelease; }
       return response('安全结论');
     } if (activeScenario === 'deadline' || activeScenario === 'cancel') { requests++; if (activeScenario === 'cancel') await c.onContentDelta('准备检查。'); await new Promise((_resolve, reject) => { const cancel = () => reject(options?.signal?.reason); if (options?.signal?.aborted) cancel(); else options?.signal?.addEventListener('abort', cancel, { once: true }); }); } const r = sequence[Math.min(requests++, sequence.length-1)]; await c.onContentDelta(r.content ?? ''); return r; } };
-  adapter = new DirectAdapter({ workspace, tools, toolsForActor: () => tools, llmProvider: provider, actorContextService: { authenticateAccessToken: async () => actor, revalidateActor: async () => actor } });
+  adapter = new DirectAdapter({ workspace, tools, toolsForActor: () => tools, llmProvider: provider, actorContextService: actors });
   await adapter.start();
   const server = (adapter as any).wsServer; if (!server.address()) await once(server, 'listening');
   const port = server.address().port;
@@ -68,8 +76,9 @@ try {
   async function socketExchange(command: Record<string, unknown>, terminal: string, cancelOnDelta = false) {
     const ws = new WebSocket(`ws://127.0.0.1:${port}`); const events: any[] = [];
     try { return await new Promise<any[]>((resolve, reject) => {
-      const timeout = setTimeout(() => reject(new Error('WS qualification timeout')), 15000);
-      ws.on('open', () => ws.send(JSON.stringify({ type: 'auth', token: 'controlled-test-token' })));
+      const timeout = setTimeout(() => reject(new Error(`WS qualification timeout: command=${command.type} terminal=${terminal} events=${events.map(e => e.type).join(',')}`)), 15000);
+      ws.on('open', () => ws.send(JSON.stringify({ type: 'auth', token })));
+      ws.on('close', (code: number) => { clearTimeout(timeout); reject(new Error(`WS closed before ${terminal}: command=${command.type} code=${code} events=${events.map(e => e.type).join(',')}`)); });
       ws.on('error', (e: Error) => { clearTimeout(timeout); reject(e); });
       ws.on('message', (raw: Buffer) => { const e = JSON.parse(raw.toString()); events.push(e);
         if (e.type === 'auth_ok') ws.send(JSON.stringify(command));
@@ -117,14 +126,14 @@ try {
     console.log(JSON.stringify({ scenario, state: run.state, requests, assistantMessages: messages.length, uniqueFinal: true, correlated: true }));
     // Real SQL intent survives a process/service replacement and concurrent recovery.
     if (scenario === 'recovery') {
-      const service = new AgentRunService(); const claimed = await service.claim(actor.userId, started.sessionKey, randomUUID(), randomUUID());
+      const service = new AgentRunService(); const claimed = await service.claim(actor.userId, started.sessionKey, randomUUID(), randomUUID(), actor);
       const failing = new AgentRunService(() => ({ query: pool.query.bind(pool), getConnection: async () => { throw new Error('injected storage unavailable'); } }) as any);
       await assert.rejects(failing.complete(claimed.run, { type: 'complete', finalContent: '持久化恢复结论' }));
       const pending = await service.getForActor(claimed.run.id, actor.userId, started.sessionKey); assert.equal(pending?.state, 'running'); assert((pending?.result as any).completionPending);
       await Promise.all([new AgentRunService().recoverCompletion(pending!), new AgentRunService().recoverCompletion(pending!)]);
       const [rows] = await pool.query<any[]>('SELECT content FROM chat_messages WHERE message_id = ?', [`run_${claimed.run.id}_assistant`]); assert.equal(rows.length, 1);
       console.log(JSON.stringify({ scenario: 'storage-pending-service-restart-concurrent-recovery', uniqueFinal: true }));
-      const crashRun = await service.claim(actor.userId, started.sessionKey, randomUUID(), randomUUID());
+      const crashRun = await service.claim(actor.userId, started.sessionKey, randomUUID(), randomUUID(), actor);
       const crash = spawnSync('pnpm', ['--filter', 'slide-api', 'exec', 'tsx', '../../tests/qualification/agent-runtime-crash.ts'], {
         cwd: new URL('../..', import.meta.url), env: { ...process.env, QUALIFICATION_CRASH_RUN_ID: crashRun.run.id,
           QUALIFICATION_CRASH_ACTOR_ID: String(actor.userId), QUALIFICATION_CRASH_SESSION_ID: started.sessionKey }, encoding: 'utf8', timeout: 20000 });
@@ -157,7 +166,7 @@ try {
   // Kill a real process after a tool checkpoint and during a provisional next attempt.
   const crashedSession = await chatDatabaseService.createSession(actor, { title: 'stream crash restore' });
   const service = new AgentRunService(); const crashKey = randomUUID();
-  const claimed = await service.claim(actor.userId, crashedSession.session_id, randomUUID(), crashKey);
+  const claimed = await service.claim(actor.userId, crashedSession.session_id, randomUUID(), crashKey, actor);
   const userFactId = `run_${claimed.run.id}_user`;
   await chatDatabaseService.addMessage(actor, crashedSession.session_id, { messageId: userFactId, role: 'user', content: '检查数据库', metadata: { canonicalRunId: claimed.run.id, canonicalTurnId: userFactId } });
   const crash = spawnSync('pnpm', ['--filter', 'slide-api', 'exec', 'tsx', '../../tests/qualification/stream-boundary-crash.ts'], {
@@ -189,7 +198,7 @@ try {
   } finally { await restored.dispose(); }
 
   const unknownSession = await chatDatabaseService.createSession(actor, { title: 'unknown tool settlement' });
-  const unknownKey = randomUUID(); const unknown = await service.claim(actor.userId, unknownSession.session_id, randomUUID(), unknownKey);
+  const unknownKey = randomUUID(); const unknown = await service.claim(actor.userId, unknownSession.session_id, randomUUID(), unknownKey, actor);
   const unknownUser = `run_${unknown.run.id}_user`;
   await chatDatabaseService.addMessage(actor, unknownSession.session_id, { messageId: unknownUser, role: 'user', content: '检查数据库', metadata: { canonicalRunId: unknown.run.id, canonicalTurnId: unknownUser } });
   const interrupted = spawnSync('pnpm', ['--filter', 'slide-api', 'exec', 'tsx', '../../tests/qualification/stream-boundary-crash.ts'], {

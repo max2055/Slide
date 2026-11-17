@@ -411,6 +411,30 @@ describe('DirectAdapter', () => {
       return { adapter, client, socket, handle, authenticateAccessToken };
     }
 
+    it('MAX-684 resource revocation clears investigation views without expiring the login', async () => {
+      const { adapter, socket, handle } = await connect();
+      await handle({ type: 'auth', token: 'test-token' });
+      const watches = (adapter as any).investigationWatches;
+      let peer: any;
+      vi.spyOn(watches, 'watch').mockImplementation(async value => { peer = value; });
+      const unwatch = vi.spyOn(watches, 'unwatch');
+      const send = vi.spyOn(socket, 'send');
+      const close = vi.spyOn(socket, 'close');
+      await handle({ type: 'investigation.watch', id: '11111111-1111-4111-8111-111111111111' });
+      expect(peer).toBeDefined();
+      peer.close('authority_revoked');
+      expect(unwatch).toHaveBeenCalledWith(peer);
+      await vi.waitFor(() => expect(send).toHaveBeenCalledWith(JSON.stringify({ type: 'investigation.error', code: 'INVESTIGATION_NOT_FOUND' }), expect.any(Function)));
+      expect(close).not.toHaveBeenCalled();
+      expect((socket as any)._authState).toBe('authenticated');
+      // The same authenticated transport remains usable, without a second auth.
+      send.mockClear();
+      await handle({ type: 'unknown' });
+      await vi.waitFor(() => expect(send).toHaveBeenCalled());
+      peer.close('observation_unavailable');
+      expect(close).toHaveBeenCalledWith(1011, 'Investigation observation unavailable');
+    });
+
     it.each([null, [], 'text', 1, true, {}, { type: 42 }])('rejects invalid message envelopes: %j', async value => {
       const { socket, handle, authenticateAccessToken } = await connect();
       const send = vi.spyOn(socket, 'send');

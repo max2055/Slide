@@ -443,7 +443,12 @@ export class DirectAdapter implements IAgentEngine {
           && this.sendSocketEvent(ws, event),
         close: (reason: InvestigationWatchFailure) => {
           this.investigationWatches.unwatch(investigationPeer);
-          if (reason === 'authority_revoked') ws.close(4001, 'Investigation authority revoked');
+          if (reason === 'authority_revoked') {
+            // Resource revocation is not proof of invalid login credentials.
+            // All investigation watches were removed above; clear their views
+            // through the existing error contract without expiring ordinary chat.
+            investigationPeer.send({ type: 'investigation.error', code: 'INVESTIGATION_NOT_FOUND' });
+          }
           else {
             console.error('[DirectAdapter] Investigation observation unavailable');
             ws.close(1011, 'Investigation observation unavailable');
