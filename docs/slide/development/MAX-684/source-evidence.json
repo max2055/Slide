@@ -1,0 +1,293 @@
+{
+  "kind": "static-source-comparison-not-runtime-acceptance",
+  "refs": {
+    "taskBase": "c22f7eef6d871cec40aad4d26c24cededb89562f",
+    "oldBase": "92aa557b887729e19ce2aa4a9e8a957d4e2935ac",
+    "auditProduct": "337d93cfb533a96481894086f71780200f5f4883",
+    "issueCandidate": "eed274e29f1ae03d74bc0e903648915cb480597f",
+    "prHead": "9a4cac3d3f732c24cc87b7a25ba3e2bac67c79b8",
+    "merge": "451ab8c9969f18d94f17392a74301294de82b5e1"
+  },
+  "taskBaseTreeEqualsOldBase": true,
+  "files": [
+    {
+      "path": "apps/db-ops-api/src/chat-routes.ts",
+      "sha256": {
+        "taskBase": "d6e9ef6dd9149b2d34a29e05d9d6332955389834850fd70aa6970ddaff22922e",
+        "oldBase": "d6e9ef6dd9149b2d34a29e05d9d6332955389834850fd70aa6970ddaff22922e",
+        "auditProduct": "d6e9ef6dd9149b2d34a29e05d9d6332955389834850fd70aa6970ddaff22922e",
+        "issueCandidate": "d6e9ef6dd9149b2d34a29e05d9d6332955389834850fd70aa6970ddaff22922e",
+        "prHead": "d6e9ef6dd9149b2d34a29e05d9d6332955389834850fd70aa6970ddaff22922e",
+        "merge": "d6e9ef6dd9149b2d34a29e05d9d6332955389834850fd70aa6970ddaff22922e"
+      },
+      "identicalAcrossAllRefs": true
+    },
+    {
+      "path": "apps/db-ops-api/src/chat-handler.ts",
+      "sha256": {
+        "taskBase": "fbc0b8867f5abec97a5f6a211cfe2b78b7af4c0e7430c9d4cd83169e919fe123",
+        "oldBase": "fbc0b8867f5abec97a5f6a211cfe2b78b7af4c0e7430c9d4cd83169e919fe123",
+        "auditProduct": "fbc0b8867f5abec97a5f6a211cfe2b78b7af4c0e7430c9d4cd83169e919fe123",
+        "issueCandidate": "fbc0b8867f5abec97a5f6a211cfe2b78b7af4c0e7430c9d4cd83169e919fe123",
+        "prHead": "fbc0b8867f5abec97a5f6a211cfe2b78b7af4c0e7430c9d4cd83169e919fe123",
+        "merge": "fbc0b8867f5abec97a5f6a211cfe2b78b7af4c0e7430c9d4cd83169e919fe123"
+      },
+      "identicalAcrossAllRefs": true
+    },
+    {
+      "path": "apps/db-ops-api/src/chat-database-service.ts",
+      "sha256": {
+        "taskBase": "a22682802303f71206b1e5897dc47e2e920a65cf72f91ae2c6b2daef9ea83f1b",
+        "oldBase": "a22682802303f71206b1e5897dc47e2e920a65cf72f91ae2c6b2daef9ea83f1b",
+        "auditProduct": "a22682802303f71206b1e5897dc47e2e920a65cf72f91ae2c6b2daef9ea83f1b",
+        "issueCandidate": "a22682802303f71206b1e5897dc47e2e920a65cf72f91ae2c6b2daef9ea83f1b",
+        "prHead": "a22682802303f71206b1e5897dc47e2e920a65cf72f91ae2c6b2daef9ea83f1b",
+        "merge": "a22682802303f71206b1e5897dc47e2e920a65cf72f91ae2c6b2daef9ea83f1b"
+      },
+      "identicalAcrossAllRefs": true
+    },
+    {
+      "path": "apps/db-ops-api/src/adapter/direct-adapter.ts",
+      "sha256": {
+        "taskBase": "5f2f8a489de4c6b98bcc3282b6726ea17ee8eed2abd68d35c67e8643f97f94c7",
+        "oldBase": "5f2f8a489de4c6b98bcc3282b6726ea17ee8eed2abd68d35c67e8643f97f94c7",
+        "auditProduct": "5f2f8a489de4c6b98bcc3282b6726ea17ee8eed2abd68d35c67e8643f97f94c7",
+        "issueCandidate": "5f2f8a489de4c6b98bcc3282b6726ea17ee8eed2abd68d35c67e8643f97f94c7",
+        "prHead": "5f2f8a489de4c6b98bcc3282b6726ea17ee8eed2abd68d35c67e8643f97f94c7",
+        "merge": "5f2f8a489de4c6b98bcc3282b6726ea17ee8eed2abd68d35c67e8643f97f94c7"
+      },
+      "identicalAcrossAllRefs": true
+    },
+    {
+      "path": "apps/db-ops-api/src/adapter/get-agent-engine.ts",
+      "sha256": {
+        "taskBase": "3d3afe16b9162c7c62db59faa8d64a0bfc210ad5ab0fc004c7eeac71ea7dfcda",
+        "oldBase": "3d3afe16b9162c7c62db59faa8d64a0bfc210ad5ab0fc004c7eeac71ea7dfcda",
+        "auditProduct": "3d3afe16b9162c7c62db59faa8d64a0bfc210ad5ab0fc004c7eeac71ea7dfcda",
+        "issueCandidate": "3d3afe16b9162c7c62db59faa8d64a0bfc210ad5ab0fc004c7eeac71ea7dfcda",
+        "prHead": "3d3afe16b9162c7c62db59faa8d64a0bfc210ad5ab0fc004c7eeac71ea7dfcda",
+        "merge": "3d3afe16b9162c7c62db59faa8d64a0bfc210ad5ab0fc004c7eeac71ea7dfcda"
+      },
+      "identicalAcrossAllRefs": true
+    },
+    {
+      "path": "apps/db-ops-api/src/auth-middleware.ts",
+      "sha256": {
+        "taskBase": "6baaed297fbd62b9826e32a418e0ece83e4da83be2ed0850064f1ef16374b080",
+        "oldBase": "6baaed297fbd62b9826e32a418e0ece83e4da83be2ed0850064f1ef16374b080",
+        "auditProduct": "6baaed297fbd62b9826e32a418e0ece83e4da83be2ed0850064f1ef16374b080",
+        "issueCandidate": "6baaed297fbd62b9826e32a418e0ece83e4da83be2ed0850064f1ef16374b080",
+        "prHead": "6baaed297fbd62b9826e32a418e0ece83e4da83be2ed0850064f1ef16374b080",
+        "merge": "6baaed297fbd62b9826e32a418e0ece83e4da83be2ed0850064f1ef16374b080"
+      },
+      "identicalAcrossAllRefs": true
+    },
+    {
+      "path": "apps/db-ops-api/src/auth/actor-context.ts",
+      "sha256": {
+        "taskBase": "a1551b57291acfc31f87f8d03ee51b3bf7dfed93d77097f3395503d33f23e86d",
+        "oldBase": "a1551b57291acfc31f87f8d03ee51b3bf7dfed93d77097f3395503d33f23e86d",
+        "auditProduct": "a1551b57291acfc31f87f8d03ee51b3bf7dfed93d77097f3395503d33f23e86d",
+        "issueCandidate": "a1551b57291acfc31f87f8d03ee51b3bf7dfed93d77097f3395503d33f23e86d",
+        "prHead": "a1551b57291acfc31f87f8d03ee51b3bf7dfed93d77097f3395503d33f23e86d",
+        "merge": "a1551b57291acfc31f87f8d03ee51b3bf7dfed93d77097f3395503d33f23e86d"
+      },
+      "identicalAcrossAllRefs": true
+    },
+    {
+      "path": "apps/db-ops-api/src/tools/policy.ts",
+      "sha256": {
+        "taskBase": "850a4691363f1dc4141687c230b9b0e1eb75fc5abaabb12c634ebb35c6e9a3d7",
+        "oldBase": "850a4691363f1dc4141687c230b9b0e1eb75fc5abaabb12c634ebb35c6e9a3d7",
+        "auditProduct": "850a4691363f1dc4141687c230b9b0e1eb75fc5abaabb12c634ebb35c6e9a3d7",
+        "issueCandidate": "850a4691363f1dc4141687c230b9b0e1eb75fc5abaabb12c634ebb35c6e9a3d7",
+        "prHead": "850a4691363f1dc4141687c230b9b0e1eb75fc5abaabb12c634ebb35c6e9a3d7",
+        "merge": "850a4691363f1dc4141687c230b9b0e1eb75fc5abaabb12c634ebb35c6e9a3d7"
+      },
+      "identicalAcrossAllRefs": true
+    },
+    {
+      "path": "apps/db-ops-api/src/tools/security-catalog.ts",
+      "sha256": {
+        "taskBase": "84f600639a3661ad26145e10da3c95610a329fe50a49bf3d7fcbc9719f8d5632",
+        "oldBase": "84f600639a3661ad26145e10da3c95610a329fe50a49bf3d7fcbc9719f8d5632",
+        "auditProduct": "84f600639a3661ad26145e10da3c95610a329fe50a49bf3d7fcbc9719f8d5632",
+        "issueCandidate": "84f600639a3661ad26145e10da3c95610a329fe50a49bf3d7fcbc9719f8d5632",
+        "prHead": "84f600639a3661ad26145e10da3c95610a329fe50a49bf3d7fcbc9719f8d5632",
+        "merge": "84f600639a3661ad26145e10da3c95610a329fe50a49bf3d7fcbc9719f8d5632"
+      },
+      "identicalAcrossAllRefs": true
+    },
+    {
+      "path": "apps/db-ops-api/src/adapter/agent-run-service.ts",
+      "sha256": {
+        "taskBase": "672662dbfb89afa2625547eba8a224d200d426c78b542a9343cb02e98ca0cce4",
+        "oldBase": "672662dbfb89afa2625547eba8a224d200d426c78b542a9343cb02e98ca0cce4",
+        "auditProduct": "672662dbfb89afa2625547eba8a224d200d426c78b542a9343cb02e98ca0cce4",
+        "issueCandidate": "672662dbfb89afa2625547eba8a224d200d426c78b542a9343cb02e98ca0cce4",
+        "prHead": "672662dbfb89afa2625547eba8a224d200d426c78b542a9343cb02e98ca0cce4",
+        "merge": "672662dbfb89afa2625547eba8a224d200d426c78b542a9343cb02e98ca0cce4"
+      },
+      "identicalAcrossAllRefs": true
+    },
+    {
+      "path": "apps/db-ops-api/src/adapter/canonical-store.ts",
+      "sha256": {
+        "taskBase": "cb19bed6a0c6e924d206920f112ab458ce17551403680e2e3a17d00c1f3fe8ae",
+        "oldBase": "cb19bed6a0c6e924d206920f112ab458ce17551403680e2e3a17d00c1f3fe8ae",
+        "auditProduct": "cb19bed6a0c6e924d206920f112ab458ce17551403680e2e3a17d00c1f3fe8ae",
+        "issueCandidate": "cb19bed6a0c6e924d206920f112ab458ce17551403680e2e3a17d00c1f3fe8ae",
+        "prHead": "cb19bed6a0c6e924d206920f112ab458ce17551403680e2e3a17d00c1f3fe8ae",
+        "merge": "cb19bed6a0c6e924d206920f112ab458ce17551403680e2e3a17d00c1f3fe8ae"
+      },
+      "identicalAcrossAllRefs": true
+    },
+    {
+      "path": "apps/db-ops-api/src/adapter/memory-service.ts",
+      "sha256": {
+        "taskBase": "acaaff870f5c14d16fa962d1ba92cd03f31e9a2ff0474dc687fcdcf8f47d0153",
+        "oldBase": "acaaff870f5c14d16fa962d1ba92cd03f31e9a2ff0474dc687fcdcf8f47d0153",
+        "auditProduct": "acaaff870f5c14d16fa962d1ba92cd03f31e9a2ff0474dc687fcdcf8f47d0153",
+        "issueCandidate": "acaaff870f5c14d16fa962d1ba92cd03f31e9a2ff0474dc687fcdcf8f47d0153",
+        "prHead": "acaaff870f5c14d16fa962d1ba92cd03f31e9a2ff0474dc687fcdcf8f47d0153",
+        "merge": "acaaff870f5c14d16fa962d1ba92cd03f31e9a2ff0474dc687fcdcf8f47d0153"
+      },
+      "identicalAcrossAllRefs": true
+    },
+    {
+      "path": "apps/db-ops-api/src/adapter/display-stream.ts",
+      "sha256": {
+        "taskBase": "a371d050fe5efe682736c72ff4fa1de57580759e8be3ec5aba87132e1234b601",
+        "oldBase": "a371d050fe5efe682736c72ff4fa1de57580759e8be3ec5aba87132e1234b601",
+        "auditProduct": "a371d050fe5efe682736c72ff4fa1de57580759e8be3ec5aba87132e1234b601",
+        "issueCandidate": "a371d050fe5efe682736c72ff4fa1de57580759e8be3ec5aba87132e1234b601",
+        "prHead": "a371d050fe5efe682736c72ff4fa1de57580759e8be3ec5aba87132e1234b601",
+        "merge": "a371d050fe5efe682736c72ff4fa1de57580759e8be3ec5aba87132e1234b601"
+      },
+      "identicalAcrossAllRefs": true
+    },
+    {
+      "path": "apps/db-ops-api/src/adapter/bounded-socket-writer.ts",
+      "sha256": {
+        "taskBase": "40214c80a81233da3548e523cc6f370a5505a35cf9162e6c645fdeb9a11bb110",
+        "oldBase": "40214c80a81233da3548e523cc6f370a5505a35cf9162e6c645fdeb9a11bb110",
+        "auditProduct": "40214c80a81233da3548e523cc6f370a5505a35cf9162e6c645fdeb9a11bb110",
+        "issueCandidate": "40214c80a81233da3548e523cc6f370a5505a35cf9162e6c645fdeb9a11bb110",
+        "prHead": "40214c80a81233da3548e523cc6f370a5505a35cf9162e6c645fdeb9a11bb110",
+        "merge": "40214c80a81233da3548e523cc6f370a5505a35cf9162e6c645fdeb9a11bb110"
+      },
+      "identicalAcrossAllRefs": true
+    },
+    {
+      "path": "apps/db-ops-api/server.ts",
+      "sha256": {
+        "taskBase": "5d1acfcb05ce4540e0395c8e3632be2aff6ff3502a38324b61efc31413278b99",
+        "oldBase": "5d1acfcb05ce4540e0395c8e3632be2aff6ff3502a38324b61efc31413278b99",
+        "auditProduct": "5d1acfcb05ce4540e0395c8e3632be2aff6ff3502a38324b61efc31413278b99",
+        "issueCandidate": "5d1acfcb05ce4540e0395c8e3632be2aff6ff3502a38324b61efc31413278b99",
+        "prHead": "5d1acfcb05ce4540e0395c8e3632be2aff6ff3502a38324b61efc31413278b99",
+        "merge": "5d1acfcb05ce4540e0395c8e3632be2aff6ff3502a38324b61efc31413278b99"
+      },
+      "identicalAcrossAllRefs": true
+    }
+  ],
+  "chatRoutes": [
+    {
+      "method": "POST",
+      "path": "/api/chat/send",
+      "line": 59
+    },
+    {
+      "method": "GET",
+      "path": "/api/chat/history",
+      "line": 84
+    },
+    {
+      "method": "GET",
+      "path": "/api/sessions",
+      "line": 123
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/sessions/:key",
+      "line": 173
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/sessions/:key",
+      "line": 190
+    },
+    {
+      "method": "POST",
+      "path": "/api/sessions/:key/cap",
+      "line": 203
+    }
+  ],
+  "websocketCases": [
+    {
+      "type": "investigation.watch",
+      "line": 669
+    },
+    {
+      "type": "investigation.unwatch",
+      "line": 685
+    },
+    {
+      "type": "chat.steer",
+      "line": 690
+    },
+    {
+      "type": "chat.send",
+      "line": 721
+    },
+    {
+      "type": "chat.cancel",
+      "line": 944
+    },
+    {
+      "type": "memory.list",
+      "line": 958
+    },
+    {
+      "type": "memory.export",
+      "line": 959
+    },
+    {
+      "type": "memory.delete",
+      "line": 960
+    },
+    {
+      "type": "memory.share",
+      "line": 961
+    },
+    {
+      "type": "memory.import",
+      "line": 962
+    },
+    {
+      "type": "memory.stop",
+      "line": 963
+    },
+    {
+      "type": "memory.retry",
+      "line": 964
+    },
+    {
+      "type": "chat.history",
+      "line": 974
+    },
+    {
+      "type": "chat.unwatch",
+      "line": 995
+    },
+    {
+      "type": "chat.watch",
+      "line": 1003
+    }
+  ],
+  "greetingLine": 4071,
+  "investigationAuthorizationChanged": true,
+  "historicalAuditSource": "9a4cac3d3f732c24cc87b7a25ba3e2bac67c79b8:docs/slide/development/MAX-683/ordinary-chat-permission-audit.md",
+  "runtimeTestsRun": false,
+  "paidModelRequests": 0
+}
