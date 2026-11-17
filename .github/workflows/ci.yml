@@ -102,7 +102,17 @@ jobs:
         run: pnpm contracts:check
       - run: pnpm --filter slide-api typecheck
       - name: Test native recovery audit policies
+        id: native-audit
         run: node --test tests/qualification/*.test.mjs
+      - name: Upload supervisor failure evidence
+        if: failure() && steps.native-audit.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: supervisor-failure-${{ github.sha }}
+          path: .qualification/supervisor/
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 7
       - name: Verify qualification coverage
         run: pnpm qualification:matrix
       - name: Run tests when not covered by the full MySQL candidate

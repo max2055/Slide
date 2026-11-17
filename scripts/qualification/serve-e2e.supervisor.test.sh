@@ -14,9 +14,16 @@ mkdir -p "$bin"
 result=0
 bystander=""
 watchdog=""
+evidence="$root/scripts/qualification/serve-e2e-evidence.py"
+observation_failed=0
 
 finish() {
-  local pid
+  local primary=$? pid
+  if [[ "$primary" != 0 && -n "${SERVE_E2E_EVIDENCE_DIR:-}" ]]; then
+    if ! "$real_python" "$evidence" preserve "$work" "$SERVE_E2E_EVIDENCE_DIR"; then
+      echo "EVIDENCE_ERROR preserve (primary exit=$primary)" >&2
+    fi
+  fi
   if [[ -n "${watchdog:-}" ]]; then
     kill "$watchdog" 2>/dev/null || true
     wait "$watchdog" 2>/dev/null || true
@@ -38,8 +45,39 @@ finish() {
     fi
   fi
   rm -rf "$work"
+  return "$primary"
 }
 trap finish EXIT
+
+# Only the exact stub target loads this initializer. Never xtrace command values:
+# serve-e2e.sh internally samples ps for ownership, which is not trace evidence.
+cat >"$work/trace-init.bash" <<'EOF'
+if [[ "$0" == "${SERVE_E2E_TRACE_TARGET:-}" ]]; then
+  unset BASH_ENV
+  if [[ "${SERVE_E2E_TRACE_ENABLED:-0}" == 1 && "${BASH_VERSINFO[0]}" -ge 5 ]]; then
+    __serve_e2e_trace_owner=$BASHPID
+    __serve_e2e_signal_seen=0
+    __serve_e2e_trace_step() {
+      local event=step
+      if [[ "$BASHPID" == "$__serve_e2e_trace_owner" && "${stop_requested:-0}" == 1 && "$__serve_e2e_signal_seen" == 0 ]]; then
+        # The first DEBUG boundary after the original assignment-only signal trap.
+        # Do not add work to or replace that trap (nested parsing is under test).
+        event=signal_observed
+        __serve_e2e_signal_seen=1
+      else
+        case "$2:$3" in
+          check_stop:*|cleanup:*|stop_our_processes:*|*:'local '*|*:snapshot=*|*:reply=*) ;;
+          *) return 0 ;;
+        esac
+      fi
+      printf 'ts=%s pid=%s func=%s line=%s event=%s\n' \
+        "$EPOCHREALTIME" "$BASHPID" "$2" "$1" "$event" >&9
+    }
+    set -T
+    trap '__serve_e2e_trace_step "$LINENO" "${FUNCNAME[0]:-top}" "$BASH_COMMAND"' DEBUG
+  fi
+fi
+EOF
 
 cat >"$bin/pnpm" <<'EOF'
 #!/bin/sh
@@ -165,6 +203,19 @@ run_scenario() {
   : >"$work/pids"
   local script_pid="" api_pid="" vite_pid="" api_child="" vite_child="" code=0
   local started_at=$SECONDS
+  local trace_pid="" trace_fifo="$dir/trace.pipe" trace_enabled=0
+  # EPOCHREALTIME requires Bash 5; older shells run the original checks without trace.
+  if [[ "${BASH_VERSINFO[0]}" -ge 5 ]]; then trace_enabled=1; fi
+  printf 'bash_major=%s fd_trace=%s\n' "${BASH_VERSINFO[0]}" "$trace_enabled" >"$dir/trace-support"
+  if mkfifo "$trace_fifo"; then
+    "$real_python" "$evidence" trace "$trace_fifo" "$dir/bash.trace" &
+    trace_pid=$!
+    echo "$trace_pid" >>"$work/pids"
+  else
+    trace_fifo=/dev/null
+    observation_failed=1
+    echo "EVIDENCE_ERROR trace setup" >&2
+  fi
   # MAX-590 D1: legacy optional diagnostics must never own lifecycle I/O.
   local diagnostic_path="$dir/lifecycle"
   if [[ "$inject" == diagnostics-missing ]]; then
@@ -177,6 +228,9 @@ run_scenario() {
     : > "$diagnostic_path"
   fi
 
+  SERVE_E2E_TRACE_ENABLED="$trace_enabled" \
+  BASH_ENV="$work/trace-init.bash" \
+  SERVE_E2E_TRACE_TARGET="$script" \
   PATH="$bin:$PATH" \
   SERVE_E2E_DIR="$dir" \
   SERVE_E2E_DIAGNOSTICS_FILE="$diagnostic_path" \
@@ -197,14 +251,14 @@ import os, signal, sys
 # so this fixture tests the requested INT, not its later TERM watchdog.
 signal.signal(signal.SIGINT, signal.SIG_DFL)
 os.execvp("bash", ["bash", *sys.argv[1:]])
-' "$script" >"$dir/stdout" 2>"$err" &
+' "$script" 9>"$trace_fifo" >"$dir/stdout" 2>"$err" &
   script_pid=$!
   echo "START $name script_pid=$script_pid signal=$signal"
   echo "$script_pid" >>"$work/pids"
   (
     sleep 12
     echo "elapsed=$((SECONDS - started_at))" > "$dir/watchdog-fired"
-    ps -ax -o pid=,ppid=,pgid=,stat=,comm= > "$dir/watchdog-processes"
+    "$real_python" "$evidence" snapshot "$dir" 2>>"$dir/diagnostic-errors" || true
     kill -TERM "$script_pid" 2>/dev/null || true
   ) >/dev/null 2>&1 &
   local local_watchdog=$!
@@ -219,6 +273,11 @@ os.execvp("bash", ["bash", *sys.argv[1:]])
       vite_child="$(cat "$dir/vite.child")"
       api_parent="$(ps -o ppid= -p "$api_pid" 2>/dev/null | tr -d '[:space:]' || true)"
       snapshot="$(ps -o pid=,ppid=,pgid=,command= -p "$script_pid" -p "$api_pid" -p "$vite_pid" -p "$api_child" -p "$vite_child" -p "$bystander" ${api_parent:+-p "$api_parent"} 2>/dev/null || true)"
+      if ! "$real_python" "$evidence" record "$dir" "$script" "$root" \
+        "$script_pid" "$api_parent" "$api_pid" "$api_child" "$vite_pid" "$vite_child" 2>>"$dir/diagnostic-errors"; then
+        observation_failed=1
+        echo "EVIDENCE_ERROR process identity" >&2
+      fi
       if [[ "$inject" == orphan ]]; then
         create_unrelated_orphan "$dir/orphan.txt" "$script_pid" || true
       fi
@@ -259,6 +318,18 @@ os.execvp("bash", ["bash", *sys.argv[1:]])
   wait "$script_pid" || code=$?
   kill "$local_watchdog" 2>/dev/null || true
   wait "$local_watchdog" 2>/dev/null || true
+  if [[ -n "$trace_pid" ]] && ! wait "$trace_pid"; then
+    observation_failed=1
+    echo "EVIDENCE_ERROR trace sink (script exit=$code)" >&2
+  fi
+  if [[ "$trace_enabled" == 1 ]] && ! "$real_python" "$evidence" validate "$dir/bash.trace" "$signal" "$script_pid" "$code" 2>>"$dir/diagnostic-errors"; then
+    observation_failed=1
+    echo "EVIDENCE_ERROR lifecycle trace content (script exit=$code)" >&2
+  fi
+  if [[ -s "$dir/diagnostic-errors" ]]; then
+    observation_failed=1
+    echo "EVIDENCE_ERROR watchdog/identity capture (script exit=$code)" >&2
+  fi
 
   api_pid="$(cat "$dir/api.pid" 2>/dev/null || true)"
   vite_pid="$(cat "$dir/vite.pid" 2>/dev/null || true)"
@@ -652,6 +723,8 @@ EOF
 
 playwright_sigkill
 
+# A collection failure cannot turn a primary failure green, or claim complete evidence.
+if [[ "$observation_failed" != 0 && "$result" == 0 ]]; then result=1; fi
 if [[ "$result" == 0 ]]; then
   echo "PASS serve-e2e supervisor"
 else
