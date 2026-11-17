@@ -28510,7 +28510,7 @@
         "default": "No target defaults; QUALIFICATION_MYSQL_HOST/PORT/USER/DATABASE/PASSWORD are separate from QUALIFICATION_ADMIN_PASSWORD",
         "override": "Caller explicitly injects all target fields; PLAYWRIGHT_BASE_URL still selects the platform API and must independently be authorized",
         "initialization": "qualificationMysqlTarget() runs before login and instance creation; absent target fields reject, explicit empty target password is retained; approval database_name uses the same target",
-        "ci": "browser qualification job uses its owned MySQL service with a DB password distinct from admin, and selects all three R4 release-security scenarios",
+        "ci": "browser qualification job uses its owned MySQL service with a DB password distinct from admin; original four scenarios and three R4 scenarios run in two fresh managed API invocations, preserving login rate limiting",
         "conclusion": "Target database authentication consumer, corrected from administrator/viewer classification. Explicit configuration is not proof of target ownership or permission.",
         "missingInputs": [
           "Independent R4 review and candidate-specific CI/artifact verification remain required; isolated local business results are recorded separately from shared-resource acceptance."
@@ -28531,7 +28531,8 @@
           },
           {
             "path": ".github/workflows/ci.yml",
-            "sha256": "9ca493d748f5dd9c5caca4e91d5f6a97ddf641c2c33fb6793a7c0352b45df9b5"
+            "sha256": "1d49134c3cb1ddf27027cd5165e776aac2f542dd42a2c220d490880d316a6e61",
+            "sha256AtReviewedHead01086ce8": "9ca493d748f5dd9c5caca4e91d5f6a97ddf641c2c33fb6793a7c0352b45df9b5"
           }
         ]
       },
@@ -28706,7 +28707,7 @@
         "default": "No target defaults; QUALIFICATION_MYSQL_HOST/PORT/USER/DATABASE/PASSWORD are separate from QUALIFICATION_ADMIN_PASSWORD",
         "override": "Caller explicitly injects all target fields; PLAYWRIGHT_BASE_URL still selects the platform API and must independently be authorized",
         "initialization": "qualificationMysqlTarget() runs before login and instance creation; absent target fields reject, explicit empty target password is retained; approval database_name uses the same target",
-        "ci": "browser qualification job uses its owned MySQL service with a DB password distinct from admin, and selects all three R4 release-security scenarios",
+        "ci": "browser qualification job uses its owned MySQL service with a DB password distinct from admin; original four scenarios and three R4 scenarios run in two fresh managed API invocations, preserving login rate limiting",
         "conclusion": "Target database authentication consumer, corrected from administrator/viewer classification. Explicit configuration is not proof of target ownership or permission.",
         "missingInputs": [
           "Independent R4 review and candidate-specific CI/artifact verification remain required; isolated local business results are recorded separately from shared-resource acceptance."
@@ -28727,7 +28728,8 @@
           },
           {
             "path": ".github/workflows/ci.yml",
-            "sha256": "9ca493d748f5dd9c5caca4e91d5f6a97ddf641c2c33fb6793a7c0352b45df9b5"
+            "sha256": "1d49134c3cb1ddf27027cd5165e776aac2f542dd42a2c220d490880d316a6e61",
+            "sha256AtReviewedHead01086ce8": "9ca493d748f5dd9c5caca4e91d5f6a97ddf641c2c33fb6793a7c0352b45df9b5"
           }
         ]
       },
@@ -29940,7 +29942,7 @@
         "default": "No target defaults; QUALIFICATION_MYSQL_HOST/PORT/USER/DATABASE/PASSWORD are separate from QUALIFICATION_ADMIN_PASSWORD",
         "override": "Caller explicitly injects all target fields; PLAYWRIGHT_BASE_URL still selects the platform API and must independently be authorized",
         "initialization": "qualificationMysqlTarget() runs before login and instance creation; absent target fields reject, explicit empty target password is retained; approval database_name uses the same target",
-        "ci": "browser qualification job uses its owned MySQL service with a DB password distinct from admin, and selects all three R4 release-security scenarios",
+        "ci": "browser qualification job uses its owned MySQL service with a DB password distinct from admin; original four scenarios and three R4 scenarios run in two fresh managed API invocations, preserving login rate limiting",
         "conclusion": "Target database authentication consumer, corrected from administrator/viewer classification. Explicit configuration is not proof of target ownership or permission.",
         "missingInputs": [
           "Independent R4 review and candidate-specific CI/artifact verification remain required; isolated local business results are recorded separately from shared-resource acceptance."
@@ -29961,7 +29963,8 @@
           },
           {
             "path": ".github/workflows/ci.yml",
-            "sha256": "9ca493d748f5dd9c5caca4e91d5f6a97ddf641c2c33fb6793a7c0352b45df9b5"
+            "sha256": "1d49134c3cb1ddf27027cd5165e776aac2f542dd42a2c220d490880d316a6e61",
+            "sha256AtReviewedHead01086ce8": "9ca493d748f5dd9c5caca4e91d5f6a97ddf641c2c33fb6793a7c0352b45df9b5"
           }
         ]
       },
@@ -30282,7 +30285,7 @@
         "default": "No target defaults; QUALIFICATION_MYSQL_HOST/PORT/USER/DATABASE/PASSWORD are separate from QUALIFICATION_ADMIN_PASSWORD",
         "override": "Caller explicitly injects all target fields; PLAYWRIGHT_BASE_URL still selects the platform API and must independently be authorized",
         "initialization": "qualificationMysqlTarget() runs before login and instance creation; absent target fields reject, explicit empty target password is retained; approval database_name uses the same target",
-        "ci": "browser qualification job uses its owned MySQL service with a DB password distinct from admin, and selects all three R4 release-security scenarios",
+        "ci": "browser qualification job uses its owned MySQL service with a DB password distinct from admin; original four scenarios and three R4 scenarios run in two fresh managed API invocations, preserving login rate limiting",
         "conclusion": "Target database authentication consumer, corrected from administrator/viewer classification. Explicit configuration is not proof of target ownership or permission.",
         "missingInputs": [
           "Independent R4 review and candidate-specific CI/artifact verification remain required; isolated local business results are recorded separately from shared-resource acceptance."
@@ -30303,7 +30306,8 @@
           },
           {
             "path": ".github/workflows/ci.yml",
-            "sha256": "9ca493d748f5dd9c5caca4e91d5f6a97ddf641c2c33fb6793a7c0352b45df9b5"
+            "sha256": "1d49134c3cb1ddf27027cd5165e776aac2f542dd42a2c220d490880d316a6e61",
+            "sha256AtReviewedHead01086ce8": "9ca493d748f5dd9c5caca4e91d5f6a97ddf641c2c33fb6793a7c0352b45df9b5"
           }
         ]
       },
@@ -30478,7 +30482,7 @@
         "default": "No target defaults; QUALIFICATION_MYSQL_HOST/PORT/USER/DATABASE/PASSWORD are separate from QUALIFICATION_ADMIN_PASSWORD",
         "override": "Caller explicitly injects all target fields; PLAYWRIGHT_BASE_URL still selects the platform API and must independently be authorized",
         "initialization": "qualificationMysqlTarget() runs before login and instance creation; absent target fields reject, explicit empty target password is retained; approval database_name uses the same target",
-        "ci": "browser qualification job uses its owned MySQL service with a DB password distinct from admin, and selects all three R4 release-security scenarios",
+        "ci": "browser qualification job uses its owned MySQL service with a DB password distinct from admin; original four scenarios and three R4 scenarios run in two fresh managed API invocations, preserving login rate limiting",
         "conclusion": "Target database authentication consumer, corrected from administrator/viewer classification. Explicit configuration is not proof of target ownership or permission.",
         "missingInputs": [
           "Independent R4 review and candidate-specific CI/artifact verification remain required; isolated local business results are recorded separately from shared-resource acceptance."
@@ -30499,7 +30503,8 @@
           },
           {
             "path": ".github/workflows/ci.yml",
-            "sha256": "9ca493d748f5dd9c5caca4e91d5f6a97ddf641c2c33fb6793a7c0352b45df9b5"
+            "sha256": "1d49134c3cb1ddf27027cd5165e776aac2f542dd42a2c220d490880d316a6e61",
+            "sha256AtReviewedHead01086ce8": "9ca493d748f5dd9c5caca4e91d5f6a97ddf641c2c33fb6793a7c0352b45df9b5"
           }
         ]
       },

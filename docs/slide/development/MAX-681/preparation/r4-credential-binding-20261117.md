@@ -1,5 +1,7 @@
 # R4：资格验收的平台登录与数据库目标分离
 
+接续：R4 已由原 Reviewer 在 head `01086ce8f0ecd4eadbba5438cf4f100d25117a8f` 独立 PASS/关闭。该候选 CI 的最终失败及后续配置修复见 [CI 登录限流修复](ci-login-burst-20261117.md)。以下为该次作者报告的历史版本限定结论；其中“R4 待复核”不再表示当前状态，新候选的 CI 与发布物仍单独核验。
+
 输入 head：`7b9ebe8b3ddb3c346a3ad020bdaeb9ad0628e1b7`；PR #920 base/merge-base：`451ab8c9969f18d94f17392a74301294de82b5e1`。本轮只追加提交；最终完整 head 与命令结果见同次 Issue 评论及受控 REPORT.md。本页是作者修复报告，R4 关闭仍由原 Reviewer 独立复核。
 
 ## 行为与输入
