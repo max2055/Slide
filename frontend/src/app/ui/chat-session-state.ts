@@ -100,6 +100,7 @@ export function denyChatSessions(host: object, message: string, all: boolean): v
   const scopes = all ? new Set([store.active, ...store.byKey.values(), ...store.byMessage.values()]) : new Set([target]);
   for (const scope of scopes) {
     const key = String(scope.host.sessionKey ?? '');
+    (store.root.refreshSessionsAfterChat as Set<string> | undefined)?.delete(String(scope.host.chatRunId ?? ''));
     for (const field of ['toolStreamSyncTimer', 'chatRunStatusClearTimer', 'compactionClearTimer', 'fallbackClearTimer']) {
       const timer = scope.host[field];
       if (timer != null) clearTimeout(timer as ReturnType<typeof setTimeout>);
@@ -115,7 +116,7 @@ export function denyChatSessions(host: object, message: string, all: boolean): v
       Object.assign(store.root, replacement.values);
     }
   }
-  (store.root.refreshSessionsAfterChat as Set<string> | undefined)?.clear();
+  if (all) (store.root.refreshSessionsAfterChat as Set<string> | undefined)?.clear();
 }
 
 /** Only a fresh authorized history read can reopen a denied receiver. */
@@ -140,9 +141,14 @@ export function registerChatSend(host: object, messageId: string): void {
 
 export function chatSessionForEvent<T extends object>(host: T, event: {
   sessionKey?: string; messageId?: string; runId?: string;
-}): T | null {
+}, requireAssociation = false): T | null {
   const active = chatSessionHost(host) as Host;
   const { sessions: store } = receivers.get(active)!;
+  // A denial names the requested session; never infer it from the visible view.
+  const sessionKey = event.sessionKey?.trim();
+  if (requireAssociation && sessionKey) {
+    return (store.byKey.get(sessionKey)?.host as T) ?? null;
+  }
   if (event.messageId) {
     const sending = store.byMessage.get(event.messageId);
     if (sending) return sending.host as T;
@@ -152,11 +158,12 @@ export function chatSessionForEvent<T extends object>(host: T, event: {
     return (store.byKey.get(event.sessionKey)?.host as T) ?? null;
   }
   // Legacy events without a session must still match the run when one is known.
-  if (event.runId && active.chatRunId && event.runId !== active.chatRunId) {
+  if (event.runId && (requireAssociation || active.chatRunId && event.runId !== active.chatRunId)) {
+    if (active.chatRunId === event.runId) return active as T;
     for (const scope of store.byKey.values()) if (scope.host.chatRunId === event.runId) return scope.host as T;
     return null;
   }
-  return active as T;
+  return requireAssociation ? null : active as T;
 }
 
 export function activateChatSession(host: object, key: string): void {
