@@ -4,6 +4,8 @@ import { registerChatRoutes } from '../chat-routes.js';
 import { dbConnection } from '../db-connection.js';
 import { registerHttpSecurity } from '../security/http-security.js';
 import { registerCronRoutes } from './cron-routes.js';
+import { cronJobService } from './cron-job-service.js';
+import { scriptService } from './script-service.js';
 import { actorContextService } from '../auth/actor-context.js';
 
 it('MAX-684 returns exact job lists over a socket with instance scopes and owner fields', async () => {
@@ -153,3 +155,62 @@ it('MAX-684 returns the created job JSON over a socket with production async hoo
     loadActor.mockRestore();
   }
 });
+
+// MF-C1: storage failures must finish serialization before the async handler ends.
+for (const operation of ['list', 'create-job', 'create-script'] as const) {
+  it(`MAX-684 MF-C1 socket ${operation} storage failure returns exact JSON without replay`, async () => {
+    const app = Fastify();
+    const actor = { userId: 7, username: 'socket-admin', roles: ['admin'], permissions: ['*'],
+      sessionVersion: 1, instanceScopes: {}, requestId: 'socket-error' };
+    const loadActor = vi.spyOn(actorContextService, 'loadActiveActor').mockResolvedValue(actor);
+    const execute = vi.fn(async () => [[], []]);
+    vi.spyOn(dbConnection, 'getPool').mockReturnValue({ execute } as any);
+    const list = vi.spyOn(cronJobService, 'getJobs').mockRejectedValue(new Error('CRON_STORAGE_UNAVAILABLE'));
+    const createJob = vi.spyOn(cronJobService, 'createJob').mockRejectedValue(new Error('CRON_STORAGE_UNAVAILABLE'));
+    const createScript = vi.spyOn(scriptService, 'createScript').mockRejectedValue(new Error('CRON_STORAGE_UNAVAILABLE'));
+    const reload = vi.fn();
+    const triggerJob = vi.fn();
+    const verifyToken = async (request: any) => { request.user = actor; };
+    const authorizeChat = vi.fn();
+    const handleChatSend = vi.fn();
+    const script = { name: 'storage-error-script', content: 'SELECT 7', target_db_type: 'mysql' };
+    const job = { name: 'storage-error-job', task_description: 'isolated qualification',
+      cron_expr: '0 0 1 1 *', target_instance_id: null };
+    try {
+      app.addHook('onSend', async (_request, _reply, payload) => payload);
+      await registerHttpSecurity(app);
+      await registerChatRoutes(app, { verifyToken, service: {} as any, authorizeChat, handleChatSend });
+      registerCronRoutes(app, verifyToken, () => ({ reload, triggerJob } as any));
+      const address = await app.listen({ host: '127.0.0.1', port: 0 });
+      const response = await fetch(address + (operation === 'create-script' ? '/api/cron/scripts' : '/api/cron/jobs'), {
+        method: operation === 'list' ? 'GET' : 'POST',
+        ...(operation === 'list' ? {} : { headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(operation === 'create-job' ? job : script) }),
+      });
+      expect(response.status).toBe(503);
+      // Assert operation counts before JSON, so the red run also proves single dispatch.
+      expect(list).toHaveBeenCalledTimes(operation === 'list' ? 1 : 0);
+      expect(createJob).toHaveBeenCalledTimes(operation === 'create-job' ? 1 : 0);
+      expect(createScript).toHaveBeenCalledTimes(operation === 'create-script' ? 1 : 0);
+      if (operation === 'list') expect(list).toHaveBeenCalledWith(null);
+      if (operation === 'create-script') expect(createScript).toHaveBeenCalledWith({ ...script,
+        description: undefined, script_type: 'sql' });
+      if (operation === 'create-job') {
+        expect(loadActor).toHaveBeenCalledExactlyOnceWith(7);
+        expect(createJob).toHaveBeenCalledWith(expect.objectContaining({ ...job, owner_user_id: 7,
+          resource_scope: { version: 1, targetInstanceId: null, instanceIds: [], serverIds: [], networkDeviceIds: [] } }));
+      }
+      expect(reload).not.toHaveBeenCalled();
+      expect(triggerJob).not.toHaveBeenCalled();
+      expect(authorizeChat).not.toHaveBeenCalled();
+      expect(handleChatSend).not.toHaveBeenCalled();
+      const body = await response.text();
+      expect(Buffer.byteLength(body)).toBeGreaterThan(0);
+      expect(response.headers.get('content-type')).toContain('application/json');
+      expect(JSON.parse(body)).toEqual({ error: 'INTERNAL_ERROR' });
+    } finally {
+      await app.close();
+      vi.restoreAllMocks();
+    }
+  });
+}

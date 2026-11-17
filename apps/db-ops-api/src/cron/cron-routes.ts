@@ -97,7 +97,7 @@ export function registerCronRoutes(fastify: FastifyInstance, verifyToken: preHan
         const jobs = await cronJobService.getJobs(getAccessibleInstanceIds((request as any).user));
         return reply.send(jobs);
       } catch (error: any) {
-        reply.code(cronErrorStatus(error)).send({ error: error.message });
+        return reply.code(cronErrorStatus(error)).send({ error: error.message });
       }
     }
   });
@@ -164,7 +164,7 @@ export function registerCronRoutes(fastify: FastifyInstance, verifyToken: preHan
         await getCronManager()?.reload();
         return reply.code(201).send({ id, message: '创建成功' });
       } catch (error: any) {
-        reply.code(cronErrorStatus(error)).send({ error: error.message });
+        return reply.code(cronErrorStatus(error)).send({ error: error.message });
       }
     }
   });
@@ -430,7 +430,7 @@ export function registerCronRoutes(fastify: FastifyInstance, verifyToken: preHan
 
         return reply.code(201).send({ id, message: '创建成功' });
       } catch (error: any) {
-        reply.code(cronErrorStatus(error)).send({ error: error.message });
+        return reply.code(cronErrorStatus(error)).send({ error: error.message });
       }
     }
   });
