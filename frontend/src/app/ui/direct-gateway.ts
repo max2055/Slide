@@ -166,14 +166,15 @@ export class DirectGatewayClient {
   private authenticated = false;
   private authenticatedAt: number | null = null;
   private readonly chatAcceptTimeoutMs: number;
-  private pendingSteers = new Map<string, { resolve: (value: unknown) => void; reject: (error: Error) => void; timer: ReturnType<typeof setTimeout> }>();
+  private pendingSteers = new Map<string, { sessionKey: string; resolve: (value: unknown) => void; reject: (error: Error) => void; timer: ReturnType<typeof setTimeout> }>();
 
-  private rejectPendingSteers(): void {
-    for (const pending of this.pendingSteers.values()) {
+  private rejectPendingSteers(sessionKey?: string): void {
+    for (const [id, pending] of this.pendingSteers) {
+      if (sessionKey !== undefined && pending.sessionKey !== sessionKey) continue;
       clearTimeout(pending.timer);
       pending.reject(new Error('调整运行回执未知；请核对会话，未自动重试。'));
+      this.pendingSteers.delete(id);
     }
-    this.pendingSteers.clear();
   }
 
   private pendingChatAcknowledgements = new Map<string, PendingChatAcknowledgement>();
@@ -387,7 +388,7 @@ export class DirectGatewayClient {
           this.pendingSteers.delete(requestId);
           reject(new Error('调整运行回执未知；请核对会话，未自动重试。'));
         }, 15_000);
-        this.pendingSteers.set(requestId, { resolve: value => resolve(value as T), reject, timer });
+        this.pendingSteers.set(requestId, { sessionKey: p.sessionKey, resolve: value => resolve(value as T), reject, timer });
         try { this.ws!.send(JSON.stringify({ type: 'chat.steer', requestId, sessionKey: p.sessionKey, message: p.message })); }
         catch (error) { clearTimeout(timer); this.pendingSteers.delete(requestId); reject(error); }
       });
@@ -509,11 +510,11 @@ export class DirectGatewayClient {
     const denial = chatAccessDenial(error);
     if (!denial) return;
     if (denial.all) this.chatForbidden = true;
-    else this.deniedSessions.add(sessionKey);
+    else if (sessionKey) this.deniedSessions.add(sessionKey);
     const messageId = (error as { messageId?: string }).messageId;
     const matches = (id: string, frame: Record<string, unknown>) => denial.all
       || (sessionKey ? frame.sessionKey === sessionKey : messageId ? id === messageId : !frame.sessionKey);
-    this.rejectPendingSteers();
+    this.rejectPendingSteers(denial.all ? undefined : sessionKey);
     for (const [id, pending] of this.pendingChatAcknowledgements) {
       if (matches(id, pending.frame)) {
         this.retiredMessages.add(id);
@@ -680,12 +681,19 @@ export class DirectGatewayClient {
       return;
     }
 
-    if ((type === 'error' || type === 'protocol.error') && chatAccessDenial(msg)) {
+    const accessDenial = (type === 'error' || type === 'protocol.error') && chatAccessDenial(msg);
+    if (accessDenial) {
       const messageId = typeof msg.messageId === 'string' ? msg.messageId : '';
+      const runId = typeof msg.runId === 'string' ? msg.runId : '';
       const pending = this.pendingChatAcknowledgements.get(messageId) ?? this.unconfirmedChats.get(messageId);
-      const sessionKey = typeof msg.sessionKey === 'string' ? msg.sessionKey : String(pending?.frame.sessionKey ?? '');
+      const sessionKey = (typeof msg.sessionKey === 'string' ? msg.sessionKey.trim() : '')
+        || String(pending?.frame.sessionKey ?? '')
+        || this.runSessions.get(runId) || '';
+      if (!accessDenial.all && !sessionKey && !messageId && !runId) return;
       const denial = { ...msg, sessionKey };
-      this.restrictChatAccess(denial, sessionKey);
+      // Only known request/run identities can scope a session denial. The UI may
+      // also know the message/run, but must not default an unlocated denial to B.
+      if (accessDenial.all || sessionKey || pending) this.restrictChatAccess(denial, sessionKey);
       this.onEvent(denial as AdapterChatEvent);
       return;
     }
@@ -1177,7 +1185,7 @@ const directStreamOrder = new WeakMap<object, { runId: string; attempt: number; 
 export function handleDirectAdapterEvent(host: Record<string, unknown>, event: AdapterChatEvent): void {
   const denial = (event.type === 'error' || event.type === 'protocol.error') && chatAccessDenial(event);
   if (denial) {
-    const receiver = denial.all ? host : chatSessionForEvent(host, event);
+    const receiver = denial.all ? host : chatSessionForEvent(host, event, true);
     if (receiver) {
       for (const scope of denial.all ? chatSessionHosts(host) : [receiver]) {
         const pending = pendingDirectStreamUpdates.get(scope);

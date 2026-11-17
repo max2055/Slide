@@ -1,7 +1,7 @@
 // MAX-684 contract substitutes: these tests do not exercise server authorization.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { apiClient } from '../../api/index.ts';
-import { activateChatSession, chatSessionHost } from './chat-session-state.ts';
+import { activateChatSession, chatSessionHost, registerChatSend } from './chat-session-state.ts';
 import { ChatAcceptanceTimeoutError, DirectGatewayClient, clearExpiredChatState, handleDirectAdapterEvent } from './direct-gateway.ts';
 import { loadChatHistory, sendChatMessage } from './controllers/chat.ts';
 
@@ -75,6 +75,114 @@ describe('MAX-684 denied chat state and credential recovery', () => {
     for (const client of clients.splice(0)) client.disconnect();
     vi.clearAllTimers(); vi.useRealTimers(); vi.restoreAllMocks(); vi.unstubAllGlobals();
     delete (window as any).__apiClient;
+  });
+
+  // MF-I2: a missing association must never select the visible B by default.
+  it.each([false, true])('MF-I2: ignores unlocated denial in client and reducer (parts=%s)', parts => {
+    const { state, socket } = connected(host(), parts);
+    chatSessionHost(state); activateChatSession(state, 'two');
+    state.chatMessages = [{ content: 'authorized B' }]; state.chatMessage = 'B draft';
+    for (const association of [{}, { sessionKey: '   ' }, { sessionKey: 'unknown' }, { messageId: 'unknown' }, { runId: 'unknown' }]) {
+      for (const type of ['error', 'protocol.error'] as const) {
+        socket.receive({ type, code: 'CHAT_SESSION_NOT_FOUND', error: 'missing', ...association });
+        handleDirectAdapterEvent(state, { type, code: 'CHAT_SESSION_NOT_FOUND', error: 'missing', ...association });
+      }
+    }
+    expect(state.chatMessages).toEqual([{ content: 'authorized B' }]);
+    expect(state.chatMessage).toBe('B draft');
+  });
+
+  it.each([
+    [false, 'key'], [false, 'message'], [false, 'run'],
+    [true, 'key'], [true, 'message'], [true, 'run'],
+  ] as const)('MF-I2: hidden A denial (parts=%s, association=%s) preserves B', async (parts, correlation) => {
+    const { state, socket, client } = connected(host(), parts);
+    const pendingA = client.sendChat('one', 'A', { idempotencyKey: 'message-A' }).catch(error => error);
+    // Bind both the UI receiver and the transport run mapping.
+    registerChatSend(state, 'message-A');
+    socket.receive({ type: 'run.started', sessionKey: 'one', runId: 'old-run', messageId: 'other' });
+    client.watchSession('one');
+    const subscriptionId = socket.frames.at(-1)!.subscriptionId;
+    let finishHistory!: (value: Response) => void;
+    vi.spyOn(apiClient, 'fetchResponseWithAuth').mockImplementation(() => new Promise(resolve => { finishHistory = resolve; }));
+    const historyA = loadChatHistory(state);
+    const steerA = client.request('chat.steer', { sessionKey: 'one', message: 'adjust A' }).catch(error => error);
+    const oldA = chatSessionHost(state);
+    activateChatSession(state, 'two'); state.chatMessages = [{ content: 'authorized B' }]; state.chatMessage = 'B draft';
+    state.refreshSessionsAfterChat.add('run-B'); client.watchSession('two');
+    const pendingB = client.sendChat('two', 'B', { idempotencyKey: 'message-B' }).catch(error => error);
+    const steerB = client.request('chat.steer', { sessionKey: 'two', message: 'adjust B' }).catch(error => error);
+    const steerBFrame = socket.frames.at(-1)!;
+    socket.receive({ type: 'error', code: 'CHAT_SESSION_NOT_FOUND', error: 'missing',
+      ...(correlation === 'key' ? { sessionKey: 'one' } : correlation === 'message' ? { messageId: 'message-A' } : { runId: 'old-run' }) });
+    expect(state.chatMessages).toEqual([{ content: 'authorized B' }]); expect(state.chatMessage).toBe('B draft');
+    expect(state.refreshSessionsAfterChat.has('run-B')).toBe(true);
+    expect(state.refreshSessionsAfterChat.has('old-run')).toBe(false);
+    oldA.chatMessages = [{ content: 'late A' }];
+    finishHistory(Response.json({ messages: [{ content: 'late A history' }] }));
+    await historyA;
+    socket.receive({ type: 'stream.snapshot', sessionKey: 'one',
+      stream: { version: 1, streamEpoch: 'old', runId: 'old-run', turnId: 'turn', subscriptionId, fromSeq: 1, toSeq: 1 },
+      snapshot: { version: 1, runId: 'old-run', attempt: 1, sequence: 1, phase: 'generating',
+        parts: [{ messageId: 'assistant', part: { id: 'late', type: 'text', text: 'late A replay', source: 'fact', status: 'partial' } }] } });
+    socket.receive({ type: 'complete', sessionKey: 'one', runId: 'old-run', finalContent: 'late A' });
+    socket.receive({ type: 'run.started', sessionKey: 'two', runId: 'run-B', messageId: 'message-B' });
+    socket.receive({ type: 'steer.result', requestId: steerBFrame.requestId, status: 'queued', runId: 'run-B' });
+    await vi.advanceTimersByTimeAsync(100);
+    await expect(pendingB).resolves.toBeUndefined();
+    expect(await pendingA).toBeInstanceOf(Error);
+    expect(await steerA).toBeInstanceOf(Error);
+    expect(await steerB).toMatchObject({ runId: 'run-B' });
+    expect(state.chatMessages).toEqual([{ content: 'authorized B' }]); expect(state.chatMessage).toBe('B draft');
+    expect((client as any).watchedSessions.has('two')).toBe(true);
+    activateChatSession(state, 'one'); expectCleared(state);
+  });
+
+  it('MF-I2: associates a new-session denial by message without denying another empty view', async () => {
+    const { state, socket, client } = connected();
+    chatSessionHost(state); activateChatSession(state, '');
+    registerChatSend(state, 'new-A');
+    const pendingA = client.sendChat(undefined, 'A', { idempotencyKey: 'new-A' }).catch(error => error);
+    activateChatSession(state, ''); state.chatMessage = 'new B draft';
+    socket.receive({ type: 'error', code: 'CHAT_SESSION_NOT_FOUND', error: 'missing', messageId: 'new-A' });
+    expect(await pendingA).toBeInstanceOf(Error);
+    expect(state.chatMessage).toBe('new B draft');
+    const pendingB = client.sendChat(undefined, 'B', { idempotencyKey: 'new-B' }).catch(error => error);
+    socket.receive({ type: 'run.started', sessionKey: 'allocated-B', runId: 'run-B', messageId: 'new-B' });
+    await expect(pendingB).resolves.toBeUndefined();
+  });
+
+  it('MF-I2: reducer uses a known run even when the visible view has no run', () => {
+    const state = host();
+    chatSessionHost(state); activateChatSession(state, 'two'); state.chatMessage = 'B draft';
+    handleDirectAdapterEvent(state, { type: 'error', code: 'CHAT_SESSION_NOT_FOUND', error: 'missing', runId: 'old-run' });
+    expect(state.chatMessage).toBe('B draft');
+    activateChatSession(state, 'one'); expectCleared(state);
+  });
+
+  it('MF-I2: explicit requested key takes precedence over a conflicting message identity', () => {
+    const { state, socket } = connected();
+    chatSessionHost(state); activateChatSession(state, 'two');
+    state.chatMessage = 'B draft'; registerChatSend(state, 'message-B');
+    socket.receive({ type: 'error', code: 'CHAT_SESSION_NOT_FOUND', error: 'missing', sessionKey: ' one ', messageId: 'message-B' });
+    expect(state.chatMessage).toBe('B draft');
+    activateChatSession(state, 'one'); expectCleared(state);
+  });
+
+  it('MF-I2: a delayed hidden HTTP history denial retains its request receiver', async () => {
+    const { state, client } = connected();
+    let finishHistory!: (value: Response) => void;
+    vi.spyOn(apiClient, 'fetchResponseWithAuth').mockImplementation(() => new Promise(resolve => { finishHistory = resolve; }));
+    const oldA = chatSessionHost(state);
+    const historyA = loadChatHistory(state);
+    activateChatSession(state, 'two'); state.chatMessages = [{ content: 'authorized B' }]; state.chatMessage = 'B draft';
+    client.watchSession('two');
+    finishHistory(Response.json({ code: 'CHAT_SESSION_NOT_FOUND', error: 'missing' }, { status: 404 }));
+    await historyA;
+    expect(state.chatMessages).toEqual([{ content: 'authorized B' }]); expect(state.chatMessage).toBe('B draft');
+    expect((client as any).watchedSessions.has('two')).toBe(true);
+    oldA.chatMessages = [{ content: 'late A' }];
+    activateChatSession(state, 'one'); expectCleared(state);
   });
 
   it.each([403, 404, 401])('clears HTTP %s history denial and retains structured status/code', async status => {
