@@ -17394,7 +17394,7 @@
       "reason": "Read current packaged line; lexical result recorded with package file hash. Literal provenance remains unconfirmed unless supported by linked reviewed source.",
       "risk": "Fixed authentication input requires consumer/resource isolation proof; remains open.",
       "disposition": "Use linked text disposition when same occurrence is confirmed; otherwise inspect field context and fixture origin; block closure of unresolved live/default values.",
-      "status": "specific-input-required",
+      "status": "confirmed-consumer-defect-fixed",
       "packageFileSha256": "480857ac1c9c1af46fca994fb1c82cac881f80eab3d8cc121bebe92a9f7e94ea",
       "adjudication": "origin-found-sink-unresolved",
       "contextSha256": "643aee335753b9e3e3a136399a29354cd01b18486bfbe5d9cf74aaa8bc79331b",
@@ -17412,6 +17412,15 @@
           "Bind request baseURL to its specific isolated qualification server and bootstrap account configuration; confirm no shared/live consumer reuses this literal."
         ],
         "scope": "Static occurrence triage; no scanner exemption. Missing sink proof remains open."
+      },
+      "consumerReview": {
+        "consumer": "deep-smoke login -> fetch /api/auth/login; test-kit receives same base through setBaseUrl",
+        "baseDefault": "localhost API development endpoint",
+        "override": "SMOKE_BASE_URL; SMOKE_USER; SMOKE_PASS now mandatory before fetch",
+        "initialization": "No bootstrap performed by this CLI; caller must supply authorized existing account",
+        "conclusion": "Confirmed fixed-password consumer corrected; missing credential refuses before network. No isolation claim for caller endpoint.",
+        "verification": "deep-smoke-runner.test.ts actual CLI missing/injected cases passed",
+        "headInput": "a759dad6fceef8e5bbe249866dedbf9a033c92c3"
       }
     },
     {
@@ -22732,7 +22741,7 @@
       "reason": "Read current packaged line; lexical result recorded with package file hash. Literal provenance remains unconfirmed unless supported by linked reviewed source.",
       "risk": "Fixed authentication input requires consumer/resource isolation proof; remains open.",
       "disposition": "Use linked text disposition when same occurrence is confirmed; otherwise inspect field context and fixture origin; block closure of unresolved live/default values.",
-      "status": "specific-input-required",
+      "status": "consumer-traced-explicit-credential-required",
       "packageFileSha256": "d848e56b907567e16dae5cf6639c9924a5eaadc64469e8e4e3d6c3a6fa3cc03f",
       "adjudication": "origin-found-sink-unresolved",
       "contextSha256": "7e79b7cc5825bb8ecc5399743689b02fa68585a98d578961349341810d16bd0f",
@@ -22766,6 +22775,36 @@
           "Bind request baseURL to its specific isolated qualification server and bootstrap account configuration; confirm no shared/live consumer reuses this literal."
         ],
         "scope": "Static occurrence triage; no scanner exemption. Missing sink proof remains open."
+      },
+      "consumerReview": {
+        "consumer": "Playwright page.request/page navigation against configured use.baseURL",
+        "default": "PLAYWRIGHT_MANAGED_ENV=1 selects managed loopback frontend port; otherwise existing loopback frontend development server",
+        "override": "PLAYWRIGHT_BASE_URL overrides even managed target; QUALIFICATION_FRONTEND_PORT selects managed port",
+        "initialization": "serve-e2e.sh invokes bootstrap-admin.mjs requiring QUALIFICATION_ADMIN_PASSWORD; database name must start db_ops_ai_qualification; admin and qualification-viewer receive hash of injected password",
+        "ci": "ci.yml injects fixed qualification password and managed flag; managed webServer reuseExistingServer=false",
+        "conclusion": "Fixed administrator/viewer password input migrated to qualificationPassword(), requiring the same explicit QUALIFICATION_ADMIN_PASSWORD used by bootstrap. Arbitrary baseURL remains caller authorization responsibility; no automatic resource isolation claim.",
+        "missingInputs": [
+          "Managed browser business verification on an explicitly authorized isolated environment remains unexecuted."
+        ],
+        "evidence": [
+          {
+            "path": "frontend/playwright.config.ts",
+            "sha256": "9f93db177c3cc3b2b3d3f468deda744be7123b9b321f4b0a6ae266d47bd6bfa1"
+          },
+          {
+            "path": "scripts/qualification/serve-e2e.sh",
+            "sha256": "b046be50487eb0f8b56fd85a7d74977e5544b7524651d611358a834f6db9c2c5"
+          },
+          {
+            "path": "scripts/qualification/bootstrap-admin.mjs",
+            "sha256": "f384525ad4ca194c0e7cbf50a6f2eea041d2987d5aa5fc0655a603464d21ae07"
+          },
+          {
+            "path": ".github/workflows/ci.yml",
+            "sha256": "172201d65e8e7626328627ea4c09102679d11dccad564b23826c7594f01c358f"
+          }
+        ],
+        "verification": "Credential helper actual missing/injected checks passed; three touched spec files contain no old fixed administrator password."
       }
     },
     {
@@ -22850,7 +22889,7 @@
       "reason": "Read current packaged line; lexical result recorded with package file hash. Literal provenance remains unconfirmed unless supported by linked reviewed source.",
       "risk": "Fixed authentication input requires consumer/resource isolation proof; remains open.",
       "disposition": "Use linked text disposition when same occurrence is confirmed; otherwise inspect field context and fixture origin; block closure of unresolved live/default values.",
-      "status": "specific-input-required",
+      "status": "consumer-traced-explicit-credential-required",
       "packageFileSha256": "b7c8a363e975006192123d09db0437556e28d5e842a74ebd36bec5f7ecc9f48a",
       "adjudication": "origin-found-sink-unresolved",
       "contextSha256": "7e79b7cc5825bb8ecc5399743689b02fa68585a98d578961349341810d16bd0f",
@@ -22884,6 +22923,36 @@
           "Bind request baseURL to its specific isolated qualification server and bootstrap account configuration; confirm no shared/live consumer reuses this literal."
         ],
         "scope": "Static occurrence triage; no scanner exemption. Missing sink proof remains open."
+      },
+      "consumerReview": {
+        "consumer": "Playwright page.request/page navigation against configured use.baseURL",
+        "default": "PLAYWRIGHT_MANAGED_ENV=1 selects managed loopback frontend port; otherwise existing loopback frontend development server",
+        "override": "PLAYWRIGHT_BASE_URL overrides even managed target; QUALIFICATION_FRONTEND_PORT selects managed port",
+        "initialization": "serve-e2e.sh invokes bootstrap-admin.mjs requiring QUALIFICATION_ADMIN_PASSWORD; database name must start db_ops_ai_qualification; admin and qualification-viewer receive hash of injected password",
+        "ci": "ci.yml injects fixed qualification password and managed flag; managed webServer reuseExistingServer=false",
+        "conclusion": "Fixed administrator/viewer password input migrated to qualificationPassword(), requiring the same explicit QUALIFICATION_ADMIN_PASSWORD used by bootstrap. Arbitrary baseURL remains caller authorization responsibility; no automatic resource isolation claim.",
+        "missingInputs": [
+          "Managed browser business verification on an explicitly authorized isolated environment remains unexecuted."
+        ],
+        "evidence": [
+          {
+            "path": "frontend/playwright.config.ts",
+            "sha256": "9f93db177c3cc3b2b3d3f468deda744be7123b9b321f4b0a6ae266d47bd6bfa1"
+          },
+          {
+            "path": "scripts/qualification/serve-e2e.sh",
+            "sha256": "b046be50487eb0f8b56fd85a7d74977e5544b7524651d611358a834f6db9c2c5"
+          },
+          {
+            "path": "scripts/qualification/bootstrap-admin.mjs",
+            "sha256": "f384525ad4ca194c0e7cbf50a6f2eea041d2987d5aa5fc0655a603464d21ae07"
+          },
+          {
+            "path": ".github/workflows/ci.yml",
+            "sha256": "172201d65e8e7626328627ea4c09102679d11dccad564b23826c7594f01c358f"
+          }
+        ],
+        "verification": "Credential helper actual missing/injected checks passed; three touched spec files contain no old fixed administrator password."
       }
     },
     {
@@ -22898,7 +22967,7 @@
       "reason": "Read current packaged line; lexical result recorded with package file hash. Literal provenance remains unconfirmed unless supported by linked reviewed source.",
       "risk": "Fixed authentication input requires consumer/resource isolation proof; remains open.",
       "disposition": "Use linked text disposition when same occurrence is confirmed; otherwise inspect field context and fixture origin; block closure of unresolved live/default values.",
-      "status": "specific-input-required",
+      "status": "consumer-traced-explicit-credential-required",
       "packageFileSha256": "b7c8a363e975006192123d09db0437556e28d5e842a74ebd36bec5f7ecc9f48a",
       "adjudication": "origin-found-sink-unresolved",
       "contextSha256": "7e79b7cc5825bb8ecc5399743689b02fa68585a98d578961349341810d16bd0f",
@@ -22932,6 +23001,36 @@
           "Bind request baseURL to its specific isolated qualification server and bootstrap account configuration; confirm no shared/live consumer reuses this literal."
         ],
         "scope": "Static occurrence triage; no scanner exemption. Missing sink proof remains open."
+      },
+      "consumerReview": {
+        "consumer": "Playwright page.request/page navigation against configured use.baseURL",
+        "default": "PLAYWRIGHT_MANAGED_ENV=1 selects managed loopback frontend port; otherwise existing loopback frontend development server",
+        "override": "PLAYWRIGHT_BASE_URL overrides even managed target; QUALIFICATION_FRONTEND_PORT selects managed port",
+        "initialization": "serve-e2e.sh invokes bootstrap-admin.mjs requiring QUALIFICATION_ADMIN_PASSWORD; database name must start db_ops_ai_qualification; admin and qualification-viewer receive hash of injected password",
+        "ci": "ci.yml injects fixed qualification password and managed flag; managed webServer reuseExistingServer=false",
+        "conclusion": "Fixed administrator/viewer password input migrated to qualificationPassword(), requiring the same explicit QUALIFICATION_ADMIN_PASSWORD used by bootstrap. Arbitrary baseURL remains caller authorization responsibility; no automatic resource isolation claim.",
+        "missingInputs": [
+          "Managed browser business verification on an explicitly authorized isolated environment remains unexecuted."
+        ],
+        "evidence": [
+          {
+            "path": "frontend/playwright.config.ts",
+            "sha256": "9f93db177c3cc3b2b3d3f468deda744be7123b9b321f4b0a6ae266d47bd6bfa1"
+          },
+          {
+            "path": "scripts/qualification/serve-e2e.sh",
+            "sha256": "b046be50487eb0f8b56fd85a7d74977e5544b7524651d611358a834f6db9c2c5"
+          },
+          {
+            "path": "scripts/qualification/bootstrap-admin.mjs",
+            "sha256": "f384525ad4ca194c0e7cbf50a6f2eea041d2987d5aa5fc0655a603464d21ae07"
+          },
+          {
+            "path": ".github/workflows/ci.yml",
+            "sha256": "172201d65e8e7626328627ea4c09102679d11dccad564b23826c7594f01c358f"
+          }
+        ],
+        "verification": "Credential helper actual missing/injected checks passed; three touched spec files contain no old fixed administrator password."
       }
     },
     {
@@ -22946,7 +23045,7 @@
       "reason": "Read current packaged line; lexical result recorded with package file hash. Literal provenance remains unconfirmed unless supported by linked reviewed source.",
       "risk": "Fixed authentication input requires consumer/resource isolation proof; remains open.",
       "disposition": "Use linked text disposition when same occurrence is confirmed; otherwise inspect field context and fixture origin; block closure of unresolved live/default values.",
-      "status": "specific-input-required",
+      "status": "consumer-traced-explicit-credential-required",
       "packageFileSha256": "b7c8a363e975006192123d09db0437556e28d5e842a74ebd36bec5f7ecc9f48a",
       "adjudication": "origin-found-sink-unresolved",
       "contextSha256": "b1a3c45ca1269cda4bd1b7ff73e430a05c66f71278a5641016489ed61b5c1a8b",
@@ -22980,6 +23079,36 @@
           "Bind request baseURL to its specific isolated qualification server and bootstrap account configuration; confirm no shared/live consumer reuses this literal."
         ],
         "scope": "Static occurrence triage; no scanner exemption. Missing sink proof remains open."
+      },
+      "consumerReview": {
+        "consumer": "Playwright page.request/page navigation against configured use.baseURL",
+        "default": "PLAYWRIGHT_MANAGED_ENV=1 selects managed loopback frontend port; otherwise existing loopback frontend development server",
+        "override": "PLAYWRIGHT_BASE_URL overrides even managed target; QUALIFICATION_FRONTEND_PORT selects managed port",
+        "initialization": "serve-e2e.sh invokes bootstrap-admin.mjs requiring QUALIFICATION_ADMIN_PASSWORD; database name must start db_ops_ai_qualification; admin and qualification-viewer receive hash of injected password",
+        "ci": "ci.yml injects fixed qualification password and managed flag; managed webServer reuseExistingServer=false",
+        "conclusion": "Fixed administrator/viewer password input migrated to qualificationPassword(), requiring the same explicit QUALIFICATION_ADMIN_PASSWORD used by bootstrap. Arbitrary baseURL remains caller authorization responsibility; no automatic resource isolation claim.",
+        "missingInputs": [
+          "Managed browser business verification on an explicitly authorized isolated environment remains unexecuted."
+        ],
+        "evidence": [
+          {
+            "path": "frontend/playwright.config.ts",
+            "sha256": "9f93db177c3cc3b2b3d3f468deda744be7123b9b321f4b0a6ae266d47bd6bfa1"
+          },
+          {
+            "path": "scripts/qualification/serve-e2e.sh",
+            "sha256": "b046be50487eb0f8b56fd85a7d74977e5544b7524651d611358a834f6db9c2c5"
+          },
+          {
+            "path": "scripts/qualification/bootstrap-admin.mjs",
+            "sha256": "f384525ad4ca194c0e7cbf50a6f2eea041d2987d5aa5fc0655a603464d21ae07"
+          },
+          {
+            "path": ".github/workflows/ci.yml",
+            "sha256": "172201d65e8e7626328627ea4c09102679d11dccad564b23826c7594f01c358f"
+          }
+        ],
+        "verification": "Credential helper actual missing/injected checks passed; three touched spec files contain no old fixed administrator password."
       }
     },
     {
@@ -22994,7 +23123,7 @@
       "reason": "Read current packaged line; lexical result recorded with package file hash. Literal provenance remains unconfirmed unless supported by linked reviewed source.",
       "risk": "Fixed authentication input requires consumer/resource isolation proof; remains open.",
       "disposition": "Use linked text disposition when same occurrence is confirmed; otherwise inspect field context and fixture origin; block closure of unresolved live/default values.",
-      "status": "specific-input-required",
+      "status": "consumer-traced-explicit-credential-required",
       "packageFileSha256": "b7c8a363e975006192123d09db0437556e28d5e842a74ebd36bec5f7ecc9f48a",
       "adjudication": "origin-found-sink-unresolved",
       "contextSha256": "7e79b7cc5825bb8ecc5399743689b02fa68585a98d578961349341810d16bd0f",
@@ -23028,6 +23157,36 @@
           "Bind request baseURL to its specific isolated qualification server and bootstrap account configuration; confirm no shared/live consumer reuses this literal."
         ],
         "scope": "Static occurrence triage; no scanner exemption. Missing sink proof remains open."
+      },
+      "consumerReview": {
+        "consumer": "Playwright page.request/page navigation against configured use.baseURL",
+        "default": "PLAYWRIGHT_MANAGED_ENV=1 selects managed loopback frontend port; otherwise existing loopback frontend development server",
+        "override": "PLAYWRIGHT_BASE_URL overrides even managed target; QUALIFICATION_FRONTEND_PORT selects managed port",
+        "initialization": "serve-e2e.sh invokes bootstrap-admin.mjs requiring QUALIFICATION_ADMIN_PASSWORD; database name must start db_ops_ai_qualification; admin and qualification-viewer receive hash of injected password",
+        "ci": "ci.yml injects fixed qualification password and managed flag; managed webServer reuseExistingServer=false",
+        "conclusion": "Fixed administrator/viewer password input migrated to qualificationPassword(), requiring the same explicit QUALIFICATION_ADMIN_PASSWORD used by bootstrap. Arbitrary baseURL remains caller authorization responsibility; no automatic resource isolation claim.",
+        "missingInputs": [
+          "Managed browser business verification on an explicitly authorized isolated environment remains unexecuted."
+        ],
+        "evidence": [
+          {
+            "path": "frontend/playwright.config.ts",
+            "sha256": "9f93db177c3cc3b2b3d3f468deda744be7123b9b321f4b0a6ae266d47bd6bfa1"
+          },
+          {
+            "path": "scripts/qualification/serve-e2e.sh",
+            "sha256": "b046be50487eb0f8b56fd85a7d74977e5544b7524651d611358a834f6db9c2c5"
+          },
+          {
+            "path": "scripts/qualification/bootstrap-admin.mjs",
+            "sha256": "f384525ad4ca194c0e7cbf50a6f2eea041d2987d5aa5fc0655a603464d21ae07"
+          },
+          {
+            "path": ".github/workflows/ci.yml",
+            "sha256": "172201d65e8e7626328627ea4c09102679d11dccad564b23826c7594f01c358f"
+          }
+        ],
+        "verification": "Credential helper actual missing/injected checks passed; three touched spec files contain no old fixed administrator password."
       }
     },
     {
@@ -23042,7 +23201,7 @@
       "reason": "Read current packaged line; lexical result recorded with package file hash. Literal provenance remains unconfirmed unless supported by linked reviewed source.",
       "risk": "Fixed authentication input requires consumer/resource isolation proof; remains open.",
       "disposition": "Use linked text disposition when same occurrence is confirmed; otherwise inspect field context and fixture origin; block closure of unresolved live/default values.",
-      "status": "specific-input-required",
+      "status": "consumer-traced-explicit-credential-required",
       "packageFileSha256": "b7c8a363e975006192123d09db0437556e28d5e842a74ebd36bec5f7ecc9f48a",
       "adjudication": "origin-found-sink-unresolved",
       "contextSha256": "b1a3c45ca1269cda4bd1b7ff73e430a05c66f71278a5641016489ed61b5c1a8b",
@@ -23076,6 +23235,36 @@
           "Bind request baseURL to its specific isolated qualification server and bootstrap account configuration; confirm no shared/live consumer reuses this literal."
         ],
         "scope": "Static occurrence triage; no scanner exemption. Missing sink proof remains open."
+      },
+      "consumerReview": {
+        "consumer": "Playwright page.request/page navigation against configured use.baseURL",
+        "default": "PLAYWRIGHT_MANAGED_ENV=1 selects managed loopback frontend port; otherwise existing loopback frontend development server",
+        "override": "PLAYWRIGHT_BASE_URL overrides even managed target; QUALIFICATION_FRONTEND_PORT selects managed port",
+        "initialization": "serve-e2e.sh invokes bootstrap-admin.mjs requiring QUALIFICATION_ADMIN_PASSWORD; database name must start db_ops_ai_qualification; admin and qualification-viewer receive hash of injected password",
+        "ci": "ci.yml injects fixed qualification password and managed flag; managed webServer reuseExistingServer=false",
+        "conclusion": "Fixed administrator/viewer password input migrated to qualificationPassword(), requiring the same explicit QUALIFICATION_ADMIN_PASSWORD used by bootstrap. Arbitrary baseURL remains caller authorization responsibility; no automatic resource isolation claim.",
+        "missingInputs": [
+          "Managed browser business verification on an explicitly authorized isolated environment remains unexecuted."
+        ],
+        "evidence": [
+          {
+            "path": "frontend/playwright.config.ts",
+            "sha256": "9f93db177c3cc3b2b3d3f468deda744be7123b9b321f4b0a6ae266d47bd6bfa1"
+          },
+          {
+            "path": "scripts/qualification/serve-e2e.sh",
+            "sha256": "b046be50487eb0f8b56fd85a7d74977e5544b7524651d611358a834f6db9c2c5"
+          },
+          {
+            "path": "scripts/qualification/bootstrap-admin.mjs",
+            "sha256": "f384525ad4ca194c0e7cbf50a6f2eea041d2987d5aa5fc0655a603464d21ae07"
+          },
+          {
+            "path": ".github/workflows/ci.yml",
+            "sha256": "172201d65e8e7626328627ea4c09102679d11dccad564b23826c7594f01c358f"
+          }
+        ],
+        "verification": "Credential helper actual missing/injected checks passed; three touched spec files contain no old fixed administrator password."
       }
     },
     {
@@ -23090,7 +23279,7 @@
       "reason": "Read current packaged line; lexical result recorded with package file hash. Literal provenance remains unconfirmed unless supported by linked reviewed source.",
       "risk": "Fixed authentication input requires consumer/resource isolation proof; remains open.",
       "disposition": "Use linked text disposition when same occurrence is confirmed; otherwise inspect field context and fixture origin; block closure of unresolved live/default values.",
-      "status": "specific-input-required",
+      "status": "consumer-traced-explicit-credential-required",
       "packageFileSha256": "b7c8a363e975006192123d09db0437556e28d5e842a74ebd36bec5f7ecc9f48a",
       "adjudication": "origin-found-sink-unresolved",
       "contextSha256": "7e79b7cc5825bb8ecc5399743689b02fa68585a98d578961349341810d16bd0f",
@@ -23124,6 +23313,36 @@
           "Bind request baseURL to its specific isolated qualification server and bootstrap account configuration; confirm no shared/live consumer reuses this literal."
         ],
         "scope": "Static occurrence triage; no scanner exemption. Missing sink proof remains open."
+      },
+      "consumerReview": {
+        "consumer": "Playwright page.request/page navigation against configured use.baseURL",
+        "default": "PLAYWRIGHT_MANAGED_ENV=1 selects managed loopback frontend port; otherwise existing loopback frontend development server",
+        "override": "PLAYWRIGHT_BASE_URL overrides even managed target; QUALIFICATION_FRONTEND_PORT selects managed port",
+        "initialization": "serve-e2e.sh invokes bootstrap-admin.mjs requiring QUALIFICATION_ADMIN_PASSWORD; database name must start db_ops_ai_qualification; admin and qualification-viewer receive hash of injected password",
+        "ci": "ci.yml injects fixed qualification password and managed flag; managed webServer reuseExistingServer=false",
+        "conclusion": "Fixed administrator/viewer password input migrated to qualificationPassword(), requiring the same explicit QUALIFICATION_ADMIN_PASSWORD used by bootstrap. Arbitrary baseURL remains caller authorization responsibility; no automatic resource isolation claim.",
+        "missingInputs": [
+          "Managed browser business verification on an explicitly authorized isolated environment remains unexecuted."
+        ],
+        "evidence": [
+          {
+            "path": "frontend/playwright.config.ts",
+            "sha256": "9f93db177c3cc3b2b3d3f468deda744be7123b9b321f4b0a6ae266d47bd6bfa1"
+          },
+          {
+            "path": "scripts/qualification/serve-e2e.sh",
+            "sha256": "b046be50487eb0f8b56fd85a7d74977e5544b7524651d611358a834f6db9c2c5"
+          },
+          {
+            "path": "scripts/qualification/bootstrap-admin.mjs",
+            "sha256": "f384525ad4ca194c0e7cbf50a6f2eea041d2987d5aa5fc0655a603464d21ae07"
+          },
+          {
+            "path": ".github/workflows/ci.yml",
+            "sha256": "172201d65e8e7626328627ea4c09102679d11dccad564b23826c7594f01c358f"
+          }
+        ],
+        "verification": "Credential helper actual missing/injected checks passed; three touched spec files contain no old fixed administrator password."
       }
     },
     {
@@ -23138,7 +23357,7 @@
       "reason": "Read current packaged line; lexical result recorded with package file hash. Literal provenance remains unconfirmed unless supported by linked reviewed source.",
       "risk": "Fixed authentication input requires consumer/resource isolation proof; remains open.",
       "disposition": "Use linked text disposition when same occurrence is confirmed; otherwise inspect field context and fixture origin; block closure of unresolved live/default values.",
-      "status": "specific-input-required",
+      "status": "consumer-traced-explicit-credential-required",
       "packageFileSha256": "b7c8a363e975006192123d09db0437556e28d5e842a74ebd36bec5f7ecc9f48a",
       "adjudication": "origin-found-sink-unresolved",
       "contextSha256": "7e79b7cc5825bb8ecc5399743689b02fa68585a98d578961349341810d16bd0f",
@@ -23172,6 +23391,36 @@
           "Bind request baseURL to its specific isolated qualification server and bootstrap account configuration; confirm no shared/live consumer reuses this literal."
         ],
         "scope": "Static occurrence triage; no scanner exemption. Missing sink proof remains open."
+      },
+      "consumerReview": {
+        "consumer": "Playwright page.request/page navigation against configured use.baseURL",
+        "default": "PLAYWRIGHT_MANAGED_ENV=1 selects managed loopback frontend port; otherwise existing loopback frontend development server",
+        "override": "PLAYWRIGHT_BASE_URL overrides even managed target; QUALIFICATION_FRONTEND_PORT selects managed port",
+        "initialization": "serve-e2e.sh invokes bootstrap-admin.mjs requiring QUALIFICATION_ADMIN_PASSWORD; database name must start db_ops_ai_qualification; admin and qualification-viewer receive hash of injected password",
+        "ci": "ci.yml injects fixed qualification password and managed flag; managed webServer reuseExistingServer=false",
+        "conclusion": "Fixed administrator/viewer password input migrated to qualificationPassword(), requiring the same explicit QUALIFICATION_ADMIN_PASSWORD used by bootstrap. Arbitrary baseURL remains caller authorization responsibility; no automatic resource isolation claim.",
+        "missingInputs": [
+          "Managed browser business verification on an explicitly authorized isolated environment remains unexecuted."
+        ],
+        "evidence": [
+          {
+            "path": "frontend/playwright.config.ts",
+            "sha256": "9f93db177c3cc3b2b3d3f468deda744be7123b9b321f4b0a6ae266d47bd6bfa1"
+          },
+          {
+            "path": "scripts/qualification/serve-e2e.sh",
+            "sha256": "b046be50487eb0f8b56fd85a7d74977e5544b7524651d611358a834f6db9c2c5"
+          },
+          {
+            "path": "scripts/qualification/bootstrap-admin.mjs",
+            "sha256": "f384525ad4ca194c0e7cbf50a6f2eea041d2987d5aa5fc0655a603464d21ae07"
+          },
+          {
+            "path": ".github/workflows/ci.yml",
+            "sha256": "172201d65e8e7626328627ea4c09102679d11dccad564b23826c7594f01c358f"
+          }
+        ],
+        "verification": "Credential helper actual missing/injected checks passed; three touched spec files contain no old fixed administrator password."
       }
     },
     {
@@ -23186,7 +23435,7 @@
       "reason": "Read current packaged line; lexical result recorded with package file hash. Literal provenance remains unconfirmed unless supported by linked reviewed source.",
       "risk": "Fixed authentication input requires consumer/resource isolation proof; remains open.",
       "disposition": "Use linked text disposition when same occurrence is confirmed; otherwise inspect field context and fixture origin; block closure of unresolved live/default values.",
-      "status": "specific-input-required",
+      "status": "consumer-traced-explicit-credential-required",
       "packageFileSha256": "b7c8a363e975006192123d09db0437556e28d5e842a74ebd36bec5f7ecc9f48a",
       "adjudication": "origin-found-sink-unresolved",
       "contextSha256": "7e79b7cc5825bb8ecc5399743689b02fa68585a98d578961349341810d16bd0f",
@@ -23220,6 +23469,36 @@
           "Bind request baseURL to its specific isolated qualification server and bootstrap account configuration; confirm no shared/live consumer reuses this literal."
         ],
         "scope": "Static occurrence triage; no scanner exemption. Missing sink proof remains open."
+      },
+      "consumerReview": {
+        "consumer": "Playwright page.request/page navigation against configured use.baseURL",
+        "default": "PLAYWRIGHT_MANAGED_ENV=1 selects managed loopback frontend port; otherwise existing loopback frontend development server",
+        "override": "PLAYWRIGHT_BASE_URL overrides even managed target; QUALIFICATION_FRONTEND_PORT selects managed port",
+        "initialization": "serve-e2e.sh invokes bootstrap-admin.mjs requiring QUALIFICATION_ADMIN_PASSWORD; database name must start db_ops_ai_qualification; admin and qualification-viewer receive hash of injected password",
+        "ci": "ci.yml injects fixed qualification password and managed flag; managed webServer reuseExistingServer=false",
+        "conclusion": "Fixed administrator/viewer password input migrated to qualificationPassword(), requiring the same explicit QUALIFICATION_ADMIN_PASSWORD used by bootstrap. Arbitrary baseURL remains caller authorization responsibility; no automatic resource isolation claim.",
+        "missingInputs": [
+          "Managed browser business verification on an explicitly authorized isolated environment remains unexecuted."
+        ],
+        "evidence": [
+          {
+            "path": "frontend/playwright.config.ts",
+            "sha256": "9f93db177c3cc3b2b3d3f468deda744be7123b9b321f4b0a6ae266d47bd6bfa1"
+          },
+          {
+            "path": "scripts/qualification/serve-e2e.sh",
+            "sha256": "b046be50487eb0f8b56fd85a7d74977e5544b7524651d611358a834f6db9c2c5"
+          },
+          {
+            "path": "scripts/qualification/bootstrap-admin.mjs",
+            "sha256": "f384525ad4ca194c0e7cbf50a6f2eea041d2987d5aa5fc0655a603464d21ae07"
+          },
+          {
+            "path": ".github/workflows/ci.yml",
+            "sha256": "172201d65e8e7626328627ea4c09102679d11dccad564b23826c7594f01c358f"
+          }
+        ],
+        "verification": "Credential helper actual missing/injected checks passed; three touched spec files contain no old fixed administrator password."
       }
     },
     {
@@ -23352,7 +23631,7 @@
       "reason": "Read current packaged line; lexical result recorded with package file hash. Literal provenance remains unconfirmed unless supported by linked reviewed source.",
       "risk": "Fixed authentication input requires consumer/resource isolation proof; remains open.",
       "disposition": "Use linked text disposition when same occurrence is confirmed; otherwise inspect field context and fixture origin; block closure of unresolved live/default values.",
-      "status": "specific-input-required",
+      "status": "consumer-traced-explicit-credential-required",
       "packageFileSha256": "ed550a77833b11bed74fb90a864a7a1ebed367616371a8d24da08215e3b4bfc5",
       "adjudication": "origin-found-sink-unresolved",
       "contextSha256": "a1e0f05b08486cbf4491a3ed2bba2a402c7c4562992324378f4b968c515c3fd9",
@@ -23386,6 +23665,36 @@
           "Bind request baseURL to its specific isolated qualification server and bootstrap account configuration; confirm no shared/live consumer reuses this literal."
         ],
         "scope": "Static occurrence triage; no scanner exemption. Missing sink proof remains open."
+      },
+      "consumerReview": {
+        "consumer": "Playwright page.request/page navigation against configured use.baseURL",
+        "default": "PLAYWRIGHT_MANAGED_ENV=1 selects managed loopback frontend port; otherwise existing loopback frontend development server",
+        "override": "PLAYWRIGHT_BASE_URL overrides even managed target; QUALIFICATION_FRONTEND_PORT selects managed port",
+        "initialization": "serve-e2e.sh invokes bootstrap-admin.mjs requiring QUALIFICATION_ADMIN_PASSWORD; database name must start db_ops_ai_qualification; admin and qualification-viewer receive hash of injected password",
+        "ci": "ci.yml injects fixed qualification password and managed flag; managed webServer reuseExistingServer=false",
+        "conclusion": "Fixed administrator/viewer password input migrated to qualificationPassword(), requiring the same explicit QUALIFICATION_ADMIN_PASSWORD used by bootstrap. Arbitrary baseURL remains caller authorization responsibility; no automatic resource isolation claim.",
+        "missingInputs": [
+          "Managed browser business verification on an explicitly authorized isolated environment remains unexecuted."
+        ],
+        "evidence": [
+          {
+            "path": "frontend/playwright.config.ts",
+            "sha256": "9f93db177c3cc3b2b3d3f468deda744be7123b9b321f4b0a6ae266d47bd6bfa1"
+          },
+          {
+            "path": "scripts/qualification/serve-e2e.sh",
+            "sha256": "b046be50487eb0f8b56fd85a7d74977e5544b7524651d611358a834f6db9c2c5"
+          },
+          {
+            "path": "scripts/qualification/bootstrap-admin.mjs",
+            "sha256": "f384525ad4ca194c0e7cbf50a6f2eea041d2987d5aa5fc0655a603464d21ae07"
+          },
+          {
+            "path": ".github/workflows/ci.yml",
+            "sha256": "172201d65e8e7626328627ea4c09102679d11dccad564b23826c7594f01c358f"
+          }
+        ],
+        "verification": "Credential helper actual missing/injected checks passed; three touched spec files contain no old fixed administrator password."
       }
     },
     {
@@ -23400,7 +23709,7 @@
       "reason": "Read current packaged line; lexical result recorded with package file hash. Literal provenance remains unconfirmed unless supported by linked reviewed source.",
       "risk": "Fixed authentication input requires consumer/resource isolation proof; remains open.",
       "disposition": "Use linked text disposition when same occurrence is confirmed; otherwise inspect field context and fixture origin; block closure of unresolved live/default values.",
-      "status": "specific-input-required",
+      "status": "consumer-traced-explicit-credential-required",
       "packageFileSha256": "ed550a77833b11bed74fb90a864a7a1ebed367616371a8d24da08215e3b4bfc5",
       "adjudication": "origin-found-sink-unresolved",
       "contextSha256": "7e79b7cc5825bb8ecc5399743689b02fa68585a98d578961349341810d16bd0f",
@@ -23434,6 +23743,36 @@
           "Bind request baseURL to its specific isolated qualification server and bootstrap account configuration; confirm no shared/live consumer reuses this literal."
         ],
         "scope": "Static occurrence triage; no scanner exemption. Missing sink proof remains open."
+      },
+      "consumerReview": {
+        "consumer": "Playwright page.request/page navigation against configured use.baseURL",
+        "default": "PLAYWRIGHT_MANAGED_ENV=1 selects managed loopback frontend port; otherwise existing loopback frontend development server",
+        "override": "PLAYWRIGHT_BASE_URL overrides even managed target; QUALIFICATION_FRONTEND_PORT selects managed port",
+        "initialization": "serve-e2e.sh invokes bootstrap-admin.mjs requiring QUALIFICATION_ADMIN_PASSWORD; database name must start db_ops_ai_qualification; admin and qualification-viewer receive hash of injected password",
+        "ci": "ci.yml injects fixed qualification password and managed flag; managed webServer reuseExistingServer=false",
+        "conclusion": "Fixed administrator/viewer password input migrated to qualificationPassword(), requiring the same explicit QUALIFICATION_ADMIN_PASSWORD used by bootstrap. Arbitrary baseURL remains caller authorization responsibility; no automatic resource isolation claim.",
+        "missingInputs": [
+          "Managed browser business verification on an explicitly authorized isolated environment remains unexecuted."
+        ],
+        "evidence": [
+          {
+            "path": "frontend/playwright.config.ts",
+            "sha256": "9f93db177c3cc3b2b3d3f468deda744be7123b9b321f4b0a6ae266d47bd6bfa1"
+          },
+          {
+            "path": "scripts/qualification/serve-e2e.sh",
+            "sha256": "b046be50487eb0f8b56fd85a7d74977e5544b7524651d611358a834f6db9c2c5"
+          },
+          {
+            "path": "scripts/qualification/bootstrap-admin.mjs",
+            "sha256": "f384525ad4ca194c0e7cbf50a6f2eea041d2987d5aa5fc0655a603464d21ae07"
+          },
+          {
+            "path": ".github/workflows/ci.yml",
+            "sha256": "172201d65e8e7626328627ea4c09102679d11dccad564b23826c7594f01c358f"
+          }
+        ],
+        "verification": "Credential helper actual missing/injected checks passed; three touched spec files contain no old fixed administrator password."
       }
     },
     {
@@ -23448,7 +23787,7 @@
       "reason": "Read current packaged line; lexical result recorded with package file hash. Literal provenance remains unconfirmed unless supported by linked reviewed source.",
       "risk": "Fixed authentication input requires consumer/resource isolation proof; remains open.",
       "disposition": "Use linked text disposition when same occurrence is confirmed; otherwise inspect field context and fixture origin; block closure of unresolved live/default values.",
-      "status": "specific-input-required",
+      "status": "consumer-traced-explicit-credential-required",
       "packageFileSha256": "ed550a77833b11bed74fb90a864a7a1ebed367616371a8d24da08215e3b4bfc5",
       "adjudication": "origin-found-sink-unresolved",
       "contextSha256": "a1e0f05b08486cbf4491a3ed2bba2a402c7c4562992324378f4b968c515c3fd9",
@@ -23482,6 +23821,36 @@
           "Bind request baseURL to its specific isolated qualification server and bootstrap account configuration; confirm no shared/live consumer reuses this literal."
         ],
         "scope": "Static occurrence triage; no scanner exemption. Missing sink proof remains open."
+      },
+      "consumerReview": {
+        "consumer": "Playwright page.request/page navigation against configured use.baseURL",
+        "default": "PLAYWRIGHT_MANAGED_ENV=1 selects managed loopback frontend port; otherwise existing loopback frontend development server",
+        "override": "PLAYWRIGHT_BASE_URL overrides even managed target; QUALIFICATION_FRONTEND_PORT selects managed port",
+        "initialization": "serve-e2e.sh invokes bootstrap-admin.mjs requiring QUALIFICATION_ADMIN_PASSWORD; database name must start db_ops_ai_qualification; admin and qualification-viewer receive hash of injected password",
+        "ci": "ci.yml injects fixed qualification password and managed flag; managed webServer reuseExistingServer=false",
+        "conclusion": "Fixed administrator/viewer password input migrated to qualificationPassword(), requiring the same explicit QUALIFICATION_ADMIN_PASSWORD used by bootstrap. Arbitrary baseURL remains caller authorization responsibility; no automatic resource isolation claim.",
+        "missingInputs": [
+          "Managed browser business verification on an explicitly authorized isolated environment remains unexecuted."
+        ],
+        "evidence": [
+          {
+            "path": "frontend/playwright.config.ts",
+            "sha256": "9f93db177c3cc3b2b3d3f468deda744be7123b9b321f4b0a6ae266d47bd6bfa1"
+          },
+          {
+            "path": "scripts/qualification/serve-e2e.sh",
+            "sha256": "b046be50487eb0f8b56fd85a7d74977e5544b7524651d611358a834f6db9c2c5"
+          },
+          {
+            "path": "scripts/qualification/bootstrap-admin.mjs",
+            "sha256": "f384525ad4ca194c0e7cbf50a6f2eea041d2987d5aa5fc0655a603464d21ae07"
+          },
+          {
+            "path": ".github/workflows/ci.yml",
+            "sha256": "172201d65e8e7626328627ea4c09102679d11dccad564b23826c7594f01c358f"
+          }
+        ],
+        "verification": "Credential helper actual missing/injected checks passed; three touched spec files contain no old fixed administrator password."
       }
     },
     {
@@ -23496,7 +23865,7 @@
       "reason": "Read current packaged line; lexical result recorded with package file hash. Literal provenance remains unconfirmed unless supported by linked reviewed source.",
       "risk": "Fixed authentication input requires consumer/resource isolation proof; remains open.",
       "disposition": "Use linked text disposition when same occurrence is confirmed; otherwise inspect field context and fixture origin; block closure of unresolved live/default values.",
-      "status": "specific-input-required",
+      "status": "consumer-traced-explicit-credential-required",
       "packageFileSha256": "ed550a77833b11bed74fb90a864a7a1ebed367616371a8d24da08215e3b4bfc5",
       "adjudication": "origin-found-sink-unresolved",
       "contextSha256": "7e79b7cc5825bb8ecc5399743689b02fa68585a98d578961349341810d16bd0f",
@@ -23530,6 +23899,36 @@
           "Bind request baseURL to its specific isolated qualification server and bootstrap account configuration; confirm no shared/live consumer reuses this literal."
         ],
         "scope": "Static occurrence triage; no scanner exemption. Missing sink proof remains open."
+      },
+      "consumerReview": {
+        "consumer": "Playwright page.request/page navigation against configured use.baseURL",
+        "default": "PLAYWRIGHT_MANAGED_ENV=1 selects managed loopback frontend port; otherwise existing loopback frontend development server",
+        "override": "PLAYWRIGHT_BASE_URL overrides even managed target; QUALIFICATION_FRONTEND_PORT selects managed port",
+        "initialization": "serve-e2e.sh invokes bootstrap-admin.mjs requiring QUALIFICATION_ADMIN_PASSWORD; database name must start db_ops_ai_qualification; admin and qualification-viewer receive hash of injected password",
+        "ci": "ci.yml injects fixed qualification password and managed flag; managed webServer reuseExistingServer=false",
+        "conclusion": "Fixed administrator/viewer password input migrated to qualificationPassword(), requiring the same explicit QUALIFICATION_ADMIN_PASSWORD used by bootstrap. Arbitrary baseURL remains caller authorization responsibility; no automatic resource isolation claim.",
+        "missingInputs": [
+          "Managed browser business verification on an explicitly authorized isolated environment remains unexecuted."
+        ],
+        "evidence": [
+          {
+            "path": "frontend/playwright.config.ts",
+            "sha256": "9f93db177c3cc3b2b3d3f468deda744be7123b9b321f4b0a6ae266d47bd6bfa1"
+          },
+          {
+            "path": "scripts/qualification/serve-e2e.sh",
+            "sha256": "b046be50487eb0f8b56fd85a7d74977e5544b7524651d611358a834f6db9c2c5"
+          },
+          {
+            "path": "scripts/qualification/bootstrap-admin.mjs",
+            "sha256": "f384525ad4ca194c0e7cbf50a6f2eea041d2987d5aa5fc0655a603464d21ae07"
+          },
+          {
+            "path": ".github/workflows/ci.yml",
+            "sha256": "172201d65e8e7626328627ea4c09102679d11dccad564b23826c7594f01c358f"
+          }
+        ],
+        "verification": "Credential helper actual missing/injected checks passed; three touched spec files contain no old fixed administrator password."
       }
     },
     {
@@ -23648,7 +24047,7 @@
       "reason": "Read current packaged line; lexical result recorded with package file hash. Literal provenance remains unconfirmed unless supported by linked reviewed source.",
       "risk": "Fixed authentication input requires consumer/resource isolation proof; remains open.",
       "disposition": "Use linked text disposition when same occurrence is confirmed; otherwise inspect field context and fixture origin; block closure of unresolved live/default values.",
-      "status": "specific-input-required",
+      "status": "consumer-traced-explicit-credential-required",
       "packageFileSha256": "ed550a77833b11bed74fb90a864a7a1ebed367616371a8d24da08215e3b4bfc5",
       "adjudication": "origin-found-sink-unresolved",
       "contextSha256": "7e79b7cc5825bb8ecc5399743689b02fa68585a98d578961349341810d16bd0f",
@@ -23682,6 +24081,36 @@
           "Bind request baseURL to its specific isolated qualification server and bootstrap account configuration; confirm no shared/live consumer reuses this literal."
         ],
         "scope": "Static occurrence triage; no scanner exemption. Missing sink proof remains open."
+      },
+      "consumerReview": {
+        "consumer": "Playwright page.request/page navigation against configured use.baseURL",
+        "default": "PLAYWRIGHT_MANAGED_ENV=1 selects managed loopback frontend port; otherwise existing loopback frontend development server",
+        "override": "PLAYWRIGHT_BASE_URL overrides even managed target; QUALIFICATION_FRONTEND_PORT selects managed port",
+        "initialization": "serve-e2e.sh invokes bootstrap-admin.mjs requiring QUALIFICATION_ADMIN_PASSWORD; database name must start db_ops_ai_qualification; admin and qualification-viewer receive hash of injected password",
+        "ci": "ci.yml injects fixed qualification password and managed flag; managed webServer reuseExistingServer=false",
+        "conclusion": "Fixed administrator/viewer password input migrated to qualificationPassword(), requiring the same explicit QUALIFICATION_ADMIN_PASSWORD used by bootstrap. Arbitrary baseURL remains caller authorization responsibility; no automatic resource isolation claim.",
+        "missingInputs": [
+          "Managed browser business verification on an explicitly authorized isolated environment remains unexecuted."
+        ],
+        "evidence": [
+          {
+            "path": "frontend/playwright.config.ts",
+            "sha256": "9f93db177c3cc3b2b3d3f468deda744be7123b9b321f4b0a6ae266d47bd6bfa1"
+          },
+          {
+            "path": "scripts/qualification/serve-e2e.sh",
+            "sha256": "b046be50487eb0f8b56fd85a7d74977e5544b7524651d611358a834f6db9c2c5"
+          },
+          {
+            "path": "scripts/qualification/bootstrap-admin.mjs",
+            "sha256": "f384525ad4ca194c0e7cbf50a6f2eea041d2987d5aa5fc0655a603464d21ae07"
+          },
+          {
+            "path": ".github/workflows/ci.yml",
+            "sha256": "172201d65e8e7626328627ea4c09102679d11dccad564b23826c7594f01c358f"
+          }
+        ],
+        "verification": "Credential helper actual missing/injected checks passed; three touched spec files contain no old fixed administrator password."
       }
     },
     {
@@ -23792,7 +24221,7 @@
       "reason": "Read current packaged line; lexical result recorded with package file hash. Literal provenance remains unconfirmed unless supported by linked reviewed source.",
       "risk": "Fixed authentication input requires consumer/resource isolation proof; remains open.",
       "disposition": "Use linked text disposition when same occurrence is confirmed; otherwise inspect field context and fixture origin; block closure of unresolved live/default values.",
-      "status": "specific-input-required",
+      "status": "consumer-traced-explicit-credential-required",
       "packageFileSha256": "ed550a77833b11bed74fb90a864a7a1ebed367616371a8d24da08215e3b4bfc5",
       "adjudication": "origin-found-sink-unresolved",
       "contextSha256": "7e79b7cc5825bb8ecc5399743689b02fa68585a98d578961349341810d16bd0f",
@@ -23826,6 +24255,36 @@
           "Bind request baseURL to its specific isolated qualification server and bootstrap account configuration; confirm no shared/live consumer reuses this literal."
         ],
         "scope": "Static occurrence triage; no scanner exemption. Missing sink proof remains open."
+      },
+      "consumerReview": {
+        "consumer": "Playwright page.request/page navigation against configured use.baseURL",
+        "default": "PLAYWRIGHT_MANAGED_ENV=1 selects managed loopback frontend port; otherwise existing loopback frontend development server",
+        "override": "PLAYWRIGHT_BASE_URL overrides even managed target; QUALIFICATION_FRONTEND_PORT selects managed port",
+        "initialization": "serve-e2e.sh invokes bootstrap-admin.mjs requiring QUALIFICATION_ADMIN_PASSWORD; database name must start db_ops_ai_qualification; admin and qualification-viewer receive hash of injected password",
+        "ci": "ci.yml injects fixed qualification password and managed flag; managed webServer reuseExistingServer=false",
+        "conclusion": "Fixed administrator/viewer password input migrated to qualificationPassword(), requiring the same explicit QUALIFICATION_ADMIN_PASSWORD used by bootstrap. Arbitrary baseURL remains caller authorization responsibility; no automatic resource isolation claim.",
+        "missingInputs": [
+          "Managed browser business verification on an explicitly authorized isolated environment remains unexecuted."
+        ],
+        "evidence": [
+          {
+            "path": "frontend/playwright.config.ts",
+            "sha256": "9f93db177c3cc3b2b3d3f468deda744be7123b9b321f4b0a6ae266d47bd6bfa1"
+          },
+          {
+            "path": "scripts/qualification/serve-e2e.sh",
+            "sha256": "b046be50487eb0f8b56fd85a7d74977e5544b7524651d611358a834f6db9c2c5"
+          },
+          {
+            "path": "scripts/qualification/bootstrap-admin.mjs",
+            "sha256": "f384525ad4ca194c0e7cbf50a6f2eea041d2987d5aa5fc0655a603464d21ae07"
+          },
+          {
+            "path": ".github/workflows/ci.yml",
+            "sha256": "172201d65e8e7626328627ea4c09102679d11dccad564b23826c7594f01c358f"
+          }
+        ],
+        "verification": "Credential helper actual missing/injected checks passed; three touched spec files contain no old fixed administrator password."
       }
     },
     {
@@ -23840,7 +24299,7 @@
       "reason": "Read current packaged line; lexical result recorded with package file hash. Literal provenance remains unconfirmed unless supported by linked reviewed source.",
       "risk": "Fixed authentication input requires consumer/resource isolation proof; remains open.",
       "disposition": "Use linked text disposition when same occurrence is confirmed; otherwise inspect field context and fixture origin; block closure of unresolved live/default values.",
-      "status": "specific-input-required",
+      "status": "consumer-traced-explicit-credential-required",
       "packageFileSha256": "ed550a77833b11bed74fb90a864a7a1ebed367616371a8d24da08215e3b4bfc5",
       "adjudication": "origin-found-sink-unresolved",
       "contextSha256": "b1a3c45ca1269cda4bd1b7ff73e430a05c66f71278a5641016489ed61b5c1a8b",
@@ -23874,6 +24333,36 @@
           "Bind request baseURL to its specific isolated qualification server and bootstrap account configuration; confirm no shared/live consumer reuses this literal."
         ],
         "scope": "Static occurrence triage; no scanner exemption. Missing sink proof remains open."
+      },
+      "consumerReview": {
+        "consumer": "Playwright page.request/page navigation against configured use.baseURL",
+        "default": "PLAYWRIGHT_MANAGED_ENV=1 selects managed loopback frontend port; otherwise existing loopback frontend development server",
+        "override": "PLAYWRIGHT_BASE_URL overrides even managed target; QUALIFICATION_FRONTEND_PORT selects managed port",
+        "initialization": "serve-e2e.sh invokes bootstrap-admin.mjs requiring QUALIFICATION_ADMIN_PASSWORD; database name must start db_ops_ai_qualification; admin and qualification-viewer receive hash of injected password",
+        "ci": "ci.yml injects fixed qualification password and managed flag; managed webServer reuseExistingServer=false",
+        "conclusion": "Fixed administrator/viewer password input migrated to qualificationPassword(), requiring the same explicit QUALIFICATION_ADMIN_PASSWORD used by bootstrap. Arbitrary baseURL remains caller authorization responsibility; no automatic resource isolation claim.",
+        "missingInputs": [
+          "Managed browser business verification on an explicitly authorized isolated environment remains unexecuted."
+        ],
+        "evidence": [
+          {
+            "path": "frontend/playwright.config.ts",
+            "sha256": "9f93db177c3cc3b2b3d3f468deda744be7123b9b321f4b0a6ae266d47bd6bfa1"
+          },
+          {
+            "path": "scripts/qualification/serve-e2e.sh",
+            "sha256": "b046be50487eb0f8b56fd85a7d74977e5544b7524651d611358a834f6db9c2c5"
+          },
+          {
+            "path": "scripts/qualification/bootstrap-admin.mjs",
+            "sha256": "f384525ad4ca194c0e7cbf50a6f2eea041d2987d5aa5fc0655a603464d21ae07"
+          },
+          {
+            "path": ".github/workflows/ci.yml",
+            "sha256": "172201d65e8e7626328627ea4c09102679d11dccad564b23826c7594f01c358f"
+          }
+        ],
+        "verification": "Credential helper actual missing/injected checks passed; three touched spec files contain no old fixed administrator password."
       }
     },
     {
@@ -23888,7 +24377,7 @@
       "reason": "Read current packaged line; lexical result recorded with package file hash. Literal provenance remains unconfirmed unless supported by linked reviewed source.",
       "risk": "Fixed authentication input requires consumer/resource isolation proof; remains open.",
       "disposition": "Use linked text disposition when same occurrence is confirmed; otherwise inspect field context and fixture origin; block closure of unresolved live/default values.",
-      "status": "specific-input-required",
+      "status": "consumer-traced-explicit-credential-required",
       "packageFileSha256": "ed550a77833b11bed74fb90a864a7a1ebed367616371a8d24da08215e3b4bfc5",
       "adjudication": "origin-found-sink-unresolved",
       "contextSha256": "7e79b7cc5825bb8ecc5399743689b02fa68585a98d578961349341810d16bd0f",
@@ -23922,6 +24411,36 @@
           "Bind request baseURL to its specific isolated qualification server and bootstrap account configuration; confirm no shared/live consumer reuses this literal."
         ],
         "scope": "Static occurrence triage; no scanner exemption. Missing sink proof remains open."
+      },
+      "consumerReview": {
+        "consumer": "Playwright page.request/page navigation against configured use.baseURL",
+        "default": "PLAYWRIGHT_MANAGED_ENV=1 selects managed loopback frontend port; otherwise existing loopback frontend development server",
+        "override": "PLAYWRIGHT_BASE_URL overrides even managed target; QUALIFICATION_FRONTEND_PORT selects managed port",
+        "initialization": "serve-e2e.sh invokes bootstrap-admin.mjs requiring QUALIFICATION_ADMIN_PASSWORD; database name must start db_ops_ai_qualification; admin and qualification-viewer receive hash of injected password",
+        "ci": "ci.yml injects fixed qualification password and managed flag; managed webServer reuseExistingServer=false",
+        "conclusion": "Fixed administrator/viewer password input migrated to qualificationPassword(), requiring the same explicit QUALIFICATION_ADMIN_PASSWORD used by bootstrap. Arbitrary baseURL remains caller authorization responsibility; no automatic resource isolation claim.",
+        "missingInputs": [
+          "Managed browser business verification on an explicitly authorized isolated environment remains unexecuted."
+        ],
+        "evidence": [
+          {
+            "path": "frontend/playwright.config.ts",
+            "sha256": "9f93db177c3cc3b2b3d3f468deda744be7123b9b321f4b0a6ae266d47bd6bfa1"
+          },
+          {
+            "path": "scripts/qualification/serve-e2e.sh",
+            "sha256": "b046be50487eb0f8b56fd85a7d74977e5544b7524651d611358a834f6db9c2c5"
+          },
+          {
+            "path": "scripts/qualification/bootstrap-admin.mjs",
+            "sha256": "f384525ad4ca194c0e7cbf50a6f2eea041d2987d5aa5fc0655a603464d21ae07"
+          },
+          {
+            "path": ".github/workflows/ci.yml",
+            "sha256": "172201d65e8e7626328627ea4c09102679d11dccad564b23826c7594f01c358f"
+          }
+        ],
+        "verification": "Credential helper actual missing/injected checks passed; three touched spec files contain no old fixed administrator password."
       }
     },
     {
@@ -23988,7 +24507,7 @@
       "reason": "Read current packaged line; lexical result recorded with package file hash. Literal provenance remains unconfirmed unless supported by linked reviewed source.",
       "risk": "Fixed authentication input requires consumer/resource isolation proof; remains open.",
       "disposition": "Use linked text disposition when same occurrence is confirmed; otherwise inspect field context and fixture origin; block closure of unresolved live/default values.",
-      "status": "specific-input-required",
+      "status": "consumer-traced-explicit-credential-required",
       "packageFileSha256": "ed550a77833b11bed74fb90a864a7a1ebed367616371a8d24da08215e3b4bfc5",
       "adjudication": "origin-found-sink-unresolved",
       "contextSha256": "7e79b7cc5825bb8ecc5399743689b02fa68585a98d578961349341810d16bd0f",
@@ -24022,6 +24541,36 @@
           "Bind request baseURL to its specific isolated qualification server and bootstrap account configuration; confirm no shared/live consumer reuses this literal."
         ],
         "scope": "Static occurrence triage; no scanner exemption. Missing sink proof remains open."
+      },
+      "consumerReview": {
+        "consumer": "Playwright page.request/page navigation against configured use.baseURL",
+        "default": "PLAYWRIGHT_MANAGED_ENV=1 selects managed loopback frontend port; otherwise existing loopback frontend development server",
+        "override": "PLAYWRIGHT_BASE_URL overrides even managed target; QUALIFICATION_FRONTEND_PORT selects managed port",
+        "initialization": "serve-e2e.sh invokes bootstrap-admin.mjs requiring QUALIFICATION_ADMIN_PASSWORD; database name must start db_ops_ai_qualification; admin and qualification-viewer receive hash of injected password",
+        "ci": "ci.yml injects fixed qualification password and managed flag; managed webServer reuseExistingServer=false",
+        "conclusion": "Fixed administrator/viewer password input migrated to qualificationPassword(), requiring the same explicit QUALIFICATION_ADMIN_PASSWORD used by bootstrap. Arbitrary baseURL remains caller authorization responsibility; no automatic resource isolation claim.",
+        "missingInputs": [
+          "Managed browser business verification on an explicitly authorized isolated environment remains unexecuted."
+        ],
+        "evidence": [
+          {
+            "path": "frontend/playwright.config.ts",
+            "sha256": "9f93db177c3cc3b2b3d3f468deda744be7123b9b321f4b0a6ae266d47bd6bfa1"
+          },
+          {
+            "path": "scripts/qualification/serve-e2e.sh",
+            "sha256": "b046be50487eb0f8b56fd85a7d74977e5544b7524651d611358a834f6db9c2c5"
+          },
+          {
+            "path": "scripts/qualification/bootstrap-admin.mjs",
+            "sha256": "f384525ad4ca194c0e7cbf50a6f2eea041d2987d5aa5fc0655a603464d21ae07"
+          },
+          {
+            "path": ".github/workflows/ci.yml",
+            "sha256": "172201d65e8e7626328627ea4c09102679d11dccad564b23826c7594f01c358f"
+          }
+        ],
+        "verification": "Credential helper actual missing/injected checks passed; three touched spec files contain no old fixed administrator password."
       }
     },
     {
@@ -24036,7 +24585,7 @@
       "reason": "Read current packaged line; lexical result recorded with package file hash. Literal provenance remains unconfirmed unless supported by linked reviewed source.",
       "risk": "Fixed authentication input requires consumer/resource isolation proof; remains open.",
       "disposition": "Use linked text disposition when same occurrence is confirmed; otherwise inspect field context and fixture origin; block closure of unresolved live/default values.",
-      "status": "specific-input-required",
+      "status": "consumer-traced-explicit-credential-required",
       "packageFileSha256": "ed550a77833b11bed74fb90a864a7a1ebed367616371a8d24da08215e3b4bfc5",
       "adjudication": "origin-found-sink-unresolved",
       "contextSha256": "b1a3c45ca1269cda4bd1b7ff73e430a05c66f71278a5641016489ed61b5c1a8b",
@@ -24070,6 +24619,36 @@
           "Bind request baseURL to its specific isolated qualification server and bootstrap account configuration; confirm no shared/live consumer reuses this literal."
         ],
         "scope": "Static occurrence triage; no scanner exemption. Missing sink proof remains open."
+      },
+      "consumerReview": {
+        "consumer": "Playwright page.request/page navigation against configured use.baseURL",
+        "default": "PLAYWRIGHT_MANAGED_ENV=1 selects managed loopback frontend port; otherwise existing loopback frontend development server",
+        "override": "PLAYWRIGHT_BASE_URL overrides even managed target; QUALIFICATION_FRONTEND_PORT selects managed port",
+        "initialization": "serve-e2e.sh invokes bootstrap-admin.mjs requiring QUALIFICATION_ADMIN_PASSWORD; database name must start db_ops_ai_qualification; admin and qualification-viewer receive hash of injected password",
+        "ci": "ci.yml injects fixed qualification password and managed flag; managed webServer reuseExistingServer=false",
+        "conclusion": "Fixed administrator/viewer password input migrated to qualificationPassword(), requiring the same explicit QUALIFICATION_ADMIN_PASSWORD used by bootstrap. Arbitrary baseURL remains caller authorization responsibility; no automatic resource isolation claim.",
+        "missingInputs": [
+          "Managed browser business verification on an explicitly authorized isolated environment remains unexecuted."
+        ],
+        "evidence": [
+          {
+            "path": "frontend/playwright.config.ts",
+            "sha256": "9f93db177c3cc3b2b3d3f468deda744be7123b9b321f4b0a6ae266d47bd6bfa1"
+          },
+          {
+            "path": "scripts/qualification/serve-e2e.sh",
+            "sha256": "b046be50487eb0f8b56fd85a7d74977e5544b7524651d611358a834f6db9c2c5"
+          },
+          {
+            "path": "scripts/qualification/bootstrap-admin.mjs",
+            "sha256": "f384525ad4ca194c0e7cbf50a6f2eea041d2987d5aa5fc0655a603464d21ae07"
+          },
+          {
+            "path": ".github/workflows/ci.yml",
+            "sha256": "172201d65e8e7626328627ea4c09102679d11dccad564b23826c7594f01c358f"
+          }
+        ],
+        "verification": "Credential helper actual missing/injected checks passed; three touched spec files contain no old fixed administrator password."
       }
     },
     {
@@ -24084,7 +24663,7 @@
       "reason": "Read current packaged line; lexical result recorded with package file hash. Literal provenance remains unconfirmed unless supported by linked reviewed source.",
       "risk": "Fixed authentication input requires consumer/resource isolation proof; remains open.",
       "disposition": "Use linked text disposition when same occurrence is confirmed; otherwise inspect field context and fixture origin; block closure of unresolved live/default values.",
-      "status": "specific-input-required",
+      "status": "consumer-traced-explicit-credential-required",
       "packageFileSha256": "ed550a77833b11bed74fb90a864a7a1ebed367616371a8d24da08215e3b4bfc5",
       "adjudication": "origin-found-sink-unresolved",
       "contextSha256": "7e79b7cc5825bb8ecc5399743689b02fa68585a98d578961349341810d16bd0f",
@@ -24118,6 +24697,36 @@
           "Bind request baseURL to its specific isolated qualification server and bootstrap account configuration; confirm no shared/live consumer reuses this literal."
         ],
         "scope": "Static occurrence triage; no scanner exemption. Missing sink proof remains open."
+      },
+      "consumerReview": {
+        "consumer": "Playwright page.request/page navigation against configured use.baseURL",
+        "default": "PLAYWRIGHT_MANAGED_ENV=1 selects managed loopback frontend port; otherwise existing loopback frontend development server",
+        "override": "PLAYWRIGHT_BASE_URL overrides even managed target; QUALIFICATION_FRONTEND_PORT selects managed port",
+        "initialization": "serve-e2e.sh invokes bootstrap-admin.mjs requiring QUALIFICATION_ADMIN_PASSWORD; database name must start db_ops_ai_qualification; admin and qualification-viewer receive hash of injected password",
+        "ci": "ci.yml injects fixed qualification password and managed flag; managed webServer reuseExistingServer=false",
+        "conclusion": "Fixed administrator/viewer password input migrated to qualificationPassword(), requiring the same explicit QUALIFICATION_ADMIN_PASSWORD used by bootstrap. Arbitrary baseURL remains caller authorization responsibility; no automatic resource isolation claim.",
+        "missingInputs": [
+          "Managed browser business verification on an explicitly authorized isolated environment remains unexecuted."
+        ],
+        "evidence": [
+          {
+            "path": "frontend/playwright.config.ts",
+            "sha256": "9f93db177c3cc3b2b3d3f468deda744be7123b9b321f4b0a6ae266d47bd6bfa1"
+          },
+          {
+            "path": "scripts/qualification/serve-e2e.sh",
+            "sha256": "b046be50487eb0f8b56fd85a7d74977e5544b7524651d611358a834f6db9c2c5"
+          },
+          {
+            "path": "scripts/qualification/bootstrap-admin.mjs",
+            "sha256": "f384525ad4ca194c0e7cbf50a6f2eea041d2987d5aa5fc0655a603464d21ae07"
+          },
+          {
+            "path": ".github/workflows/ci.yml",
+            "sha256": "172201d65e8e7626328627ea4c09102679d11dccad564b23826c7594f01c358f"
+          }
+        ],
+        "verification": "Credential helper actual missing/injected checks passed; three touched spec files contain no old fixed administrator password."
       }
     },
     {
@@ -24132,7 +24741,7 @@
       "reason": "Read current packaged line; lexical result recorded with package file hash. Literal provenance remains unconfirmed unless supported by linked reviewed source.",
       "risk": "Fixed authentication input requires consumer/resource isolation proof; remains open.",
       "disposition": "Use linked text disposition when same occurrence is confirmed; otherwise inspect field context and fixture origin; block closure of unresolved live/default values.",
-      "status": "specific-input-required",
+      "status": "consumer-traced-explicit-credential-required",
       "packageFileSha256": "ed550a77833b11bed74fb90a864a7a1ebed367616371a8d24da08215e3b4bfc5",
       "adjudication": "origin-found-sink-unresolved",
       "contextSha256": "b1a3c45ca1269cda4bd1b7ff73e430a05c66f71278a5641016489ed61b5c1a8b",
@@ -24166,6 +24775,36 @@
           "Bind request baseURL to its specific isolated qualification server and bootstrap account configuration; confirm no shared/live consumer reuses this literal."
         ],
         "scope": "Static occurrence triage; no scanner exemption. Missing sink proof remains open."
+      },
+      "consumerReview": {
+        "consumer": "Playwright page.request/page navigation against configured use.baseURL",
+        "default": "PLAYWRIGHT_MANAGED_ENV=1 selects managed loopback frontend port; otherwise existing loopback frontend development server",
+        "override": "PLAYWRIGHT_BASE_URL overrides even managed target; QUALIFICATION_FRONTEND_PORT selects managed port",
+        "initialization": "serve-e2e.sh invokes bootstrap-admin.mjs requiring QUALIFICATION_ADMIN_PASSWORD; database name must start db_ops_ai_qualification; admin and qualification-viewer receive hash of injected password",
+        "ci": "ci.yml injects fixed qualification password and managed flag; managed webServer reuseExistingServer=false",
+        "conclusion": "Fixed administrator/viewer password input migrated to qualificationPassword(), requiring the same explicit QUALIFICATION_ADMIN_PASSWORD used by bootstrap. Arbitrary baseURL remains caller authorization responsibility; no automatic resource isolation claim.",
+        "missingInputs": [
+          "Managed browser business verification on an explicitly authorized isolated environment remains unexecuted."
+        ],
+        "evidence": [
+          {
+            "path": "frontend/playwright.config.ts",
+            "sha256": "9f93db177c3cc3b2b3d3f468deda744be7123b9b321f4b0a6ae266d47bd6bfa1"
+          },
+          {
+            "path": "scripts/qualification/serve-e2e.sh",
+            "sha256": "b046be50487eb0f8b56fd85a7d74977e5544b7524651d611358a834f6db9c2c5"
+          },
+          {
+            "path": "scripts/qualification/bootstrap-admin.mjs",
+            "sha256": "f384525ad4ca194c0e7cbf50a6f2eea041d2987d5aa5fc0655a603464d21ae07"
+          },
+          {
+            "path": ".github/workflows/ci.yml",
+            "sha256": "172201d65e8e7626328627ea4c09102679d11dccad564b23826c7594f01c358f"
+          }
+        ],
+        "verification": "Credential helper actual missing/injected checks passed; three touched spec files contain no old fixed administrator password."
       }
     },
     {
