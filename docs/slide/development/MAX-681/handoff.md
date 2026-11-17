@@ -117,3 +117,6 @@ pnpm security:scan:all
 ## 本轮独立阶段 PASS 与处置接续
 
 R1/R2 和三个技能/lock 删除问题已由原 Reviewer 复审关闭，不再列为待修。指定 head efa524f3265169cc0eac2edcb5b798fd0b2b0223 的 CI/产物证据已接收，完整边界及 A1–F1、逐项台账、历史处置和切换清单见 [当前基线准备包](preparation/README.md)。整单仍 BLOCKED 于未完成的内容审计、持久注入与真实切换验收，Issue 保持 in_progress；当前准备包不宣称剩余风险关闭。
+
+
+R3及实质内容调查见 preparation/README.md 的“R3及内容调查接续”；广告行与命名ref已区分，旧快照不变。语义/结构审计增量及仍未完成的字面值、像素、历史闭包审核逐项保留，不以词法判定替代有效秘密裁定。

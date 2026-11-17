@@ -17,7 +17,17 @@
       ],
       "artifactLinks": [],
       "evidence": "configured-comparison.json; artifact-audit.json",
-      "status": "owner-signoff-pending"
+      "status": "owner-signoff-pending",
+      "sourceContextEvidence": {
+        "environmentInput": true,
+        "localEndpointMention": true,
+        "mockEvidence": false,
+        "rejectionEvidence": true,
+        "schemaLifecycle": false,
+        "taskSchemaEvidence": false
+      },
+      "consumerClass": "test-or-manual-authentication-caller",
+      "investigation": "Authentication input appears in test/manual caller; local endpoint/env/schema evidence recorded separately. Effective endpoint can be overridden; no running consumer or safe fixture identity inferred."
     },
     {
       "id": "P02",
@@ -31,7 +41,17 @@
       "textLinks": [],
       "artifactLinks": [],
       "evidence": "configured-comparison.json; artifact-audit.json",
-      "status": "owner-signoff-pending"
+      "status": "owner-signoff-pending",
+      "sourceContextEvidence": {
+        "environmentInput": false,
+        "localEndpointMention": false,
+        "mockEvidence": false,
+        "rejectionEvidence": false,
+        "schemaLifecycle": false,
+        "taskSchemaEvidence": false
+      },
+      "consumerClass": "test-or-manual-authentication-caller",
+      "investigation": "Authentication input appears in test/manual caller; local endpoint/env/schema evidence recorded separately. Effective endpoint can be overridden; no running consumer or safe fixture identity inferred."
     },
     {
       "id": "P03",
@@ -45,7 +65,17 @@
       "textLinks": [],
       "artifactLinks": [],
       "evidence": "configured-comparison.json; artifact-audit.json",
-      "status": "owner-signoff-pending"
+      "status": "owner-signoff-pending",
+      "sourceContextEvidence": {
+        "environmentInput": true,
+        "localEndpointMention": false,
+        "mockEvidence": false,
+        "rejectionEvidence": false,
+        "schemaLifecycle": false,
+        "taskSchemaEvidence": true
+      },
+      "consumerClass": "test-or-manual-authentication-caller",
+      "investigation": "Authentication input appears in test/manual caller; local endpoint/env/schema evidence recorded separately. Effective endpoint can be overridden; no running consumer or safe fixture identity inferred."
     },
     {
       "id": "P04",
@@ -59,7 +89,17 @@
       "textLinks": [],
       "artifactLinks": [],
       "evidence": "configured-comparison.json; artifact-audit.json",
-      "status": "owner-signoff-pending"
+      "status": "owner-signoff-pending",
+      "sourceContextEvidence": {
+        "environmentInput": false,
+        "localEndpointMention": false,
+        "mockEvidence": false,
+        "rejectionEvidence": false,
+        "schemaLifecycle": false,
+        "taskSchemaEvidence": false
+      },
+      "consumerClass": "test-or-manual-authentication-caller",
+      "investigation": "Authentication input appears in test/manual caller; local endpoint/env/schema evidence recorded separately. Effective endpoint can be overridden; no running consumer or safe fixture identity inferred."
     },
     {
       "id": "P05",
@@ -73,7 +113,17 @@
       "textLinks": [],
       "artifactLinks": [],
       "evidence": "configured-comparison.json; artifact-audit.json",
-      "status": "owner-signoff-pending"
+      "status": "owner-signoff-pending",
+      "sourceContextEvidence": {
+        "environmentInput": true,
+        "localEndpointMention": true,
+        "mockEvidence": false,
+        "rejectionEvidence": false,
+        "schemaLifecycle": false,
+        "taskSchemaEvidence": true
+      },
+      "consumerClass": "test-or-manual-authentication-caller",
+      "investigation": "Authentication input appears in test/manual caller; local endpoint/env/schema evidence recorded separately. Effective endpoint can be overridden; no running consumer or safe fixture identity inferred."
     },
     {
       "id": "P06",
@@ -87,7 +137,17 @@
       "textLinks": [],
       "artifactLinks": [],
       "evidence": "configured-comparison.json; artifact-audit.json",
-      "status": "owner-signoff-pending"
+      "status": "owner-signoff-pending",
+      "sourceContextEvidence": {
+        "environmentInput": false,
+        "localEndpointMention": false,
+        "mockEvidence": false,
+        "rejectionEvidence": true,
+        "schemaLifecycle": true,
+        "taskSchemaEvidence": true
+      },
+      "consumerClass": "schema-seed-history",
+      "investigation": "SQL DDL/DML source, not a live connection consumer. Preserve checksum; account state requires resource confirmation."
     },
     {
       "id": "P07",
@@ -101,7 +161,17 @@
       "textLinks": [],
       "artifactLinks": [],
       "evidence": "configured-comparison.json; artifact-audit.json",
-      "status": "owner-signoff-pending"
+      "status": "owner-signoff-pending",
+      "sourceContextEvidence": {
+        "environmentInput": false,
+        "localEndpointMention": false,
+        "mockEvidence": false,
+        "rejectionEvidence": true,
+        "schemaLifecycle": true,
+        "taskSchemaEvidence": true
+      },
+      "consumerClass": "schema-seed-history",
+      "investigation": "SQL DDL/DML source, not a live connection consumer. Preserve checksum; account state requires resource confirmation."
     },
     {
       "id": "P08",
@@ -115,7 +185,17 @@
       "textLinks": [],
       "artifactLinks": [],
       "evidence": "configured-comparison.json; artifact-audit.json",
-      "status": "owner-signoff-pending"
+      "status": "owner-signoff-pending",
+      "sourceContextEvidence": {
+        "environmentInput": true,
+        "localEndpointMention": false,
+        "mockEvidence": false,
+        "rejectionEvidence": true,
+        "schemaLifecycle": false,
+        "taskSchemaEvidence": false
+      },
+      "consumerClass": "bootstrap-or-rejection-policy",
+      "investigation": "Bootstrap/security source path with validation semantics; no runtime connection proven by literal presence."
     },
     {
       "id": "P09",
@@ -129,7 +209,17 @@
       "textLinks": [],
       "artifactLinks": [],
       "evidence": "configured-comparison.json; artifact-audit.json",
-      "status": "owner-signoff-pending"
+      "status": "owner-signoff-pending",
+      "sourceContextEvidence": {
+        "environmentInput": true,
+        "localEndpointMention": true,
+        "mockEvidence": true,
+        "rejectionEvidence": true,
+        "schemaLifecycle": true,
+        "taskSchemaEvidence": true
+      },
+      "consumerClass": "test-or-manual-authentication-caller",
+      "investigation": "Authentication input appears in test/manual caller; local endpoint/env/schema evidence recorded separately. Effective endpoint can be overridden; no running consumer or safe fixture identity inferred."
     },
     {
       "id": "P10",
@@ -143,7 +233,17 @@
       "textLinks": [],
       "artifactLinks": [],
       "evidence": "configured-comparison.json; artifact-audit.json",
-      "status": "owner-signoff-pending"
+      "status": "owner-signoff-pending",
+      "sourceContextEvidence": {
+        "environmentInput": false,
+        "localEndpointMention": false,
+        "mockEvidence": false,
+        "rejectionEvidence": false,
+        "schemaLifecycle": true,
+        "taskSchemaEvidence": true
+      },
+      "consumerClass": "bootstrap-or-rejection-policy",
+      "investigation": "Bootstrap/security source path with validation semantics; no runtime connection proven by literal presence."
     },
     {
       "id": "P11",
@@ -159,7 +259,17 @@
         "W503"
       ],
       "evidence": "configured-comparison.json; artifact-audit.json",
-      "status": "owner-signoff-pending"
+      "status": "owner-signoff-pending",
+      "sourceContextEvidence": {
+        "environmentInput": true,
+        "localEndpointMention": true,
+        "mockEvidence": false,
+        "rejectionEvidence": true,
+        "schemaLifecycle": true,
+        "taskSchemaEvidence": true
+      },
+      "consumerClass": "test-or-manual-authentication-caller",
+      "investigation": "Authentication input appears in test/manual caller; local endpoint/env/schema evidence recorded separately. Effective endpoint can be overridden; no running consumer or safe fixture identity inferred."
     },
     {
       "id": "P12",
@@ -175,7 +285,17 @@
         "W459"
       ],
       "evidence": "configured-comparison.json; artifact-audit.json",
-      "status": "owner-signoff-pending"
+      "status": "owner-signoff-pending",
+      "sourceContextEvidence": {
+        "environmentInput": true,
+        "localEndpointMention": true,
+        "mockEvidence": false,
+        "rejectionEvidence": true,
+        "schemaLifecycle": false,
+        "taskSchemaEvidence": false
+      },
+      "consumerClass": "test-or-manual-authentication-caller",
+      "investigation": "Authentication input appears in test/manual caller; local endpoint/env/schema evidence recorded separately. Effective endpoint can be overridden; no running consumer or safe fixture identity inferred."
     },
     {
       "id": "P13",
@@ -189,7 +309,17 @@
       "textLinks": [],
       "artifactLinks": [],
       "evidence": "configured-comparison.json; artifact-audit.json",
-      "status": "owner-signoff-pending"
+      "status": "owner-signoff-pending",
+      "sourceContextEvidence": {
+        "environmentInput": true,
+        "localEndpointMention": true,
+        "mockEvidence": false,
+        "rejectionEvidence": false,
+        "schemaLifecycle": false,
+        "taskSchemaEvidence": false
+      },
+      "consumerClass": "test-or-manual-authentication-caller",
+      "investigation": "Authentication input appears in test/manual caller; local endpoint/env/schema evidence recorded separately. Effective endpoint can be overridden; no running consumer or safe fixture identity inferred."
     },
     {
       "id": "P14",
@@ -203,7 +333,17 @@
       "textLinks": [],
       "artifactLinks": [],
       "evidence": "configured-comparison.json; artifact-audit.json",
-      "status": "owner-signoff-pending"
+      "status": "owner-signoff-pending",
+      "sourceContextEvidence": {
+        "environmentInput": true,
+        "localEndpointMention": true,
+        "mockEvidence": false,
+        "rejectionEvidence": false,
+        "schemaLifecycle": false,
+        "taskSchemaEvidence": false
+      },
+      "consumerClass": "test-or-manual-authentication-caller",
+      "investigation": "Authentication input appears in test/manual caller; local endpoint/env/schema evidence recorded separately. Effective endpoint can be overridden; no running consumer or safe fixture identity inferred."
     },
     {
       "id": "P15",
@@ -217,7 +357,17 @@
       "textLinks": [],
       "artifactLinks": [],
       "evidence": "configured-comparison.json; artifact-audit.json",
-      "status": "owner-signoff-pending"
+      "status": "owner-signoff-pending",
+      "sourceContextEvidence": {
+        "environmentInput": true,
+        "localEndpointMention": true,
+        "mockEvidence": false,
+        "rejectionEvidence": true,
+        "schemaLifecycle": false,
+        "taskSchemaEvidence": true
+      },
+      "consumerClass": "test-or-manual-authentication-caller",
+      "investigation": "Authentication input appears in test/manual caller; local endpoint/env/schema evidence recorded separately. Effective endpoint can be overridden; no running consumer or safe fixture identity inferred."
     },
     {
       "id": "P16",
@@ -235,7 +385,17 @@
         "W646"
       ],
       "evidence": "configured-comparison.json; artifact-audit.json",
-      "status": "owner-signoff-pending"
+      "status": "owner-signoff-pending",
+      "sourceContextEvidence": {
+        "environmentInput": true,
+        "localEndpointMention": false,
+        "mockEvidence": false,
+        "rejectionEvidence": false,
+        "schemaLifecycle": false,
+        "taskSchemaEvidence": true
+      },
+      "consumerClass": "test-or-manual-authentication-caller",
+      "investigation": "Authentication input appears in test/manual caller; local endpoint/env/schema evidence recorded separately. Effective endpoint can be overridden; no running consumer or safe fixture identity inferred."
     },
     {
       "id": "P17",
@@ -249,7 +409,17 @@
       "textLinks": [],
       "artifactLinks": [],
       "evidence": "configured-comparison.json; artifact-audit.json",
-      "status": "owner-signoff-pending"
+      "status": "owner-signoff-pending",
+      "sourceContextEvidence": {
+        "environmentInput": true,
+        "localEndpointMention": false,
+        "mockEvidence": false,
+        "rejectionEvidence": false,
+        "schemaLifecycle": false,
+        "taskSchemaEvidence": true
+      },
+      "consumerClass": "test-or-manual-authentication-caller",
+      "investigation": "Authentication input appears in test/manual caller; local endpoint/env/schema evidence recorded separately. Effective endpoint can be overridden; no running consumer or safe fixture identity inferred."
     },
     {
       "id": "P18",
@@ -265,7 +435,17 @@
         "W609"
       ],
       "evidence": "configured-comparison.json; artifact-audit.json",
-      "status": "owner-signoff-pending"
+      "status": "owner-signoff-pending",
+      "sourceContextEvidence": {
+        "environmentInput": true,
+        "localEndpointMention": false,
+        "mockEvidence": false,
+        "rejectionEvidence": false,
+        "schemaLifecycle": false,
+        "taskSchemaEvidence": false
+      },
+      "consumerClass": "test-or-manual-authentication-caller",
+      "investigation": "Authentication input appears in test/manual caller; local endpoint/env/schema evidence recorded separately. Effective endpoint can be overridden; no running consumer or safe fixture identity inferred."
     },
     {
       "id": "P19",
@@ -279,7 +459,17 @@
       "textLinks": [],
       "artifactLinks": [],
       "evidence": "configured-comparison.json; artifact-audit.json",
-      "status": "owner-signoff-pending"
+      "status": "owner-signoff-pending",
+      "sourceContextEvidence": {
+        "environmentInput": true,
+        "localEndpointMention": true,
+        "mockEvidence": false,
+        "rejectionEvidence": false,
+        "schemaLifecycle": false,
+        "taskSchemaEvidence": false
+      },
+      "consumerClass": "test-or-manual-authentication-caller",
+      "investigation": "Authentication input appears in test/manual caller; local endpoint/env/schema evidence recorded separately. Effective endpoint can be overridden; no running consumer or safe fixture identity inferred."
     },
     {
       "id": "P20",
@@ -293,7 +483,17 @@
       "textLinks": [],
       "artifactLinks": [],
       "evidence": "configured-comparison.json; artifact-audit.json",
-      "status": "owner-signoff-pending"
+      "status": "owner-signoff-pending",
+      "sourceContextEvidence": {
+        "environmentInput": true,
+        "localEndpointMention": true,
+        "mockEvidence": false,
+        "rejectionEvidence": false,
+        "schemaLifecycle": false,
+        "taskSchemaEvidence": false
+      },
+      "consumerClass": "test-or-manual-authentication-caller",
+      "investigation": "Authentication input appears in test/manual caller; local endpoint/env/schema evidence recorded separately. Effective endpoint can be overridden; no running consumer or safe fixture identity inferred."
     },
     {
       "id": "P21",
@@ -317,7 +517,17 @@
         "W620"
       ],
       "evidence": "configured-comparison.json; artifact-audit.json",
-      "status": "owner-signoff-pending"
+      "status": "owner-signoff-pending",
+      "sourceContextEvidence": {
+        "environmentInput": true,
+        "localEndpointMention": true,
+        "mockEvidence": false,
+        "rejectionEvidence": false,
+        "schemaLifecycle": false,
+        "taskSchemaEvidence": false
+      },
+      "consumerClass": "test-or-manual-authentication-caller",
+      "investigation": "Authentication input appears in test/manual caller; local endpoint/env/schema evidence recorded separately. Effective endpoint can be overridden; no running consumer or safe fixture identity inferred."
     },
     {
       "id": "P22",
@@ -355,7 +565,17 @@
         "W639"
       ],
       "evidence": "configured-comparison.json; artifact-audit.json",
-      "status": "owner-signoff-pending"
+      "status": "owner-signoff-pending",
+      "sourceContextEvidence": {
+        "environmentInput": true,
+        "localEndpointMention": true,
+        "mockEvidence": false,
+        "rejectionEvidence": true,
+        "schemaLifecycle": true,
+        "taskSchemaEvidence": true
+      },
+      "consumerClass": "test-or-manual-authentication-caller",
+      "investigation": "Authentication input appears in test/manual caller; local endpoint/env/schema evidence recorded separately. Effective endpoint can be overridden; no running consumer or safe fixture identity inferred."
     },
     {
       "id": "P23",
@@ -369,7 +589,17 @@
       "textLinks": [],
       "artifactLinks": [],
       "evidence": "configured-comparison.json; artifact-audit.json",
-      "status": "owner-signoff-pending"
+      "status": "owner-signoff-pending",
+      "sourceContextEvidence": {
+        "environmentInput": true,
+        "localEndpointMention": true,
+        "mockEvidence": false,
+        "rejectionEvidence": false,
+        "schemaLifecycle": false,
+        "taskSchemaEvidence": true
+      },
+      "consumerClass": "test-or-manual-authentication-caller",
+      "investigation": "Authentication input appears in test/manual caller; local endpoint/env/schema evidence recorded separately. Effective endpoint can be overridden; no running consumer or safe fixture identity inferred."
     },
     {
       "id": "P24",
@@ -383,7 +613,17 @@
       "textLinks": [],
       "artifactLinks": [],
       "evidence": "configured-comparison.json; artifact-audit.json",
-      "status": "owner-signoff-pending"
+      "status": "owner-signoff-pending",
+      "sourceContextEvidence": {
+        "environmentInput": true,
+        "localEndpointMention": true,
+        "mockEvidence": false,
+        "rejectionEvidence": false,
+        "schemaLifecycle": false,
+        "taskSchemaEvidence": false
+      },
+      "consumerClass": "test-or-manual-authentication-caller",
+      "investigation": "Authentication input appears in test/manual caller; local endpoint/env/schema evidence recorded separately. Effective endpoint can be overridden; no running consumer or safe fixture identity inferred."
     }
   ]
 }

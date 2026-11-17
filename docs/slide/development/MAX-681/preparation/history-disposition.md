@@ -1,6 +1,6 @@
 # 历史及外部副本处置方案
 
-只读盘点于 2026-11-17 完成。7580 个 Actions 元数据合计 17170973841 字节；其中 2 个有有限内容审计，其余 7578 个未做内容审计。0 个 Release，1 个 fork。远端广告 1081 条引用：517 heads、561 pull refs、2 tags、HEAD。远端查询不是托管方内部引用完整枚举。
+只读盘点于 2026-11-17 完成。7580 个 Actions 元数据合计 17170973841 字节；其中 2 个有有限内容审计，其余 7578 个未做内容审计。0 个 Release，1 个 fork。远端快照有 1081 条广告：1079 个命名 ref（517 heads、561 pull refs、1 个附注 tag），另有 HEAD 别名及该 tag 的一条 peeled 广告。peeled OID 仅关联到 tag，不是独立更新目标；pull refs 为托管方管理对象。远端查询不是托管方内部引用完整枚举。
 
 精确对象快照和逐对象动作位于受控 artifact-disposition.json 与 ref-disposition.json，包含 artifact ID/name/run、ref 原 SHA、权限及恢复约束；不使用会随时间扩大的“删除所有”目标。执行前必须重取快照并审核差异，新增对象不自动继承批准。
 

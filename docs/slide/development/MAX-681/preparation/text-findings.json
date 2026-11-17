@@ -64,12 +64,14 @@
           "sameFileBytes": false
         }
       ],
-      "category": "requires-current-context-adjudication",
-      "reason": "No identical whole-file evidence; old label cannot authorize current occurrence.",
+      "category": "qualification-injection",
+      "reason": "Explicit qualification process/CI assignment; runtime target provenance must be checked before real resource use.",
       "risk": "File contains platform same-value occurrence; record is file-level correlation, not proof this finding is that value. Rotation pending.",
       "disposition": "Review this source location with resource owner; classify live/default/reference/isolated fixture; replace live/default entry with injection and validate caller before closure.",
       "evidence": "current independent full-cli.json",
-      "sameValueFile": true
+      "sameValueFile": true,
+      "contextSha256": "2951f077f445215372c3b3588e193980959dfaf408ddf6c5d6d42a90a21d2b2b",
+      "adjudication": "current-source-context-reviewed"
     },
     {
       "path": ".github/workflows/ci.yml",
@@ -91,12 +93,14 @@
           "sameFileBytes": false
         }
       ],
-      "category": "requires-current-context-adjudication",
-      "reason": "No identical whole-file evidence; old label cannot authorize current occurrence.",
+      "category": "qualification-injection",
+      "reason": "Explicit qualification process/CI assignment; runtime target provenance must be checked before real resource use.",
       "risk": "File contains platform same-value occurrence; record is file-level correlation, not proof this finding is that value. Rotation pending.",
       "disposition": "Review this source location with resource owner; classify live/default/reference/isolated fixture; replace live/default entry with injection and validate caller before closure.",
       "evidence": "current independent full-cli.json",
-      "sameValueFile": true
+      "sameValueFile": true,
+      "contextSha256": "2951f077f445215372c3b3588e193980959dfaf408ddf6c5d6d42a90a21d2b2b",
+      "adjudication": "current-source-context-reviewed"
     },
     {
       "path": ".planning/phases/108-agent/108-REVIEW.md",
@@ -134,11 +138,13 @@
           "sameFileBytes": false
         }
       ],
-      "category": "requires-current-context-adjudication",
-      "reason": "No identical whole-file evidence; old label cannot authorize current occurrence.",
+      "category": "runtime-reference",
+      "reason": "Current line reads configured/env/member value or decrypted value; no credential literal at the reported occurrence.",
       "risk": "Unconfirmed literal/reference; do not infer safety from test/document path.",
       "disposition": "Review this source location with resource owner; classify live/default/reference/isolated fixture; replace live/default entry with injection and validate caller before closure.",
-      "evidence": "current independent full-cli.json"
+      "evidence": "current independent full-cli.json",
+      "contextSha256": "5d3a770aed2ddde1dba7c3fbe8258605418575eab36f61e8e027b5b4a1647d7d",
+      "adjudication": "current-source-context-reviewed"
     },
     {
       "path": ".planning/phases/113-ai-cron-agent/113-AI-SPEC.md",
@@ -454,11 +460,13 @@
           "sameFileBytes": false
         }
       ],
-      "category": "requires-current-context-adjudication",
-      "reason": "No identical whole-file evidence; old label cannot authorize current occurrence.",
+      "category": "placeholder-example",
+      "reason": "URL contains explicit placeholder marker; not a configured authentication.",
       "risk": "Unconfirmed literal/reference; do not infer safety from test/document path.",
       "disposition": "Review this source location with resource owner; classify live/default/reference/isolated fixture; replace live/default entry with injection and validate caller before closure.",
-      "evidence": "current independent full-cli.json"
+      "evidence": "current independent full-cli.json",
+      "contextSha256": "fbe1f0565d386c0a98725114caa4ff0077d024e246ac374a8e6855b4b7552cb1",
+      "adjudication": "current-source-context-reviewed"
     },
     {
       "path": "apps/db-ops-api/e2e/max237-metric-semantics.ts",
@@ -970,11 +978,13 @@
       "sourceSha256": "e2826d5e2a9658c29e1235c8a66567b02b6cfc7660305d773028d30f34e247f8",
       "owner": "15-BackendDev-01",
       "oldLinks": [],
-      "category": "requires-current-context-adjudication",
-      "reason": "No identical whole-file evidence; old label cannot authorize current occurrence.",
+      "category": "runtime-reference",
+      "reason": "Current line reads configured/env/member value or decrypted value; no credential literal at the reported occurrence.",
       "risk": "Unconfirmed literal/reference; do not infer safety from test/document path.",
       "disposition": "Review this source location with resource owner; classify live/default/reference/isolated fixture; replace live/default entry with injection and validate caller before closure.",
-      "evidence": "current independent full-cli.json"
+      "evidence": "current independent full-cli.json",
+      "contextSha256": "0a07f89bde7a9f4b18e249f86b9e798851be07184a238ff9dc366c04c1829fcc",
+      "adjudication": "current-source-context-reviewed"
     },
     {
       "path": "apps/db-ops-api/src/chat-handler.mysql.test.ts",
@@ -1027,11 +1037,13 @@
       "sourceSha256": "8e7718b2c99bbd5d294691674544c78ef0324fa91455fadfe61ce05b3909a4b5",
       "owner": "15-BackendDev-01",
       "oldLinks": [],
-      "category": "requires-current-context-adjudication",
-      "reason": "No identical whole-file evidence; old label cannot authorize current occurrence.",
-      "risk": "Unconfirmed literal/reference; do not infer safety from test/document path.",
-      "disposition": "Review this source location with resource owner; classify live/default/reference/isolated fixture; replace live/default entry with injection and validate caller before closure.",
-      "evidence": "current independent full-cli.json"
+      "category": "test-database-fallback",
+      "reason": "Current line selects explicit environment value with literal fallback; real target isolation cannot be inferred.",
+      "risk": "Environment fallback can reuse shared credential; explicit target/consumer confirmation still required.",
+      "disposition": "Remove fallback from real-entry use after caller compatibility check; test only against explicit task-owned target.",
+      "evidence": "current independent full-cli.json",
+      "contextSha256": "0fe0b71ebcecb1ef1d3aac5b2cb3f80bbba824360a271dfa319dd6f034f83d7b",
+      "adjudication": "current-source-context-reviewed"
     },
     {
       "path": "apps/db-ops-api/src/contracts/public-api.ts",
@@ -1048,11 +1060,13 @@
           "sameFileBytes": false
         }
       ],
-      "category": "requires-current-context-adjudication",
-      "reason": "No identical whole-file evidence; old label cannot authorize current occurrence.",
+      "category": "schema-or-diagnostic",
+      "reason": "Current expression is schema description/validation message, not an authentication assignment.",
       "risk": "Unconfirmed literal/reference; do not infer safety from test/document path.",
       "disposition": "Review this source location with resource owner; classify live/default/reference/isolated fixture; replace live/default entry with injection and validate caller before closure.",
-      "evidence": "current independent full-cli.json"
+      "evidence": "current independent full-cli.json",
+      "contextSha256": "531e7d79cd5cd286fd1a449a17ee78360af9d9a775e93dc6141b3cabc847bf79",
+      "adjudication": "current-source-context-reviewed"
     },
     {
       "path": "apps/db-ops-api/src/credential-rotation.max307.test.ts",
@@ -1251,11 +1265,13 @@
           "sameFileBytes": false
         }
       ],
-      "category": "requires-current-context-adjudication",
-      "reason": "No identical whole-file evidence; old label cannot authorize current occurrence.",
+      "category": "runtime-reference",
+      "reason": "Current line reads configured/env/member value or decrypted value; no credential literal at the reported occurrence.",
       "risk": "Unconfirmed literal/reference; do not infer safety from test/document path.",
       "disposition": "Review this source location with resource owner; classify live/default/reference/isolated fixture; replace live/default entry with injection and validate caller before closure.",
-      "evidence": "current independent full-cli.json"
+      "evidence": "current independent full-cli.json",
+      "contextSha256": "8b0370cc52acb61ac8815bf4990d5ac9f7b81bd50a7283b508249761dac32727",
+      "adjudication": "current-source-context-reviewed"
     },
     {
       "path": "apps/db-ops-api/src/database-service.ts",
@@ -1287,11 +1303,13 @@
           "sameFileBytes": false
         }
       ],
-      "category": "requires-current-context-adjudication",
-      "reason": "No identical whole-file evidence; old label cannot authorize current occurrence.",
+      "category": "runtime-reference",
+      "reason": "Current line reads configured/env/member value or decrypted value; no credential literal at the reported occurrence.",
       "risk": "Unconfirmed literal/reference; do not infer safety from test/document path.",
       "disposition": "Review this source location with resource owner; classify live/default/reference/isolated fixture; replace live/default entry with injection and validate caller before closure.",
-      "evidence": "current independent full-cli.json"
+      "evidence": "current independent full-cli.json",
+      "contextSha256": "55573b96955357eb51e9f3f21f5d0a27becad0b23cf3d80e7766db288a9569e0",
+      "adjudication": "current-source-context-reviewed"
     },
     {
       "path": "apps/db-ops-api/src/database-service.ts",
@@ -1323,11 +1341,13 @@
           "sameFileBytes": false
         }
       ],
-      "category": "requires-current-context-adjudication",
-      "reason": "No identical whole-file evidence; old label cannot authorize current occurrence.",
+      "category": "runtime-reference",
+      "reason": "Current line reads configured/env/member value or decrypted value; no credential literal at the reported occurrence.",
       "risk": "Unconfirmed literal/reference; do not infer safety from test/document path.",
       "disposition": "Review this source location with resource owner; classify live/default/reference/isolated fixture; replace live/default entry with injection and validate caller before closure.",
-      "evidence": "current independent full-cli.json"
+      "evidence": "current independent full-cli.json",
+      "contextSha256": "10dd4862679097c8f909352f521ee43a0d8212e9e1142b516b7234ee1f515a92",
+      "adjudication": "current-source-context-reviewed"
     },
     {
       "path": "apps/db-ops-api/src/database-service.ts",
@@ -1359,11 +1379,13 @@
           "sameFileBytes": false
         }
       ],
-      "category": "requires-current-context-adjudication",
-      "reason": "No identical whole-file evidence; old label cannot authorize current occurrence.",
+      "category": "runtime-reference",
+      "reason": "Current line reads configured/env/member value or decrypted value; no credential literal at the reported occurrence.",
       "risk": "Unconfirmed literal/reference; do not infer safety from test/document path.",
       "disposition": "Review this source location with resource owner; classify live/default/reference/isolated fixture; replace live/default entry with injection and validate caller before closure.",
-      "evidence": "current independent full-cli.json"
+      "evidence": "current independent full-cli.json",
+      "contextSha256": "1617635fc19a4723f8e9f99672661e52036543e9d593c105963234127cc43292",
+      "adjudication": "current-source-context-reviewed"
     },
     {
       "path": "apps/db-ops-api/src/db-connection-init.mysql.test.ts",
@@ -1485,11 +1507,13 @@
           "sameFileBytes": false
         }
       ],
-      "category": "requires-current-context-adjudication",
-      "reason": "No identical whole-file evidence; old label cannot authorize current occurrence.",
+      "category": "runtime-reference",
+      "reason": "Current line reads configured/env/member value or decrypted value; no credential literal at the reported occurrence.",
       "risk": "Unconfirmed literal/reference; do not infer safety from test/document path.",
       "disposition": "Review this source location with resource owner; classify live/default/reference/isolated fixture; replace live/default entry with injection and validate caller before closure.",
-      "evidence": "current independent full-cli.json"
+      "evidence": "current independent full-cli.json",
+      "contextSha256": "8201870f961107c410cb560fd33cdcf9ea4aa06c4090e0488f79d8c8a089233f",
+      "adjudication": "current-source-context-reviewed"
     },
     {
       "path": "apps/db-ops-api/src/instance-database-service.ts",
@@ -3386,11 +3410,13 @@
       "sourceSha256": "ee9a3fc40f14161687eb88a53c514d31382ce80d9df653f079bb880cd54e4137",
       "owner": "15-BackendDev-01",
       "oldLinks": [],
-      "category": "requires-current-context-adjudication",
-      "reason": "No identical whole-file evidence; old label cannot authorize current occurrence.",
-      "risk": "Unconfirmed literal/reference; do not infer safety from test/document path.",
-      "disposition": "Review this source location with resource owner; classify live/default/reference/isolated fixture; replace live/default entry with injection and validate caller before closure.",
-      "evidence": "current independent full-cli.json"
+      "category": "test-database-fallback",
+      "reason": "Current line selects explicit environment value with literal fallback; real target isolation cannot be inferred.",
+      "risk": "Environment fallback can reuse shared credential; explicit target/consumer confirmation still required.",
+      "disposition": "Remove fallback from real-entry use after caller compatibility check; test only against explicit task-owned target.",
+      "evidence": "current independent full-cli.json",
+      "contextSha256": "e676e16da85fc5cf821862674b2d0da01e0633ed4ef983f8b85a26133556182b",
+      "adjudication": "current-source-context-reviewed"
     },
     {
       "path": "apps/db-ops-api/src/metrics/templates/trigger-flow.mysql.test.ts",
@@ -3428,11 +3454,13 @@
           "sameFileBytes": false
         }
       ],
-      "category": "requires-current-context-adjudication",
-      "reason": "No identical whole-file evidence; old label cannot authorize current occurrence.",
+      "category": "test-input-or-assertion",
+      "reason": "Occurrence belongs to request fixture/expected DTO/mock response or test channel config; classification is syntax/context, not proof all endpoints isolated.",
       "risk": "Unconfirmed literal/reference; do not infer safety from test/document path.",
       "disposition": "Review this source location with resource owner; classify live/default/reference/isolated fixture; replace live/default entry with injection and validate caller before closure.",
-      "evidence": "current independent full-cli.json"
+      "evidence": "current independent full-cli.json",
+      "contextSha256": "dabb6da358bfec5f4165b72174de3da420e93e34cfcb9f6d691c1530203e1a79",
+      "adjudication": "current-source-context-reviewed"
     },
     {
       "path": "apps/db-ops-api/src/notification-channel-config.ts",
@@ -3449,11 +3477,13 @@
           "sameFileBytes": false
         }
       ],
-      "category": "requires-current-context-adjudication",
-      "reason": "No identical whole-file evidence; old label cannot authorize current occurrence.",
+      "category": "schema-or-diagnostic",
+      "reason": "Current expression is schema description/validation message, not an authentication assignment.",
       "risk": "Unconfirmed literal/reference; do not infer safety from test/document path.",
       "disposition": "Review this source location with resource owner; classify live/default/reference/isolated fixture; replace live/default entry with injection and validate caller before closure.",
-      "evidence": "current independent full-cli.json"
+      "evidence": "current independent full-cli.json",
+      "contextSha256": "4f6d47aea75010ad6b8311f3de6526944a929f6c4ec7efba710f7d536472abeb",
+      "adjudication": "current-source-context-reviewed"
     },
     {
       "path": "apps/db-ops-api/src/notification-credentials.mysql.test.ts",
@@ -3464,11 +3494,13 @@
       "sourceSha256": "0c96f0098659989fce051a266d80d9165b907b6e7210c6c4aa4a1ee027647da3",
       "owner": "15-BackendDev-01",
       "oldLinks": [],
-      "category": "requires-current-context-adjudication",
-      "reason": "No identical whole-file evidence; old label cannot authorize current occurrence.",
+      "category": "test-input-or-assertion",
+      "reason": "Occurrence belongs to request fixture/expected DTO/mock response or test channel config; classification is syntax/context, not proof all endpoints isolated.",
       "risk": "Unconfirmed literal/reference; do not infer safety from test/document path.",
       "disposition": "Review this source location with resource owner; classify live/default/reference/isolated fixture; replace live/default entry with injection and validate caller before closure.",
-      "evidence": "current independent full-cli.json"
+      "evidence": "current independent full-cli.json",
+      "contextSha256": "5e96bcdf87f1270dd735c8271d8f774371c11c8349566aadc239292da42495be",
+      "adjudication": "current-source-context-reviewed"
     },
     {
       "path": "apps/db-ops-api/src/notification-credentials.mysql.test.ts",
@@ -3479,11 +3511,13 @@
       "sourceSha256": "0c96f0098659989fce051a266d80d9165b907b6e7210c6c4aa4a1ee027647da3",
       "owner": "15-BackendDev-01",
       "oldLinks": [],
-      "category": "requires-current-context-adjudication",
-      "reason": "No identical whole-file evidence; old label cannot authorize current occurrence.",
+      "category": "test-input-or-assertion",
+      "reason": "Occurrence belongs to request fixture/expected DTO/mock response or test channel config; classification is syntax/context, not proof all endpoints isolated.",
       "risk": "Unconfirmed literal/reference; do not infer safety from test/document path.",
       "disposition": "Review this source location with resource owner; classify live/default/reference/isolated fixture; replace live/default entry with injection and validate caller before closure.",
-      "evidence": "current independent full-cli.json"
+      "evidence": "current independent full-cli.json",
+      "contextSha256": "f679bdd28f2c86753a28cac511970b4a40f4465c19ba5f6c89f92c864c5171e4",
+      "adjudication": "current-source-context-reviewed"
     },
     {
       "path": "apps/db-ops-api/src/notification-credentials.mysql.test.ts",
@@ -3494,11 +3528,13 @@
       "sourceSha256": "0c96f0098659989fce051a266d80d9165b907b6e7210c6c4aa4a1ee027647da3",
       "owner": "15-BackendDev-01",
       "oldLinks": [],
-      "category": "requires-current-context-adjudication",
-      "reason": "No identical whole-file evidence; old label cannot authorize current occurrence.",
+      "category": "test-input-or-assertion",
+      "reason": "Occurrence belongs to request fixture/expected DTO/mock response or test channel config; classification is syntax/context, not proof all endpoints isolated.",
       "risk": "Unconfirmed literal/reference; do not infer safety from test/document path.",
       "disposition": "Review this source location with resource owner; classify live/default/reference/isolated fixture; replace live/default entry with injection and validate caller before closure.",
-      "evidence": "current independent full-cli.json"
+      "evidence": "current independent full-cli.json",
+      "contextSha256": "50ea2468a23001488d109ae04b93e6e11ca4081cc92b2e4c58b500a1abdf66a5",
+      "adjudication": "current-source-context-reviewed"
     },
     {
       "path": "apps/db-ops-api/src/notification-credentials.mysql.test.ts",
@@ -3509,11 +3545,13 @@
       "sourceSha256": "0c96f0098659989fce051a266d80d9165b907b6e7210c6c4aa4a1ee027647da3",
       "owner": "15-BackendDev-01",
       "oldLinks": [],
-      "category": "requires-current-context-adjudication",
-      "reason": "No identical whole-file evidence; old label cannot authorize current occurrence.",
+      "category": "test-input-or-assertion",
+      "reason": "Occurrence belongs to request fixture/expected DTO/mock response or test channel config; classification is syntax/context, not proof all endpoints isolated.",
       "risk": "Unconfirmed literal/reference; do not infer safety from test/document path.",
       "disposition": "Review this source location with resource owner; classify live/default/reference/isolated fixture; replace live/default entry with injection and validate caller before closure.",
-      "evidence": "current independent full-cli.json"
+      "evidence": "current independent full-cli.json",
+      "contextSha256": "d219541effc3e648543dbc532a3d3f49b08ae32ee044a46596cbdd86432020cc",
+      "adjudication": "current-source-context-reviewed"
     },
     {
       "path": "apps/db-ops-api/src/notification-credentials.mysql.test.ts",
@@ -3524,11 +3562,13 @@
       "sourceSha256": "0c96f0098659989fce051a266d80d9165b907b6e7210c6c4aa4a1ee027647da3",
       "owner": "15-BackendDev-01",
       "oldLinks": [],
-      "category": "requires-current-context-adjudication",
-      "reason": "No identical whole-file evidence; old label cannot authorize current occurrence.",
+      "category": "test-input-or-assertion",
+      "reason": "Occurrence belongs to request fixture/expected DTO/mock response or test channel config; classification is syntax/context, not proof all endpoints isolated.",
       "risk": "Unconfirmed literal/reference; do not infer safety from test/document path.",
       "disposition": "Review this source location with resource owner; classify live/default/reference/isolated fixture; replace live/default entry with injection and validate caller before closure.",
-      "evidence": "current independent full-cli.json"
+      "evidence": "current independent full-cli.json",
+      "contextSha256": "5209e4de623cccb083c8b368d920cbe14913aecbe346c3ae8cde770ff3c38b7e",
+      "adjudication": "current-source-context-reviewed"
     },
     {
       "path": "apps/db-ops-api/src/notification-credentials.mysql.test.ts",
@@ -3539,11 +3579,13 @@
       "sourceSha256": "0c96f0098659989fce051a266d80d9165b907b6e7210c6c4aa4a1ee027647da3",
       "owner": "15-BackendDev-01",
       "oldLinks": [],
-      "category": "requires-current-context-adjudication",
-      "reason": "No identical whole-file evidence; old label cannot authorize current occurrence.",
+      "category": "test-input-or-assertion",
+      "reason": "Occurrence belongs to request fixture/expected DTO/mock response or test channel config; classification is syntax/context, not proof all endpoints isolated.",
       "risk": "Unconfirmed literal/reference; do not infer safety from test/document path.",
       "disposition": "Review this source location with resource owner; classify live/default/reference/isolated fixture; replace live/default entry with injection and validate caller before closure.",
-      "evidence": "current independent full-cli.json"
+      "evidence": "current independent full-cli.json",
+      "contextSha256": "6154ed4c3d8238eee79ce1aa9ab51cd5911e0b48aef39ca558c0d4a1326d3a33",
+      "adjudication": "current-source-context-reviewed"
     },
     {
       "path": "apps/db-ops-api/src/notification-database-service.test.ts",
@@ -3560,11 +3602,13 @@
           "sameFileBytes": false
         }
       ],
-      "category": "requires-current-context-adjudication",
-      "reason": "No identical whole-file evidence; old label cannot authorize current occurrence.",
+      "category": "test-input-or-assertion",
+      "reason": "Occurrence belongs to request fixture/expected DTO/mock response or test channel config; classification is syntax/context, not proof all endpoints isolated.",
       "risk": "Unconfirmed literal/reference; do not infer safety from test/document path.",
       "disposition": "Review this source location with resource owner; classify live/default/reference/isolated fixture; replace live/default entry with injection and validate caller before closure.",
-      "evidence": "current independent full-cli.json"
+      "evidence": "current independent full-cli.json",
+      "contextSha256": "1915ebe313c3098ea648d3336e6b0444bba455373ed79c664e63ef8e01f3254d",
+      "adjudication": "current-source-context-reviewed"
     },
     {
       "path": "apps/db-ops-api/src/notification-database-service.test.ts",
@@ -3575,11 +3619,13 @@
       "sourceSha256": "1a2577cbcbba383ad858fe33300dc053d29f0cbf0219ed61d88ac8eabf154dc4",
       "owner": "15-BackendDev-01",
       "oldLinks": [],
-      "category": "requires-current-context-adjudication",
-      "reason": "No identical whole-file evidence; old label cannot authorize current occurrence.",
+      "category": "test-input-or-assertion",
+      "reason": "Occurrence belongs to request fixture/expected DTO/mock response or test channel config; classification is syntax/context, not proof all endpoints isolated.",
       "risk": "Unconfirmed literal/reference; do not infer safety from test/document path.",
       "disposition": "Review this source location with resource owner; classify live/default/reference/isolated fixture; replace live/default entry with injection and validate caller before closure.",
-      "evidence": "current independent full-cli.json"
+      "evidence": "current independent full-cli.json",
+      "contextSha256": "47101475a6826c3e256903790708aca785e35391b7de7f62505fba36ecfe87d4",
+      "adjudication": "current-source-context-reviewed"
     },
     {
       "path": "apps/db-ops-api/src/notification-oauth-review-regressions.test.ts",
@@ -3590,11 +3636,13 @@
       "sourceSha256": "f7c3ab7c52948c45ff31c3f39ed04b3007b7204c5ec7caec4cc3c830d5b523f0",
       "owner": "15-BackendDev-01",
       "oldLinks": [],
-      "category": "requires-current-context-adjudication",
-      "reason": "No identical whole-file evidence; old label cannot authorize current occurrence.",
+      "category": "test-input-or-assertion",
+      "reason": "Occurrence belongs to request fixture/expected DTO/mock response or test channel config; classification is syntax/context, not proof all endpoints isolated.",
       "risk": "Unconfirmed literal/reference; do not infer safety from test/document path.",
       "disposition": "Review this source location with resource owner; classify live/default/reference/isolated fixture; replace live/default entry with injection and validate caller before closure.",
-      "evidence": "current independent full-cli.json"
+      "evidence": "current independent full-cli.json",
+      "contextSha256": "91265916e9534353a8369844faee9e7197b668bfdc4a223c7214fb7b24027294",
+      "adjudication": "current-source-context-reviewed"
     },
     {
       "path": "apps/db-ops-api/src/notification-oauth-review-regressions.test.ts",
@@ -3605,11 +3653,13 @@
       "sourceSha256": "f7c3ab7c52948c45ff31c3f39ed04b3007b7204c5ec7caec4cc3c830d5b523f0",
       "owner": "15-BackendDev-01",
       "oldLinks": [],
-      "category": "requires-current-context-adjudication",
-      "reason": "No identical whole-file evidence; old label cannot authorize current occurrence.",
+      "category": "test-input-or-assertion",
+      "reason": "Occurrence belongs to request fixture/expected DTO/mock response or test channel config; classification is syntax/context, not proof all endpoints isolated.",
       "risk": "Unconfirmed literal/reference; do not infer safety from test/document path.",
       "disposition": "Review this source location with resource owner; classify live/default/reference/isolated fixture; replace live/default entry with injection and validate caller before closure.",
-      "evidence": "current independent full-cli.json"
+      "evidence": "current independent full-cli.json",
+      "contextSha256": "595f523f5cd60713cb8864368b37f1fa1b0f671ec5cd9c96c9f0a472efde1cae",
+      "adjudication": "current-source-context-reviewed"
     },
     {
       "path": "apps/db-ops-api/src/notification-oauth-review-regressions.test.ts",
@@ -3620,11 +3670,13 @@
       "sourceSha256": "f7c3ab7c52948c45ff31c3f39ed04b3007b7204c5ec7caec4cc3c830d5b523f0",
       "owner": "15-BackendDev-01",
       "oldLinks": [],
-      "category": "requires-current-context-adjudication",
-      "reason": "No identical whole-file evidence; old label cannot authorize current occurrence.",
+      "category": "test-input-or-assertion",
+      "reason": "Occurrence belongs to request fixture/expected DTO/mock response or test channel config; classification is syntax/context, not proof all endpoints isolated.",
       "risk": "Unconfirmed literal/reference; do not infer safety from test/document path.",
       "disposition": "Review this source location with resource owner; classify live/default/reference/isolated fixture; replace live/default entry with injection and validate caller before closure.",
-      "evidence": "current independent full-cli.json"
+      "evidence": "current independent full-cli.json",
+      "contextSha256": "364f38148ae5fd3682cd516af385ed5db99aefe2d07b2699a00d130b9ae267a6",
+      "adjudication": "current-source-context-reviewed"
     },
     {
       "path": "apps/db-ops-api/src/notification-oauth-review-regressions.test.ts",
@@ -3635,11 +3687,13 @@
       "sourceSha256": "f7c3ab7c52948c45ff31c3f39ed04b3007b7204c5ec7caec4cc3c830d5b523f0",
       "owner": "15-BackendDev-01",
       "oldLinks": [],
-      "category": "requires-current-context-adjudication",
-      "reason": "No identical whole-file evidence; old label cannot authorize current occurrence.",
+      "category": "test-input-or-assertion",
+      "reason": "Occurrence belongs to request fixture/expected DTO/mock response or test channel config; classification is syntax/context, not proof all endpoints isolated.",
       "risk": "Unconfirmed literal/reference; do not infer safety from test/document path.",
       "disposition": "Review this source location with resource owner; classify live/default/reference/isolated fixture; replace live/default entry with injection and validate caller before closure.",
-      "evidence": "current independent full-cli.json"
+      "evidence": "current independent full-cli.json",
+      "contextSha256": "6f5b36d35f781762bb8ade3cc109f5a6858dd04c269252557d8fe446f2a45a09",
+      "adjudication": "current-source-context-reviewed"
     },
     {
       "path": "apps/db-ops-api/src/notification-oauth-review-regressions.test.ts",
@@ -3650,11 +3704,13 @@
       "sourceSha256": "f7c3ab7c52948c45ff31c3f39ed04b3007b7204c5ec7caec4cc3c830d5b523f0",
       "owner": "15-BackendDev-01",
       "oldLinks": [],
-      "category": "requires-current-context-adjudication",
-      "reason": "No identical whole-file evidence; old label cannot authorize current occurrence.",
+      "category": "test-input-or-assertion",
+      "reason": "Occurrence belongs to request fixture/expected DTO/mock response or test channel config; classification is syntax/context, not proof all endpoints isolated.",
       "risk": "Unconfirmed literal/reference; do not infer safety from test/document path.",
       "disposition": "Review this source location with resource owner; classify live/default/reference/isolated fixture; replace live/default entry with injection and validate caller before closure.",
-      "evidence": "current independent full-cli.json"
+      "evidence": "current independent full-cli.json",
+      "contextSha256": "bf0384186966610d091b0ccb425175f7a9cb33debb40b15d2cfc13cce4888a10",
+      "adjudication": "current-source-context-reviewed"
     },
     {
       "path": "apps/db-ops-api/src/notification-oauth-review-regressions.test.ts",
@@ -3665,11 +3721,13 @@
       "sourceSha256": "f7c3ab7c52948c45ff31c3f39ed04b3007b7204c5ec7caec4cc3c830d5b523f0",
       "owner": "15-BackendDev-01",
       "oldLinks": [],
-      "category": "requires-current-context-adjudication",
-      "reason": "No identical whole-file evidence; old label cannot authorize current occurrence.",
+      "category": "test-input-or-assertion",
+      "reason": "Occurrence belongs to request fixture/expected DTO/mock response or test channel config; classification is syntax/context, not proof all endpoints isolated.",
       "risk": "Unconfirmed literal/reference; do not infer safety from test/document path.",
       "disposition": "Review this source location with resource owner; classify live/default/reference/isolated fixture; replace live/default entry with injection and validate caller before closure.",
-      "evidence": "current independent full-cli.json"
+      "evidence": "current independent full-cli.json",
+      "contextSha256": "3b5dd5aa90fadc9da59be637ef87e4fca960ea6ed0a3704e29ffc183cd840f02",
+      "adjudication": "current-source-context-reviewed"
     },
     {
       "path": "apps/db-ops-api/src/notification-oauth-review-regressions.test.ts",
@@ -3680,11 +3738,13 @@
       "sourceSha256": "f7c3ab7c52948c45ff31c3f39ed04b3007b7204c5ec7caec4cc3c830d5b523f0",
       "owner": "15-BackendDev-01",
       "oldLinks": [],
-      "category": "requires-current-context-adjudication",
-      "reason": "No identical whole-file evidence; old label cannot authorize current occurrence.",
+      "category": "test-input-or-assertion",
+      "reason": "Occurrence belongs to request fixture/expected DTO/mock response or test channel config; classification is syntax/context, not proof all endpoints isolated.",
       "risk": "Unconfirmed literal/reference; do not infer safety from test/document path.",
       "disposition": "Review this source location with resource owner; classify live/default/reference/isolated fixture; replace live/default entry with injection and validate caller before closure.",
-      "evidence": "current independent full-cli.json"
+      "evidence": "current independent full-cli.json",
+      "contextSha256": "d7cfdc1985bae730b2e328a74933c0bfdca07a26387c090e7af7697007147a62",
+      "adjudication": "current-source-context-reviewed"
     },
     {
       "path": "apps/db-ops-api/src/notification-oauth-review-regressions.test.ts",
@@ -3695,11 +3755,13 @@
       "sourceSha256": "f7c3ab7c52948c45ff31c3f39ed04b3007b7204c5ec7caec4cc3c830d5b523f0",
       "owner": "15-BackendDev-01",
       "oldLinks": [],
-      "category": "requires-current-context-adjudication",
-      "reason": "No identical whole-file evidence; old label cannot authorize current occurrence.",
+      "category": "test-input-or-assertion",
+      "reason": "Occurrence belongs to request fixture/expected DTO/mock response or test channel config; classification is syntax/context, not proof all endpoints isolated.",
       "risk": "Unconfirmed literal/reference; do not infer safety from test/document path.",
       "disposition": "Review this source location with resource owner; classify live/default/reference/isolated fixture; replace live/default entry with injection and validate caller before closure.",
-      "evidence": "current independent full-cli.json"
+      "evidence": "current independent full-cli.json",
+      "contextSha256": "390815e6cf17251a435e339a23e96a202bdb583b3abd12746127b61693567e2b",
+      "adjudication": "current-source-context-reviewed"
     },
     {
       "path": "apps/db-ops-api/src/notification-records-http.test.ts",
@@ -3710,11 +3772,13 @@
       "sourceSha256": "c490a9242bfdb1803cee73fd133f10220798a863d30571201445e5bd71624666",
       "owner": "15-BackendDev-01",
       "oldLinks": [],
-      "category": "requires-current-context-adjudication",
-      "reason": "No identical whole-file evidence; old label cannot authorize current occurrence.",
-      "risk": "Unconfirmed literal/reference; do not infer safety from test/document path.",
-      "disposition": "Review this source location with resource owner; classify live/default/reference/isolated fixture; replace live/default entry with injection and validate caller before closure.",
-      "evidence": "current independent full-cli.json"
+      "category": "test-database-fallback",
+      "reason": "Current line selects explicit environment value with literal fallback; real target isolation cannot be inferred.",
+      "risk": "Environment fallback can reuse shared credential; explicit target/consumer confirmation still required.",
+      "disposition": "Remove fallback from real-entry use after caller compatibility check; test only against explicit task-owned target.",
+      "evidence": "current independent full-cli.json",
+      "contextSha256": "a9d678443f1bf8365c820ba4d8edd67fb065bab1bdbebe160beb420e0ef4cffc",
+      "adjudication": "current-source-context-reviewed"
     },
     {
       "path": "apps/db-ops-api/src/notification-service.test.ts",
@@ -3731,11 +3795,13 @@
           "sameFileBytes": false
         }
       ],
-      "category": "requires-current-context-adjudication",
-      "reason": "No identical whole-file evidence; old label cannot authorize current occurrence.",
+      "category": "test-input-or-assertion",
+      "reason": "Occurrence belongs to request fixture/expected DTO/mock response or test channel config; classification is syntax/context, not proof all endpoints isolated.",
       "risk": "Unconfirmed literal/reference; do not infer safety from test/document path.",
       "disposition": "Review this source location with resource owner; classify live/default/reference/isolated fixture; replace live/default entry with injection and validate caller before closure.",
-      "evidence": "current independent full-cli.json"
+      "evidence": "current independent full-cli.json",
+      "contextSha256": "6154ffac66d0f7db6388c34541a1300f724abeb7e096eac363d43e2cf17e560b",
+      "adjudication": "current-source-context-reviewed"
     },
     {
       "path": "apps/db-ops-api/src/operations/actions/execution.mysql.test.ts",
@@ -3773,11 +3839,13 @@
           "sameFileBytes": false
         }
       ],
-      "category": "requires-current-context-adjudication",
-      "reason": "No identical whole-file evidence; old label cannot authorize current occurrence.",
-      "risk": "Unconfirmed literal/reference; do not infer safety from test/document path.",
-      "disposition": "Review this source location with resource owner; classify live/default/reference/isolated fixture; replace live/default entry with injection and validate caller before closure.",
-      "evidence": "current independent full-cli.json"
+      "category": "test-database-fallback",
+      "reason": "Current line selects explicit environment value with literal fallback; real target isolation cannot be inferred.",
+      "risk": "Environment fallback can reuse shared credential; explicit target/consumer confirmation still required.",
+      "disposition": "Remove fallback from real-entry use after caller compatibility check; test only against explicit task-owned target.",
+      "evidence": "current independent full-cli.json",
+      "contextSha256": "2e54e8995ee1397a2d9746aa6f6ccd9e88ae3d5c61cb2d37d7467f8a76f68e7d",
+      "adjudication": "current-source-context-reviewed"
     },
     {
       "path": "apps/db-ops-api/src/operations/actions/runtime-ports.test.ts",
@@ -4004,11 +4072,13 @@
           "sameFileBytes": false
         }
       ],
-      "category": "requires-current-context-adjudication",
-      "reason": "No identical whole-file evidence; old label cannot authorize current occurrence.",
+      "category": "test-input-or-assertion",
+      "reason": "Occurrence belongs to request fixture/expected DTO/mock response or test channel config; classification is syntax/context, not proof all endpoints isolated.",
       "risk": "Unconfirmed literal/reference; do not infer safety from test/document path.",
       "disposition": "Review this source location with resource owner; classify live/default/reference/isolated fixture; replace live/default entry with injection and validate caller before closure.",
-      "evidence": "current independent full-cli.json"
+      "evidence": "current independent full-cli.json",
+      "contextSha256": "b32e956122683e048d4f41000ff9bda520dc32addcc8c093bb871a59ffdb4a69",
+      "adjudication": "current-source-context-reviewed"
     },
     {
       "path": "apps/db-ops-api/src/platform/deployment-binding.test.ts",
@@ -4344,11 +4414,13 @@
       "sourceSha256": "3e13a68e04c816d6f673d26b35f39d37c3cc6273cb460bf25012c4f7783938e5",
       "owner": "15-BackendDev-01",
       "oldLinks": [],
-      "category": "requires-current-context-adjudication",
-      "reason": "No identical whole-file evidence; old label cannot authorize current occurrence.",
-      "risk": "Unconfirmed literal/reference; do not infer safety from test/document path.",
-      "disposition": "Review this source location with resource owner; classify live/default/reference/isolated fixture; replace live/default entry with injection and validate caller before closure.",
-      "evidence": "current independent full-cli.json"
+      "category": "test-database-fallback",
+      "reason": "Current line selects explicit environment value with literal fallback; real target isolation cannot be inferred.",
+      "risk": "Environment fallback can reuse shared credential; explicit target/consumer confirmation still required.",
+      "disposition": "Remove fallback from real-entry use after caller compatibility check; test only against explicit task-owned target.",
+      "evidence": "current independent full-cli.json",
+      "contextSha256": "2d17aa0e21146227d30fec081c447c50dbf524ae7bcfc1f39dca95dfe3605ed8",
+      "adjudication": "current-source-context-reviewed"
     },
     {
       "path": "apps/db-ops-api/src/schema-database-service.mysql.test.ts",
@@ -4386,11 +4458,13 @@
           "sameFileBytes": false
         }
       ],
-      "category": "requires-current-context-adjudication",
-      "reason": "No identical whole-file evidence; old label cannot authorize current occurrence.",
+      "category": "runtime-reference",
+      "reason": "Current line reads configured/env/member value or decrypted value; no credential literal at the reported occurrence.",
       "risk": "Unconfirmed literal/reference; do not infer safety from test/document path.",
       "disposition": "Review this source location with resource owner; classify live/default/reference/isolated fixture; replace live/default entry with injection and validate caller before closure.",
-      "evidence": "current independent full-cli.json"
+      "evidence": "current independent full-cli.json",
+      "contextSha256": "8201870f961107c410cb560fd33cdcf9ea4aa06c4090e0488f79d8c8a089233f",
+      "adjudication": "current-source-context-reviewed"
     },
     {
       "path": "apps/db-ops-api/src/security/agent-tool-approval-submit.mysql.test.ts",
@@ -4579,11 +4653,13 @@
       "sourceSha256": "4d294fcbf2573bf14d55ef63d2b0be72f6b153509c61ca97990d20cfbb836983",
       "owner": "15-BackendDev-01",
       "oldLinks": [],
-      "category": "requires-current-context-adjudication",
-      "reason": "No identical whole-file evidence; old label cannot authorize current occurrence.",
+      "category": "test-input-or-assertion",
+      "reason": "Occurrence belongs to request fixture/expected DTO/mock response or test channel config; classification is syntax/context, not proof all endpoints isolated.",
       "risk": "Unconfirmed literal/reference; do not infer safety from test/document path.",
       "disposition": "Review this source location with resource owner; classify live/default/reference/isolated fixture; replace live/default entry with injection and validate caller before closure.",
-      "evidence": "current independent full-cli.json"
+      "evidence": "current independent full-cli.json",
+      "contextSha256": "3079923c1031fa3d87324c4a048ef8a089a44fa234156f8d5c823f6118202ebf",
+      "adjudication": "current-source-context-reviewed"
     },
     {
       "path": "apps/db-ops-api/src/security/public-dto.test.ts",
@@ -4600,11 +4676,13 @@
           "sameFileBytes": false
         }
       ],
-      "category": "requires-current-context-adjudication",
-      "reason": "No identical whole-file evidence; old label cannot authorize current occurrence.",
+      "category": "test-input-or-assertion",
+      "reason": "Occurrence belongs to request fixture/expected DTO/mock response or test channel config; classification is syntax/context, not proof all endpoints isolated.",
       "risk": "Unconfirmed literal/reference; do not infer safety from test/document path.",
       "disposition": "Review this source location with resource owner; classify live/default/reference/isolated fixture; replace live/default entry with injection and validate caller before closure.",
-      "evidence": "current independent full-cli.json"
+      "evidence": "current independent full-cli.json",
+      "contextSha256": "9e9c5bf17b203a8efaceaa817a859a4682598bfc8f538f71dadbd14bff702729",
+      "adjudication": "current-source-context-reviewed"
     },
     {
       "path": "apps/db-ops-api/src/security/public-dto.test.ts",
@@ -4615,11 +4693,13 @@
       "sourceSha256": "a2715f95dc13baa92a932a787b32e9a8c419f047560b2c7fa7951c7a625da366",
       "owner": "15-BackendDev-01",
       "oldLinks": [],
-      "category": "requires-current-context-adjudication",
-      "reason": "No identical whole-file evidence; old label cannot authorize current occurrence.",
+      "category": "test-input-or-assertion",
+      "reason": "Occurrence belongs to request fixture/expected DTO/mock response or test channel config; classification is syntax/context, not proof all endpoints isolated.",
       "risk": "Unconfirmed literal/reference; do not infer safety from test/document path.",
       "disposition": "Review this source location with resource owner; classify live/default/reference/isolated fixture; replace live/default entry with injection and validate caller before closure.",
-      "evidence": "current independent full-cli.json"
+      "evidence": "current independent full-cli.json",
+      "contextSha256": "ebf55f5fe1a545d98e02dffab86a6cd32d7855c71fbb3242c2e5ce2bbf78853c",
+      "adjudication": "current-source-context-reviewed"
     },
     {
       "path": "apps/db-ops-api/src/security/ssh-trust.integration.test.ts",
@@ -4641,11 +4721,13 @@
           "sameFileBytes": false
         }
       ],
-      "category": "requires-current-context-adjudication",
-      "reason": "No identical whole-file evidence; old label cannot authorize current occurrence.",
+      "category": "test-input-or-assertion",
+      "reason": "Occurrence belongs to request fixture/expected DTO/mock response or test channel config; classification is syntax/context, not proof all endpoints isolated.",
       "risk": "Unconfirmed literal/reference; do not infer safety from test/document path.",
       "disposition": "Review this source location with resource owner; classify live/default/reference/isolated fixture; replace live/default entry with injection and validate caller before closure.",
-      "evidence": "current independent full-cli.json"
+      "evidence": "current independent full-cli.json",
+      "contextSha256": "21009aeea9ff298d3694f84d6be3845e5be2f9d2fe4c90038d3111059cfe3fdc",
+      "adjudication": "current-source-context-reviewed"
     },
     {
       "path": "apps/db-ops-api/src/security/ssh-trust.integration.test.ts",
@@ -4667,11 +4749,13 @@
           "sameFileBytes": false
         }
       ],
-      "category": "requires-current-context-adjudication",
-      "reason": "No identical whole-file evidence; old label cannot authorize current occurrence.",
+      "category": "test-input-or-assertion",
+      "reason": "Occurrence belongs to request fixture/expected DTO/mock response or test channel config; classification is syntax/context, not proof all endpoints isolated.",
       "risk": "Unconfirmed literal/reference; do not infer safety from test/document path.",
       "disposition": "Review this source location with resource owner; classify live/default/reference/isolated fixture; replace live/default entry with injection and validate caller before closure.",
-      "evidence": "current independent full-cli.json"
+      "evidence": "current independent full-cli.json",
+      "contextSha256": "de879b996a307635da75d0c8b61014e1fc49faf3503e17378dce623a80d49c1f",
+      "adjudication": "current-source-context-reviewed"
     },
     {
       "path": "apps/db-ops-api/src/server-credential-migration.mysql.test.ts",
@@ -4798,11 +4882,13 @@
           "sameFileBytes": false
         }
       ],
-      "category": "requires-current-context-adjudication",
-      "reason": "No identical whole-file evidence; old label cannot authorize current occurrence.",
+      "category": "test-input-or-assertion",
+      "reason": "Occurrence belongs to request fixture/expected DTO/mock response or test channel config; classification is syntax/context, not proof all endpoints isolated.",
       "risk": "Unconfirmed literal/reference; do not infer safety from test/document path.",
       "disposition": "Review this source location with resource owner; classify live/default/reference/isolated fixture; replace live/default entry with injection and validate caller before closure.",
-      "evidence": "current independent full-cli.json"
+      "evidence": "current independent full-cli.json",
+      "contextSha256": "e7b8ada6140693bde78c0d4bacdad7eb244d27ef00fe969bdf56cbdb9a4f7b17",
+      "adjudication": "current-source-context-reviewed"
     },
     {
       "path": "apps/db-ops-api/src/smtp-oauth2.test.ts",
@@ -4824,11 +4910,13 @@
           "sameFileBytes": false
         }
       ],
-      "category": "requires-current-context-adjudication",
-      "reason": "No identical whole-file evidence; old label cannot authorize current occurrence.",
+      "category": "test-input-or-assertion",
+      "reason": "Occurrence belongs to request fixture/expected DTO/mock response or test channel config; classification is syntax/context, not proof all endpoints isolated.",
       "risk": "Unconfirmed literal/reference; do not infer safety from test/document path.",
       "disposition": "Review this source location with resource owner; classify live/default/reference/isolated fixture; replace live/default entry with injection and validate caller before closure.",
-      "evidence": "current independent full-cli.json"
+      "evidence": "current independent full-cli.json",
+      "contextSha256": "b5f07f34bcfac182323a1c77cc956ca3ee81501f69fd2c842508834ffc028ebc",
+      "adjudication": "current-source-context-reviewed"
     },
     {
       "path": "apps/db-ops-api/src/smtp-oauth2.test.ts",
@@ -4850,11 +4938,13 @@
           "sameFileBytes": false
         }
       ],
-      "category": "requires-current-context-adjudication",
-      "reason": "No identical whole-file evidence; old label cannot authorize current occurrence.",
+      "category": "test-input-or-assertion",
+      "reason": "Occurrence belongs to request fixture/expected DTO/mock response or test channel config; classification is syntax/context, not proof all endpoints isolated.",
       "risk": "Unconfirmed literal/reference; do not infer safety from test/document path.",
       "disposition": "Review this source location with resource owner; classify live/default/reference/isolated fixture; replace live/default entry with injection and validate caller before closure.",
-      "evidence": "current independent full-cli.json"
+      "evidence": "current independent full-cli.json",
+      "contextSha256": "68f5b40048ab4e04fc2b23631a472123e68913a252d9225a44c41997ebbcc65f",
+      "adjudication": "current-source-context-reviewed"
     },
     {
       "path": "apps/db-ops-api/src/smtp-oauth2.test.ts",
@@ -4876,11 +4966,13 @@
           "sameFileBytes": false
         }
       ],
-      "category": "requires-current-context-adjudication",
-      "reason": "No identical whole-file evidence; old label cannot authorize current occurrence.",
+      "category": "test-input-or-assertion",
+      "reason": "Occurrence belongs to request fixture/expected DTO/mock response or test channel config; classification is syntax/context, not proof all endpoints isolated.",
       "risk": "Unconfirmed literal/reference; do not infer safety from test/document path.",
       "disposition": "Review this source location with resource owner; classify live/default/reference/isolated fixture; replace live/default entry with injection and validate caller before closure.",
-      "evidence": "current independent full-cli.json"
+      "evidence": "current independent full-cli.json",
+      "contextSha256": "1a0f40a5d4d29e689187b4f228c3313e6b852cbf3d0fce31284f387788ef50fb",
+      "adjudication": "current-source-context-reviewed"
     },
     {
       "path": "apps/db-ops-api/src/smtp-oauth2.ts",
@@ -4891,11 +4983,13 @@
       "sourceSha256": "4da14f6b2dc41b8b31a99bab6c8a957173265483907b035b2b5959938960639e",
       "owner": "15-BackendDev-01",
       "oldLinks": [],
-      "category": "requires-current-context-adjudication",
-      "reason": "No identical whole-file evidence; old label cannot authorize current occurrence.",
+      "category": "runtime-reference",
+      "reason": "Current line reads configured/env/member value or decrypted value; no credential literal at the reported occurrence.",
       "risk": "Unconfirmed literal/reference; do not infer safety from test/document path.",
       "disposition": "Review this source location with resource owner; classify live/default/reference/isolated fixture; replace live/default entry with injection and validate caller before closure.",
-      "evidence": "current independent full-cli.json"
+      "evidence": "current independent full-cli.json",
+      "contextSha256": "ca17cf8aba4f3b4af79115a3e5698eaf1f8d65e628562adba84e6e583ba9e5cf",
+      "adjudication": "current-source-context-reviewed"
     },
     {
       "path": "apps/db-ops-api/src/sql-audit-service.mysql.test.ts",
@@ -4906,11 +5000,13 @@
       "sourceSha256": "db417f4d8f8b23b3e0aa95e9fec110b178798051d0a124286f0a7d83568fe3eb",
       "owner": "15-BackendDev-01",
       "oldLinks": [],
-      "category": "requires-current-context-adjudication",
-      "reason": "No identical whole-file evidence; old label cannot authorize current occurrence.",
-      "risk": "Unconfirmed literal/reference; do not infer safety from test/document path.",
-      "disposition": "Review this source location with resource owner; classify live/default/reference/isolated fixture; replace live/default entry with injection and validate caller before closure.",
-      "evidence": "current independent full-cli.json"
+      "category": "test-database-fallback",
+      "reason": "Current line selects explicit environment value with literal fallback; real target isolation cannot be inferred.",
+      "risk": "Environment fallback can reuse shared credential; explicit target/consumer confirmation still required.",
+      "disposition": "Remove fallback from real-entry use after caller compatibility check; test only against explicit task-owned target.",
+      "evidence": "current independent full-cli.json",
+      "contextSha256": "fa9bc3910f5bb5f37595846739188fb6c435911ba5d112659002862904d0a74a",
+      "adjudication": "current-source-context-reviewed"
     },
     {
       "path": "apps/db-ops-api/src/sql-executor.dameng-ownership.integration.test.ts",
@@ -5225,11 +5321,13 @@
       "sourceSha256": "98c53c67a3fe96f3d499788afd41be914c57c10775552b3f2c786453704a026d",
       "owner": "15-BackendDev-01",
       "oldLinks": [],
-      "category": "requires-current-context-adjudication",
-      "reason": "No identical whole-file evidence; old label cannot authorize current occurrence.",
+      "category": "test-input-or-assertion",
+      "reason": "Occurrence belongs to request fixture/expected DTO/mock response or test channel config; classification is syntax/context, not proof all endpoints isolated.",
       "risk": "Unconfirmed literal/reference; do not infer safety from test/document path.",
       "disposition": "Review this source location with resource owner; classify live/default/reference/isolated fixture; replace live/default entry with injection and validate caller before closure.",
-      "evidence": "current independent full-cli.json"
+      "evidence": "current independent full-cli.json",
+      "contextSha256": "76bcec792ee0b3c2da9d33115ba49f57aae71ad20ce832c046fdeedb993518f1",
+      "adjudication": "current-source-context-reviewed"
     },
     {
       "path": "apps/db-ops-api/src/workflows/outbox-service.mysql.test.ts",
@@ -5261,11 +5359,13 @@
       "sourceSha256": "e2959fc31fc63b013797bfe774d8b7aa0dec81601b1f2b055a948ca30294333a",
       "owner": "15-BackendDev-01",
       "oldLinks": [],
-      "category": "requires-current-context-adjudication",
-      "reason": "No identical whole-file evidence; old label cannot authorize current occurrence.",
+      "category": "runtime-reference",
+      "reason": "Current line reads configured/env/member value or decrypted value; no credential literal at the reported occurrence.",
       "risk": "Unconfirmed literal/reference; do not infer safety from test/document path.",
       "disposition": "Review this source location with resource owner; classify live/default/reference/isolated fixture; replace live/default entry with injection and validate caller before closure.",
-      "evidence": "current independent full-cli.json"
+      "evidence": "current independent full-cli.json",
+      "contextSha256": "219bb4cecb5918bd7b4e11c80dbee3440103dfd809c615ded6b2c7f732df62ea",
+      "adjudication": "current-source-context-reviewed"
     },
     {
       "path": "apps/db-ops-api/tests/alert-rca-http.acceptance.ts",
@@ -5276,11 +5376,13 @@
       "sourceSha256": "e2959fc31fc63b013797bfe774d8b7aa0dec81601b1f2b055a948ca30294333a",
       "owner": "15-BackendDev-01",
       "oldLinks": [],
-      "category": "requires-current-context-adjudication",
-      "reason": "No identical whole-file evidence; old label cannot authorize current occurrence.",
+      "category": "test-input-or-assertion",
+      "reason": "Occurrence belongs to request fixture/expected DTO/mock response or test channel config; classification is syntax/context, not proof all endpoints isolated.",
       "risk": "Unconfirmed literal/reference; do not infer safety from test/document path.",
       "disposition": "Review this source location with resource owner; classify live/default/reference/isolated fixture; replace live/default entry with injection and validate caller before closure.",
-      "evidence": "current independent full-cli.json"
+      "evidence": "current independent full-cli.json",
+      "contextSha256": "e931bafdbb4ce370457a824469d14c08042ccab5d79595ebd765e588a26f2f24",
+      "adjudication": "current-source-context-reviewed"
     },
     {
       "path": "apps/db-ops-api/tests/alert-rca-http.acceptance.ts",
@@ -5291,11 +5393,13 @@
       "sourceSha256": "e2959fc31fc63b013797bfe774d8b7aa0dec81601b1f2b055a948ca30294333a",
       "owner": "15-BackendDev-01",
       "oldLinks": [],
-      "category": "requires-current-context-adjudication",
-      "reason": "No identical whole-file evidence; old label cannot authorize current occurrence.",
+      "category": "test-input-or-assertion",
+      "reason": "Occurrence belongs to request fixture/expected DTO/mock response or test channel config; classification is syntax/context, not proof all endpoints isolated.",
       "risk": "Unconfirmed literal/reference; do not infer safety from test/document path.",
       "disposition": "Review this source location with resource owner; classify live/default/reference/isolated fixture; replace live/default entry with injection and validate caller before closure.",
-      "evidence": "current independent full-cli.json"
+      "evidence": "current independent full-cli.json",
+      "contextSha256": "c12d6c7f2c17ad6bffff3ebf14056b272b79659c3aba3c0d8853c185380a15a4",
+      "adjudication": "current-source-context-reviewed"
     },
     {
       "path": "apps/db-ops-api/tests/alert-retention-http.acceptance.ts",
@@ -5306,11 +5410,13 @@
       "sourceSha256": "2960b324503794ecbb61a5068ff629ffa954f2e544d25dc226255ccfdde447cc",
       "owner": "15-BackendDev-01",
       "oldLinks": [],
-      "category": "requires-current-context-adjudication",
-      "reason": "No identical whole-file evidence; old label cannot authorize current occurrence.",
+      "category": "runtime-reference",
+      "reason": "Current line reads configured/env/member value or decrypted value; no credential literal at the reported occurrence.",
       "risk": "Unconfirmed literal/reference; do not infer safety from test/document path.",
       "disposition": "Review this source location with resource owner; classify live/default/reference/isolated fixture; replace live/default entry with injection and validate caller before closure.",
-      "evidence": "current independent full-cli.json"
+      "evidence": "current independent full-cli.json",
+      "contextSha256": "219bb4cecb5918bd7b4e11c80dbee3440103dfd809c615ded6b2c7f732df62ea",
+      "adjudication": "current-source-context-reviewed"
     },
     {
       "path": "apps/db-ops-api/tests/alert-retention-http.acceptance.ts",
@@ -5321,11 +5427,13 @@
       "sourceSha256": "2960b324503794ecbb61a5068ff629ffa954f2e544d25dc226255ccfdde447cc",
       "owner": "15-BackendDev-01",
       "oldLinks": [],
-      "category": "requires-current-context-adjudication",
-      "reason": "No identical whole-file evidence; old label cannot authorize current occurrence.",
+      "category": "test-input-or-assertion",
+      "reason": "Occurrence belongs to request fixture/expected DTO/mock response or test channel config; classification is syntax/context, not proof all endpoints isolated.",
       "risk": "Unconfirmed literal/reference; do not infer safety from test/document path.",
       "disposition": "Review this source location with resource owner; classify live/default/reference/isolated fixture; replace live/default entry with injection and validate caller before closure.",
-      "evidence": "current independent full-cli.json"
+      "evidence": "current independent full-cli.json",
+      "contextSha256": "f3e5095d03925b2459cab2bab75d58b86f469400d87796b8d7fb00025b4c5ffd",
+      "adjudication": "current-source-context-reviewed"
     },
     {
       "path": "apps/db-ops-api/tests/alert-retention-http.acceptance.ts",
@@ -5336,11 +5444,13 @@
       "sourceSha256": "2960b324503794ecbb61a5068ff629ffa954f2e544d25dc226255ccfdde447cc",
       "owner": "15-BackendDev-01",
       "oldLinks": [],
-      "category": "requires-current-context-adjudication",
-      "reason": "No identical whole-file evidence; old label cannot authorize current occurrence.",
+      "category": "test-input-or-assertion",
+      "reason": "Occurrence belongs to request fixture/expected DTO/mock response or test channel config; classification is syntax/context, not proof all endpoints isolated.",
       "risk": "Unconfirmed literal/reference; do not infer safety from test/document path.",
       "disposition": "Review this source location with resource owner; classify live/default/reference/isolated fixture; replace live/default entry with injection and validate caller before closure.",
-      "evidence": "current independent full-cli.json"
+      "evidence": "current independent full-cli.json",
+      "contextSha256": "e9f71a77b77a10848cd259ff5bc21d3549466303ef143122035cd324961d58e7",
+      "adjudication": "current-source-context-reviewed"
     },
     {
       "path": "apps/db-ops-api/tests/alert-rule-editor-http.acceptance.ts",
@@ -5351,11 +5461,13 @@
       "sourceSha256": "d0c76ed149eb6fff34059a0281b7fd0fca66b75089c296a294ad93e06c02bd37",
       "owner": "15-BackendDev-01",
       "oldLinks": [],
-      "category": "requires-current-context-adjudication",
-      "reason": "No identical whole-file evidence; old label cannot authorize current occurrence.",
+      "category": "runtime-reference",
+      "reason": "Current line reads configured/env/member value or decrypted value; no credential literal at the reported occurrence.",
       "risk": "Unconfirmed literal/reference; do not infer safety from test/document path.",
       "disposition": "Review this source location with resource owner; classify live/default/reference/isolated fixture; replace live/default entry with injection and validate caller before closure.",
-      "evidence": "current independent full-cli.json"
+      "evidence": "current independent full-cli.json",
+      "contextSha256": "219bb4cecb5918bd7b4e11c80dbee3440103dfd809c615ded6b2c7f732df62ea",
+      "adjudication": "current-source-context-reviewed"
     },
     {
       "path": "apps/db-ops-api/tests/alert-rule-editor-http.acceptance.ts",
@@ -5366,11 +5478,13 @@
       "sourceSha256": "d0c76ed149eb6fff34059a0281b7fd0fca66b75089c296a294ad93e06c02bd37",
       "owner": "15-BackendDev-01",
       "oldLinks": [],
-      "category": "requires-current-context-adjudication",
-      "reason": "No identical whole-file evidence; old label cannot authorize current occurrence.",
+      "category": "test-input-or-assertion",
+      "reason": "Occurrence belongs to request fixture/expected DTO/mock response or test channel config; classification is syntax/context, not proof all endpoints isolated.",
       "risk": "Unconfirmed literal/reference; do not infer safety from test/document path.",
       "disposition": "Review this source location with resource owner; classify live/default/reference/isolated fixture; replace live/default entry with injection and validate caller before closure.",
-      "evidence": "current independent full-cli.json"
+      "evidence": "current independent full-cli.json",
+      "contextSha256": "c02239cbad4dec0b7199cca8a4c6e3e52ad13befcade8fdc6d78b149e4a8be86",
+      "adjudication": "current-source-context-reviewed"
     },
     {
       "path": "apps/db-ops-api/tests/alert-rule-editor-http.acceptance.ts",
@@ -5381,11 +5495,13 @@
       "sourceSha256": "d0c76ed149eb6fff34059a0281b7fd0fca66b75089c296a294ad93e06c02bd37",
       "owner": "15-BackendDev-01",
       "oldLinks": [],
-      "category": "requires-current-context-adjudication",
-      "reason": "No identical whole-file evidence; old label cannot authorize current occurrence.",
+      "category": "test-input-or-assertion",
+      "reason": "Occurrence belongs to request fixture/expected DTO/mock response or test channel config; classification is syntax/context, not proof all endpoints isolated.",
       "risk": "Unconfirmed literal/reference; do not infer safety from test/document path.",
       "disposition": "Review this source location with resource owner; classify live/default/reference/isolated fixture; replace live/default entry with injection and validate caller before closure.",
-      "evidence": "current independent full-cli.json"
+      "evidence": "current independent full-cli.json",
+      "contextSha256": "5984aa5777a80c95b055a041df860237006b10e894ba01bc46ec5b7d14d956b1",
+      "adjudication": "current-source-context-reviewed"
     },
     {
       "path": "apps/db-ops-api/tests/branding-config-http.acceptance.ts",
@@ -5396,11 +5512,13 @@
       "sourceSha256": "505a4c04fa28431173de21f2e300505c171ed25df66213e010d82de3a8f5daa8",
       "owner": "15-BackendDev-01",
       "oldLinks": [],
-      "category": "requires-current-context-adjudication",
-      "reason": "No identical whole-file evidence; old label cannot authorize current occurrence.",
+      "category": "runtime-reference",
+      "reason": "Current line reads configured/env/member value or decrypted value; no credential literal at the reported occurrence.",
       "risk": "Unconfirmed literal/reference; do not infer safety from test/document path.",
       "disposition": "Review this source location with resource owner; classify live/default/reference/isolated fixture; replace live/default entry with injection and validate caller before closure.",
-      "evidence": "current independent full-cli.json"
+      "evidence": "current independent full-cli.json",
+      "contextSha256": "eb93397ea6dc1e68db29ec12c358f0a0d27dfe940da85581d7bbf5cc1d8c4d32",
+      "adjudication": "current-source-context-reviewed"
     },
     {
       "path": "apps/db-ops-api/tests/config-read-http.acceptance.ts",
@@ -5747,11 +5865,13 @@
       "sourceSha256": "7d9ed0b6fb95396a34d12f4b1382007039b004d74f8fe557c9982c54a2e91de3",
       "owner": "15-BackendDev-01",
       "oldLinks": [],
-      "category": "requires-current-context-adjudication",
-      "reason": "No identical whole-file evidence; old label cannot authorize current occurrence.",
+      "category": "runtime-reference",
+      "reason": "Current line reads configured/env/member value or decrypted value; no credential literal at the reported occurrence.",
       "risk": "Unconfirmed literal/reference; do not infer safety from test/document path.",
       "disposition": "Review this source location with resource owner; classify live/default/reference/isolated fixture; replace live/default entry with injection and validate caller before closure.",
-      "evidence": "current independent full-cli.json"
+      "evidence": "current independent full-cli.json",
+      "contextSha256": "f74eaf806b4c93af77e134f57aede13843d52f62614cdbc7d8b7f98fc9f720de",
+      "adjudication": "current-source-context-reviewed"
     },
     {
       "path": "apps/db-ops-api/tests/report-scope-http.acceptance.ts",
@@ -5762,11 +5882,13 @@
       "sourceSha256": "0aad9bf4b4c628f4cf1bf05bc1b29b803a98779f5d2f4a87e952ece403a93758",
       "owner": "15-BackendDev-01",
       "oldLinks": [],
-      "category": "requires-current-context-adjudication",
-      "reason": "No identical whole-file evidence; old label cannot authorize current occurrence.",
+      "category": "runtime-reference",
+      "reason": "Current line reads configured/env/member value or decrypted value; no credential literal at the reported occurrence.",
       "risk": "Unconfirmed literal/reference; do not infer safety from test/document path.",
       "disposition": "Review this source location with resource owner; classify live/default/reference/isolated fixture; replace live/default entry with injection and validate caller before closure.",
-      "evidence": "current independent full-cli.json"
+      "evidence": "current independent full-cli.json",
+      "contextSha256": "e72f1b1495b823bbde4a1cd432d59eb3085efefe6bc489279d27f1009125352b",
+      "adjudication": "current-source-context-reviewed"
     },
     {
       "path": "apps/db-ops-api/tests/report-scope-http.acceptance.ts",
@@ -5777,11 +5899,13 @@
       "sourceSha256": "0aad9bf4b4c628f4cf1bf05bc1b29b803a98779f5d2f4a87e952ece403a93758",
       "owner": "15-BackendDev-01",
       "oldLinks": [],
-      "category": "requires-current-context-adjudication",
-      "reason": "No identical whole-file evidence; old label cannot authorize current occurrence.",
+      "category": "test-input-or-assertion",
+      "reason": "Occurrence belongs to request fixture/expected DTO/mock response or test channel config; classification is syntax/context, not proof all endpoints isolated.",
       "risk": "Unconfirmed literal/reference; do not infer safety from test/document path.",
       "disposition": "Review this source location with resource owner; classify live/default/reference/isolated fixture; replace live/default entry with injection and validate caller before closure.",
-      "evidence": "current independent full-cli.json"
+      "evidence": "current independent full-cli.json",
+      "contextSha256": "05c5822814a0951e84be707b0e05c4916d59ecbe26ceb153b61f23c42270961b",
+      "adjudication": "current-source-context-reviewed"
     },
     {
       "path": "apps/db-ops-api/tests/report-scope-http.acceptance.ts",
@@ -5792,11 +5916,13 @@
       "sourceSha256": "0aad9bf4b4c628f4cf1bf05bc1b29b803a98779f5d2f4a87e952ece403a93758",
       "owner": "15-BackendDev-01",
       "oldLinks": [],
-      "category": "requires-current-context-adjudication",
-      "reason": "No identical whole-file evidence; old label cannot authorize current occurrence.",
+      "category": "test-input-or-assertion",
+      "reason": "Occurrence belongs to request fixture/expected DTO/mock response or test channel config; classification is syntax/context, not proof all endpoints isolated.",
       "risk": "Unconfirmed literal/reference; do not infer safety from test/document path.",
       "disposition": "Review this source location with resource owner; classify live/default/reference/isolated fixture; replace live/default entry with injection and validate caller before closure.",
-      "evidence": "current independent full-cli.json"
+      "evidence": "current independent full-cli.json",
+      "contextSha256": "76dafa3717bc98315479f3efaa9079e0db8578747797aa045fff99b885722d5d",
+      "adjudication": "current-source-context-reviewed"
     },
     {
       "path": "apps/db-ops-api/tests/rotate-lost-encryption-key.max316.mysql.test.ts",
@@ -5855,11 +5981,13 @@
           "sameFileBytes": false
         }
       ],
-      "category": "requires-current-context-adjudication",
-      "reason": "No identical whole-file evidence; old label cannot authorize current occurrence.",
+      "category": "runtime-reference",
+      "reason": "Current line reads configured/env/member value or decrypted value; no credential literal at the reported occurrence.",
       "risk": "Unconfirmed literal/reference; do not infer safety from test/document path.",
       "disposition": "Review this source location with resource owner; classify live/default/reference/isolated fixture; replace live/default entry with injection and validate caller before closure.",
-      "evidence": "current independent full-cli.json"
+      "evidence": "current independent full-cli.json",
+      "contextSha256": "d5183373f18ee359e083b7f75cc5a640aac51f8c10a8cc9c5c660e4432c45f64",
+      "adjudication": "current-source-context-reviewed"
     },
     {
       "path": "apps/db-ops-api/tests/strict-body-http.acceptance.ts",
@@ -5870,11 +5998,13 @@
       "sourceSha256": "20a89469f37a43354b1e2840fa18eaa7182d5c9a6eade4fc1d9ddfbf484ebe80",
       "owner": "15-BackendDev-01",
       "oldLinks": [],
-      "category": "requires-current-context-adjudication",
-      "reason": "No identical whole-file evidence; old label cannot authorize current occurrence.",
+      "category": "runtime-reference",
+      "reason": "Current line reads configured/env/member value or decrypted value; no credential literal at the reported occurrence.",
       "risk": "Unconfirmed literal/reference; do not infer safety from test/document path.",
       "disposition": "Review this source location with resource owner; classify live/default/reference/isolated fixture; replace live/default entry with injection and validate caller before closure.",
-      "evidence": "current independent full-cli.json"
+      "evidence": "current independent full-cli.json",
+      "contextSha256": "219bb4cecb5918bd7b4e11c80dbee3440103dfd809c615ded6b2c7f732df62ea",
+      "adjudication": "current-source-context-reviewed"
     },
     {
       "path": "apps/db-ops-api/tests/strict-body-http.acceptance.ts",
@@ -5885,11 +6015,13 @@
       "sourceSha256": "20a89469f37a43354b1e2840fa18eaa7182d5c9a6eade4fc1d9ddfbf484ebe80",
       "owner": "15-BackendDev-01",
       "oldLinks": [],
-      "category": "requires-current-context-adjudication",
-      "reason": "No identical whole-file evidence; old label cannot authorize current occurrence.",
+      "category": "test-input-or-assertion",
+      "reason": "Occurrence belongs to request fixture/expected DTO/mock response or test channel config; classification is syntax/context, not proof all endpoints isolated.",
       "risk": "Unconfirmed literal/reference; do not infer safety from test/document path.",
       "disposition": "Review this source location with resource owner; classify live/default/reference/isolated fixture; replace live/default entry with injection and validate caller before closure.",
-      "evidence": "current independent full-cli.json"
+      "evidence": "current independent full-cli.json",
+      "contextSha256": "92bca36d0c1e6576b77f94a481c4378098809321c5cf27158b08eec6d9666028",
+      "adjudication": "current-source-context-reviewed"
     },
     {
       "path": "apps/db-ops-api/tests/strict-body-http.acceptance.ts",
@@ -5900,11 +6032,13 @@
       "sourceSha256": "20a89469f37a43354b1e2840fa18eaa7182d5c9a6eade4fc1d9ddfbf484ebe80",
       "owner": "15-BackendDev-01",
       "oldLinks": [],
-      "category": "requires-current-context-adjudication",
-      "reason": "No identical whole-file evidence; old label cannot authorize current occurrence.",
+      "category": "test-input-or-assertion",
+      "reason": "Occurrence belongs to request fixture/expected DTO/mock response or test channel config; classification is syntax/context, not proof all endpoints isolated.",
       "risk": "Unconfirmed literal/reference; do not infer safety from test/document path.",
       "disposition": "Review this source location with resource owner; classify live/default/reference/isolated fixture; replace live/default entry with injection and validate caller before closure.",
-      "evidence": "current independent full-cli.json"
+      "evidence": "current independent full-cli.json",
+      "contextSha256": "729334a5ebfd5be6fd6be59d1e668afc89b9e0019f30a103bb4e062f9f15b747",
+      "adjudication": "current-source-context-reviewed"
     },
     {
       "path": "apps/db-ops-api/tests/strict-body-http.acceptance.ts",
@@ -5915,11 +6049,13 @@
       "sourceSha256": "20a89469f37a43354b1e2840fa18eaa7182d5c9a6eade4fc1d9ddfbf484ebe80",
       "owner": "15-BackendDev-01",
       "oldLinks": [],
-      "category": "requires-current-context-adjudication",
-      "reason": "No identical whole-file evidence; old label cannot authorize current occurrence.",
+      "category": "test-input-or-assertion",
+      "reason": "Occurrence belongs to request fixture/expected DTO/mock response or test channel config; classification is syntax/context, not proof all endpoints isolated.",
       "risk": "Unconfirmed literal/reference; do not infer safety from test/document path.",
       "disposition": "Review this source location with resource owner; classify live/default/reference/isolated fixture; replace live/default entry with injection and validate caller before closure.",
-      "evidence": "current independent full-cli.json"
+      "evidence": "current independent full-cli.json",
+      "contextSha256": "d019bddb97d8e43f39f96f6373f195f515e15f73ea11d8bf8f83350e28a27bdc",
+      "adjudication": "current-source-context-reviewed"
     },
     {
       "path": "apps/db-ops-api/tests/strict-body-http.acceptance.ts",
@@ -5930,11 +6066,13 @@
       "sourceSha256": "20a89469f37a43354b1e2840fa18eaa7182d5c9a6eade4fc1d9ddfbf484ebe80",
       "owner": "15-BackendDev-01",
       "oldLinks": [],
-      "category": "requires-current-context-adjudication",
-      "reason": "No identical whole-file evidence; old label cannot authorize current occurrence.",
+      "category": "test-input-or-assertion",
+      "reason": "Occurrence belongs to request fixture/expected DTO/mock response or test channel config; classification is syntax/context, not proof all endpoints isolated.",
       "risk": "Unconfirmed literal/reference; do not infer safety from test/document path.",
       "disposition": "Review this source location with resource owner; classify live/default/reference/isolated fixture; replace live/default entry with injection and validate caller before closure.",
-      "evidence": "current independent full-cli.json"
+      "evidence": "current independent full-cli.json",
+      "contextSha256": "1f4e907a308e6d80bd9808f1684adf5c694d37704c6e19865edf6e0b1850ba83",
+      "adjudication": "current-source-context-reviewed"
     },
     {
       "path": "apps/db-ops-api/tests/tool-recovery.worker.ts",
@@ -5966,11 +6104,13 @@
       "sourceSha256": "74dfb9b61253df06f949662652a2d47b5c96b636c2ddbf454ab1f4fd58027665",
       "owner": "15-BackendDev-01",
       "oldLinks": [],
-      "category": "requires-current-context-adjudication",
-      "reason": "No identical whole-file evidence; old label cannot authorize current occurrence.",
+      "category": "runtime-reference",
+      "reason": "Current line reads configured/env/member value or decrypted value; no credential literal at the reported occurrence.",
       "risk": "Unconfirmed literal/reference; do not infer safety from test/document path.",
       "disposition": "Review this source location with resource owner; classify live/default/reference/isolated fixture; replace live/default entry with injection and validate caller before closure.",
-      "evidence": "current independent full-cli.json"
+      "evidence": "current independent full-cli.json",
+      "contextSha256": "df797751964889576cd6139ff343ec8eb49b69fcead73a2f285005ce808ea2da",
+      "adjudication": "current-source-context-reviewed"
     },
     {
       "path": "apps/sandbox-controller/src/nonce-store.ts",
@@ -6149,11 +6289,13 @@
       "sourceSha256": "895a8df30f03b625f9bab74976d014296c82b6fa04d37ea915894ae1712b81d0",
       "owner": "15-FrontendDev-01 (proposal; Chief confirms)",
       "oldLinks": [],
-      "category": "requires-current-context-adjudication",
-      "reason": "No identical whole-file evidence; old label cannot authorize current occurrence.",
-      "risk": "Unconfirmed literal/reference; do not infer safety from test/document path.",
-      "disposition": "Review this source location with resource owner; classify live/default/reference/isolated fixture; replace live/default entry with injection and validate caller before closure.",
-      "evidence": "current independent full-cli.json"
+      "category": "test-database-fallback",
+      "reason": "Current line selects explicit environment value with literal fallback; real target isolation cannot be inferred.",
+      "risk": "Environment fallback can reuse shared credential; explicit target/consumer confirmation still required.",
+      "disposition": "Remove fallback from real-entry use after caller compatibility check; test only against explicit task-owned target.",
+      "evidence": "current independent full-cli.json",
+      "contextSha256": "cefce10a5b27739ae2326f6cf88d83714fcf597521e036af5f53651aede4f5dc",
+      "adjudication": "current-source-context-reviewed"
     },
     {
       "path": "frontend/e2e/MAX-178-models.spec.ts",
@@ -6248,11 +6390,13 @@
       "sourceSha256": "fcd6d3cf8df72884fc9d8bc489b746d0b6f15461a72e19a8d34d58a29408159c",
       "owner": "15-FrontendDev-01 (proposal; Chief confirms)",
       "oldLinks": [],
-      "category": "requires-current-context-adjudication",
-      "reason": "No identical whole-file evidence; old label cannot authorize current occurrence.",
+      "category": "runtime-reference",
+      "reason": "Current line reads configured/env/member value or decrypted value; no credential literal at the reported occurrence.",
       "risk": "Unconfirmed literal/reference; do not infer safety from test/document path.",
       "disposition": "Review this source location with resource owner; classify live/default/reference/isolated fixture; replace live/default entry with injection and validate caller before closure.",
-      "evidence": "current independent full-cli.json"
+      "evidence": "current independent full-cli.json",
+      "contextSha256": "3f789a738289f5cfdf5eb7c8479fb7502de989f4630cdfdbca2498306bf3476b",
+      "adjudication": "current-source-context-reviewed"
     },
     {
       "path": "frontend/e2e/instance-host-diagnostics.spec.ts",
@@ -6432,11 +6576,13 @@
       "sourceSha256": "61e1bc61acce141616aa9bae646329af76f4e89b70e05bc40aa47245846eeb8b",
       "owner": "15-FrontendDev-01 (proposal; Chief confirms)",
       "oldLinks": [],
-      "category": "requires-current-context-adjudication",
-      "reason": "No identical whole-file evidence; old label cannot authorize current occurrence.",
+      "category": "runtime-reference",
+      "reason": "Current line reads configured/env/member value or decrypted value; no credential literal at the reported occurrence.",
       "risk": "Unconfirmed literal/reference; do not infer safety from test/document path.",
       "disposition": "Review this source location with resource owner; classify live/default/reference/isolated fixture; replace live/default entry with injection and validate caller before closure.",
-      "evidence": "current independent full-cli.json"
+      "evidence": "current independent full-cli.json",
+      "contextSha256": "88144271521d254ab529283f867dbcc56553b8d5f8062efa39cbeca760b37019",
+      "adjudication": "current-source-context-reviewed"
     },
     {
       "path": "frontend/e2e/release-security.spec.ts",
@@ -6565,11 +6711,13 @@
       "sourceSha256": "44341926bad74849296dd93810c830f0b3ab5e75dbe859697f14494b20e1e080",
       "owner": "15-FrontendDev-01 (proposal; Chief confirms)",
       "oldLinks": [],
-      "category": "requires-current-context-adjudication",
-      "reason": "No identical whole-file evidence; old label cannot authorize current occurrence.",
+      "category": "runtime-reference",
+      "reason": "Current line reads configured/env/member value or decrypted value; no credential literal at the reported occurrence.",
       "risk": "Unconfirmed literal/reference; do not infer safety from test/document path.",
       "disposition": "Review this source location with resource owner; classify live/default/reference/isolated fixture; replace live/default entry with injection and validate caller before closure.",
-      "evidence": "current independent full-cli.json"
+      "evidence": "current independent full-cli.json",
+      "contextSha256": "7a1d5ebb40bd5a4ef1c7d97bf1ffb09c95c738505a16d5833a170ef2fa055a33",
+      "adjudication": "current-source-context-reviewed"
     },
     {
       "path": "frontend/e2e/source-sync.spec.ts",
@@ -6622,11 +6770,13 @@
       "sourceSha256": "490c8ad2e52803c8c93c263cd3ff341c7c1c6b59b613be37853861a806ac4b3c",
       "owner": "15-FrontendDev-01 (proposal; Chief confirms)",
       "oldLinks": [],
-      "category": "requires-current-context-adjudication",
-      "reason": "No identical whole-file evidence; old label cannot authorize current occurrence.",
+      "category": "runtime-reference",
+      "reason": "Current line reads configured/env/member value or decrypted value; no credential literal at the reported occurrence.",
       "risk": "Unconfirmed literal/reference; do not infer safety from test/document path.",
       "disposition": "Review this source location with resource owner; classify live/default/reference/isolated fixture; replace live/default entry with injection and validate caller before closure.",
-      "evidence": "current independent full-cli.json"
+      "evidence": "current independent full-cli.json",
+      "contextSha256": "d9a17230d6a3aac77bc3d5a568c1ee5bc46667efd988851c62059bc2b33e8cb1",
+      "adjudication": "current-source-context-reviewed"
     },
     {
       "path": "frontend/src/app/ui/views/feishu-notification-settings.test.ts",
@@ -6643,11 +6793,13 @@
           "sameFileBytes": false
         }
       ],
-      "category": "requires-current-context-adjudication",
-      "reason": "No identical whole-file evidence; old label cannot authorize current occurrence.",
+      "category": "test-input-or-assertion",
+      "reason": "Occurrence belongs to request fixture/expected DTO/mock response or test channel config; classification is syntax/context, not proof all endpoints isolated.",
       "risk": "Unconfirmed literal/reference; do not infer safety from test/document path.",
       "disposition": "Review this source location with resource owner; classify live/default/reference/isolated fixture; replace live/default entry with injection and validate caller before closure.",
-      "evidence": "current independent full-cli.json"
+      "evidence": "current independent full-cli.json",
+      "contextSha256": "2a083aa8d66d4e492612346cede99670c5afc68fcd263f41d0bdb4870912355e",
+      "adjudication": "current-source-context-reviewed"
     },
     {
       "path": "frontend/src/app/ui/views/instances-db.MAX319.test.ts",
@@ -6889,11 +7041,13 @@
       "sourceSha256": "e07f3c60d52547c0d0092b63481e7f8ddfef5cd575ae1f35cf3fc03779a542a4",
       "owner": "15-FrontendDev-01 (proposal; Chief confirms)",
       "oldLinks": [],
-      "category": "requires-current-context-adjudication",
-      "reason": "No identical whole-file evidence; old label cannot authorize current occurrence.",
+      "category": "runtime-reference",
+      "reason": "Current line reads configured/env/member value or decrypted value; no credential literal at the reported occurrence.",
       "risk": "Unconfirmed literal/reference; do not infer safety from test/document path.",
       "disposition": "Review this source location with resource owner; classify live/default/reference/isolated fixture; replace live/default entry with injection and validate caller before closure.",
-      "evidence": "current independent full-cli.json"
+      "evidence": "current independent full-cli.json",
+      "contextSha256": "5ec36bedfa9b85aa3934300df9e6864cf329e8c6d05e617639742582946e0368",
+      "adjudication": "current-source-context-reviewed"
     },
     {
       "path": "packages/agent-core/src/__tests__/memory-pipeline.test.ts",
@@ -6910,11 +7064,13 @@
           "sameFileBytes": false
         }
       ],
-      "category": "requires-current-context-adjudication",
-      "reason": "No identical whole-file evidence; old label cannot authorize current occurrence.",
+      "category": "model-context-test-string",
+      "reason": "Memory pipeline test input intentionally contains credential-like text; remains historical exposure-shaped material.",
       "risk": "Unconfirmed literal/reference; do not infer safety from test/document path.",
       "disposition": "Review this source location with resource owner; classify live/default/reference/isolated fixture; replace live/default entry with injection and validate caller before closure.",
-      "evidence": "current independent full-cli.json"
+      "evidence": "current independent full-cli.json",
+      "contextSha256": "8271708b9ae66e5d7396c8e13815cf8b882567fbac8ebb21d2d39247980f15c3",
+      "adjudication": "current-source-context-reviewed"
     },
     {
       "path": "packages/agent-core/src/__tests__/memory-pipeline.test.ts",
@@ -6931,11 +7087,13 @@
           "sameFileBytes": false
         }
       ],
-      "category": "requires-current-context-adjudication",
-      "reason": "No identical whole-file evidence; old label cannot authorize current occurrence.",
+      "category": "model-context-test-string",
+      "reason": "Memory pipeline test input intentionally contains credential-like text; remains historical exposure-shaped material.",
       "risk": "Unconfirmed literal/reference; do not infer safety from test/document path.",
       "disposition": "Review this source location with resource owner; classify live/default/reference/isolated fixture; replace live/default entry with injection and validate caller before closure.",
-      "evidence": "current independent full-cli.json"
+      "evidence": "current independent full-cli.json",
+      "contextSha256": "8271708b9ae66e5d7396c8e13815cf8b882567fbac8ebb21d2d39247980f15c3",
+      "adjudication": "current-source-context-reviewed"
     },
     {
       "path": "packages/agent-core/src/__tests__/openai-provider-tail.test.ts",
@@ -7167,11 +7325,13 @@
           "sameFileBytes": false
         }
       ],
-      "category": "requires-current-context-adjudication",
-      "reason": "No identical whole-file evidence; old label cannot authorize current occurrence.",
+      "category": "qualification-injection",
+      "reason": "Explicit qualification process/CI assignment; runtime target provenance must be checked before real resource use.",
       "risk": "Unconfirmed literal/reference; do not infer safety from test/document path.",
       "disposition": "Review this source location with resource owner; classify live/default/reference/isolated fixture; replace live/default entry with injection and validate caller before closure.",
-      "evidence": "current independent full-cli.json"
+      "evidence": "current independent full-cli.json",
+      "contextSha256": "e68f1c26137415f792f748543ca8c65c4a6d9af2c732ced6fc8ff8ac1c349db1",
+      "adjudication": "current-source-context-reviewed"
     },
     {
       "path": "scripts/qualification/run-existing-mysql.sh",
@@ -7193,11 +7353,13 @@
           "sameFileBytes": false
         }
       ],
-      "category": "requires-current-context-adjudication",
-      "reason": "No identical whole-file evidence; old label cannot authorize current occurrence.",
+      "category": "qualification-injection",
+      "reason": "Explicit qualification process/CI assignment; runtime target provenance must be checked before real resource use.",
       "risk": "Unconfirmed literal/reference; do not infer safety from test/document path.",
       "disposition": "Review this source location with resource owner; classify live/default/reference/isolated fixture; replace live/default entry with injection and validate caller before closure.",
-      "evidence": "current independent full-cli.json"
+      "evidence": "current independent full-cli.json",
+      "contextSha256": "10f6f2cfd1e6840e32e8a347f2b74b35c8a9fd696a69c3bd4aea1e5484d6573b",
+      "adjudication": "current-source-context-reviewed"
     },
     {
       "path": "scripts/qualification/run-investigation-rollout.sh",
@@ -7208,11 +7370,13 @@
       "sourceSha256": "c68dad1541bf909cc9849124ac26bf64e5240d9cac483a068dae039343043a18",
       "owner": "15-BackendDev-01",
       "oldLinks": [],
-      "category": "requires-current-context-adjudication",
-      "reason": "No identical whole-file evidence; old label cannot authorize current occurrence.",
+      "category": "runtime-random-generation",
+      "reason": "Shell expression invokes node crypto random generation; conservative scanner captures expression.",
       "risk": "Unconfirmed literal/reference; do not infer safety from test/document path.",
       "disposition": "Review this source location with resource owner; classify live/default/reference/isolated fixture; replace live/default entry with injection and validate caller before closure.",
-      "evidence": "current independent full-cli.json"
+      "evidence": "current independent full-cli.json",
+      "contextSha256": "c84f5c9d8bd7e674a00fa2814f358b8ab3b05d670615af7a2ca08d83fad1e118",
+      "adjudication": "current-source-context-reviewed"
     },
     {
       "path": "scripts/qualification/run-pg-collection.sh",
