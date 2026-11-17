@@ -32,6 +32,7 @@ export function runtimeClaimFixture(nonce: string, env = process.env, ownerUsern
     if (rows.length !== 1) return reply.code(403).send({ error: 'FIXTURE_SCOPE' });
     // Lock out concurrent admissions before any asynchronous creation. Unknown
     // writes are never retried by this fixture, including after an error reply.
+    if (admitted.has(sessionId)) return reply.code(403).send({ error: 'FIXTURE_SCOPE' });
     admitted.add(sessionId);
     try {
       const { run } = await runs.claim(actor.userId, sessionId, messageId, requestKey, actor);
