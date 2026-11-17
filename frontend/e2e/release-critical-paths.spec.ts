@@ -66,6 +66,7 @@ test('resource readiness keeps an offline managed server visible and non-healthy
 });
 
 test('browser renders live MySQL metrics for an isolated managed instance', async ({ page }) => {
+  const password = qualificationPassword();
   const login = await page.request.post('/api/auth/login', {
     data: { username: 'admin', password: qualificationPassword() },
   });
@@ -81,7 +82,7 @@ test('browser renders live MySQL metrics for an isolated managed instance', asyn
       host: '127.0.0.1',
       port: 3306,
       username: 'root',
-      password: qualificationPassword(),
+      password,
       database_name: 'db_ops_ai_qualification',
     },
   });
@@ -136,6 +137,7 @@ test('browser renders live MySQL metrics for an isolated managed instance', asyn
 });
 
 test('fresh native MySQL metrics create a threshold alert visible in the browser', async ({ page }) => {
+  const password = qualificationPassword();
   test.setTimeout(180_000);
   const login = await page.request.post('/api/auth/login', {
     data: { username: 'admin', password: qualificationPassword() },
@@ -154,7 +156,7 @@ test('fresh native MySQL metrics create a threshold alert visible in the browser
       host: '127.0.0.1',
       port: 3306,
       username: 'root',
-      password: qualificationPassword(),
+      password,
       database_name: 'db_ops_ai_qualification',
     },
   });

@@ -23334,9 +23334,9 @@
         "conclusion": "mocked-cli-fetch",
         "source": {
           "path": "apps/db-ops-api/tests/smoke-runner.test.ts",
-          "line": 20,
+          "line": 21,
           "fileSha256": "197b3415557b03806ee93cdc339ce30d9a39c56631acd6ab421d174afcf5935d",
-          "lineSha256": "2a44168318e224e1f830fe9ab620aa00dd4f7b3fb19ef4399abf59593cf0756d"
+          "lineSha256": "717ddf36b554549e3be126f4f0c823b122c10eafca5bd880fa973726f0db5167"
         },
         "consumerAndConfiguration": "smoke-runner replaces every child global fetch before importing actual smoke CLI; returned token is fabricated Response consumed by CLI authorization-header flow. No socket is opened for this token.",
         "verification": "Source trace only; runtime verification separately scoped in consumer-package-20261117.md"
@@ -28979,8 +28979,8 @@
         "conclusion": "caller-http-data",
         "source": {
           "path": "frontend/e2e/release-critical-paths.spec.ts",
-          "line": 406,
-          "fileSha256": "4a278e8db03d56d476877953bd1c7a95c5c9694ea6ac0bfc5527a70af6393a3f",
+          "line": 408,
+          "fileSha256": "20615c985ee05a78e609c8ae2eafec89c72db53668567f782d8dd1e64b759eb6",
           "lineSha256": "55892432c13f9f92a14fc293927bb32a20f82644e8d079fafde72665b00a3639"
         },
         "consumerAndConfiguration": "release-critical paths creates an enabled webhook channel with synthetic signing secret via page.request, then exercises report delivery at the configured Playwright service. It is a real credential consumer and may dispatch notification traffic; public example URL is not proof of a controlled receiver. BaseURL can target an existing service. Target/API/notification receiver authorization must be provided before real execution; no test-directory safety claim.",
@@ -29066,7 +29066,7 @@
         "source": {
           "path": "frontend/e2e/release-security.spec.ts",
           "line": 8,
-          "fileSha256": "a7738d4a4a127bad74f8a62b80d2c7d038fef334e5fb1f2dba6f807fd62d856f",
+          "fileSha256": "75526c23eeb5619bccc16d281c5f8b3a3850027451cde471fba018cefb6ce2bb",
           "lineSha256": "0b2626604369c08c42978cd54667b38f6c63815b85e6deb2b9a099132591f594"
         },
         "consumerAndConfiguration": "release-security posts a deliberately incorrect administrator password to the real login endpoint and expects 401. It is a negative authentication attempt, not an issued account. baseURL/managed qualification credentials and caller target ownership remain required.",
@@ -29446,7 +29446,7 @@
         "source": {
           "path": "frontend/e2e/release-security.spec.ts",
           "line": 75,
-          "fileSha256": "a7738d4a4a127bad74f8a62b80d2c7d038fef334e5fb1f2dba6f807fd62d856f",
+          "fileSha256": "75526c23eeb5619bccc16d281c5f8b3a3850027451cde471fba018cefb6ce2bb",
           "lineSha256": "f559552b3a342f3feceede267cad1d72bb7293a98733a9ea255ed37e5a2a8d0f"
         },
         "consumerAndConfiguration": "Revocation spec creates a unique qualification username with a matching synthetic password, logs in as that account, revokes and finally cleans up. This is real authentication/write at Playwright request.baseURL; admin password is now injected. Managed bootstrap provides qualification admin but direct/override target requires explicit caller ownership; fixed per-test user input must never be used to justify shared account reuse.",
@@ -29514,7 +29514,7 @@
         "source": {
           "path": "frontend/e2e/release-security.spec.ts",
           "line": 84,
-          "fileSha256": "a7738d4a4a127bad74f8a62b80d2c7d038fef334e5fb1f2dba6f807fd62d856f",
+          "fileSha256": "75526c23eeb5619bccc16d281c5f8b3a3850027451cde471fba018cefb6ce2bb",
           "lineSha256": "f0ce7c1e6d793cf68f960ecb6b11859237a22f8c65ce341b7479d03a78cefedc"
         },
         "consumerAndConfiguration": "Revocation spec creates a unique qualification username with a matching synthetic password, logs in as that account, revokes and finally cleans up. This is real authentication/write at Playwright request.baseURL; admin password is now injected. Managed bootstrap provides qualification admin but direct/override target requires explicit caller ownership; fixed per-test user input must never be used to justify shared account reuse.",
@@ -29656,7 +29656,7 @@
         "source": {
           "path": "frontend/e2e/release-security.spec.ts",
           "line": 138,
-          "fileSha256": "a7738d4a4a127bad74f8a62b80d2c7d038fef334e5fb1f2dba6f807fd62d856f",
+          "fileSha256": "75526c23eeb5619bccc16d281c5f8b3a3850027451cde471fba018cefb6ce2bb",
           "lineSha256": "77db7a180740b5cc7cba020e7e467b82f7852c60295ef7ee82565002483a5971"
         },
         "consumerAndConfiguration": "Security spec submits private-URL negative input and creates disabled synthetic notification channel then cleans up. Playwright baseURL is real, can be overridden; accepted channel is disabled and no send is requested here, but caller still must own selected platform and its collector context.",
@@ -29720,7 +29720,7 @@
         "source": {
           "path": "frontend/e2e/release-security.spec.ts",
           "line": 150,
-          "fileSha256": "a7738d4a4a127bad74f8a62b80d2c7d038fef334e5fb1f2dba6f807fd62d856f",
+          "fileSha256": "75526c23eeb5619bccc16d281c5f8b3a3850027451cde471fba018cefb6ce2bb",
           "lineSha256": "58387171662e4138c00c53e27176934dfdae17fab7c5f1afa433c218c565cca9"
         },
         "consumerAndConfiguration": "Security spec submits private-URL negative input and creates disabled synthetic notification channel then cleans up. Playwright baseURL is real, can be overridden; accepted channel is disabled and no send is requested here, but caller still must own selected platform and its collector context.",
@@ -30021,8 +30021,8 @@
         "conclusion": "caller-http-resource",
         "source": {
           "path": "frontend/e2e/release-security.spec.ts",
-          "line": 245,
-          "fileSha256": "a7738d4a4a127bad74f8a62b80d2c7d038fef334e5fb1f2dba6f807fd62d856f",
+          "line": 246,
+          "fileSha256": "75526c23eeb5619bccc16d281c5f8b3a3850027451cde471fba018cefb6ce2bb",
           "lineSha256": "770764313612f00c0c079f9b4e12ff93978615d6ca2138f0a34da73c5eea6899"
         },
         "consumerAndConfiguration": "Security spec creates synthetic instance metadata for unsupported MongoDB target and validates capability behavior; password is stored via real API at Playwright baseURL. Unsupported collection path is expected to reject; target/API ownership must be supplied by managed qualification setup or caller.",

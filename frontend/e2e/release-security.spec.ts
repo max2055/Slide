@@ -166,6 +166,7 @@ test('notification channels reject private targets and redact stored credentials
 });
 
 test('direct SQL execution rejects write, DDL, and multi-statement input before the target driver', async ({ page }) => {
+  const password = qualificationPassword();
   const login = await page.request.post('/api/auth/login', {
     data: { username: 'admin', password: qualificationPassword() },
   });
@@ -181,7 +182,7 @@ test('direct SQL execution rejects write, DDL, and multi-statement input before 
       host: '127.0.0.1',
       port: 3306,
       username: 'root',
-      password: qualificationPassword(),
+      password,
       database_name: 'db_ops_ai_qualification',
     },
   });
@@ -252,6 +253,7 @@ test('adapter capability contract rejects unsupported database types before pers
 });
 
 test('concurrent approval reviews execute a write exactly once', async ({ page }) => {
+  const password = qualificationPassword();
   test.setTimeout(30_000);
   const login = await page.request.post('/api/auth/login', {
     data: { username: 'admin', password: qualificationPassword() },
@@ -268,7 +270,7 @@ test('concurrent approval reviews execute a write exactly once', async ({ page }
       host: '127.0.0.1',
       port: 3306,
       username: 'root',
-      password: qualificationPassword(),
+      password,
       database_name: 'db_ops_ai_qualification',
     },
   });
@@ -340,6 +342,7 @@ test('concurrent approval reviews execute a write exactly once', async ({ page }
 });
 
 test('approval cancellation and retry keep the request attached to the current attempt', async ({ page }) => {
+  const password = qualificationPassword();
   test.setTimeout(30_000);
   const login = await page.request.post('/api/auth/login', {
     data: { username: 'admin', password: qualificationPassword() },
@@ -355,7 +358,7 @@ test('approval cancellation and retry keep the request attached to the current a
       host: '127.0.0.1',
       port: 3306,
       username: 'root',
-      password: qualificationPassword(),
+      password,
       database_name: 'db_ops_ai_qualification',
     },
   });
