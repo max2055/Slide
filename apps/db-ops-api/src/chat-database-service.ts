@@ -1,4 +1,4 @@
-import { PlatformUnavailableError } from './lifecycle/platform-unavailable.js';
+import { PlatformUnavailableError, rethrowAuthorityReadError } from './lifecycle/platform-unavailable.js';
 import { ChatAuthorization } from './auth/chat-authorization.js';
 /**
  * Actor-scoped chat persistence and sharing boundary.
@@ -111,6 +111,11 @@ export class ChatDatabaseService {
     return this.pool;
   }
 
+  private async authorityRead<T>(executor: QueryExecutor, sql: string, values?: unknown[]): Promise<[T, unknown?]> {
+    try { return await executor.query<T>(sql, values); }
+    catch (error) { rethrowAuthorityReadError(error); }
+  }
+
   private accessPredicate(action: ChatAction, sessionAlias = 'cs'): string {
     if (!READ_ACTIONS.has(action)) return `${sessionAlias}.user_id = ? AND NOT EXISTS
       (SELECT 1 FROM investigations i WHERE i.session_id = ${sessionAlias}.session_id)`;
@@ -133,19 +138,21 @@ export class ChatDatabaseService {
     executor: QueryExecutor = this.getPool(),
     lock = false,
   ): Promise<ChatSessionRecord> {
-    await this.chatAccess.require(actor, { execute: (sql, values) => executor.query(sql, values) });
-    const [rows] = await executor.query<RowDataPacket[]>(
-      `SELECT cs.* FROM chat_sessions cs
-       WHERE cs.session_id = ?
-         AND ${this.accessPredicate(action)}
-       ${lock ? 'FOR UPDATE' : ''}`,
-      [sessionId, ...this.accessValues(actor, action)],
-    );
-    if (!rows[0]) throw new ChatSessionNotFoundError();
-    if (Number(rows[0].user_id) !== actor.userId
-      && !await this.chatAccess.ownerReadable(Number(rows[0].user_id), { execute: (sql, values) => executor.query(sql, values) })) throw new ChatSessionNotFoundError();
-    await this.authorizeLinkedInvestigation(actor, sessionId, action, executor);
-    return this.mapSessionRow(rows[0]);
+    try {
+      await this.chatAccess.require(actor, { execute: (sql, values) => executor.query(sql, values) });
+      const [rows] = await executor.query<RowDataPacket[]>(
+        `SELECT cs.* FROM chat_sessions cs
+         WHERE cs.session_id = ?
+           AND ${this.accessPredicate(action)}
+         ${lock ? 'FOR UPDATE' : ''}`,
+        [sessionId, ...this.accessValues(actor, action)],
+      );
+      if (!rows[0]) throw new ChatSessionNotFoundError();
+      if (Number(rows[0].user_id) !== actor.userId
+        && !await this.chatAccess.ownerReadable(Number(rows[0].user_id), { execute: (sql, values) => executor.query(sql, values) })) throw new ChatSessionNotFoundError();
+      await this.authorizeLinkedInvestigation(actor, sessionId, action, executor);
+      return this.mapSessionRow(rows[0]);
+    } catch (error) { rethrowAuthorityReadError(error); }
   }
 
   private async authorizeLinkedInvestigation(actor: ActorContext, sessionId: string, action: ChatAction,
@@ -165,11 +172,13 @@ export class ChatDatabaseService {
 
   /** Cancellation carries no content and does not restore chat authority. */
   async authorizeCancellation(actor: ActorContext, sessionId: string): Promise<void> {
-    const executor = { execute: (sql: string, values?: unknown[]) => this.getPool().query(sql, values) };
-    await this.chatAccess.actors.revalidateActorOn(executor, actor);
-    const [rows] = await this.getPool().query<any[]>(`SELECT session_id FROM chat_sessions
-      WHERE session_id = ? AND user_id = ? AND NOT EXISTS (SELECT 1 FROM investigations i WHERE i.session_id = chat_sessions.session_id)`, [sessionId, actor.userId]);
-    if (!rows.length) throw new ChatSessionNotFoundError();
+    try {
+      const executor = { execute: (sql: string, values?: unknown[]) => this.getPool().query(sql, values) };
+      await this.chatAccess.actors.revalidateActorOn(executor, actor);
+      const [rows] = await this.getPool().query<any[]>(`SELECT session_id FROM chat_sessions
+        WHERE session_id = ? AND user_id = ? AND NOT EXISTS (SELECT 1 FROM investigations i WHERE i.session_id = chat_sessions.session_id)`, [sessionId, actor.userId]);
+      if (!rows.length) throw new ChatSessionNotFoundError();
+    } catch (error) { rethrowAuthorityReadError(error); }
   }
 
   async createSession(
@@ -204,7 +213,7 @@ export class ChatDatabaseService {
 
   async getSessions(actor: ActorContext, limit = 20): Promise<ChatSessionRecord[]> {
     await this.chatAccess.require(actor, { execute: (sql, values) => this.getPool().query(sql, values) });
-    const [rows] = await this.getPool().query<RowDataPacket[]>(
+    const [rows] = await this.authorityRead<RowDataPacket[]>(this.getPool(),
       `SELECT cs.* FROM chat_sessions cs
        WHERE ${this.accessPredicate('read')}
        ORDER BY cs.last_message_at DESC, cs.created_at DESC`,
@@ -250,7 +259,7 @@ export class ChatDatabaseService {
     limit = 200,
   ): Promise<ChatMessageRecord[]> {
     await this.authorizeSession(actor, sessionId, 'history');
-    const [rows] = await this.getPool().query<RowDataPacket[]>(
+    const [rows] = await this.authorityRead<RowDataPacket[]>(this.getPool(),
       `SELECT cm.*, cs.id AS authorized_session_id
        FROM chat_sessions cs
        LEFT JOIN chat_messages cm ON cm.session_id = cs.session_id
@@ -275,7 +284,7 @@ export class ChatDatabaseService {
     before?: number,
   ): Promise<{ messages: ChatMessageRecord[]; nextBefore: number | null }> {
     await this.authorizeSession(actor, sessionId, 'history');
-    const [rows] = await this.getPool().query<RowDataPacket[]>(
+    const [rows] = await this.authorityRead<RowDataPacket[]>(this.getPool(),
       `SELECT cm.* FROM chat_messages cm
        JOIN chat_sessions cs ON cs.session_id = cm.session_id
        WHERE cm.session_id = ? AND ${this.accessPredicate('history')}
@@ -300,7 +309,7 @@ export class ChatDatabaseService {
     const messages: ChatMessageRecord[] = [];
     let currentParentId: string | null = messageId;
     for (let depth = 0; currentParentId && depth < maxDepth; depth += 1) {
-      const [rows] = await this.getPool().query<RowDataPacket[]>(
+      const [rows] = await this.authorityRead<RowDataPacket[]>(this.getPool(),
         `SELECT cm.* FROM chat_messages cm
          JOIN chat_sessions cs ON cs.session_id = cm.session_id
          WHERE cm.message_id = ? AND cm.session_id = ?
@@ -321,7 +330,7 @@ export class ChatDatabaseService {
     sessionId: string,
   ): Promise<ChatMessageRecord[]> {
     await this.authorizeSession(actor, sessionId, 'history');
-    const [rows] = await this.getPool().query<RowDataPacket[]>(
+    const [rows] = await this.authorityRead<RowDataPacket[]>(this.getPool(),
       `SELECT cm.* FROM chat_messages cm
        JOIN chat_sessions cs ON cs.session_id = cm.session_id
        WHERE cm.parent_id = ? AND cm.session_id = ?
@@ -533,7 +542,7 @@ export class ChatDatabaseService {
 
   async getSessionCount(actor: ActorContext, sessionId: string): Promise<number> {
     await this.authorizeSession(actor, sessionId, 'history');
-    const [rows] = await this.getPool().query<RowDataPacket[]>(
+    const [rows] = await this.authorityRead<RowDataPacket[]>(this.getPool(),
       `SELECT COUNT(cm.id) AS cnt
        FROM chat_sessions cs
        LEFT JOIN chat_messages cm ON cm.session_id = cs.session_id

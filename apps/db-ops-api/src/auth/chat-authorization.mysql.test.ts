@@ -56,14 +56,14 @@ describe.skipIf(!port)('MAX-684 real SQL/JWT/HTTP/WS; controlled model endpoint'
     const response = await fetch(String(app.listeningOrigin) + path, { method, headers: { ...(jwt ? { authorization: 'Bearer ' + jwt } : {}), ...(body ? { 'content-type': 'application/json' } : {}) }, ...(body ? { body: JSON.stringify(body) } : {}) });
     return { status: response.status, body: await response.text() };
   };
-  async function client(jwt: string) {
+  async function client(jwt: string, parts = false) {
     const server = (adapter as any).wsServer;
     const socket = new WebSocket(`ws://127.0.0.1:${server.address().port}`);
     clients.push(socket);
     const events: any[] = [];
     socket.on('message', data => events.push(JSON.parse(data.toString())));
     await new Promise<void>((resolve, reject) => { socket.once('open', resolve); socket.once('error', reject); });
-    socket.send(JSON.stringify({ type: 'auth', token: jwt }));
+    socket.send(JSON.stringify({ type: 'auth', token: jwt, ...(parts ? { capabilities: ['parts-stream-v1'] } : {}) }));
     await vi.waitFor(() => expect(events.some(e => e.type === 'auth_ok')).toBe(true));
     return { socket, events };
   }
@@ -155,6 +155,229 @@ describe.skipIf(!port)('MAX-684 real SQL/JWT/HTTP/WS; controlled model endpoint'
     if (process.env.MAX684_EVIDENCE) await writeFile(process.env.MAX684_EVIDENCE, JSON.stringify({ observed, modelCalls, toolCalls,
       modelBoundary: 'real local OpenAI-compatible HTTP endpoint, controlled output; no paid provider',
       serviceBoundary: 'real Fastify routes/DirectAdapter runner, real WS, real MySQL migrations and JWT', schemaDropped: true }, null, 2));
+  });
+
+  // MF-I2: actual server denial frames drive the released client/controller,
+  // with A hidden and B holding a genuine pending admission receipt.
+  it.each(['watch', 'history', 'replay'])('MF-I2 real %s denial isolates hidden A from active B', async entry => {
+    const a = await actor(), b = await actor(68402);
+    const hidden = (await chatDatabaseService.createSession(b)).session_id;
+    const previousRun = (await runs.claim(b.userId, hidden, randomUUID(), randomUUID(), b)).run;
+    // Persist an old admitted owner's run, then the current owner/share ACL.
+    await pool.query('UPDATE chat_sessions SET user_id=? WHERE session_id=?', [a.userId, hidden]);
+    await chatDatabaseService.grantSessionShare(a, hidden, b.userId, 'read');
+    const jwt = await token(68402);
+    expect((await call('/api/chat/history?sessionKey=' + hidden, 'GET', undefined, jwt)).status).toBe(200);
+    await pool.query('DELETE FROM chat_session_shares WHERE session_id=?', [hidden]);
+    const requireFrontend = createRequire(new URL('../../../../frontend/package.json', import.meta.url));
+    const { JSDOM } = requireFrontend('jsdom'), dom = new JSDOM('', { url: String(app.listeningOrigin) });
+    for (const key of ['window', 'document', 'HTMLElement', 'customElements', 'localStorage', 'sessionStorage', 'location', 'navigator', 'CustomEvent']) vi.stubGlobal(key, dom.window[key]);
+    vi.stubGlobal('WebSocket', WebSocket);
+    const gatewayPath = new URL('../../../../frontend/src/app/ui/direct-gateway.ts', import.meta.url).href;
+    const sessionPath = new URL('../../../../frontend/src/app/ui/chat-session-state.ts', import.meta.url).href;
+    const { DirectGatewayClient, handleDirectAdapterEvent } = await import(gatewayPath);
+    const { activateChatSession, chatSessionHost } = await import(sessionPath);
+    const state: any = { sessionKey: hidden, chatMessages: [{ content: 'MF_I2_HIDDEN_PRIVATE' }], chatMessage: 'A draft', chatAttachments: [], chatQueue: [],
+      chatLoading: false, chatSending: false, chatRunId: null, chatStream: null, chatStreamStartedAt: null,
+      chatThinkingText: '', chatToolMessages: [], chatStreamSegments: [], toolStreamById: new Map(), toolStreamOrder: [], toolStreamSyncTimer: null,
+      refreshSessionsAfterChat: new Set(), settings: {}, applySettings() {} };
+    const retiredA = chatSessionHost(state); activateChatSession(state, other);
+    const preservedB = [{ content: 'MF_I2_AUTHORIZED_B' }]; state.chatMessages = preservedB; state.chatMessage = 'B draft';
+    const frames: any[] = [], changes: string[] = [];
+    const gateway = new DirectGatewayClient({ url: `ws://127.0.0.1:${(adapter as any).wsServer.address().port}`, chatAcceptTimeoutMs: 5000,
+      onEvent: (event: any) => { frames.push(event); handleDirectAdapterEvent(state, event); }, onStateChange: (change: string) => changes.push(change) });
+    (dom.window as any).__apiClient = { getToken: () => jwt }; state.client = gateway;
+    const sendEvent = (adapter as any).sendSocketEvent.bind(adapter);
+    const lost = vi.spyOn(adapter as any, 'sendSocketEvent').mockImplementation((ws: any, event: any) => event.type === 'run.started' ? true : sendEvent(ws, event));
+    const send = vi.spyOn(WebSocket.prototype, 'send');
+    const count = modelCalls, tools = toolCalls;
+    let settledB = false;
+    try {
+      gateway.connect(); await vi.waitFor(() => expect(changes).toContain('connected'));
+      gateway.watchSession(other);
+      hold = true;
+      const acknowledgement = gateway.sendChat(other, 'B pending receipt').then(() => { settledB = true; }, () => { settledB = true; });
+      await vi.waitFor(() => expect(modelCalls).toBe(count + 1));
+      const pendingB = [...(gateway as any).pendingChatAcknowledgements.keys()]; expect(pendingB).toHaveLength(1);
+      const messageId = entry === 'replay' ? previousRun.messageId : randomUUID();
+      const request: any = { type: entry === 'replay' ? 'chat.send' : 'chat.' + entry, sessionKey: ' agent:main:' + hidden + ' ', messageId, runId: previousRun.id };
+      if (entry === 'replay') Object.assign(request, { message: 'must not replay', idempotencyKey: previousRun.idempotencyKey });
+      (gateway as any).ws.send(JSON.stringify(request));
+      await vi.waitFor(() => expect(frames.some(e => e.code === 'CHAT_SESSION_NOT_FOUND')).toBe(true));
+      const denial = frames.find(e => e.code === 'CHAT_SESSION_NOT_FOUND');
+      expect(denial).toMatchObject({ sessionKey: hidden, messageId, runId: previousRun.id });
+      expect(state.chatMessages).toBe(preservedB); expect(state.chatMessage).toBe('B draft');
+      expect(state.chatAccessDenied).not.toBe(true); expect(settledB).toBe(false);
+      expect([...(gateway as any).pendingChatAcknowledgements.keys()]).toEqual(pendingB);
+      const peer = [...(adapter as any).wsServer.clients].find((ws: any) => ws._actorContext?.userId === b.userId) as WebSocket;
+      expect((adapter as any).sessionSubscribers.get(other)?.has(peer)).toBe(true);
+      // Late transport response and old async receiver cannot restore denied A.
+      (gateway as any).dispatchEvent({ type: 'complete', sessionKey: hidden, finalContent: 'MF_I2_LATE_A' });
+      retiredA.chatMessages = [{ content: 'MF_I2_LATE_RECEIVER' }];
+      expect(state.chatMessages).toBe(preservedB);
+      activateChatSession(state, hidden); expect(state.chatMessages).toEqual([]); expect(state.chatAccessDenied).toBe(true);
+      activateChatSession(state, other); expect(state.chatMessages).toBe(preservedB); expect(state.chatMessage).toBe('B draft');
+      expect(modelCalls).toBe(count + 1); expect(toolCalls).toBe(tools);
+      const sends = send.mock.calls.map(([raw]) => { try { return JSON.parse(String(raw)); } catch { return {}; } }).filter(f => f.type === 'chat.send');
+      expect(sends.filter(f => f.message === 'B pending receipt')).toHaveLength(1);
+      gateway.disconnect(); await acknowledgement;
+      observed.push({ id: 'MF-I2-real-dual-view-' + entry, status: 'passed' });
+    } finally {
+      gateway.disconnect(); lost.mockRestore(); send.mockRestore(); hold = false; for (const release of releases.splice(0)) release();
+      vi.unstubAllGlobals(); dom.window.close();
+    }
+  }, 12000);
+
+  // Independent implementation review MF-I1: transaction failure must never
+  // turn staged reconciliation data into a legacy or parts display result.
+  it.each(['watch', 'replay'].flatMap(entry => [false, true].flatMap(parts =>
+    ['expired', 'unbound', 'version'].flatMap(binding => ['acquire', 'begin'].map(fault => ({ entry, parts, binding, fault }))))))(
+    'MF-I1 $entry parts=$parts $binding recovery-$fault keeps staged SQL private', async ({ entry, parts, binding, fault }) => {
+      const a = await actor(68401, binding === 'expired' ? 1 : 60);
+      const run = (await runs.claim(a.userId, session, randomUUID(), randomUUID(), a)).run;
+      const interrupted = new AgentRunService(() => ({ query: pool.query.bind(pool), getConnection: async () => { throw new Error('staging interruption'); } }) as never);
+      await expect(interrupted.complete(run, { type: 'complete', finalContent: 'MF_I1_STAGED_PRIVATE', stopReason: 'completed' })).rejects.toThrow('staging interruption');
+      if (binding === 'expired') await new Promise(resolve => setTimeout(resolve, Math.max(0, run.chatAuthority!.expiresAt - Date.now() + 20)));
+      if (binding === 'unbound') await pool.query('UPDATE agent_runs SET chat_session_version=NULL,chat_credential_ref=NULL,chat_credential_expires_ms=NULL WHERE id=?', [run.id]);
+      if (binding === 'version') await pool.query('UPDATE users SET session_version=2 WHERE id=68401');
+      const live = await client(await token(), parts), count = modelCalls, tools = toolCalls;
+      const getConnection = pool.getConnection.bind(pool);
+      const failure = vi.spyOn(pool, 'getConnection').mockImplementationOnce(async () => {
+        if (fault === 'acquire') throw new Error('MF-I1 recovery acquisition fault');
+        const connection = await getConnection();
+        const begin = vi.spyOn(connection, 'beginTransaction').mockRejectedValueOnce(new Error('MF-I1 recovery transaction fault'));
+        const release = connection.release.bind(connection);
+        vi.spyOn(connection, 'release').mockImplementationOnce(() => { begin.mockRestore(); release(); });
+        return connection;
+      });
+      try {
+        live.socket.send(JSON.stringify(entry === 'watch'
+          ? { type: 'chat.watch', sessionKey: session, subscriptionId: randomUUID() }
+          : { type: 'chat.send', sessionKey: session, message: 'must not reexecute', messageId: run.messageId, idempotencyKey: run.idempotencyKey }));
+        await vi.waitFor(() => expect(live.events.some(e => e.code === 'COMPLETION_STORAGE_FAILED')).toBe(true));
+        expect(live.events.some(e => JSON.stringify(e).includes('MF_I1_STAGED_PRIVATE'))).toBe(false);
+        const snapshot = live.events.find(e => e.type === 'run.snapshot');
+        expect(snapshot.run.result).toEqual({ completionPending: true });
+        expect(snapshot.run.chatAuthority).toBeUndefined();
+        const [rows] = await pool.query<any[]>('SELECT result_json,state FROM agent_runs WHERE id=?', [run.id]);
+        expect(JSON.stringify(rows)).toContain('MF_I1_STAGED_PRIVATE'); expect(rows[0].state).toBe('running');
+        expect(modelCalls).toBe(count); expect(toolCalls).toBe(tools);
+      } finally { failure.mockRestore(); }
+      // A fresh observation after dependency recovery cancels the old authority;
+      // it never extends exp/version or retries a model/tool operation.
+      live.socket.send(JSON.stringify({ type: 'chat.watch', sessionKey: session, subscriptionId: randomUUID() }));
+      await vi.waitFor(() => expect(live.events.some(e => e.type === 'run.snapshot' && e.run.state === 'cancelled')).toBe(true));
+      const [messages] = await pool.query<any[]>("SELECT id FROM chat_messages WHERE session_id=? AND role='assistant'", [session]);
+      expect(messages).toHaveLength(0);
+      expect(live.events.some(e => JSON.stringify(e).includes('MF_I1_STAGED_PRIVATE'))).toBe(false);
+      expect(modelCalls).toBe(count); expect(toolCalls).toBe(tools);
+      observed.push({ id: `MF-I1-${entry}-${parts ? 'parts' : 'legacy'}-${binding}-${fault}`, status: 'passed' });
+    });
+
+  it.each(['identity', 'acl-share', 'owner', 'linked-investigation'])(
+    'MF-I3 %s SQL failure stays temporary at admission and output', async stage => {
+      const a = await actor(), b = await actor(68402);
+      await chatDatabaseService.grantSessionShare(a, session, b.userId, 'read');
+      const jwt = await token(68402), live = await client(jwt);
+      const count = modelCalls, tools = toolCalls;
+      const closed: number[] = []; live.socket.on('close', code => closed.push(code));
+      // Only the targeted SQL read fails; identity queries before ACL/owner are real.
+      const rawQuery = pool.query.bind(pool), rawExecute = pool.execute.bind(pool);
+      let hits = 0, identitySuccess = 0;
+      const matches = (sql: string, values: any[]) => stage === 'identity' ? /FROM users u/.test(sql) && values?.[0] === 68402
+        : stage === 'acl-share' ? /SELECT cs\.\* FROM chat_sessions cs/.test(sql)
+        : stage === 'owner' ? /FROM users u/.test(sql) && values?.[0] === 68401
+        : /SELECT id FROM investigations WHERE session_id/.test(sql);
+      const intercept = (raw: any) => async (sql: any, values: any, ...rest: any[]) => {
+        if (matches(String(sql), values)) { hits++; throw Object.assign(new Error('MF-I3 targeted SQL connection reset'), { code: 'ECONNRESET' }); }
+        const result = await raw(sql, values, ...rest);
+        if (/FROM users u/.test(String(sql)) && values?.[0] === 68402) identitySuccess++;
+        return result;
+      };
+      const queryFault = vi.spyOn(pool, 'query').mockImplementation(intercept(rawQuery) as any);
+      const executeFault = vi.spyOn(pool, 'execute').mockImplementation(intercept(rawExecute) as any);
+      try {
+        const http = await call('/api/chat/history?sessionKey=' + session, 'GET', undefined, jwt);
+        expect(http.status).toBe(503); expect(http.body).not.toContain('PRIVATE_OWNER_HISTORY');
+        live.socket.send(JSON.stringify({ type: 'chat.watch', sessionKey: session }));
+        await vi.waitFor(() => expect(closed).toEqual([1013]));
+        expect(live.events.some(e => ['CHAT_SESSION_NOT_FOUND', 'CHAT_FORBIDDEN'].includes(e.code))).toBe(false);
+        // Reconnect first, then fail at actual guarded dispatch, after admission.
+      } finally { queryFault.mockRestore(); executeFault.mockRestore(); }
+      const output = await client(jwt), outputClosed: number[] = [];
+      output.socket.on('close', code => outputClosed.push(code));
+      output.socket.send(JSON.stringify({ type: 'chat.watch', sessionKey: session }));
+      await vi.waitFor(() => expect((adapter as any).sessionSubscribers.get(session)?.size).toBe(1));
+      const queryOutput = vi.spyOn(pool, 'query').mockImplementation(intercept(rawQuery) as any);
+      const executeOutput = vi.spyOn(pool, 'execute').mockImplementation(intercept(rawExecute) as any);
+      try {
+        const peer = [...(adapter as any).wsServer.clients].find((ws: any) => ws._actorContext?.userId === b.userId) as WebSocket;
+        (adapter as any).sendSocketEvent(peer, { type: 'complete', sessionKey: session, finalContent: 'MF_I3_OUTBOUND_PRIVATE' });
+        await vi.waitFor(() => expect(outputClosed).toEqual([1013]));
+        expect(JSON.stringify(output.events)).not.toContain('MF_I3_OUTBOUND_PRIVATE');
+        expect(output.events.some(e => ['CHAT_SESSION_NOT_FOUND', 'CHAT_FORBIDDEN'].includes(e.code))).toBe(false);
+      } finally { queryOutput.mockRestore(); executeOutput.mockRestore(); }
+      const recovered = await client(jwt);
+      recovered.socket.send(JSON.stringify({ type: 'chat.watch', sessionKey: session }));
+      await vi.waitFor(() => expect((adapter as any).sessionSubscribers.get(session)?.size).toBe(1));
+      expect((await call('/api/chat/history?sessionKey=' + session, 'GET', undefined, jwt)).status).toBe(200);
+      expect(modelCalls).toBe(count); expect(toolCalls).toBe(tools); expect(hits).toBeGreaterThan(0);
+      if (stage !== 'identity') expect(identitySuccess).toBeGreaterThan(0);
+      await pool.query('DELETE FROM chat_session_shares WHERE session_id=?', [session]);
+      expect((await call('/api/chat/history?sessionKey=' + session, 'GET', undefined, jwt)).status).toBe(404);
+      observed.push({ id: 'MF-I3-' + stage, status: 'passed' });
+    });
+
+  it.each(['history', 'send', 'replay'])('MF-I3 ACL SQL failure in %s closes 1013 without permanent denial or execution', async entry => {
+    const a = await actor(), jwt = await token(), live = await client(jwt);
+    const previous = (await runs.claim(a.userId, session, randomUUID(), randomUUID(), a)).run;
+    const codes: number[] = []; live.socket.on('close', code => codes.push(code));
+    const raw = pool.query.bind(pool), count = modelCalls, tools = toolCalls;
+    const failure = vi.spyOn(pool, 'query').mockImplementation((async (sql: any, ...args: any[]) => {
+      if (/SELECT cs\.\* FROM chat_sessions cs/.test(String(sql))) throw Object.assign(new Error('MF-I3 command ACL connection reset'), { code: 'ECONNRESET' });
+      return (raw as any)(sql, ...args);
+    }) as any);
+    try {
+      live.socket.send(JSON.stringify({ type: entry === 'history' ? 'chat.history' : 'chat.send', sessionKey: session,
+        message: 'not admitted', messageId: entry === 'replay' ? previous.messageId : randomUUID(),
+        idempotencyKey: entry === 'replay' ? previous.idempotencyKey : randomUUID() }));
+      await vi.waitFor(() => expect(codes).toEqual([1013]));
+      expect(live.events.some(e => ['CHAT_FORBIDDEN', 'CHAT_SESSION_NOT_FOUND'].includes(e.code))).toBe(false);
+      expect(live.events.some(e => e.type === 'run.started' || e.finalContent)).toBe(false);
+      expect(modelCalls).toBe(count); expect(toolCalls).toBe(tools);
+    } finally { failure.mockRestore(); }
+    observed.push({ id: 'MF-I3-ACL-' + entry, status: 'passed' });
+  });
+
+  it('MF-I3 HTTP final authority read failure replaces already loaded history with 503', async () => {
+    const jwt = await token(), raw = pool.query.bind(pool); let aclReads = 0;
+    const failure = vi.spyOn(pool, 'query').mockImplementation((async (sql: any, ...args: any[]) => {
+      if (/SELECT cs\.\* FROM chat_sessions cs/.test(String(sql)) && ++aclReads === 3)
+        throw Object.assign(new Error('MF-I3 final HTTP authority read reset'), { code: 'ECONNRESET' });
+      return (raw as any)(sql, ...args);
+    }) as any);
+    try {
+      const result = await call('/api/chat/history?sessionKey=' + session, 'GET', undefined, jwt);
+      expect(aclReads).toBe(3); expect(result.status).toBe(503); expect(result.body).not.toContain('PRIVATE_OWNER_HISTORY');
+    } finally { failure.mockRestore(); }
+    observed.push({ id: 'MF-I3-HTTP-outbound', status: 'passed' });
+  });
+
+  it('MF-I3 unknown ACL exceptions remain internal errors, never a permanent not-found or unavailable label', async () => {
+    const jwt = await token(), live = await client(jwt);
+    const query = pool.query.bind(pool);
+    const fault = vi.spyOn(pool, 'query').mockImplementation((async (sql: any, ...args: any[]) => {
+      if (/SELECT cs\.\* FROM chat_sessions cs/.test(String(sql))) throw new TypeError('MF-I3 unknown query bug');
+      return (query as any)(sql, ...args);
+    }) as any);
+    try {
+      expect((await call('/api/chat/history?sessionKey=' + session, 'GET', undefined, jwt)).status).toBe(500);
+      live.socket.send(JSON.stringify({ type: 'chat.watch', sessionKey: session, messageId: 'unknown-error' }));
+      await vi.waitFor(() => expect(live.events.some(e => e.type === 'error')).toBe(true));
+      expect(live.events.some(e => ['CHAT_SESSION_NOT_FOUND', 'CHAT_FORBIDDEN', 'PLATFORM_UNAVAILABLE'].includes(e.code))).toBe(false);
+      expect(live.socket.readyState).toBe(WebSocket.OPEN);
+    } finally { fault.mockRestore(); }
+    observed.push({ id: 'MF-I3-unknown-not-reclassified', status: 'passed' });
   });
 
   it('HTTP/WS complete rejection matrix: no authority creates no run/session/model request', async () => {

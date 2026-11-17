@@ -289,7 +289,10 @@ export class DirectAdapter implements IAgentEngine {
   private sendSocketEvent(ws: WebSocket, payload: Record<string, unknown>): boolean {
     if (payload.type === 'run.snapshot') {
       const { chatAuthority: _internal, ...run } = payload.run as AgentRun;
-      payload = { ...payload, run };
+      // MF-I1: staged SQL is reconciliation data, never a display result,
+      // including legacy peers and every recovery-failure fallback.
+      payload = { ...payload, run: (run.result as { completionPending?: boolean } | undefined)?.completionPending
+        ? { ...run, result: { completionPending: true } } : run };
     }
     if (this.partsPeers.has(ws) && payload.type === 'run.snapshot') {
       const run = payload.run as AgentRun;
@@ -707,7 +710,7 @@ export class DirectAdapter implements IAgentEngine {
         // Receipt order wins over asynchronous authorization/admission completion.
         if (this.partsPeers.has(ws) && ['chat.watch', 'chat.send'].includes(msg.type) && typeof msg.sessionKey === 'string'
           && typeof msg.subscriptionId === 'string' && msg.subscriptionId.length > 0 && msg.subscriptionId.length <= 512) {
-          subscriptionRequests.set(msg.sessionKey, msg.subscriptionId);
+          subscriptionRequests.set(chatSessionId(msg.sessionKey), msg.subscriptionId);
           while (subscriptionRequests.size > this.displayStreams.limits.maxSubscriptionsPerPeer) subscriptionRequests.delete(subscriptionRequests.keys().next().value!);
         }
 
@@ -756,7 +759,8 @@ export class DirectAdapter implements IAgentEngine {
           catch {
             this.displayStreams.unwatch(ws);
             for (const subscribers of this.sessionSubscribers.values()) subscribers.delete(ws);
-            this.sendSocketEvent(ws, { type: 'error', code: 'CHAT_FORBIDDEN', error: '权限不足', messageId: msg.messageId, sessionKey: msg.sessionKey });
+            this.sendSocketEvent(ws, { type: 'error', code: 'CHAT_FORBIDDEN', error: '权限不足', messageId: msg.messageId,
+              sessionKey: typeof msg.sessionKey === 'string' ? chatSessionId(msg.sessionKey) : undefined, runId: msg.runId });
             return;
           }
         }
@@ -845,6 +849,7 @@ export class DirectAdapter implements IAgentEngine {
 
             const idempotencyKey = msg.idempotencyKey as string | undefined;
             const messageId = msg.messageId as string | undefined;
+            let replayRunId: string | undefined;
             if (idempotencyKey && messageId) {
               pendingMessages.set(messageId, idempotencyKey);
               try {
@@ -853,19 +858,23 @@ export class DirectAdapter implements IAgentEngine {
                   idempotencyKey,
                 );
                 if (existingRun) {
+                  replayRunId = existingRun.id;
                   if (existingRun.messageId !== messageId
                     || (rawSessionKey && existingRun.sessionId !== sessionKey)) {
                     this.sendSocketEvent(ws, { type: 'protocol.error', code: 'IDEMPOTENCY_CONFLICT' });
                     return;
                   }
+                  sessionKey = existingRun.sessionId;
                   await chatDatabaseService.authorizeSession(messageActor, existingRun.sessionId, 'append');
                   subscribeToSession(existingRun.sessionId);
                   try {
                     existingRun = await agentRunService.recoverCompletion(existingRun);
-                  } catch {
+                  } catch (error) {
+                    if (error instanceof PlatformUnavailableError) { closeAfterAuthFailure(1013, 'Service unavailable'); return; }
+                    if (error instanceof ActorAuthenticationError) { closeAfterAuthFailure(4001, 'Unauthorized'); return; }
                     this.sendSocketEvent(ws, { type: 'run.snapshot', run: existingRun, messageId, sessionKey: existingRun.sessionId });
                     this.sendSocketEvent(ws, { type: 'error', code: 'COMPLETION_STORAGE_FAILED', retryable: true,
-                      error: '回答保存未确认，请重试或重连恢复。', runId: existingRun.id, sessionKey: existingRun.sessionId });
+                      error: '回答保存未确认，请重试或重连恢复。', runId: existingRun.id, messageId, sessionKey: existingRun.sessionId });
                     return;
                   }
                   this.sendSocketEvent(ws, {
@@ -878,8 +887,10 @@ export class DirectAdapter implements IAgentEngine {
                   return;
                 }
               } catch (err) {
+                if (err instanceof PlatformUnavailableError) { closeAfterAuthFailure(1013, 'Service unavailable'); return; }
+                if (err instanceof ActorAuthenticationError) { closeAfterAuthFailure(4001, 'Unauthorized'); return; }
                 const errorMsg = err instanceof Error ? err.message : String(err);
-                this.sendSocketEvent(ws, { type: 'error', error: errorMsg, ...(err instanceof ChatForbiddenError ? { code: 'CHAT_FORBIDDEN' } : err instanceof ChatSessionNotFoundError ? { code: 'CHAT_SESSION_NOT_FOUND' } : {}) });
+                this.sendSocketEvent(ws, { type: 'error', error: errorMsg, sessionKey, messageId, runId: replayRunId, ...(err instanceof ChatForbiddenError ? { code: 'CHAT_FORBIDDEN' } : err instanceof ChatSessionNotFoundError ? { code: 'CHAT_SESSION_NOT_FOUND' } : {}) });
                 return;
               }
             }
@@ -1019,7 +1030,9 @@ export class DirectAdapter implements IAgentEngine {
                   this.activeRuns.delete(persistentRun.run.id);
                 } catch { /* preserve the original request failure */ }
               }
-              const failure = { type: 'error', ...(err instanceof ChatForbiddenError ? { code: 'CHAT_FORBIDDEN' } : err instanceof ChatSessionNotFoundError ? { code: 'CHAT_SESSION_NOT_FOUND' } : {}), error: completionAttempted ? '回答保存未确认，请重试或重连恢复。' : errorMsg,
+              if (err instanceof PlatformUnavailableError) { closeAfterAuthFailure(1013, 'Service unavailable'); return; }
+              if (err instanceof ActorAuthenticationError) { closeAfterAuthFailure(4001, 'Unauthorized'); return; }
+              const failure = { type: 'error', sessionKey, messageId, ...(err instanceof ChatForbiddenError ? { code: 'CHAT_FORBIDDEN' } : err instanceof ChatSessionNotFoundError ? { code: 'CHAT_SESSION_NOT_FOUND' } : {}), error: completionAttempted ? '回答保存未确认，请重试或重连恢复。' : errorMsg,
                 ...(completionAttempted ? { code: 'COMPLETION_STORAGE_FAILED', retryable: true } : {}),
                 ...(persistentRun ? { runId: persistentRun.run.id, sessionKey } : {}),
               };
@@ -1069,14 +1082,16 @@ export class DirectAdapter implements IAgentEngine {
                 finally { scope.release(); }
               }
               if (ws.readyState === WebSocket.OPEN) this.sendSocketEvent(ws, { type: 'memory.result', operation: msg.type, messageId: msg.messageId, sessionKey: String(msg.sessionKey ?? ''), result });
-            } catch {
-              if (ws.readyState === WebSocket.OPEN) this.sendSocketEvent(ws, { type: 'error', messageId: msg.messageId, error: 'Memory request failed' });
+            } catch (error) {
+              if (error instanceof PlatformUnavailableError) { closeAfterAuthFailure(1013, 'Service unavailable'); break; }
+              if (error instanceof ActorAuthenticationError) { closeAfterAuthFailure(4001, 'Unauthorized'); break; }
+              if (ws.readyState === WebSocket.OPEN) this.sendSocketEvent(ws, { type: 'error', messageId: msg.messageId, sessionKey: chatSessionId(String(msg.sessionKey ?? '')), error: 'Memory request failed' });
             }
             break;
           }
 
           case 'chat.history': {
-            const historySessionKey = (msg.sessionKey as string) || '';
+            const historySessionKey = chatSessionId(typeof msg.sessionKey === 'string' ? msg.sessionKey.trim() : '');
             try {
               const messages = await chatDatabaseService.getMessages(connectionActor, historySessionKey, 200);
               // Map DB records to frontend-compatible message format
@@ -1093,22 +1108,23 @@ export class DirectAdapter implements IAgentEngine {
               if (dbErr instanceof PlatformUnavailableError) { closeAfterAuthFailure(1013, 'Service unavailable'); break; }
               if (dbErr instanceof ActorAuthenticationError) { closeAfterAuthFailure(4001, 'Unauthorized'); break; }
               console.error('[DirectAdapter] chat.history failed:', dbErr instanceof Error ? dbErr.message : String(dbErr));
-              this.sendSocketEvent(ws, { type: 'error', code: dbErr instanceof ChatForbiddenError ? 'CHAT_FORBIDDEN' : 'CHAT_SESSION_NOT_FOUND', error: dbErr instanceof ChatForbiddenError ? '权限不足' : 'Session not found' });
+              this.sendSocketEvent(ws, { type: 'error', sessionKey: historySessionKey, messageId: msg.messageId, runId: msg.runId, ...(dbErr instanceof ChatForbiddenError ? { code: 'CHAT_FORBIDDEN' } : dbErr instanceof ChatSessionNotFoundError ? { code: 'CHAT_SESSION_NOT_FOUND' } : {}), error: dbErr instanceof ChatForbiddenError ? '权限不足' : dbErr instanceof ChatSessionNotFoundError ? 'Session not found' : 'History request failed' });
             }
             break;
           }
 
           case 'chat.unwatch': {
             if (typeof msg.sessionKey === 'string') {
-              this.sessionSubscribers.get(msg.sessionKey)?.delete(ws);
-              this.displayStreams.unwatch(ws, msg.sessionKey);
-              subscriptionRequests.delete(msg.sessionKey);
+              const key = chatSessionId(msg.sessionKey);
+              this.sessionSubscribers.get(key)?.delete(ws);
+              this.displayStreams.unwatch(ws, key);
+              subscriptionRequests.delete(key);
             }
             break;
           }
           case 'chat.watch': {
             // Subscribe WS to session for invoke() completion broadcasts
-            const watchKey = (msg.sessionKey as string) || '';
+            const watchKey = chatSessionId(typeof msg.sessionKey === 'string' ? msg.sessionKey.trim() : '');
             if (watchKey) {
               try {
                 await chatDatabaseService.authorizeSession(connectionActor, watchKey, 'watch');
@@ -1132,16 +1148,17 @@ export class DirectAdapter implements IAgentEngine {
                       sendToSession(watchKey, { ...(recovered.result as { event: ChatEvent }).event, runId: recovered.id, sessionKey: watchKey });
                       await this.extractCompletedMemory(connectionActor, watchKey, recovered.id);
                     }
-                  } catch {
+                  } catch (error) {
+                    if (error instanceof PlatformUnavailableError || error instanceof ActorAuthenticationError) throw error;
                     if (ws.readyState === WebSocket.OPEN) this.sendSocketEvent(ws, { type: 'run.snapshot', run: pending, messageId: pending.messageId, sessionKey: watchKey });
                     sendToSession(watchKey, { type: 'error', code: 'COMPLETION_STORAGE_FAILED', retryable: true,
-                      error: '回答保存未确认，请重试或重连恢复。', runId: pending.id, sessionKey: watchKey });
+                      error: '回答保存未确认，请重试或重连恢复。', runId: pending.id, messageId: pending.messageId, sessionKey: watchKey });
                   }
                 }
               } catch (error) {
                 if (error instanceof PlatformUnavailableError) { closeAfterAuthFailure(1013, 'Service unavailable'); break; }
                 if (error instanceof ActorAuthenticationError) { closeAfterAuthFailure(4001, 'Unauthorized'); break; }
-                this.sendSocketEvent(ws, { type: 'error', code: error instanceof ChatForbiddenError ? 'CHAT_FORBIDDEN' : 'CHAT_SESSION_NOT_FOUND', error: error instanceof ChatForbiddenError ? '权限不足' : 'Session not found' });
+                this.sendSocketEvent(ws, { type: 'error', sessionKey: watchKey, messageId: msg.messageId, runId: msg.runId, ...(error instanceof ChatForbiddenError ? { code: 'CHAT_FORBIDDEN' } : error instanceof ChatSessionNotFoundError ? { code: 'CHAT_SESSION_NOT_FOUND' } : {}), error: error instanceof ChatForbiddenError ? '权限不足' : error instanceof ChatSessionNotFoundError ? 'Session not found' : 'Watch request failed' });
               }
             }
             break;
