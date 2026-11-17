@@ -17,7 +17,7 @@ expected: Kill any running server (port 3000). Start fresh with `npx tsx server.
 result: pass
 
 ### 2. Login still works after RBAC migration
-expected: POST /api/login with admin/Tpam1234 returns 200 with JWT token. Login response should not include dropped `role` field. No `undefined` or TypeScript errors in server logs.
+expected: POST /api/login with admin/REDACTED returns 200 with JWT token. Login response should not include dropped `role` field. No `undefined` or TypeScript errors in server logs.
 result: pass
 
 ### 3. RBAC API: List system roles

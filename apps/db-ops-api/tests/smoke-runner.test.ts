@@ -13,6 +13,10 @@ function run(scenario: string) {
       const scenario = process.env.SMOKE_SCENARIO;
       if (scenario === "login-error") throw new Error("controlled offline");
       if (path === "/api/auth/login") {
+        const credentials = JSON.parse(options.body);
+        if (credentials.password !== process.env.SMOKE_PASS || credentials.username !== process.env.SMOKE_USER) {
+          throw new Error("SMOKE_FIXTURE_CREDENTIAL_MISMATCH");
+        }
         return new Response(JSON.stringify({ token: "isolated-test-token" }), { status: 200 });
       }
       const guard = !options.headers.Authorization &&
@@ -31,7 +35,9 @@ function run(scenario: string) {
     await import("./tests/smoke-test.ts");
   `], {
     cwd, encoding: "utf8", timeout: 15000,
-    env: { ...process.env, SMOKE_SCENARIO: scenario, SMOKE_BASE_URL: "http://isolated.invalid" },
+    // MAX-681: the real CLI requires explicit credentials even for mocked fetch.
+    env: { ...process.env, SMOKE_SCENARIO: scenario, SMOKE_BASE_URL: "http://isolated.invalid",
+      SMOKE_USER: "isolated-test-user", SMOKE_PASS: ["isolated", "smoke", "credential"].join("-") },
   });
 }
 

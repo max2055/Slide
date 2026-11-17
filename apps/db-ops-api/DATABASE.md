@@ -42,7 +42,7 @@ mysql -u root -p < sql/schema.sql
 ✅ 数据库初始化完成！
 
 📝 默认账户:
-   管理员：admin / Tpam1234
+   管理员：admin / REDACTED
    普通用户：user / user123
 ```
 
@@ -75,7 +75,7 @@ mysql -u root -p < sql/schema.sql
 
 初始化后会自动插入以下默认数据：
 
-- **默认用户**: admin / Tpam1234, user / user123
+- **默认用户**: admin / REDACTED, user / user123
 - **LLM 提供商配置**: 阿里云、Ollama、Anthropic、OpenAI、DeepSeek
 - **技能配置**: 7 个预定义技能
 - **告警规则**: 6 个预定义告警规则
