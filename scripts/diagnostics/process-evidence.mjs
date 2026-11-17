@@ -37,8 +37,12 @@ if (process.env.SLIDE_TEST_PROCESS_EVIDENCE === '1') {
     // Observe all pauses, emit only Promise rejection locations, always resume.
     // These observations do not themselves establish that a rejection is fatal.
     const scripts = new Map();
+    const rejectedScripts = new Map();
     session.on('Debugger.scriptParsed', ({ params }) => {
       if (safeFrame({ url: params.url, lineNumber: 0, columnNumber: 0 }, root)) scripts.set(params.scriptId, params.url);
+      else rejectedScripts.set(params.scriptId,
+        typeof params.url !== 'string' || !params.url ? 'empty-url'
+          : !params.url.startsWith('file:') ? 'non-file-url' : 'path-rejected');
     });
     session.on('Debugger.paused', ({ params }) => {
       try {
@@ -47,8 +51,14 @@ if (process.env.SLIDE_TEST_PROCESS_EVIDENCE === '1') {
           url: scripts.get(frame.location.scriptId), lineNumber: frame.location.lineNumber, columnNumber: frame.location.columnNumber,
         }));
         const asynchronous = (params.asyncStackTrace?.callFrames ?? []).slice(0, 32);
+        const mapping = { accepted: 0, 'empty-url': 0, 'non-file-url': 0, 'path-rejected': 0, 'unknown-script': 0 };
+        for (const frame of (params.callFrames ?? []).slice(0, 32)) {
+          const id = frame.location.scriptId;
+          const category = scripts.has(id) ? 'accepted' : rejectedScripts.get(id) ?? 'unknown-script';
+          mapping[category]++;
+        }
         const frames = [...synchronous, ...asynchronous].map(frame => safeFrame(frame, root)).filter(Boolean);
-        emit({ event: 'test-engine-pause', type: 'unknown', frameCount: synchronous.length + asynchronous.length, frames });
+        emit({ event: 'test-engine-pause', type: 'unknown', frameCount: synchronous.length + asynchronous.length, mapping, frames });
       } catch { /* Never inspect the exception remote object. */ }
       finally { try { session.post('Debugger.resume'); } catch { /* Original fatal path remains authoritative. */ } }
     });
