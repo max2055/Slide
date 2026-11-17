@@ -238,7 +238,7 @@ describe('109-04: DirectGatewayClient', () => {
     client.disconnect();
   });
 
-  it('stops confirmation retries and reports unknown acceptance without changing message identity', async () => {
+  it('MAX-684: sends once and reports unknown acceptance without changing message identity', async () => {
     vi.useFakeTimers();
     const socket = installMockWebSocket();
     const client = new DirectGatewayClient({ onEvent, onStateChange });
@@ -248,10 +248,10 @@ describe('109-04: DirectGatewayClient', () => {
     const result = request.catch((error: Error) => error.message);
     const original = socket.frames.at(-1);
     await vi.advanceTimersByTimeAsync(60_000);
-    expect(socket.frames.filter((frame) => frame.type === 'chat.send')).toEqual([original, original, original, original]);
+    expect(socket.frames.filter((frame) => frame.type === 'chat.send')).toEqual([original]);
     expect(await result).toContain('发送结果尚未确认');
     await vi.advanceTimersByTimeAsync(60_000);
-    expect(socket.frames.filter((frame) => frame.type === 'chat.send')).toHaveLength(4);
+    expect(socket.frames.filter((frame) => frame.type === 'chat.send')).toHaveLength(1);
     client.disconnect();
   });
 
@@ -282,7 +282,7 @@ describe('109-04: DirectGatewayClient', () => {
     client.disconnect();
   });
 
-  it('preserves the total confirmation deadline across reconnects', async () => {
+  it('MAX-684: ends pending confirmation on disconnect without replaying at reconnect', async () => {
     vi.useFakeTimers();
     vi.spyOn(Math, 'random').mockReturnValue(1);
     vi.spyOn(console, 'warn').mockImplementation(() => {});
@@ -297,7 +297,7 @@ describe('109-04: DirectGatewayClient', () => {
     socket.receive({ type: 'auth_ok' });
     await vi.advanceTimersByTimeAsync(29_000);
     expect(await result).toContain('发送结果尚未确认');
-    expect(socket.frames.filter((frame) => frame.type === 'chat.send')).toHaveLength(2);
+    expect(socket.frames.filter((frame) => frame.type === 'chat.send')).toHaveLength(0);
     client.disconnect();
   });
 
@@ -402,10 +402,12 @@ describe('109-04: DirectGatewayClient', () => {
     expect(onStateChange).toHaveBeenCalledWith('auth_failed');
   });
 
+  // MAX-684 approved policy: reconnection restores observation only.
   it.each([
     [1006, 'network lost', 'network_interrupted'],
     [1012, 'service restart', 'service_restarting'],
-  ] as const)('reconciles an unacknowledged chat after close code %s', async (code, reason, state) => {
+    [1013, 'authorization unavailable', 'service_unavailable'],
+  ] as const)('ends unknown acceptance and only observes after close code %s', async (code, reason, state) => {
     vi.useFakeTimers();
     vi.spyOn(Math, 'random').mockReturnValue(1);
     vi.spyOn(console, 'warn').mockImplementation(() => {});
@@ -413,47 +415,22 @@ describe('109-04: DirectGatewayClient', () => {
     const client = new DirectGatewayClient({ onEvent, onStateChange });
     client.connect();
     socket.receive({ type: 'auth_ok' });
-
-    const request = client.request('chat.send', { sessionKey: '', message: 'first message' });
-    const originalFrame = socket.frames.at(-1)!;
-    socket.receive({
-      type: 'session.created',
-      sessionKey: 'server-session',
-      messageId: originalFrame.messageId,
-    });
+    const result = client.sendChat(undefined, 'first message').catch(error => error);
+    const original = socket.frames.at(-1)!;
+    socket.receive({ type: 'session.created', sessionKey: 'server-session', messageId: original.messageId });
     socket.closeWith(code, reason, false);
     expect(onStateChange).toHaveBeenCalledWith(state);
-
-    let settled = false;
-    void request.then(() => { settled = true; }, () => { settled = true; });
-    await Promise.resolve();
-    expect(settled).toBe(false);
-
+    expect(await result).toBeInstanceOf(ChatAcceptanceTimeoutError);
     await vi.advanceTimersByTimeAsync(1_000);
     socket.receive({ type: 'auth_ok' });
-    const replayedFrame = socket.frames.at(-1)!;
-    expect(replayedFrame).toMatchObject({
-      type: 'chat.send',
-      messageId: originalFrame.messageId,
-      idempotencyKey: originalFrame.idempotencyKey,
-      sessionKey: 'server-session',
-    });
-
-    const snapshot = {
-      type: 'run.snapshot',
-      messageId: replayedFrame.messageId,
-      run: {
-        id: 'existing-run',
-        sessionId: 'server-session',
-        messageId: replayedFrame.messageId,
-        idempotencyKey: replayedFrame.idempotencyKey,
-        state: 'running',
-      },
-    };
+    expect(socket.frames).toContainEqual({ type: 'chat.watch', sessionKey: 'server-session' });
+    expect(socket.frames.some(frame => frame.type === 'chat.send')).toBe(false);
+    const snapshot = { type: 'run.snapshot', messageId: original.messageId,
+      run: { id: 'existing-run', sessionId: 'server-session', messageId: original.messageId,
+        idempotencyKey: original.idempotencyKey, state: 'cancelled' } };
     socket.receive(snapshot);
-
-    await expect(request).resolves.toBeUndefined();
     expect(onEvent).toHaveBeenCalledWith(snapshot);
+    client.disconnect();
   });
 
   it('treats a duplicate chat snapshot as durable acceptance', async () => {
