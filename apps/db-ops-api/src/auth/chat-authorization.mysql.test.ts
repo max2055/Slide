@@ -211,6 +211,12 @@ describe.skipIf(!port)('MAX-684 real SQL/JWT/HTTP/WS; controlled model endpoint'
       expect([...(gateway as any).pendingChatAcknowledgements.keys()]).toEqual(pendingB);
       const peer = [...(adapter as any).wsServer.clients].find((ws: any) => ws._actorContext?.userId === b.userId) as WebSocket;
       expect((adapter as any).sessionSubscribers.get(other)?.has(peer)).toBe(true);
+      // MF-I2 frontend fallback: transport-corrupted/unknown association cannot
+      // guess B; these are explicit injected frames, not server contract proof.
+      (gateway as any).dispatchEvent({ type: 'error', code: 'CHAT_SESSION_NOT_FOUND' });
+      (gateway as any).dispatchEvent({ type: 'error', code: 'CHAT_SESSION_NOT_FOUND', runId: 'unknown-run' });
+      expect(state.chatMessages).toBe(preservedB); expect(state.chatMessage).toBe('B draft');
+      expect([...(gateway as any).pendingChatAcknowledgements.keys()]).toEqual(pendingB);
       // Late transport response and old async receiver cannot restore denied A.
       (gateway as any).dispatchEvent({ type: 'complete', sessionKey: hidden, finalContent: 'MF_I2_LATE_A' });
       retiredA.chatMessages = [{ content: 'MF_I2_LATE_RECEIVER' }];
@@ -220,6 +226,14 @@ describe.skipIf(!port)('MAX-684 real SQL/JWT/HTTP/WS; controlled model endpoint'
       expect(modelCalls).toBe(count + 1); expect(toolCalls).toBe(tools);
       const sends = send.mock.calls.map(([raw]) => { try { return JSON.parse(String(raw)); } catch { return {}; } }).filter(f => f.type === 'chat.send');
       expect(sends.filter(f => f.message === 'B pending receipt')).toHaveLength(1);
+      // A genuine global denial still clears both scopes and ends B's unknown
+      // receipt, without replaying the admitted request or held model call.
+      await revoke(b.userId);
+      (gateway as any).ws.send(JSON.stringify({ type: 'chat.watch', sessionKey: other }));
+      await vi.waitFor(() => expect(frames.some(e => e.code === 'CHAT_FORBIDDEN')).toBe(true));
+      expect(state.chatMessages).toEqual([]); expect(state.chatAccessDenied).toBe(true);
+      await acknowledgement; expect(settledB).toBe(true);
+      expect(modelCalls).toBe(count + 1); expect(toolCalls).toBe(tools);
       gateway.disconnect(); await acknowledgement;
       observed.push({ id: 'MF-I2-real-dual-view-' + entry, status: 'passed' });
     } finally {
