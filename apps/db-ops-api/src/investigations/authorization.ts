@@ -8,7 +8,7 @@ import { InvestigationStoreError, type AdmissionAuthorizer, type AdmissionInvest
   type InvestigationActor, type InvestigationOperation, type InvestigationResource } from './store.js';
 
 export type AuthorityExecutor = Pick<TransactionConnection, 'execute'>;
-export type InvestigationAction = InvestigationOperation | 'continue' | 'cancel' | 'watch' | 'content';
+export type InvestigationAction = InvestigationOperation | 'continue' | 'cancel' | 'watch' | 'content' | 'action-scope';
 export interface InvestigationAuthoritySnapshot {
   schemaVersion: 1;
   investigationId: string;
@@ -214,7 +214,8 @@ export class InvestigationAuthorization {
     // explicit-grant request survive deletion of that live instance grant.
     const globalInstanceAccess = !ceiling.resourceBoundary && permission(current, 'instance:*')
       && permission(ceiling, 'instance:*') && (!frozen || frozen.globalInstanceAccess === true);
-    if (!permitted('chat:view') || profile.id === 'system' && !permitted('config:view')) throw invisible();
+    // Action-plan scope checks retain membership and full resource ACL without granting investigation content.
+    if (!permitted(action === 'action-scope' ? 'operations:actions:view' : 'chat:view') || profile.id === 'system' && !permitted('config:view')) throw invisible();
     const historical = (investigation.scopeRevision ?? 0) > 0
       ? (await rows(connection, 'SELECT resource_type,resource_id FROM investigation_scope_resources WHERE investigation_id=? FOR SHARE', [investigation.id]))
         .map(ref => ({ type: ref.resource_type, id: Number(ref.resource_id) })) : [];
@@ -230,8 +231,8 @@ export class InvestigationAuthorization {
         if (!found.length) throw invisible();
       }
     }
-    if (!['read', 'watch', 'content'].includes(action) && role !== 'operator') throw forbidden();
-    const tools = profile.toolAllowlist.filter(name => {
+    if (!['read', 'watch', 'content', 'action-scope'].includes(action) && role !== 'operator') throw forbidden();
+    const tools = (action === 'action-scope' ? [] : profile.toolAllowlist).filter(name => {
       const security = getToolSecurityDefinition(name);
       return (!this.toolCeiling || this.toolCeiling.includes(name)) && !!security && security.audience === 'actor' && security.effect === 'read'
         && security.credentials !== 'read' && security.approval === 'never' && this.toolPolicy(name)
@@ -239,7 +240,7 @@ export class InvestigationAuthorization {
     });
     // Downstream tools see a bounded actor with exact effective permissions,
     // never a role/username-based admin shortcut, and read-only scope levels.
-    const permissions = new Set(['chat:view', ...(profile.id === 'system' ? ['config:view'] : []),
+    const permissions = new Set([...(action === 'action-scope' ? [] : ['chat:view']), ...(profile.id === 'system' ? ['config:view'] : []),
       ...investigation.resources.map(ref => resourcePermission(ref.type)),
       ...tools.flatMap(name => [...getToolSecurityDefinition(name)!.permissions])]);
     const boundary = Object.freeze({

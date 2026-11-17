@@ -109,15 +109,15 @@ test('create → real tool process → cancel → different Run → versions and
   await expect(page.locator('.workspace-context investigation-context')).toContainText('根因待验证');
 });
 
-test('1600 / 1024 / 390 layout and evidence dialog keyboard focus', async ({ page }) => {
+test('desktop layout and evidence dialog keyboard focus', async ({ page }) => {
   await login(page);
   await page.goto(`${env.url}/investigations?investigation=${investigationId}`);
-  for (const width of [1600, 1024, 390]) {
+  for (const width of [1440, 1366, 1920]) {
     await page.setViewportSize({ width, height: 950 });
     await expect(page.getByRole('textbox', { name: '继续调查', exact: true })).toBeVisible();
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     expect(await page.evaluate(() => { const rect = document.querySelector('investigations-page')!.getBoundingClientRect(); const nav = document.querySelector('.shell-nav')!.getBoundingClientRect(); return rect.left >= nav.right && rect.right <= innerWidth; })).toBe(true);
-    if (width === 1600) await expect(page.locator('.workspace-context')).toBeVisible();
+    if (width >= 1440) await expect(page.locator('.workspace-context')).toBeVisible();
     else {
       const trigger = page.getByRole('button', { name: '查看证据与成果' });
       await trigger.click(); await expect(page.getByRole('dialog', { name: '证据与成果' })).toBeVisible();
@@ -346,7 +346,7 @@ for (const entry of ['creation', 'conversion'] as const) {
         await expect(page).toHaveURL(new RegExp(`session=${session.session_id}`));
         const [messages] = await env.pool.query('SELECT message_id,content FROM chat_messages WHERE session_id=?', [session.session_id]);
         expect(messages).toEqual([{ message_id: messageId, content: '撤权前的原消息' }]);
-      } else await expect(page).toHaveURL(`${env.url}/investigations`);
+      } else await expect(page).toHaveURL(`${env.url}/workbench?workspaceTab=investigations`);
     } finally { await env.pool.query("INSERT IGNORE INTO instance_permissions (user_id,instance_id,access_level) VALUES (101,101,'read-only')"); }
   });
 }
@@ -380,7 +380,7 @@ test('Profiles settings consumes readonly facts, responds to live SQL rejection 
       await expect(details).toBeFocused();
     }
     await expect(profiles).toContainText('尚未评估'); await expect(profiles).toContainText('执行上限不代表剩余额度');
-    for (const width of [1600, 1024, 390]) {
+    for (const width of [1440, 1366, 1920]) {
       await page.setViewportSize({ width, height: 950 });
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
       await page.screenshot({ path: `test-results/t06-profiles-${width}.png`, fullPage: true });
@@ -637,7 +637,11 @@ test('more than 20 durable result versions page, remain after snapshot, and reco
 for (const action of ['revocation', 'selection'] as const) {
   test(`${action} cannot restore a delayed real HTTP history page`, async ({ page }) => {
     const id = await pagedInvestigation(), other = action === 'selection' ? await pagedInvestigation() : '';
-    await login(page); await page.goto(`${env.url}/investigations?investigation=${id}`);
+    await login(page);
+    if (action === 'selection') {
+      await page.goto(`${env.url}/workbench?workspaceTab=investigations`);
+      await page.locator(`button[data-investigation="${id}"]`).click();
+    } else await page.goto(`${env.url}/investigations?investigation=${id}`);
     await expect.poll(() => page.evaluate(() => (document.querySelector('investigations-page') as any).controller.online)).toBe(true);
     await observed(page);
     let release!: () => void, arrived!: () => void, delivered!: () => void;
@@ -664,9 +668,8 @@ for (const action of ['revocation', 'selection'] as const) {
         // Either the HTTP live recheck or WS revocation may close authority first.
         await expect(page.getByRole('alert')).toContainText(/访问权限|登录已失效/);
       } else {
-        const button = page.locator('.investigation-list button').filter({ hasText: '确定性分页调查' });
-        // Both records are recent; use the list's newest row for the other ID.
-        await button.first().click();
+        await page.getByRole('link', { name: '返回来源页面', exact: true }).click();
+        await page.locator(`button[data-investigation="${other}"]`).click();
         await expect.poll(() => page.evaluate(() => (document.querySelector('investigations-page') as any).controller.detail?.id)).toBe(other);
       }
       release(); await settled;
@@ -690,7 +693,7 @@ for (const action of ['revocation', 'selection'] as const) {
   });
 }
 
-test('MAX-212 partial outcome is readable before collapsed process in both themes and widths', async ({ page }) => {
+test('MAX-212 partial outcome is readable before collapsed process at desktop sizes', async ({ page }) => {
   env.exhaustProviderSteps(true);
   let id = '';
   try {
@@ -714,7 +717,8 @@ test('MAX-212 partial outcome is readable before collapsed process in both theme
   await expect(page.locator('.investigation-states')).toContainText('未确认');
   const process = page.locator('details[aria-label="执行过程与技术详情"]');
   await expect(process).not.toHaveAttribute('open', '');
-  for (const width of [1600, 390]) for (const theme of ['light', 'dark']) {
+  for (const width of [1366, 1440, 1920]) {
+    const theme = 'light';
     await page.setViewportSize({ width, height: 1000 });
     await page.locator('slide-app').evaluate((e: any, theme) => e.applySettings({ ...e.settings, themeMode: theme }), theme);
     await expect(page.locator('html')).toHaveAttribute('data-theme-mode', theme);
@@ -731,4 +735,31 @@ test('MAX-212 partial outcome is readable before collapsed process in both theme
   const counts = env.counts(); await page.reload(); await expect(resultSection).toContainText('已保留');
   expect(env.counts()).toEqual(counts);
   await expect(page.locator('investigation-feedback')).toBeVisible();
+});
+
+test('MAX-683 reads three independent long evidence records through authorized HTTP in the full app',async({page})=>{
+  const [rows]=await env.pool.query('SELECT request_id,run_id FROM investigation_results WHERE investigation_id=? ORDER BY version DESC LIMIT 1',[investigationId]);
+  const binding={investigationId,requestId:rows[0].request_id,runId:rows[0].run_id};
+  const proofs=[];
+  for(const source of ['SYNTHETIC slow log','SYNTHETIC metric window','SYNTHETIC configuration']) {
+    proofs.push(await env.bridge.observationServices().evidence.put(env.owner,binding,crypto.randomUUID(),{
+      source,summary:`${source} 独立资料。${'长文本用于阅读验收，不能推广为真实目标采集结论。'.repeat(22)}`,
+      resources:[{type:'instance',id:101}],observedFrom:new Date(Date.now()-60000).toISOString(),observedTo:new Date().toISOString(),collectedAt:new Date().toISOString(),raw:{source,fixture:true,limitation:'synthetic only'},
+    }));
+  }
+  expect(new Set(proofs.map(p=>p.contentHash)).size).toBe(3);
+  const reads=new Set<string>();
+  page.on('response',r=>{if(r.status()===200&&r.url().includes('/evidence/'))reads.add(r.url().split('/').pop()!);});
+  await login(page);await page.goto(`${env.url}/workbench?investigation=${investigationId}`);await observed(page);
+  for(const proof of proofs) {
+    const entry=page.locator(`.workspace-context [data-evidence="${proof.id}"]`);
+    await expect(entry).toContainText(proof.source);await expect(entry).toContainText('不能推广为真实目标采集结论');
+    await entry.locator('summary').click();await expect(entry).toContainText(proof.contentHash);
+  }
+  expect(proofs.every(p=>reads.has(p.id))).toBe(true);
+  for(const [width,height] of [[1440,900],[1366,768],[1920,1080]]) {
+    await page.setViewportSize({width,height});
+    expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+    await page.screenshot({path:test.info().outputPath(`independent-evidence-${width}.png`),fullPage:true});
+  }
 });

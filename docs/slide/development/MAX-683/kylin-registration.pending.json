@@ -1,0 +1,49 @@
+{
+  "draftKind": "max683-pending-kylin-registration",
+  "status": "pending-network-and-identity-verification",
+  "deployable": false,
+  "targetProposal": {
+    "protocol": 1,
+    "serverId": null,
+    "host": "172.16.51.128",
+    "port": 22,
+    "username": "slide-action",
+    "unit": "slide-action-demo.service",
+    "helper": "/usr/local/libexec/slide-action-demo-helper",
+    "helperHash": null,
+    "unitHash": null,
+    "hostFingerprint": null,
+    "toolVersion": "1",
+    "eligible": false
+  },
+  "manifestToSign": null,
+  "manifestSignature": null,
+  "targetSignature": null,
+  "signatureAlgorithm": "Ed25519",
+  "signedPayloadRecipes": {
+    "manifestSignature": "UTF8(operationsContentHash(complete verified manifest))",
+    "targetSignature": "UTF8(operationsContentHash(complete verified target))"
+  },
+  "validFrom": null,
+  "validUntil": null,
+  "verifierProposal": {
+    "id": null,
+    "version": null,
+    "definitionHash": null,
+    "trustedHealthSource": null
+  },
+  "verificationRequired": [
+    "network-and-actual-lease",
+    "pinned-host-identity-and-original-target-correspondence",
+    "dedicated-nonroot-account-and-forced-command",
+    "root-owned-helper-unit-and-registration-files",
+    "installed-helper-and-effective-unit-hashes",
+    "trusted-health-source-and-current-sampling",
+    "isolated-candidate-server-row-with-exact-address-and-fingerprint",
+    "fresh-manifest-and-target-signatures-with-bounded-validity",
+    "current-investigation-result-plan-and-independent-new-approval"
+  ],
+  "sharedModelConfigurationSourceModified": false,
+  "remoteChangesPerformed": false,
+  "oldManifestOrApprovalReusable": false
+}

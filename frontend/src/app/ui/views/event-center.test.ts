@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 import "./event-center.js";
+import { EventCenterPage } from './event-center.js';
 
 describe("event center navigation", () => {
   afterEach(() => {
@@ -9,7 +10,8 @@ describe("event center navigation", () => {
 
   async function renderAt(path: string) {
     window.history.replaceState({}, "", path);
-    const element = document.createElement("event-center-page") as HTMLElement & { updateComplete: Promise<unknown> };
+    const element = new EventCenterPage();
+    element.permissions = new Set(['alert:view']);
     document.body.append(element);
     await element.updateComplete;
     return element;
@@ -23,6 +25,17 @@ describe("event center navigation", () => {
       "活动告警", "聚合事件", "通知投递", "平台异常",
     ]);
     expect(root.querySelector("event-management-page")).not.toBeNull();
+  });
+  it('waits for aggregate authority and unmounts facts on revocation', async () => {
+    const element = await renderAt('/events?view=aggregate');
+    element.permissions = null; await element.updateComplete;
+    expect(element.shadowRoot!.querySelector('[role="status"]')?.textContent).toContain('正在确认访问权限');
+    expect(element.shadowRoot!.querySelector('event-management-page')).toBeNull();
+    window.dispatchEvent(new CustomEvent('slide-permissions-loaded', {detail:{permissions:['alert:view']}})); await element.updateComplete;
+    expect(element.shadowRoot!.querySelector('event-management-page')).not.toBeNull();
+    window.dispatchEvent(new CustomEvent('slide-permissions-loaded', {detail:{permissions:[]}})); await element.updateComplete;
+    expect(element.shadowRoot!.querySelector('event-management-page')).toBeNull();
+    expect(element.shadowRoot!.querySelector('app-empty-state')?.getAttribute('title')).toBe('无访问权限');
   });
 
   it("keeps old rules navigation on the four-tab center without a rule editor", async()=>{

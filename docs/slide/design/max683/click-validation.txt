@@ -1,0 +1,52 @@
+### Result
+"{\n  \"checks\": [\n    \"MF1/MF2 首页范围与调查时间\",\n    \"MF1/MF2 A1/A2/H1 可发现且时间来源不同\",\n    \"MF1 第二计划可读取\",\n    \"MF1 已关闭调查历史计划只读\",\n    \"MF3 首页需继续到调查详情且无活动请求\",\n    \"MF3 可继续无审批模板\",\n    \"MF3 独立运行中对象只读取等待\",\n    \"MF3 运行中无继续动作\",\n    \"1366 详情无页面横溢\",\n    \"1366 首页无页面横溢\",\n    \"1920 首页无页面横溢\",\n    \"建议项 证据不足摘要含原因采样窗口引用\"\n  ],\n  \"passed\": 12,\n  \"scope\": \"静态设计原型；无 API；不验证权限、审批执行或导航恢复\"\n}"
+### Ran Playwright code
+```js
+await (async (page) => {
+ const checks=[];
+ const check=async(name, condition)=>{if(!await condition())throw new Error(name);checks.push(name);};
+ const text=async()=>page.locator('body').innerText();
+ const contains=async(...words)=>{const t=await text();return words.every(w=>t.includes(w));};
+ const shot=async(name)=>page.screenshot({path:'docs/slide/design/max683/'+name+'.png',scale:'css'});
+ await check('MF1/MF2 首页范围与调查时间',()=>contains('每调查一个当前下一步','调查更新时间','今日 15:20','完整行动列表','完整调查列表'));
+ await shot('home-1440');
+ await page.getByRole('link',{name:'完整行动列表 →',exact:true}).click();
+ await check('MF1/MF2 A1/A2/H1 可发现且时间来源不同',()=>contains('A1 ·','A2 ·','已关闭调查 H','计划更新 15:42','计划更新 15:46','未提供'));
+ await shot('actions-1440');
+ await page.getByRole('link',{name:'审阅 A2 →',exact:true}).click();
+ await check('MF1 第二计划可读取',()=>contains('A2 · 专用服务配置核对计划','同调查 A 的第二个待审批计划'));
+ await shot('second-1440');
+ await page.goBack();
+ await page.getByRole('link',{name:'读取历史 →',exact:true}).click();
+ await check('MF1 已关闭调查历史计划只读',()=>contains('H1 · 历史服务处置计划','来源调查：已关闭调查 H','已过期 · 历史只读'));
+ await shot('history-1440');
+ await page.getByRole('link',{name:'← 返回事项列表',exact:true}).click();
+ await page.getByRole('link',{name:'查看调查 →',exact:true}).click();
+ await check('MF3 首页需继续到调查详情且无活动请求',()=>contains('/ 调查详情','需继续调查','没有活动请求','继续原调查（示意）'));
+ await check('MF3 可继续无审批模板',async()=>!((await text()).includes('计划有效期')||(await text()).includes('原作者不可自批')));
+ await shot('continue-1440');
+ await page.getByRole('link',{name:'← 返回事项列表',exact:true}).click();
+ await page.getByRole('link',{name:'完整调查列表 →',exact:true}).click();
+ await shot('investigations-1440');
+ await page.getByRole('link',{name:'查看运行中调查 →',exact:true}).click();
+ await check('MF3 独立运行中对象只读取等待',()=>contains('数据库连接异常调查 R','/ 调查详情','活动请求运行中','不再派发','读取当前请求（示意）'));
+ await check('MF3 运行中无继续动作',async()=>await page.getByRole('button',{name:'继续原调查（示意）',exact:true}).count()===0);
+ await shot('running-1440');
+ await page.getByRole('link',{name:'待审批',exact:true}).click();
+ await shot('detail-1440');
+ await page.setViewportSize({width:1366,height:768});await shot('detail-1366');
+ await check('1366 详情无页面横溢',()=>page.evaluate(()=>document.documentElement.scrollWidth===1366));
+ await page.getByRole('link',{name:'← 返回事项列表',exact:true}).click();
+ await check('1366 首页无页面横溢',()=>page.evaluate(()=>document.documentElement.scrollWidth===1366));
+ await page.setViewportSize({width:1920,height:1080});await shot('home-1920');
+ await check('1920 首页无页面横溢',()=>page.evaluate(()=>document.documentElement.scrollWidth===1920));
+ await page.setViewportSize({width:1440,height:900});
+ await page.getByRole('link',{name:'核对证据 →',exact:true}).click();
+ await check('建议项 证据不足摘要含原因采样窗口引用',()=>contains('missingSamples：12','observedFrom','observedUntil','报告引用：当前执行 E1 / 报告 v2'));
+ await shot('missing-1440');
+ return JSON.stringify({checks,passed:checks.length,scope:'静态设计原型；无 API；不验证权限、审批执行或导航恢复'},null,2);
+})(page);
+```
+### Page
+- Page URL: http://127.0.0.1:18763/concept.html?view=detail&mode=missing
+- Page Title: AI 工作台 · 设计提案

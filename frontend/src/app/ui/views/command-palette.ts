@@ -17,8 +17,8 @@ type PaletteItem = {
 
 // Explicit product allowlist: upstream chat commands do not define Slide capabilities.
 const PRODUCT_DESTINATIONS: Array<[Tab, string, IconName, string?]> = [
-  ['dashboard', '资源总览', 'bar-chart'], ['attention', '关注事项', 'activity'],
-  ['investigations', '调查工作台', 'search'], ['chat', '运维对话', 'file-text'],
+  ['dashboard', '资源总览', 'bar-chart'],
+  ['investigations', 'AI 工作台', 'search'], ['chat', '运维对话', 'file-text'],
   ['instances-db', '数据库实例', 'database'], ['servers', '服务器', 'monitor'],
   ['network-devices', '网络设备', 'monitor'],
   ['sql-console', 'SQL 控制台', 'terminal', '执行受实例权限、SQL 边界与审批约束'],
@@ -32,7 +32,7 @@ export function getPaletteItems(permissions: Set<string> | null = null, visibleT
   if (!permissions) return [];
   return PRODUCT_DESTINATIONS.filter(([tab]) =>
     (!visibleTabs?.length || visibleTabs.includes(tab)) &&
-    hasSlidePermission(permissions, tab === 'attention' ? 'alert:view' : tab === 'chat' ? 'chat:view' : TAB_REQUIRED_PERMISSIONS[tab])
+    (tab === 'investigations' ? hasSlidePermission(permissions, 'chat:view') || hasSlidePermission(permissions, 'operations:actions:view') : hasSlidePermission(permissions, tab === 'chat' ? 'chat:view' : TAB_REQUIRED_PERMISSIONS[tab]))
   ).map(([tab, label, icon, description]) => ({ id: `nav-${tab}`, label, icon, category: 'navigation', action: `nav:${tab}`, description }));
 }
 

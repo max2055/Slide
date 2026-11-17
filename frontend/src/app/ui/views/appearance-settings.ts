@@ -222,7 +222,7 @@ export class AppearanceSettings extends LitElement {
     this.sidebarPos = readSettingsField("sidebarPosition", "left");
     this.reduceMotion = readSettingsField("reduceAnimations", false);
     const defaultTab = readSettingsField<unknown>("defaultTab", "dashboard");
-    this.defaultTab = typeof defaultTab === "string" ? defaultTab : "dashboard";
+    this.defaultTab = defaultTab === "attention" ? "events" : defaultTab === "operations-actions" ? "investigations" : typeof defaultTab === "string" ? defaultTab : "dashboard";
     this.visibleTabsConfigured = readSettingsField<unknown>("visibleTabsConfigured", false) === true;
     const visibleTabs = readSettingsField<unknown>("visibleTabs", []);
     this.visibleTabs = Array.isArray(visibleTabs) ? visibleTabs.filter((tab): tab is string => typeof tab === "string") : [];

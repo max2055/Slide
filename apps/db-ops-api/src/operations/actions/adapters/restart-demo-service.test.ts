@@ -8,6 +8,7 @@ import { describe, expect, it } from 'vitest';
 import { operationsContentHash, type ActionPlanVersion } from '../../contracts.js';
 import { RestartDemoServiceAdapter, type DemoTargetRegistration } from './restart-demo-service.js';
 import { consumeActionInvocation, checkedActionReceipt, actionConfigHash } from '../executor.js';
+import { DEMO_TARGET_HOSTS } from '../../demo-target-hosts.js';
 
 const { publicKey, privateKey } = generateKeyPairSync('ed25519');
 const hostKey = Buffer.from('registered-host-key');
@@ -339,7 +340,69 @@ print('disk intent, duplicate, collision, lost reply, unknown blockade passed')
     expect(JSON.parse(result.stdout)).toMatchObject({ rejected: invalid !== 'absent' });
   });
 
-  it('real loopback SSH handshake accepts only pinned key and fixed helper command', async () => {
+  it.each(DEMO_TARGET_HOSTS)('binds %s to its own signature and plan hash rather than the other allowed address', async host => {
+    const target = { ...registration, host };
+    const targetHash = operationsContentHash(target);
+    const targetSignature = sign(null, Buffer.from(targetHash), privateKey);
+    const other = { ...target, host: DEMO_TARGET_HOSTS.find(value => value !== host)! };
+    const c = new Client();
+    expect(() => new RestartDemoServiceAdapter(other, targetSignature, publicKey,
+      async () => ({privateKey:'test-key'}), () => c)).toThrow('OPERATIONS_PRECONDITION_FAILED');
+    const adapter = new RestartDemoServiceAdapter(target, targetSignature, publicKey,
+      async () => ({privateKey:'test-key'}), () => c);
+    const p = structuredClone(plan);
+    p.content.preconditions[0].expected = operationsContentHash(other);
+    await expect(adapter.preflight(p)).rejects.toThrow('OPERATIONS_PRECONDITION_FAILED');
+    expect(c.config).toBeUndefined(); expect(c.commands).toEqual([]);
+    p.content.preconditions[0].expected = targetHash;
+    c.response = { ...(c.response as object), configHash:targetHash };
+    await adapter.preflight(p);
+    expect(c.config.host).toBe(host);
+    expect(c.commands).toEqual(['sudo -n -- /usr/local/libexec/slide-action-demo-helper inspect']);
+  });
+  it.each([...DEMO_TARGET_HOSTS, '172.16.51.129','127.0.0.1','kylin.local','172.16.51.128.example','::1'])(
+    'actual Python helper configuration guard agrees on address %s', host => {
+      const helper = new URL('../../../../../../scripts/qualification/action-demo-helper.sh',import.meta.url);
+      const definitions = readFileSync(helper,'utf8').split("<<'PY'\n")[1].split('\ntry:\n    main()')[0];
+      const target = {...registration,host};
+      const harness = `
+import tempfile,json,sys
+ns={}
+exec(${JSON.stringify(definitions)},ns)
+target=json.load(sys.stdin)
+with tempfile.NamedTemporaryFile(mode='w+') as f:
+    json.dump(target,f);f.flush()
+    ns['REGISTRATION']=f.name
+    ns['check_path']=lambda *args: None  # Synthetic filesystem, real registration/hash/unit checks.
+    ns['digest']=lambda path: 'a'*64 if path==ns['HELPER'] else 'b'*64
+    props={'FragmentPath':ns['UNIT_FILE'],'DropInPaths':'','Id':ns['UNIT'],'LoadState':'loaded','NeedDaemonReload':'no','Transient':'no'}
+    ns['ctl']=lambda *args: props[args[2].split('=',1)[1]]
+    try:
+        result,h=ns['configuration']()
+        print(json.dumps({'accepted':True,'hash':h}))
+    except ValueError:
+        print(json.dumps({'accepted':False}))
+`;
+      const run = (input: unknown) => {
+        const r=spawnSync('/usr/bin/python3',['-I','-c',harness],{input:JSON.stringify(input),encoding:'utf8',timeout:5000});
+        expect(r.status,r.stderr).toBe(0); return JSON.parse(r.stdout);
+      };
+      const accepted=DEMO_TARGET_HOSTS.includes(host as typeof DEMO_TARGET_HOSTS[number]);
+      expect(run(target)).toEqual(accepted?{accepted:true,hash:operationsContentHash(target)}:{accepted:false});
+      if(accepted) {
+        expect(run({...target,helperHash:'f'.repeat(64)})).toEqual({accepted:false});
+        expect(run({...target,unitHash:'f'.repeat(64)})).toEqual({accepted:false});
+        expect(run({...target,hostFingerprint:'unverified'})).toEqual({accepted:false});
+      }
+    });
+  it.each(['172.16.51.129','127.0.0.1','kylin.local','172.16.51.128.example','::1'])(
+    'rejects a signed but unregistered execution address %s', host => {
+      const target = {...registration,host};
+      expect(() => new RestartDemoServiceAdapter(target,
+        sign(null,Buffer.from(operationsContentHash(target)),privateKey),publicKey,
+        async () => ({privateKey:'test-key'}))).toThrow('OPERATIONS_PRECONDITION_FAILED');
+    });
+  it.each(DEMO_TARGET_HOSTS)('real loopback SSH handshake for %s accepts only pinned key and fixed helper command', async registeredHost => {
     const host = generateSshFixtureKeyPair(),
       login = generateSshFixtureKeyPair();
     const parsed = utils.parseKey(host.private);
@@ -347,7 +410,7 @@ print('disk intent, duplicate, collision, lost reply, unknown blockade passed')
     const fingerprint =
       'SHA256:' +
       createHash('sha256').update(parsed.getPublicSSH()).digest('base64').replace(/=+$/, '');
-    const target = { ...registration, hostFingerprint: fingerprint };
+    const target = { ...registration, host: registeredHost, hostFingerprint: fingerprint };
     const targetHash = operationsContentHash(target);
     const targetSignature = sign(null, Buffer.from(targetHash), privateKey),
       commands: string[] = [];
