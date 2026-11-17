@@ -8,6 +8,7 @@ const cwd = fileURLToPath(new URL("..", import.meta.url));
 function run(scenario: string) {
   return spawnSync(process.execPath, ["--import", "tsx", "--input-type=module", "-e", `
     let guards = 0;
+    const { createHash } = await import('node:crypto');
     globalThis.fetch = async (url, options) => {
       const path = new URL(url).pathname;
       const scenario = process.env.SMOKE_SCENARIO;
@@ -18,6 +19,11 @@ function run(scenario: string) {
           throw new Error("SMOKE_FIXTURE_CREDENTIAL_MISMATCH");
         }
         return new Response(JSON.stringify({ token: "isolated-test-token" }), { status: 200 });
+      }
+      if (path === "/api/users" && options.method === "POST" && options.headers.Authorization) {
+        const { password } = JSON.parse(options.body);
+        if (typeof password !== 'string' || password.length < 32) throw new Error('UNSAFE_CREATED_PASSWORD');
+        console.log('CREATED_PASSWORD_SHA256=' + createHash('sha256').update(password).digest('hex'));
       }
       const guard = !options.headers.Authorization &&
         options.method === "POST" && ["/api/users", "/api/database/instances"].includes(path);
@@ -42,6 +48,16 @@ function run(scenario: string) {
 }
 
 describe("smoke CLI exit and summary (#399)", () => {
+  it('MAX-681 creates a different account password in each CLI process', () => {
+    const first = run('pass');
+    const second = run('pass');
+    expect(first.status).toBe(0);
+    expect(second.status).toBe(0);
+    const digest = (text: string) => /CREATED_PASSWORD_SHA256=([a-f0-9]{64})/.exec(text)?.[1];
+    expect(digest(first.stdout)).toBeDefined();
+    expect(digest(second.stdout)).toBeDefined();
+    expect(digest(first.stdout)).not.toBe(digest(second.stdout));
+  });
   it.each([
     ["pass", 0, 0],
     ["guard-400", 0, 0],

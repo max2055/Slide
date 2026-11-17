@@ -15,6 +15,11 @@ while [[ $# -gt 0 ]]; do
 done
 case "$mode" in deterministic|mysql|soak|provider) ;; *) exit 64 ;; esac
 if [[ "$runtime_only" == 1 && "$mode" != mysql ]]; then echo '--runtime-only requires --mode mysql' >&2; exit 64; fi
+# MAX-681: preserve an explicitly empty fixture password, never invent one.
+if [[ "$mode" == mysql && "${DB_PASSWORD+x}" != x ]]; then
+  echo 'DB_PASSWORD must be explicitly injected for mysql mode' >&2
+  exit 64
+fi
 mkdir -p .qualification/runtime
 log=".qualification/runtime/${mode}-$(date +%s)-$$.log"
 export QUALIFICATION_RUNTIME_LOG="$log"
@@ -23,10 +28,10 @@ pnpm --filter slide-api exec tsx ../../tests/qualification/agent-runtime.ts "$mo
 
 if [[ "$mode" == mysql && "$runtime_only" != 1 ]]; then
   APPROVAL_TEST_MYSQL_HOST="${DB_HOST:-127.0.0.1}" APPROVAL_TEST_MYSQL_PORT="${DB_PORT:-3306}" \
-  APPROVAL_TEST_MYSQL_USER="${DB_USER:-root}" APPROVAL_TEST_MYSQL_PASSWORD="${DB_PASSWORD:-}" \
+  APPROVAL_TEST_MYSQL_USER="${DB_USER:-root}" APPROVAL_TEST_MYSQL_PASSWORD="$DB_PASSWORD" \
     pnpm --filter slide-api exec vitest run src/security/agent-tool-approval-execution.mysql.test.ts 2>&1 | tee -a "$log"
-  AGENT_RUN_TEST_MYSQL_PORT="${DB_PORT:-3306}" AGENT_RUN_TEST_MYSQL_PASSWORD="${DB_PASSWORD:-}" \
-  AUTH_TEST_MYSQL_PORT="${DB_PORT:-3306}" AUTH_TEST_MYSQL_PASSWORD="${DB_PASSWORD:-}" \
+  AGENT_RUN_TEST_MYSQL_PORT="${DB_PORT:-3306}" AGENT_RUN_TEST_MYSQL_PASSWORD="$DB_PASSWORD" \
+  AUTH_TEST_MYSQL_PORT="${DB_PORT:-3306}" AUTH_TEST_MYSQL_PASSWORD="$DB_PASSWORD" \
   JWT_SECRET_KEY=t05-isolated-fixture-jwt-key-not-for-production-use T04_BROWSER_TEST=1 \
     pnpm --filter slide-api exec vitest run \
       src/investigations/observation.mysql.test.ts src/investigations/stream.test.ts \
