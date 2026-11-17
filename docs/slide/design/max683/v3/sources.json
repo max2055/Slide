@@ -1,0 +1,44 @@
+{
+  "observedDate": "2026-11-17",
+  "method": "Public documentation and official website; downloaded official MP4 bytes replayed in Edge; screenshot samples. No authenticated product session.",
+  "videos": [
+    {
+      "parent": "https://www.palantir.com/platforms/aip/",
+      "url": "https://videos.ctfassets.net/xrfr7uokpv1b/3i5t2rIzKAgpGzHP57Ifdf/a5aeadd92cfd4598019770b6656b139a/ai-app.mp4",
+      "file": "ai-app.mp4",
+      "durationSeconds": 23.857143,
+      "sampledSeconds": [
+        0,
+        8,
+        16,
+        22
+      ],
+      "sha256": "2a4268574389fc909e746f467980bfa5d50f78bf7a03c6ace23541a704232a7e",
+      "bytes": 2680549
+    },
+    {
+      "parent": "https://www.palantir.com/platforms/aip/",
+      "url": "https://videos.ctfassets.net/xrfr7uokpv1b/6HuTeCsMfrno2wJ53Wj66Z/d14aa29f633d50d7a851a5c0b06430eb/action-driven-logic.mp4",
+      "file": "action-driven-logic.mp4",
+      "durationSeconds": 30.021995,
+      "sampledSeconds": [
+        0,
+        6.024371
+      ],
+      "sha256": "9b0a64948c9ad4b766f77377e2bcc29470fdb9f8457d036354ec466975a364a8",
+      "bytes": 2921589
+    }
+  ],
+  "images": [
+    {
+      "url": "https://www.palantir.com/docs/resources/foundry/aip-analyst/aip-analyst-workflow-3.png",
+      "local": "references/workflow-3.png",
+      "parent": "https://www.palantir.com/docs/foundry/aip-analyst/overview"
+    },
+    {
+      "url": "https://www.palantir.com/docs/resources/foundry/aip-analyst/aip-analyst-outline.png",
+      "local": "references/outline.png",
+      "parent": "https://www.palantir.com/docs/foundry/aip-analyst/using-aip-analyst"
+    }
+  ]
+}
