@@ -1,5 +1,8 @@
 # MAX-242 统一 AI 工作空间体验设计
 
+> 2026-11-16 / MAX-683（Slide #581）后续决策：AI 工作台规范地址为 `/workbench`，使用“调查 / 行动计划”页签；取消独立关注事项和行动中心菜单。旧 `/investigations`、`/attention`、`/operations-actions` 及等价 tab/默认首页继续兼容原记录和精确版本。本文下述并列菜单/独立页面的旧解释由本决策取代，历史依据保留；不改变原审批、执行、验证与权限边界。迁移对照见 `docs/slide/development/MAX-683/entry-migration.md`。
+
+
 依据：Issue #266 范围与验收；设计来源为 GitHub 固定链接的
 [AI 工作空间体验复盘](https://github.com/max2055/Slide/blob/5cb26fefd538dc377bace47c06d050a4d8dda4f1/docs/superpowers/specs/2026-10-22-ai-workspace-experience-review.md)、
 [少输入排查](https://github.com/max2055/Slide/blob/5cb26fefd538dc377bace47c06d050a4d8dda4f1/docs/superpowers/specs/2026-10-22-input-burden-audit.md)、

@@ -54,11 +54,11 @@ it('carries the exact source result version into a draft and returns to the sour
   history.replaceState({},'','/operations-actions?sourceInvestigation=source-one&resultVersion=4&targetId=501');
   api.mockImplementation(url=>Promise.resolve(json(String(url).includes('/api/investigations/')?{id:'source-one',title:'来源调查',resources:[{type:'server',id:501}],latestResult:{id:'result',version:4,result:{summary:'夹具结果'}}}:String(url).includes('/plans?')?{items:[],authorizedCounts:{total:0},nextCursor:null}:{plan:plan()})));
   view=document.createElement('operations-actions') as OperationsActions;
-  view.permissions=new Set(['operations:actions:view','operations:actions:propose']);
+  view.permissions=new Set(['operations:actions:view','operations:actions:propose','chat:view']);
   document.body.append(view);await flush();
   const root=view.shadowRoot!;
   expect(root.textContent).toContain('结果 V4');expect(root.querySelector('[aria-label="草案结果版本"]')).toBeNull();
-  expect(root.querySelector('a[href="/investigations?investigation=source-one"]')).not.toBeNull();
+  expect(root.querySelector('a[href="/workbench?investigation=source-one"]')).not.toBeNull();
   const target=root.querySelector('[aria-label="草案目标服务器"]') as HTMLSelectElement;
   expect(target.value).toBe('501');
   const impact=root.querySelector('[aria-label="草案预计影响"]') as HTMLSelectElement;
@@ -70,7 +70,7 @@ it('carries the exact source result version into a draft and returns to the sour
 it('refuses stale source results and clears draft context after live authority withdrawal',async()=>{
  history.replaceState({},'','/operations-actions?sourceInvestigation=source-one&resultVersion=4&targetId=501');
  api.mockImplementation(url=>Promise.resolve(json(String(url).includes('/api/investigations/')?{id:'source-one',title:'来源调查',resources:[{type:'server',id:501}],latestResult:{id:'r5',version:5,result:{summary:'新结果'}}}:{items:[],authorizedCounts:{total:0}})));
- view=document.createElement('operations-actions') as OperationsActions;view.permissions=new Set(['operations:actions:view','operations:actions:propose']);document.body.append(view);await flush();
+ view=document.createElement('operations-actions') as OperationsActions;view.permissions=new Set(['operations:actions:view','operations:actions:propose','chat:view']);document.body.append(view);await flush();
  const root=view.shadowRoot!;expect(root.textContent).toContain('来源结果已变化');
  const create=[...root.querySelectorAll('button')].find(b=>b.textContent==='创建可信来源草案')!;expect(create.disabled).toBe(true);
  expect(api.mock.calls.some(([url])=>String(url).endsWith('/actions/drafts'))).toBe(false);
@@ -90,5 +90,28 @@ it('stale reminder plan bindings expose current-record confirmation and never re
  api.mockImplementation(url=>Promise.resolve(json(String(url).includes('/unified')?{items:[row()]}:{plan:plan()})));
  view=document.createElement('operations-actions') as OperationsActions;view.permissions=new Set(['operations:actions:view','operations:actions:approve']);document.body.append(view);await flush();
  const root=view.shadowRoot!;expect(root.textContent).toContain('提醒引用的计划版本已变化');expect([...root.querySelectorAll('button')].some(b=>b.textContent==='批准当前版本')).toBe(false);
- expect(root.querySelector('a[href="/operations-actions?plan=p"]')).not.toBeNull();expect(api.mock.calls.every(([,init])=>!init?.method)).toBe(true);
+ expect(root.querySelector('a[href="/workbench?workspaceTab=actions&plan=p"]')).not.toBeNull();expect(api.mock.calls.every(([,init])=>!init?.method)).toBe(true);
+});
+it.each(['//evil.invalid','/workbench?investigation=restricted'])('explains an invalid or unauthorized return target %s and offers the authorized list',async returnTo=>{
+  api.mockImplementation(url=>Promise.resolve(json(String(url).includes('/unified') || String(url).includes('/plans?') ? {items:[]} : {plan:plan()})));
+  await mount();
+  history.replaceState({},'',`/workbench?workspaceTab=actions&plan=p&returnTo=${encodeURIComponent(returnTo)}`);
+  view.requestUpdate();await flush();
+  expect(view.shadowRoot!.textContent).toContain('来源位置无效或当前无权访问');
+  expect(view.shadowRoot!.querySelector('a[href="/workbench?workspaceTab=actions"]')).not.toBeNull();
+  expect(view.shadowRoot!.querySelector('a[href="//evil.invalid"]')).toBeNull();
+});
+
+it('MAX-683: action-only detail presents missing conclusions and separate outcomes without reading investigations',async()=>{
+  api.mockImplementation(url=>Promise.resolve(json(String(url).includes('/unified')?{items:[row()]}:{plan:plan()})));
+  const root=await mount();
+  expect(root.querySelector('.plan-title')?.textContent).toContain('未提供绑定结果的结论摘要');
+  expect(root.textContent).toContain('具体调查建议未提供');
+  expect(root.querySelector('[aria-label="行动结果状态"]')?.textContent).toContain('业务恢复');
+  expect(root.querySelector('[aria-label="行动结果状态"]')?.textContent).toContain('未知');
+  expect(api.mock.calls.some(([url])=>String(url).includes('/api/investigations'))).toBe(false);
+  expect(root.querySelector('a[href*="investigation="]')).toBeNull();
+  const conditions=root.getElementById('plan-conditions')!; conditions.scrollIntoView=vi.fn();
+  [...root.querySelectorAll('button')].find(b=>b.textContent==='审阅行动条件')!.click();
+  expect(root.activeElement).toBe(conditions);
 });

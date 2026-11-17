@@ -3,12 +3,13 @@ import { generateKeyPairSync, sign } from 'node:crypto';
 import { mkdtemp, writeFile, rm, mkdir } from 'node:fs/promises';
 import { operationsContentHash } from './contracts.js';
 import type { PilotManifest } from './action-environment.js';
-export async function syntheticPilot() {
+import type { DemoTargetHost } from './demo-target-hosts.js';
+export async function syntheticPilot(host: DemoTargetHost = '192.168.49.130') {
   await mkdir('.qualification', { recursive: true });
   const directory = await mkdtemp('.qualification/synthetic-pilot-');
   const keys = generateKeyPairSync('ed25519');
   const manifest: PilotManifest = {
-    schemaVersion: 1, target: { protocol: 1, serverId: 501, host: '192.168.49.130', port: 22,
+    schemaVersion: 1, target: { protocol: 1, serverId: 501, host, port: 22,
       username: 'slide-action', unit: 'slide-action-demo.service', helper: '/usr/local/libexec/slide-action-demo-helper',
       helperHash: 'a'.repeat(64), unitHash: 'b'.repeat(64), hostFingerprint: 'SHA256:' + Buffer.alloc(32, 7).toString('base64').replace(/=+$/, ''),
       toolVersion: '1', eligible: true },

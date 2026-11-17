@@ -1,0 +1,131 @@
+{
+  "source": "/Users/max/Coding/40-Slide/outputs/workbench-review-20261117",
+  "purpose": "User-authorized implementation visual baseline; fictional data only",
+  "files": [
+    {
+      "path": "README.md",
+      "bytes": 7923,
+      "sha256": "3518d741a948319f51e3a8f2f78ed9f377fadb8ca3ab41a2d1a56f8d11f151ba"
+    },
+    {
+      "path": "assets/app.js",
+      "bytes": 38789,
+      "sha256": "1c6d4eb0cbc38b1731af7a50e099f6dbccce54413259b8b25f33a56631d35fb3"
+    },
+    {
+      "path": "assets/data.js",
+      "bytes": 7031,
+      "sha256": "2a3e606c1fb4cb107b028f2cc779353567ee827f90f11a2f2fb6ad9bbf7b2011"
+    },
+    {
+      "path": "assets/shared-btn-styles.css",
+      "bytes": 5897,
+      "sha256": "aba5af33620c2e5c37feb4c8c46ba6c963c1874bdd4bb70121d0445567c6a989"
+    },
+    {
+      "path": "assets/tokens.css",
+      "bytes": 7635,
+      "sha256": "faf21ced2f73b2f193b68a677a88ba1bb3a1fc0dfc2e3fa9f66c4030bb231b89"
+    },
+    {
+      "path": "assets/workbench.css",
+      "bytes": 11846,
+      "sha256": "01d3dc7b17bb96fb4120acf0085857c49042fd142e3843680d54a7b3cf80958a"
+    },
+    {
+      "path": "index.html",
+      "bytes": 551,
+      "sha256": "6338afef77a819ee291dbfaa0110c70608e12daf344829377eb382b44467e4dc"
+    },
+    {
+      "path": "screenshots/action-detail-1440.png",
+      "bytes": 179396,
+      "sha256": "6b523c795189b33d8a6c9d16f4964b7aaf31c071e1cdeeb3fd1bd22b0945b932"
+    },
+    {
+      "path": "screenshots/approval-1440.png",
+      "bytes": 256716,
+      "sha256": "eb8b7403bc4e6f78855cbe5d594a7a6f58713d5caccde49feddae9bab65594e9"
+    },
+    {
+      "path": "screenshots/execute-confirm-1440.png",
+      "bytes": 256037,
+      "sha256": "5fa6e366aa0f4ff59459f0ec1158c9b43a16e757bf2f21377e472239a1891e8d"
+    },
+    {
+      "path": "screenshots/home-1366.png",
+      "bytes": 193552,
+      "sha256": "9d53efdfe9444af0a94e70cab653752f443a5334859e017ad8554339e96e09ba"
+    },
+    {
+      "path": "screenshots/home-1440.png",
+      "bytes": 227343,
+      "sha256": "bd3f4fe69bfdd8c5cf62372e71b580e5a0359c4b54079304b0cfe940e09845bd"
+    },
+    {
+      "path": "screenshots/home-1920.png",
+      "bytes": 262679,
+      "sha256": "9fbfbaa399894c369e01428cf6bddc3b6868603365e6fd63488abc00d80afe4d"
+    },
+    {
+      "path": "screenshots/investigation-detail.png",
+      "bytes": 164308,
+      "sha256": "c6ade9d1d2d5fdd85f3a1b0bcdddc320bed5e5a63f8685bd65a12196dd4ca0d1"
+    },
+    {
+      "path": "screenshots/investigation-list.png",
+      "bytes": 135144,
+      "sha256": "9554cec8ddcd41a77dff5b0b9c878b7d10b338ac1568fe0daefe055c778ccbac"
+    },
+    {
+      "path": "screenshots/long-detail-1366.png",
+      "bytes": 181608,
+      "sha256": "2c91a4bf3091e79c3030371798984d814ee09d71648289d4fae51c4bad7bee56"
+    },
+    {
+      "path": "screenshots/long-home-1366.png",
+      "bytes": 211951,
+      "sha256": "9c290afd6e121c1299ee146b543c9e3f26e77d3c915221b8c1394bbd81d81be1"
+    },
+    {
+      "path": "screenshots/related-actions.png",
+      "bytes": 106763,
+      "sha256": "3deb7da907ec28c2e403399651fec797eab1373fc0069aaf3da51a376d236e49"
+    },
+    {
+      "path": "screenshots/report-2030.png",
+      "bytes": 136475,
+      "sha256": "977827fa0a6bf92d907e169bb1730e91ccd3e1471b3937aa6e7fb8139ef77446"
+    },
+    {
+      "path": "screenshots/report-2038.png",
+      "bytes": 137316,
+      "sha256": "dd2b6a4d7b2bf70be51693833f60a5b53cb3794ac08f24641bed9b9c514f8fb8"
+    },
+    {
+      "path": "screenshots/report-2039.png",
+      "bytes": 120392,
+      "sha256": "634946c803f90e5ca22937aae79da9504783e380e78c0d7fd3f6383d289e3e40"
+    },
+    {
+      "path": "screenshots.html",
+      "bytes": 3693,
+      "sha256": "607a241d83ed6ac1a4b3ee7bb8bbedf9fc760d127ea326dcf7317cd779b62d08"
+    },
+    {
+      "path": "serve.py",
+      "bytes": 856,
+      "sha256": "960835ea95d778ee4f88cd51d930d835ad86be984cb426fcb1b3aae9ca3c1c5a"
+    },
+    {
+      "path": "verification.json",
+      "bytes": 962,
+      "sha256": "0cadb86b9360ced43497615c400f76e3d92441561003806ab0244b6e8edbeea3"
+    },
+    {
+      "path": "verify.cjs",
+      "bytes": 8015,
+      "sha256": "45c7ba06c0e500669c929cf8bfd0ff2585412cee7cff3a3ebb10cb16a9d2e17b"
+    }
+  ]
+}

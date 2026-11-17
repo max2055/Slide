@@ -22,5 +22,5 @@ it('reads action and feedback originals only on explicit request and marks parti
  expect(api).not.toHaveBeenCalled();await (view as any).readReferences();await view.updateComplete;
  expect(api).toHaveBeenCalledTimes(3);expect(api.mock.calls.every(([,init])=>!init?.method)).toBe(true);
  expect(view.shadowRoot!.textContent).toContain('旧结果计划');expect(view.shadowRoot!.textContent).toContain('存在未展开');
- expect(view.shadowRoot!.textContent).toContain('人工待核实');expect(view.shadowRoot!.querySelector('a')!.getAttribute('href')).toBe('/operations-actions?plan=plan');
+ expect(view.shadowRoot!.textContent).toContain('人工待核实');expect(view.shadowRoot!.querySelector('a')!.getAttribute('href')).toBe('/workbench?workspaceTab=actions&plan=plan');
 });

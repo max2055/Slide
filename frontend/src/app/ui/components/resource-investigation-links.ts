@@ -63,13 +63,13 @@ export class ResourceInvestigationLinks extends LitElement {
     const context={schemaVersion:1 as const,resourceRefs:[{type:this.resourceType,id:this.resourceId,role:'primary' as const}],from:range.from,to:range.to,sourceEventIds:[],returnTo:detailReturnUrl(this.resourceType,this.resourceId,range)};
     return html`<div class="related-line" role="region" aria-label="资源调查">
       ${this.loading ? html`<span role="status">正在加载调查…</span>` : this.error ? html`<span role="alert">${this.error}</span>` : this.items.length
-        ? html`<span>关联调查 · 最近 ${this.items.length} 项</span><a class="latest" title=${this.items[0].title} href=${`/investigations?investigation=${encodeURIComponent(this.items[0].id)}`}>${this.items[0].title}</a>${this.items.length > 1 ? html`<details><summary>更多调查</summary><ul>${this.items.slice(1).map(row => html`<li><a href=${`/investigations?investigation=${encodeURIComponent(row.id)}`}>${row.title}</a></li>`)}</ul></details>` : nothing}`
+        ? html`<span>关联调查 · 最近 ${this.items.length} 项</span><a class="latest" title=${this.items[0].title} href=${`/workbench?investigation=${encodeURIComponent(this.items[0].id)}`}>${this.items[0].title}</a>${this.items.length > 1 ? html`<details><summary>更多调查</summary><ul>${this.items.slice(1).map(row => html`<li><a href=${`/workbench?investigation=${encodeURIComponent(row.id)}`}>${row.title}</a></li>`)}</ul></details>` : nothing}`
         : html`<span>暂无可访问的调查</span>`}
       <a href=${resourceContextUrl(this.resourceType,this.resourceId,'events',range)}>窗口内事件</a>
       <a href=${resourceContextUrl(this.resourceType,this.resourceId,'audit-center',range)}>操作审计</a>
       <a href=${investigationEntryHref(context)}>AI 事实调查（未调用模型）</a>
       <span>观察窗口 ${range.from} → ${range.to}</span>
-      <a href=${`/investigations?resource=${this.resourceType}:${this.resourceId}`}>查看此资源的全部调查</a>
+      <a href=${`/workbench?resource=${this.resourceType}:${this.resourceId}`}>查看此资源的全部调查</a>
       ${this.error ? html`<button class="btn" @click=${this.load}>重新加载调查</button>` : nothing}
     </div>`;
   }

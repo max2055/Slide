@@ -47,7 +47,7 @@ def configuration():
     check_path(REGISTRATION)
     with open(REGISTRATION) as f: r=json.load(f)
     keys={'protocol','serverId','host','port','username','unit','helper','helperHash','unitHash','hostFingerprint','toolVersion','eligible'}
-    if set(r)!=keys or r['protocol']!=1 or type(r['serverId']) is not int or r['serverId']<=0 or r['host']!='192.168.49.130' or r['port']!=22 or r['username']!='slide-action' or r['unit']!=UNIT or r['helper']!=HELPER or r['toolVersion']!='1' or r['eligible'] is not True:
+    if set(r)!=keys or r['protocol']!=1 or type(r['serverId']) is not int or r['serverId']<=0 or r['host'] not in ('192.168.49.130','172.16.51.128') or r['port']!=22 or r['username']!='slide-action' or r['unit']!=UNIT or r['helper']!=HELPER or r['toolVersion']!='1' or r['eligible'] is not True:
         raise ValueError('registration')
     if not re.fullmatch('SHA256:[A-Za-z0-9+/]{43}',r['hostFingerprint']): raise ValueError('fingerprint')
     if digest(HELPER)!=r['helperHash'] or digest(UNIT_FILE)!=r['unitHash']: raise ValueError('hash')
