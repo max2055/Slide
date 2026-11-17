@@ -9,7 +9,7 @@ const rules = [
   ['bearer', /\bBearer\s+[A-Za-z0-9._~+/=-]{24,}/gi],
   ['api-key', /\b(?:sk-(?:ant-|proj-)?[A-Za-z0-9_-]{20,}|gh[pousr]_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{30,})/g],
   ['credential-url', /\b[a-z][a-z0-9+.-]*:\/\/[^\s/@:]+:[^\s/@]+@[^\s/]+/gi],
-  ['credential-field', /["']?\b(?:api[_-]?key|access[_-]?token|client[_-]?secret|jwt[_-]?secret(?:[_-]?key)?|db[_-]?password|password|passwd|pwd)["']?\s*[:=]\s*["']([^"'\r\n]{12,})["']/gi],
+  ['credential-field', /["']?\b(?:api[_-]?key|access[_-]?token|client[_-]?secret|jwt[_-]?secret(?:[_-]?key)?|db[_-]?password|password|passwd|pwd)["']?\s*[:=]\s*(?:"((?:\\[^\r\n]|[^"\\\r\n]){12,})"|'((?:\\[^\r\n]|[^'\\\r\n]){12,})')/gi],
   ['credential-field-unquoted', /^[ \t]*(?:api[_-]?key|access[_-]?token|client[_-]?secret|jwt[_-]?secret(?:[_-]?key)?|db[_-]?password|password|passwd|pwd)\s*[:=][ \t]*([a-z0-9_+./=-]{12,})/gim],
   ['credential-field-multiline', /\b(?:api[_-]?key|access[_-]?token|client[_-]?secret|jwt[_-]?secret(?:[_-]?key)?|db[_-]?password|password|passwd|pwd)\s*:\s*[|>][-+]?[ \t]*\r?\n[ \t]+[^\s]{12,}/gi],
 ];
@@ -29,6 +29,20 @@ function decodeWithOffsets(text) {
   return { text: decoded, offsets };
 }
 
+function isInjectedAssignment(file, text, match) {
+  if (!/\.sh$/i.test(file) || !match[1]
+    || !/^\$\{[A-Z_][A-Z0-9_]*(?::?\?[^}"'`\\$]*)?\}$/.test(match[1])) return false;
+  const start = text.lastIndexOf('\n', match.index - 1) + 1;
+  const end = text.indexOf('\n', match.index);
+  const line = text.slice(start, end < 0 ? undefined : end);
+  // Only complete assignments, with no concatenation or trailing shell syntax.
+  if (!/^[ \t]*(?:export[ \t]+)?[A-Za-z_][A-Za-z0-9_]*="[^"\\]*"[ \t]*$/.test(line)) return false;
+  // Earlier unknown syntax can leave us inside quotes, heredocs, functions, etc.
+  // Accept only blank/comment lines and plain unquoted assignments before it.
+  return text.slice(0, start).split('\n').every(previous =>
+    /^[ \t]*(?:#.*|(?:export[ \t]+)?[A-Za-z_][A-Za-z0-9_]*=[A-Za-z0-9_./-]*)?$/.test(previous));
+}
+
 export function inspectSecrets(file, text) {
   const views = [{ text, offsets: undefined }, decodeWithOffsets(text)];
   const findings = new Map();
@@ -36,11 +50,9 @@ export function inspectSecrets(file, text) {
     for (const [rule, pattern] of rules) {
       pattern.lastIndex = 0;
       for (const match of view.text.matchAll(pattern)) {
-        // In Bash, a double-quoted required/pure parameter expansion reads an
-        // injected value. Defaults (:-), single quotes and mixed text remain
-        // literals to audit; other secret-format rules still scan this text.
-        if (rule === 'credential-field' && /\.sh$/i.test(file) && match[0].endsWith('"')
-          && /^\$\{[A-Z_][A-Z0-9_]*(?::?\?[^}]*)?\}$/.test(match[1])) continue;
+        // Fail closed outside a small, provable shell subset. In particular,
+        // never infer execution context from a .sh suffix or a matching suffix.
+        if (rule === 'credential-field' && isInjectedAssignment(file, view.text, match)) continue;
         const offset = view.offsets?.[match.index] ?? match.index;
         const line = text.slice(0, offset).split('\n').length;
         const fingerprint = createHash('sha256').update(JSON.stringify([file, rule, match[0]])).digest('hex');

@@ -64,3 +64,66 @@ test('required Bash injection is an expression; defaults and single quotes remai
   assert.ok(inspectSecrets('entry.sh', `${field}="prefix-${reference}"`).length > 0);
   assert.ok(inspectSecrets('entry.sh', `${field}="${api}"`).some(f => f.rule === 'api-key'));
 });
+
+// MAX-681 Reviewer R1/R2: exercise the shipped CLI, not just internal patterns.
+test('R1/R2 CLI blocks literals and suffix changes in worktree and commit modes', t => {
+  const cwd = mkdtempSync(path.join(tmpdir(), 'slide-secret-cli-'));
+  t.after(() => rmSync(cwd, { recursive: true, force: true }));
+  const git = (...args) => execFileSync('git', args, { cwd, stdio: 'pipe' }).toString().trim();
+  git('init', '-q');
+  git('config', 'user.name', 'Fixture');
+  git('config', 'user.email', 'fixture@example.invalid');
+  git('commit', '--allow-empty', '-qm', 'empty');
+  const cli = path.resolve('scripts/ci/check-secrets.mjs');
+  const field = ['pass', 'word'].join('');
+  const ref = '${SYNTHETIC_PARAMETER}';
+  const cases = [
+    ['early apostrophe', `"${"isn't-a-usable-secret-fixture"}"`],
+    ['inverse quotes', `'${'is"not-a-usable-secret-fixture'}'`],
+    ['escaped double', JSON.stringify('short"synthetic-secret-fixture')],
+    ['escaped single', "'short\\'synthetic-secret-fixture'"],
+    ['ordinary control', '"ordinary-synthetic-fixture"'],
+    ['mixed literal', `'${ref}"'`],
+    ['single literal', `'${ref}'`],
+    ['quoted heredoc', `"${ref}"`, "cat <<'CONFIG'\n", '\nCONFIG'],
+    ['escaped heredoc', `"${ref}"`, 'cat <<\\CONFIG\n', '\nCONFIG'],
+    ['outer quote', `"${ref}"`, "text='\n", "\n'"],
+    ['unknown context', `"${ref}"`, 'some_command\n'],
+    ['required injection', '"${SYNTHETIC_PARAMETER:?required}"', '', '', 0],
+    ['pure injection', `"${ref}"`, '#!/bin/bash\n', '', 0],
+    ['default remains audited', '"${SYNTHETIC_PARAMETER:-fixture-default}"'],
+    ['trailing literal', `"${ref}"'suffix'`],
+  ];
+  for (const [name, value, prefix = '', suffix = '', expected = 1] of cases) {
+    const base = git('rev-parse', 'HEAD');
+    writeFileSync(path.join(cwd, 'probe.sh'), prefix + field + '=' + value + suffix + '\n');
+    const run = args => {
+      const result = spawnSync(process.execPath, [cli, '--base', base, ...args], { cwd, encoding: 'utf8' });
+      assert.equal(result.status, expected, name + result.stderr);
+      const report = JSON.parse(result.stdout);
+      assert.equal(report.findings.length > 0, expected === 1, name);
+      assert.ok(!result.stdout.includes(value), 'no source disclosure');
+    };
+    run([]);
+    git('add', '.'); git('commit', '-qm', name);
+    run(['--head', 'HEAD']);
+    // Remove each probe so the next scenario is an actual addition.
+    git('rm', 'probe.sh'); git('commit', '-qm', 'remove probe');
+  }
+  for (const quote of ['"', "'"]) {
+    for (const middle of [quote === '"' ? "'" : '"', '\\' + quote]) {
+      writeFileSync(path.join(cwd, 'probe.env'), field + '=' + quote + 'long-synthetic-prefix' + middle + 'old-suffix' + quote);
+      git('add', '.'); git('commit', '-qm', 'suffix baseline');
+      const base = git('rev-parse', 'HEAD');
+      writeFileSync(path.join(cwd, 'probe.env'), field + '=' + quote + 'long-synthetic-prefix' + middle + 'new-suffix' + quote);
+      const check = args => {
+        const result = spawnSync(process.execPath, [cli, '--base', base, ...args], { cwd, encoding: 'utf8' });
+        assert.equal(result.status, 1, 'suffix change');
+        assert.ok(JSON.parse(result.stdout).findings.length > 0);
+      };
+      check([]);
+      git('add', '.'); git('commit', '-qm', 'suffix changed');
+      check(['--head', 'HEAD']);
+    }
+  }
+});
