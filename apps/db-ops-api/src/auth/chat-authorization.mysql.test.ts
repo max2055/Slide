@@ -342,8 +342,14 @@ describe.skipIf(!port)('MAX-684 real SQL/JWT/HTTP/WS; controlled model endpoint'
     }
   }));
   it('MF1-child-exp: initiating expiry cancels child scope', () => caseDone('MF1-child-exp', async () => {
-    const s = scope(await actor(68401, 1)); await vi.waitFor(() => expect(s.controller.signal.aborted).toBe(true), { timeout: 1800 });
-    await expect(withChatExecution(s, () => guardedChatProvider(provider).chat([], []))).rejects.toThrow();
+    const a = await actor(68401, 1), s = scope(a), registry = new SubagentRegistry();
+    const manager = new SubagentManager(new AgentRunner(guardedChatProvider(provider)), undefined, undefined, registry);
+    hold = true; const id = await withChatExecution(s, () => manager.spawn('fixture', 'child outlives parent', session, a));
+    await vi.waitFor(() => expect(releases.length).toBe(1));
+    s.release(); scopes.splice(scopes.indexOf(s), 1);
+    await vi.waitFor(() => expect(registry.getRun(id)?.status).not.toBe('running'), { timeout: 1800 });
+    expect(registry.getRun(id)?.result).toBeUndefined(); await expect(scope(await actor()).check()).resolves.toBeUndefined();
+    hold = false; releases.shift()!();
   }));
   it('MF1-access: no chat and wrong owner cannot read child result', () => caseDone('MF1-access', async () => {
     const a = await actor(), s = scope(a), registry = new SubagentRegistry();
@@ -382,9 +388,14 @@ describe.skipIf(!port)('MAX-684 real SQL/JWT/HTTP/WS; controlled model endpoint'
   }));
   it('MF2-reconnect: fresh observer never rebinds durable execution', () => caseDone('MF2-reconnect', async () => {
     const a = await actor(68401, 1); const run = (await runs.claim(a.userId, session, randomUUID(), randomUUID(), a)).run;
-    const before = run.chatAuthority; await client(await token());
+    const before = run.chatAuthority; const observer = await client(await token());
+    observer.socket.send(JSON.stringify({ type: 'chat.watch', sessionKey: session }));
+    await vi.waitFor(() => expect((adapter as any).sessionSubscribers.get(session)?.size).toBe(1));
     expect((await runs.getForActor(run.id, a.userId, session))?.chatAuthority).toEqual(before);
     expect(before?.expiresAt).toBe(chatCredential(a)?.expiresAt);
+    await new Promise(resolve => setTimeout(resolve, Math.max(0, before!.expiresAt - Date.now() + 10)));
+    expect((await runs.recoverCompletion((await runs.getForActor(run.id, a.userId, session))!)).state).toBe('cancelled');
+    expect(observer.socket.readyState).toBe(WebSocket.OPEN);
   }));
   async function analysisRequest(a?: ActorContext) {
     return { actor: a, purpose: 'fault_diagnosis', subject: { type: 'server', id: 68401 }, authorizationVersion: analysisAuthorizationVersion(a) } as any;
@@ -431,6 +442,23 @@ describe.skipIf(!port)('MAX-684 real SQL/JWT/HTTP/WS; controlled model endpoint'
     await revoke(68403);
     await expect(authority.authorize(connection, service, investigation, 'read')).rejects.toThrow();
   }));
+  it('recipient share withdrawal removes only that observation, preserving another authorized session', async () => {
+    const a = await actor(), b = await actor(68402);
+    const second = (await chatDatabaseService.createSession(a)).session_id;
+    await chatDatabaseService.grantSessionShare(a, session, b.userId, 'read');
+    await chatDatabaseService.grantSessionShare(a, second, b.userId, 'read');
+    const watcher = await client(await token(68402));
+    for (const key of [session, second]) watcher.socket.send(JSON.stringify({ type: 'chat.watch', sessionKey: key }));
+    await vi.waitFor(() => expect((adapter as any).sessionSubscribers.get(second)?.size).toBe(1));
+    await pool.query('DELETE FROM chat_session_shares WHERE session_id=? AND recipient_user_id=?', [session, b.userId]);
+    const peer = [...(adapter as any).wsServer.clients].find((ws: any) => ws._actorContext?.userId === b.userId) as WebSocket;
+    (adapter as any).sendSocketEvent(peer, { type: 'complete', sessionKey: session, finalContent: 'WITHDRAWN_PRIVATE' });
+    (adapter as any).sendSocketEvent(peer, { type: 'complete', sessionKey: second, finalContent: 'STILL_AUTHORIZED' });
+    await vi.waitFor(() => expect(watcher.events.some(e => e.finalContent === 'STILL_AUTHORIZED')).toBe(true));
+    expect(watcher.events.some(e => e.finalContent === 'WITHDRAWN_PRIVATE')).toBe(false);
+    expect((adapter as any).sessionSubscribers.get(second)?.has(peer)).toBe(true);
+    observed.push({ id: 'share-withdrawal-observation-isolation', status: 'passed' });
+  });
   it('D3-owner: suspension retains share and restoration restores new reads', () => caseDone('D3-owner', async () => {
     await chatDatabaseService.grantSessionShare(await actor(), session, 68402, 'read'); const jwt = await token(68402);
     for (const change of ['chat', 'disabled']) {

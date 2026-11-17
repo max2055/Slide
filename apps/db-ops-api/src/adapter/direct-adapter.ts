@@ -497,23 +497,29 @@ export class DirectAdapter implements IAgentEngine {
         if (['auth_ok', 'protocol.error'].includes(type) || type.startsWith('investigation.')
           || type === 'error' && !payload.finalContent && !payload.messageParts && !payload.projection) return true;
         if (!connectionActor || authState !== 'authenticated') return false;
+        const key = typeof payload.sessionKey === 'string' ? payload.sessionKey
+          : (payload.run as { sessionId?: string } | undefined)?.sessionId;
         try {
           assertChatCredential(connectionActor);
           const live = await this.actorContexts.revalidateActor(connectionActor);
           assertChatPermission(live);
-          const key = typeof payload.sessionKey === 'string' ? payload.sessionKey
-            : (payload.run as { sessionId?: string } | undefined)?.sessionId;
           if (key) await chatDatabaseService.authorizeSession(connectionActor, key, 'read');
           assertChatPermission(await this.actorContexts.revalidateActor(connectionActor));
           assertChatCredential(connectionActor);
           return ws.readyState === WebSocket.OPEN && authState === 'authenticated';
         } catch (error) {
-          this.displayStreams.unwatch(ws);
-          for (const subscribers of this.sessionSubscribers.values()) subscribers.delete(ws);
-          if (error instanceof PlatformUnavailableError) closeAfterAuthFailure(1013, 'Service unavailable');
-          else if (error instanceof ActorAuthenticationError) closeAfterAuthFailure(4001, 'Unauthorized');
-          else this.sendSocketEvent(ws, { type: 'error', code: error instanceof ChatForbiddenError ? 'CHAT_FORBIDDEN' : 'CHAT_SESSION_NOT_FOUND',
-            error: error instanceof ChatForbiddenError ? '权限不足' : 'Session not found', sessionKey: payload.sessionKey });
+          if (error instanceof ChatSessionNotFoundError && key) {
+            this.displayStreams.unwatch(ws, key);
+            this.sessionSubscribers.get(key)?.delete(ws);
+          } else {
+            this.displayStreams.unwatch(ws);
+            for (const subscribers of this.sessionSubscribers.values()) subscribers.delete(ws);
+          }
+          if (error instanceof ActorAuthenticationError) closeAfterAuthFailure(4001, 'Unauthorized');
+          else if (error instanceof ChatForbiddenError || error instanceof ChatSessionNotFoundError) this.sendSocketEvent(ws, {
+            type: 'error', code: error instanceof ChatForbiddenError ? 'CHAT_FORBIDDEN' : 'CHAT_SESSION_NOT_FOUND',
+            error: error instanceof ChatForbiddenError ? '权限不足' : 'Session not found', sessionKey: key });
+          else closeAfterAuthFailure(1013, 'Service unavailable');
           return false;
         }
       });
