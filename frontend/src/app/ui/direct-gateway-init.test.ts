@@ -256,4 +256,29 @@ describe('initChatClient', () => {
     expect(host.lastError).toBe('登录已失效，请重新登录。');
     expect(localStorage.getItem('token')).toBeNull();
   });
+
+  it('MAX-684: expiry of the old socket clears its display without logging out fresh credentials', async () => {
+    localStorage.setItem('permissions', '["chat:view"]');
+    vi.spyOn(api, 'authFetch').mockImplementation(async () => Response.json({ agents: [], sessions: [] }));
+    vi.spyOn(appSettings, 'refreshActiveTab').mockResolvedValue(undefined);
+    const host: Record<string, unknown> = { client: null, connected: false, sessionKey: 'one',
+      chatMessages: [{ content: 'private history' }], chatRunId: 'old-run', chatStream: 'private stream' };
+    initChatClient(host);
+    await vi.waitFor(() => expect(MockWebSocket.latest?.frames.length).toBeGreaterThan(0));
+    const oldSocket = MockWebSocket.latest!;
+    oldSocket.receive({ type: 'auth_ok' });
+    localStorage.setItem('token', 'fresh-credential');
+    oldSocket.closeWith(4001, 'old credential expired');
+    expect(localStorage.getItem('token')).toBe('fresh-credential');
+    expect(host.chatMessages).toEqual([]);
+    expect(host.chatStream).toBeNull();
+    expect(host.chatRunId).toBeNull();
+    expect(host.connectionError).toContain('凭证已更新');
+    (host.client as any).reconnect();
+    await vi.waitFor(() => expect(MockWebSocket.latest?.frames.length).toBeGreaterThan(0));
+    expect(MockWebSocket.latest?.frames.map(raw => JSON.parse(raw))).toContainEqual(expect.objectContaining({ type: 'auth', token: 'fresh-credential' }));
+    oldSocket.receive({ type: 'text_delta', delta: 'late private stream' });
+    expect(host.chatMessages).toEqual([]);
+    (host.client as any).disconnect();
+  });
 });

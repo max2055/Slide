@@ -11,9 +11,11 @@ const defaults = () => ({
   chatRecoveryNotice: null, lastError: null, compactionStatus: null, fallbackStatus: null,
   chatAvatarUrl: null, toolStreamById: new Map(), toolStreamOrder: [], toolStreamSyncTimer: null,
   sidebarOpen: false, sidebarContent: null, sidebarError: null,
+  chatAccessDenied: false, chatRunStatus: null, chatRunStatusClearTimer: null,
+  compactionClearTimer: null, fallbackClearTimer: null,
 });
-type Scope = { values: Host; host: Host };
-type Sessions = { root: Host; active: Scope; byKey: Map<string, Scope>; byMessage: Map<string, Scope>; valid: boolean };
+type Scope = { values: Host; host: Host; valid: boolean };
+type Sessions = { root: Host; active: Scope; byKey: Map<string, Scope>; byMessage: Map<string, Scope>; valid: boolean; denied?: boolean };
 const sessions = new WeakMap<object, Sessions>();
 const receivers = new WeakMap<object, { sessions: Sessions; scope: Scope }>();
 
@@ -23,11 +25,12 @@ function createScope(store: Sessions, key: string, initial?: Host): Scope {
     if (field in initial) values[field] = initial[field];
   }
   values.sessionKey = key;
-  const scope: Scope = { values, host: {} };
+  if (store.denied) values.chatAccessDenied = true;
+  const scope: Scope = { values, host: {}, valid: true };
   scope.host = new Proxy(values, {
     get(_, field) {
       if (typeof field === 'string' && field in values) {
-        return store.valid && store.active === scope && store.root.sessionKey === values.sessionKey && field in store.root
+        return store.valid && scope.valid && store.active === scope && store.root.sessionKey === values.sessionKey && field in store.root
           ? store.root[field] : values[field];
       }
       const value = store.root[field as string];
@@ -35,7 +38,7 @@ function createScope(store: Sessions, key: string, initial?: Host): Scope {
       return typeof value === 'function' ? value.bind(store.root) : value;
     },
     set(_, field, value) {
-      if (!store.valid) return true;
+      if (!store.valid || !scope.valid) return true;
       if (typeof field === 'string' && field in values) {
         const visible = store.active === scope && store.root.sessionKey === values.sessionKey;
         if (field === 'sessionKey' && value !== values.sessionKey) {
@@ -70,8 +73,59 @@ export function chatSessionHost<T extends object>(host: T): T {
 
 export function isVisibleChatSession(host: object): boolean {
   const receiver = receivers.get(host);
-  return !receiver || receiver.sessions.valid && receiver.sessions.active === receiver.scope
+  return !receiver || receiver.sessions.valid && receiver.scope.valid && receiver.sessions.active === receiver.scope
     && receiver.sessions.root.sessionKey === receiver.scope.values.sessionKey;
+}
+
+export function isCurrentChatSession(host: object): boolean {
+  const receiver = receivers.get(host);
+  return !receiver || receiver.sessions.valid && receiver.scope.valid;
+}
+
+export function chatAccessDenial(error: unknown): { message: string; all: boolean } | null {
+  if (!error || typeof error !== 'object') return null;
+  const { status, code } = error as { status?: number; code?: string };
+  if (status === 401) return { message: '登录已失效，请重新登录。', all: true };
+  if (status === 403 || code === 'CHAT_FORBIDDEN') return { message: '无权使用聊天，请联系管理员。', all: true };
+  if (status === 404 || code === 'CHAT_SESSION_NOT_FOUND') return { message: '会话不存在或不可见。', all: false };
+  return null;
+}
+
+/** Replace receivers so pending reads, sends and timers cannot repopulate a denied view. */
+export function denyChatSessions(host: object, message: string, all: boolean): void {
+  const active = chatSessionHost(host);
+  const { sessions: store, scope: target } = receivers.get(active)!;
+  if (!store.valid || !target.valid) return;
+  if (all) store.denied = true;
+  const scopes = all ? new Set([store.active, ...store.byKey.values(), ...store.byMessage.values()]) : new Set([target]);
+  for (const scope of scopes) {
+    const key = String(scope.host.sessionKey ?? '');
+    for (const field of ['toolStreamSyncTimer', 'chatRunStatusClearTimer', 'compactionClearTimer', 'fallbackClearTimer']) {
+      const timer = scope.host[field];
+      if (timer != null) clearTimeout(timer as ReturnType<typeof setTimeout>);
+    }
+    scope.valid = false;
+    Object.assign(scope.values, defaults(), { sessionKey: key, chatAccessDenied: true, lastError: message });
+    const replacement = createScope(store, key);
+    replacement.values.chatAccessDenied = true;
+    replacement.values.lastError = message;
+    for (const [id, sending] of store.byMessage) if (sending === scope) store.byMessage.delete(id);
+    if (store.active === scope) {
+      store.active = replacement;
+      Object.assign(store.root, replacement.values);
+    }
+  }
+  (store.root.refreshSessionsAfterChat as Set<string> | undefined)?.clear();
+}
+
+/** Only a fresh authorized history read can reopen a denied receiver. */
+export function allowChatSession(host: object): boolean {
+  const receiver = receivers.get(host);
+  if (!receiver || !isCurrentChatSession(host)) return false;
+  const denied = !!receiver.scope.host.chatAccessDenied;
+  receiver.scope.host.chatAccessDenied = false;
+  receiver.sessions.denied = false;
+  return denied;
 }
 
 export function registerChatSend(host: object, messageId: string): void {
@@ -128,8 +182,12 @@ export function clearChatSessions(host: object): void {
   if (!store) return;
   store.valid = false;
   for (const scope of new Set([store.active, ...store.byKey.values(), ...store.byMessage.values()])) {
-    const timer = scope.host.toolStreamSyncTimer;
-    if (typeof timer === 'number') clearTimeout(timer);
+    for (const field of ['toolStreamSyncTimer', 'chatRunStatusClearTimer', 'compactionClearTimer', 'fallbackClearTimer']) {
+      const timer = scope.host[field];
+      if (timer != null) clearTimeout(timer as ReturnType<typeof setTimeout>);
+    }
+    scope.valid = false;
+    Object.assign(scope.values, defaults());
   }
   store.byKey.clear(); store.byMessage.clear();
   sessions.delete(store.root);
