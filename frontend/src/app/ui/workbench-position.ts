@@ -43,7 +43,9 @@ export async function restoreWorkbenchPosition(root: ParentNode) {
     if (target.tagName === 'H2') target.tabIndex = -1;
     target.focus({preventScroll:true});
     if (target === match) window.scrollTo(0,position.y);
-    else target.scrollIntoView({block:'nearest'});
+    // The full application scrolls main.content, not the window. Reveal the
+    // focused row through its scrollable ancestors after restoring the page.
+    target.scrollIntoView({block:'center',inline:'nearest',behavior:'instant'});
   }
   const {workbenchPosition: _position,...state} = history.state;
   history.replaceState(state,'',location.href);

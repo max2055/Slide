@@ -24,3 +24,16 @@ it('MAX-683: skips collapsed details even when Chromium reports a layout rectang
  await restoreWorkbenchPosition(root);
  expect(document.activeElement).toBe(target);expect(target.scrollIntoView).toHaveBeenCalled();
 });
+
+it('reveals the restored row through nested scroll containers without smooth scrolling',async()=>{
+ const root=document.createElement('section');
+ root.innerHTML='<button data-workbench-key="row">查看调查</button>';
+ document.body.append(root);
+ const target=root.querySelector('button')!;
+ vi.spyOn(target,'getClientRects').mockReturnValue([{width:100,height:20}] as unknown as DOMRectList);
+ target.scrollIntoView=vi.fn();vi.spyOn(window,'scrollTo').mockImplementation(()=>{});
+ history.replaceState({workbenchPosition:{key:'row',y:0}},'','/');
+ await restoreWorkbenchPosition(root);
+ expect(document.activeElement).toBe(target);
+ expect(target.scrollIntoView).toHaveBeenCalledWith({block:'center',inline:'nearest',behavior:'instant'});
+});
