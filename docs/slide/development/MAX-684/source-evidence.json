@@ -289,5 +289,628 @@
   "investigationAuthorizationChanged": true,
   "historicalAuditSource": "9a4cac3d3f732c24cc87b7a25ba3e2bac67c79b8:docs/slide/development/MAX-683/ordinary-chat-permission-audit.md",
   "runtimeTestsRun": false,
-  "paidModelRequests": 0
+  "paidModelRequests": 0,
+  "revisionEvidence": {
+    "revisionBase": "33e76544049930703f4f21853753fbb58a85a95c",
+    "productRef": "c22f7eef6d871cec40aad4d26c24cededb89562f",
+    "scope": "Documentation revision only; source hashes and anchors are static evidence, not implementation acceptance.",
+    "reviewComment": "01a1e93f-4f1f-78af-9b2b-626194b85ced",
+    "files": [
+      {
+        "path": "apps/db-ops-api/src/agents/subagent-spawn-tool.ts",
+        "sha256": {
+          "taskBase": "c9f43a7776d6c34d25f728c28300f077a2da244b5967b8ac2ba17d8bdba3d2db",
+          "oldBase": "c9f43a7776d6c34d25f728c28300f077a2da244b5967b8ac2ba17d8bdba3d2db",
+          "auditProduct": "c9f43a7776d6c34d25f728c28300f077a2da244b5967b8ac2ba17d8bdba3d2db",
+          "issueCandidate": "c9f43a7776d6c34d25f728c28300f077a2da244b5967b8ac2ba17d8bdba3d2db",
+          "prHead": "c9f43a7776d6c34d25f728c28300f077a2da244b5967b8ac2ba17d8bdba3d2db",
+          "merge": "c9f43a7776d6c34d25f728c28300f077a2da244b5967b8ac2ba17d8bdba3d2db"
+        },
+        "identicalAcrossAllRefs": true,
+        "anchors": [
+          {
+            "anchor": "const runId = await _subagentManager.spawn",
+            "lines": [
+              79
+            ]
+          },
+          {
+            "anchor": "const result = await _subagentManager.access",
+            "lines": [
+              122
+            ]
+          }
+        ]
+      },
+      {
+        "path": "apps/db-ops-api/src/agents/subagent-manager.ts",
+        "sha256": {
+          "taskBase": "e412e3be140382bf5e7705559f5e23e73bd54df8bcf6078786d55758819a19c4",
+          "oldBase": "e412e3be140382bf5e7705559f5e23e73bd54df8bcf6078786d55758819a19c4",
+          "auditProduct": "e412e3be140382bf5e7705559f5e23e73bd54df8bcf6078786d55758819a19c4",
+          "issueCandidate": "e412e3be140382bf5e7705559f5e23e73bd54df8bcf6078786d55758819a19c4",
+          "prHead": "e412e3be140382bf5e7705559f5e23e73bd54df8bcf6078786d55758819a19c4",
+          "merge": "e412e3be140382bf5e7705559f5e23e73bd54df8bcf6078786d55758819a19c4"
+        },
+        "identicalAcrossAllRefs": true,
+        "anchors": [
+          {
+            "anchor": "async spawn(",
+            "lines": [
+              71
+            ]
+          },
+          {
+            "anchor": "allocation?.signal",
+            "lines": [
+              104
+            ]
+          },
+          {
+            "anchor": "async access(",
+            "lines": [
+              116
+            ]
+          },
+          {
+            "anchor": "private async _executeSubagent",
+            "lines": [
+              155
+            ]
+          },
+          {
+            "anchor": "const result = await this.agentRunner.run",
+            "lines": [
+              179
+            ]
+          }
+        ]
+      },
+      {
+        "path": "apps/db-ops-api/src/agents/subagent-registry.ts",
+        "sha256": {
+          "taskBase": "043895fba91ec9ff645111c7516f6eceadb945a7bdf0e0d75ac7a26fc525f761",
+          "oldBase": "043895fba91ec9ff645111c7516f6eceadb945a7bdf0e0d75ac7a26fc525f761",
+          "auditProduct": "043895fba91ec9ff645111c7516f6eceadb945a7bdf0e0d75ac7a26fc525f761",
+          "issueCandidate": "043895fba91ec9ff645111c7516f6eceadb945a7bdf0e0d75ac7a26fc525f761",
+          "prHead": "043895fba91ec9ff645111c7516f6eceadb945a7bdf0e0d75ac7a26fc525f761",
+          "merge": "043895fba91ec9ff645111c7516f6eceadb945a7bdf0e0d75ac7a26fc525f761"
+        },
+        "identicalAcrossAllRefs": true,
+        "anchors": [
+          {
+            "anchor": "export interface SubagentRunRecord",
+            "lines": [
+              16
+            ]
+          }
+        ]
+      },
+      {
+        "path": "packages/agent-core/src/runtime/budget.ts",
+        "sha256": {
+          "taskBase": "c3fc1efd86185b7ed443d4d14b8130a54fa95105af1eb80ecccc0b44963a6291",
+          "oldBase": "c3fc1efd86185b7ed443d4d14b8130a54fa95105af1eb80ecccc0b44963a6291",
+          "auditProduct": "c3fc1efd86185b7ed443d4d14b8130a54fa95105af1eb80ecccc0b44963a6291",
+          "issueCandidate": "c3fc1efd86185b7ed443d4d14b8130a54fa95105af1eb80ecccc0b44963a6291",
+          "prHead": "c3fc1efd86185b7ed443d4d14b8130a54fa95105af1eb80ecccc0b44963a6291",
+          "merge": "c3fc1efd86185b7ed443d4d14b8130a54fa95105af1eb80ecccc0b44963a6291"
+        },
+        "identicalAcrossAllRefs": true,
+        "anchors": [
+          {
+            "anchor": "export async function reserveChildBudget",
+            "lines": [
+              54
+            ]
+          },
+          {
+            "anchor": "if (!current?.spec.budgetLimits)",
+            "lines": [
+              56
+            ]
+          },
+          {
+            "anchor": "signal: spec.signal",
+            "lines": [
+              78
+            ]
+          }
+        ]
+      },
+      {
+        "path": "apps/db-ops-api/src/analysis/analysis-dispatch-store.ts",
+        "sha256": {
+          "taskBase": "bc10e2f53708b76aa1add4afbde94f22df72dcd92079559bcd0b22cd0cb64896",
+          "oldBase": "bc10e2f53708b76aa1add4afbde94f22df72dcd92079559bcd0b22cd0cb64896",
+          "auditProduct": "bc10e2f53708b76aa1add4afbde94f22df72dcd92079559bcd0b22cd0cb64896",
+          "issueCandidate": "bc10e2f53708b76aa1add4afbde94f22df72dcd92079559bcd0b22cd0cb64896",
+          "prHead": "bc10e2f53708b76aa1add4afbde94f22df72dcd92079559bcd0b22cd0cb64896",
+          "merge": "bc10e2f53708b76aa1add4afbde94f22df72dcd92079559bcd0b22cd0cb64896"
+        },
+        "identicalAcrossAllRefs": true,
+        "anchors": [
+          {
+            "anchor": "export interface AnalysisRequest",
+            "lines": [
+              11
+            ]
+          },
+          {
+            "anchor": "actor?: ActorContext",
+            "lines": [
+              14
+            ]
+          },
+          {
+            "anchor": "authorizationVersion: string",
+            "lines": [
+              20
+            ]
+          }
+        ]
+      },
+      {
+        "path": "apps/db-ops-api/src/analysis/analysis-identity.ts",
+        "sha256": {
+          "taskBase": "cb3f7c4ee115fe1a3a152d13f999ce2ee76bc7f960d62b298138f941e0580372",
+          "oldBase": "cb3f7c4ee115fe1a3a152d13f999ce2ee76bc7f960d62b298138f941e0580372",
+          "auditProduct": "cb3f7c4ee115fe1a3a152d13f999ce2ee76bc7f960d62b298138f941e0580372",
+          "issueCandidate": "cb3f7c4ee115fe1a3a152d13f999ce2ee76bc7f960d62b298138f941e0580372",
+          "prHead": "cb3f7c4ee115fe1a3a152d13f999ce2ee76bc7f960d62b298138f941e0580372",
+          "merge": "cb3f7c4ee115fe1a3a152d13f999ce2ee76bc7f960d62b298138f941e0580372"
+        },
+        "identicalAcrossAllRefs": true,
+        "anchors": [
+          {
+            "anchor": "export function analysisAuthorizationVersion",
+            "lines": [
+              11
+            ]
+          },
+          {
+            "anchor": "export async function authorizeAnalysisRequest",
+            "lines": [
+              27
+            ]
+          },
+          {
+            "anchor": "analysisAuthorizationVersion(bounded)",
+            "lines": [
+              37
+            ]
+          },
+          {
+            "anchor": "auto_analysis_config",
+            "lines": [
+              41
+            ]
+          }
+        ]
+      },
+      {
+        "path": "apps/db-ops-api/src/analysis/analysis-dispatch-handler.ts",
+        "sha256": {
+          "taskBase": "ee6293ccd4a3c91050ab9ee36a2646df5a48d8745fcd8395a87b2fb6f60908a9",
+          "oldBase": "ee6293ccd4a3c91050ab9ee36a2646df5a48d8745fcd8395a87b2fb6f60908a9",
+          "auditProduct": "ee6293ccd4a3c91050ab9ee36a2646df5a48d8745fcd8395a87b2fb6f60908a9",
+          "issueCandidate": "ee6293ccd4a3c91050ab9ee36a2646df5a48d8745fcd8395a87b2fb6f60908a9",
+          "prHead": "ee6293ccd4a3c91050ab9ee36a2646df5a48d8745fcd8395a87b2fb6f60908a9",
+          "merge": "ee6293ccd4a3c91050ab9ee36a2646df5a48d8745fcd8395a87b2fb6f60908a9"
+        },
+        "identicalAcrossAllRefs": true,
+        "anchors": [
+          {
+            "anchor": "const check = async",
+            "lines": [
+              22
+            ]
+          },
+          {
+            "anchor": "await deps.authorize",
+            "lines": [
+              29
+            ]
+          },
+          {
+            "anchor": "beforeProviderRequest:",
+            "lines": [
+              41
+            ]
+          },
+          {
+            "anchor": "completeAnalysis:",
+            "lines": [
+              42
+            ]
+          }
+        ]
+      },
+      {
+        "path": "apps/db-ops-api/src/cron/cron-authority.ts",
+        "sha256": {
+          "taskBase": "75c67c628e4560a1120cc9518a98b6a2054bf62e98c0730539bbade50e31a3ff",
+          "oldBase": "75c67c628e4560a1120cc9518a98b6a2054bf62e98c0730539bbade50e31a3ff",
+          "auditProduct": "75c67c628e4560a1120cc9518a98b6a2054bf62e98c0730539bbade50e31a3ff",
+          "issueCandidate": "75c67c628e4560a1120cc9518a98b6a2054bf62e98c0730539bbade50e31a3ff",
+          "prHead": "75c67c628e4560a1120cc9518a98b6a2054bf62e98c0730539bbade50e31a3ff",
+          "merge": "75c67c628e4560a1120cc9518a98b6a2054bf62e98c0730539bbade50e31a3ff"
+        },
+        "identicalAcrossAllRefs": true,
+        "anchors": [
+          {
+            "anchor": "export async function assertCronActorAccess",
+            "lines": [
+              25
+            ]
+          },
+          {
+            "anchor": "async authorize(",
+            "lines": [
+              37
+            ]
+          },
+          {
+            "anchor": "loadActiveActor",
+            "lines": [
+              46
+            ]
+          },
+          {
+            "anchor": "refreshActor:",
+            "lines": [
+              69
+            ]
+          }
+        ]
+      },
+      {
+        "path": "apps/db-ops-api/src/investigations/authorization.ts",
+        "sha256": {
+          "taskBase": "c6bc2b97a8888bf1ead7e42ed86b118389c1f57acf28dc0cbe6cd4293fae66f3",
+          "oldBase": "c6bc2b97a8888bf1ead7e42ed86b118389c1f57acf28dc0cbe6cd4293fae66f3",
+          "auditProduct": "e309aa0fc533f71420e274541ab844f498b97fa5ad7bca1a50b8a8dc6a2f1494",
+          "issueCandidate": "e309aa0fc533f71420e274541ab844f498b97fa5ad7bca1a50b8a8dc6a2f1494",
+          "prHead": "e309aa0fc533f71420e274541ab844f498b97fa5ad7bca1a50b8a8dc6a2f1494",
+          "merge": "e309aa0fc533f71420e274541ab844f498b97fa5ad7bca1a50b8a8dc6a2f1494"
+        },
+        "identicalAcrossAllRefs": false,
+        "anchors": [
+          {
+            "anchor": "async authorize(",
+            "lines": [
+              173
+            ]
+          },
+          {
+            "anchor": "loadInvestigationActorFrom",
+            "lines": [
+              105,
+              186
+            ]
+          },
+          {
+            "anchor": "if (!permitted('chat:view')",
+            "lines": [
+              149,
+              217
+            ]
+          }
+        ]
+      },
+      {
+        "path": "apps/db-ops-api/src/auth/actor-context.ts",
+        "sha256": {
+          "taskBase": "a1551b57291acfc31f87f8d03ee51b3bf7dfed93d77097f3395503d33f23e86d",
+          "oldBase": "a1551b57291acfc31f87f8d03ee51b3bf7dfed93d77097f3395503d33f23e86d",
+          "auditProduct": "a1551b57291acfc31f87f8d03ee51b3bf7dfed93d77097f3395503d33f23e86d",
+          "issueCandidate": "a1551b57291acfc31f87f8d03ee51b3bf7dfed93d77097f3395503d33f23e86d",
+          "prHead": "a1551b57291acfc31f87f8d03ee51b3bf7dfed93d77097f3395503d33f23e86d",
+          "merge": "a1551b57291acfc31f87f8d03ee51b3bf7dfed93d77097f3395503d33f23e86d"
+        },
+        "identicalAcrossAllRefs": true,
+        "anchors": [
+          {
+            "anchor": "export interface ActorContext",
+            "lines": [
+              11
+            ]
+          },
+          {
+            "anchor": "decoded = jwt.verify",
+            "lines": [
+              221
+            ]
+          },
+          {
+            "anchor": "return this.loadActiveActor(decoded.userId",
+            "lines": [
+              224
+            ]
+          }
+        ]
+      },
+      {
+        "path": "apps/db-ops-api/src/auth-middleware.ts",
+        "sha256": {
+          "taskBase": "6baaed297fbd62b9826e32a418e0ece83e4da83be2ed0850064f1ef16374b080",
+          "oldBase": "6baaed297fbd62b9826e32a418e0ece83e4da83be2ed0850064f1ef16374b080",
+          "auditProduct": "6baaed297fbd62b9826e32a418e0ece83e4da83be2ed0850064f1ef16374b080",
+          "issueCandidate": "6baaed297fbd62b9826e32a418e0ece83e4da83be2ed0850064f1ef16374b080",
+          "prHead": "6baaed297fbd62b9826e32a418e0ece83e4da83be2ed0850064f1ef16374b080",
+          "merge": "6baaed297fbd62b9826e32a418e0ece83e4da83be2ed0850064f1ef16374b080"
+        },
+        "identicalAcrossAllRefs": true,
+        "anchors": [
+          {
+            "anchor": "request.user = await actorContexts.authenticateAccessToken",
+            "lines": [
+              23
+            ]
+          }
+        ]
+      },
+      {
+        "path": "apps/db-ops-api/src/adapter/agent-run-service.ts",
+        "sha256": {
+          "taskBase": "672662dbfb89afa2625547eba8a224d200d426c78b542a9343cb02e98ca0cce4",
+          "oldBase": "672662dbfb89afa2625547eba8a224d200d426c78b542a9343cb02e98ca0cce4",
+          "auditProduct": "672662dbfb89afa2625547eba8a224d200d426c78b542a9343cb02e98ca0cce4",
+          "issueCandidate": "672662dbfb89afa2625547eba8a224d200d426c78b542a9343cb02e98ca0cce4",
+          "prHead": "672662dbfb89afa2625547eba8a224d200d426c78b542a9343cb02e98ca0cce4",
+          "merge": "672662dbfb89afa2625547eba8a224d200d426c78b542a9343cb02e98ca0cce4"
+        },
+        "identicalAcrossAllRefs": true,
+        "anchors": [
+          {
+            "anchor": "export interface AgentRun",
+            "lines": [
+              15
+            ]
+          }
+        ]
+      },
+      {
+        "path": "apps/db-ops-api/src/chat-database-service.ts",
+        "sha256": {
+          "taskBase": "a22682802303f71206b1e5897dc47e2e920a65cf72f91ae2c6b2daef9ea83f1b",
+          "oldBase": "a22682802303f71206b1e5897dc47e2e920a65cf72f91ae2c6b2daef9ea83f1b",
+          "auditProduct": "a22682802303f71206b1e5897dc47e2e920a65cf72f91ae2c6b2daef9ea83f1b",
+          "issueCandidate": "a22682802303f71206b1e5897dc47e2e920a65cf72f91ae2c6b2daef9ea83f1b",
+          "prHead": "a22682802303f71206b1e5897dc47e2e920a65cf72f91ae2c6b2daef9ea83f1b",
+          "merge": "a22682802303f71206b1e5897dc47e2e920a65cf72f91ae2c6b2daef9ea83f1b"
+        },
+        "identicalAcrossAllRefs": true,
+        "anchors": [
+          {
+            "anchor": "private accessPredicate",
+            "lines": [
+              110
+            ]
+          },
+          {
+            "anchor": "async grantSessionShare",
+            "lines": [
+              468
+            ]
+          }
+        ]
+      },
+      {
+        "path": "apps/db-ops-api/src/adapter/direct-adapter.ts",
+        "sha256": {
+          "taskBase": "5f2f8a489de4c6b98bcc3282b6726ea17ee8eed2abd68d35c67e8643f97f94c7",
+          "oldBase": "5f2f8a489de4c6b98bcc3282b6726ea17ee8eed2abd68d35c67e8643f97f94c7",
+          "auditProduct": "5f2f8a489de4c6b98bcc3282b6726ea17ee8eed2abd68d35c67e8643f97f94c7",
+          "issueCandidate": "5f2f8a489de4c6b98bcc3282b6726ea17ee8eed2abd68d35c67e8643f97f94c7",
+          "prHead": "5f2f8a489de4c6b98bcc3282b6726ea17ee8eed2abd68d35c67e8643f97f94c7",
+          "merge": "5f2f8a489de4c6b98bcc3282b6726ea17ee8eed2abd68d35c67e8643f97f94c7"
+        },
+        "identicalAcrossAllRefs": true,
+        "anchors": [
+          {
+            "anchor": "new SubagentManager(this.runner",
+            "lines": [
+              339
+            ]
+          }
+        ]
+      },
+      {
+        "path": "apps/db-ops-api/src/adapter/get-agent-engine.ts",
+        "sha256": {
+          "taskBase": "3d3afe16b9162c7c62db59faa8d64a0bfc210ad5ab0fc004c7eeac71ea7dfcda",
+          "oldBase": "3d3afe16b9162c7c62db59faa8d64a0bfc210ad5ab0fc004c7eeac71ea7dfcda",
+          "auditProduct": "3d3afe16b9162c7c62db59faa8d64a0bfc210ad5ab0fc004c7eeac71ea7dfcda",
+          "issueCandidate": "3d3afe16b9162c7c62db59faa8d64a0bfc210ad5ab0fc004c7eeac71ea7dfcda",
+          "prHead": "3d3afe16b9162c7c62db59faa8d64a0bfc210ad5ab0fc004c7eeac71ea7dfcda",
+          "merge": "3d3afe16b9162c7c62db59faa8d64a0bfc210ad5ab0fc004c7eeac71ea7dfcda"
+        },
+        "identicalAcrossAllRefs": true,
+        "anchors": [
+          {
+            "anchor": "export function createActorBoundToolRegistry",
+            "lines": [
+              236
+            ]
+          },
+          {
+            "anchor": "await executeToolWithPolicy(actor, anyTool",
+            "lines": [
+              256
+            ]
+          }
+        ]
+      },
+      {
+        "path": "apps/db-ops-api/src/tools/security-catalog.ts",
+        "sha256": {
+          "taskBase": "84f600639a3661ad26145e10da3c95610a329fe50a49bf3d7fcbc9719f8d5632",
+          "oldBase": "84f600639a3661ad26145e10da3c95610a329fe50a49bf3d7fcbc9719f8d5632",
+          "auditProduct": "84f600639a3661ad26145e10da3c95610a329fe50a49bf3d7fcbc9719f8d5632",
+          "issueCandidate": "84f600639a3661ad26145e10da3c95610a329fe50a49bf3d7fcbc9719f8d5632",
+          "prHead": "84f600639a3661ad26145e10da3c95610a329fe50a49bf3d7fcbc9719f8d5632",
+          "merge": "84f600639a3661ad26145e10da3c95610a329fe50a49bf3d7fcbc9719f8d5632"
+        },
+        "identicalAcrossAllRefs": true,
+        "anchors": [
+          {
+            "anchor": "spawn_subagent: definition",
+            "lines": [
+              66
+            ]
+          },
+          {
+            "anchor": "access_subagent: definition",
+            "lines": [
+              67
+            ]
+          }
+        ]
+      }
+    ],
+    "findings": [
+      {
+        "id": "MF1",
+        "current": "Subagent owner/actor and parentSessionKey exist; budget allocation can propagate parent spec.signal conditionally. No trusted chat parentRunId/credential binding or continuous chat admission is established by those mechanisms.",
+        "recommended": "D4 lineage cascade and independent live admission/monitoring after normal parent completion; protect access and result delivery.",
+        "proposalSection": "5.1"
+      },
+      {
+        "id": "MF2",
+        "current": "JWT verification returns ActorContext; ordinary AgentRun and actor lack verified initiating credential exp/connection binding.",
+        "recommended": "Disable: all ordinary user runs; version change: old versions only; chat revoke: all ordinary user runs; JWT expiry: initiating credential only. Observer expiry does not cancel observed owner runs; reconnect cannot extend original execution expiry.",
+        "proposalSection": "5.2"
+      },
+      {
+        "id": "MF3",
+        "current": "User analysis freezes full permission hash and rechecks before Provider and completion. Cron has live owner/business/resource checks; system analysis checks switches; investigation service checks its own kind/version/chat/profile/resource authority.",
+        "recommended": "Keep full analysis authorizationVersion algorithm, including chat-only revocation invalidation. Preserve other background authority; no blanket background exemption.",
+        "proposalSection": "5.3"
+      },
+      {
+        "id": "D3-owner",
+        "current": "Share read predicate does not check owner current active/chat authority.",
+        "recommended": "Suspend read on owner chat loss/disable, retain share records and allow read after owner restoration; owner token expiry/version-only change does not suspend sharing.",
+        "proposalSection": "5.4"
+      }
+    ],
+    "futureAcceptanceCases": [
+      {
+        "id": "MF1-parent-completed",
+        "trigger": "Parent completes normally; child remains active",
+        "expected": "Child retains original deadline/credential exp and independent live permission monitoring."
+      },
+      {
+        "id": "MF1-second-model",
+        "trigger": "Revoke chat during child activity before second model request",
+        "expected": "No second Provider dispatch; child cancellation, no result body; unknown earlier calls retained."
+      },
+      {
+        "id": "MF1-next-tool",
+        "trigger": "Disable actor or revoke initiating version before child next tool",
+        "expected": "No tool dispatch; cancel in affected lineage; retain prior effects."
+      },
+      {
+        "id": "MF1-child-exp",
+        "trigger": "Initiating JWT expires after parent completion",
+        "expected": "Cancel bound child; fresh-token unrelated runs continue."
+      },
+      {
+        "id": "MF1-access",
+        "trigger": "Access result with no chat or wrong owner",
+        "expected": "No result body, preserve existing tool policy and resource ACL."
+      },
+      {
+        "id": "MF2-A-B",
+        "trigger": "A expires while B has started independent run with fresh JWT",
+        "expected": "Only A-bound execution lineage cancelled; B continues."
+      },
+      {
+        "id": "MF2-version",
+        "trigger": "v invalidated; B authenticated at v+1",
+        "expected": "Old-version lineages cancelled; v+1 lineage continues."
+      },
+      {
+        "id": "MF2-http-send",
+        "trigger": "HTTP send crosses initiating exp",
+        "expected": "Cancel bound execution; 401 before response, no later body, preserve facts."
+      },
+      {
+        "id": "MF2-http-history",
+        "trigger": "HTTP history query crosses exp",
+        "expected": "401 before body, no owner-run cancellation."
+      },
+      {
+        "id": "MF2-observer",
+        "trigger": "Only watcher token expires",
+        "expected": "Close watcher/clear queue; independent owner execution continues."
+      },
+      {
+        "id": "MF2-reconnect",
+        "trigger": "Fresh JWT reconnects to observe old active run",
+        "expected": "Observation allowed only with live ACL; no execution rebind or exp extension."
+      },
+      {
+        "id": "MF3-analysis-chat",
+        "trigger": "Only chat revoked from previously chat-containing analysis snapshot",
+        "expected": "Existing analysis fails full authorization hash; new business request can use new authorized snapshot; algorithm unchanged."
+      },
+      {
+        "id": "MF3-analysis-business",
+        "trigger": "Required business/resource permission revoked or actor disabled",
+        "expected": "Existing analysis rejected at next live Provider/completion check; preserve unknown requests."
+      },
+      {
+        "id": "MF3-cron",
+        "trigger": "Only chat removed / cron business permission removed / owner disabled",
+        "expected": "Respectively continue / reject at existing authority check / reject at load; no new browser-exp policy."
+      },
+      {
+        "id": "MF3-system",
+        "trigger": "User chat/business permission revoked or user disabled",
+        "expected": "Independent system analysis unaffected; own switch/config/resource checks remain."
+      },
+      {
+        "id": "MF3-service",
+        "trigger": "Unrelated user disabled versus service own chat/business authority removed",
+        "expected": "Unrelated user does not cancel service; own authority failure rejects at existing investigation check."
+      },
+      {
+        "id": "D3-owner",
+        "trigger": "Owner chat loss/disable then restoration",
+        "expected": "Suspend recipient reads with 404 if recipient otherwise authorized; retain records; allow new read after restoration, no automatic run revival."
+      },
+      {
+        "id": "D3-token",
+        "trigger": "Owner JWT expires or version changes but remains active with chat",
+        "expected": "Sharing continues; only bound execution/connection affected under MF2."
+      }
+    ],
+    "runtimeTestsRun": false,
+    "paidModelRequests": 0,
+    "analysisAlgorithmChanged": false,
+    "limitations": [
+      "No runtime HTTP/WS/SQL/Provider acceptance in this documentation stage.",
+      "Independent re-review and Max policy choice are pending.",
+      "pnpm source-policy unavailable in current shell; not claimed passed."
+    ],
+    "selfCheck": {
+      "sourceHashComparisons": 186,
+      "revisionSourceFiles": 16,
+      "revisionIdenticalAcrossAllRefs": 15,
+      "differentFile": "apps/db-ops-api/src/investigations/authorization.ts (existing PR #1008 authorization delta; per-ref hashes retained)",
+      "sourceAnchorsVerified": true,
+      "recommendationSectionsAndTableColumnsVerified": true,
+      "productDiffAgainstRevisionBaseEmpty": true,
+      "branchAndRevisionBaseAncestryVerified": true,
+      "gitDiffCheck": "exit 0",
+      "sourcePolicy": {
+        "command": "pnpm ci:source-policy",
+        "exitCode": 127,
+        "classification": "environment: pnpm command not found"
+      },
+      "businessAcceptance": "not run: proposal revision only"
+    }
+  }
 }
