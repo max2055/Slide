@@ -16,9 +16,13 @@ bystander=""
 watchdog=""
 evidence="$root/scripts/qualification/serve-e2e-evidence.py"
 observation_failed=0
+mkdir -p "$work/observations"
+(umask 077; : > "$work/observations/signal-boundaries.tsv")
+exec 8>"$work/observations/signal-boundaries.tsv"
+source "$root/scripts/qualification/serve-e2e-boundaries.bash"
 
 finish() {
-  local primary=$? pid
+  local primary=$? pid export_failed=0
   if [[ "$primary" != 0 && -n "${SERVE_E2E_EVIDENCE_DIR:-}" ]]; then
     if ! "$real_python" "$evidence" preserve "$work" "$SERVE_E2E_EVIDENCE_DIR"; then
       echo "EVIDENCE_ERROR preserve (primary exit=$primary)" >&2
@@ -44,7 +48,12 @@ finish() {
       kill -TERM "$pid" 2>/dev/null || true
     fi
   fi
+  if [[ -n "${SERVE_E2E_BOUNDARY_OUTPUT:-}" ]]; then
+    mkdir -p "$SERVE_E2E_BOUNDARY_OUTPUT"
+    cp "$work/observations/"* "$SERVE_E2E_BOUNDARY_OUTPUT/" || { echo "EVIDENCE_ERROR boundary export" >&2; export_failed=1; }
+  fi
   rm -rf "$work"
+  if [[ "$export_failed" != 0 && "$primary" == 0 ]]; then exit 1; fi
   return "$primary"
 }
 trap finish EXIT
@@ -223,7 +232,9 @@ run_scenario() {
   elif [[ "$inject" == diagnostics-unwritable ]]; then
     diagnostic_path="/dev/null/lifecycle"
   elif [[ "$inject" == diagnostics-directory ]]; then
+    boundary_mark mkdir_before "$$"
     mkdir -p "$diagnostic_path"
+    boundary_mark mkdir_after "$$" "$?"
   elif [[ "$inject" == diagnostics-invalidated ]]; then
     : > "$diagnostic_path"
   fi
@@ -251,15 +262,22 @@ import os, signal, sys
 # so this fixture tests the requested INT, not its later TERM watchdog.
 signal.signal(signal.SIGINT, signal.SIG_DFL)
 os.execvp("bash", ["bash", *sys.argv[1:]])
-' "$script" 9>"$trace_fifo" >"$dir/stdout" 2>"$err" &
+' "$script" 8>&- 9>"$trace_fifo" >"$dir/stdout" 2>"$err" &
   script_pid=$!
+  boundary_mark started "$script_pid"
   echo "START $name script_pid=$script_pid signal=$signal"
   echo "$script_pid" >>"$work/pids"
   (
     sleep 12
+    boundary_mark watchdog_fired "$script_pid"
     echo "elapsed=$((SECONDS - started_at))" > "$dir/watchdog-fired"
     "$real_python" "$evidence" snapshot "$dir" 2>>"$dir/diagnostic-errors" || true
-    kill -TERM "$script_pid" 2>/dev/null || true
+    boundary_mark watchdog_kill_before "$script_pid"
+    if kill -TERM "$script_pid" 2>/dev/null; then
+      boundary_mark watchdog_kill_after "$script_pid" 0
+    else
+      boundary_mark watchdog_kill_after "$script_pid" "$?"
+    fi
   ) >/dev/null 2>&1 &
   local local_watchdog=$!
   echo "$local_watchdog" >>"$work/pids"
@@ -295,15 +313,24 @@ os.execvp("bash", ["bash", *sys.argv[1:]])
       echo "SIGNAL $name target=$script_pid signal=$signal elapsed=$((SECONDS - started_at))" > "$dir/signal-sent"
       if [[ "$inject" == diagnostics-invalidated ]]; then
         # Invalidate the destination only after API/Vite and both children exist.
+        boundary_mark unlink_before "$script_pid"
         rm -f "$diagnostic_path"
-        if ! mkdir "$diagnostic_path"; then
+        boundary_mark unlink_after "$script_pid" "$?"
+        boundary_mark mkdir_before "$script_pid"
+        if mkdir "$diagnostic_path"; then
+          boundary_mark mkdir_after "$script_pid" 0
+        else
+          boundary_mark mkdir_after "$script_pid" "$?"
           echo "FAIL $name could not invalidate diagnostic destination"
           result=1
         fi
       fi
+      boundary_mark kill_before "$script_pid"
       if kill "-$signal" "$script_pid" 2>/dev/null; then
+        boundary_mark kill_after "$script_pid" 0
         echo "signal_delivery=success" >> "$dir/signal-sent"
       else
+        boundary_mark kill_after "$script_pid" "$?"
         echo "signal_delivery=failed" >> "$dir/signal-sent"
       fi
       if [[ "$inject" == collect ]]; then : > "$dir/collect-release"; fi
@@ -316,6 +343,7 @@ os.execvp("bash", ["bash", *sys.argv[1:]])
   done
 
   wait "$script_pid" || code=$?
+  boundary_mark wait_after "$script_pid" "$code"
   kill "$local_watchdog" 2>/dev/null || true
   wait "$local_watchdog" 2>/dev/null || true
   if [[ -n "$trace_pid" ]] && ! wait "$trace_pid"; then
@@ -723,6 +751,9 @@ EOF
 
 playwright_sigkill
 
+if ! "$real_python" "$root/scripts/qualification/serve-e2e-boundaries.py" "$work/observations" "$boundary_supported"; then
+  observation_failed=1
+fi
 # A collection failure cannot turn a primary failure green, or claim complete evidence.
 if [[ "$observation_failed" != 0 && "$result" == 0 ]]; then result=1; fi
 if [[ "$result" == 0 ]]; then

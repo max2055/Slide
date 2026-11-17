@@ -11,7 +11,7 @@ import time
 TRACE_LIMIT = 512 * 1024
 ARCHIVE_LIMIT = 8 * 1024 * 1024
 TRACE_RECORD = re.compile(rb'ts=[0-9]+\.[0-9]{6} pid=[1-9][0-9]* func=[A-Za-z_][A-Za-z_0-9]* line=[1-9][0-9]* event=(?:step|signal_observed)\n')
-FILES = ('report', 'stderr', 'stdout', 'signal-sent', 'watchdog-fired',
+FILES = ('signal-boundaries.tsv', 'boundary-summary.json', 'boundary-errors', 'report', 'stderr', 'stdout', 'signal-sent', 'watchdog-fired',
          'watchdog-processes', 'identities.json', 'bash.trace', 'bash.trace.json', 'trace-support',
          'diagnostic-errors', 'lifecycle.json')
 

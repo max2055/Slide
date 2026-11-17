@@ -281,7 +281,16 @@ jobs:
       - name: Cron browser, real authenticated routes and durable completion
         run: pnpm --filter slide-frontend exec playwright test cron-live.spec.ts --workers=1
       - name: Runtime candidate isolation and history
-        run: pnpm --filter slide-frontend exec playwright test agent-runtime.spec.ts --workers=1
+        id: runtime-browser
+        run: node scripts/qualification/runtime-browser-evidence.mjs
+      - name: Upload sanitized runtime fixture evidence
+        if: always() && steps.runtime-browser.outcome != 'skipped'
+        uses: actions/upload-artifact@v4
+        with:
+          name: runtime-browser-sanitized-${{ github.sha }}
+          path: frontend/test-results-agent-runtime-sanitized/evidence.json
+          if-no-files-found: error
+          retention-days: 7
       - name: Feedback evaluation and runtime qualification
         env:
           T11_TEST_MYSQL_PORT: '3306'
