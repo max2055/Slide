@@ -1,6 +1,6 @@
 # MAX-683 工作台设计提案
 
-当前视觉候选：[V3 AIP 研究与应用](v3/RESEARCH.md) · [新版原型](v3/concept.html) · [与 V2 同尺寸对照](v3/compare.html)。V3 结合官方产品界面与演示调整对象上下文及结论依据；V1/V2 留作历史，已审定的数据、权限及导航验收约定继续适用。本轮仍为待独立复审、供 Max 确认的设计。
+当前视觉候选：[V4 纵向决策阅读](v4/DESIGN.md) · [新版原型](v4/concept.html) · [与 V3 同尺寸对照](v4/compare.html)。V4 复用 [AIP 研究](v3/RESEARCH.md)，改善横向扫读、依据重复与窄建议区换行；V1/V2/V3 留作历史，已审定的数据、权限及导航验收约定继续适用。本轮仍为待独立复审、供 Max 确认的设计。
 
 2026-11-17 修订；负责人 15-FrontendDev-01。状态：修订待 Chief 派 Reviewer 复审，通过后再供 Max 确认。仅设计，不实施产品、不改 API、不发布、不触发审批或执行。Issue 按 Chief 指令保持 in_progress。
 

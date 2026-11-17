@@ -1,0 +1,218 @@
+{
+  "checks": [
+    "首页 V3/V4 原图1440x900加载",
+    "计划详情 V3/V4 原图1440x900加载",
+    "验证失败 V3/V4 原图1440x900加载",
+    "证据不足 V3/V4 原图1440x900加载",
+    "对照页 Tab/Enter切换",
+    "approval 建议文字宽度超过700px",
+    "approval 主操作在1366首屏",
+    "failed 建议文字宽度超过700px",
+    "failed 主操作在1366首屏",
+    "missing 建议文字宽度超过700px",
+    "missing 主操作在1366首屏",
+    "长建议和长对象名自然换行，主操作无重叠且首屏可达",
+    "continue 原始资料无行动模板",
+    "running 原始资料无行动模板",
+    "1920详情无横溢"
+  ],
+  "passed": 15,
+  "measurements": [
+    {
+      "version": "v3",
+      "mode": "approval",
+      "sizes": {
+        ".next-pane p": {
+          "width": 226,
+          "top": 326.953125,
+          "bottom": 382.953125
+        },
+        ".business": {
+          "width": 226,
+          "top": 398.953125,
+          "bottom": 437.75
+        },
+        ".detail-title": {
+          "width": 916,
+          "top": 177.171875,
+          "bottom": 213.171875
+        },
+        ".object-context": {
+          "width": 200,
+          "top": 129.984375,
+          "bottom": 717.984375
+        },
+        ".evidence-pane": {
+          "width": 651,
+          "top": 292.5625,
+          "bottom": 503.296875
+        }
+      }
+    },
+    {
+      "version": "v3",
+      "mode": "failed",
+      "sizes": {
+        ".next-pane p": {
+          "width": 226,
+          "top": 326.953125,
+          "bottom": 382.953125
+        },
+        ".business": {
+          "width": 226,
+          "top": 398.953125,
+          "bottom": 437.75
+        },
+        ".detail-title": {
+          "width": 916,
+          "top": 177.171875,
+          "bottom": 213.171875
+        },
+        ".object-context": {
+          "width": 200,
+          "top": 129.984375,
+          "bottom": 724.71875
+        },
+        ".evidence-pane": {
+          "width": 651,
+          "top": 292.5625,
+          "bottom": 503.296875
+        }
+      }
+    },
+    {
+      "version": "v3",
+      "mode": "missing",
+      "sizes": {
+        ".next-pane p": {
+          "width": 226,
+          "top": 326.953125,
+          "bottom": 382.953125
+        },
+        ".business": {
+          "width": 226,
+          "top": 398.953125,
+          "bottom": 437.75
+        },
+        ".detail-title": {
+          "width": 916,
+          "top": 177.171875,
+          "bottom": 213.171875
+        },
+        ".object-context": {
+          "width": 200,
+          "top": 129.984375,
+          "bottom": 724.71875
+        },
+        ".evidence-pane": {
+          "width": 651,
+          "top": 292.5625,
+          "bottom": 503.296875
+        }
+      }
+    },
+    {
+      "version": "v4",
+      "mode": "approval",
+      "sizes": {
+        ".next-pane p": {
+          "width": 816,
+          "top": 309.265625,
+          "bottom": 338.15625
+        },
+        ".business": {
+          "width": 164,
+          "top": 291.59375,
+          "bottom": 331.03125
+        },
+        ".detail-title": {
+          "width": 1110,
+          "top": 179.03125,
+          "bottom": 218.03125
+        },
+        ".object-context": {
+          "width": 1110,
+          "top": 398.953125,
+          "bottom": 549.515625
+        },
+        ".evidence-pane": {
+          "width": 1110,
+          "top": 567.515625,
+          "bottom": 740.421875
+        }
+      }
+    },
+    {
+      "version": "v4",
+      "mode": "failed",
+      "sizes": {
+        ".next-pane p": {
+          "width": 816,
+          "top": 309.265625,
+          "bottom": 338.15625
+        },
+        ".business": {
+          "width": 164,
+          "top": 291.59375,
+          "bottom": 331.03125
+        },
+        ".detail-title": {
+          "width": 1110,
+          "top": 179.03125,
+          "bottom": 218.03125
+        },
+        ".object-context": {
+          "width": 1110,
+          "top": 398.953125,
+          "bottom": 549.515625
+        },
+        ".evidence-pane": {
+          "width": 1110,
+          "top": 567.515625,
+          "bottom": 712.984375
+        }
+      }
+    },
+    {
+      "version": "v4",
+      "mode": "missing",
+      "sizes": {
+        ".next-pane p": {
+          "width": 816,
+          "top": 309.265625,
+          "bottom": 338.15625
+        },
+        ".business": {
+          "width": 164,
+          "top": 291.59375,
+          "bottom": 331.03125
+        },
+        ".detail-title": {
+          "width": 1110,
+          "top": 179.03125,
+          "bottom": 218.03125
+        },
+        ".object-context": {
+          "width": 1110,
+          "top": 398.953125,
+          "bottom": 549.515625
+        },
+        ".evidence-pane": {
+          "width": 1110,
+          "top": 567.515625,
+          "bottom": 712.984375
+        }
+      }
+    },
+    {
+      "syntheticLongText": {
+        "textWidth": 816,
+        "textHeight": 86.671875,
+        "buttonBottom": 359.921875,
+        "overlap": false,
+        "overflow": false
+      }
+    }
+  ],
+  "scope": "静态原型；长文是临时注入的排版样本，不冒充真实业务数据"
+}
