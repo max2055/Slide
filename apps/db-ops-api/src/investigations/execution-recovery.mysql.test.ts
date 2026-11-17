@@ -2012,7 +2012,7 @@ describe.skipIf(!port)('T04 investigation workflow execution / real MySQL', () =
       owner.userId,
       'Ordinary Chat',
     ]);
-    const { run } = await runs.claim(owner.userId, chatId, 'ordinary-turn', `investigation:${randomUUID()}`);
+    const { run } = await runs.claim(owner.userId, chatId, 'ordinary-turn', `investigation:${randomUUID()}`, owner);
     expect(
       (await runs.complete(run, { type: 'complete', stopReason: 'completed', finalContent: 'ordinary response' }))
         .state,
