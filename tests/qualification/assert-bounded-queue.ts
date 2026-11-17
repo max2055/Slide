@@ -78,7 +78,12 @@ export async function qualifyBoundedQueue(pool: Pool) {
       while (completed.length < 3 && Date.now() < end) {
         await sleep(1000); ticks.push(worker.runOnce(handler));
       }
-      await Promise.all(ticks);
+      const tickResults = await Promise.all(ticks);
+      const [diagnostic] = await pool.query<any[]>("SELECT state, attempts, lease_expires_at > NOW() AS leaseAlive FROM workflow_jobs WHERE id = ?", [reportId]);
+      console.info(JSON.stringify({ event: 'bounded-terminal-evidence', concurrency, sameResource,
+        elapsedMs: Math.round(performance.now() - start), state: ['running','completed','failed','retry','queued'].includes(diagnostic[0]?.state) ? diagnostic[0].state : 'unknown',
+        attempts: Number(diagnostic[0]?.attempts), leaseAlive: Boolean(diagnostic[0]?.leaseAlive),
+        ticks: tickResults.map(value => ['running','completed','cancelled','retry','idle','failed'].includes(String(value)) ? value : 'unknown') }));
       assert.equal(completed.length, 3);
       assert.equal(overlaps, 0, 'same-resource effects never overlap');
       const waitMs = Object.fromEntries(Object.keys(starts).map(t => [t, starts[t] - enqueued[t]]));

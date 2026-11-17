@@ -41,7 +41,12 @@ describe.skipIf(!port)('P10 actual server process registration', () => {
         '/api/metrics/discovery/instance/101',
         '/api/metrics/template-bindings/instance/101/effective-triggers',
       ];
-      const read = (path: string) => fetch(`http://127.0.0.1:${httpPort}${path}`, { headers });
+      const read = async (path: string) => {
+        const response = await fetch(`http://127.0.0.1:${httpPort}${path}`, { headers });
+        console.info('[P10Response]', JSON.stringify({ elapsedMs: Date.now() - (deadline - 30_000), status: response.status,
+          standby: output.includes('API-only standby'), exited: child?.exitCode !== null }));
+        return response;
+      };
       for (const path of metricPaths) {
         const result = await read(path);
         expect(result.status, `${path}: ${await result.text()}`).toBe(200);
@@ -75,6 +80,13 @@ describe.skipIf(!port)('P10 actual server process registration', () => {
         const timeout = setTimeout(() => child?.kill('SIGKILL'), 10_000);
         await exited; clearTimeout(timeout);
       }
+      try {
+        const states = [...output.matchAll(/\[WorkerRecovery\] (\{[^\n]+\})/g)].map(match => {
+          try { const value = JSON.parse(match[1]); return ['starting','ready','standby','degraded','recovering','blocked','stopping'].includes(value.state) ? value.state : 'unknown'; }
+          catch { return 'unknown'; }
+        });
+        await writeFile('.p10-recovery-evidence.json', JSON.stringify({ states, exitCode: child?.exitCode }));
+      } catch { console.error('P10_EVIDENCE_UNAVAILABLE'); }
       await writeFile('.p10-server-process.log', output);
       await fixture.close();
     }

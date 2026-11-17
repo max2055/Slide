@@ -30,6 +30,11 @@ const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 async function waitFor(check: () => Promise<boolean>, label: string, timeout = 30_000) {
   const deadline = Date.now() + timeout;
   while (Date.now() < deadline) { if (await check().catch(() => false)) return; await delay(250); }
+  try {
+    const [waiting] = await pool!.query<any[]>({ sql: "SELECT COUNT(*) AS n FROM information_schema.processlist WHERE STATE IN ('Waiting for table metadata lock','Waiting for table level lock')", timeout: 1000 });
+    const [leases] = await pool!.query<any[]>({ sql: "SELECT COUNT(*) AS n FROM worker_leases WHERE expires_at > NOW()", timeout: 1000 });
+    console.error(JSON.stringify({ event: 'startup-timeout-evidence', label, waitingLocks: Number(waiting[0].n), activeLeases: Number(leases[0].n), exits: children.map(p => p.child.exitCode) }));
+  } catch { console.error('STARTUP_EVIDENCE_UNAVAILABLE'); }
   throw new Error(`Qualification timeout: ${label}\n${children.map(p => p.output().slice(-6000)).join("\n")}`);
 }
 async function freePort(): Promise<number> {
