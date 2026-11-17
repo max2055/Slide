@@ -112,3 +112,8 @@ pnpm security:scan:all
 见 [返修与验收索引](repair-20261117.md)。旧消费者和活动快照只作历史线索；当前 owner、进程、在途事务、旧池和恢复点须在窗口前重新签收。未收到具体 60 分钟窗口或 owner/admin 跨项目注入确认；不执行真实切换。
 
 注入目标旧名称 15-Coder-01 对应固定 agent ID；当前显示名为 15-BackendDev-01。执行前按 ID 重新读取配置，不按旧名称推定设置相同。两次独立 claim 仍未完成；Reviewer 的落实仅解除人员缺口，未解除修复复审、注入或资源前置条件。
+
+
+## 本轮独立阶段 PASS 与处置接续
+
+R1/R2 和三个技能/lock 删除问题已由原 Reviewer 复审关闭，不再列为待修。指定 head efa524f3265169cc0eac2edcb5b798fd0b2b0223 的 CI/产物证据已接收，完整边界及 A1–F1、逐项台账、历史处置和切换清单见 [当前基线准备包](preparation/README.md)。整单仍 BLOCKED 于未完成的内容审计、持久注入与真实切换验收，Issue 保持 in_progress；当前准备包不宣称剩余风险关闭。
