@@ -98,10 +98,11 @@ describe('MAX-595 / #541 production notification records HTTP registration', () 
 });
 
 it.skipIf(!process.env.NOTIFICATION_RECORDS_TEST_MYSQL_PORT)('MAX-595 real MySQL rows through HTTP preserve all four statuses and empty results', async () => {
+    if (process.env.NOTIFICATION_RECORDS_TEST_MYSQL_PASSWORD === undefined) throw new Error('NOTIFICATION_RECORDS_TEST_MYSQL_PASSWORD must be explicitly injected; explicit empty is reserved for isolated targets');
   authenticate();
   const options = { host: process.env.NOTIFICATION_RECORDS_TEST_MYSQL_HOST ?? '127.0.0.1',
     port: Number(process.env.NOTIFICATION_RECORDS_TEST_MYSQL_PORT), user: process.env.NOTIFICATION_RECORDS_TEST_MYSQL_USER ?? 'root',
-    password: process.env.NOTIFICATION_RECORDS_TEST_MYSQL_PASSWORD ?? '' };
+    password: process.env.NOTIFICATION_RECORDS_TEST_MYSQL_PASSWORD! };
   const admin = mysql.createPool(options);
   const database = `max595_records_${process.pid}`;
   let pool: ReturnType<typeof mysql.createPool> | undefined;

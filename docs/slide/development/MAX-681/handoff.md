@@ -120,3 +120,6 @@ R1/R2 和三个技能/lock 删除问题已由原 Reviewer 复审关闭，不再�
 
 
 R3及实质内容调查见 preparation/README.md 的“R3及内容调查接续”；广告行与命名ref已区分，旧快照不变。语义/结构审计增量及仍未完成的字面值、像素、历史闭包审核逐项保留，不以词法判定替代有效秘密裁定。
+
+
+七个数据库入口与shallow历史恢复的后续实测见 [convergence.md](preparation/convergence.md)。空密码回退已移除，显式空值保留兼容；不把变量存在视作资源已授权。

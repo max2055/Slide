@@ -15,7 +15,9 @@ describe.skipIf(!port)('MAX-347 approval event integrity on real MySQL', () => {
   const database = `max347_${process.pid}`;
   const checker = new ConsistencyChecker();
   beforeAll(async () => {
-    connection = await mysql.createConnection({ host: '127.0.0.1', port, user: 'root', password: process.env.METRICS_TEST_MYSQL_PASSWORD ?? '', timezone: 'Z' });
+    if (process.env.METRICS_TEST_MYSQL_PASSWORD === undefined) throw new Error('METRICS_TEST_MYSQL_PASSWORD must be explicitly injected; explicit empty is reserved for isolated targets');
+
+    connection = await mysql.createConnection({ host: '127.0.0.1', port, user: 'root', password: process.env.METRICS_TEST_MYSQL_PASSWORD!, timezone: 'Z' });
     await connection.query(`CREATE DATABASE ${database}`);
     await connection.query(`USE ${database}`);
     const schema = readFileSync(new URL('../sql/schema.sql', import.meta.url), 'utf8');
@@ -92,7 +94,9 @@ describe.skipIf(!port)('resource health truth with legacy mixed collations', () 
   const database = `max210_${process.pid}`;
   const checker = new ConsistencyChecker();
   beforeAll(async () => {
-    connection = await mysql.createConnection({ host: '127.0.0.1', port, user: 'root', password: process.env.METRICS_TEST_MYSQL_PASSWORD ?? '', charset: 'utf8mb4', timezone: 'Z' });
+    if (process.env.METRICS_TEST_MYSQL_PASSWORD === undefined) throw new Error('METRICS_TEST_MYSQL_PASSWORD must be explicitly injected; explicit empty is reserved for isolated targets');
+
+    connection = await mysql.createConnection({ host: '127.0.0.1', port, user: 'root', password: process.env.METRICS_TEST_MYSQL_PASSWORD!, charset: 'utf8mb4', timezone: 'Z' });
     await connection.query(`CREATE DATABASE ${database}`);
     await connection.query(`USE ${database}`);
     await connection.query("CREATE TABLE database_instances (id INT PRIMARY KEY, health_status VARCHAR(32), status VARCHAR(32))");
@@ -202,9 +206,11 @@ describe.skipIf(!port)('MAX-8 / #473 composite alert metric references on MySQL'
   const database = `max8_metric_refs_${process.pid}`;
   const types = ['instance', 'server', 'network_device'] as const;
   beforeAll(async () => {
+    if (process.env.METRICS_TEST_MYSQL_PASSWORD === undefined) throw new Error('METRICS_TEST_MYSQL_PASSWORD must be explicitly injected; explicit empty is reserved for isolated targets');
+
     connection = await mysql.createConnection({
       host: '127.0.0.1', port, user: process.env.METRICS_TEST_MYSQL_USER ?? 'root',
-      password: process.env.METRICS_TEST_MYSQL_PASSWORD ?? '', timezone: 'Z',
+      password: process.env.METRICS_TEST_MYSQL_PASSWORD!, timezone: 'Z',
     });
     await connection.query(`CREATE DATABASE ${database}`);
     await connection.query(`USE ${database}`);

@@ -36,7 +36,7 @@ describe.skipIf(!port)('P06 SQL + JWT domain composition', () => {
     host: '127.0.0.1',
     port,
     user: 'root',
-    password: process.env.OPERATIONS_TEST_MYSQL_PASSWORD ?? '',
+    password: process.env.OPERATIONS_TEST_MYSQL_PASSWORD!,
     timezone: 'Z',
     connectionLimit: 12,
   };
@@ -165,6 +165,8 @@ describe.skipIf(!port)('P06 SQL + JWT domain composition', () => {
       )
     )[0];
   beforeAll(async () => {
+    if (process.env.OPERATIONS_TEST_MYSQL_PASSWORD === undefined) throw new Error('OPERATIONS_TEST_MYSQL_PASSWORD must be explicitly injected; explicit empty is reserved for isolated targets');
+
     const admin = await mysql.createConnection(options);
     await admin.query(
       `CREATE DATABASE ${database} CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`,

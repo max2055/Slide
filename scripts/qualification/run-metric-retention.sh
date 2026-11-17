@@ -38,7 +38,7 @@ if [[ "$stable" -lt 3 ]]; then echo 'isolated metric retention MySQL unavailable
 # GET_LOCK with a 30s budget. Serialize files instead of queuing full migration
 # chains behind that lock (MAX-642); keep concurrency within each suite intact.
 test_exit=0
-METRICS_TEST_MYSQL_PORT="$port" pnpm --filter slide-api exec vitest run --no-file-parallelism \
+METRICS_TEST_MYSQL_PASSWORD='' METRICS_TEST_MYSQL_PORT="$port" pnpm --filter slide-api exec vitest run --no-file-parallelism \
   src/workflows/metric-retention-handler.test.ts src/metrics/storage.mysql.test.ts src/metrics/rollout/control.mysql.test.ts \
   src/consistency-checker.mysql.test.ts || test_exit=$?
 exit "$test_exit"
