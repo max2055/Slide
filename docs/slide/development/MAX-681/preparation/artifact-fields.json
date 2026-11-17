@@ -16,9 +16,18 @@
       "disposition": "Use linked text disposition when same occurrence is confirmed; otherwise inspect field context and fixture origin; block closure of unresolved live/default values.",
       "status": "current-context-review-pending",
       "packageFileSha256": "ea0fe6e1b843f462f065be89e0565fa0df2df436d4e512e434919cbd18606e53",
-      "adjudication": "literal-context-requires-provenance",
+      "adjudication": "semantic-noncredential",
       "contextSha256": "37a0460c517cf6c42c7a0d83b7297e11450141f9f3acc31254687235b4a2077d",
-      "confirmedTextLinks": []
+      "confirmedTextLinks": [],
+      "sourceReview": {
+        "head": "e529dc8c29a722531aaf6e2f9f5cc8dda2902ced",
+        "fileSha256": "ea0fe6e1b843f462f065be89e0565fa0df2df436d4e512e434919cbd18606e53",
+        "line": 16,
+        "lineSha256": "37a0460c517cf6c42c7a0d83b7297e11450141f9f3acc31254687235b4a2077d",
+        "classification": "tokenizer-version",
+        "reason": "Version constants of token estimator, not authentication material; consumed by estimation/version metadata.",
+        "scope": "Semantic finding classification only; no scanner exemption or credential revocation."
+      }
     },
     {
       "path": "packages/agent-core/src/token-estimation.ts",
@@ -34,9 +43,18 @@
       "disposition": "Use linked text disposition when same occurrence is confirmed; otherwise inspect field context and fixture origin; block closure of unresolved live/default values.",
       "status": "current-context-review-pending",
       "packageFileSha256": "ea0fe6e1b843f462f065be89e0565fa0df2df436d4e512e434919cbd18606e53",
-      "adjudication": "literal-context-requires-provenance",
+      "adjudication": "semantic-noncredential",
       "contextSha256": "225e5fea9379d3354706fbcf36f2ec70f402a6a8e75c0a3b43ed14dbf0aa9f67",
-      "confirmedTextLinks": []
+      "confirmedTextLinks": [],
+      "sourceReview": {
+        "head": "e529dc8c29a722531aaf6e2f9f5cc8dda2902ced",
+        "fileSha256": "ea0fe6e1b843f462f065be89e0565fa0df2df436d4e512e434919cbd18606e53",
+        "line": 17,
+        "lineSha256": "225e5fea9379d3354706fbcf36f2ec70f402a6a8e75c0a3b43ed14dbf0aa9f67",
+        "classification": "tokenizer-version",
+        "reason": "Version constants of token estimator, not authentication material; consumed by estimation/version metadata.",
+        "scope": "Semantic finding classification only; no scanner exemption or credential revocation."
+      }
     },
     {
       "path": "packages/agent-core/src/context.ts",
@@ -52,9 +70,18 @@
       "disposition": "Use linked text disposition when same occurrence is confirmed; otherwise inspect field context and fixture origin; block closure of unresolved live/default values.",
       "status": "current-context-review-pending",
       "packageFileSha256": "c956bc64a44e1bd78f7e1c9946b2489831fc404508f3dae24a0d68ec662b9de1",
-      "adjudication": "literal-context-requires-provenance",
+      "adjudication": "semantic-noncredential",
       "contextSha256": "c87fa33ddefad532b6c7bf3994c45cf640110652d9be5841f849bac34eb67261",
-      "confirmedTextLinks": []
+      "confirmedTextLinks": [],
+      "sourceReview": {
+        "head": "e529dc8c29a722531aaf6e2f9f5cc8dda2902ced",
+        "fileSha256": "c956bc64a44e1bd78f7e1c9946b2489831fc404508f3dae24a0d68ec662b9de1",
+        "line": 106,
+        "lineSha256": "c87fa33ddefad532b6c7bf3994c45cf640110652d9be5841f849bac34eb67261",
+        "classification": "context-policy-enum",
+        "reason": "tokenPolicy is the protected/bounded/replaceable context budget enum, not an access token.",
+        "scope": "Semantic finding classification only; no scanner exemption or credential revocation."
+      }
     },
     {
       "path": "packages/agent-core/src/context.ts",
@@ -70,9 +97,18 @@
       "disposition": "Use linked text disposition when same occurrence is confirmed; otherwise inspect field context and fixture origin; block closure of unresolved live/default values.",
       "status": "current-context-review-pending",
       "packageFileSha256": "c956bc64a44e1bd78f7e1c9946b2489831fc404508f3dae24a0d68ec662b9de1",
-      "adjudication": "literal-context-requires-provenance",
+      "adjudication": "semantic-noncredential",
       "contextSha256": "006004d0f6a9ce43ff5f48dd674147e4d9dfc473d07ba0144665877ae3ed84b6",
-      "confirmedTextLinks": []
+      "confirmedTextLinks": [],
+      "sourceReview": {
+        "head": "e529dc8c29a722531aaf6e2f9f5cc8dda2902ced",
+        "fileSha256": "c956bc64a44e1bd78f7e1c9946b2489831fc404508f3dae24a0d68ec662b9de1",
+        "line": 110,
+        "lineSha256": "006004d0f6a9ce43ff5f48dd674147e4d9dfc473d07ba0144665877ae3ed84b6",
+        "classification": "context-policy-enum",
+        "reason": "tokenPolicy is the protected/bounded/replaceable context budget enum, not an access token.",
+        "scope": "Semantic finding classification only; no scanner exemption or credential revocation."
+      }
     },
     {
       "path": "packages/agent-core/src/__tests__/openai-provider-tail.test.ts",
@@ -384,9 +420,18 @@
       "disposition": "Use linked text disposition when same occurrence is confirmed; otherwise inspect field context and fixture origin; block closure of unresolved live/default values.",
       "status": "current-context-review-pending",
       "packageFileSha256": "750d10a1f0b886b2183dad1025405f1c6c4664c234fedb663936e5d365e754b0",
-      "adjudication": "literal-context-requires-provenance",
+      "adjudication": "semantic-noncredential",
       "contextSha256": "8a2e523192ccb4dfb28f0d531c85b4e7e527ffb299fa824b3cb4c842a675dc97",
-      "confirmedTextLinks": []
+      "confirmedTextLinks": [],
+      "sourceReview": {
+        "head": "e529dc8c29a722531aaf6e2f9f5cc8dda2902ced",
+        "fileSha256": "750d10a1f0b886b2183dad1025405f1c6c4664c234fedb663936e5d365e754b0",
+        "line": 11,
+        "lineSha256": "8a2e523192ccb4dfb28f0d531c85b4e7e527ffb299fa824b3cb4c842a675dc97",
+        "classification": "context-policy-enum",
+        "reason": "tokenPolicy is the protected/bounded/replaceable context budget enum, not an access token.",
+        "scope": "Semantic finding classification only; no scanner exemption or credential revocation."
+      }
     },
     {
       "path": "packages/agent-core/src/context-block.ts",
@@ -402,9 +447,18 @@
       "disposition": "Use linked text disposition when same occurrence is confirmed; otherwise inspect field context and fixture origin; block closure of unresolved live/default values.",
       "status": "current-context-review-pending",
       "packageFileSha256": "750d10a1f0b886b2183dad1025405f1c6c4664c234fedb663936e5d365e754b0",
-      "adjudication": "literal-context-requires-provenance",
+      "adjudication": "semantic-noncredential",
       "contextSha256": "39a57ba79c7cc1186dc2b2e3a6342d05ae27b6ba9b0b84811a529492091a498a",
-      "confirmedTextLinks": []
+      "confirmedTextLinks": [],
+      "sourceReview": {
+        "head": "e529dc8c29a722531aaf6e2f9f5cc8dda2902ced",
+        "fileSha256": "750d10a1f0b886b2183dad1025405f1c6c4664c234fedb663936e5d365e754b0",
+        "line": 50,
+        "lineSha256": "39a57ba79c7cc1186dc2b2e3a6342d05ae27b6ba9b0b84811a529492091a498a",
+        "classification": "context-policy-enum",
+        "reason": "tokenPolicy is the protected/bounded/replaceable context budget enum, not an access token.",
+        "scope": "Semantic finding classification only; no scanner exemption or credential revocation."
+      }
     },
     {
       "path": "scripts/qualification/run-MAX-177.sh",
@@ -1212,9 +1266,18 @@
       "disposition": "Use linked text disposition when same occurrence is confirmed; otherwise inspect field context and fixture origin; block closure of unresolved live/default values.",
       "status": "current-context-review-pending",
       "packageFileSha256": "f12ef2fb908b20acdf0dea2214fe0c1dd553845267ce0afcebce19a340267b83",
-      "adjudication": "literal-context-requires-provenance",
+      "adjudication": "semantic-noncredential",
       "contextSha256": "aeaed0e242b7d795d198d6445a1e76fb6271f2194ef5b076bf9ebd4eb14210e4",
-      "confirmedTextLinks": []
+      "confirmedTextLinks": [],
+      "sourceReview": {
+        "head": "e529dc8c29a722531aaf6e2f9f5cc8dda2902ced",
+        "fileSha256": "f12ef2fb908b20acdf0dea2214fe0c1dd553845267ce0afcebce19a340267b83",
+        "line": 81,
+        "lineSha256": "aeaed0e242b7d795d198d6445a1e76fb6271f2194ef5b076bf9ebd4eb14210e4",
+        "classification": "usage-metadata",
+        "reason": "Token accounting convention/cost semantics or availability status; no authentication value is carried.",
+        "scope": "Semantic finding classification only; no scanner exemption or credential revocation."
+      }
     },
     {
       "path": "docs/slide/development/MAX-237/t2b/evidence/ddl-error-guard/ddl-error-guard-allowlist.patch",
@@ -1266,9 +1329,18 @@
       "disposition": "Use linked text disposition when same occurrence is confirmed; otherwise inspect field context and fixture origin; block closure of unresolved live/default values.",
       "status": "current-context-review-pending",
       "packageFileSha256": "438f5f8bfee0b3314732321c97ee804fe1be2e0583bb172f10446fad8929222f",
-      "adjudication": "literal-context-requires-provenance",
+      "adjudication": "semantic-noncredential",
       "contextSha256": "ca89f1feb6a7098e377e517d4135399ec81ff90d99e7317aefe7828d896ee26d",
-      "confirmedTextLinks": []
+      "confirmedTextLinks": [],
+      "sourceReview": {
+        "head": "e529dc8c29a722531aaf6e2f9f5cc8dda2902ced",
+        "fileSha256": "438f5f8bfee0b3314732321c97ee804fe1be2e0583bb172f10446fad8929222f",
+        "line": 114,
+        "lineSha256": "ca89f1feb6a7098e377e517d4135399ec81ff90d99e7317aefe7828d896ee26d",
+        "classification": "evidence-checksum",
+        "reason": "JSON key is an evidence filename and value is its SHA256 checksum, not a secret-probe payload.",
+        "scope": "Semantic finding classification only; no scanner exemption or credential revocation."
+      }
     },
     {
       "path": "docs/slide/reviews/2026-09-16-audit-recheck/audit-ws-recheck-20260916.test.ts",
@@ -1302,9 +1374,18 @@
       "disposition": "Use linked text disposition when same occurrence is confirmed; otherwise inspect field context and fixture origin; block closure of unresolved live/default values.",
       "status": "current-context-review-pending",
       "packageFileSha256": "6e85078d495f9e088fa0b970a31f612a25dee1699bd2d9049be0d05dc801e8cf",
-      "adjudication": "literal-context-requires-provenance",
+      "adjudication": "semantic-noncredential",
       "contextSha256": "2bef2876a33742b825df7f57b2feb3bbbe19fe231ae78fed71cf957a698ab874",
-      "confirmedTextLinks": []
+      "confirmedTextLinks": [],
+      "sourceReview": {
+        "head": "e529dc8c29a722531aaf6e2f9f5cc8dda2902ced",
+        "fileSha256": "6e85078d495f9e088fa0b970a31f612a25dee1699bd2d9049be0d05dc801e8cf",
+        "line": 83,
+        "lineSha256": "2bef2876a33742b825df7f57b2feb3bbbe19fe231ae78fed71cf957a698ab874",
+        "classification": "operator-placeholder",
+        "reason": "Document explicitly requires operator-managed input; angle-bracket placeholder is not usable authentication.",
+        "scope": "Semantic finding classification only; no scanner exemption or credential revocation."
+      }
     },
     {
       "path": "apps/db-ops-api/src/credential-rotation.max307.test.ts",
@@ -1416,11 +1497,20 @@
       "disposition": "Use linked text disposition when same occurrence is confirmed; otherwise inspect field context and fixture origin; block closure of unresolved live/default values.",
       "status": "linked-evidence",
       "packageFileSha256": "6e28c13e7bac20571691d0bd3cee95b268f218ec8d2528e98cec0d48e024f8d3",
-      "adjudication": "literal-context-requires-provenance",
+      "adjudication": "semantic-noncredential",
       "contextSha256": "b75e91ec87e1709662c73e0673a042b24a69ca2a320d5229486904240a25af9e",
       "confirmedTextLinks": [
         "T139"
-      ]
+      ],
+      "sourceReview": {
+        "head": "e529dc8c29a722531aaf6e2f9f5cc8dda2902ced",
+        "fileSha256": "6e28c13e7bac20571691d0bd3cee95b268f218ec8d2528e98cec0d48e024f8d3",
+        "line": 163,
+        "lineSha256": "b75e91ec87e1709662c73e0673a042b24a69ca2a320d5229486904240a25af9e",
+        "classification": "credential-field-selector",
+        "reason": "Selects a field name in a validation error; encrypted credentials are rejected from client input.",
+        "scope": "Semantic finding classification only; no scanner exemption or credential revocation."
+      }
     },
     {
       "path": "apps/db-ops-api/src/investigations/list-aggregation.test.ts",
@@ -1494,9 +1584,18 @@
       "disposition": "Use linked text disposition when same occurrence is confirmed; otherwise inspect field context and fixture origin; block closure of unresolved live/default values.",
       "status": "current-context-review-pending",
       "packageFileSha256": "9d241ba0b26e2677596a1852f878cd062d492d4c8f14bbe8b6bc562fcf6e8926",
-      "adjudication": "literal-context-requires-provenance",
+      "adjudication": "semantic-noncredential",
       "contextSha256": "f78a39e3dc3255b4d1a7e4c2ed5a8ec648ab97f2c4af2f2c1269646e229305ef",
-      "confirmedTextLinks": []
+      "confirmedTextLinks": [],
+      "sourceReview": {
+        "head": "e529dc8c29a722531aaf6e2f9f5cc8dda2902ced",
+        "fileSha256": "9d241ba0b26e2677596a1852f878cd062d492d4c8f14bbe8b6bc562fcf6e8926",
+        "line": 265,
+        "lineSha256": "f78a39e3dc3255b4d1a7e4c2ed5a8ec648ab97f2c4af2f2c1269646e229305ef",
+        "classification": "usage-metadata",
+        "reason": "Token accounting convention/cost semantics or availability status; no authentication value is carried.",
+        "scope": "Semantic finding classification only; no scanner exemption or credential revocation."
+      }
     },
     {
       "path": "apps/db-ops-api/src/investigations/ops-b16-final.test.ts",
@@ -2136,9 +2235,18 @@
       "disposition": "Use linked text disposition when same occurrence is confirmed; otherwise inspect field context and fixture origin; block closure of unresolved live/default values.",
       "status": "current-context-review-pending",
       "packageFileSha256": "5b95cf182922f814e5f52b01c195efdd4d0a237278b40615ea5d6ac67319d98d",
-      "adjudication": "literal-context-requires-provenance",
+      "adjudication": "semantic-noncredential",
       "contextSha256": "e667c188db335e95d981cb53c1b22e2be60d9a27689d7c768c6e07cd58d40cb5",
-      "confirmedTextLinks": []
+      "confirmedTextLinks": [],
+      "sourceReview": {
+        "head": "e529dc8c29a722531aaf6e2f9f5cc8dda2902ced",
+        "fileSha256": "5b95cf182922f814e5f52b01c195efdd4d0a237278b40615ea5d6ac67319d98d",
+        "line": 153,
+        "lineSha256": "e667c188db335e95d981cb53c1b22e2be60d9a27689d7c768c6e07cd58d40cb5",
+        "classification": "usage-metadata",
+        "reason": "Token accounting convention/cost semantics or availability status; no authentication value is carried.",
+        "scope": "Semantic finding classification only; no scanner exemption or credential revocation."
+      }
     },
     {
       "path": "apps/db-ops-api/src/investigations/ops-budget-planning.test.ts",
@@ -2176,9 +2284,18 @@
       "disposition": "Use linked text disposition when same occurrence is confirmed; otherwise inspect field context and fixture origin; block closure of unresolved live/default values.",
       "status": "current-context-review-pending",
       "packageFileSha256": "dae6a5bcb4f148642821870e29efe6589bd923d374a3fbe5a6639e5ca3b877c6",
-      "adjudication": "literal-context-requires-provenance",
+      "adjudication": "semantic-noncredential",
       "contextSha256": "74cdc911697fc42f74b1da2e16a24cba5176f9cedd54d2cacc77af0920a47226",
-      "confirmedTextLinks": []
+      "confirmedTextLinks": [],
+      "sourceReview": {
+        "head": "e529dc8c29a722531aaf6e2f9f5cc8dda2902ced",
+        "fileSha256": "dae6a5bcb4f148642821870e29efe6589bd923d374a3fbe5a6639e5ca3b877c6",
+        "line": 230,
+        "lineSha256": "74cdc911697fc42f74b1da2e16a24cba5176f9cedd54d2cacc77af0920a47226",
+        "classification": "synthetic-redaction-tool",
+        "reason": "execution-real-provider.ts readonlyTools returns synthetic=true for asserted instance 101 with a deliberate must-redact field; not a resource connection.",
+        "scope": "Semantic finding classification only; no scanner exemption or credential revocation."
+      }
     },
     {
       "path": "apps/db-ops-api/src/investigations/ops-selected-observations.test.ts",
@@ -2282,9 +2399,18 @@
       "disposition": "Use linked text disposition when same occurrence is confirmed; otherwise inspect field context and fixture origin; block closure of unresolved live/default values.",
       "status": "current-context-review-pending",
       "packageFileSha256": "b219d5d1746b97da474f419387c00d2b0a39e0da3aafb5a67afc1a59cb6927f0",
-      "adjudication": "literal-context-requires-provenance",
+      "adjudication": "semantic-noncredential",
       "contextSha256": "16223f8f39150030a54d5592b9a34def20fdfd973d752fb746d48eb132c0c84b",
-      "confirmedTextLinks": []
+      "confirmedTextLinks": [],
+      "sourceReview": {
+        "head": "e529dc8c29a722531aaf6e2f9f5cc8dda2902ced",
+        "fileSha256": "b219d5d1746b97da474f419387c00d2b0a39e0da3aafb5a67afc1a59cb6927f0",
+        "line": 551,
+        "lineSha256": "16223f8f39150030a54d5592b9a34def20fdfd973d752fb746d48eb132c0c84b",
+        "classification": "usage-metadata",
+        "reason": "Token accounting convention/cost semantics or availability status; no authentication value is carried.",
+        "scope": "Semantic finding classification only; no scanner exemption or credential revocation."
+      }
     },
     {
       "path": "apps/db-ops-api/src/investigations/ops-context-regression.test.ts",
@@ -3110,9 +3236,18 @@
       "disposition": "Use linked text disposition when same occurrence is confirmed; otherwise inspect field context and fixture origin; block closure of unresolved live/default values.",
       "status": "current-context-review-pending",
       "packageFileSha256": "1b723ac56ae2805580f403aa0c12a4d98f9e97b8354b457603eeb549dbd4fc62",
-      "adjudication": "literal-context-requires-provenance",
+      "adjudication": "semantic-noncredential",
       "contextSha256": "c08f8066d866d04235f681889cdd4cba3eb7d7e3ac9c6ca9550a0835184ad469",
-      "confirmedTextLinks": []
+      "confirmedTextLinks": [],
+      "sourceReview": {
+        "head": "e529dc8c29a722531aaf6e2f9f5cc8dda2902ced",
+        "fileSha256": "1b723ac56ae2805580f403aa0c12a4d98f9e97b8354b457603eeb549dbd4fc62",
+        "line": 426,
+        "lineSha256": "c08f8066d866d04235f681889cdd4cba3eb7d7e3ac9c6ca9550a0835184ad469",
+        "classification": "credential-property-selector",
+        "reason": "Computed object key selects password/privateKey; actual credential comes from data.credential_value, no fixed credential here.",
+        "scope": "Semantic finding classification only; no scanner exemption or credential revocation."
+      }
     },
     {
       "path": "apps/db-ops-api/src/auth/rbac-management-read.test.ts",
@@ -3146,9 +3281,18 @@
       "disposition": "Use linked text disposition when same occurrence is confirmed; otherwise inspect field context and fixture origin; block closure of unresolved live/default values.",
       "status": "current-context-review-pending",
       "packageFileSha256": "d5d7b8919cd62d40de87ce2b214ed3f158b95168cfee10d3cab0a82638bcb0bc",
-      "adjudication": "literal-context-requires-provenance",
+      "adjudication": "semantic-noncredential",
       "contextSha256": "96f3099b108c393a11cf57f18867540d65d09a23ef3ac4ab86e86d6ed66d313c",
-      "confirmedTextLinks": []
+      "confirmedTextLinks": [],
+      "sourceReview": {
+        "head": "e529dc8c29a722531aaf6e2f9f5cc8dda2902ced",
+        "fileSha256": "d5d7b8919cd62d40de87ce2b214ed3f158b95168cfee10d3cab0a82638bcb0bc",
+        "line": 4,
+        "lineSha256": "96f3099b108c393a11cf57f18867540d65d09a23ef3ac4ab86e86d6ed66d313c",
+        "classification": "service-no-login-marker",
+        "reason": "auth-database-service.ts rejects isInvestigationServiceIdentity before password verification; marker is identity metadata, not an interactive password.",
+        "scope": "Semantic finding classification only; no scanner exemption or credential revocation."
+      }
     },
     {
       "path": "apps/db-ops-api/src/auth/legacy-password-migration.test.ts",
@@ -6494,11 +6638,20 @@
       "disposition": "Use linked text disposition when same occurrence is confirmed; otherwise inspect field context and fixture origin; block closure of unresolved live/default values.",
       "status": "linked-evidence",
       "packageFileSha256": "cd191208c3bee3eeb3d72008679ffa4aeca54372b0187df9f84ea061f4823672",
-      "adjudication": "literal-context-requires-provenance",
+      "adjudication": "semantic-noncredential",
       "contextSha256": "502ea1b0883d550349f764534ce1ecba6f1897627f0a9c604131c8fc78982775",
       "confirmedTextLinks": [
         "T170"
-      ]
+      ],
+      "sourceReview": {
+        "head": "e529dc8c29a722531aaf6e2f9f5cc8dda2902ced",
+        "fileSha256": "cd191208c3bee3eeb3d72008679ffa4aeca54372b0187df9f84ea061f4823672",
+        "line": 5,
+        "lineSha256": "502ea1b0883d550349f764534ce1ecba6f1897627f0a9c604131c8fc78982775",
+        "classification": "mock-encryption-fixture",
+        "reason": "pg-collection-test-support.ts encrypts a synthetic password and injects CollectionPgClient vi.fn connect/query; not a live PostgreSQL credential.",
+        "scope": "Semantic finding classification only; no scanner exemption or credential revocation."
+      }
     },
     {
       "path": "apps/db-ops-api/src/pg-collection-test-support.ts",
@@ -10163,9 +10316,18 @@
       "disposition": "Use linked text disposition when same occurrence is confirmed; otherwise inspect field context and fixture origin; block closure of unresolved live/default values.",
       "status": "current-context-review-pending",
       "packageFileSha256": "a57906ac2fb4bc4bf64fed98e6afa17a83c4959aef47a6d3659e7370f984b005",
-      "adjudication": "literal-context-requires-provenance",
+      "adjudication": "semantic-noncredential",
       "contextSha256": "ae0fcb282d2898342335ecd56383d0af454cc393df727b839657530a0e40aeaf",
-      "confirmedTextLinks": []
+      "confirmedTextLinks": [],
+      "sourceReview": {
+        "head": "e529dc8c29a722531aaf6e2f9f5cc8dda2902ced",
+        "fileSha256": "a57906ac2fb4bc4bf64fed98e6afa17a83c4959aef47a6d3659e7370f984b005",
+        "line": 537,
+        "lineSha256": "ae0fcb282d2898342335ecd56383d0af454cc393df727b839657530a0e40aeaf",
+        "classification": "ui-password-label",
+        "reason": "Translation text or translation-key binding for password input visibility; no credential value.",
+        "scope": "Semantic finding classification only; no scanner exemption or credential revocation."
+      }
     },
     {
       "path": "frontend/src/app/i18n/locales/en.ts",
@@ -10181,9 +10343,18 @@
       "disposition": "Use linked text disposition when same occurrence is confirmed; otherwise inspect field context and fixture origin; block closure of unresolved live/default values.",
       "status": "current-context-review-pending",
       "packageFileSha256": "a57906ac2fb4bc4bf64fed98e6afa17a83c4959aef47a6d3659e7370f984b005",
-      "adjudication": "literal-context-requires-provenance",
+      "adjudication": "semantic-noncredential",
       "contextSha256": "088803c3fb43c49b83d2d5039f517f74a156a34733f071a2119ef160e372f0bd",
-      "confirmedTextLinks": []
+      "confirmedTextLinks": [],
+      "sourceReview": {
+        "head": "e529dc8c29a722531aaf6e2f9f5cc8dda2902ced",
+        "fileSha256": "a57906ac2fb4bc4bf64fed98e6afa17a83c4959aef47a6d3659e7370f984b005",
+        "line": 539,
+        "lineSha256": "088803c3fb43c49b83d2d5039f517f74a156a34733f071a2119ef160e372f0bd",
+        "classification": "ui-password-label",
+        "reason": "Translation text or translation-key binding for password input visibility; no credential value.",
+        "scope": "Semantic finding classification only; no scanner exemption or credential revocation."
+      }
     },
     {
       "path": "frontend/src/app/i18n/locales/en.ts",
@@ -10199,9 +10370,18 @@
       "disposition": "Use linked text disposition when same occurrence is confirmed; otherwise inspect field context and fixture origin; block closure of unresolved live/default values.",
       "status": "current-context-review-pending",
       "packageFileSha256": "a57906ac2fb4bc4bf64fed98e6afa17a83c4959aef47a6d3659e7370f984b005",
-      "adjudication": "literal-context-requires-provenance",
+      "adjudication": "semantic-noncredential",
       "contextSha256": "85cdad04fa36f8f8c6d47adf17d86c413379052d4b6481b96b08e2cd2d479c7d",
-      "confirmedTextLinks": []
+      "confirmedTextLinks": [],
+      "sourceReview": {
+        "head": "e529dc8c29a722531aaf6e2f9f5cc8dda2902ced",
+        "fileSha256": "a57906ac2fb4bc4bf64fed98e6afa17a83c4959aef47a6d3659e7370f984b005",
+        "line": 545,
+        "lineSha256": "85cdad04fa36f8f8c6d47adf17d86c413379052d4b6481b96b08e2cd2d479c7d",
+        "classification": "ui-password-label",
+        "reason": "Translation text or translation-key binding for password input visibility; no credential value.",
+        "scope": "Semantic finding classification only; no scanner exemption or credential revocation."
+      }
     },
     {
       "path": "frontend/src/app/i18n/locales/en.ts",
@@ -10217,9 +10397,18 @@
       "disposition": "Use linked text disposition when same occurrence is confirmed; otherwise inspect field context and fixture origin; block closure of unresolved live/default values.",
       "status": "current-context-review-pending",
       "packageFileSha256": "a57906ac2fb4bc4bf64fed98e6afa17a83c4959aef47a6d3659e7370f984b005",
-      "adjudication": "literal-context-requires-provenance",
+      "adjudication": "semantic-noncredential",
       "contextSha256": "093023455200eb76436c3ce9f22c99afec140d5c0759f6bfbd568e63536218bd",
-      "confirmedTextLinks": []
+      "confirmedTextLinks": [],
+      "sourceReview": {
+        "head": "e529dc8c29a722531aaf6e2f9f5cc8dda2902ced",
+        "fileSha256": "a57906ac2fb4bc4bf64fed98e6afa17a83c4959aef47a6d3659e7370f984b005",
+        "line": 546,
+        "lineSha256": "093023455200eb76436c3ce9f22c99afec140d5c0759f6bfbd568e63536218bd",
+        "classification": "ui-password-label",
+        "reason": "Translation text or translation-key binding for password input visibility; no credential value.",
+        "scope": "Semantic finding classification only; no scanner exemption or credential revocation."
+      }
     },
     {
       "path": "frontend/src/app/i18n/locales/zh-CN.ts",
@@ -10235,9 +10424,18 @@
       "disposition": "Use linked text disposition when same occurrence is confirmed; otherwise inspect field context and fixture origin; block closure of unresolved live/default values.",
       "status": "current-context-review-pending",
       "packageFileSha256": "abaff57d90c27976a4b61e7ecc3f2cbf4ec5f73c90c4e6c9b6ac27bfcc780db0",
-      "adjudication": "literal-context-requires-provenance",
+      "adjudication": "semantic-noncredential",
       "contextSha256": "1fc625081ec888ecc5d733361c60ff89711a12b847351609f8acd34702e61077",
-      "confirmedTextLinks": []
+      "confirmedTextLinks": [],
+      "sourceReview": {
+        "head": "e529dc8c29a722531aaf6e2f9f5cc8dda2902ced",
+        "fileSha256": "abaff57d90c27976a4b61e7ecc3f2cbf4ec5f73c90c4e6c9b6ac27bfcc780db0",
+        "line": 551,
+        "lineSha256": "1fc625081ec888ecc5d733361c60ff89711a12b847351609f8acd34702e61077",
+        "classification": "ui-password-label",
+        "reason": "Translation text or translation-key binding for password input visibility; no credential value.",
+        "scope": "Semantic finding classification only; no scanner exemption or credential revocation."
+      }
     },
     {
       "path": "frontend/src/app/ui/storage.ts",
@@ -10253,9 +10451,18 @@
       "disposition": "Use linked text disposition when same occurrence is confirmed; otherwise inspect field context and fixture origin; block closure of unresolved live/default values.",
       "status": "current-context-review-pending",
       "packageFileSha256": "6361727b9ca29902f6e08d29c91af613bd34c1e6d35d25466dc8d15be1ab1b70",
-      "adjudication": "literal-context-requires-provenance",
+      "adjudication": "semantic-noncredential",
       "contextSha256": "e8f49d366f19485e306f1a3bfc7ddf6cd390a22d976cf5dbd6c46b926c636e03",
-      "confirmedTextLinks": []
+      "confirmedTextLinks": [],
+      "sourceReview": {
+        "head": "e529dc8c29a722531aaf6e2f9f5cc8dda2902ced",
+        "fileSha256": "6361727b9ca29902f6e08d29c91af613bd34c1e6d35d25466dc8d15be1ab1b70",
+        "line": 9,
+        "lineSha256": "e8f49d366f19485e306f1a3bfc7ddf6cd390a22d976cf5dbd6c46b926c636e03",
+        "classification": "storage-key",
+        "reason": "Browser storage key names a session-token slot; stored token value is obtained at runtime.",
+        "scope": "Semantic finding classification only; no scanner exemption or credential revocation."
+      }
     },
     {
       "path": "frontend/src/app/ui/direct-gateway-init.test.ts",
@@ -10397,9 +10604,18 @@
       "disposition": "Use linked text disposition when same occurrence is confirmed; otherwise inspect field context and fixture origin; block closure of unresolved live/default values.",
       "status": "current-context-review-pending",
       "packageFileSha256": "ef36d1a486994624c630182760df427a5154c1baad3b13291dd10b3cc27ef063",
-      "adjudication": "literal-context-requires-provenance",
+      "adjudication": "semantic-noncredential",
       "contextSha256": "96a3c1aadbbbb718d1c1755ed094d8fa8cd71cc1aceb65b8301eec02a8dfe33c",
-      "confirmedTextLinks": []
+      "confirmedTextLinks": [],
+      "sourceReview": {
+        "head": "e529dc8c29a722531aaf6e2f9f5cc8dda2902ced",
+        "fileSha256": "ef36d1a486994624c630182760df427a5154c1baad3b13291dd10b3cc27ef063",
+        "line": 6,
+        "lineSha256": "96a3c1aadbbbb718d1c1755ed094d8fa8cd71cc1aceb65b8301eec02a8dfe33c",
+        "classification": "authentication-error-code",
+        "reason": "Constant error identifier used in connection error presentation, not an authentication token/password.",
+        "scope": "Semantic finding classification only; no scanner exemption or credential revocation."
+      }
     },
     {
       "path": "frontend/src/app/ui/connect-error-details.ts",
@@ -10415,9 +10631,18 @@
       "disposition": "Use linked text disposition when same occurrence is confirmed; otherwise inspect field context and fixture origin; block closure of unresolved live/default values.",
       "status": "current-context-review-pending",
       "packageFileSha256": "ef36d1a486994624c630182760df427a5154c1baad3b13291dd10b3cc27ef063",
-      "adjudication": "literal-context-requires-provenance",
+      "adjudication": "semantic-noncredential",
       "contextSha256": "3956281afacb53bb4b5b3b116c84c546cac609cbae8f94642670d3eaba53d070",
-      "confirmedTextLinks": []
+      "confirmedTextLinks": [],
+      "sourceReview": {
+        "head": "e529dc8c29a722531aaf6e2f9f5cc8dda2902ced",
+        "fileSha256": "ef36d1a486994624c630182760df427a5154c1baad3b13291dd10b3cc27ef063",
+        "line": 7,
+        "lineSha256": "3956281afacb53bb4b5b3b116c84c546cac609cbae8f94642670d3eaba53d070",
+        "classification": "authentication-error-code",
+        "reason": "Constant error identifier used in connection error presentation, not an authentication token/password.",
+        "scope": "Semantic finding classification only; no scanner exemption or credential revocation."
+      }
     },
     {
       "path": "frontend/src/app/ui/connect-error-details.ts",
@@ -10433,9 +10658,18 @@
       "disposition": "Use linked text disposition when same occurrence is confirmed; otherwise inspect field context and fixture origin; block closure of unresolved live/default values.",
       "status": "current-context-review-pending",
       "packageFileSha256": "ef36d1a486994624c630182760df427a5154c1baad3b13291dd10b3cc27ef063",
-      "adjudication": "literal-context-requires-provenance",
+      "adjudication": "semantic-noncredential",
       "contextSha256": "8ade1e04a3cb52ccbc5b572327f756bec830e1a88c5198072b200829e894691c",
-      "confirmedTextLinks": []
+      "confirmedTextLinks": [],
+      "sourceReview": {
+        "head": "e529dc8c29a722531aaf6e2f9f5cc8dda2902ced",
+        "fileSha256": "ef36d1a486994624c630182760df427a5154c1baad3b13291dd10b3cc27ef063",
+        "line": 8,
+        "lineSha256": "8ade1e04a3cb52ccbc5b572327f756bec830e1a88c5198072b200829e894691c",
+        "classification": "authentication-error-code",
+        "reason": "Constant error identifier used in connection error presentation, not an authentication token/password.",
+        "scope": "Semantic finding classification only; no scanner exemption or credential revocation."
+      }
     },
     {
       "path": "frontend/src/app/ui/connect-error-details.ts",
@@ -10451,9 +10685,18 @@
       "disposition": "Use linked text disposition when same occurrence is confirmed; otherwise inspect field context and fixture origin; block closure of unresolved live/default values.",
       "status": "current-context-review-pending",
       "packageFileSha256": "ef36d1a486994624c630182760df427a5154c1baad3b13291dd10b3cc27ef063",
-      "adjudication": "literal-context-requires-provenance",
+      "adjudication": "semantic-noncredential",
       "contextSha256": "bff5e1f1a2d79f10f59bf3099f7cd266bc116be2b83180eb2416ebedd13213c8",
-      "confirmedTextLinks": []
+      "confirmedTextLinks": [],
+      "sourceReview": {
+        "head": "e529dc8c29a722531aaf6e2f9f5cc8dda2902ced",
+        "fileSha256": "ef36d1a486994624c630182760df427a5154c1baad3b13291dd10b3cc27ef063",
+        "line": 9,
+        "lineSha256": "bff5e1f1a2d79f10f59bf3099f7cd266bc116be2b83180eb2416ebedd13213c8",
+        "classification": "authentication-error-code",
+        "reason": "Constant error identifier used in connection error presentation, not an authentication token/password.",
+        "scope": "Semantic finding classification only; no scanner exemption or credential revocation."
+      }
     },
     {
       "path": "frontend/src/app/ui/connect-error-details.ts",
@@ -10469,9 +10712,18 @@
       "disposition": "Use linked text disposition when same occurrence is confirmed; otherwise inspect field context and fixture origin; block closure of unresolved live/default values.",
       "status": "current-context-review-pending",
       "packageFileSha256": "ef36d1a486994624c630182760df427a5154c1baad3b13291dd10b3cc27ef063",
-      "adjudication": "literal-context-requires-provenance",
+      "adjudication": "semantic-noncredential",
       "contextSha256": "8b9441d17f5878c3d0a9c96711a3de5795db107c38ae9f3bf3873defd0f47fcb",
-      "confirmedTextLinks": []
+      "confirmedTextLinks": [],
+      "sourceReview": {
+        "head": "e529dc8c29a722531aaf6e2f9f5cc8dda2902ced",
+        "fileSha256": "ef36d1a486994624c630182760df427a5154c1baad3b13291dd10b3cc27ef063",
+        "line": 10,
+        "lineSha256": "8b9441d17f5878c3d0a9c96711a3de5795db107c38ae9f3bf3873defd0f47fcb",
+        "classification": "authentication-error-code",
+        "reason": "Constant error identifier used in connection error presentation, not an authentication token/password.",
+        "scope": "Semantic finding classification only; no scanner exemption or credential revocation."
+      }
     },
     {
       "path": "frontend/src/app/ui/connect-error-details.ts",
@@ -10487,9 +10739,18 @@
       "disposition": "Use linked text disposition when same occurrence is confirmed; otherwise inspect field context and fixture origin; block closure of unresolved live/default values.",
       "status": "current-context-review-pending",
       "packageFileSha256": "ef36d1a486994624c630182760df427a5154c1baad3b13291dd10b3cc27ef063",
-      "adjudication": "literal-context-requires-provenance",
+      "adjudication": "semantic-noncredential",
       "contextSha256": "25a83fe5836b373d155c4f1242ccb1b4d5204e4876407b5d97f1a90635e6f8de",
-      "confirmedTextLinks": []
+      "confirmedTextLinks": [],
+      "sourceReview": {
+        "head": "e529dc8c29a722531aaf6e2f9f5cc8dda2902ced",
+        "fileSha256": "ef36d1a486994624c630182760df427a5154c1baad3b13291dd10b3cc27ef063",
+        "line": 11,
+        "lineSha256": "25a83fe5836b373d155c4f1242ccb1b4d5204e4876407b5d97f1a90635e6f8de",
+        "classification": "authentication-error-code",
+        "reason": "Constant error identifier used in connection error presentation, not an authentication token/password.",
+        "scope": "Semantic finding classification only; no scanner exemption or credential revocation."
+      }
     },
     {
       "path": "frontend/src/app/ui/connect-error-details.ts",
@@ -10505,9 +10766,18 @@
       "disposition": "Use linked text disposition when same occurrence is confirmed; otherwise inspect field context and fixture origin; block closure of unresolved live/default values.",
       "status": "current-context-review-pending",
       "packageFileSha256": "ef36d1a486994624c630182760df427a5154c1baad3b13291dd10b3cc27ef063",
-      "adjudication": "literal-context-requires-provenance",
+      "adjudication": "semantic-noncredential",
       "contextSha256": "250d5a1444bf9428ae3fa8ca963049ca507d4dd51d4943e7ed950edf090b673f",
-      "confirmedTextLinks": []
+      "confirmedTextLinks": [],
+      "sourceReview": {
+        "head": "e529dc8c29a722531aaf6e2f9f5cc8dda2902ced",
+        "fileSha256": "ef36d1a486994624c630182760df427a5154c1baad3b13291dd10b3cc27ef063",
+        "line": 12,
+        "lineSha256": "250d5a1444bf9428ae3fa8ca963049ca507d4dd51d4943e7ed950edf090b673f",
+        "classification": "authentication-error-code",
+        "reason": "Constant error identifier used in connection error presentation, not an authentication token/password.",
+        "scope": "Semantic finding classification only; no scanner exemption or credential revocation."
+      }
     },
     {
       "path": "frontend/src/app/ui/connect-error-details.ts",
@@ -10523,9 +10793,18 @@
       "disposition": "Use linked text disposition when same occurrence is confirmed; otherwise inspect field context and fixture origin; block closure of unresolved live/default values.",
       "status": "current-context-review-pending",
       "packageFileSha256": "ef36d1a486994624c630182760df427a5154c1baad3b13291dd10b3cc27ef063",
-      "adjudication": "literal-context-requires-provenance",
+      "adjudication": "semantic-noncredential",
       "contextSha256": "e1130830f8438ae9d4ce576a0c5cdedbc11f9695775093297281b8cde09adc73",
-      "confirmedTextLinks": []
+      "confirmedTextLinks": [],
+      "sourceReview": {
+        "head": "e529dc8c29a722531aaf6e2f9f5cc8dda2902ced",
+        "fileSha256": "ef36d1a486994624c630182760df427a5154c1baad3b13291dd10b3cc27ef063",
+        "line": 13,
+        "lineSha256": "e1130830f8438ae9d4ce576a0c5cdedbc11f9695775093297281b8cde09adc73",
+        "classification": "authentication-error-code",
+        "reason": "Constant error identifier used in connection error presentation, not an authentication token/password.",
+        "scope": "Semantic finding classification only; no scanner exemption or credential revocation."
+      }
     },
     {
       "path": "frontend/src/app/ui/components/template-discovery-auth.test.ts",
@@ -11201,9 +11480,18 @@
       "disposition": "Use linked text disposition when same occurrence is confirmed; otherwise inspect field context and fixture origin; block closure of unresolved live/default values.",
       "status": "current-context-review-pending",
       "packageFileSha256": "5901625b13f460be16795e0b3c3596604dc20812919247e6bb81e9bbc68fdd3f",
-      "adjudication": "literal-context-requires-provenance",
+      "adjudication": "semantic-noncredential",
       "contextSha256": "77ed57ebd1980628f38a695f6bf5d66628b63c3099e46571123720db9f295517",
-      "confirmedTextLinks": []
+      "confirmedTextLinks": [],
+      "sourceReview": {
+        "head": "e529dc8c29a722531aaf6e2f9f5cc8dda2902ced",
+        "fileSha256": "5901625b13f460be16795e0b3c3596604dc20812919247e6bb81e9bbc68fdd3f",
+        "line": 102,
+        "lineSha256": "77ed57ebd1980628f38a695f6bf5d66628b63c3099e46571123720db9f295517",
+        "classification": "ui-password-label",
+        "reason": "Translation text or translation-key binding for password input visibility; no credential value.",
+        "scope": "Semantic finding classification only; no scanner exemption or credential revocation."
+      }
     },
     {
       "path": "frontend/src/app/ui/views/login-gate.ts",
@@ -11219,9 +11507,18 @@
       "disposition": "Use linked text disposition when same occurrence is confirmed; otherwise inspect field context and fixture origin; block closure of unresolved live/default values.",
       "status": "current-context-review-pending",
       "packageFileSha256": "5901625b13f460be16795e0b3c3596604dc20812919247e6bb81e9bbc68fdd3f",
-      "adjudication": "literal-context-requires-provenance",
+      "adjudication": "semantic-noncredential",
       "contextSha256": "f838531bcaddaac73fd562942d859ccf2aac650b1ad9d022a31060e2dfee8bc3",
-      "confirmedTextLinks": []
+      "confirmedTextLinks": [],
+      "sourceReview": {
+        "head": "e529dc8c29a722531aaf6e2f9f5cc8dda2902ced",
+        "fileSha256": "5901625b13f460be16795e0b3c3596604dc20812919247e6bb81e9bbc68fdd3f",
+        "line": 103,
+        "lineSha256": "f838531bcaddaac73fd562942d859ccf2aac650b1ad9d022a31060e2dfee8bc3",
+        "classification": "ui-password-label",
+        "reason": "Translation text or translation-key binding for password input visibility; no credential value.",
+        "scope": "Semantic finding classification only; no scanner exemption or credential revocation."
+      }
     },
     {
       "path": "frontend/src/app/ui/views/llm-config.MAX-178.test.ts",
@@ -11277,9 +11574,18 @@
       "disposition": "Use linked text disposition when same occurrence is confirmed; otherwise inspect field context and fixture origin; block closure of unresolved live/default values.",
       "status": "current-context-review-pending",
       "packageFileSha256": "743003807063dba803438f948b6d800c0980762bb29aeab84120049b603c966d",
-      "adjudication": "literal-context-requires-provenance",
+      "adjudication": "semantic-noncredential",
       "contextSha256": "b3a04787f5ff827911ff64b15f8b2e00ecf8c57125dfe4137c95a867c6bba8c2",
-      "confirmedTextLinks": []
+      "confirmedTextLinks": [],
+      "sourceReview": {
+        "head": "e529dc8c29a722531aaf6e2f9f5cc8dda2902ced",
+        "fileSha256": "743003807063dba803438f948b6d800c0980762bb29aeab84120049b603c966d",
+        "line": 58,
+        "lineSha256": "b3a04787f5ff827911ff64b15f8b2e00ecf8c57125dfe4137c95a867c6bba8c2",
+        "classification": "budget-validation-message",
+        "reason": "Chinese token-budget validation message; Token refers to model usage quota, not authentication.",
+        "scope": "Semantic finding classification only; no scanner exemption or credential revocation."
+      }
     },
     {
       "path": "frontend/src/app/ui/views/investigation-governance.ts",
@@ -11295,9 +11601,18 @@
       "disposition": "Use linked text disposition when same occurrence is confirmed; otherwise inspect field context and fixture origin; block closure of unresolved live/default values.",
       "status": "current-context-review-pending",
       "packageFileSha256": "743003807063dba803438f948b6d800c0980762bb29aeab84120049b603c966d",
-      "adjudication": "literal-context-requires-provenance",
+      "adjudication": "semantic-noncredential",
       "contextSha256": "239dc556332da50fad29e94d17a437e8d94ce117b18984020a4348d1da89efb0",
-      "confirmedTextLinks": []
+      "confirmedTextLinks": [],
+      "sourceReview": {
+        "head": "e529dc8c29a722531aaf6e2f9f5cc8dda2902ced",
+        "fileSha256": "743003807063dba803438f948b6d800c0980762bb29aeab84120049b603c966d",
+        "line": 59,
+        "lineSha256": "239dc556332da50fad29e94d17a437e8d94ce117b18984020a4348d1da89efb0",
+        "classification": "budget-validation-message",
+        "reason": "Chinese token-budget validation message; Token refers to model usage quota, not authentication.",
+        "scope": "Semantic finding classification only; no scanner exemption or credential revocation."
+      }
     },
     {
       "path": "frontend/src/app/ui/views/investigation-governance.ts",
@@ -11313,9 +11628,18 @@
       "disposition": "Use linked text disposition when same occurrence is confirmed; otherwise inspect field context and fixture origin; block closure of unresolved live/default values.",
       "status": "current-context-review-pending",
       "packageFileSha256": "743003807063dba803438f948b6d800c0980762bb29aeab84120049b603c966d",
-      "adjudication": "literal-context-requires-provenance",
+      "adjudication": "semantic-noncredential",
       "contextSha256": "ecaf5487c4ef70258c21b444793e4f9854a974f0cf932c478be864d84311c4d0",
-      "confirmedTextLinks": []
+      "confirmedTextLinks": [],
+      "sourceReview": {
+        "head": "e529dc8c29a722531aaf6e2f9f5cc8dda2902ced",
+        "fileSha256": "743003807063dba803438f948b6d800c0980762bb29aeab84120049b603c966d",
+        "line": 254,
+        "lineSha256": "ecaf5487c4ef70258c21b444793e4f9854a974f0cf932c478be864d84311c4d0",
+        "classification": "budget-validation-message",
+        "reason": "Chinese token-budget validation message; Token refers to model usage quota, not authentication.",
+        "scope": "Semantic finding classification only; no scanner exemption or credential revocation."
+      }
     },
     {
       "path": "frontend/src/app/ui/views/investigation-governance.ts",
@@ -11331,9 +11655,18 @@
       "disposition": "Use linked text disposition when same occurrence is confirmed; otherwise inspect field context and fixture origin; block closure of unresolved live/default values.",
       "status": "current-context-review-pending",
       "packageFileSha256": "743003807063dba803438f948b6d800c0980762bb29aeab84120049b603c966d",
-      "adjudication": "literal-context-requires-provenance",
+      "adjudication": "semantic-noncredential",
       "contextSha256": "3b5cc001308add15ff09f84e1011dda0ced8fadae2694713b39f1c874b3428f6",
-      "confirmedTextLinks": []
+      "confirmedTextLinks": [],
+      "sourceReview": {
+        "head": "e529dc8c29a722531aaf6e2f9f5cc8dda2902ced",
+        "fileSha256": "743003807063dba803438f948b6d800c0980762bb29aeab84120049b603c966d",
+        "line": 256,
+        "lineSha256": "3b5cc001308add15ff09f84e1011dda0ced8fadae2694713b39f1c874b3428f6",
+        "classification": "budget-validation-message",
+        "reason": "Chinese token-budget validation message; Token refers to model usage quota, not authentication.",
+        "scope": "Semantic finding classification only; no scanner exemption or credential revocation."
+      }
     },
     {
       "path": "frontend/src/app/ui/views/instances-db.MAX319.test.ts",
@@ -11555,9 +11888,18 @@
       "disposition": "Use linked text disposition when same occurrence is confirmed; otherwise inspect field context and fixture origin; block closure of unresolved live/default values.",
       "status": "current-context-review-pending",
       "packageFileSha256": "70eb83376a9631f0e4c2171094db1c0950ccf8e4cc4b45ee410a31282f14892d",
-      "adjudication": "literal-context-requires-provenance",
+      "adjudication": "semantic-noncredential",
       "contextSha256": "b4343ac8b608b0268c0285e6c396e3fecc4a1ee35864ba2efed98d6ef1135332",
-      "confirmedTextLinks": []
+      "confirmedTextLinks": [],
+      "sourceReview": {
+        "head": "e529dc8c29a722531aaf6e2f9f5cc8dda2902ced",
+        "fileSha256": "70eb83376a9631f0e4c2171094db1c0950ccf8e4cc4b45ee410a31282f14892d",
+        "line": 144,
+        "lineSha256": "b4343ac8b608b0268c0285e6c396e3fecc4a1ee35864ba2efed98d6ef1135332",
+        "classification": "usage-metadata",
+        "reason": "Token accounting convention/cost semantics or availability status; no authentication value is carried.",
+        "scope": "Semantic finding classification only; no scanner exemption or credential revocation."
+      }
     },
     {
       "path": "frontend/e2e/infrastructure-ops.spec.ts",
@@ -12497,9 +12839,20 @@
       "disposition": "Use linked text disposition when same occurrence is confirmed; otherwise inspect field context and fixture origin; block closure of unresolved live/default values.",
       "status": "current-context-review-pending",
       "packageFileSha256": "6bae186c8ad5fe9ff9172052ee4ffc502b02be3bde4c98bf42637dd51adc7eca",
-      "adjudication": "literal-context-requires-provenance",
+      "adjudication": "semantic-noncredential",
       "contextSha256": "942ba1649ceefa0289135e7c4490c4bdacda0f31979062d3f409462b3f5ab15b",
-      "confirmedTextLinks": []
+      "confirmedTextLinks": [],
+      "sourceReview": {
+        "classification": "built-ui-translation-binding",
+        "reason": "Packaged password visibility button binds login.hidePassword/login.showPassword exactly as frontend/src/app/ui/views/login-gate.ts:102-103; boolean state controls visibility, no password literal.",
+        "sourceIds": [
+          "W586",
+          "W587"
+        ],
+        "artifactId": 14302744472,
+        "artifactScope": "86c13d9a49d9c9a42755aa31a6d7d8cdd5699b16 only",
+        "packageFileSha256": "6bae186c8ad5fe9ff9172052ee4ffc502b02be3bde4c98bf42637dd51adc7eca"
+      }
     },
     {
       "path": "frontend/dist/assets/index--jRZ8JZo.js",
@@ -12515,9 +12868,20 @@
       "disposition": "Use linked text disposition when same occurrence is confirmed; otherwise inspect field context and fixture origin; block closure of unresolved live/default values.",
       "status": "current-context-review-pending",
       "packageFileSha256": "6bae186c8ad5fe9ff9172052ee4ffc502b02be3bde4c98bf42637dd51adc7eca",
-      "adjudication": "literal-context-requires-provenance",
+      "adjudication": "semantic-noncredential",
       "contextSha256": "38eebae1dc3e643c7a93f6439e71d103b027b88a676bdd30ee6ac03597067c35",
-      "confirmedTextLinks": []
+      "confirmedTextLinks": [],
+      "sourceReview": {
+        "classification": "built-ui-translation-binding",
+        "reason": "Packaged password visibility button binds login.hidePassword/login.showPassword exactly as frontend/src/app/ui/views/login-gate.ts:102-103; boolean state controls visibility, no password literal.",
+        "sourceIds": [
+          "W586",
+          "W587"
+        ],
+        "artifactId": 14302744472,
+        "artifactScope": "86c13d9a49d9c9a42755aa31a6d7d8cdd5699b16 only",
+        "packageFileSha256": "6bae186c8ad5fe9ff9172052ee4ffc502b02be3bde4c98bf42637dd51adc7eca"
+      }
     }
   ]
 }
