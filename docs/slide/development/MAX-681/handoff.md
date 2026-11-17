@@ -131,3 +131,9 @@ R3及实质内容调查见 preparation/README.md 的“R3及内容调查接续�
 
 
 七个数据库入口与shallow历史恢复的后续实测见 [convergence.md](preparation/convergence.md)。空密码回退已移除，显式空值保留兼容；不把变量存在视作资源已授权。
+
+## R4 凭据消费者修复接续
+
+最新修复与 A1–F1 见 [R4 目标凭据绑定](preparation/r4-credential-binding-20261117.md)，逐项更正见 [R4 索引](preparation/r4-corrections-20261117.json)。W633/W637/W639 及同类 W614/W616 属于数据库实例驱动认证，原管理员/viewer 裁定已更正且历史证据保留。平台登录与目标五项输入分开；缺值在写入前拒绝，保留显式空密码约定；变量存在不证明目标获授权。
+
+三个实际安全场景在本任务独占 MySQL 与 Chromium 上 3/3 通过，包括 reload、SQL、并发审批执行一次及浏览器取消/重试关联。CI 已选择这些场景，并修复阻塞其执行的本地非流式审核夹具和测试导航定位；不放宽产品策略。旧候选 CI/发布物成功仅适用于旧版本，新候选另行核验。R1/R2、技能/lock、R3 保持独立关闭，R4 交原 Reviewer 复核；共享轮换、持久注入/两次 claim、旧账号与窗口、历史闭包及外部副本仍未闭环。整单保持 in_progress。

@@ -1,4 +1,4 @@
-import { qualificationPassword } from './qualification-credentials.js';
+import { qualificationPassword, qualificationMysqlTarget } from './qualification-credentials.js';
 import { expect, test } from '@playwright/test';
 
 test('qualification security boundary rejects unauthenticated administration and invalid login', async ({ page }) => {
@@ -166,7 +166,7 @@ test('notification channels reject private targets and redact stored credentials
 });
 
 test('direct SQL execution rejects write, DDL, and multi-statement input before the target driver', async ({ page }) => {
-  const password = qualificationPassword();
+  const target = qualificationMysqlTarget();
   const login = await page.request.post('/api/auth/login', {
     data: { username: 'admin', password: qualificationPassword() },
   });
@@ -179,11 +179,7 @@ test('direct SQL execution rejects write, DDL, and multi-statement input before 
       name,
       environment: 'testing',
       db_type: 'mysql',
-      host: '127.0.0.1',
-      port: 3306,
-      username: 'root',
-      password,
-      database_name: 'db_ops_ai_qualification',
+      ...target,
     },
   });
   expect(created.status()).toBe(200);
@@ -192,6 +188,7 @@ test('direct SQL execution rejects write, DDL, and multi-statement input before 
   const assertNoCredential = (value: unknown) => {
     const serialized = JSON.stringify(value);
     expect(serialized).not.toContain(qualificationPassword());
+    if (target.password) expect(serialized).not.toContain(target.password);
     expect(serialized).not.toContain('password_encrypted');
     expect(serialized).not.toContain('connection_string');
   };
@@ -253,7 +250,7 @@ test('adapter capability contract rejects unsupported database types before pers
 });
 
 test('concurrent approval reviews execute a write exactly once', async ({ page }) => {
-  const password = qualificationPassword();
+  const target = qualificationMysqlTarget();
   test.setTimeout(30_000);
   const login = await page.request.post('/api/auth/login', {
     data: { username: 'admin', password: qualificationPassword() },
@@ -267,11 +264,7 @@ test('concurrent approval reviews execute a write exactly once', async ({ page }
       name,
       environment: 'testing',
       db_type: 'mysql',
-      host: '127.0.0.1',
-      port: 3306,
-      username: 'root',
-      password,
-      database_name: 'db_ops_ai_qualification',
+      ...target,
     },
   });
   expect(created.status()).toBe(200);
@@ -284,7 +277,7 @@ test('concurrent approval reviews execute a write exactly once', async ({ page }
       data: {
         instance_id: id,
         sql_text: 'UPDATE qualification_approval_counter SET value = value + 1 WHERE id = 1',
-        database_name: 'db_ops_ai_qualification',
+        database_name: target.database_name,
       },
     });
     const submittedBody = await submitted.json();
@@ -342,7 +335,7 @@ test('concurrent approval reviews execute a write exactly once', async ({ page }
 });
 
 test('approval cancellation and retry keep the request attached to the current attempt', async ({ page }) => {
-  const password = qualificationPassword();
+  const target = qualificationMysqlTarget();
   test.setTimeout(30_000);
   const login = await page.request.post('/api/auth/login', {
     data: { username: 'admin', password: qualificationPassword() },
@@ -355,11 +348,7 @@ test('approval cancellation and retry keep the request attached to the current a
       name: `qualification-approval-retry-${Date.now()}`,
       environment: 'testing',
       db_type: 'mysql',
-      host: '127.0.0.1',
-      port: 3306,
-      username: 'root',
-      password,
-      database_name: 'db_ops_ai_qualification',
+      ...target,
     },
   });
   expect(instance.status()).toBe(200);
@@ -371,7 +360,7 @@ test('approval cancellation and retry keep the request attached to the current a
       data: {
         instance_id: instanceId,
         sql_text: sqlText,
-        database_name: 'db_ops_ai_qualification',
+        database_name: target.database_name,
       },
     });
     const body = await submitted.json();
@@ -384,7 +373,7 @@ test('approval cancellation and retry keep the request attached to the current a
     await page.locator('.login-gate input[autocomplete="current-password"]').fill(qualificationPassword());
     await page.locator('.login-gate__connect').click();
     await expect(page.locator('.login-gate')).toBeHidden({ timeout: 15_000 });
-    await page.getByRole('link', { name: 'Approval' }).click();
+    await page.locator('nav a[href="/approval"]').click();
     const dashboard = page.locator('approval-dashboard');
     const card = dashboard.locator('.card').filter({ hasText: sqlText });
     await expect(card).toBeVisible({ timeout: 15_000 });

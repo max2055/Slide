@@ -237,6 +237,10 @@ jobs:
       DB_USER: root
       DB_PASSWORD: qualification-test-password
       QUALIFICATION_ADMIN_PASSWORD: Tpam1234
+      QUALIFICATION_MYSQL_PORT: '3306'
+      QUALIFICATION_MYSQL_USER: root
+      QUALIFICATION_MYSQL_DATABASE: db_ops_ai_qualification
+      QUALIFICATION_MYSQL_PASSWORD: qualification-test-password
       QUALIFICATION_CANCELLATION_E2E: '1'
       QUALIFICATION_CRON_E2E: '1'
       PLAYWRIGHT_MANAGED_ENV: '1'
@@ -260,11 +264,24 @@ jobs:
           T06_TEST_MYSQL_PORT: '3306'
           T06_TEST_MYSQL_PASSWORD: qualification-test-password
         run: pnpm --filter slide-frontend exec playwright test --config playwright.investigation-tls.config.ts
+      - name: Bind database target to the runner-owned MySQL service ingress
+        # New managed targets reject loopback. The job service publishes 3306 on
+        # this disposable runner; platform DB_HOST stays separate from the target.
+        run: |
+          node --input-type=module <<'NODE'
+          import { networkInterfaces } from 'node:os';
+          import { appendFileSync } from 'node:fs';
+          const ingress = Object.values(networkInterfaces()).flat().find(
+            address => address.family === 'IPv4' && !address.internal,
+          );
+          if (!ingress) throw new Error('owned MySQL service ingress unavailable');
+          appendFileSync(process.env.GITHUB_ENV, `QUALIFICATION_MYSQL_HOST=${ingress.address}\n`);
+          NODE
       - name: Login, authorization and persistent Agent cancellation
         run: >-
           pnpm --filter slide-frontend exec playwright test
           release-critical-paths.spec.ts release-security.spec.ts agent-cancellation.spec.ts
-          --grep 'qualification login|qualification security boundary|viewer cannot|Stop cancels'
+          --grep 'qualification login|qualification security boundary|viewer cannot|Stop cancels|direct SQL execution|concurrent approval reviews|approval cancellation and retry'
           --workers=1
 
       - name: Production administrator bootstrap and upgrade regression

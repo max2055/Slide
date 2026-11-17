@@ -1,0 +1,55 @@
+{
+  "corrections": [
+    {
+      "id": "W614",
+      "inputHead": "7b9ebe8b3ddb3c346a3ad020bdaeb9ad0628e1b7",
+      "sourcePath": "frontend/e2e/release-critical-paths.spec.ts",
+      "fileSha256": "67fa47073873c3450e088284a7137c39aae8a0287fe045856334093e9ff73dbd",
+      "targetSpreadLine": 82,
+      "lineSha256": "a805bb43533bacee76aa29427da79c57bf000bedecea84bba1434867004b1e55",
+      "historicalRecordPreserved": true,
+      "report": "r4-credential-binding-20261117.md"
+    },
+    {
+      "id": "W616",
+      "inputHead": "7b9ebe8b3ddb3c346a3ad020bdaeb9ad0628e1b7",
+      "sourcePath": "frontend/e2e/release-critical-paths.spec.ts",
+      "fileSha256": "67fa47073873c3450e088284a7137c39aae8a0287fe045856334093e9ff73dbd",
+      "targetSpreadLine": 152,
+      "lineSha256": "a805bb43533bacee76aa29427da79c57bf000bedecea84bba1434867004b1e55",
+      "historicalRecordPreserved": true,
+      "report": "r4-credential-binding-20261117.md"
+    },
+    {
+      "id": "W633",
+      "inputHead": "7b9ebe8b3ddb3c346a3ad020bdaeb9ad0628e1b7",
+      "sourcePath": "frontend/e2e/release-security.spec.ts",
+      "fileSha256": "84a5bc709d5fa670554c7cf359c0aeae34795531c0b43c5bd0766ca3d26e2c66",
+      "targetSpreadLine": 182,
+      "lineSha256": "a805bb43533bacee76aa29427da79c57bf000bedecea84bba1434867004b1e55",
+      "historicalRecordPreserved": true,
+      "report": "r4-credential-binding-20261117.md"
+    },
+    {
+      "id": "W637",
+      "inputHead": "7b9ebe8b3ddb3c346a3ad020bdaeb9ad0628e1b7",
+      "sourcePath": "frontend/e2e/release-security.spec.ts",
+      "fileSha256": "84a5bc709d5fa670554c7cf359c0aeae34795531c0b43c5bd0766ca3d26e2c66",
+      "targetSpreadLine": 267,
+      "lineSha256": "a805bb43533bacee76aa29427da79c57bf000bedecea84bba1434867004b1e55",
+      "historicalRecordPreserved": true,
+      "report": "r4-credential-binding-20261117.md"
+    },
+    {
+      "id": "W639",
+      "inputHead": "7b9ebe8b3ddb3c346a3ad020bdaeb9ad0628e1b7",
+      "sourcePath": "frontend/e2e/release-security.spec.ts",
+      "fileSha256": "84a5bc709d5fa670554c7cf359c0aeae34795531c0b43c5bd0766ca3d26e2c66",
+      "targetSpreadLine": 351,
+      "lineSha256": "a805bb43533bacee76aa29427da79c57bf000bedecea84bba1434867004b1e55",
+      "historicalRecordPreserved": true,
+      "report": "r4-credential-binding-20261117.md"
+    }
+  ],
+  "scope": "Five MySQL instance consumers; original 657 IDs retained. Prior 351-entry snapshot remains version-bound history."
+}

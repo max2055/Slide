@@ -1,4 +1,4 @@
-import { qualificationPassword } from './qualification-credentials.js';
+import { qualificationPassword, qualificationMysqlTarget } from './qualification-credentials.js';
 import { expect, test } from '@playwright/test';
 
 test('qualification login authenticates through REST and enters the application', async ({ page }) => {
@@ -66,7 +66,7 @@ test('resource readiness keeps an offline managed server visible and non-healthy
 });
 
 test('browser renders live MySQL metrics for an isolated managed instance', async ({ page }) => {
-  const password = qualificationPassword();
+  const target = qualificationMysqlTarget();
   const login = await page.request.post('/api/auth/login', {
     data: { username: 'admin', password: qualificationPassword() },
   });
@@ -79,11 +79,7 @@ test('browser renders live MySQL metrics for an isolated managed instance', asyn
       name,
       environment: 'testing',
       db_type: 'mysql',
-      host: '127.0.0.1',
-      port: 3306,
-      username: 'root',
-      password,
-      database_name: 'db_ops_ai_qualification',
+      ...target,
     },
   });
   expect(created.status()).toBe(200);
@@ -99,7 +95,7 @@ test('browser renders live MySQL metrics for an isolated managed instance', asyn
     await expect(row).toBeVisible({ timeout: 15_000 });
     await row.getByRole('button', { name: '测试' }).click();
     const dialog = page.locator('app-dialog');
-    await dialog.locator('input[type="password"]').fill(qualificationPassword());
+    await dialog.locator('input[type="password"]').fill(target.password);
     const reloaded = page.waitForResponse((candidate) =>
       candidate.url().endsWith(`/api/database/instances/${id}/reload`) && candidate.request().method() === 'POST',
     );
@@ -137,7 +133,7 @@ test('browser renders live MySQL metrics for an isolated managed instance', asyn
 });
 
 test('fresh native MySQL metrics create a threshold alert visible in the browser', async ({ page }) => {
-  const password = qualificationPassword();
+  const target = qualificationMysqlTarget();
   test.setTimeout(180_000);
   const login = await page.request.post('/api/auth/login', {
     data: { username: 'admin', password: qualificationPassword() },
@@ -153,11 +149,7 @@ test('fresh native MySQL metrics create a threshold alert visible in the browser
       name,
       environment: 'testing',
       db_type: 'mysql',
-      host: '127.0.0.1',
-      port: 3306,
-      username: 'root',
-      password,
-      database_name: 'db_ops_ai_qualification',
+      ...target,
     },
   });
   expect(created.status()).toBe(200);

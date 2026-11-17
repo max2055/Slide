@@ -68,6 +68,19 @@ async function handle(request, response) {
     finish(response, 400);
     return;
   }
+  // MAX-681 R4: SQL approval uses non-streaming chat. The cancellation fixture
+  // must complete those requests so real SQL/browser qualification can proceed.
+  if (payload.stream !== true) {
+    response.writeHead(200, { 'content-type': 'application/json' });
+    response.end(JSON.stringify({
+      id: 'qualification-nonstreaming', object: 'chat.completion', model: 'qualification-cancellable',
+      choices: [{ index: 0, message: { role: 'assistant', content: JSON.stringify({
+        risk_level: 'high', recommendation: 'approve', reasoning: 'Controlled qualification fixture; human approval still required',
+      }) }, finish_reason: 'stop' }],
+      usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
+    }));
+    return;
+  }
   const scenarioMessage = messages.find(m => m.role === 'user' && /runtime-qualification:(recovery|length|reject):/.test(m.content ?? ''));
   if (scenarioMessage) {
     const key = scenarioMessage.content;

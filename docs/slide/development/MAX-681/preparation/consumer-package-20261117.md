@@ -61,3 +61,7 @@ Reviewer 交接目录 SHA256SUMS 全部通过。后端重跑恢复脚本，657 �
 | F1 | 本地检查与代码绑定；最终候选 CI/发布物只接受其自己的 head、合成提交、RELEASE、哈希、源码一致性与扫描证据。旧 CI/包不迁移；不重置 watch、不轮询 |
 
 受控证据入口：项目 `outputs/max-681-consumer-chains/REPORT.md`、`SHA256SUMS`；扫描交接仍为 `outputs/max-681-paired-field-handoff-20261117/README.md`。该技术包供独立审查；整单保持 in_progress，不构成共享配置/写入、真实切换、删除、历史改写/强推、合并或发布授权。
+
+## R4 更正
+
+本页此前把部分 Playwright 实例密码裁定为管理员/viewer 登录输入，该结论已由独立复核 R4 否定。[R4 修复与更正索引](r4-credential-binding-20261117.md) 接续 W633/W637/W639 及同类 W614/W616 的实际数据库认证调用链、完整输入分离、缺值回归及 3/3 真实业务证据；原历史快照不能覆盖本次更正。旧候选 7b9ebe8… 的 CI/发布物成功结论按独立复核接收，不能迁移到修复后的候选。
