@@ -4,6 +4,7 @@ import { registerChatRoutes } from '../chat-routes.js';
 import { dbConnection } from '../db-connection.js';
 import { registerHttpSecurity } from '../security/http-security.js';
 import { registerCronRoutes } from './cron-routes.js';
+import { actorContextService } from '../auth/actor-context.js';
 
 it('MAX-684 returns the created script JSON over a socket with production async hooks', async () => {
   const app = Fastify();
@@ -40,5 +41,60 @@ it('MAX-684 returns the created script JSON over a socket with production async 
   } finally {
     await app.close();
     pool.mockRestore();
+  }
+});
+
+it('MAX-684 returns the created job JSON over a socket with production async hooks', async () => {
+  const app = Fastify();
+  const actor = { userId: 7, username: 'socket-admin', roles: ['admin'], permissions: ['*'],
+    sessionVersion: 1, instanceScopes: {}, requestId: 'socket-job' };
+  // Keep identity binding, CronJobDatabaseService and INSERT real; control identity
+  // lookup and SQL transport. Real JWT/MySQL is verified separately.
+  const loadActor = vi.spyOn(actorContextService, 'loadActiveActor').mockResolvedValue(actor);
+  const execute = vi.fn(async (sql: string) => {
+    if (sql === 'SELECT id FROM database_instances') return [[], []];
+    if (sql.startsWith('INSERT INTO cron_jobs ')) return [{ insertId: 41 }, []];
+    throw new Error('UNEXPECTED_SQL');
+  });
+  const pool = vi.spyOn(dbConnection, 'getPool').mockReturnValue({ execute } as any);
+  const verifyToken = async (request: any) => { request.user = actor; };
+  const authorizeChat = vi.fn();
+  const handleChatSend = vi.fn();
+  const reload = vi.fn(async () => {});
+  try {
+    app.addHook('onSend', async (_request, _reply, payload) => payload);
+    await registerHttpSecurity(app);
+    await registerChatRoutes(app, { verifyToken, service: {} as any, authorizeChat, handleChatSend });
+    registerCronRoutes(app, verifyToken, () => ({ reload } as any));
+    const address = await app.listen({ host: '127.0.0.1', port: 0 });
+    const response = await fetch(`${address}/api/cron/jobs`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ name: 'socket job regression', task_description: 'isolated qualification',
+        cron_expr: '0 0 1 1 *', target_instance_id: null }),
+    });
+    expect(response.status).toBe(201);
+    const body = await response.text();
+    expect(Buffer.byteLength(body)).toBeGreaterThan(0);
+    expect(response.headers.get('content-type')).toContain('application/json');
+    expect(JSON.parse(body)).toEqual({ id: 41, message: '创建成功' });
+    expect(loadActor).toHaveBeenCalledExactlyOnceWith(7);
+    expect(execute).toHaveBeenCalledTimes(2);
+    const [sql, values] = execute.mock.calls[1] as unknown as [string, unknown[]];
+    expect(sql.replace(/\s+/g, ' ')).toBe("INSERT INTO cron_jobs (name, task_description, cron_expr, task_type, script_id, script_binding, target_instance_id, timezone, description, timeout_seconds, owner_user_id, principal_type, resource_scope, identity_status, identity_audit, enabled) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'user', ?, ?, ?, ?)");
+    expect(values.slice(0, 11)).toEqual(['socket job regression', 'isolated qualification', '0 0 1 1 *',
+      'agent', null, null, null, 'Asia/Shanghai', null, 300, 7]);
+    expect(JSON.parse(values[11] as string)).toEqual({ version: 1, targetInstanceId: null,
+      instanceIds: [], serverIds: [], networkDeviceIds: [] });
+    expect(values[12]).toBe('bound');
+    expect(JSON.parse(values[13] as string)).toEqual({ bound_by: 7, owner_user_id: 7,
+      bound_at: expect.any(String), source: 'authenticated-route' });
+    expect(values[14]).toBe(1);
+    expect(reload).toHaveBeenCalledExactlyOnceWith();
+    expect(authorizeChat).not.toHaveBeenCalled();
+    expect(handleChatSend).not.toHaveBeenCalled();
+  } finally {
+    await app.close();
+    pool.mockRestore();
+    loadActor.mockRestore();
   }
 });

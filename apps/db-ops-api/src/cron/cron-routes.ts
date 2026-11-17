@@ -162,7 +162,7 @@ export function registerCronRoutes(fastify: FastifyInstance, verifyToken: preHan
         });
 
         await getCronManager()?.reload();
-        reply.code(201).send({ id, message: '创建成功' });
+        return reply.code(201).send({ id, message: '创建成功' });
       } catch (error: any) {
         reply.code(cronErrorStatus(error)).send({ error: error.message });
       }
