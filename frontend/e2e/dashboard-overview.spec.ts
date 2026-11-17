@@ -88,7 +88,7 @@ test('evidence opens bounded workspace facts without analysis and return restore
   const control = await fixture(page); await page.goto('/dashboard?scope=server&q=Payments');
   const view = page.locator('dashboard-page'); await expect(view.locator('.risk-row').first()).toBeVisible();
   await view.locator('.risk-row').first().getByRole('link', { name: '查看证据', exact: true }).click();
-  await expect(page).toHaveURL(/\/investigations\?entry=/);
+  await expect(page).toHaveURL(/\/workbench\?entry=/);
   const entry = JSON.parse(new URL(page.url()).searchParams.get('entry')!);
   expect(entry.resourceRefs).toEqual([{ type: 'server', id: 11, role: 'primary' }]);
   expect(Date.parse(entry.to) - Date.parse(entry.from)).toBe(30 * 60_000);

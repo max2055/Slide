@@ -1,6 +1,9 @@
 import '../components/resource-event-context.js';
 import { LitElement, css, html } from "lit";
-import { customElement, state } from "lit/decorators.js";
+import { customElement, property, state } from "lit/decorators.js";
+import { keyed } from 'lit/directives/keyed.js';
+import { hasSlidePermission } from '../app-settings.ts';
+import './event-management.ts';
 import './system-events.ts';
 
 type EventCenterView = "active" | "aggregate" | "notifications" | "system";
@@ -14,17 +17,25 @@ const EVENT_VIEWS: readonly { id: EventCenterView; label: string }[] = [
 
 @customElement("event-center-page")
 export class EventCenterPage extends LitElement {
+  @property({ attribute: false }) permissions: Set<string> | null = null;
+  @state() private authorityEpoch = 0;
+  private authority = (event: Event) => {
+    this.permissions = new Set((event as CustomEvent<{permissions:string[]}>).detail.permissions);
+    this.authorityEpoch++;
+  };
   @state() private activeView: EventCenterView = "active";
   private readonly popStateHandler = () => this.syncFromLocation();
 
   override connectedCallback() {
     super.connectedCallback();
     window.addEventListener("popstate", this.popStateHandler);
+    window.addEventListener('slide-permissions-loaded', this.authority);
     this.syncFromLocation();
   }
 
   override disconnectedCallback() {
     window.removeEventListener("popstate", this.popStateHandler);
+    window.removeEventListener('slide-permissions-loaded', this.authority);
     super.disconnectedCallback();
   }
 
@@ -72,6 +83,8 @@ export class EventCenterPage extends LitElement {
 
   override render() {
     if (new URLSearchParams(location.search).has('resource')) return html`<resource-event-context></resource-event-context>`;
+    if (this.activeView === 'aggregate' && this.permissions === null) return html`<p role="status">正在确认访问权限</p>`;
+    if (this.activeView === 'aggregate' && !hasSlidePermission(this.permissions, 'alert:view')) return html`<app-empty-state title="无访问权限"></app-empty-state>`;
     return html`
       <p>触发条件在资源的固定版本模板中配置。<a href="/?tab=instances-db">前往资源配置模板触发器</a></p>
       <div class="tabs" role="tablist" aria-label="事件中心">
@@ -85,7 +98,7 @@ export class EventCenterPage extends LitElement {
           >${view.label}</button>
         `)}
       </div>
-      ${this.renderView()}
+      ${keyed(this.authorityEpoch, this.renderView())}
     `;
   }
 

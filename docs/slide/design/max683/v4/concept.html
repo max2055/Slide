@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Slide · 工作台设计 V4</title>
+<link rel="stylesheet" href="layout.css">
+</head>
+<body>
+<div class="shell"><aside class="sidebar"><b class="brand">Slide</b><p class="nav-label">AI 工作空间</p><p class="nav-item active">AI 工作台</p><p class="nav-item">运维对话</p><p class="nav-label">基础设施</p><p class="nav-item">资源管理</p><p class="nav-item">事件中心</p><p class="nav-item">审批中心</p><p class="sidebar-footer">导航位置示意</p></aside>
+<main><div class="topline"><span>AI 工作空间 / 工作台</span><span>设计提案 V4 · 纵向决策阅读</span></div><div class="demo"><span>演示数据 · 未连接 API；业务操作禁用；筛选、分页及返回上下文/焦点恢复尚未实现。</span><a href="compare.html">与 V3 对照 ↗</a></div><div id="content"></div><nav class="scenario-nav" aria-label="设计状态示例"><span>状态示例</span><a href="?">首页</a><a href="?view=detail">待审批</a><a href="?view=detail&mode=failed">验证失败</a><a href="?view=detail&mode=missing">证据不足</a><a href="?view=detail&mode=continue">可继续调查</a><a href="?view=detail&mode=running">运行中调查</a><a href="?view=empty">空状态</a><a href="?view=empty&mode=forbidden">无权限</a></nav></main></div>
+<script>
+const q=new URLSearchParams(location.search),view=q.get('view')||'home',mode=q.get('mode')||'approval';
+const data={
+ approval:{status:'待独立审批',type:'行动计划详情',object:'专用演练服务重启计划 · 来源调查 A',conclusion:'计划尚未批准，业务恢复仍未确认。',advice:'先审阅目标、影响与有效期，再进入独立审批。',cta:'进入独立审批',evidence:'当前计划 v3 尚未获得独立批准；批准后仍须显式确认执行。',detail:'示例：已有服务状态与 HTTP 样本，但故障原因尚未确认。',risk:'重启会造成专用服务短时中断；执行前须核对目标配置和恢复条件。',phase:['原因未确认','等待独立审批','未发送','未开始']},
+ failed:{status:'验证失败',type:'行动恢复验证详情',object:'专用服务恢复验证报告 · 来源调查 B',conclusion:'执行已成功，但恢复验证未通过。',advice:'先核对失败样本与观察窗口，再判断后续处置；不要重复执行。',cta:'查看失败证据',evidence:'reason：观察窗口内出现 HTTP 失败；missingSamples：0。',detail:'observedFrom：2026-11-16 15:30；observedUntil：15:35（北京时间）。报告引用：执行 E1 / 报告 v2。',risk:'当前不能确认业务恢复；本次执行成功不代表恢复条件满足。',phase:['原因未确认','当前执行所用版本','成功','失败']},
+ missing:{status:'证据不足',type:'行动恢复验证详情',object:'恢复采样验证报告 · 来源调查 C',conclusion:'采样不足，无法判断业务是否恢复。',advice:'先核对缺失的 12 个样本与采样链路，补齐证据后再判断恢复。',cta:'核对缺失证据',evidence:'reason：观察样本不足；missingSamples：12。缺样不能按正常样本处理。',detail:'observedFrom：2026-11-16 15:30；observedUntil：15:35（北京时间）。报告引用：执行 E1 / 报告 v2。',risk:'恢复结论为未知；保留原动作，不因缺样重复执行。',phase:['原因未确认','当前执行所用版本','成功','证据不足']},
+ continue:{status:'需继续调查',type:'调查详情',object:'服务间歇性不可用调查',conclusion:'故障原因未确认，现有证据不足。',advice:'补充不同时段的状态和访问样本，再继续原调查。',cta:'继续原调查',evidence:'现有 HTTP 样本不足以判断间歇性故障的原因。',detail:'当前无活动请求；核对目标与已有证据后补充信息。',risk:'业务恢复未确认；补证据后再作处置判断。',phase:['无活动请求','业务恢复未确认']},
+ running:{status:'调查运行中',type:'调查详情',object:'数据库连接异常调查 R',conclusion:'调查请求运行中，故障原因尚未确认。',advice:'读取当前请求进展，等待结果返回后再判断下一步。',cta:'读取当前请求',evidence:'当前采样请求正在运行，新的调查结果尚未生成。',detail:'有活动请求；不重复派发。运行结束也不等于业务恢复。',risk:'业务恢复尚未确认；当前仅查看原请求。',phase:['活动请求运行中','业务恢复未确认']},
+ second:{status:'待独立审批',type:'行动计划详情',object:'A2 · 专用服务配置核对计划 · 来源调查 A',conclusion:'配置核对计划尚未批准。',advice:'审阅第二个计划的核对范围与前置条件，再进入独立审批。',cta:'进入独立审批',evidence:'这是调查 A 的第二个待审批计划，由完整行动列表发现，不是首页投影的第二行。',detail:'计划更新 15:46；调查更新时间仍为 15:20，两者不混用。',risk:'须核对当前计划具体范围；不沿用 A1 的审批或绑定。',phase:['原因未确认','等待独立审批','未发送','未开始']},
+ history:{status:'已过期 · 历史只读',type:'行动计划详情',object:'H1 · 历史服务处置计划 · 来源调查 H（已关闭）',conclusion:'计划已过期，仅可读取历史记录。',advice:'核对历史版本与证据；不要沿用过期计划审批或执行。',cta:'历史只读',evidence:'已关闭调查 H 不进入首页下一步投影，授权历史计划仍可从完整行动列表发现。',detail:'计划更新时间：未提供。',risk:'历史记录不提供新的执行资格。',phase:['已关闭','已过期','历史记录','按历史报告读取']}
+};
+const homeRows=[
+ {key:'approval',origin:'专用服务不可用调查 A',target:'测试服务器 / slide-demo.service',time:'15:20',cta:'审阅计划'},
+ {key:'failed',origin:'专用服务恢复调查 B',target:'测试服务器 / slide-demo.service',time:'15:38',cta:'查看失败证据'},
+ {key:'missing',origin:'服务采样缺口调查 C',target:'测试服务器 / slide-demo.service',time:'15:31',cta:'核对缺失证据'},
+ {key:'continue',origin:'服务间歇性不可用调查',target:'测试服务器',time:'15:20',cta:'查看调查'}
+];
+const nav=`<div class="links"><a href="?view=investigations">完整调查列表 →</a><a href="?view=actions">完整行动列表 →</a></div>`;
+const status=(d,key)=>`<span class="status ${key}">${d.status}</span>`;
+const content=document.getElementById('content');
+if(view==='home'){
+ content.innerHTML=`<header class="heading"><div><h1>AI 工作台</h1><p>结论有依据，行动有边界。</p></div>${nav}</header><div class="section-head"><h2>需要处理</h2><span class="muted" style="font-size:12px">已加载 4 个调查的下一步 · 非全部计划</span></div><div class="scope">每调查一个当前下一步 · 仅 open/waiting 调查<details><summary>覆盖说明</summary><p>优先选择一个执行，否则选择一个计划。翻完页也不覆盖同调查其他计划或已关闭调查历史；请使用完整类型列表按授权逐页发现。不支持全域排序、统计或等待时长。</p></details></div><section class="work-list" aria-label="每调查一个当前下一步">${homeRows.map(r=>{const d=data[r.key];return `<article class="work"><div class="decision-cell"><div class="object-cell">${status(d,r.key)}<p>来源调查：${r.origin}</p><small>调查更新 · 今日 ${r.time} · 北京时间</small></div><h3>${d.conclusion}</h3><p class="recommend"><span>建议</span>${d.advice}</p><p class="row-evidence">目标：${r.target}<a href="?view=detail&mode=${r.key}#evidence">[1] 查看依据</a></p></div><a class="button row-action" href="?view=detail&mode=${r.key}">${r.cta} →</a></article>`}).join('')}</section><div class="list-foot"><span>演示顺序；目标、结论与建议摘要仍需最小只读摘要契约确认。</span><button class="quiet-button" disabled>加载更多（示意）</button></div>`;
+}else if(view==='detail'){
+ const key=data[mode]?mode:'approval',d=data[key],investigation=['continue','running'].includes(key);
+ const conditions=investigation?'<p>以原调查与结果版本读取证据；补充信息后才显式发起请求。</p>':'<p>前置条件：目标配置、服务单元及工具版本与当前计划一致。</p><p>验证条件：基线 120 秒，后观察 300 秒，每 10 秒采样。</p><p>回滚能力：核对当前计划 capability 与 description 原文。</p>';
+ const isReport=['failed','missing'].includes(key);
+ const sourceObject=investigation?d.object:d.object.replace(/ · 来源调查.*$/,'');
+ const contextFacts=investigation?`<dt>当前请求</dt><dd>${key==='continue'?'无活动请求，可继续':'活动请求运行中，不再派发'}</dd><dt>调查更新时间</dt><dd>今日 ${key==='continue'?'15:20':'15:25'} · 北京时间</dd>`:`<dt>来源调查</dt><dd>${key==='history'?'调查 H · 已关闭':key==='failed'?'调查 B':key==='missing'?'调查 C':'调查 A'}</dd><dt>${key==='second'?'核对范围':'影响'}</dt><dd>${key==='second'?'服务配置与前置条件':'专用服务短时中断'}</dd><dt>计划有效期 · 北京时间</dt><dd>2026-11-16<br>15:40 — 16:10${key==='history'?' · 已过期':''}</dd>`;
+ const evidenceRows=investigation?`<tr><td class="refnum">[1]</td><td>调查结果 / 原请求</td><td>${key==='continue'?'样本不足，无活动请求':'采样请求运行中，结果未生成'}</td></tr>`:isReport?`<tr><td class="refnum">[1]</td><td>执行 E1 / 报告 v2</td><td>${key==='missing'?'观察样本不足；缺样 12，无法判断恢复':'观察窗口内 HTTP 失败；缺样 0'}</td></tr><tr><td class="refnum">[2]</td><td>观察窗口</td><td>2026-11-16 15:30 — 15:35 · 北京时间</td></tr>`:`<tr><td class="refnum">[1]</td><td>${key==='history'?'历史计划':'当前计划 v3'}</td><td>${key==='history'?'已过期，仅可读取':'待独立审批，尚未执行'}</td></tr><tr><td class="refnum">[2]</td><td>前置与验证条件</td><td>执行前核对目标、配置与恢复条件</td></tr>`;
+ content.innerHTML=`<a class="back" href="?">← 返回需要处理</a><div class="record-shell"><section class="record-main"><div class="detail-eyebrow">${d.type} / 当前结论</div><h1 class="detail-title">${d.conclusion}</h1><p class="risk"><span>风险与判断边界</span>${d.risk}</p><section class="next-pane"><h2>建议下一步</h2><p>${d.advice}</p><button class="business" disabled>${d.cta}（演示）</button><small>${investigation?'演示按钮禁用，不发起调查请求。':key==='approval'||key==='second'?'独立审批后仍须显式确认执行；原作者不可自批。':'仅查看原记录，不重新发送原动作。'}</small></section><aside class="object-context"><div class="context-heading"><h2>对象上下文</h2>${status(d,key)}<p class="context-object">${sourceObject}</p></div><dl><div class="context-fact"><dt>目标</dt><dd>测试服务器${investigation?'':' / slide-demo.service'}</dd></div>${contextFacts.replace(/<dt>/g,'<div class="context-fact"><dt>').replace(/<\/dd>/g,'</dd></div>')}</dl><div class="record-progress">${d.phase.map((s,i)=>`<p><span>${investigation?['请求','业务状态'][i]:['调查','计划','执行','恢复验证'][i]}</span>${s}</p>`).join('')}</div></aside><section class="evidence-pane" id="evidence"><h2>结论依据 <span class="refnum">[1]</span></h2><table class="evidence-table"><thead><tr><th>引用</th><th>来源</th><th>支持内容 / 限制</th></tr></thead><tbody>${evidenceRows}</tbody></table>${isReport?'':'<p class="row-evidence">'+d.detail+'</p>'}</section><div class="conditions"><h2>${investigation?'继续判断前':'验证与处置条件'}</h2>${conditions}</div><details class="raw"><summary>展开完整证据、版本与原始资料</summary><p>${investigation?'此处为调查资料占位：按调查与结果版本读取原始样本、证据引用和原请求记录。不能将当前请求运行结束推断为业务恢复。':'此处为行动资料占位：保留计划版本、完整参数、内容哈希、工具版本、审批记录及当前执行/报告引用。正式决策前须完整可读，不引用上一轮报告。'}原型没有实际原始报告或业务数据。</p></details></section></div>`;
+}else if(['actions','investigations'].includes(view)){
+ const actions=view==='actions';
+ const rows=actions?[
+ ['A1 · 专用演练服务重启计划','调查 A · 待审批，首页选中的当前下一步','计划更新 15:42','approval','审阅 A1'],
+ ['A2 · 专用服务配置核对计划','同一调查 A · 第二个待审批计划，首页不逐条覆盖','计划更新 15:46','second','审阅 A2'],
+ ['H1 · 历史服务处置计划','已关闭调查 H · 已过期，按授权只读发现','未提供','history','读取历史']
+ ]:[
+ ['服务间歇性不可用调查','无活动请求 · 补充证据后继续','调查更新 15:20','continue','查看可继续调查'],
+ ['数据库连接异常调查 R','活动请求运行中 · 只读当前进展','调查更新 15:25','running','查看运行中调查'],
+ ['已关闭调查 H','授权历史计划 H1 经完整行动列表发现','调查更新 14:00','catalog','查看授权行动']
+ ];
+ content.innerHTML=`<a class="back" href="?">← 返回需要处理</a><header class="heading"><div><h1>完整${actions?'行动':'调查'}列表</h1><p>授权范围内逐页发现，不受首页下一步投影限制。</p></div>${nav}</header><p class="scope">无状态过滤的演示；各类型独立分页。“完整”指可逐页发现，不表示已加载全量或全域统计。</p><section class="work-list">${rows.map(r=>`<article class="catalog-row"><div><h3>${r[0]}</h3><p>${r[1]}</p></div><span class="time">${r[2]}</span><a href="${r[3]==='catalog'?'?view=actions':'?view=detail&mode='+r[3]}">${r[4]} →</a></article>`).join('')}</section><p class="scope" style="margin-top:15px">实际列表保留 nextCursor / partial / countScope。仅行动权限用户直接降级行动列表，不加载或显示调查摘要；这里是双权限演示。</p>`;
+}else{
+ content.innerHTML=`<div class="empty"><h1>${mode==='forbidden'?'当前内容不可访问':'当前页没有需要处理的事项'}</h1><p>${mode==='forbidden'?'不展示记录、目标或数量。请核对登录状态与相应读取权限。':'仅覆盖当前授权与已读取范围；如有下一页须继续读取，不能推断全局无待办。'}</p><a href="?">返回需要处理 →</a></div>`;
+}
+</script>
+</body></html>

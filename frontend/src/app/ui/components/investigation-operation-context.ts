@@ -108,9 +108,9 @@ export class InvestigationOperationContext extends LitElement {
     return html`<app-card><span slot="header">案例参考与行动</span><p>历史案例是参考材料，与当前事实分开核对。创建计划不会获得执行许可。</p>
       <div class="toolbar"><a class="btn" href=${`/operations-knowledge?sourceInvestigation=${encodeURIComponent(this.investigationId)}`}>查找可信案例</a>
         ${this.resultVersion ? html`<a class="btn" href=${`/operations-knowledge?sourceInvestigation=${encodeURIComponent(this.investigationId)}&resultVersion=${this.resultVersion}`}>从当前结果整理案例</a>` : nothing}
-        <a class="btn" href=${`/operations-actions?sourceInvestigation=${encodeURIComponent(this.investigationId)}${this.resultVersion ? `&resultVersion=${this.resultVersion}` : ''}`}>查看行动计划</a></div>
+        <a class="btn" href=${`/workbench?workspaceTab=actions&sourceInvestigation=${encodeURIComponent(this.investigationId)}${this.resultVersion ? `&resultVersion=${this.resultVersion}` : ''}`}>查看行动计划</a></div>
       ${this.resultVersion ? this.resources.filter(ref => ref.type === 'server').map(ref => html`<a class="btn"
-        href=${`/operations-actions?sourceInvestigation=${encodeURIComponent(this.investigationId)}&resultVersion=${this.resultVersion}&targetId=${ref.id}`}>为服务器 ${ref.id} 整理当前结果的行动草案</a>`) : nothing}
+        href=${`/workbench?workspaceTab=actions&sourceInvestigation=${encodeURIComponent(this.investigationId)}&resultVersion=${this.resultVersion}&targetId=${ref.id}`}>为服务器 ${ref.id} 整理当前结果的行动草案</a>`) : nothing}
       <p class="muted">行动仅限专用工具、不可变计划与独立人工批准；后续仍需显式执行及效果验证。</p>
     </app-card><app-card><span slot="header">关联事项与解释</span><p>按资源、当前时间窗口与可信关系关联，不将相关性解释为根因。</p>
       <button class="btn" ?disabled=${a.locked || !this.resources.length || this.resources.length > 20} @click=${this.computeAttention}>评估当前关联事项</button>
@@ -120,7 +120,7 @@ export class InvestigationOperationContext extends LitElement {
         ${a.data.items.length ? a.data.items.map(group => html`<div class="row"><div class="row-head"><strong>${group.eventIds.length} 个关联事件 · ${operationLabels[group.severity] ?? group.severity}</strong><app-badge variant="warn">${group.currentValidity === 'current' ? '规则关联' : '有效性未知'}</app-badge></div>
           <p>已知分数 / 可能上界：${group.score.lower}–${group.score.upper} · 评分覆盖率 ${(group.score.coverage*100).toFixed(0)}%</p>
           <details><summary>关联理由与评分缺口</summary><p>关联不等于根因；未知分项不重分配权重。</p><pre>${JSON.stringify({reasons:group.reasons,components:group.score.components,missing:group.missing,ruleVersion:a.data!.ruleVersion},null,2)}</pre></details>
-          ${group.investigationIds.map(id => html`<a href=${`/investigations?investigation=${encodeURIComponent(id)}`}>打开关联调查</a> `)}</div>`)
+          ${group.investigationIds.map(id => html`<a href=${`/workbench?investigation=${encodeURIComponent(id)}`}>打开关联调查</a> `)}</div>`)
           : html`<app-empty-state title="当前窗口暂无关联事件" description="没有匹配记录不代表无异常。"></app-empty-state>`}
         ${a.data.items.length&&!a.data.nextCursor?html`<label>人工关联或拆分依据<textarea aria-label="人工关联或拆分依据" maxlength="1000" .value=${this.overrideReason} ?disabled=${a.locked} @input=${(e:Event)=>this.overrideReason=(e.target as HTMLTextAreaElement).value}></textarea></label><p class="muted">人工覆盖不改变原事件事实，保留原规则分组与理由。</p><div class="toolbar"><button class="btn" ?disabled=${a.locked||!this.overrideReason.trim()} @click=${()=>this.override(false)}>人工关联当前全部事件</button><button class="btn" ?disabled=${a.locked||!this.overrideReason.trim()} @click=${()=>this.override(true)}>人工拆分为独立事件</button></div>`:nothing}
         ${a.data.nextCursor ? html`<button class="btn" ?disabled=${a.loading} @click=${() => void a.load(`/attention/${encodeURIComponent(a.data!.id)}?version=${a.data!.version}&cursor=${encodeURIComponent(a.data!.nextCursor!)}`)}>下一页关联事项</button>` : nothing}` : nothing}

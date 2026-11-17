@@ -30,10 +30,10 @@ describe('UI-02: navigation contract', () => {
 
   it('uses the specified primary navigation groups and fixed utility entries', () => {
     expect(TAB_GROUPS.map((group) => [group.label, [...group.tabs]])).toEqual([
-      ['workspace', ['attention', 'investigations', 'chat']],
+      ['workspace', ['investigations', 'chat']],
       ['resources', ['dashboard', 'network-devices', 'servers', 'instances-db']],
       ['operations', ['events', 'sql-console', 'cron-jobs', 'reports', 'operations-knowledge']],
-      ['securityGovernance', ['approval', 'operations-actions', 'audit-center']],
+      ['securityGovernance', ['approval', 'audit-center']],
     ]);
     expect(UTILITY_TABS).toEqual(['health-center', 'feedback', 'settings']);
     expect(pathForTab('health-center')).toBe('/health');

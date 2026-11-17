@@ -12,12 +12,13 @@ import { describe, expect, it } from 'vitest';
 import { startFeedbackFixture } from '../investigations/feedback-test-fixture.js';
 import { fingerprintSshHostKey } from '../security/ssh-host-key.js';
 import { syntheticPilot } from './action-environment.fixture.js';
+import { DEMO_TARGET_HOSTS } from './demo-target-hosts.js';
 
 const port = Number(process.env.OPERATIONS_TEST_MYSQL_PORT ?? process.env.AGENT_RUN_TEST_MYSQL_PORT ?? 0);
 describe.skipIf(!port)('P10 action readiness actual server (synthetic)', () => {
-  it('creates and submits only exact source-bound plans; refuses stale identities/config/ACL and never dispatches', async () => {
+  it.each(DEMO_TARGET_HOSTS)('%s creates and submits only exact source-bound plans; refuses stale identities/config/ACL and never dispatches', async registeredHost => {
     process.env.T11_TEST_MYSQL_PASSWORD = process.env.OPERATIONS_TEST_MYSQL_PASSWORD ?? process.env.AGENT_RUN_TEST_MYSQL_PASSWORD ?? '';
-    const f = await startFeedbackFixture(port), pilot = await syntheticPilot();
+    const f = await startFeedbackFixture(port), pilot = await syntheticPilot(registeredHost);
     const commands: string[] = [], clients = new Set<any>();
     const host = generateKeyPairSync('rsa', { modulusLength: 2048 });
     const hostPem = host.privateKey.export({ type: 'pkcs1', format: 'pem' });
@@ -65,11 +66,11 @@ describe.skipIf(!port)('P10 action readiness actual server (synthetic)', () => {
       await writeFile(preload, `import ssh2 from 'ssh2';
 const original = ssh2.Client.prototype.connect;
 ssh2.Client.prototype.connect = function(config) {
-  if (config.host !== '192.168.49.130' || config.port !== 22) throw Error('UNEXPECTED_TEST_SSH_TARGET');
+  if (config.host !== ${JSON.stringify(registeredHost)} || config.port !== 22) throw Error('UNEXPECTED_TEST_SSH_TARGET');
   return original.call(this, {...config, host:'127.0.0.1', port:${sshPort}});
 };\n`);
       await f.rows(`INSERT INTO servers(id,host,port,label,os_type,credential_type,credential_encrypted,host_key_fingerprint,collection_enabled)
-        VALUES(501,'192.168.49.130',22,'synthetic-pilot','Other','key','unused',?,0)`, [pilot.manifest.target.hostFingerprint]);
+        VALUES(501,?,22,'synthetic-pilot','Other','key','unused',?,0)`, [registeredHost,pilot.manifest.target.hostFingerprint]);
       await f.rows(`INSERT INTO role_permissions(role_id,permission_id) SELECT 101,id FROM permissions
         WHERE code IN ('servers:view','servers:manage','instance:manage','operations:actions:view','operations:actions:propose')`);
       await f.rows("UPDATE instance_permissions SET access_level='read-write' WHERE user_id=101");
@@ -158,12 +159,12 @@ ssh2.Client.prototype.connect = function(config) {
       expect((await f.rows('SELECT COUNT(*) n FROM action_plans'))[0].n).toBe(1);
       expect(commands.length).toBeGreaterThanOrEqual(5);
       expect(commands.every(cmd => cmd === 'sudo -n -- /usr/local/libexec/slide-action-demo-helper inspect')).toBe(true);
-      await writeFile('.qualification/action-readiness-result.json', JSON.stringify({ synthetic: true, database: f.database,
+      await writeFile(`.qualification/action-readiness-${registeredHost}-result.json`, JSON.stringify({ synthetic: true, registeredHost, database: f.database,
         checks, commands, approvals, actualServer: true, realTargetConnections: 0, dispatches: 0, productModelCalls: 0 }, null, 2));
     } finally {
       await stop(); for (const client of clients) client.end();
       if (ssh.listening) await new Promise<void>(done => ssh.close(() => done()));
-      await writeFile('.qualification/action-readiness-server.log', output);
+      await writeFile(`.qualification/action-readiness-${registeredHost}-server.log`, output);
       await pilot.close(); await f.close();
     }
   }, 120_000);

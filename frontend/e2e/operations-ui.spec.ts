@@ -99,7 +99,7 @@ test('synthetic plan uses real version-bound submission and independent approval
   await own.getByRole('button',{name:'提交当前版本审批',exact:true}).click();
   await expect(own).toContainText('待独立审批');await expect(own.getByRole('button',{name:'批准当前版本',exact:true})).toBeDisabled();
   await reviewer.goto(`${env.url}/operations-actions`);const view=reviewer.locator('operations-actions');
-  await view.getByRole('button',{name:`计划 ${env.plan.id} · v1`,exact:true}).click();
+  await view.locator(`button[data-plan="${env.plan.id}"]`).click();
   await view.getByLabel('审批备注',{exact:true}).fill('SYNTHETIC 独立身份核对目标、影响、不可回退能力与版本。');
   const approve=view.getByRole('button',{name:'批准当前版本',exact:true});await approve.click();
   await expect(view.getByRole('dialog',{name:'确认当前计划审批'})).toBeVisible();
@@ -289,4 +289,65 @@ test('queued cancellation and unknown receipt reconciliation use original execut
       if(output)await page.screenshot({path:resolve(output,'outcome-unknown-reconcile.png')});
     }
   }
+});
+
+test('MAX-683 closed investigation discovers both plans and long confirmation remains readable',async({page})=>{
+  const initialSends=env.sends();
+  const impact='SYNTHETIC 长确认范围。'+ '仅用于隔离界面验收，需核对目标、版本、停止条件和回退限制。'.repeat(45);
+  const first=await env.ui.draft(env.author,{investigationId:env.actionSource.inv.id,resultVersion:1,targetId:501,impact});
+  const second=await env.ui.draft(env.author,{investigationId:env.actionSource.inv.id,resultVersion:1,targetId:501,impact:'SYNTHETIC 历史第二计划'});
+  await env.plans.submit(env.author,{planId:first.id,expectedVersion:first.version});
+  await page.addInitScript(({token,actor})=>{localStorage.setItem('slide.i18n.locale','zh-CN');localStorage.setItem('slide.control.settings.v1:default',JSON.stringify({locale:'zh-CN',navCollapsed:true}));localStorage.setItem('token',token);localStorage.setItem('user',JSON.stringify({id:actor.userId}));localStorage.setItem('permissions',JSON.stringify(actor.permissions));},{token:env.token(env.reviewer),actor:env.reviewer});
+  const view=page.locator('operations-actions');
+  await page.goto(`${env.url}/workbench?workspaceTab=actions&plan=${first.id}`);
+  for(const [width,height] of [[1440,900],[1366,768],[1920,1080]]) {
+    await page.setViewportSize({width,height});
+    await expect(view.locator('.outcome-strip')).toContainText('业务恢复');
+    await page.evaluate(()=>window.scrollTo(0,0));
+    await page.screenshot({path:test.info().outputPath(`action-detail-${width}.png`)});
+    await view.getByRole('button',{name:'审阅行动条件',exact:true}).click();
+    await expect(view.locator('#plan-conditions')).toBeFocused();
+    const approve=view.getByRole('button',{name:'批准当前版本',exact:true});await approve.click();
+    const dialog=view.getByRole('dialog',{name:'确认当前计划审批'});
+    await expect(dialog).toBeVisible();
+    await expect(view.locator('app-dialog[title="确认当前计划审批"]')).toContainText(impact);
+    await view.locator('app-dialog[title="确认当前计划审批"]').getByText('审阅绑定依据',{exact:true}).scrollIntoViewIfNeeded();
+    await expect(view.locator('app-dialog[title="确认当前计划审批"]').getByText('审阅绑定依据',{exact:true})).toBeInViewport();
+    const final=view.getByRole('button',{name:'确认批准当前版本',exact:true});await final.scrollIntoViewIfNeeded();await expect(final).toBeVisible();
+    expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+    await page.screenshot({path:test.info().outputPath(`long-confirm-${width}.png`)});
+    await page.keyboard.press('Escape');await expect(approve).toBeFocused();
+  }
+  await env.rows("UPDATE investigations SET lifecycle='closed' WHERE id=?",[env.actionSource.inv.id]);
+  try {
+    await page.goto(`${env.url}/workbench?investigation=${env.actionSource.inv.id}`);
+    const related=page.locator('investigation-action-list');
+    await expect(related.locator(`a[href*="plan=${first.id}"]`)).toBeVisible();
+    await expect(related.locator(`a[href*="plan=${second.id}"]`)).toBeVisible();
+    await related.locator(`a[href*="plan=${second.id}"]`).click();
+    await expect(view).toContainText('SYNTHETIC 历史第二计划');
+    await page.reload();await expect(view).toContainText('SYNTHETIC 历史第二计划');
+    await view.getByRole('link',{name:'返回来源页面',exact:true}).click();
+    await expect(page.locator('.investigation-detail-title')).toBeVisible();
+    await expect(page.locator('investigation-action-list').locator(`a[href*="plan=${second.id}"]`)).toBeVisible();
+  } finally {await env.rows("UPDATE investigations SET lifecycle='open' WHERE id=?",[env.actionSource.inv.id]);}
+  await page.goto(`${env.url}/workbench?workspaceTab=actions&actionCursor=expired-invalid`);
+  await expect(view.getByRole('alert')).toBeVisible();
+  await view.getByRole('button',{name:'查找计划',exact:true}).click();
+  await expect(view.locator(`button[data-plan="${second.id}"]`)).toBeVisible();
+  expect(new URL(page.url()).searchParams.has('actionCursor')).toBe(false);
+  await view.locator(`button[data-plan="${second.id}"]`).click();
+  await page.reload();await expect(view).toContainText('SYNTHETIC 历史第二计划');
+  await view.getByRole('link',{name:'返回来源页面',exact:true}).click();
+  await expect(view.locator(`button[data-plan="${second.id}"]`)).toBeFocused();
+  await view.getByLabel('计划状态筛选',{exact:true}).selectOption('draft');
+  await view.locator(`button[data-plan="${second.id}"]`).click();
+  await env.rows("UPDATE action_plan_versions SET state='expired' WHERE plan_id=? AND version=?",[second.id,second.version]);
+  await page.reload();await expect(view).toContainText('SYNTHETIC 历史第二计划');
+  await view.getByRole('link',{name:'返回来源页面',exact:true}).click();
+  await expect(view.locator(`button[data-plan="${second.id}"]`)).toHaveCount(0);
+  await expect(view.getByRole('button',{name:'查找计划',exact:true})).toBeEnabled();
+  await expect(view.getByRole('button',{name:'查找计划',exact:true})).toBeFocused();
+  await expect(view.getByRole('button',{name:'查找计划',exact:true})).toBeInViewport();
+  expect(env.sends()).toBe(initialSends);
 });

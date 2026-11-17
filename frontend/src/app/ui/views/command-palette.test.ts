@@ -6,7 +6,7 @@ afterEach(() => document.body.replaceChildren());
 it('offers only authorized product destinations and respects configured navigation', () => {
   expect(getPaletteItems()).toEqual([]);
   const limited = getPaletteItems(new Set(['alert:view']));
-  expect(limited.map(item => item.action)).toEqual(['nav:attention', 'nav:events', 'nav:settings']);
+  expect(limited.map(item => item.action)).toEqual(['nav:events', 'nav:settings']);
   expect(getPaletteItems(new Set(['*']), ['servers']).map(item => item.label)).toEqual(['服务器']);
   const all = getPaletteItems(new Set(['*']));
   expect(all.every(item => item.action.startsWith('nav:'))).toBe(true);
