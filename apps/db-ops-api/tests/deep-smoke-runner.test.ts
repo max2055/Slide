@@ -4,7 +4,7 @@ import { expect, it } from 'vitest';
 
 it('MAX-681 deep smoke rejects missing credentials before fetch and forwards explicit credentials', () => {
   for (const configured of [false, true]) {
-    const env = { ...process.env, SMOKE_BASE_URL: 'http://isolated.invalid:3210', SMOKE_USER: 'fixture-user' };
+    const env: NodeJS.ProcessEnv = { ...process.env, SMOKE_BASE_URL: 'http://isolated.invalid:3210', SMOKE_USER: 'fixture-user' };
     delete env.SMOKE_PASS;
     if (configured) env.SMOKE_PASS = 'explicit-fixture-value';
     const result = spawnSync(process.execPath, ['--import', 'tsx', '--input-type=module', '-e', `
