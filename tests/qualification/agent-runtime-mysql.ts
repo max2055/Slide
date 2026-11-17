@@ -40,6 +40,7 @@ try {
   const actors = new ActorContextService(() => pool);
   const token = signAccessToken(await actors.loadActiveActor(actorId), process.env.JWT_SECRET_KEY!);
   const actor = await actors.authenticateAccessToken(token, process.env.JWT_SECRET_KEY!, randomUUID());
+  assert.deepEqual(actor.permissions, ['chat:view'], 'runtime fixture grants only ordinary-chat access');
   process.env.QUALIFICATION_CRASH_ACCESS_TOKEN = token;
   const bad = '正在分析数据库状态……\n'.repeat(20);
   let activeScenario = '';
