@@ -95,7 +95,7 @@ export function registerCronRoutes(fastify: FastifyInstance, verifyToken: preHan
     handler: async (request, reply) => {
       try {
         const jobs = await cronJobService.getJobs(getAccessibleInstanceIds((request as any).user));
-        reply.send(jobs);
+        return reply.send(jobs);
       } catch (error: any) {
         reply.code(cronErrorStatus(error)).send({ error: error.message });
       }
