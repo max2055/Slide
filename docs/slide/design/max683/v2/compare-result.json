@@ -1,0 +1,37 @@
+{
+  "results": [
+    {
+      "state": "首页",
+      "dimensions": "1440x900",
+      "images": [
+        "before-home-1440.png",
+        "home-1440.png"
+      ]
+    },
+    {
+      "state": "计划详情",
+      "dimensions": "1440x900",
+      "images": [
+        "before-detail-1440.png",
+        "detail-1440.png"
+      ]
+    },
+    {
+      "state": "验证失败",
+      "dimensions": "1440x900",
+      "images": [
+        "before-failed-1440.png",
+        "failed-1440.png"
+      ]
+    },
+    {
+      "state": "证据不足",
+      "dimensions": "1440x900",
+      "images": [
+        "before-missing-1440.png",
+        "missing-1440.png"
+      ]
+    }
+  ],
+  "keyboardState": "计划详情"
+}

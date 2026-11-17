@@ -1,3 +1,4 @@
+import { canonicalWorkspaceUrl } from "./workbench-routing.ts";
 import { DEFAULT_ACCENT_COLOR, accentForeground } from "./accent-color.ts";
 import { roleScopesAllow } from "../src/shared/operator-scope-compat.ts";
 import { refreshChat } from "./app-chat.ts";
@@ -439,6 +440,8 @@ export function syncTabWithLocation(host: SettingsHost, replace: boolean) {
   if (typeof window === "undefined") {
     return;
   }
+  const canonical = canonicalWorkspaceUrl(new URL(window.location.href), host.basePath);
+  if (canonical.href !== window.location.href) window.history.replaceState({}, "", canonical);
   const resolved = tabFromPath(window.location.pathname, host.basePath) ?? "chat";
   setTabFromRoute(host, resolved);
   syncUrlWithTab(host, resolved, replace);
@@ -448,6 +451,8 @@ export function onPopState(host: SettingsHost) {
   if (typeof window === "undefined") {
     return;
   }
+  const canonical = canonicalWorkspaceUrl(new URL(window.location.href), host.basePath);
+  if (canonical.href !== window.location.href) window.history.replaceState({}, "", canonical);
   const resolved = tabFromPath(window.location.pathname, host.basePath);
   if (!resolved) {
     return;
@@ -468,7 +473,7 @@ export function setTabFromRoute(host: SettingsHost, next: Tab) {
 
 function updateBrowserHistory(url: URL, replace: boolean) {
   if (replace) {
-    return window.history.replaceState({}, "", url.toString());
+    return window.history.replaceState(url.href === window.location.href ? window.history.state : {}, "", url.toString());
   }
   return window.history.pushState({}, "", url.toString());
 }
@@ -478,6 +483,13 @@ function applyTabSelection(
   next: Tab,
   options: { refreshPolicy: "always" | "connected"; syncUrl?: boolean },
 ) {
+  if (next === 'attention' || next === 'operations-actions') {
+    const u = new URL(window.location.href);
+    u.pathname = `${host.basePath}/${next}`;
+    const canonical = canonicalWorkspaceUrl(u, host.basePath);
+    window.history.replaceState({}, '', canonical);
+    next = next === 'attention' ? 'events' : 'investigations';
+  }
   tabSelectionRevisions.set(host, getTabSelectionRevision(host) + 1);
   const prev = host.tab;
   host.tab = next;

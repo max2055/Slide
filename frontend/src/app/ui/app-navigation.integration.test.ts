@@ -17,7 +17,7 @@ it('keeps heavy views deferred and filters visible navigation by permissions', a
     agentsList: null, chatQueue: [], requestUpdate: vi.fn(),
   } as any;
   render(renderApp(host), container);
-  expect(container.querySelector('a[href="/attention"]')).not.toBeNull();
+  expect(container.querySelector('a[href="/attention"]')).toBeNull();
   expect(container.querySelector('a[href="/audit"]')).toBeNull();
   expect(loaded.dashboard).not.toHaveBeenCalled();
   expect(loaded.agents).not.toHaveBeenCalled();
@@ -25,7 +25,7 @@ it('keeps heavy views deferred and filters visible navigation by permissions', a
   host.userPermissions = new Set(['audit:view']);
   render(renderApp(host), container);
   expect(container.querySelector('a[href="/audit"]')).not.toBeNull();
-  expect(container.querySelector('a[href="/investigations"]')).toBeNull();
+  expect(container.querySelector('a[href="/workbench"]')).toBeNull();
   host.userPermissions = new Set(['view_dashboard']);
   host.tab = 'dashboard';
   render(renderApp(host), container);

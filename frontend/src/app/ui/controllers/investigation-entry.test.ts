@@ -6,7 +6,7 @@ const c: InvestigationEntryContext = { schemaVersion: 1, resourceRefs: [{ type: 
 describe('public entry link producer example', () => {
   it('round trips resource/metric history/event context without rebasing time or losing dimensions', () => {
     const url = new URL(investigationEntryHref(c, '/slide'), 'https://example.invalid');
-    expect(url.pathname).toBe('/slide/investigations'); expect(readInvestigationEntry(url.search)).toEqual(c);
+    expect(url.pathname).toBe('/slide/workbench'); expect(readInvestigationEntry(url.search)).toEqual(c);
   });
   it('does not treat malformed or duplicate contexts as a manual empty draft', () => {
     expect(readInvestigationEntry('?query=x')).toBeNull();

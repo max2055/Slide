@@ -20,6 +20,7 @@ export interface CaseRecord {
 export interface CasePage { items: CaseRecord[]; authorizedCounts: { total: number }; nextCursor: string | null }
 export interface PlanRecord {
   id: string; version: number; contentHash: string;
+  targetName?: string | null; updatedAt?: string; verificationState?: string | null;
   approvalId?: string|null;
   executions?: Array<{id:string;planVersion:number;state:string}>;
   state: 'draft' | 'pending_approval' | 'approved' | 'rejected' | 'expired' | 'superseded';

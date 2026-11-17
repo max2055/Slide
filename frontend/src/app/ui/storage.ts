@@ -1,3 +1,6 @@
+export function migrateVisibleTabs(tabs: string[]): string[] {
+  return [...new Set(tabs.map(tab => tab === 'attention' ? 'events' : tab === 'operations-actions' ? 'investigations' : tab))];
+}
 import { DEFAULT_ACCENT_COLOR } from "./accent-color.ts";
 const SETTINGS_KEY_PREFIX = "slide.control.settings.v1:";
 export const UI_SETTINGS_STORAGE_KEY = SETTINGS_KEY_PREFIX + "default";
@@ -255,7 +258,7 @@ export function loadSettings(): UiSettings {
       // Layer 2 — Layout
       defaultTab: typeof (parsed as any).defaultTab === "string" ? (parsed as any).defaultTab : defaults.defaultTab,
       visibleTabsConfigured: (parsed as any).visibleTabsConfigured === true,
-      visibleTabs: Array.isArray((parsed as any).visibleTabs) ? (parsed as any).visibleTabs : defaults.visibleTabs,
+      visibleTabs: Array.isArray((parsed as any).visibleTabs) ? migrateVisibleTabs((parsed as any).visibleTabs) : defaults.visibleTabs,
       // Layer 3 — Data display
       defaultPageSize: typeof (parsed as any).defaultPageSize === "number" && (parsed as any).defaultPageSize > 0 ? (parsed as any).defaultPageSize : defaults.defaultPageSize,
       dateFormat: ((parsed as any).dateFormat === "relative" || (parsed as any).dateFormat === "absolute") ? (parsed as any).dateFormat : defaults.dateFormat,
@@ -395,7 +398,7 @@ export async function syncPreferencesFromServer(currentSettings: UiSettings): Pr
         accentColor: typeof server.accentColor === 'string' && server.accentColor ? server.accentColor : currentSettings.accentColor,
         defaultTab: typeof server.defaultTab === 'string' ? server.defaultTab : currentSettings.defaultTab,
         visibleTabsConfigured: Array.isArray(server.visibleTabs) ? server.visibleTabsConfigured === true : currentSettings.visibleTabsConfigured,
-        visibleTabs: Array.isArray(server.visibleTabs) ? server.visibleTabs as string[] : currentSettings.visibleTabs,
+        visibleTabs: Array.isArray(server.visibleTabs) ? migrateVisibleTabs(server.visibleTabs as string[]) : currentSettings.visibleTabs,
         navWidth: typeof server.navWidth === 'number' ? server.navWidth : currentSettings.navWidth,
         defaultPageSize: typeof server.defaultPageSize === 'number' && server.defaultPageSize > 0 ? server.defaultPageSize : currentSettings.defaultPageSize,
         dateFormat: (server.dateFormat === 'relative' || server.dateFormat === 'absolute') ? server.dateFormat : currentSettings.dateFormat,

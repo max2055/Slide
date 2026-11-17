@@ -274,6 +274,13 @@ export class EventManagementPage extends LitElement {
     }
 
     .event-item {
+      display: block;
+      width: 100%;
+      text-align: left;
+      color: inherit;
+      font: inherit;
+      background: transparent;
+      border: 0;
       padding: var(--space-md) var(--space-lg);
       border-bottom: 1px solid var(--border);
       cursor: pointer;
@@ -282,6 +289,7 @@ export class EventManagementPage extends LitElement {
 
     .event-item:last-child { border-bottom: none; }
     .event-item:hover { background: var(--bg-secondary); }
+    .event-item:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
     .event-item.selected { background: var(--bg-secondary); border-left: 3px solid var(--primary, #3b82f6); }
 
     .event-item .event-title {
@@ -455,9 +463,22 @@ export class EventManagementPage extends LitElement {
   @state() private eventsPage = 0;
   @state() private eventsTotal = 0;
   private readonly eventsPageSize = 50;
+  private closeDetail = (event?: KeyboardEvent) => {
+    if (event && event.key !== 'Escape') return;
+    const id = this.selectedEvent?.id;
+    this.detailRequest++;
+    this.selectedEvent = null; this.eventMembers = []; this.eventLogs = [];
+    if (id !== undefined) this.renderRoot?.querySelector<HTMLButtonElement>(`button[data-event-id="${id}"]`)?.focus();
+  };
+  override disconnectedCallback() {
+    this.listRequest++; this.detailRequest++;
+    window.removeEventListener('keydown', this.closeDetail);
+    super.disconnectedCallback();
+  }
 
   override connectedCallback() {
     super.connectedCallback();
+    window.addEventListener('keydown', this.closeDetail);
     this._loadEvents();
     // Restore persisted RCA result
     try {
@@ -505,9 +526,10 @@ export class EventManagementPage extends LitElement {
         authFetch(`${API_BASE}/alerts/events/stats`),
         authFetch(`${API_BASE}/alerts/events/mttr`),
       ]);
-      if (!eventsRes.ok) throw new Error(`Failed to load events: ${eventsRes.status}`);
+      if (!eventsRes.ok) throw new Error(eventsRes.status === 403 ? '无权访问事件' : `事件加载失败: ${eventsRes.status}`);
       if (!statsRes.ok) throw new Error(`Failed to load stats: ${statsRes.status}`);
       const data = await eventsRes.json();
+      if (!Array.isArray(data?.items ?? data)) throw new Error('事件返回格式异常');
       const stats = await statsRes.json();
       const mttr = mttrRes.ok ? await mttrRes.json() : null;
       if (request !== this.listRequest) return;
@@ -517,7 +539,11 @@ export class EventManagementPage extends LitElement {
       this.stats = stats;
       this.mttr = mttr;
     } catch (e: any) {
-      if (request === this.listRequest) this.loadError = e.message;
+      if (request === this.listRequest) {
+        this.loadError = e.message;
+        this.events = []; this.stats = null; this.mttr = null;
+        this.closeDetail();
+      }
     } finally {
       if (request === this.listRequest) {
         this.loading = false;
@@ -707,6 +733,7 @@ export class EventManagementPage extends LitElement {
     if (this.filterSearch.trim()) {
       const q = this.filterSearch.trim().toLowerCase();
       result = result.filter((e) =>
+        `#${e.id}`.includes(q) ||
         e.title.toLowerCase().includes(q) ||
         (e.root_cause && e.root_cause.toLowerCase().includes(q)) ||
         (e.instance_name && e.instance_name.toLowerCase().includes(q))
@@ -764,7 +791,7 @@ export class EventManagementPage extends LitElement {
 
   override render() {
     if (this.loading) {
-      return html`<div class="page"><div class="loading" style="flex-direction:column;gap:16px;">
+      return html`<div class="page"><button class="btn" disabled aria-label="刷新事件">正在加载事件</button><div role="status" class="loading" style="flex-direction:column;gap:16px;">
           <div style="display:grid;grid-template-columns:repeat(6,1fr);gap:var(--space-md);width:100%;">
             <div class="skeleton-stat" style="width:100%;height:70px;"></div>
             <div class="skeleton-stat" style="width:100%;height:70px;"></div>
@@ -789,7 +816,7 @@ export class EventManagementPage extends LitElement {
         </div>` : nothing}
         ${this.error ? html`<div class="error" role="alert">操作失败: ${this.error}</div>` : nothing}
         <div class="page-top">
-        <div class="header"></div>
+        <div class="header"><button class="btn btn-refresh" aria-label="刷新事件" ?disabled=${this.retryLoading} @click=${this._loadEvents}>${this.retryLoading ? '刷新中...' : '刷新事件'}</button></div>
 
         ${this.stats ? this._renderStats() : nothing}
 
@@ -823,7 +850,7 @@ export class EventManagementPage extends LitElement {
 
         <div class="filter-bar">
           <label>本页严重度:</label>
-          <select @change=${(e: Event) => { this.filterSeverity = (e.target as HTMLSelectElement).value; }}>
+          <select aria-label="本页严重度" @change=${(e: Event) => { this.filterSeverity = (e.target as HTMLSelectElement).value; }}>
             <option value="all">全部</option>
             <option value="critical" ?selected=${this.filterSeverity === 'critical'}>严重</option>
             <option value="error" ?selected=${this.filterSeverity === 'error'}>错误</option>
@@ -849,7 +876,7 @@ export class EventManagementPage extends LitElement {
                     ${filtered.length === 0
                       ? html`<div class="detail-empty">暂无匹配的事件</div>`
                       : filtered.map((event) => html`
-                          <div
+                          <button type="button" data-event-id=${event.id} aria-label=${`查看事件 #${event.id} 详情`}
                             class="event-item ${this.selectedEvent?.id === event.id ? "selected" : ""}"
                             @click=${() => this._selectEvent(event)}
                           >
@@ -861,7 +888,7 @@ export class EventManagementPage extends LitElement {
                               <span>${event.instance_name || "N/A"}</span>
                               <span>${this._formatTime(event.created_at)}</span>
                             </div>
-                          </div>
+                          </button>
                         `)}
                   </div>
                   ${this._renderPagination()}
@@ -915,6 +942,8 @@ export class EventManagementPage extends LitElement {
     const e = this.selectedEvent!;
     return html`
       <div class="detail-panel">
+        <button class="btn" @click=${() => this.closeDetail()}>返回事件列表</button>
+        <h3>事件 #${e.id}：${e.title}</h3>
         <template-event-evidence .eventId=${e.id}></template-event-evidence>
         <div class="detail-section">
           <h4>基本信息</h4>

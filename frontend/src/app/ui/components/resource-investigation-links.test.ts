@@ -17,7 +17,7 @@ afterEach(()=>document.body.replaceChildren());
 it('opens persisted investigations without admitting new work',async()=>{
   authFetch.mockResolvedValue(response({items:[{id:'existing',title:'CPU 调查'}]}));
   const element=await mount();
-  await vi.waitFor(()=>expect(element.shadowRoot.querySelector('a[href="/investigations?investigation=existing"]')).not.toBeNull());
+  await vi.waitFor(()=>expect(element.shadowRoot.querySelector('a[href="/workbench?investigation=existing"]')).not.toBeNull());
   expect(authFetch).toHaveBeenCalledTimes(1);
   expect(authFetch).toHaveBeenCalledWith('/api/investigations?resource=server:101&limit=5',expect.objectContaining({cache:'no-store'}));
 });
