@@ -25,3 +25,5 @@ base：451ab8c9969f18d94f17392a74301294de82b5e1。
 startup直接观察到登录HTTP200/空JSON；server.ts登录成功分支reply.send后不返回，与已对照证明的HTTP生命周期风险吻合，但尚未对该登录分支做修改对照。建议下一步仅在登录成功/错误发送分支返回reply，先做同配置对照再复跑startup和Edge；此处仅交证据，不扩大本次已释放五处分支修复。不能推断它会修复fatal。
 
 保留draft，不合并、不部署、不关闭#1009；由原Reviewer在稳定候选后唯一复核。
+
+补充base完整startup：http-base-startup.log退出0，原入口完整通过。档案由上述base SHA的git archive生成，未改源码；入口自报head读取到档案上层工作目录的Git元数据，不能用它作为被执行源码版本，源码归属以archive输入SHA为准。结合base composition通过，当前候选startup登录空响应属于base之后的兼容回归，具体引入提交仍未二分。完整base与新候选入口并非同一测试文件版本（新候选含既有诊断），因此不夸大为严格逐字同配置对照。
