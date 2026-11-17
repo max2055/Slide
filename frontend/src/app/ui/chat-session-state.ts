@@ -15,7 +15,7 @@ const defaults = () => ({
   compactionClearTimer: null, fallbackClearTimer: null,
 });
 type Scope = { values: Host; host: Host; valid: boolean };
-type Sessions = { root: Host; active: Scope; byKey: Map<string, Scope>; byMessage: Map<string, Scope>; valid: boolean; denied?: boolean };
+type Sessions = { root: Host; active: Scope; byKey: Map<string, Scope>; byMessage: Map<string, Scope>; valid: boolean; denied?: string };
 const sessions = new WeakMap<object, Sessions>();
 const receivers = new WeakMap<object, { sessions: Sessions; scope: Scope }>();
 
@@ -25,7 +25,7 @@ function createScope(store: Sessions, key: string, initial?: Host): Scope {
     if (field in initial) values[field] = initial[field];
   }
   values.sessionKey = key;
-  if (store.denied) values.chatAccessDenied = true;
+  if (store.denied) { values.chatAccessDenied = true; values.lastError = store.denied; }
   const scope: Scope = { values, host: {}, valid: true };
   scope.host = new Proxy(values, {
     get(_, field) {
@@ -96,7 +96,7 @@ export function denyChatSessions(host: object, message: string, all: boolean): v
   const active = chatSessionHost(host);
   const { sessions: store, scope: target } = receivers.get(active)!;
   if (!store.valid || !target.valid) return;
-  if (all) store.denied = true;
+  if (all) store.denied = message;
   const scopes = all ? new Set([store.active, ...store.byKey.values(), ...store.byMessage.values()]) : new Set([target]);
   for (const scope of scopes) {
     const key = String(scope.host.sessionKey ?? '');
@@ -124,7 +124,7 @@ export function allowChatSession(host: object): boolean {
   if (!receiver || !isCurrentChatSession(host)) return false;
   const denied = !!receiver.scope.host.chatAccessDenied;
   receiver.scope.host.chatAccessDenied = false;
-  receiver.sessions.denied = false;
+  receiver.sessions.denied = undefined;
   return denied;
 }
 

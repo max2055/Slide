@@ -118,6 +118,9 @@ describe('MAX-684 denied chat state and credential recovery', () => {
     socket.receive({ type: 'error', code: 'CHAT_FORBIDDEN', error: 'denied', sessionKey: 'one' });
     expectCleared(state);
     activateChatSession(state, 'one'); expectCleared(state);
+    activateChatSession(state, '');
+    expect(state.lastError).toBe('无权使用聊天，请联系管理员。');
+    expectCleared(state);
   });
 
   it('rejects the matching pending send on 404 while preserving another acknowledgement', async () => {
