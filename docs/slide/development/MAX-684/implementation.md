@@ -5,7 +5,7 @@
 ## 候选与归属
 
 - 集成目标 base/main：`451ab8c9969f18d94f17392a74301294de82b5e1`（包含 #1008）；从任务起点通过 merge 纳入，没有重写起点历史。
-- 后端实现：`38765b0dc`；集成前端 merge：`07bcad19d2950e173bf862bf8c530fe0a4722cde`；真实客户端集成验证提交：`cb8f212e9019471c96dee1ba65494b312b070027`。最终交付完整 SHA 见 PR 和任务评论，后续仅补验收测试与证据文档。
+- 后端实现：`38765b0dc`；集成前端 merge：`07bcad19d2950e173bf862bf8c530fe0a4722cde`；真实客户端集成验证提交：`cb8f212e9019471c96dee1ba65494b312b070027`。最终产品代码候选 `963b079c28ec60ac88c9b6d94fffab7422a7f1fa`，本提交之后仅补交付证据文档；完整候选见 [草稿 PR #1010](https://github.com/max2055/Slide/pull/1010)。
 - 前端浏览器证据：[作者 REPORT](https://multica.ai/api/attachments/01a1e99c-b7c5-7544-b5ae-8b6006255b1b/download)、[原证据包](https://multica.ai/api/attachments/01a1e99c-ce62-75d1-8340-4a3844cb052c/download)。
 - 前端原候选：[草稿 PR #1009](https://github.com/max2055/Slide/pull/1009)，head `0f4919bf76a224912409102ce9f93f85b419560b`；准确核对六个前端文件后以 merge 纳入，原 PR 保持 OPEN/DRAFT，不改写或关闭。
 - 后端、运行、迁移、测试及六个已释放前端文件构成本完整候选；没有纳入工作树既有运行时 `AGENTS.md`。本代理完成集成后释放这些文件给 Chief/Reviewer，未再启动其他成员。
@@ -73,8 +73,26 @@ WS 使用已有 error 帧及稳定 code `CHAT_FORBIDDEN` / `CHAT_SESSION_NOT_FOU
 
 ## 必要 gate 与已知限制
 
-已验证前端全量 226 文件/2352 项通过，安全回归 35 文件/613 项通过，真实授权与集成 23 项通过；前后端 typecheck、contracts:check、ci:source-policy、前端 build/CSP 通过。API 全量串行结果见最终交付评论及输出证据包；所有 gate 都使用完整入口，测试、观测和清理分别记录。前后端 typecheck、公开契约、source-policy、前端 build/CSP、安全测试及适用模块回归均须在完整候选检查。独立权限实现复核仍由 Chief 交原 Reviewer 执行，本文件不代替其结论。
+已验证前端全量 226 文件/2352 项通过，安全回归 35 文件/613 项通过，真实授权与集成 23 项通过；前后端 typecheck、contracts:check、ci:source-policy、前端 build/CSP 通过。API 全量 `pnpm --filter slide-api test --maxWorkers=1` 为 690 文件通过、190 文件跳过，8464 项通过、1928 项跳过，Vitest 退出 0。全量运行开始于 cb8f212；期间仅完成分享撤回观察隔离的窄修改，之后在 963b079 产品代码上补跑安全 613 项与真实授权 23 项，覆盖该变化。无需重跑未变化模块；所有 gate 都使用完整入口，测试、观测和清理分别记录。前后端 typecheck、公开契约、source-policy、前端 build/CSP、安全测试及适用模块回归均须在完整候选检查。独立权限实现复核仍由 Chief 交原 Reviewer 执行，本文件不代替其结论。
 
-历史诊断：首次扩大 API 全量时，旧夹具缺少新凭证/聊天权，已更新并分别验证。随后共享 mysql3308 发生 OOM（Docker State.ExitCode=137/OOMKilled=true），出现连接丢失、ECONNREFUSED 和跨 schema 的全局迁移锁等待；核对容器身份后仅重启该测试服务，未停止其他任务容器。另有未修改的 prompt-manager 文件监听断言在并行全量中超时，隔离 20 项通过。不能把这些失败记为 gate 通过；最终用单 worker、明确注入测试 SQL 配置再收集结果。
+历史诊断：首次扩大 API 全量时，旧夹具缺少新凭证/聊天权，已更新并分别验证。随后共享 mysql3308 发生 OOM（Docker State.ExitCode=137/OOMKilled=true），出现连接丢失、ECONNREFUSED 和跨 schema 的全局迁移锁等待；核对容器身份后仅重启该测试服务，未停止其他任务容器。另有未修改的 prompt-manager 文件监听断言在并行全量中超时，隔离 20 项通过。不能把这些失败记为 gate 通过；最终用单 worker、明确注入 T08_TEST_MYSQL_PORT / TRIGGER_TEST_MYSQL_PORT 及对应密码环境配置，通过全量 gate；各夹具仍使用随机独占 schema。历史失败保留在证据包，不改无关提示词代码。
 
 仍有范围限制：真实外部模型能力/费用测试未执行；未做新增授权查询的容量基准；网络栈已接受的数据和已发出的未知外部动作不能瞬间撤回，须保全事实并对账，不自动补权或重放。没有合并至 main、部署或自行签署实现 PASS。
+
+最终本地检查入口：
+
+```bash
+pnpm --filter slide-api typecheck
+pnpm --filter slide-frontend typecheck
+pnpm --filter slide-api test --maxWorkers=1
+pnpm --filter slide-frontend test
+pnpm --filter slide-frontend build
+pnpm security:test
+pnpm security:scan
+pnpm contracts:check
+pnpm ci:source-policy origin/main HEAD
+```
+
+API 全量通过仍不覆盖按环境跳过的全部外部场景；23 项 MAX-684 验收通过独立显式入口执行。模型受控端点请求总数和工具计数见 scenario-evidence.json；拒绝矩阵中准入增量为零、子任务撤权后第二次模型/下一工具增量为零。取消 staged answer 的 SQL 事实保留、未写 assistant 消息、未重发模型；前端未知回执恢复仅一次 chat.send/模型准入均有断言。
+
+CI 是推送后外部系统，未等待或宣称通过。完整候选继续保持草稿；MAX-684 实施阶段交付给 Chief 后等待原 Reviewer 独立实现审查及最终验收，未宣称整单完成。
