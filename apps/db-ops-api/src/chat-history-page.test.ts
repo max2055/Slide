@@ -1,4 +1,5 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { ChatAuthorization } from './auth/chat-authorization.js';
+import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 import { dbConnection } from './db-connection.js';
 import { ChatDatabaseService, ChatSessionNotFoundError } from './chat-database-service.js';
 import type { ActorContext } from './auth/actor-context.js';
@@ -6,6 +7,7 @@ import type { ActorContext } from './auth/actor-context.js';
 const actor = { userId: 7 } as ActorContext;
 const session = { id: 1, session_id: 'one', user_id: 7, created_at: new Date(), updated_at: new Date() };
 const row = (id: number) => ({ id, message_id: `m-${id}`, session_id: 'one', role: 'user', content: 'message', created_at: new Date(0) });
+beforeEach(() => vi.spyOn(ChatAuthorization.prototype, 'require').mockImplementation(async a => a));
 afterEach(() => vi.restoreAllMocks());
 
 describe('history database cursor boundary', () => {

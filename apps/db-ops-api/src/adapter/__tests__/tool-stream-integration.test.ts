@@ -1,3 +1,4 @@
+import { recordVerifiedCredential } from '../../auth/chat-credential.js';
 import { it, expect, vi, afterEach } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -15,7 +16,8 @@ import type { ActorContext } from '../../auth/actor-context.js';
 
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
 const final: LLMResponse = { content: 'after', finishReason: 'stop', toolCalls: [], usage: {}, shouldExecuteTools: false, hasToolCalls: false };
-const actor: ActorContext = { userId: 81, username: 'fixture', roles: ['admin'], permissions: [], sessionVersion: 1, instanceScopes: {}, requestId: 'tool-stream-fixture' };
+const actor: ActorContext = { userId: 81, username: 'fixture', roles: ['admin'], permissions: ['chat:view'], sessionVersion: 1, instanceScopes: {}, requestId: 'tool-stream-fixture' };
+recordVerifiedCredential(actor, 'unit-token', Date.now() / 1000 + 3600);
 
 it('real authenticated Adapter WS → Gateway → tool consumer preserves identity, timing, errors and text boundaries', async () => {
   // Only persistence/identity boundaries and provider are controlled. Execution,
@@ -61,7 +63,7 @@ it('real authenticated Adapter WS → Gateway → tool consumer preserves identi
     } };
   const workspace = mkdtempSync(join(tmpdir(), 'tool-stream-integration-'));
   const adapter = new DirectAdapter({ workspace, concurrentTools: true, tools, toolsForActor: () => tools, llmProvider: provider,
-    actorContextService: { authenticateAccessToken: vi.fn().mockResolvedValue(actor), revalidateActor: vi.fn().mockResolvedValue(actor) } });
+    actorContextService: { authenticateAccessToken: vi.fn().mockResolvedValue(recordVerifiedCredential(actor, 'unit-token', Date.now() / 1000 + 3600)), revalidateActor: vi.fn().mockResolvedValue(recordVerifiedCredential(actor, 'unit-token', Date.now() / 1000 + 3600)) } });
   let ws: WebSocket | undefined;
   let watcher: WebSocket | undefined;
   let snapshotObserved = false;

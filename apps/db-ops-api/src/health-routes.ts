@@ -11,7 +11,7 @@ export function registerHealthRoutes(
 ): void {
   // 健康检查
   fastify.get('/api/health', { schema: { response: { 200: HealthResponseSchema } } }, async (request, reply) => {
-    reply.send({
+    return reply.send({
       status: 'ok',
       timestamp: new Date().toISOString(),
     });

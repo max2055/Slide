@@ -1,3 +1,4 @@
+import { recordVerifiedCredential } from './chat-credential.js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ToolRegistry } from '@slide/agent-core';
 import { WebSocket } from 'ws';
@@ -21,6 +22,7 @@ import { requirePermission } from './require-permission.js';
 import { requireInstanceAccess } from './require-instance-access.js';
 
 vi.mock('../chat-database-service.js', () => ({
+  ChatSessionNotFoundError: class extends Error {},
   chatDatabaseService: {
     addMessage: vi.fn().mockResolvedValue(undefined),
     createSession: vi.fn().mockResolvedValue({ session_id: 'server-generated-session' }),
@@ -56,15 +58,15 @@ const ACTIVE_ROWS = [
 ];
 
 function actor(requestId = 'request-1'): ActorContext {
-  return Object.freeze({
+  return recordVerifiedCredential(Object.freeze({
     userId: 7,
     username: 'alice',
     roles: Object.freeze(['dba']),
-    permissions: Object.freeze(['instance:view']),
+    permissions: Object.freeze(['instance:view', 'chat:view']),
     sessionVersion: 4,
     instanceScopes: Object.freeze({ 12: 'read-write' as const }),
     requestId,
-  });
+  }), 'unit-token', Date.now() / 1000 + 3600);
 }
 
 function replyMock() {
@@ -1208,7 +1210,7 @@ describe('websocket actor boundary', () => {
     const forgedActor = Object.freeze({ ...actor('forged-auth'), userId: 999 });
     const contexts = {
       authenticateAccessToken: vi.fn()
-        .mockResolvedValueOnce(firstActor)
+        .mockResolvedValueOnce(recordVerifiedCredential(firstActor, 'unit-token', Date.now() / 1000 + 3600))
         .mockResolvedValueOnce(forgedActor),
       revalidateActor: vi.fn().mockResolvedValue(firstActor),
     };

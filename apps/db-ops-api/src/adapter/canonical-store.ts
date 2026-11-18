@@ -1,3 +1,4 @@
+import { currentChatExecution } from '../auth/chat-execution.js';
 import { dbConnection } from '../db-connection.js';
 import { chatDatabaseService } from '../chat-database-service.js';
 import type { TransactionConnection } from '../workflows/outbox-service.js';
@@ -93,12 +94,15 @@ export class CanonicalStore {
   async appendToolFacts(actor: ActorContext, sessionId: string, userId: string, entries: SessionEntry[], iteration: number, checkpoint?: Record<string, unknown>): Promise<void> {
     if (!entries.length) return;
     if (!Number.isSafeInteger(iteration) || iteration < 0 || iteration > 100_000) throw new Error('INVALID_CANONICAL_ORDINAL');
-    await chatDatabaseService.authorizeSession(actor, sessionId, 'append');
+    const scope = currentChatExecution();
+    // An admitted execution may record already-observed tool facts after loss
+    // of authority; this port neither dispatches calls nor returns content.
+    if (!scope || scope.actor !== actor || scope.sessionId !== sessionId) await chatDatabaseService.authorizeSession(actor, sessionId, 'append');
     const connection = await this.pool().getConnection();
     try {
       await connection.beginTransaction();
       // Serialize fact writes and verify ownership again inside the transaction.
-      const [owners] = await connection.query<any[]>('SELECT session_id FROM chat_sessions WHERE session_id = ? AND user_id = ? FOR UPDATE', [sessionId, actor.userId]);
+      const [owners] = await connection.query<any[]>('SELECT session_id FROM chat_sessions WHERE session_id = ? AND user_id = ? AND NOT EXISTS (SELECT 1 FROM investigations i WHERE i.session_id = chat_sessions.session_id) FOR UPDATE', [sessionId, actor.userId]);
       if (!owners.length) throw new Error('Chat session not found');
       await this.writeToolFacts(connection, sessionId, userId, entries, iteration);
       if (checkpoint) await this.writeCheckpoint(connection, sessionId, checkpoint);

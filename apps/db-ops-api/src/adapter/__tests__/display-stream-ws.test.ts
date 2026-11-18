@@ -1,3 +1,4 @@
+import { recordVerifiedCredential } from '../../auth/chat-credential.js';
 import { afterEach, it, expect, vi } from 'vitest';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -16,7 +17,8 @@ import { chatDatabaseService } from '../../chat-database-service.js';
 import type { ActorContext } from '../../auth/actor-context.js';
 
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllEnvs(); vi.unstubAllGlobals(); });
-const actor: ActorContext = { userId: 81, username: 'fixture', roles: ['admin'], permissions: [], sessionVersion: 1, instanceScopes: {}, requestId: 'display-stream-fixture' };
+const actor: ActorContext = { userId: 81, username: 'fixture', roles: ['admin'], permissions: ['chat:view'], sessionVersion: 1, instanceScopes: {}, requestId: 'display-stream-fixture' };
+recordVerifiedCredential(actor, 'unit-token', Date.now() / 1000 + 3600);
 const final = { content: 'end', finishReason: 'stop', toolCalls: [], usage: {}, shouldExecuteTools: false, hasToolCalls: false };
 function mockBoundaries() {
   vi.stubEnv('AGENT_WS_PORT', '0');
@@ -71,7 +73,7 @@ it('MAX-128 accepted receipt precedes actual waiting-model phase within 100ms ov
     chatStream: async (_, __, callbacks) => { await new Promise<void>(resolve => { release = resolve; }); await callbacks.onContentDelta('end'); return final; } };
   const workspace = mkdtempSync(join(tmpdir(), 'phase-admission-'));
   const adapter = new DirectAdapter({ workspace, tools: new ToolRegistry(), llmProvider: provider,
-    actorContextService: { authenticateAccessToken: vi.fn().mockResolvedValue(actor), revalidateActor: vi.fn().mockResolvedValue(actor) } });
+    actorContextService: { authenticateAccessToken: vi.fn().mockResolvedValue(recordVerifiedCredential(actor, 'unit-token', Date.now() / 1000 + 3600)), revalidateActor: vi.fn().mockResolvedValue(recordVerifiedCredential(actor, 'unit-token', Date.now() / 1000 + 3600)) } });
   vi.spyOn(adapter as any, 'extractCompletedMemory').mockResolvedValue(undefined);
   let socket: WebSocket | undefined;
   try {
@@ -115,7 +117,7 @@ it('real WS old/new clients, disconnect/refresh, capture suffix and bounded long
     } };
   const workspace = mkdtempSync(join(tmpdir(), 'display-stream-ws-'));
   const adapter = new DirectAdapter({ workspace, tools, toolsForActor: () => tools, llmProvider: provider,
-    actorContextService: { authenticateAccessToken: vi.fn().mockResolvedValue(actor), revalidateActor: vi.fn().mockResolvedValue(actor) } });
+    actorContextService: { authenticateAccessToken: vi.fn().mockResolvedValue(recordVerifiedCredential(actor, 'unit-token', Date.now() / 1000 + 3600)), revalidateActor: vi.fn().mockResolvedValue(recordVerifiedCredential(actor, 'unit-token', Date.now() / 1000 + 3600)) } });
   const sockets: WebSocket[] = [];
   const published = new Map<number, number>();
   const serverTimings: Array<{ type: string; queueFromLastOperationMs?: number; sendCallbackMs: number }> = [];
@@ -205,7 +207,7 @@ it('real WS receive fault injection makes Gateway drop duplicates/old subscripti
   } };
   const workspace = mkdtempSync(join(tmpdir(), 'display-gateway-ws-'));
   const adapter = new DirectAdapter({ workspace, tools, llmProvider: provider,
-    actorContextService: { authenticateAccessToken: vi.fn().mockResolvedValue(actor), revalidateActor: vi.fn().mockResolvedValue(actor) } });
+    actorContextService: { authenticateAccessToken: vi.fn().mockResolvedValue(recordVerifiedCredential(actor, 'unit-token', Date.now() / 1000 + 3600)), revalidateActor: vi.fn().mockResolvedValue(recordVerifiedCredential(actor, 'unit-token', Date.now() / 1000 + 3600)) } });
   const host: any = { sessionKey: 'fixture', chatRunId: null, chatStream: '', chatThinkingText: '', chatToolMessages: [], chatStreamSegments: [], toolStreamById: new Map(),
     toolStreamOrder: [], chatMessages: [], chatQueue: [], chatSending: false, settings: { lastActiveSessionKey: '' }, applySettings() {}, refreshSessionsAfterChat: new Set(), client: null };
   const gateway = new DirectGatewayClient({ onEvent: (e: any) => handleDirectAdapterEvent(host, e), onStateChange: () => {} });
@@ -257,7 +259,7 @@ it('MAX-454 real WS publishes only reducer-accepted frames and agrees with fresh
   const workspace = mkdtempSync(join(tmpdir(), 'display-authority-ws-'));
   const provider: LLMProvider = { getDefaultModel: () => 'fixture', chat: async () => final, chatStream: async () => final };
   const adapter = new DirectAdapter({ workspace, tools: new ToolRegistry(), llmProvider: provider,
-    actorContextService: { authenticateAccessToken: vi.fn().mockResolvedValue(actor), revalidateActor: vi.fn().mockResolvedValue(actor) } });
+    actorContextService: { authenticateAccessToken: vi.fn().mockResolvedValue(recordVerifiedCredential(actor, 'unit-token', Date.now() / 1000 + 3600)), revalidateActor: vi.fn().mockResolvedValue(recordVerifiedCredential(actor, 'unit-token', Date.now() / 1000 + 3600)) } });
   const sockets: WebSocket[] = [];
   try {
     await adapter.start(); const server = (adapter as any).wsServer; if (!server.address()) await once(server, 'listening');
@@ -286,7 +288,7 @@ it('real WS isolates a stalled write callback peer, evicts cache epochs and stil
   const provider: LLMProvider = { getDefaultModel: () => 'fixture', chat: async () => final, chatStream: async () => final };
   const adapter = new DirectAdapter({ workspace, tools: new ToolRegistry(), llmProvider: provider,
     displayStreamLimits: { maxRuns: 1 },
-    actorContextService: { authenticateAccessToken: vi.fn().mockResolvedValue(actor), revalidateActor: vi.fn().mockResolvedValue(actor) } });
+    actorContextService: { authenticateAccessToken: vi.fn().mockResolvedValue(recordVerifiedCredential(actor, 'unit-token', Date.now() / 1000 + 3600)), revalidateActor: vi.fn().mockResolvedValue(recordVerifiedCredential(actor, 'unit-token', Date.now() / 1000 + 3600)) } });
   const sockets: WebSocket[] = [];
   try {
     await adapter.start(); const server = (adapter as any).wsServer; if (!server.address()) await once(server, 'listening');

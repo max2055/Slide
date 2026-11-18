@@ -601,8 +601,15 @@ describe.skipIf(!port)('T05 observation / real MySQL, JWT, HTTP and WebSocket', 
       await pool.query('DROP TRIGGER t05_initial_observation_fault');
       recovered.ws.send(JSON.stringify({type:'investigation.watch',id:inv.id}));
       await eventually(() => recovered.events.filter(e => e.type === 'investigation.snapshot').length === 2);
-      const closing=once(recovered.ws,'close');await pool.query('DELETE FROM instance_permissions WHERE user_id=101 AND instance_id=102');await watch.tick();
-      expect((await closing)[0]).toBe(4001); expect((await rows('SELECT state FROM agent_runs'))[0].state).toBe('running');
+      await pool.query('DELETE FROM instance_permissions WHERE user_id=101 AND instance_id=102');await watch.tick();
+      // MAX-684: resource loss withdraws observation, not the authenticated login.
+      await eventually(() => recovered.events.some(e => e.type === 'investigation.error' && e.code === 'INVESTIGATION_NOT_FOUND'));
+      expect(recovered.ws.readyState).toBe(WebSocket.OPEN);
+      expect((watch as any).peers.size).toBe(0);
+      expect((await rows('SELECT state FROM agent_runs'))[0].state).toBe('running');
+      await pool.query("INSERT INTO instance_permissions(user_id,instance_id,access_level) VALUES(101,102,'read-only')");
+      recovered.ws.send(JSON.stringify({type:'investigation.watch',id:inv.id}));
+      await eventually(() => recovered.events.filter(e => e.type === 'investigation.snapshot').length === 3);
     } finally {for(const ws of sockets)ws.terminate();await adapter.dispose(); if(savedPort===undefined)delete process.env.AGENT_WS_PORT;else process.env.AGENT_WS_PORT=savedPort;await rm(workspace,{recursive:true,force:true});}
   },20_000);
 });

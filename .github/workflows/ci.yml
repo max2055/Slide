@@ -271,7 +271,9 @@ jobs:
       - name: Cron browser, real authenticated routes and durable completion
         run: pnpm --filter slide-frontend exec playwright test cron-live.spec.ts --workers=1
       - name: Runtime candidate isolation and history
-        run: pnpm --filter slide-frontend exec playwright test agent-runtime.spec.ts --workers=1
+        run: |
+          node --experimental-vm-modules --test frontend/playwright.agent-runtime.config.test.mjs
+          pnpm --filter slide-frontend exec playwright test agent-runtime.spec.ts --config playwright.agent-runtime.config.ts --workers=1
       - name: Feedback evaluation and runtime qualification
         env:
           T11_TEST_MYSQL_PORT: '3306'

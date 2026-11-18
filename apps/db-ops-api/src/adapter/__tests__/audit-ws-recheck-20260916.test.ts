@@ -1,3 +1,4 @@
+import { recordVerifiedCredential } from '../../auth/chat-credential.js';
 import { canonicalStore } from '../canonical-store.js';
 import { expect, it, vi } from 'vitest';
 import { WebSocket } from 'ws';
@@ -9,7 +10,8 @@ import { agentRunService } from '../agent-run-service.js';
 it.each(['legacy', 'durable'])('%s assistant persistence failure never announces durable completion', async (protocol) => {
   vi.stubEnv('AGENT_WS_PORT', '0');
   vi.stubEnv('JWT_SECRET_KEY', 'isolated-audit-websocket-secret-long-enough');
-  const actor = { userId: 74, username: 'probe', roles: ['viewer'], permissions: [], sessionVersion: 1, instanceScopes: {}, requestId: 'probe' };
+  const actor = { userId: 74, username: 'probe', roles: ['viewer'], permissions: ['chat:view'], sessionVersion: 1, instanceScopes: {}, requestId: 'probe' };
+  recordVerifiedCredential(actor, 'unit-token', Date.now() / 1000 + 3600);
   vi.spyOn(chatDatabaseService, 'getSessionMetadata').mockResolvedValue(null);
   vi.spyOn(chatDatabaseService, 'authorizeSession').mockResolvedValue({} as any);
   vi.spyOn(canonicalStore, 'getPage').mockResolvedValue({ messages: [], nextBefore: null });

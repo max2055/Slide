@@ -11,7 +11,7 @@ describe('live authentication during dependency failure', () => {
     let businessCalls = 0;
     app.get('/protected', { preHandler: createVerifyToken('test-secret', service) }, async () => { businessCalls++; return { ok: true }; });
     try {
-      const token = jwt.sign({ userId: 1, sessionVersion: 1 }, 'test-secret');
+      const token = jwt.sign({ userId: 1, sessionVersion: 1 }, 'test-secret', { expiresIn: '1h' });
       const response = await app.inject({ url: '/protected', headers: { authorization: `Bearer ${token}` } });
       expect(response.statusCode).toBe(503);
       expect(response.body).not.toContain('private');

@@ -2012,7 +2012,7 @@ describe.skipIf(!port)('T04 investigation workflow execution / real MySQL', () =
       owner.userId,
       'Ordinary Chat',
     ]);
-    const { run } = await runs.claim(owner.userId, chatId, 'ordinary-turn', `investigation:${randomUUID()}`);
+    const { run } = await runs.claim(owner.userId, chatId, 'ordinary-turn', `investigation:${randomUUID()}`, owner);
     expect(
       (await runs.complete(run, { type: 'complete', stopReason: 'completed', finalContent: 'ordinary response' }))
         .state,
@@ -2166,6 +2166,9 @@ describe.skipIf(!port)('T04 investigation workflow execution / real MySQL', () =
       silent: true,
       env: {
         ...process.env,
+        // MAX-684: the crash harness signs its own HTTP receipt after restart.
+        // Supply a task key even when the invoking shell has no application env.
+        JWT_SECRET_KEY: 't04-crash-fixture-jwt-key-at-least-32-bytes',
         T04_CHILD_DATABASE: database,
         T04_CHILD_LENGTH: outputLength ? '1' : '',
         T04_CHILD_COMMAND: JSON.stringify(childCommand()),

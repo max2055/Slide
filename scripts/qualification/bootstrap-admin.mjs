@@ -110,6 +110,18 @@ async function applyQualificationFixtures(db, passwordHash, options) {
   await db.execute(
     "INSERT IGNORE INTO user_roles (user_id, role_id) SELECT u.id, r.id FROM users u JOIN roles r ON r.name = 'viewer' WHERE u.username = 'qualification-viewer'",
   );
+  // MAX-684: reach the ownership boundary without changing the seeded viewer role.
+  await db.execute("INSERT IGNORE INTO roles (name) VALUES ('qualification-chat-reader')");
+  await db.execute(
+    `INSERT IGNORE INTO role_permissions (role_id, permission_id)
+     SELECT r.id, p.id FROM roles r JOIN permissions p ON p.code = 'chat:view'
+     WHERE r.name = 'qualification-chat-reader'`,
+  );
+  await db.execute(
+    `INSERT IGNORE INTO user_roles (user_id, role_id)
+     SELECT u.id, r.id FROM users u JOIN roles r ON r.name = 'qualification-chat-reader'
+     WHERE u.username = 'qualification-viewer'`,
+  );
   const [admins] = await db.execute("SELECT id FROM users WHERE username = 'admin'");
   const adminId = admins[0]?.id;
   if (!adminId) throw new Error('qualification admin seed is missing');

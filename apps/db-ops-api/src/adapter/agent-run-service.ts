@@ -1,3 +1,5 @@
+import { chatCredential } from '../auth/chat-credential.js';
+import { assertChatCredential, ChatAuthorization } from '../auth/chat-authorization.js';
 import { ActorAuthenticationError, ActorContextService, type ActorContext } from '../auth/actor-context.js';
 import { InvestigationAuthorization } from '../investigations/authorization.js';
 import { InvestigationResultStore } from '../investigations/result-schema.js';
@@ -12,7 +14,7 @@ import { persistedMessageParts } from './message-parts.js';
 import { projectionDocuments } from '@slide/agent-core/message-projection';
 
 export type AgentRunState = 'running' | 'completed' | 'partial' | 'failed' | 'cancelled' | 'timed_out';
-export interface AgentRun { id: string; actorId: number; sessionId: string; messageId: string; idempotencyKey: string; state: AgentRunState; result?: unknown; error?: unknown; }
+export interface AgentRun { id: string; actorId: number; sessionId: string; messageId: string; idempotencyKey: string; state: AgentRunState; chatAuthority?: { sessionVersion: number; credentialRef: string; expiresAt: number }; result?: unknown; error?: unknown; }
 
 interface Executor { query<T = unknown>(sql: string, values?: unknown[]): Promise<[T, unknown?]>; }
 interface Connection extends Executor { beginTransaction(): Promise<void>; commit(): Promise<void>; rollback(): Promise<void>; release(): void; }
@@ -31,14 +33,20 @@ export class AgentRunService {
   constructor(private readonly poolProvider: () => Pool | null = () => dbConnection.getPool() as unknown as Pool | null,
     private readonly authorization = new InvestigationAuthorization(new ActorContextService(poolProvider as never))) {}
 
-  async claim(actorId: number, sessionId: string, messageId: string, idempotencyKey: string): Promise<{ run: AgentRun; created: boolean }> {
+  async claim(actorId: number, sessionId: string, messageId: string, idempotencyKey: string, actor?: ActorContext): Promise<{ run: AgentRun; created: boolean }> {
     const pool = this.requirePool();
     const id = randomUUID();
+    if (actor) {
+      if (actor.userId !== actorId) throw new ActorAuthenticationError();
+      assertChatCredential(actor, true);
+      await new ChatAuthorization().require(actor, { execute: (sql, values) => pool.query(sql, values) });
+    }
+    const credential = actor && chatCredential(actor);
     await pool.query(
-      `INSERT INTO agent_runs (id, actor_id, session_id, message_id, idempotency_key, state, expires_at)
-       VALUES (?, ?, ?, ?, ?, 'running', DATE_ADD(NOW(), INTERVAL 24 HOUR))
+      `INSERT INTO agent_runs (id, actor_id, session_id, message_id, idempotency_key, state, expires_at, chat_session_version, chat_credential_ref, chat_credential_expires_ms)
+       VALUES (?, ?, ?, ?, ?, 'running', DATE_ADD(NOW(), INTERVAL 24 HOUR), ?, ?, ?)
        ON DUPLICATE KEY UPDATE id = id`,
-      [id, actorId, sessionId, messageId, idempotencyKey],
+      [id, actorId, sessionId, messageId, idempotencyKey, actor?.sessionVersion ?? null, credential?.id ?? null, credential?.expiresAt ?? null],
     );
     const [rows] = await pool.query<any[]>(
       `SELECT ${runColumns} FROM agent_runs WHERE actor_id = ? AND idempotency_key = ?`,
@@ -231,11 +239,22 @@ export class AgentRunService {
 
   async recoverCompletion(run: AgentRun): Promise<AgentRun> {
     await this.assertOrdinaryRun(this.requirePool(),run);
-    if (run.state !== 'running' || !(run.result as CompletionResult | undefined)?.completionPending) return run;
+    if (run.state !== 'running') return run;
+    if (!(run.result as CompletionResult | undefined)?.completionPending) {
+      try { await this.authorizeOrdinaryCompletion(this.requirePool(), run); }
+      catch (error) {
+        if (!(error instanceof ActorAuthenticationError) && (error as { code?: string }).code !== 'CHAT_FORBIDDEN') throw error;
+        await this.requirePool().query("UPDATE agent_runs SET state = 'cancelled', error_json = ?, finished_at = NOW() WHERE id = ? AND state = 'running' AND " + ordinaryRun,
+          [JSON.stringify({ code: 'CHAT_AUTHORITY_REVOKED', retryable: false }), run.id]);
+        return { ...run, state: 'cancelled', result: undefined, error: { code: 'CHAT_AUTHORITY_REVOKED' } };
+      }
+      return run;
+    }
     const pool = this.requirePool();
     if (!pool.getConnection) throw new Error('Completion requires a database transaction');
     const connection = await pool.getConnection();
     try {
+      await connection.query('SET TRANSACTION ISOLATION LEVEL READ COMMITTED');
       await connection.beginTransaction();
       const [rows] = await connection.query<any[]>(
         `SELECT ${runColumns} FROM agent_runs WHERE id = ? AND actor_id = ? AND session_id = ? FOR UPDATE`,
@@ -254,6 +273,15 @@ export class AgentRunService {
         [run.sessionId, run.actorId],
       );
       if (!sessions[0]) throw new Error('Chat session not found');
+      try { await this.authorizeOrdinaryCompletion(connection, current); }
+      catch (error) {
+        if (!(error instanceof ActorAuthenticationError) && (error as { code?: string }).code !== 'CHAT_FORBIDDEN') throw error;
+        await connection.query("UPDATE agent_runs SET state = 'cancelled', error_json = ?, finished_at = NOW() WHERE id = ? AND state = 'running'",
+          [JSON.stringify({ code: 'CHAT_AUTHORITY_REVOKED', retryable: false }), run.id]);
+        await connection.commit();
+        // Retain staged intent/usage for reconciliation; never return its body.
+        return { ...current, state: 'cancelled', result: undefined, error: { code: 'CHAT_AUTHORITY_REVOKED' } };
+      }
       this.assertCompletion(result.event);
       const event = { ...result.event };
       const durable = { kind: 'mysql' as const, reference: `run_${run.id}_assistant` };
@@ -288,6 +316,7 @@ export class AgentRunService {
       if (event.projection) event.projection = { ...event.projection, operations: [...event.projection.operations,
         ...(event.messageParts ? [{ type: 'parts.persisted' as const, documents: projectionDocuments([event.messageParts]) }] : []),
         { type: 'run.terminal', outcome: 'completed', durable }] };
+      await this.authorizeOrdinaryCompletion(connection, current);
       const committed = { stopReason: 'completed', event };
       const [updated] = await connection.query<{ affectedRows: number }>(
         `UPDATE agent_runs SET state = 'completed', result_json = ?, error_json = NULL, finished_at = NOW()
@@ -331,6 +360,15 @@ export class AgentRunService {
     return Number(outcome.affectedRows) === 1;
   }
 
+  private async authorizeOrdinaryCompletion(executor: Executor, run: AgentRun): Promise<void> {
+    const binding = run.chatAuthority;
+    if (!binding || binding.expiresAt <= Date.now()) throw new ActorAuthenticationError();
+    const actors = new ActorContextService();
+    const actor = await actors.loadActiveActorOn({ execute: (sql, values) => executor.query(sql, values) }, run.actorId, binding.sessionVersion);
+    await new ChatAuthorization(actors).require(actor, { execute: (sql, values) => executor.query(sql, values) });
+    if (binding.expiresAt <= Date.now()) throw new ActorAuthenticationError();
+  }
+
   private async assertOrdinaryRun(executor: Executor, run: AgentRun): Promise<void> {
     if (!run.idempotencyKey.startsWith('investigation:')) return;
     const [bound] = await executor.query<any[]>(`SELECT id FROM investigation_requests
@@ -365,7 +403,17 @@ export class AgentRunService {
   }
 
   private requirePool(): Pool { const pool = this.poolProvider(); if (!pool) throw new Error('Agent run database unavailable'); return pool; }
-  private map(row: any): AgentRun { return { id: row.id, actorId: Number(row.actor_id), sessionId: row.session_id, messageId: row.message_id, idempotencyKey: row.idempotency_key, state: row.state, result: typeof row.result_json === 'string' ? JSON.parse(row.result_json) : row.result_json, error: typeof row.error_json === 'string' ? JSON.parse(row.error_json) : row.error_json }; }
+  private map(row: any): AgentRun {
+    const result = typeof row.result_json === 'string' ? JSON.parse(row.result_json) : row.result_json;
+    return { id: row.id, actorId: Number(row.actor_id), sessionId: row.session_id, messageId: row.message_id,
+      idempotencyKey: row.idempotency_key, state: row.state,
+      ...(row.chat_session_version && row.chat_credential_ref && row.chat_credential_expires_ms ? { chatAuthority: {
+        sessionVersion: Number(row.chat_session_version), credentialRef: row.chat_credential_ref, expiresAt: Number(row.chat_credential_expires_ms),
+      } } : {}),
+      // A cancelled staged answer remains a storage reconciliation fact only.
+      result: row.state === 'cancelled' && result?.completionPending ? undefined : result,
+      error: typeof row.error_json === 'string' ? JSON.parse(row.error_json) : row.error_json };
+  }
 }
 
 export const agentRunService = new AgentRunService();

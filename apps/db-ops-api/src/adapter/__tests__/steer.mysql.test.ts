@@ -70,6 +70,10 @@ describe.skipIf(!port)('MAX-626 real MySQL/JWT/REST/WS slash-command acceptance'
     await new MigrationRunner(pool).run();
     vi.spyOn(dbConnection, 'getPool').mockReturnValue(pool);
     await pool.query("INSERT INTO users (id, username, password_hash) VALUES (626, 'steer-owner', 'unused'), (627, 'steer-other', 'unused')");
+    // MAX-684: exercise session ownership with an authorized ordinary-chat actor.
+    await pool.query("INSERT INTO roles (id, name) VALUES (626, 'steer-chat-fixture')");
+    await pool.query("INSERT INTO role_permissions (role_id, permission_id) SELECT 626, id FROM permissions WHERE code = 'chat:view'");
+    await pool.query('INSERT INTO user_roles (user_id, role_id) VALUES (626, 626)');
     contexts = new ActorContextService(() => pool as never);
     actor = await contexts.loadActiveActor(626, 1); token = signAccessToken(actor, secret);
     sessionKey = (await chatDatabaseService.createSession(actor, { title: 'MAX-626 acceptance' })).session_id;

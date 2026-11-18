@@ -95,9 +95,9 @@ export function registerCronRoutes(fastify: FastifyInstance, verifyToken: preHan
     handler: async (request, reply) => {
       try {
         const jobs = await cronJobService.getJobs(getAccessibleInstanceIds((request as any).user));
-        reply.send(jobs);
+        return reply.send(jobs);
       } catch (error: any) {
-        reply.code(cronErrorStatus(error)).send({ error: error.message });
+        return reply.code(cronErrorStatus(error)).send({ error: error.message });
       }
     }
   });
@@ -162,9 +162,9 @@ export function registerCronRoutes(fastify: FastifyInstance, verifyToken: preHan
         });
 
         await getCronManager()?.reload();
-        reply.code(201).send({ id, message: '创建成功' });
+        return reply.code(201).send({ id, message: '创建成功' });
       } catch (error: any) {
-        reply.code(cronErrorStatus(error)).send({ error: error.message });
+        return reply.code(cronErrorStatus(error)).send({ error: error.message });
       }
     }
   });
@@ -276,9 +276,9 @@ export function registerCronRoutes(fastify: FastifyInstance, verifyToken: preHan
         const manager = getCronManager();
         if (!manager) return reply.code(503).send({ error: 'WORKFLOW_RUNTIME_UNAVAILABLE' });
         const run = await manager.triggerJob(config, (request as any).user, key as string | undefined, body);
-        reply.code(202).send({ runId: run.runId, jobId: run.jobId, status: run.status, message: '已接受执行，结果请按 runId 查询' });
+        return reply.code(202).send({ runId: run.runId, jobId: run.jobId, status: run.status, message: '已接受执行，结果请按 runId 查询' });
       } catch (error: any) {
-        reply.code(cronErrorStatus(error)).send({ error: error.message });
+        return reply.code(cronErrorStatus(error)).send({ error: error.message });
       }
     }
   });
@@ -293,8 +293,8 @@ export function registerCronRoutes(fastify: FastifyInstance, verifyToken: preHan
         if (!requestKey || requestKey.length > 200) return reply.code(400).send({ error: 'CRON_IDEMPOTENCY_KEY_INVALID' });
         const run = await cronRunStore.findRequest(Number(id), (request as any).user.userId, requestKey);
         if (!run) return reply.code(404).send({ error: 'CRON_RUN_NOT_FOUND' });
-        reply.send(run);
-      } catch (error: any) { reply.code(cronErrorStatus(error)).send({ error: error.message }); }
+        return reply.send(run);
+      } catch (error: any) { return reply.code(cronErrorStatus(error)).send({ error: error.message }); }
     },
   });
 
@@ -306,8 +306,8 @@ export function registerCronRoutes(fastify: FastifyInstance, verifyToken: preHan
         if (!await requireCronJobAccess(request, reply, Number(id))) return;
         const run = await cronRunStore.get(runId);
         if (!run || run.jobId !== Number(id)) return reply.code(404).send({ error: 'CRON_RUN_NOT_FOUND' });
-        reply.send(run);
-      } catch (error: any) { reply.code(cronErrorStatus(error)).send({ error: error.message }); }
+        return reply.send(run);
+      } catch (error: any) { return reply.code(cronErrorStatus(error)).send({ error: error.message }); }
     },
   });
 
@@ -428,9 +428,9 @@ export function registerCronRoutes(fastify: FastifyInstance, verifyToken: preHan
           script_type: body.script_type || 'sql',
         });
 
-        reply.code(201).send({ id, message: '创建成功' });
+        return reply.code(201).send({ id, message: '创建成功' });
       } catch (error: any) {
-        reply.code(cronErrorStatus(error)).send({ error: error.message });
+        return reply.code(cronErrorStatus(error)).send({ error: error.message });
       }
     }
   });

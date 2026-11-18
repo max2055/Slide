@@ -653,7 +653,7 @@ async function start() {
         userAgent: request.headers['user-agent'],
       }).catch(error => console.error('记录登录审计失败:', error));
 
-      reply.send({
+      return reply.send({
         token,
         refreshToken,
         expiresIn: 3600,
@@ -665,7 +665,7 @@ async function start() {
     } catch (error: any) {
       if (error instanceof PlatformUnavailableError) return reply.code(503).send(platformUnavailableResponse);
       console.error('登录失败:', error);
-      reply.code(500).send({ error: '登录失败：' + error.message });
+      return reply.code(500).send({ error: '登录失败：' + error.message });
     }
   });
 
@@ -1064,6 +1064,7 @@ async function start() {
     verifyToken,
     service: chatDatabaseService,
     handleChatSend,
+    getGreeting: getAgentGreeting,
   });
 
   fastify.get('/api/resources/:type/:id', { preHandler: [verifyToken] }, async (request, reply) => {
@@ -4064,15 +4065,6 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
       } catch (error: any) {
         reply.code(500).send({ error: error.message });
       }
-    }
-  });
-
-  // 获取 Agent 问候语
-  fastify.get('/api/chat/greeting', { preHandler: [verifyToken] }, async (_request, reply) => {
-    try {
-      reply.send({ greeting: getAgentGreeting() });
-    } catch (error: any) {
-      reply.code(500).send({ error: error.message });
     }
   });
 

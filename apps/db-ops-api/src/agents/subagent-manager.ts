@@ -1,3 +1,4 @@
+import { currentChatExecution, guardedChatTools } from '../auth/chat-execution.js';
 import crypto from 'node:crypto';
 import { recordRuntimeEvent } from '../platform/runtime-events.js';
 import { resolveRuntimePolicy, runtimeSpec, type RuntimePolicy } from '../adapter/runtime-policy.js';
@@ -42,6 +43,7 @@ export class SubagentManager {
   private parentTools: ToolRegistry | null;
   private readonly toolsForActor?: (actor: ActorContext) => ToolRegistry;
   private readonly unsettled = new Set<string>();
+  private readonly lineages = new WeakMap<SubagentRunRecord, NonNullable<ReturnType<typeof currentChatExecution>>>();
   private readonly limits = loadAgentRuntimeLimits();
   private readonly admissions = new ActorConcurrencyLimiter(this.limits.maxConcurrentRunsPerActor);
 
@@ -76,6 +78,10 @@ export class SubagentManager {
     parentRemaining?: RuntimePolicy,
   ): Promise<string> {
     if (!actor) throw new Error('SUBAGENT_ACTOR_REQUIRED');
+    const lineage = currentChatExecution();
+    if (!lineage || lineage.actor.userId !== actor.userId) throw new Error('CHAT_LINEAGE_REQUIRED');
+    actor = lineage.actor;
+    parentSessionKey = lineage.sessionId;
     if (!task.trim() || task.length > this.limits.maxMessageChars) throw new Error('SUBAGENT_TASK_INVALID');
     if (!/^[a-zA-Z0-9._-]{1,64}$/.test(agentId)) throw new Error('SUBAGENT_AGENT_ID_INVALID');
     // Claim synchronously before the first await, including durable allocation.
@@ -90,6 +96,7 @@ export class SubagentManager {
     };
     let run: SubagentRunRecord;
     try {
+      await lineage.check();
       const requested = resolveRuntimePolicy('subagent', { parentRemaining });
       const allocation = await reserveChildBudget(requested);
       const policy = allocation ? Object.freeze({ ...requested, ...allocation }) : requested;
@@ -100,8 +107,11 @@ export class SubagentManager {
         ownerId: actor.userId,
         unsettled: true,
       });
+      this.lineages.set(run, lineage);
       // Execution owns admission until every observed operation settles.
-      void this._executeSubagent(run, actor, policy, release, allocation?.signal);
+      const releaseLineage = lineage.retain();
+      void this._executeSubagent(run, actor, policy, () => { release(); releaseLineage(); },
+        AbortSignal.any([lineage.controller.signal, ...(allocation?.signal ? [allocation.signal] : [])]));
     } catch (err) {
       release();
       throw err;
@@ -114,10 +124,14 @@ export class SubagentManager {
    * Access a subagent's status and result.
    */
   async access(runId: string, actor?: ActorContext): Promise<{ found: boolean; status: SubagentStatus; result?: unknown; error?: string; resolution?: RuntimeResolution; cancellationPending?: boolean }> {
+    const lineage = currentChatExecution();
+    if (!lineage || !actor || lineage.actor.userId !== actor.userId) return { found: false, status: 'failed', error: 'Subagent run not found' };
+    await lineage.check();
     const run = this.registry.getRun(runId);
-    if (!actor || !run || run.ownerId !== actor.userId) {
+    if (!actor || !run || run.ownerId !== actor.userId || !this.lineages.has(run)) {
       return { found: false, status: 'failed', error: 'Subagent run not found' };
     }
+    await this.lineages.get(run)!.check();
     return { found: true, status: run.status, result: run.result, error: run.error, ...(run.resolution ? { resolution: run.resolution } : {}), ...(this.unsettled.has(runId) && run.status !== 'running' ? { cancellationPending: true } : {}) };
   }
 
@@ -181,7 +195,7 @@ export class SubagentManager {
           { role: 'system', content: 'You are a subagent executing a specific task. Focus only on the assigned task.' },
           { role: 'user', content: run.task },
         ],
-        tools: this._buildSubagentTools(actor),
+        tools: guardedChatTools(this._buildSubagentTools(actor)),
         model: this.agentRunner.getDefaultModel(),
         ...runtimeSpec(policy),
         onRuntimeEvent: recordRuntimeEvent,
@@ -206,6 +220,7 @@ export class SubagentManager {
         signal: controller.signal,
       });
 
+      await currentChatExecution()?.check();
       const completed = !controller.signal.aborted && result.stopReason === 'completed'
         && (!result.resolution || result.resolution.kind === 'response_ready');
       const reason = controller.signal.aborted ? cancellationError(controller.signal).code

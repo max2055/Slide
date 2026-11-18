@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import { expect, test } from '@playwright/test';
 import { AgentRunService } from '../../apps/db-ops-api/src/adapter/agent-run-service';
 import { dbConnection } from '../../apps/db-ops-api/src/db-connection';
@@ -10,11 +11,14 @@ for (const scenario of ['recovery', 'length', 'reject'] as const) {
     await page.goto('/chat');
     await page.locator('.login-gate input[autocomplete="username"]').fill('admin');
     await page.locator('.login-gate input[autocomplete="current-password"]').fill(process.env.QUALIFICATION_ADMIN_PASSWORD ?? 'Tpam1234');
+    const login = page.waitForResponse(r => new URL(r.url()).pathname === '/api/auth/login' && r.request().method() === 'POST');
     await page.locator('.login-gate__connect').click();
+    const accessToken = (await (await login).json()).token;
+    expect(typeof accessToken).toBe('string');
     await expect(page.locator('.login-gate')).toBeHidden({ timeout: 15_000 });
     const input = page.getByRole('textbox', { name: /Message .*Enter to send/ });
     await expect(input).toBeEnabled();
-    const prompt = `runtime-qualification:${scenario}:${randomUUID()} 检查数据库`;
+    const prompt = `runtime-qualification:${scenario}:${process.env.RUNTIME_CLAIM_NONCE}:${randomUUID()} 检查数据库`;
     await input.fill(prompt); await page.getByRole('button', { name: 'Send message' }).click();
     expect(await dbConnection.initialize({ host: process.env.DB_HOST ?? '127.0.0.1', port: Number(process.env.DB_PORT ?? 3306), user: process.env.DB_USER ?? 'root', password: process.env.DB_PASSWORD, database: 'db_ops_ai_qualification' })).toBe(true);
     try {
@@ -41,7 +45,16 @@ for (const scenario of ['recovery', 'length', 'reject'] as const) {
       if (scenario === 'recovery') {
         const [owners] = await pool.query<Array<{ user_id: number }>>('SELECT user_id FROM chat_sessions WHERE session_id = ?', [sessionId]);
         const service = new AgentRunService();
-        const { run } = await service.claim(owners[0].user_id, sessionId, randomUUID(), randomUUID());
+        const { port } = JSON.parse(readFileSync(process.env.RUNTIME_CLAIM_COORDINATE!, 'utf8'));
+        expect(Number.isInteger(port) && port > 0 && port <= 65535).toBe(true);
+        // Node HTTP, outside the browser trace; token stays in worker memory.
+        const claimed = await fetch(`http://127.0.0.1:${port}/claim`, { method: 'POST',
+          headers: { authorization: `Bearer ${accessToken}`, 'content-type': 'application/json' },
+          body: JSON.stringify({ sessionId, messageId: randomUUID(), requestKey: randomUUID() }) });
+        expect(claimed.status).toBe(200);
+        const { runId } = await claimed.json();
+        const run = (await service.getForActor(runId, owners[0].user_id, sessionId))!;
+        expect(run).toBeTruthy();
         const failingStore = new AgentRunService(() => ({ query: pool.query.bind(pool), getConnection: async () => { throw new Error('controlled storage unavailable'); } }) as any);
         await expect(failingStore.complete(run, { type: 'complete', finalContent: '重连恢复的唯一最终答案。' })).rejects.toThrow('controlled storage unavailable');
         const pending = await service.getForActor(run.id, run.actorId, sessionId);

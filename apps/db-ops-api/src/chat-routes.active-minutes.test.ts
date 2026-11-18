@@ -4,7 +4,7 @@ import type { ActorContext } from './auth/actor-context.js';
 import { registerChatRoutes, type ChatRouteDependencies } from './chat-routes.js';
 
 const actor: ActorContext = {
-  userId: 7, username: 'alice', roles: [], permissions: [],
+  userId: 7, username: 'alice', roles: [], permissions: ['chat:view'],
   sessionVersion: 1, instanceScopes: {}, requestId: 'active-minutes',
 };
 const now = Date.parse('2026-11-11T00:00:00Z');
@@ -19,6 +19,7 @@ async function setup() {
       { session_id: 'undated', last_message_at: null },
     ] as Awaited<ReturnType<ChatRouteDependencies['service']['getSessions']>>);
   const deps: ChatRouteDependencies = {
+    authorizeChat: async a => a,
     verifyToken: async (request) => { Object.assign(request, { user: actor }); },
     service: {
       getSessions, getMessages: vi.fn(), getMessagePage: vi.fn(),
@@ -80,7 +81,8 @@ describe('GET /api/sessions activeMinutes (#503)', () => {
     const app = Fastify();
     const getSessions = vi.fn();
     await registerChatRoutes(app, {
-      verifyToken: async (_request, reply) => { await reply.code(401).send({ error: 'Unauthorized' }); },
+      authorizeChat: async a => a,
+    verifyToken: async (_request, reply) => { await reply.code(401).send({ error: 'Unauthorized' }); },
       service: { getSessions } as unknown as ChatRouteDependencies['service'],
       handleChatSend: vi.fn(),
     });

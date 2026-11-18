@@ -1,3 +1,7 @@
+import { ChatSessionNotFoundError } from '../chat-database-service.js';
+import { ChatExecution, currentChatExecution, withChatExecution, withoutChatExecution, guardedChatProvider, guardedChatTools } from '../auth/chat-execution.js';
+import { assertChatCredential, assertChatPermission, ChatForbiddenError } from '../auth/chat-authorization.js';
+import { carryChatCredential, chatCredential } from '../auth/chat-credential.js';
 import { boundedToolValue, buildToolPreview } from '@slide/agent-core/tool-stream';
 import { projectionDocuments, reduceMessageProjection, type ProjectionOperation } from '@slide/agent-core/message-projection';
 import { PARTS_STREAM_CAPABILITY, type DisplayCursor } from '@slide/agent-core/display-stream';
@@ -60,6 +64,7 @@ import { chatDatabaseService } from '../chat-database-service.js';
 import { SubagentManager } from '../agents/subagent-manager.js';
 import { setSubagentManager } from '../agents/subagent-spawn-tool.js';
 import {
+  ActorAuthenticationError,
   actorContextService,
   type ActorContext,
   type ActorContextService,
@@ -239,10 +244,10 @@ export class DirectAdapter implements IAgentEngine {
     this.lifecycle.signal.throwIfAborted();
     if (!this.investigationExecutor || !this.toolsForActor) throw new Error('INVESTIGATION_EXECUTOR_UNAVAILABLE');
     const context = { ...command.context, signal: AbortSignal.any([command.context.signal, this.lifecycle.signal]) };
-    return this.observeOperation(this.investigationExecutor.execute({ ...command, context }, {
+    return withoutChatExecution(() => this.observeOperation(this.investigationExecutor!.execute({ ...command, context }, {
       providerForPurpose: purpose => this.providerForPurpose ? this.providerForPurpose(purpose) : Promise.resolve(this.provider),
       toolsForActor: actor => this.toolsForActor!(actor),
-    }));
+    })));
   }
 
   private runner: AgentRunner;
@@ -282,6 +287,13 @@ export class DirectAdapter implements IAgentEngine {
   private sessionSubscribers = new Map<string, Set<WebSocket>>();
 
   private sendSocketEvent(ws: WebSocket, payload: Record<string, unknown>): boolean {
+    if (payload.type === 'run.snapshot') {
+      const { chatAuthority: _internal, ...run } = payload.run as AgentRun;
+      // MF-I1: staged SQL is reconciliation data, never a display result,
+      // including legacy peers and every recovery-failure fallback.
+      payload = { ...payload, run: (run.result as { completionPending?: boolean } | undefined)?.completionPending
+        ? { ...run, result: { completionPending: true } } : run };
+    }
     if (this.partsPeers.has(ws) && payload.type === 'run.snapshot') {
       const run = payload.run as AgentRun;
       // Durable status is separate from the bounded display snapshot. Large
@@ -294,7 +306,7 @@ export class DirectAdapter implements IAgentEngine {
   }
 
   constructor(opts: DirectAdapterOptions) {
-    this.runner = new AgentRunner(opts.llmProvider);
+    this.runner = new AgentRunner(guardedChatProvider(opts.llmProvider));
     this.displayStreams = new DisplayStreamAuthority(opts.displayStreamLimits);
     this.investigationWatches = opts.investigationWatchService ?? new InvestigationWatchService();
     this.streamingLimits = opts.streamingLimits;
@@ -313,7 +325,7 @@ export class DirectAdapter implements IAgentEngine {
     const workspace = opts.workspace || process.cwd();
     this.memoryStore = opts.memoryStore || new MemoryStore(workspace);
     this.businessMemory = new BusinessMemoryService(workspace, opts.memoryWorkspaceId ?? process.env.SLIDE_MEMORY_WORKSPACE_ID,
-      async () => this.providerForPurpose ? this.providerForPurpose('memory') : this.provider, opts.memoryPipeline, opts.memoryRetrievalLimits);
+      async () => guardedChatProvider(this.providerForPurpose ? await this.providerForPurpose('memory') : this.provider), opts.memoryPipeline, opts.memoryRetrievalLimits);
     this.skillsLoader = opts.skillsLoader || new SkillsLoader(workspace);
     this.sessionManager = opts.sessionManager || new SessionManager(workspace);
     this.contextBuilder = opts.contextBuilder || new ContextBuilder(workspace, {
@@ -325,7 +337,13 @@ export class DirectAdapter implements IAgentEngine {
 
   /** Post-commit maintenance cannot change chat's durable terminal outcome. */
   async extractCompletedMemory(actor: ActorContext, sessionId: string, runId: string, signal?: AbortSignal): Promise<void> {
-    try { await this.businessMemory.completed(actor, sessionId, runId, signal); }
+    try {
+      assertChatCredential(actor);
+      await chatDatabaseService.authorizeSession(actor, sessionId, 'append');
+      const scope = new ChatExecution(actor, sessionId, runId, () => chatDatabaseService.authorizeSession(actor, sessionId, 'append'), signal);
+      try { await withChatExecution(scope, () => this.businessMemory.completed(actor, sessionId, runId, scope.controller.signal)); }
+      finally { scope.release(); }
+    }
     catch { platformLogs.record({ component: 'agent', eventType: 'memory.extraction_failed', status: 'failed', correlationId: runId }); }
   }
 
@@ -401,6 +419,7 @@ export class DirectAdapter implements IAgentEngine {
       type ConnectionAuthState = 'unauthenticated' | 'authenticating' | 'authenticated' | 'closed';
       let authState: ConnectionAuthState = 'unauthenticated';
       let authGeneration = 0;
+      let credentialTimer: ReturnType<typeof setTimeout> | undefined;
       let connectionActor: ActorContext | undefined;
       let connectionCeiling: ActorContext | undefined;
       let investigationIntent = 0;
@@ -424,7 +443,12 @@ export class DirectAdapter implements IAgentEngine {
           && this.sendSocketEvent(ws, event),
         close: (reason: InvestigationWatchFailure) => {
           this.investigationWatches.unwatch(investigationPeer);
-          if (reason === 'authority_revoked') ws.close(4001, 'Investigation authority revoked');
+          if (reason === 'authority_revoked') {
+            // Resource revocation is not proof of invalid login credentials.
+            // All investigation watches were removed above; clear their views
+            // through the existing error contract without expiring ordinary chat.
+            investigationPeer.send({ type: 'investigation.error', code: 'INVESTIGATION_NOT_FOUND' });
+          }
           else {
             console.error('[DirectAdapter] Investigation observation unavailable');
             ws.close(1011, 'Investigation observation unavailable');
@@ -438,23 +462,29 @@ export class DirectAdapter implements IAgentEngine {
         }
         this.sessionSubscribers.get(sessionKey)!.add(ws);
         if (this.partsPeers.has(ws)) this.displayStreams.watch(ws, sessionKey, subscriptionRequests.get(sessionKey) ?? subscriptionId ?? randomUUID(),
-          event => this.socketWriter.send(ws, JSON.stringify(event)));
+          event => this.socketWriter.send(ws, JSON.stringify({ ...event, sessionKey })));
       };
 
       const sendToSession = (sessionKey: string, payload: Record<string, unknown>) => {
         const projection = payload.projection as import('@slide/agent-core/message-projection').ProjectionFrame | undefined;
         if (projection) this.displayStreams.publish(sessionKey, projection);
-        const serialized = JSON.stringify(payload);
+        payload = { ...payload, sessionKey };
+        const authorization: Promise<void>[] = [];
         for (const subscriber of this.sessionSubscribers.get(sessionKey) ?? []) {
           if (subscriber.readyState !== WebSocket.OPEN || projection && this.partsPeers.has(subscriber)) continue;
           try {
-            if (this.partsPeers.has(subscriber)) this.sendSocketEvent(subscriber, payload);
-            else this.socketWriter.send(subscriber, serialized);
+            const accepted = this.sendSocketEvent(subscriber, payload);
+            if (accepted && payload.type === 'text_delta' && !this.partsPeers.has(subscriber)) {
+              const pending = this.socketWriter.authorizationTail(subscriber);
+              if (pending) authorization.push(pending);
+            }
           } catch { /* close logging captures the transport failure */ }
         }
+        if (authorization.length) return Promise.all(authorization);
       };
 
       const clearAuthentication = () => {
+        clearTimeout(credentialTimer);
         this.investigationWatches.unwatch(investigationPeer);
         authGeneration += 1;
         authState = 'closed';
@@ -469,6 +499,43 @@ export class DirectAdapter implements IAgentEngine {
         clearAuthentication();
         if (ws.readyState === WebSocket.OPEN) ws.close(code, reason);
       };
+
+      this.socketWriter.setGuard(ws, async payload => {
+        const type = String(payload.type ?? '');
+        if (type === 'memory.result' && payload.operation === 'memory.stop') {
+          if (!connectionActor) return false;
+          assertChatCredential(connectionActor);
+          await this.actorContexts.revalidateActor(connectionActor);
+          return true;
+        }
+        if (['auth_ok', 'protocol.error'].includes(type) || type.startsWith('investigation.')
+          || type === 'error' && !payload.finalContent && !payload.messageParts && !payload.projection) return true;
+        if (!connectionActor || authState !== 'authenticated') return false;
+        const key = typeof payload.sessionKey === 'string' ? payload.sessionKey
+          : (payload.run as { sessionId?: string } | undefined)?.sessionId;
+        try {
+          assertChatCredential(connectionActor);
+          if (key) await chatDatabaseService.authorizeSession(connectionActor, key, 'read');
+          if (!connectionActor || authState !== 'authenticated') return false;
+          assertChatPermission(await this.actorContexts.revalidateActor(connectionActor));
+          assertChatCredential(connectionActor);
+          return ws.readyState === WebSocket.OPEN && authState === 'authenticated';
+        } catch (error) {
+          if (error instanceof ChatSessionNotFoundError && key) {
+            this.displayStreams.unwatch(ws, key);
+            this.sessionSubscribers.get(key)?.delete(ws);
+          } else {
+            this.displayStreams.unwatch(ws);
+            for (const subscribers of this.sessionSubscribers.values()) subscribers.delete(ws);
+          }
+          if (error instanceof ActorAuthenticationError) closeAfterAuthFailure(4001, 'Unauthorized');
+          else if (error instanceof ChatForbiddenError || error instanceof ChatSessionNotFoundError) this.sendSocketEvent(ws, {
+            type: 'error', code: error instanceof ChatForbiddenError ? 'CHAT_FORBIDDEN' : 'CHAT_SESSION_NOT_FOUND',
+            error: error instanceof ChatForbiddenError ? '权限不足' : 'Session not found', sessionKey: key });
+          else closeAfterAuthFailure(1013, 'Service unavailable');
+          return false;
+        }
+      });
 
       // Heartbeat and authorization revalidation share the existing 30s cycle.
       const heartbeatTimer = setInterval(() => {
@@ -492,7 +559,7 @@ export class DirectAdapter implements IAgentEngine {
             if (ws.readyState === WebSocket.OPEN
               && authState === 'authenticated'
               && authGeneration === revalidationGeneration) {
-              connectionActor = nextActor;
+              connectionActor = carryChatCredential(actorAtStart, nextActor);
               (ws as any)._actorContext = nextActor;
             }
           }).catch((error) => {
@@ -510,6 +577,31 @@ export class DirectAdapter implements IAgentEngine {
         (ws as any)._isAlive = false;
         ws.ping();
       }, this.heartbeatIntervalMs);
+
+      let observationChecking = false;
+      const observationTimer = setInterval(() => {
+        if (observationChecking || !connectionActor || authState !== 'authenticated') return;
+        observationChecking = true;
+        void (async () => {
+          assertChatCredential(connectionActor!);
+          const live = await this.actorContexts.revalidateActor(connectionActor!);
+          assertChatPermission(live);
+          for (const [key, subscribers] of this.sessionSubscribers) {
+            if (!subscribers.has(ws)) continue;
+            try { await chatDatabaseService.authorizeSession(connectionActor!, key, 'read'); }
+            catch (error) {
+              if (!(error instanceof ChatSessionNotFoundError)) throw error;
+              subscribers.delete(ws); this.displayStreams.unwatch(ws, key);
+              this.sendSocketEvent(ws, { type: 'error', code: 'CHAT_SESSION_NOT_FOUND', error: 'Session not found', sessionKey: key });
+            }
+          }
+        })().catch(error => {
+          this.displayStreams.unwatch(ws);
+          for (const subscribers of this.sessionSubscribers.values()) subscribers.delete(ws);
+          if (error instanceof ChatForbiddenError) this.sendSocketEvent(ws, { type: 'error', code: 'CHAT_FORBIDDEN', error: '权限不足' });
+          else closeAfterAuthFailure(error instanceof PlatformUnavailableError ? 1013 : 4001, 'Unauthorized');
+        }).finally(() => { observationChecking = false; });
+      }, 5000);
 
       ws.on('pong', () => {
         (ws as any)._isAlive = true;
@@ -529,7 +621,9 @@ export class DirectAdapter implements IAgentEngine {
           pendingMessages: [...pendingMessages].map(([messageId, idempotencyKey]) => ({ messageId, idempotencyKey })),
         }));
         clearTimeout(authTimer);
+        clearTimeout(credentialTimer);
         clearInterval(heartbeatTimer);
+        clearInterval(observationTimer);
         clearAuthentication();
         this.displayStreams.unwatch(ws);
         // Unsubscribe from all session broadcasts
@@ -594,6 +688,9 @@ export class DirectAdapter implements IAgentEngine {
             if (ws.readyState === WebSocket.OPEN
               && authState === 'authenticating'
               && authGeneration === authenticationGeneration) {
+              const credential = chatCredential(authenticatedActor);
+              if (!credential) throw new ActorAuthenticationError();
+              credentialTimer = setTimeout(() => closeAfterAuthFailure(4001, 'Unauthorized'), Math.max(0, credential.expiresAt - Date.now()));
               connectionActor = authenticatedActor;
               connectionCeiling = authenticatedActor;
               authenticatedUserId = authenticatedActor.userId;
@@ -623,7 +720,7 @@ export class DirectAdapter implements IAgentEngine {
         // Receipt order wins over asynchronous authorization/admission completion.
         if (this.partsPeers.has(ws) && ['chat.watch', 'chat.send'].includes(msg.type) && typeof msg.sessionKey === 'string'
           && typeof msg.subscriptionId === 'string' && msg.subscriptionId.length > 0 && msg.subscriptionId.length <= 512) {
-          subscriptionRequests.set(msg.sessionKey, msg.subscriptionId);
+          subscriptionRequests.set(chatSessionId(msg.sessionKey), msg.subscriptionId);
           while (subscriptionRequests.size > this.displayStreams.limits.maxSubscriptionsPerPeer) subscriptionRequests.delete(subscriptionRequests.keys().next().value!);
         }
 
@@ -650,6 +747,7 @@ export class DirectAdapter implements IAgentEngine {
           }
         }
         try {
+          assertChatCredential(connectionActor);
           const revalidatedActor = await this.actorContexts.revalidateActor(
             connectionActor,
             randomUUID(),
@@ -658,13 +756,24 @@ export class DirectAdapter implements IAgentEngine {
           // SQL revalidation is in flight. Never restore it or admit new work.
           if (ws.readyState !== WebSocket.OPEN || authState !== 'authenticated'
             || authGeneration !== commandGeneration) return;
-          connectionActor = revalidatedActor;
+          connectionActor = carryChatCredential(connectionActor, revalidatedActor);
           (ws as any)._actorContext = connectionActor;
         } catch (error) {
           closeAfterAuthFailure(error instanceof PlatformUnavailableError ? 1013 : 4001, error instanceof PlatformUnavailableError ? 'Service unavailable' : 'Unauthorized');
           return;
         }
 
+        if ((String(msg.type).startsWith('chat.') || String(msg.type).startsWith('memory.'))
+          && !['chat.cancel', 'chat.unwatch', 'memory.stop'].includes(String(msg.type))) {
+          try { assertChatPermission(connectionActor); }
+          catch {
+            this.displayStreams.unwatch(ws);
+            for (const subscribers of this.sessionSubscribers.values()) subscribers.delete(ws);
+            this.sendSocketEvent(ws, { type: 'error', code: 'CHAT_FORBIDDEN', error: '权限不足', messageId: msg.messageId,
+              sessionKey: typeof msg.sessionKey === 'string' ? chatSessionId(msg.sessionKey) : undefined, runId: msg.runId });
+            return;
+          }
+        }
         switch (msg.type) {
           case 'investigation.watch': {
             try {
@@ -750,6 +859,7 @@ export class DirectAdapter implements IAgentEngine {
 
             const idempotencyKey = msg.idempotencyKey as string | undefined;
             const messageId = msg.messageId as string | undefined;
+            let replayRunId: string | undefined;
             if (idempotencyKey && messageId) {
               pendingMessages.set(messageId, idempotencyKey);
               try {
@@ -758,19 +868,23 @@ export class DirectAdapter implements IAgentEngine {
                   idempotencyKey,
                 );
                 if (existingRun) {
+                  replayRunId = existingRun.id;
                   if (existingRun.messageId !== messageId
                     || (rawSessionKey && existingRun.sessionId !== sessionKey)) {
                     this.sendSocketEvent(ws, { type: 'protocol.error', code: 'IDEMPOTENCY_CONFLICT' });
                     return;
                   }
+                  sessionKey = existingRun.sessionId;
                   await chatDatabaseService.authorizeSession(messageActor, existingRun.sessionId, 'append');
                   subscribeToSession(existingRun.sessionId);
                   try {
                     existingRun = await agentRunService.recoverCompletion(existingRun);
-                  } catch {
+                  } catch (error) {
+                    if (error instanceof PlatformUnavailableError) { closeAfterAuthFailure(1013, 'Service unavailable'); return; }
+                    if (error instanceof ActorAuthenticationError) { closeAfterAuthFailure(4001, 'Unauthorized'); return; }
                     this.sendSocketEvent(ws, { type: 'run.snapshot', run: existingRun, messageId, sessionKey: existingRun.sessionId });
                     this.sendSocketEvent(ws, { type: 'error', code: 'COMPLETION_STORAGE_FAILED', retryable: true,
-                      error: '回答保存未确认，请重试或重连恢复。', runId: existingRun.id, sessionKey: existingRun.sessionId });
+                      error: '回答保存未确认，请重试或重连恢复。', runId: existingRun.id, messageId, sessionKey: existingRun.sessionId });
                     return;
                   }
                   this.sendSocketEvent(ws, {
@@ -783,8 +897,10 @@ export class DirectAdapter implements IAgentEngine {
                   return;
                 }
               } catch (err) {
+                if (err instanceof PlatformUnavailableError) { closeAfterAuthFailure(1013, 'Service unavailable'); return; }
+                if (err instanceof ActorAuthenticationError) { closeAfterAuthFailure(4001, 'Unauthorized'); return; }
                 const errorMsg = err instanceof Error ? err.message : String(err);
-                this.sendSocketEvent(ws, { type: 'error', error: errorMsg });
+                this.sendSocketEvent(ws, { type: 'error', error: errorMsg, sessionKey, messageId, runId: replayRunId, ...(err instanceof ChatForbiddenError ? { code: 'CHAT_FORBIDDEN' } : err instanceof ChatSessionNotFoundError ? { code: 'CHAT_SESSION_NOT_FOUND' } : {}) });
                 return;
               }
             }
@@ -810,7 +926,7 @@ export class DirectAdapter implements IAgentEngine {
               }
 
               persistentRun = idempotencyKey && messageId
-                ? await agentRunService.claim(messageActor.userId, sessionKey, messageId, idempotencyKey)
+                ? await agentRunService.claim(messageActor.userId, sessionKey, messageId, idempotencyKey, messageActor)
                 : undefined;
               if (persistentRun && !persistentRun.created) {
                 if (persistentRun.run.messageId !== messageId) {
@@ -872,7 +988,7 @@ export class DirectAdapter implements IAgentEngine {
                   failureEvent = event;
                   return;
                 }
-                sendToSession(sessionKey, {
+                await sendToSession(sessionKey, {
                   ...event,
                   ...(persistentRun ? { runId: persistentRun.run.id, sessionKey } : {}),
                 });
@@ -920,11 +1036,13 @@ export class DirectAdapter implements IAgentEngine {
               if (persistentRun?.created) {
                 try {
                   if (completionAttempted) await agentRunService.failUnstagedCompletion(persistentRun.run.id);
-                  else await agentRunService.finish(persistentRun.run.id, 'failed', undefined, { message: errorMsg });
+                  else await agentRunService.finish(persistentRun.run.id, err instanceof ActorAuthenticationError || err instanceof ChatForbiddenError ? 'cancelled' : 'failed', undefined, { message: errorMsg });
                   this.activeRuns.delete(persistentRun.run.id);
                 } catch { /* preserve the original request failure */ }
               }
-              const failure = { type: 'error', error: completionAttempted ? '回答保存未确认，请重试或重连恢复。' : errorMsg,
+              if (err instanceof PlatformUnavailableError) { closeAfterAuthFailure(1013, 'Service unavailable'); return; }
+              if (err instanceof ActorAuthenticationError) { closeAfterAuthFailure(4001, 'Unauthorized'); return; }
+              const failure = { type: 'error', sessionKey, messageId, ...(err instanceof ChatForbiddenError ? { code: 'CHAT_FORBIDDEN' } : err instanceof ChatSessionNotFoundError ? { code: 'CHAT_SESSION_NOT_FOUND' } : {}), error: completionAttempted ? '回答保存未确认，请重试或重连恢复。' : errorMsg,
                 ...(completionAttempted ? { code: 'COMPLETION_STORAGE_FAILED', retryable: true } : {}),
                 ...(persistentRun ? { runId: persistentRun.run.id, sessionKey } : {}),
               };
@@ -963,16 +1081,27 @@ export class DirectAdapter implements IAgentEngine {
           case 'memory.stop':
           case 'memory.retry': {
             try {
-              const result = await this.businessMemory.request(connectionActor, String(msg.sessionKey ?? ''), msg.type!, msg);
-              if (ws.readyState === WebSocket.OPEN) this.sendSocketEvent(ws, { type: 'memory.result', operation: msg.type, messageId: msg.messageId, result });
-            } catch {
-              if (ws.readyState === WebSocket.OPEN) this.sendSocketEvent(ws, { type: 'error', messageId: msg.messageId, error: 'Memory request failed' });
+              const memorySession = String(msg.sessionKey ?? '');
+              let result: unknown;
+              if (msg.type === 'memory.stop') result = await this.businessMemory.request(connectionActor, memorySession, msg.type, msg);
+              else {
+                const memoryActor = connectionActor;
+                const scope = new ChatExecution(memoryActor, memorySession, randomUUID(),
+                  () => chatDatabaseService.authorizeSession(memoryActor, memorySession, 'append'));
+                try { result = await withChatExecution(scope, () => this.businessMemory.request(memoryActor, memorySession, msg.type!, msg)); }
+                finally { scope.release(); }
+              }
+              if (ws.readyState === WebSocket.OPEN) this.sendSocketEvent(ws, { type: 'memory.result', operation: msg.type, messageId: msg.messageId, sessionKey: String(msg.sessionKey ?? ''), result });
+            } catch (error) {
+              if (error instanceof PlatformUnavailableError) { closeAfterAuthFailure(1013, 'Service unavailable'); break; }
+              if (error instanceof ActorAuthenticationError) { closeAfterAuthFailure(4001, 'Unauthorized'); break; }
+              if (ws.readyState === WebSocket.OPEN) this.sendSocketEvent(ws, { type: 'error', messageId: msg.messageId, sessionKey: chatSessionId(String(msg.sessionKey ?? '')), error: 'Memory request failed' });
             }
             break;
           }
 
           case 'chat.history': {
-            const historySessionKey = (msg.sessionKey as string) || '';
+            const historySessionKey = chatSessionId(typeof msg.sessionKey === 'string' ? msg.sessionKey.trim() : '');
             try {
               const messages = await chatDatabaseService.getMessages(connectionActor, historySessionKey, 200);
               // Map DB records to frontend-compatible message format
@@ -984,25 +1113,28 @@ export class DirectAdapter implements IAgentEngine {
                 messageParts: m.messageParts,
                 createdAt: m.created_at instanceof Date ? m.created_at.toISOString() : m.created_at,
               }));
-              this.sendSocketEvent(ws, { type: 'complete', messages: mapped });
+              this.sendSocketEvent(ws, { type: 'complete', messages: mapped, sessionKey: historySessionKey });
             } catch (dbErr) {
+              if (dbErr instanceof PlatformUnavailableError) { closeAfterAuthFailure(1013, 'Service unavailable'); break; }
+              if (dbErr instanceof ActorAuthenticationError) { closeAfterAuthFailure(4001, 'Unauthorized'); break; }
               console.error('[DirectAdapter] chat.history failed:', dbErr instanceof Error ? dbErr.message : String(dbErr));
-              this.sendSocketEvent(ws, { type: 'error', error: 'Failed to load chat history' });
+              this.sendSocketEvent(ws, { type: 'error', sessionKey: historySessionKey, messageId: msg.messageId, runId: msg.runId, ...(dbErr instanceof ChatForbiddenError ? { code: 'CHAT_FORBIDDEN' } : dbErr instanceof ChatSessionNotFoundError ? { code: 'CHAT_SESSION_NOT_FOUND' } : {}), error: dbErr instanceof ChatForbiddenError ? '权限不足' : dbErr instanceof ChatSessionNotFoundError ? 'Session not found' : 'History request failed' });
             }
             break;
           }
 
           case 'chat.unwatch': {
             if (typeof msg.sessionKey === 'string') {
-              this.sessionSubscribers.get(msg.sessionKey)?.delete(ws);
-              this.displayStreams.unwatch(ws, msg.sessionKey);
-              subscriptionRequests.delete(msg.sessionKey);
+              const key = chatSessionId(msg.sessionKey);
+              this.sessionSubscribers.get(key)?.delete(ws);
+              this.displayStreams.unwatch(ws, key);
+              subscriptionRequests.delete(key);
             }
             break;
           }
           case 'chat.watch': {
             // Subscribe WS to session for invoke() completion broadcasts
-            const watchKey = (msg.sessionKey as string) || '';
+            const watchKey = chatSessionId(typeof msg.sessionKey === 'string' ? msg.sessionKey.trim() : '');
             if (watchKey) {
               try {
                 await chatDatabaseService.authorizeSession(connectionActor, watchKey, 'watch');
@@ -1011,11 +1143,11 @@ export class DirectAdapter implements IAgentEngine {
                 this.sessionSubscribers.get(watchKey)!.add(ws);
                 if (this.partsPeers.has(ws)) {
                   const ok = this.displayStreams.watch(ws, watchKey, typeof msg.subscriptionId === 'string' ? msg.subscriptionId : '',
-                    event => this.socketWriter.send(ws, JSON.stringify(event)), msg.cursor as DisplayCursor | undefined);
+                    event => this.socketWriter.send(ws, JSON.stringify({ ...event, sessionKey: watchKey })), msg.cursor as DisplayCursor | undefined);
                   if (!ok) this.sendSocketEvent(ws, { type: 'protocol.error', code: 'STREAM_SUBSCRIPTION_LIMIT' });
                 } else {
                   const stream = this.displayStreams.legacySnapshot(watchKey);
-                  if (stream) this.socketWriter.send(ws, JSON.stringify(stream));
+                  if (stream) this.socketWriter.send(ws, JSON.stringify({ ...stream, sessionKey: watchKey }));
                 }
                 // Refresh/reconnect need not retain the original request key.
                 for (const pending of await agentRunService.pendingCompletions(connectionActor.userId, watchKey)) {
@@ -1026,14 +1158,17 @@ export class DirectAdapter implements IAgentEngine {
                       sendToSession(watchKey, { ...(recovered.result as { event: ChatEvent }).event, runId: recovered.id, sessionKey: watchKey });
                       await this.extractCompletedMemory(connectionActor, watchKey, recovered.id);
                     }
-                  } catch {
+                  } catch (error) {
+                    if (error instanceof PlatformUnavailableError || error instanceof ActorAuthenticationError) throw error;
                     if (ws.readyState === WebSocket.OPEN) this.sendSocketEvent(ws, { type: 'run.snapshot', run: pending, messageId: pending.messageId, sessionKey: watchKey });
                     sendToSession(watchKey, { type: 'error', code: 'COMPLETION_STORAGE_FAILED', retryable: true,
-                      error: '回答保存未确认，请重试或重连恢复。', runId: pending.id, sessionKey: watchKey });
+                      error: '回答保存未确认，请重试或重连恢复。', runId: pending.id, messageId: pending.messageId, sessionKey: watchKey });
                   }
                 }
-              } catch {
-                this.sendSocketEvent(ws, { type: 'error', error: 'Chat session not found' });
+              } catch (error) {
+                if (error instanceof PlatformUnavailableError) { closeAfterAuthFailure(1013, 'Service unavailable'); break; }
+                if (error instanceof ActorAuthenticationError) { closeAfterAuthFailure(4001, 'Unauthorized'); break; }
+                this.sendSocketEvent(ws, { type: 'error', sessionKey: watchKey, messageId: msg.messageId, runId: msg.runId, ...(error instanceof ChatForbiddenError ? { code: 'CHAT_FORBIDDEN' } : error instanceof ChatSessionNotFoundError ? { code: 'CHAT_SESSION_NOT_FOUND' } : {}), error: error instanceof ChatForbiddenError ? '权限不足' : error instanceof ChatSessionNotFoundError ? 'Session not found' : 'Watch request failed' });
               }
             }
             break;
@@ -1116,10 +1251,20 @@ export class DirectAdapter implements IAgentEngine {
   ): Promise<ChatResult> {
     this.lifecycle.signal.throwIfAborted();
     const combined = signal ? AbortSignal.any([signal, this.lifecycle.signal]) : this.lifecycle.signal;
-    return this.observeOperation(this.withSessionLock(sessionKey, () => {
+    const scope = _actor ? new ChatExecution(_actor, sessionKey, runtimeRunId ?? randomUUID(),
+      () => chatDatabaseService.authorizeSession(_actor, sessionKey, 'append'), combined) : undefined;
+    scope?.controller.signal.addEventListener('abort', () => {
+      const active = runtimeRunId && this.activeRuns.get(runtimeRunId);
+      if (active) { active.injections.length = 0; active.acceptingSteers = false; active.controller.abort(scope.controller.signal.reason); }
+    }, { once: true });
+    const work = () => this.observeOperation(this.withSessionLock(sessionKey, async () => {
       combined.throwIfAborted();
-      return this.runChat(sessionKey, message, onEvent, _actor, combined, idempotencyKey, runtimeRunId, persistedUserId);
+      await scope?.check();
+      return this.runChat(sessionKey, message, onEvent, _actor,
+        scope ? AbortSignal.any([combined, scope.controller.signal]) : combined, idempotencyKey, runtimeRunId, persistedUserId);
     }));
+    try { return await (scope ? withChatExecution(scope, work) : work()); }
+    finally { scope?.release(); }
   }
 
   private async runChat(
@@ -1167,6 +1312,12 @@ export class DirectAdapter implements IAgentEngine {
       && resumeCheckpoint.runtime_request_key !== requestKey && !(Array.isArray(pending) && pending.length)) {
       delete session.metadata.runtime_checkpoint;
       resumeCheckpoint = undefined;
+    }
+    if (_actor && resumeCheckpoint) {
+      const binding = resumeCheckpoint.chat_authority_v1 as { credentialRef?: string; expiresAt?: number; sessionVersion?: number } | undefined;
+      const credential = chatCredential(_actor);
+      if (!binding || binding.credentialRef !== credential?.id || binding.expiresAt !== credential?.expiresAt
+        || binding.sessionVersion !== _actor.sessionVersion) throw new Error('CHAT_CHECKPOINT_RECONCILIATION_REQUIRED');
     }
     // The business history already contains every durably recorded tool fact.
     if (resumeCheckpoint && !_actor) this.runner._restoreRuntimeCheckpoint(session as any);
@@ -1218,6 +1369,8 @@ export class DirectAdapter implements IAgentEngine {
       if (streamState) streamState.sequence = Math.max(streamState.sequence, sequence);
       const checkpoint: Record<string, unknown> = { ...payload, canonical_run_id: runId, canonical_turn_id: userFactId,
         runtime_request_key: requestKey,
+        ...(_actor ? { chat_authority_v1: { credentialRef: chatCredential(_actor)?.id, expiresAt: chatCredential(_actor)?.expiresAt,
+          sessionVersion: _actor.sessionVersion, runId } } : {}),
         runtime_policy: { entry: policy.entry, source: policy.source, longChat: policy.longChat, maxIterations: policy.maxIterations, runTimeoutMs: policy.runTimeoutMs } };
       // Final response_ready is a candidate, retained in checkpoint until durable commit.
       const facts = checkpointFacts(checkpoint, runId).filter(m => m.role === 'tool' || m.tool_calls?.length)
@@ -1278,7 +1431,14 @@ export class DirectAdapter implements IAgentEngine {
     this.displayStreams.start(sessionKey, runId, userFactId, () => projection.state);
     const consume = orderedChatConsumer(onEvent, this.streamingLimits);
     let streamClosed = false;
-    const deliver: ChatEventConsumer = (event, writerSignal) => {
+    const deliver: ChatEventConsumer = async (event, writerSignal) => {
+      try { await currentChatExecution()?.check(); }
+      catch (error) {
+        // Runtime timeout/cancel still needs its terminal receipt. Authorization
+        // failures suppress content; the caller persists only a safe run state.
+        if (!['complete', 'error', 'cancelled'].includes(event.type)) throw error;
+        if (error instanceof ActorAuthenticationError || error instanceof ChatForbiddenError || error instanceof PlatformUnavailableError) return;
+      }
       if (streamClosed && !['complete', 'error', 'cancelled'].includes(event.type)) return;
       const ordinal = ++sequence;
       const frame = projection.observe(event, attempt, ordinal);
@@ -1297,11 +1457,11 @@ export class DirectAdapter implements IAgentEngine {
     let terminalEmitted = false;
     try {
       const provider = this.providerForPurpose ? await this.providerForPurpose('chat') : this.provider;
-      const runner = this.providerForPurpose ? new AgentRunner(provider) : this.runner;
+      const runner = this.providerForPurpose ? new AgentRunner(guardedChatProvider(provider)) : this.runner;
 
       const result = await runner.run({
         initialMessages: contextMessages as Message[],
-        tools: _actor && this.toolsForActor ? this.toolsForActor(_actor) : new ToolRegistry(),
+        tools: guardedChatTools(_actor && this.toolsForActor ? this.toolsForActor(_actor) : new ToolRegistry()),
         model: provider.getDefaultModel(),
         ...runtimeSpec(policy),
         streamingLimits: this.streamingLimits,
@@ -1460,10 +1620,10 @@ export class DirectAdapter implements IAgentEngine {
   ): Promise<InvokeResult> {
     this.lifecycle.signal.throwIfAborted();
     const signal = options?.signal ? AbortSignal.any([options.signal, this.lifecycle.signal]) : this.lifecycle.signal;
-    return this.observeOperation(this.withSessionLock(sessionKey, () => {
+    return withoutChatExecution(() => this.observeOperation(this.withSessionLock(sessionKey, () => {
       signal.throwIfAborted();
       return this.runInvoke(sessionKey, message, systemPrompt, { ...options, signal });
-    }));
+    })));
   }
 
   private async runInvoke(
@@ -1535,7 +1695,7 @@ export class DirectAdapter implements IAgentEngine {
       const selectedProvider = this.providerForPurpose ? await this.providerForPurpose(options?.purpose || 'default') : this.provider;
       const provider = options?.beforeProviderRequest
         ? guardedAnalysisProvider(selectedProvider, options.beforeProviderRequest, controller.signal, options.recordAnalysisExecution) : selectedProvider;
-      const runner = this.providerForPurpose || options?.beforeProviderRequest ? new AgentRunner(provider) : this.runner;
+      const runner = this.providerForPurpose || options?.beforeProviderRequest ? new AgentRunner(guardedChatProvider(provider)) : this.runner;
       const result = await runner.run({
         initialMessages: messages,
         // A generic background invoke receives no tools. Analysis runs receive
@@ -1578,8 +1738,8 @@ ${result.finalContent || ''}`
       const subs = this.sessionSubscribers.get(sessionKey);
       if (subs && subs.size > 0 && (finalContent || result.stopReason !== 'completed')) {
         const msg = JSON.stringify(result.stopReason === 'completed'
-          ? { type: 'complete', finalContent, stopReason: result.stopReason, resolution: result.resolution }
-          : { type: 'error', finalContent, stopReason: result.stopReason, resolution: result.resolution, error: result.error || result.resolution?.reasonCode || result.stopReason });
+          ? { type: 'complete', sessionKey, finalContent, stopReason: result.stopReason, resolution: result.resolution }
+          : { type: 'error', sessionKey, finalContent, stopReason: result.stopReason, resolution: result.resolution, error: result.error || result.resolution?.reasonCode || result.stopReason });
         for (const ws of subs) {
           try { this.socketWriter.send(ws, msg); } catch { /* client may have disconnected */ }
         }
@@ -1643,7 +1803,7 @@ ${result.finalContent || ''}`
    */
   setProvider(newProvider: import('@slide/agent-core').LLMProvider): void {
     this.provider = newProvider;
-    this.runner.setProvider(newProvider);
+    this.runner.setProvider(guardedChatProvider(newProvider));
     console.log('[DirectAdapter] Provider reloaded');
   }
 

@@ -10,6 +10,10 @@ export interface SocketWriteLimits {
  * it must reconnect and query authorized durable history/run.snapshot. */
 export class BoundedSocketWriter {
   private readonly pending = new WeakMap<WebSocket, { bytes: number; events: number; stopped: boolean }>();
+  private readonly guards = new WeakMap<WebSocket, (payload: Record<string, unknown>) => Promise<boolean>>();
+  private readonly queued = new WeakMap<WebSocket, { tail: Promise<void>; bytes: number; events: number }>();
+  setGuard(ws: WebSocket, guard: (payload: Record<string, unknown>) => Promise<boolean>): void { this.guards.set(ws, guard); }
+  authorizationTail(ws: WebSocket): Promise<void> | undefined { return this.queued.get(ws)?.tail; }
   readonly maxBytes: number;
   readonly maxEvents: number;
   readonly closeTimeoutMs: number;
@@ -24,6 +28,24 @@ export class BoundedSocketWriter {
   }
 
   send(ws: WebSocket, serialized: string): boolean {
+    const guard = this.guards.get(ws);
+    if (!guard) return this.sendRaw(ws, serialized);
+    if (ws.readyState !== WebSocket.OPEN) return false;
+    let queue = this.queued.get(ws);
+    if (!queue) { queue = { tail: Promise.resolve(), bytes: 0, events: 0 }; this.queued.set(ws, queue); }
+    const bytes = Buffer.byteLength(serialized, 'utf8') + 14;
+    if (queue.bytes + bytes > this.maxBytes || queue.events >= this.maxEvents) {
+      this.onFailure?.('WS_SLOW_CONSUMER'); ws.close(4009, 'Slow consumer'); return false;
+    }
+    queue.bytes += bytes; queue.events++;
+    const state = queue;
+    state.tail = state.tail.then(async () => {
+      if (ws.readyState === WebSocket.OPEN && await guard(JSON.parse(serialized))) this.sendRaw(ws, serialized);
+    }).catch(() => { ws.close(1013, 'Service unavailable'); }).finally(() => { state.bytes -= bytes; state.events--; });
+    return true;
+  }
+
+  private sendRaw(ws: WebSocket, serialized: string): boolean {
     if (ws.readyState !== WebSocket.OPEN) return false;
     let state = this.pending.get(ws);
     if (!state) {
