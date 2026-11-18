@@ -8,7 +8,6 @@ import { createServer as createHttpServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { resolve, join } from 'node:path';
 import { promisify } from 'node:util';
-import bcrypt from '../../apps/db-ops-api/node_modules/bcrypt/bcrypt.js';
 import mysql from '../../apps/db-ops-api/node_modules/mysql2/promise.js';
 import { WorkerLease } from '../../apps/db-ops-api/src/lifecycle/worker-lease.js';
 import { CronRunStore } from '../../apps/db-ops-api/src/cron/cron-run-store.js';
@@ -27,44 +26,10 @@ fakeProvider.listen(0, '127.0.0.1'); await once(fakeProvider, 'listening');
 const fakeProviderPort = (fakeProvider.address() as { port: number }).port;
 let pool: ReturnType<typeof mysql.createPool> | undefined;
 let lock: Awaited<ReturnType<typeof mysql.createConnection>> | undefined;
-const connectionIds = new Map<number, string>();
-let lastProbe: { status?: number; phase: string; bytes?: number } = { phase: 'not-started' };
-const connectionLabel = (id: number) => {
-  if (!connectionIds.has(id)) connectionIds.set(id, `connection-${connectionIds.size + 1}`);
-  return connectionIds.get(id);
-};
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 async function waitFor(check: () => Promise<boolean>, label: string, timeout = 30_000) {
   const deadline = Date.now() + timeout;
   while (Date.now() < deadline) { if (await check().catch(() => false)) return; await delay(250); }
-  try {
-    const [waiting] = await pool!.query<any[]>({ sql: "SELECT COUNT(*) AS n FROM information_schema.processlist WHERE STATE IN ('Waiting for table metadata lock','Waiting for table level lock')", timeout: 1000 });
-    const [leases] = await pool!.query<any[]>({ sql: "SELECT COUNT(*) AS n FROM worker_leases WHERE expires_at > NOW()", timeout: 1000 });
-    const [observer] = await pool!.query<any[]>({ sql: 'SELECT CONNECTION_ID() AS id', timeout: 1000 });
-    const [locks] = await pool!.query<any[]>({ sql: `SELECT t.PROCESSLIST_ID AS id, t.PROCESSLIST_HOST AS host, t.PROCESSLIST_USER AS principal,
-      m.OBJECT_NAME AS objectName, m.OBJECT_TYPE AS objectType, m.LOCK_STATUS AS lockStatus
-      FROM performance_schema.metadata_locks m JOIN performance_schema.threads t ON m.OWNER_THREAD_ID=t.THREAD_ID
-      WHERE m.OBJECT_SCHEMA='db_ops_ai_qualification_w07'`, timeout: 1000 });
-    const processes = await Promise.all(children.map(async (p, index) => {
-      const sockets = await exec('lsof', ['-nP', '-a', '-p', String(p.child.pid), '-iTCP'], { timeout: 1000 }).catch(() => ({ stdout: '' }));
-      const localPorts = new Set([...sockets.stdout.matchAll(/:(\d+)->/g)].map(m => Number(m[1])));
-      return { index, localPorts };
-    }));
-    const evidence = {
-      event: 'startup-timeout-evidence', label, waitingLocks: Number(waiting[0].n), activeLeases: Number(leases[0].n),
-      locks: locks.map(row => ({ connection: connectionLabel(Number(row.id)),
-        owner: Number(row.id) === lock?.threadId ? 'test-lock-holder' : Number(row.id) === Number(observer[0].id) ? 'observer'
-          : row.principal === 'w07_api_1' ? 'api-1' : row.principal === 'w07_api_2' ? 'api-2'
-          : processes.find(p => p.localPorts.has(Number(String(row.host).split(':').at(-1))))?.index === 0 ? 'api-1' : 'unattributed',
-        object: row.objectName === 'agent_security_policies' ? 'agent-security-policy' : 'other',
-        category: row.objectType === 'TABLE' ? 'table' : 'other', status: row.lockStatus === 'PENDING' ? 'pending' : 'granted' })),
-      processes: children.map((p, i) => ({ id: `api-${i + 1}`, exit: p.child.exitCode,
-        listening: p.output().includes('"phase":"listening"'), healthTransport: p.output().includes('"phase":"health-transport"') })),
-      lastProbe,
-    };
-    console.error(JSON.stringify(evidence));
-    await writeFile(join(directory, 'startup-evidence.json'), JSON.stringify(evidence));
-  } catch { console.error('STARTUP_EVIDENCE_UNAVAILABLE'); }
   throw new Error(`Qualification timeout: ${label}\n${children.map(p => p.output().slice(-6000)).join("\n")}`);
 }
 async function freePort(): Promise<number> {
@@ -74,14 +39,8 @@ async function freePort(): Promise<number> {
 }
 async function probe(port: number, path = '/api/health/ready') {
   // Allow the server's 5s readiness deadline to return its explicit 503.
-  lastProbe = { phase: 'transport' };
   const response = await fetch(`http://127.0.0.1:${port}${path}`, { signal: AbortSignal.timeout(7_000) });
-  lastProbe = { phase: 'response-json', status: response.status };
-  const text = await response.text();
-  lastProbe = { phase: 'json-decode', status: response.status, bytes: Buffer.byteLength(text) };
-  const body = JSON.parse(text);
-  lastProbe = { phase: 'complete', status: response.status };
-  return { code: response.status, body };
+  return { code: response.status, body: await response.json() };
 }
 async function stop(process: typeof children[number]) {
   if (process.child.exitCode !== null || process.child.signalCode !== null) return;
@@ -91,14 +50,14 @@ async function stop(process: typeof children[number]) {
 }
 function start(env: NodeJS.ProcessEnv) {
   let output = '';
-  const child = spawn(process.execPath, ['--import', join(root, 'scripts/diagnostics/request-evidence.mjs'), '--import', 'tsx', 'server.ts'], { cwd: api, env: { ...env, SLIDE_TEST_REQUEST_EVIDENCE: '1' }, stdio: ['ignore', 'pipe', 'pipe'] });
+  const child = spawn(process.execPath, ['--import', 'tsx', 'server.ts'], { cwd: api, env, stdio: ['ignore', 'pipe', 'pipe'] });
   child.stdout!.on('data', data => { output += data; }); child.stderr!.on('data', data => { output += data; });
   const run = { child, output: () => output, exit: once(child, 'exit') }; children.push(run); return run;
 }
 
 try {
-  await exec('docker', ['run', '-d', '--name', container, '--memory', '1g', '-e', 'MYSQL_ALLOW_EMPTY_PASSWORD=yes', '-p', '127.0.0.1::3306', 'mysql:8.4',
-    '--innodb-buffer-pool-size=32M', '--performance-schema=ON', '--max-connections=60']);
+  await exec('docker', ['run', '-d', '--name', container, '--memory', '512m', '-e', 'MYSQL_ALLOW_EMPTY_PASSWORD=yes', '-p', '127.0.0.1::3306', 'mysql:8.4',
+    '--innodb-buffer-pool-size=32M', '--performance-schema=OFF', '--max-connections=60']);
   const mapped = (await exec('docker', ['port', container, '3306/tcp'])).stdout.trim();
   const port = Number(mapped.split(':').at(-1));
   pool = mysql.createPool({ host: '127.0.0.1', port, user: 'root', password: '' });
@@ -118,23 +77,11 @@ try {
   // Pool connections must all use the test database (USE affects only one).
   await pool.end(); pool = mysql.createPool({ host: '127.0.0.1', port, user: 'root', password: '', database: 'db_ops_ai_qualification_w07' });
   await pool.query("UPDATE llm_providers SET api_base_url = ? WHERE name = 'deepseek'", [`http://127.0.0.1:${fakeProviderPort}/v1`]);
-  async function accountEvidence(phase: string) {
-    const [rows] = await pool!.query<any[]>("SELECT password_hash, status FROM users WHERE username='admin'");
-    console.error(JSON.stringify({ event: 'startup-account', phase, visible: rows.length === 1,
-      active: rows[0]?.status === 'active', passwordMatches: rows[0] ? await bcrypt.compare('qualification-admin-password', rows[0].password_hash) : false }));
-  }
-  await accountEvidence('after-bootstrap');
-  // Dedicated task principals attribute server connections across Docker NAT.
-  // Only the matching API child receives each principal; the observer stays root.
-  for (const principal of ['w07_api_1', 'w07_api_2']) {
-    await pool.query(`CREATE USER '${principal}'@'%' IDENTIFIED BY ''`);
-    await pool.query(`GRANT ALL PRIVILEGES ON db_ops_ai_qualification_w07.* TO '${principal}'@'%'`);
-  }
   lock = await mysql.createConnection({ host: '127.0.0.1', port, user: 'root', password: '', database: 'db_ops_ai_qualification_w07' });
   // Delay an actual API dependency, without a production-only delay switch.
   await lock.query('LOCK TABLES agent_security_policies WRITE');
   const leaderPort = await freePort(), standbyPort = await freePort();
-  const leader = start({ ...env, DB_USER: 'w07_api_1', PORT: String(leaderPort), AGENT_WS_PORT: String(await freePort()) });
+  const leader = start({ ...env, PORT: String(leaderPort), AGENT_WS_PORT: String(await freePort()) });
   await waitFor(async () => (await probe(leaderPort, '/api/health')).code === 200, 'leader liveness');
   // The listener opens before WorkerStartup acquires its lease.
   await waitFor(async () => {
@@ -147,7 +94,7 @@ try {
   await delay(35_000);
   const [renewed] = await pool.query<any[]>('SELECT owner_id, expires_at > NOW() AS alive FROM worker_leases');
   assert.equal(renewed[0].owner_id, owner); assert.equal(renewed[0].alive, 1);
-  const standby = start({ ...env, DB_USER: 'w07_api_2', PORT: String(standbyPort), AGENT_WS_PORT: String(await freePort()) });
+  const standby = start({ ...env, PORT: String(standbyPort), AGENT_WS_PORT: String(await freePort()) });
   await waitFor(async () => (await probe(standbyPort, '/api/health')).code === 200, 'standby liveness');
   await delay(2_000);
   await lock.query('UNLOCK TABLES');
@@ -159,8 +106,7 @@ try {
   assert.equal(leader.output().includes('qualification-private-workspace'), false);
   events.push('slow API dependency >35s: lease renewed; two real API processes: one background engine');
 
-  await accountEvidence('before-login');
-  const login = await fetch(`http://127.0.0.1:${standbyPort}/api/auth/login`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-slide-test-request': 'startup-login' },
+  const login = await fetch(`http://127.0.0.1:${standbyPort}/api/auth/login`, { method: 'POST', headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ username: 'admin', password: 'qualification-admin-password' }) });
   assert.equal(login.status, 200); const auth = await login.json() as any;
   const token = auth.token ?? auth.accessToken;

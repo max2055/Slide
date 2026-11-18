@@ -2,15 +2,12 @@ import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { expect, test } from '@playwright/test';
 import { AgentRunService } from '../../apps/db-ops-api/src/adapter/agent-run-service';
-import { runtimeEvidence } from './runtime-evidence';
 import { dbConnection } from '../../apps/db-ops-api/src/db-connection';
 
 for (const scenario of ['recovery', 'length', 'reject'] as const) {
-  test(`runtime qualification ${scenario} keeps a unique safe final across reload`, async ({ page }, testInfo) => {
+  test(`runtime qualification ${scenario} keeps a unique safe final across reload`, async ({ page }) => {
     test.skip(process.env.QUALIFICATION_CANCELLATION_E2E !== '1', 'requires isolated managed MySQL/provider');
     test.setTimeout(60_000);
-    const evidence = runtimeEvidence(page, scenario, testInfo);
-    let recoveryRun: { id: string; actorId: number; sessionId: string } | undefined;
     await page.goto('/chat');
     await page.locator('.login-gate input[autocomplete="username"]').fill('admin');
     await page.locator('.login-gate input[autocomplete="current-password"]').fill(process.env.QUALIFICATION_ADMIN_PASSWORD ?? 'Tpam1234');
@@ -33,7 +30,6 @@ for (const scenario of ['recovery', 'length', 'reject'] as const) {
       }, { timeout: 15_000 }).toBe(scenario === 'reject' ? 'failed' : 'completed');
       const expected = scenario === 'length' ? '第一段。第二段。' : '安全结论：数据库连接正常。';
       const readMessages = async () => { const [rows] = await pool.query<Array<{ content: string }>>('SELECT content FROM chat_messages WHERE session_id = ? AND role = ?', [sessionId, 'assistant']); return rows; };
-      evidence.bind(sessionId, expected);
       const rows = await readMessages();
       expect(rows).toHaveLength(scenario === 'reject' ? 0 : 1);
       expect(JSON.stringify(rows)).not.toContain('正在分析数据库状态');
@@ -42,7 +38,6 @@ for (const scenario of ['recovery', 'length', 'reject'] as const) {
         expect(rows[0].content).toBe(expected);
         await expect(page.getByText(expected, { exact: true })).toBeVisible();
       }
-      evidence.phase('before_reload');
       await page.reload();
       if (scenario !== 'reject') await expect(page.getByText(expected, { exact: true })).toBeVisible({ timeout: 15000 });
       await expect(page.getByText('正在分析数据库状态', { exact: false })).toHaveCount(0);
@@ -60,15 +55,11 @@ for (const scenario of ['recovery', 'length', 'reject'] as const) {
         const { runId } = await claimed.json();
         const run = (await service.getForActor(runId, owners[0].user_id, sessionId))!;
         expect(run).toBeTruthy();
-        recoveryRun = run;
         const failingStore = new AgentRunService(() => ({ query: pool.query.bind(pool), getConnection: async () => { throw new Error('controlled storage unavailable'); } }) as any);
         await expect(failingStore.complete(run, { type: 'complete', finalContent: '重连恢复的唯一最终答案。' })).rejects.toThrow('controlled storage unavailable');
         const pending = await service.getForActor(run.id, run.actorId, sessionId);
         expect(pending?.state).toBe('running');
         expect((pending?.result as any).completionPending).toBe(true);
-        evidence.bind(sessionId, '重连恢复的唯一最终答案。');
-        evidence.phase('pending_staged');
-        evidence.phase('before_recovery_reload');
         await page.reload();
         await expect(page.getByText('重连恢复的唯一最终答案。', { exact: true })).toBeVisible({ timeout: 15000 });
         await expect.poll(async () => (await service.getForActor(run.id, run.actorId, sessionId))?.state).toBe('completed');
@@ -77,18 +68,6 @@ for (const scenario of ['recovery', 'length', 'reject'] as const) {
         const [finals] = await pool.query<Array<{ content: string }>>('SELECT content FROM chat_messages WHERE message_id = ?', [`run_${run.id}_assistant`]);
         expect(finals).toEqual([{ content: '重连恢复的唯一最终答案。' }]);
       }
-    } catch (error) { evidence.testFailed(); throw error; } finally {
-      if (recoveryRun) {
-        try {
-          const pool = dbConnection.getPool()!;
-          const [runs] = await pool.query<any[]>({ sql: 'SELECT state, result_json FROM agent_runs WHERE id = ? AND actor_id = ? AND session_id = ?', timeout: 2000 }, [recoveryRun.id, recoveryRun.actorId, recoveryRun.sessionId]);
-          const [messages] = await pool.query<any[]>({ sql: 'SELECT content FROM chat_messages WHERE session_id = ? AND message_id = ?', timeout: 2000 }, [recoveryRun.sessionId, `run_${recoveryRun.id}_assistant`]);
-          const result = typeof runs[0]?.result_json === 'string' ? JSON.parse(runs[0].result_json) : runs[0]?.result_json;
-          evidence.snapshot(recoveryRun.id, runs[0]?.state ?? 'missing', result?.completionPending === true, messages);
-        } catch { evidence.fail(); }
-      }
-      await evidence.finish();
-      await dbConnection.close();
-    }
+    } finally { await dbConnection.close(); }
   });
 }

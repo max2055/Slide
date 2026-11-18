@@ -1,7 +1,7 @@
 import { createRequire } from 'node:module';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { writeFileSync } from 'node:fs';
+import { writeFileSync, unlinkSync } from 'node:fs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 // NODE_OPTIONS is inherited by other managed commands. Only the actual managed
@@ -16,6 +16,9 @@ if (process.env.PLAYWRIGHT_MANAGED_ENV === '1' && process.env.QUALIFICATION_CANC
     await app.listen({ host: '127.0.0.1', port: 0 });
     const { port } = app.server.address();
     writeFileSync(process.env.RUNTIME_CLAIM_COORDINATE, JSON.stringify({ port }), { flag: 'wx', mode: 0o600 });
+    process.once('exit', () => {
+      try { unlinkSync(process.env.RUNTIME_CLAIM_COORDINATE); } catch { /* Process-owned, best-effort cleanup. */ }
+    });
     app.server.unref();
   } catch { console.error('RUNTIME_CLAIM_FIXTURE_START_FAILED'); process.exit(2); }
 }
