@@ -373,7 +373,7 @@ test('approval cancellation and retry keep the request attached to the current a
     await page.locator('.login-gate input[autocomplete="current-password"]').fill(qualificationPassword());
     await page.locator('.login-gate__connect').click();
     await expect(page.locator('.login-gate')).toBeHidden({ timeout: 15_000 });
-    await page.locator('nav a[href="/approval"]').click();
+    await page.goto('/approval');
     const dashboard = page.locator('approval-dashboard');
     const card = dashboard.locator('.card').filter({ hasText: sqlText });
     await expect(card).toBeVisible({ timeout: 15_000 });

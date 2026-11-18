@@ -15,9 +15,9 @@ export async function registerResourceIdentityRoutes(fastify:FastifyInstance,ver
       if (!instance) {
         return reply.code(404).send({ error: '实例不存在' });
       }
-      reply.send(publicInstanceDto(instance as unknown as Record<string, unknown>));
+      return reply.send(publicInstanceDto(instance as unknown as Record<string, unknown>));
     } catch (error: any) {
-      reply.code(500).send({ error: '获取实例详情失败：' + error.message });
+      return reply.code(500).send({ error: '获取实例详情失败：' + error.message });
     }
   });
   fastify.get('/api/servers', { preHandler: [verifyToken, requirePermission('servers:view')] }, async (request, reply) => {
