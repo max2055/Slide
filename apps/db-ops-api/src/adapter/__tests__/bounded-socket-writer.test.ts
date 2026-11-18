@@ -37,6 +37,46 @@ describe('per-client bounded WS writes', () => {
     expect(other.terminate).toHaveBeenCalledTimes(1); expect(failure.mock.calls.at(-1)).toEqual(['WS_WRITE_FAILED']);
   });
 
+  it('settles guarded frames in order without waiting for socket acknowledgements', async () => {
+    const { peer, callbacks } = controlledPeer();
+    const writer = new BoundedSocketWriter();
+    let resolve!: (allowed: boolean) => void;
+    const promise = new Promise<boolean>(done => { resolve = done; });
+    const guard = vi.fn().mockReturnValueOnce(promise).mockResolvedValue(true);
+    writer.setGuard(peer, guard);
+    expect(writer.send(peer, '{"sequence":1}')).toBe(true);
+    expect(writer.send(peer, '{"sequence":2}')).toBe(true);
+    const pending = writer.authorizationTail(peer);
+    await Promise.resolve();
+    expect(guard.mock.calls).toEqual([[{ sequence: 1 }]]);
+    expect(peer.send).not.toHaveBeenCalled();
+    resolve(true);
+    await pending;
+    expect(guard.mock.calls).toEqual([[{ sequence: 1 }], [{ sequence: 2 }]]);
+    expect(vi.mocked(peer.send).mock.calls.map(([payload]) => JSON.parse(String(payload)).sequence)).toEqual([1, 2]);
+    expect(callbacks).toHaveLength(2);
+    callbacks.forEach(callback => callback());
+  });
+
+  it.each([{ maxPendingEvents: 2 }, { maxPendingBytes: 32 }])('still evicts a peer at the guarded queue limit (%j)', async limits => {
+    const { peer } = controlledPeer();
+    const failure = vi.fn();
+    const writer = new BoundedSocketWriter(limits, failure);
+    let resolve!: (allowed: boolean) => void;
+    const promise = new Promise<boolean>(done => { resolve = done; });
+    writer.setGuard(peer, () => promise);
+    expect(writer.send(peer, '{}')).toBe(true);
+    expect(writer.send(peer, '{}')).toBe(true);
+    await Promise.resolve();
+    expect(writer.send(peer, '{}')).toBe(false);
+    expect(failure.mock.calls).toEqual([['WS_SLOW_CONSUMER']]);
+    expect(peer.close).toHaveBeenCalledWith(4009, 'Slow consumer');
+    Object.assign(peer, { readyState: WebSocket.CLOSING });
+    resolve(true);
+    await writer.authorizationTail(peer);
+    expect(peer.send).not.toHaveBeenCalled();
+  });
+
   // GitHub #303: callbacks settle per write, failure/cleanup belongs to the connection.
   it.each(['callback', 'throw'])('reports and terminates once across in-flight failures (%s)', mode => {
     const { peer, callbacks } = controlledPeer();

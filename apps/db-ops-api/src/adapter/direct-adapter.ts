@@ -469,12 +469,18 @@ export class DirectAdapter implements IAgentEngine {
         const projection = payload.projection as import('@slide/agent-core/message-projection').ProjectionFrame | undefined;
         if (projection) this.displayStreams.publish(sessionKey, projection);
         payload = { ...payload, sessionKey };
+        const authorization: Promise<void>[] = [];
         for (const subscriber of this.sessionSubscribers.get(sessionKey) ?? []) {
           if (subscriber.readyState !== WebSocket.OPEN || projection && this.partsPeers.has(subscriber)) continue;
           try {
-            this.sendSocketEvent(subscriber, payload);
+            const accepted = this.sendSocketEvent(subscriber, payload);
+            if (accepted && payload.type === 'text_delta' && !this.partsPeers.has(subscriber)) {
+              const pending = this.socketWriter.authorizationTail(subscriber);
+              if (pending) authorization.push(pending);
+            }
           } catch { /* close logging captures the transport failure */ }
         }
+        if (authorization.length) return Promise.all(authorization);
       };
 
       const clearAuthentication = () => {
@@ -509,9 +515,8 @@ export class DirectAdapter implements IAgentEngine {
           : (payload.run as { sessionId?: string } | undefined)?.sessionId;
         try {
           assertChatCredential(connectionActor);
-          const live = await this.actorContexts.revalidateActor(connectionActor);
-          assertChatPermission(live);
           if (key) await chatDatabaseService.authorizeSession(connectionActor, key, 'read');
+          if (!connectionActor || authState !== 'authenticated') return false;
           assertChatPermission(await this.actorContexts.revalidateActor(connectionActor));
           assertChatCredential(connectionActor);
           return ws.readyState === WebSocket.OPEN && authState === 'authenticated';
@@ -983,7 +988,7 @@ export class DirectAdapter implements IAgentEngine {
                   failureEvent = event;
                   return;
                 }
-                sendToSession(sessionKey, {
+                await sendToSession(sessionKey, {
                   ...event,
                   ...(persistentRun ? { runId: persistentRun.run.id, sessionKey } : {}),
                 });

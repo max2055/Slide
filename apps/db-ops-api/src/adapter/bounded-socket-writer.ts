@@ -13,6 +13,7 @@ export class BoundedSocketWriter {
   private readonly guards = new WeakMap<WebSocket, (payload: Record<string, unknown>) => Promise<boolean>>();
   private readonly queued = new WeakMap<WebSocket, { tail: Promise<void>; bytes: number; events: number }>();
   setGuard(ws: WebSocket, guard: (payload: Record<string, unknown>) => Promise<boolean>): void { this.guards.set(ws, guard); }
+  authorizationTail(ws: WebSocket): Promise<void> | undefined { return this.queued.get(ws)?.tail; }
   readonly maxBytes: number;
   readonly maxEvents: number;
   readonly closeTimeoutMs: number;

@@ -157,6 +157,42 @@ describe.skipIf(!port)('MAX-684 real SQL/JWT/HTTP/WS; controlled model endpoint'
       serviceBoundary: 'real Fastify routes/DirectAdapter runner, real WS, real MySQL migrations and JWT', schemaDropped: true }, null, 2));
   });
 
+  it.each(['revocation', 'expiry', 'query failure'])('Legacy rejects queued frames on %s before sending', async change => {
+    const jwt = await token(68401, change === 'expiry' ? 2 : 60);
+    const live = await client(jwt);
+    const listenerActor = await actors.authenticateAccessToken(jwt, secret);
+    const peer = [...(adapter as any).wsServer.clients].find((ws: any) => ws._actorContext?.userId === listenerActor.userId);
+    const closed: number[] = [];
+    live.socket.on('close', code => closed.push(code));
+    let resolve!: () => void;
+    const promise = new Promise<void>(done => { resolve = done; });
+    const revalidate = actors.revalidateActor.bind(actors);
+    const finalCheck = vi.spyOn(actors, 'revalidateActor').mockImplementationOnce(async actorToCheck => {
+      await promise;
+      return revalidate(actorToCheck);
+    });
+    const rawExecute = pool.execute.bind(pool);
+    const execute = vi.spyOn(pool, 'execute');
+    try {
+      for (const sequence of [1, 2]) expect((adapter as any).sendSocketEvent(peer, {
+        type: 'text_delta', sessionKey: session, sequence, delta: 'QUEUED_LEGACY_PRIVATE',
+      })).toBe(true);
+      const drained = (adapter as any).socketWriter.authorizationTail(peer);
+      await vi.waitFor(() => expect(finalCheck).toHaveBeenCalledTimes(1));
+      if (change === 'revocation') await revoke();
+      else if (change === 'expiry') await vi.waitFor(() => expect(closed).toEqual([4001]), { timeout: 3000 });
+      else execute.mockImplementation(((sql: string, ...args: any[]) => {
+        if (sql.includes('FROM users u')) return Promise.reject(Object.assign(new Error('fixture SQL failure'), { code: 'ECONNRESET' }));
+        return (rawExecute as any)(sql, ...args);
+      }) as typeof pool.execute);
+      resolve();
+      await drained;
+      if (change === 'revocation') await vi.waitFor(() => expect(live.events.some(event => event.code === 'CHAT_FORBIDDEN')).toBe(true));
+      if (change === 'query failure') await vi.waitFor(() => expect(closed).toEqual([1013]));
+      expect(live.events.some(event => event.type === 'text_delta')).toBe(false);
+    } finally { resolve(); finalCheck.mockRestore(); execute.mockRestore(); }
+  });
+
   // MF-I2: actual server denial frames drive the released client/controller,
   // with A hidden and B holding a genuine pending admission receipt.
   it.each(['watch', 'history', 'replay'])('MF-I2 real %s denial isolates hidden A from active B', async entry => {
