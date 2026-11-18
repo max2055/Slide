@@ -11,7 +11,7 @@ export async function registerResourceIdentityRoutes(fastify:FastifyInstance,ver
     try {
       const { id } = request.params as any;
       const instance = await instanceDatabaseService.getInstanceById(Number(id));
-      if (!await revalidateIdentityRead(request, reply, 'instance', Number(id))) return;
+      if (!await revalidateIdentityRead(request, reply, 'instance', Number(id))) return reply;
       if (!instance) {
         return reply.code(404).send({ error: '实例不存在' });
       }

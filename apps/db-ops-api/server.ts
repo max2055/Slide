@@ -2007,7 +2007,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
   fastify.post('/api/approval/:id/review', { preHandler: [verifyToken, requirePermission('approval:approve')] }, async (request, reply) => {
     try {
       const { id } = request.params as any;
-      if (!await requireApprovalAccess(request, reply, Number(id), 'read-write')) return;
+      if (!await requireApprovalAccess(request, reply, Number(id), 'read-write')) return reply;
       const check = strictBody(request.body as Record<string, unknown>,
           ['action', 'notes', 'execute_after_approve'], 'POST /api/approval/:id/review');
         if (check.error) return reply.code(400).send(check.error);
@@ -2176,7 +2176,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
   fastify.get('/api/approval/:id/events', { preHandler: [verifyToken, requirePermission('approval:view')] }, async (request, reply) => {
     try {
       const { id } = request.params as any;
-      if (!await requireApprovalAccess(request, reply, Number(id))) return;
+      if (!await requireApprovalAccess(request, reply, Number(id))) return reply;
       const events = await approvalService.getApprovalEvents(Number(id));
       return reply.send(events);
     } catch (error: any) {
