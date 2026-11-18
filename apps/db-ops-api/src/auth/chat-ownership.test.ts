@@ -42,7 +42,7 @@ function makeActor(userId: number): ActorContext {
     userId,
     username: `user-${userId}`,
     roles: Object.freeze([]),
-    permissions: Object.freeze([]),
+    permissions: Object.freeze(['chat:view']),
     sessionVersion: 1,
     instanceScopes: Object.freeze({}),
     requestId: `request-${userId}`,
@@ -115,6 +115,7 @@ class ChatAclPool {
   }
 
   private async execute(sql: string, values: unknown[] = []): Promise<any> {
+    if (sql.includes('FROM users u')) return [[{ id: values[0], username: `user-${values[0]}`, status: 'active', session_version: 1, role_name: null, permission_code: 'chat:view', instance_id: null, access_level: null }]];
     const compact = sql.replace(/\s+/g, ' ').trim();
     if (compact.startsWith('SELECT id FROM investigations WHERE session_id')) return [[]];
 

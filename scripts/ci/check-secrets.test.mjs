@@ -4,11 +4,21 @@ import { mkdtempSync, writeFileSync, rmSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { inspectSecrets, scanRepository } from './check-secrets.mjs';
+import { inspectKnownValues, inspectSecrets, scanRepository } from './check-secrets.mjs';
 
 // Construct synthetic probes at runtime; no usable credential is stored here.
 const api = ['sk-', 'Z'.repeat(32)].join('');
 const jwt = ['eyJ' + 'A'.repeat(12), 'B'.repeat(24), 'C'.repeat(32)].join('.');
+
+test('scans a short reused value in assignments, fixtures and comments without emitting it', () => {
+  const value = ['Qa', 'Text', '07'].join('');
+  const source = `QUALIFICATION_ADMIN_PASSWORD: ${value}\nfill('${value}')\n-- fixture: ${value}`;
+  assert.deepEqual(inspectSecrets('fixture', source), []);
+  const findings = inspectKnownValues('fixture', source, [value, value]);
+  assert.deepEqual(findings, [1, 2, 3].map(line => ({ path: 'fixture', line, rule: 'known-value' })));
+  assert.ok(!JSON.stringify(findings).includes(value));
+  assert.throws(() => inspectKnownValues('fixture', source, ['']), /INVALID_KNOWN_VALUES/);
+});
 
 test('scans documentation, YAML, JSON, samples and tests with no directory exemptions', () => {
   for (const file of ['AGENTS.md', 'docs/guide.md', '.github/workflows/test.yml', '.env.example', 'settings.json', 'src/fixture.test.ts']) {
@@ -46,6 +56,24 @@ test('incremental comparison blocks copied, changed and additional occurrences',
   assert.equal(scanRepository({ cwd, base: 'HEAD' }).findings.filter(f => f.rule === 'api-key').length, 2);
   git('add', '.'); git('commit', '-qm', 'synthetic new risks');
   assert.equal(scanRepository({ cwd, base: 'HEAD^', head: 'HEAD' }).findings.filter(f => f.rule === 'api-key').length, 2);
+});
+
+test('known-value CLI reports inherited matches and fails without exposing values', t => {
+  const cwd = mkdtempSync(path.join(tmpdir(), 'slide-known-value-'));
+  t.after(() => rmSync(cwd, { recursive: true, force: true }));
+  const git = (...args) => execFileSync('git', args, { cwd, stdio: 'pipe' });
+  const value = ['Fixture', '07'].join('');
+  git('init', '-q');
+  writeFileSync(path.join(cwd, 'default.sql'), `-- Seed: ${value}`);
+  git('add', '.');
+  git('-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '-qm', 'synthetic baseline');
+  const cli = path.resolve('scripts/ci/check-secrets.mjs');
+  const result = spawnSync(process.execPath, [cli, '--known-values-stdin', '--base', 'HEAD', '--head', 'HEAD'], {
+    cwd, input: JSON.stringify([value]), encoding: 'utf8',
+  });
+  assert.equal(result.status, 1);
+  assert.deepEqual(JSON.parse(result.stdout).findings, [{ path: 'default.sql', line: 1, rule: 'known-value' }]);
+  assert.ok(!result.stdout.includes(value) && !result.stderr.includes(value));
 });
 
 test('invalid refs fail closed and never print source or native errors', () => {

@@ -7,7 +7,7 @@ test('Stop cancels the active Agent run and persists its terminal state', async 
 
   await page.goto('/chat');
   await page.locator('.login-gate input[autocomplete="username"]').fill('admin');
-  await page.locator('.login-gate input[autocomplete="current-password"]').fill('Tpam1234');
+  await page.locator('.login-gate input[autocomplete="current-password"]').fill(process.env.QUALIFICATION_ADMIN_PASSWORD ?? 'SlideQa42');
   await page.locator('.login-gate__connect').click();
   await expect(page.locator('.login-gate')).toBeHidden({ timeout: 15_000 });
 
@@ -59,7 +59,7 @@ test('unsupported attachments fail explicitly without creating an Agent run', as
   test.skip(process.env.QUALIFICATION_CANCELLATION_E2E !== '1', 'requires the managed qualification environment');
   await page.goto('/chat');
   await page.locator('.login-gate input[autocomplete="username"]').fill('admin');
-  await page.locator('.login-gate input[autocomplete="current-password"]').fill('Tpam1234');
+  await page.locator('.login-gate input[autocomplete="current-password"]').fill(process.env.QUALIFICATION_ADMIN_PASSWORD ?? 'SlideQa42');
   await page.locator('.login-gate__connect').click();
   await expect(page.locator('.login-gate')).toBeHidden({ timeout: 15_000 });
 

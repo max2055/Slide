@@ -1,5 +1,6 @@
 import { loadSecurityConfig } from '../config/security-config.js';
 import { bootstrapProductionAdmin } from './production-bootstrap.js';
+import { insertDevelopmentAccountSeeds } from './development-account-seeds.js';
 import { createHash } from 'node:crypto';
 import { readdir, readFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
@@ -22,7 +23,11 @@ export const LEGACY_MIGRATION_CHECKSUMS: Readonly<Record<string, readonly { reco
   '000_schema_baseline.sql': Object.freeze([
     Object.freeze({
       recordedChecksum: 'ba0ea57599e766dc9c9605746cdd9fa221cc05464fe45ed640b33a668fbcbbb8',
-      currentChecksum: '729ec2cce91657443417503a6cf0a1852cb6002885fc6f9f9af5755560cdc2b9',
+      currentChecksum: '9f6952edd85f9cff7cd14571a5e70d79acb714ea0f2bd55771b4d52e76a0389a',
+    }),
+    Object.freeze({
+      recordedChecksum: '729ec2cce91657443417503a6cf0a1852cb6002885fc6f9f9af5755560cdc2b9',
+      currentChecksum: '9f6952edd85f9cff7cd14571a5e70d79acb714ea0f2bd55771b4d52e76a0389a',
     }),
   ]),
   // 071_v010 was deployed once with a harmless trailing-whitespace variant.
@@ -164,7 +169,10 @@ export class MigrationRunner {
       if (Number(locks[0]?.locked) !== 1) throw new MigrationError('Could not acquire migration lock');
       await this.runLocked(connection);
       await assertSchemaInvariants(this.pool);
-      if (process.env.NODE_ENV === 'production') await bootstrapProductionAdmin(connection, process.env);
+      if (process.env.NODE_ENV === 'production') {
+        await bootstrapProductionAdmin(connection, process.env,
+          LEGACY_MIGRATION_CHECKSUMS[snapshotId].map(pair => pair.recordedChecksum));
+      }
       await connection.query('SELECT RELEASE_LOCK(?)', [lockName]);
     } catch (error) {
       // Closing the session also releases its advisory lock. Never return a
@@ -294,13 +302,17 @@ export class MigrationRunner {
   private async apply(connection: MigrationConnection, migration: SqlMigration): Promise<void> {
     await connection.query('INSERT INTO app_schema_migrations (migration_id, checksum, status, started_at) VALUES (?, ?, \'running\', NOW())', [migration.id, migration.checksum]);
     // Preserve historical checksums while isolating development-only account seeds.
-    const statements = statementsForExecution(migration).filter(statement => !(
-      process.env.NODE_ENV === 'production' && migration.id === snapshotId
-      && /INSERT INTO `users`/.test(statement)
-    ));
+    const statements = statementsForExecution(migration);
     let statementIndex = 0;
     try {
-      for (; statementIndex < statements.length; statementIndex++) await connection.query(statements[statementIndex]);
+      for (; statementIndex < statements.length; statementIndex++) {
+        const statement = statements[statementIndex];
+        if (migration.id === snapshotId && /INSERT INTO `users`/.test(statement)) {
+          if (process.env.NODE_ENV !== 'production') await insertDevelopmentAccountSeeds(connection, statement);
+          continue;
+        }
+        await connection.query(statement);
+      }
       await connection.query(`UPDATE app_schema_migrations SET status = 'completed', finished_at = NOW(), statement_index = NULL, error = NULL WHERE migration_id = ?`, [migration.id]);
     } catch (error) {
       const message = error instanceof Error ? error.message.slice(0, 4096) : String(error).slice(0, 4096);

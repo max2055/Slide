@@ -8,7 +8,7 @@ import { ChatAcceptanceTimeoutError, type DirectGatewayClient } from "../direct-
 import { normalizeLowercaseStringOrEmpty } from "../string-coerce.ts";
 import type { ChatAttachment } from "../ui-types.ts";
 import { generateUUID } from "../uuid.ts";
-import { chatSessionHost, registerChatSend } from '../chat-session-state.ts';
+import { chatSessionHost, registerChatSend, isCurrentChatSession, chatAccessDenial, denyChatSessions, allowChatSession } from '../chat-session-state.ts';
 import {
   formatMissingOperatorReadScopeMessage,
   isMissingOperatorReadScopeError,
@@ -35,7 +35,7 @@ function shouldApplyChatHistoryResult(
   version: number,
   sessionKey: string,
 ): boolean {
-  return isLatestChatHistoryRequest(state, version) && state.sessionKey === sessionKey;
+  return isCurrentChatSession(state) && isLatestChatHistoryRequest(state, version) && state.sessionKey === sessionKey;
 }
 
 function isSilentReplyStream(text: string): boolean {
@@ -91,6 +91,7 @@ export type ChatState = {
   chatStreamStartedAt: number | null;
   lastError: string | null;
   chatRecoveryNotice?: string | null;
+  chatAccessDenied?: boolean;
 };
 
 export type ChatEventPayload = {
@@ -113,8 +114,17 @@ function maybeResetToolStream(state: ChatState) {
   }
 }
 
+export function clearDeniedChatAccess(state: ChatState, error: unknown): boolean {
+  const denial = chatAccessDenial(error);
+  if (!denial || !isCurrentChatSession(state)) return false;
+  state.client?.restrictChatAccess?.(error, state.sessionKey);
+  denyChatSessions(state, denial.message, denial.all);
+  return true;
+}
+
 export async function loadChatHistory(state: ChatState, opts?: { clearNotices?: boolean }) {
   state = chatSessionHost(state);
+  if (!isCurrentChatSession(state)) return;
   if (opts?.clearNotices) {
     state.lastError = null;
     clearChatRecoveryNotice(state);
@@ -151,6 +161,7 @@ export async function loadChatHistory(state: ChatState, opts?: { clearNotices?: 
       before = page.nextBefore;
     }
     const messages = pages.reverse().flat();
+    const wasDenied = allowChatSession(state);
     const activeDisplayRun = hasActiveChatDisplayStream(state as unknown as Record<string, unknown>) ? state.chatRunId : null;
     state.chatMessages = messages.filter((message) => {
       if (shouldHideHistoryMessage(message)) return false;
@@ -162,6 +173,10 @@ export async function loadChatHistory(state: ChatState, opts?: { clearNotices?: 
     });
     hydrateChatProjections(state as unknown as Record<string, unknown>, state.chatMessages);
     state.chatThinkingLevel = res.thinkingLevel ?? null;
+    if (wasDenied) {
+      state.lastError = null;
+      state.client?.resumeChatObservation?.(sessionKey);
+    }
     if (hasActiveChatDisplayStream(state as unknown as Record<string, unknown>)) return;
     // Clear all streaming state — history includes tool results and text
     // inline, so keeping streaming artifacts would cause duplicates.
@@ -172,6 +187,7 @@ export async function loadChatHistory(state: ChatState, opts?: { clearNotices?: 
     if (!shouldApplyChatHistoryResult(state, requestVersion, sessionKey)) {
       return;
     }
+    if (clearDeniedChatAccess(state, err)) return;
     if (isMissingOperatorReadScopeError(err)) {
       state.chatMessages = [];
       state.chatThinkingLevel = null;
@@ -224,6 +240,7 @@ const unconfirmedChats = new WeakMap<ChatState, UnconfirmedChat[]>();
 /** Late acceptance clears the retry draft without stealing a different session/run. */
 export function confirmChatSend(state: ChatState, messageId?: string, accepted = true): boolean {
   state = chatSessionHost(state);
+  if (!isCurrentChatSession(state) || state.chatAccessDenied) return false;
   const attempts = unconfirmedChats.get(state) ?? [];
   const attempt = attempts.find((item) => item.error.messageId === messageId);
   if (!attempt) return true;
@@ -333,7 +350,7 @@ export async function sendChatMessage(
   attachments?: ChatAttachment[],
 ): Promise<string | null> {
   state = chatSessionHost(state);
-  if (!state.client || !state.connected) {
+  if (!isCurrentChatSession(state) || state.chatAccessDenied || !state.client || !state.connected) {
     return null;
   }
   const msg = message.trim();
@@ -387,8 +404,10 @@ export async function sendChatMessage(
   const pendingRunId = state.chatRunId;
   let updateSendingState = true;
   try {
-    return await sending;
+    const acceptedRunId = await sending;
+    return isCurrentChatSession(state) ? acceptedRunId : null;
   } catch (err) {
+    if (!isCurrentChatSession(state) || clearDeniedChatAccess(state, err)) return null;
     // A rejected send belongs to its original session, even after navigation.
     if ((state.chatRunId && state.chatRunId !== pendingRunId)
       || (state.sessionKey !== sendSessionKey
@@ -413,7 +432,7 @@ export async function sendDetachedChatMessage(
   attachments?: ChatAttachment[],
 ): Promise<string | null> {
   state = chatSessionHost(state);
-  if (!state.client || !state.connected) {
+  if (!isCurrentChatSession(state) || state.chatAccessDenied || !state.client || !state.connected) {
     return null;
   }
   const msg = message.trim();
@@ -425,15 +444,17 @@ export async function sendDetachedChatMessage(
   clearChatRecoveryNotice(state);
   const runId = generateUUID();
   try {
-    return await requestChatSend(state, { message: msg, attachments, runId });
+    const acceptedRunId = await requestChatSend(state, { message: msg, attachments, runId });
+    return isCurrentChatSession(state) ? acceptedRunId : null;
   } catch (err) {
+    if (!isCurrentChatSession(state) || clearDeniedChatAccess(state, err)) return null;
     state.lastError = formatConnectError(err);
     return null;
   }
 }
 
 export function handleChatEvent(state: ChatState, payload?: ChatEventPayload) {
-  if (!payload) {
+  if (!isCurrentChatSession(state) || state.chatAccessDenied || !payload) {
     return null;
   }
   const sessionMatches = payload.sessionKey === state.sessionKey;

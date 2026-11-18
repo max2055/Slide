@@ -5,7 +5,7 @@ async function login(page: any) {
   await page.goto("/", { waitUntil: "domcontentloaded" });
   await page.waitForSelector(".login-gate__connect", { timeout: 10000 });
   await page.fill('input[autocomplete="username"]', "admin");
-  await page.fill('input[autocomplete="current-password"]', "Tpam1234");
+  await page.fill('input[autocomplete="current-password"]', process.env.QUALIFICATION_ADMIN_PASSWORD ?? 'SlideQa42');
   await page.click(".login-gate__connect");
   await page.waitForURL("**/dashboard", { timeout: 15000 });
   await page.waitForTimeout(1000);
@@ -22,7 +22,7 @@ test.describe("Auth", () => {
     await page.goto("/", { waitUntil: "domcontentloaded" });
     await page.waitForSelector(".login-gate__connect", { timeout: 10000 });
     await page.fill('input[autocomplete="username"]', "admin");
-    await page.fill('input[autocomplete="current-password"]', "Tpam1234");
+    await page.fill('input[autocomplete="current-password"]', process.env.QUALIFICATION_ADMIN_PASSWORD ?? 'SlideQa42');
     await page.click(".login-gate__connect");
     await page.waitForURL("**/dashboard", { timeout: 15000 });
     await expect(page).toHaveURL(/dashboard/);
@@ -41,7 +41,7 @@ test.describe("Auth", () => {
     await page.goto("/", { waitUntil: "domcontentloaded" });
     await page.waitForSelector(".login-gate__connect", { timeout: 10000 });
     await page.fill('input[autocomplete="username"]', "admin");
-    await page.fill('input[autocomplete="current-password"]', "Tpam1234");
+    await page.fill('input[autocomplete="current-password"]', process.env.QUALIFICATION_ADMIN_PASSWORD ?? 'SlideQa42');
     await page.press('input[autocomplete="current-password"]', "Enter");
     await page.waitForURL("**/dashboard", { timeout: 15000 });
     await expect(page).toHaveURL(/dashboard/);

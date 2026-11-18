@@ -1,3 +1,4 @@
+import { recordVerifiedCredential } from '../../auth/chat-credential.js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import fs from 'node:fs/promises';
 import os from 'node:os';
@@ -10,7 +11,7 @@ import { CanonicalStore, canonicalStore } from '../canonical-store.js';
 import { chatDatabaseService } from '../../chat-database-service.js';
 import { agentRunService, type AgentRun } from '../agent-run-service.js';
 import type { ActorContext } from '../../auth/actor-context.js';
-const actor = { userId: 1, username: 'A', roles: [], permissions: [], sessionVersion: 1, instanceScopes: {}, requestId: 'test' } as ActorContext;
+const actor = { userId: 1, username: 'A', roles: [], permissions: ['chat:view'], sessionVersion: 1, instanceScopes: {}, requestId: 'test' } as ActorContext;
 const run: AgentRun = { id: 'r1', actorId: 1, sessionId: 's1', state: 'completed', messageId: 'request', idempotencyKey: 'request' };
 let directory: string;
 let inputs: MemoryInput[];
@@ -19,6 +20,8 @@ let adapters: DirectAdapter[];
 let clients: WebSocket[];
 let provider: LLMProvider;
 beforeEach(async () => {
+  recordVerifiedCredential(actor, 'unit-token', Date.now() / 1000 + 3600);
+  vi.spyOn(chatDatabaseService, 'authorizeCancellation').mockResolvedValue(undefined);
   directory = await fs.mkdtemp(path.join(os.tmpdir(), 'business-memory-')); pipelines = []; adapters = []; clients = [];
   inputs = [{ id: 'run_r1_user', content: 'I prefer concise Chinese replies.', hash: memoryHash('I prefer concise Chinese replies.') }];
   provider = { getDefaultModel: () => 'fake', chat: vi.fn(async () => ({ content: '[]', finishReason: 'stop', toolCalls: [], usage: { prompt_tokens: 10, completion_tokens: 2 }, shouldExecuteTools: false, hasToolCalls: false })) } as unknown as LLMProvider;
@@ -85,7 +88,10 @@ async function connection(p: MemoryPipeline) {
   const client = new WebSocket(`ws://127.0.0.1:${server.address().port}`); clients.push(client);
   await new Promise<void>((resolve, reject) => { client.once('open', resolve); client.once('error', reject); });
   const socket = [...server.clients][0] as WebSocket; const send = vi.spyOn(socket, 'send');
-  const handle = (msg: unknown) => Promise.resolve(socket.listeners('message')[0].call(socket, Buffer.from(JSON.stringify(msg))));
+  const handle = async (msg: unknown) => {
+    await socket.listeners('message')[0].call(socket, Buffer.from(JSON.stringify(msg)));
+    await (adapter as any).socketWriter.queued.get(socket)?.tail;
+  };
   await handle({ type: 'auth', token: 'fake-access-token' }); send.mockClear();
   return { adapter, handle, send };
 }

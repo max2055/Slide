@@ -1,3 +1,4 @@
+import { chatAuthorization } from './chat-authorization.js';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ActorContext } from './actor-context.js';
 
@@ -37,6 +38,7 @@ const actor: ActorContext = Object.freeze({
 describe('chat ownership handler boundary', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.spyOn(chatAuthorization, 'require').mockImplementation(async actor => actor);
     mocks.addMessage.mockResolvedValue(undefined);
     mocks.authorizeSession.mockResolvedValue({ session_id: 'authorized-session' });
     mocks.chat.mockResolvedValue({ finalContent: 'answer', usage: { prompt_tokens: 1 } });

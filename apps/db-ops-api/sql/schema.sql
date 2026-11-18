@@ -846,14 +846,14 @@ CREATE TABLE IF NOT EXISTS `audit_log_entries` (
 -- 初始化数据
 -- ============================================
 
--- 插入默认管理员账户 (密码：Tpam1234)
+-- 插入管理员账户种子记录
 -- !!! 安全警告：以下使用 SHA-256 哈希，不适用于生产环境 !!!
 -- TODO: 改为在应用初始化代码中使用 bcrypt 创建用户（参见 apps/db-ops-api/CLAUDE.md 认证章节）
 -- 测试/开发环境下保留以下种子数据以支持 init-db.ts 引导
--- 密码使用 SHA256 哈希：4f32fc2ba7f8dfa43328d1ee7e5eb7607c78ab2e73c5cd001979aeaf5532c817
+-- 以下为合成开发夹具的密码哈希，不用于生产初始化
 INSERT INTO `users` (`username`, `password_hash`, `email`, `status`, `role_backup`) VALUES
-('admin', '4f32fc2ba7f8dfa43328d1ee7e5eb7607c78ab2e73c5cd001979aeaf5532c817', 'admin@example.com', 'active', 'admin'),
-('user', '4f32fc2ba7f8dfa43328d1ee7e5eb7607c78ab2e73c5cd001979aeaf5532c817', 'user@example.com', 'active', 'viewer');
+('admin', '56734b8aa29f341f79523c650d5ca12fe2656e5ccc8d82290f94a08d924aa2ff', 'admin@example.com', 'active', 'admin'),
+('user', '56734b8aa29f341f79523c650d5ca12fe2656e5ccc8d82290f94a08d924aa2ff', 'user@example.com', 'active', 'viewer');
 
 -- 插入默认 LLM 提供商配置
 INSERT INTO `llm_providers` (`name`, `display_name`, `deployment_type`, `default_model`, `models_supported`, `context_window`, `supports_function_call`, `supports_vision`, `input_cost_per_1k`, `output_cost_per_1k`, `enabled`, `is_default`, `temperature`, `max_tokens`) VALUES

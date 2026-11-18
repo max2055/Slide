@@ -195,7 +195,7 @@ describe('MigrationRunner', () => {
     const networkFoundation = migrations.find((migration) => migration.id === '070_network_device_resource_foundation.sql');
     const sessionTimeout = migrations.find((migration) => migration.id === '082_auth_session_idle_timeout.sql');
 
-    expect(baseline?.checksum).toBe('729ec2cce91657443417503a6cf0a1852cb6002885fc6f9f9af5755560cdc2b9');
+    expect(baseline?.checksum).toBe('9f6952edd85f9cff7cd14571a5e70d79acb714ea0f2bd55771b4d52e76a0389a');
     expect(isMigrationChecksumAccepted(
       '000_schema_baseline.sql',
       'ba0ea57599e766dc9c9605746cdd9fa221cc05464fe45ed640b33a668fbcbbb8',
@@ -214,7 +214,8 @@ describe('MigrationRunner', () => {
 
   // #535: expected pairs are independent of the production exception table.
   const historicalChecksums = [
-    ['000_schema_baseline.sql', 'ba0ea57599e766dc9c9605746cdd9fa221cc05464fe45ed640b33a668fbcbbb8', '729ec2cce91657443417503a6cf0a1852cb6002885fc6f9f9af5755560cdc2b9'],
+    ['000_schema_baseline.sql', 'ba0ea57599e766dc9c9605746cdd9fa221cc05464fe45ed640b33a668fbcbbb8', '9f6952edd85f9cff7cd14571a5e70d79acb714ea0f2bd55771b4d52e76a0389a'],
+    ['000_schema_baseline.sql', '729ec2cce91657443417503a6cf0a1852cb6002885fc6f9f9af5755560cdc2b9', '9f6952edd85f9cff7cd14571a5e70d79acb714ea0f2bd55771b4d52e76a0389a'],
     ['067_device_registrations.sql', '94403810bcae74f546a719b6d2f062e1699c18440e2ad76a5c787fa3f2c10ebb', 'b53a8b888ad3842cecd10a42df37d579769d615f3894fad107d04a5fec2da84d'],
     ['070_network_device_resource_foundation.sql', 'b8e1da4a29ff2a47b0703ab4d95746e41812b4bf4d5f46ca293292f816c10583', '5ca1ec5c8f2c2d40a09cb5e5375eb4ab98851dc7a30eefef077011091ae4cc1b'],
     ['071_v010_infrastructure_assistant.sql', '2a070214f68fbc1fd760d1708b3b39d5376d226495a0df5d77c32fb96fd4763f', 'a5e7b11e17674530e818fb21aa626236153065bf7ce66a4af609314bb7aa923c'],

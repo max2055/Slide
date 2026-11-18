@@ -70,7 +70,8 @@ export class BusinessMemoryService {
   async request(actor: ActorContext, sessionId: string, operation: string, payload: Record<string, unknown>): Promise<unknown> {
     if (!this.pipeline.enabled) throw new Error('MEMORY_DISABLED');
     // Shared chat read permission does not confer memory write permission.
-    await chatDatabaseService.authorizeSession(actor, sessionId, 'append');
+    if (operation === 'memory.stop') await chatDatabaseService.authorizeCancellation(actor, sessionId);
+    else await chatDatabaseService.authorizeSession(actor, sessionId, 'append');
     const scope = this.scope(actor, sessionId);
     const store = this.pipeline.store;
     switch (operation) {

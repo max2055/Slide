@@ -106,6 +106,8 @@ export T11_TEST_MYSQL_PORT="$port" T11_TEST_MYSQL_PASSWORD=''
 if [[ "$mode" == --full || "$mode" == --api ]]; then
   # The full API candidate enables all existing MySQL gates on this exclusive
   # server. Suites requiring other resources still need their own fixtures.
+  export MAX684_ACCEPTANCE=1 MAX684_MYSQL_HOST="$DB_HOST" MAX684_MYSQL_PORT="$DB_PORT"
+  export MAX684_MYSQL_USER="$DB_USER" MAX684_MYSQL_PASSWORD="$DB_PASSWORD"
   for prefix in REPORT CRON METRICS DELIVERY ALERT_EVENT APPROVAL SOURCE METRIC_QUALITY ANALYSIS INSTANCE_REMOVAL; do
     export "${prefix}_TEST_MYSQL_PORT=$port" "${prefix}_TEST_MYSQL_PASSWORD="
   done

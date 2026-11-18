@@ -12,7 +12,19 @@ function harness(work) {
   writeFileSync(trace, '');
   const stubs = {
     docker: '#!/bin/sh\nprintf "docker %s\\n" "$*" >> "$CI_TRACE"\ncase "$1" in port) echo 127.0.0.1:33306;; inspect) echo \'{"status":"running","running":true,"oomKilled":false,"exitCode":0,"memoryBytes":805306368}\';; rm) exit "${CI_STUB_CLEANUP_EXIT:-0}";; esac\n',
-    pnpm: '#!/bin/sh\nprintf "pnpm %s\\n" "$*" >> "$CI_TRACE"\ncase "$*" in *"exec node -e"*|*"exec node --input-type=module -e"*|*"t12-startup.mjs probe "*) exit 0 ;; esac\nexit "${CI_STUB_EXIT:-0}"\n',
+    pnpm: `#!/bin/sh
+printf "pnpm %s\\n" "$*" >> "$CI_TRACE"
+case "$*" in
+  *"exec node -e"*|*"exec node --input-type=module -e"*|*"t12-startup.mjs probe "*) exit 0 ;;
+  "--filter slide-api test "*)
+    if [ "$MAX684_ACCEPTANCE" = 1 ] && [ "$MAX684_MYSQL_HOST" = 127.0.0.1 ] &&
+       [ "$MAX684_MYSQL_PORT" = 33306 ] && [ "$MAX684_MYSQL_USER" = root ] &&
+       [ "\${MAX684_MYSQL_PASSWORD-unset}" = "" ]; then
+      printf '%s\\n' 'MAX-684 required on isolated MySQL' >> "$CI_TRACE"
+    fi ;;
+esac
+exit "\${CI_STUB_EXIT:-0}"
+`,
   };
   stubs.sleep = '#!/bin/sh\nexit 0\n';
   for (const [name, content] of Object.entries(stubs)) {
@@ -43,6 +55,7 @@ test('standalone API and integration modes retain their original coverage', () =
   const api = run('scripts/qualification/run-investigation-rollout.sh', ['--api']);
   assert.equal(api.status, 0, api.stderr);
   assert.match(api.trace, /slide-api test --maxWorkers=1/);
+  assert.match(api.trace, /MAX-684 required on isolated MySQL/);
   assert.doesNotMatch(api.trace, /investigation-rollout\.ts|playwright/);
   const integration = run('scripts/qualification/run-investigation-rollout.sh', ['--integration']);
   assert.equal(integration.status, 0, integration.stderr);
@@ -55,6 +68,7 @@ test('sharded API keeps the largest file in a dedicated self-contained exec leg'
   const shard = run('scripts/qualification/run-investigation-rollout.sh', ['--api'], { T12_API_SHARD: '3' });
   assert.equal(shard.status, 0, shard.stderr);
   assert.match(shard.trace, /slide-api test .*--shard=3\/8 --exclude \*\*\/execution-recovery\.mysql\.test\.ts/);
+  assert.match(shard.trace, /MAX-684 required on isolated MySQL/);
   assert.match(shard.trace, /mysql:9\.6/);
   const exec = run('scripts/qualification/run-investigation-rollout.sh', ['--api'], { T12_API_SHARD: 'exec' });
   assert.equal(exec.status, 0, exec.stderr);

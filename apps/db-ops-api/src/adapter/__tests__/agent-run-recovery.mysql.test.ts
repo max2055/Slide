@@ -47,6 +47,9 @@ describe.skipIf(!port)('T04-A durable terminal and real WebSocket regressions', 
     pool = mysql.createPool({ ...options, database, connectionLimit: 10 });
     await new MigrationRunner(pool).run();
     await pool.query("INSERT INTO users (id, username, password_hash) VALUES (7, 'run-owner', 'not-a-login-hash'), (8, 'other-owner', 'not-a-login-hash')");
+    await pool.query("INSERT INTO roles (name) VALUES ('chat-fixture')");
+    await pool.query("INSERT INTO role_permissions (role_id, permission_id) SELECT r.id, p.id FROM roles r CROSS JOIN permissions p WHERE r.name = 'chat-fixture' AND p.code = 'chat:view'");
+    await pool.query("INSERT INTO user_roles (user_id, role_id) SELECT u.id, r.id FROM users u CROSS JOIN roles r WHERE u.id IN (7, 8) AND r.name = 'chat-fixture'");
     service = new AgentRunService(() => pool as never);
     contexts = new ActorContextService(() => pool as never);
   }, 60_000);
@@ -76,7 +79,10 @@ describe.skipIf(!port)('T04-A durable terminal and real WebSocket regressions', 
     if (admin) { await admin.query(`DROP DATABASE IF EXISTS ${database}`); await admin.end(); }
   });
 
-  const claim = async () => (await service.claim(7, 'owned:key', randomUUID(), randomUUID())).run;
+  const claim = async () => {
+    const actor = await contexts.authenticateAccessToken(signAccessToken(await contexts.loadActiveActor(7, 1), secret), secret);
+    return (await service.claim(7, 'owned:key', randomUUID(), randomUUID(), actor)).run;
+  };
   const current = async (run: AgentRun) => (await service.getForActor(run.id, 7, run.sessionId))!;
   const messages = async () => (await pool.query<RowDataPacket[]>('SELECT * FROM chat_messages ORDER BY id'))[0];
   async function staged(): Promise<AgentRun> {
@@ -95,6 +101,13 @@ describe.skipIf(!port)('T04-A durable terminal and real WebSocket regressions', 
     expect(await service.findByIdempotencyKey(7, run.idempotencyKey)).toMatchObject({ result: value ?? null, error: value ?? null });
     expect((await service.claim(7, run.sessionId, run.messageId, run.idempotencyKey)).run).toMatchObject({ result: value ?? null, error: value ?? null });
     expect(await service.finish(run.id, 'partial', 'late')).toBe(false);
+  });
+  it('legacy completion without a credential binding cancels without replay or message writes', async () => {
+    const { run } = await service.claim(7, 'owned:key', randomUUID(), randomUUID());
+    expect(await service.complete(run, answer)).toMatchObject({ state: 'cancelled' });
+    expect(await service.recoverCompletion((await current(run)))).toMatchObject({ state: 'cancelled' });
+    expect(await messages()).toHaveLength(0);
+    expect(await service.pendingCompletions(7, run.sessionId)).toHaveLength(0);
   });
   it('a new service recovers staged completion once without executing a provider', async () => {
     const run = await staged();

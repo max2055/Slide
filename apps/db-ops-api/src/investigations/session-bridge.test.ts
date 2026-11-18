@@ -437,7 +437,12 @@ describe.skipIf(!port)('T03-B real MySQL/JWT authorization and atomic Session br
           .rejects.toMatchObject({ statusCode: 404 });
       });
       for (const call of [() => chat.getMessages(member, investigation.sessionId), () => chat.getSessionCount(member, investigation.sessionId),
-        () => chat.authorizeSession(member, investigation.sessionId, 'watch')]) await expect(call()).rejects.toThrow('Chat session not found');
+        () => chat.authorizeSession(member, investigation.sessionId, 'watch')]) {
+        const code = mode === 'role-permission' || mode === 'role-expire' ? 'CHAT_FORBIDDEN' : 'CHAT_SESSION_NOT_FOUND';
+        const rejected = call();
+        await expect(rejected).rejects.toMatchObject({ code });
+        await expect(rejected).rejects.not.toHaveProperty('messages');
+      }
       for (const table of ['chat_messages', 'investigation_requests', 'workflow_jobs', 'outbox_events']) expect(await all(table)).toHaveLength(1);
     });
 

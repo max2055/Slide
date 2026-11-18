@@ -12,6 +12,12 @@ import { chatDatabaseService } from '../../apps/db-ops-api/src/chat-database-ser
 import { dbConnection } from '../../apps/db-ops-api/src/db-connection';
 import { canonicalStore } from '../../apps/db-ops-api/src/adapter/canonical-store';
 import { registerChatRoutes } from '../../apps/db-ops-api/src/chat-routes';
+import { createVerifyToken } from '../../apps/db-ops-api/src/auth-middleware';
+import { streamingIdentity } from '../../apps/db-ops-api/tests/streaming-auth-fixture';
+
+// Real login/JWT frames must not enter the automatically uploaded trace.zip.
+// The original CDP performance trace and numeric/wire diagnostics remain below.
+test.use({ trace: 'off' });
 
 // Stop browser timers/WS, then await route.fetch while its backend still lives.
 async function closeStreamingPage(page: Page) {
@@ -48,6 +54,8 @@ test('MAX-129 real MySQL → Adapter → WS → Gateway → reducer → UI, refr
   let failure: unknown; let cleanupFailure: unknown;
   const service = chatDatabaseService as any;
   const originals: Array<() => void> = [];
+  const secrets: string[] = [];
+  const redact = (value: string) => secrets.reduce((text, secret) => text.replaceAll(secret, '[fixture-credential-redacted]'), value);
   const observeCalls = (target: any, methods: string[]) => {
     for (const method of methods) {
       const original = target[method]; originals.push(() => { target[method] = original; });
@@ -68,18 +76,32 @@ test('MAX-129 real MySQL → Adapter → WS → Gateway → reducer → UI, refr
     const init = spawnSync('pnpm', ['--filter', 'slide-api', 'exec', 'tsx', 'init-db.ts'], { cwd: new URL('../..', import.meta.url), env: process.env, encoding: 'utf8', timeout: 120_000 });
     expect(init.status, init.stderr).toBe(0); expect(await dbConnection.initialize()).toBe(true);
     const pool = dbConnection.getPool()!;
-    const [created] = await pool.execute("INSERT INTO users (username,password_hash,status) VALUES (?, 'fixture-no-login', 'active')", [`stream-${randomUUID()}`]) as any;
-    const actor = { userId: created.insertId, username: 'stream-fixture', roles: ['viewer'], permissions: [], sessionVersion: 1, instanceScopes: {}, requestId: randomUUID() };
-    const session = await chatDatabaseService.createSession(actor, { title: 'MAX-129 real stream' });
+    const username = `stream-${randomUUID()}`;
+    const password = randomUUID().replaceAll('-', ''); secrets.push(password);
+    const [created] = await pool.execute('INSERT INTO users (username,password_hash,status) VALUES (?, ?, \'active\')', [username, await require('bcrypt').hash(password, 10)]) as any;
+    const [role] = await pool.execute('INSERT INTO roles(name) VALUES(?)', [username]) as any;
+    await pool.execute('INSERT INTO user_roles(user_id,role_id) VALUES(?,?)', [created.insertId, role.insertId]);
+    await pool.execute("INSERT INTO role_permissions(role_id,permission_id) SELECT ?,id FROM permissions WHERE code='chat:view'", [role.insertId]);
+    const identity = streamingIdentity();
     rest = require('fastify')();
+    identity.registerLogin(rest);
     await registerChatRoutes(rest, { service: chatDatabaseService,
-      verifyToken: async (request: any) => { request.user = actor; }, handleChatSend: async () => { throw new Error('fixture uses WS admission'); } });
+      verifyToken: createVerifyToken(identity.secret, identity.actors), handleChatSend: async () => { throw new Error('fixture uses WS admission'); } });
     await rest.listen({ port: 0, host: '127.0.0.1' }); const restPort = rest.server.address().port;
     await page.route(url => url.pathname.startsWith('/api/'), async route => {
       const original = new URL(route.request().url());
       const response = await route.fetch({ url: `http://127.0.0.1:${restPort}${original.pathname}${original.search}` });
       await route.fulfill({ response });
     });
+    await page.goto('/e2e/fixtures/streaming-login.html');
+    await page.locator('input[autocomplete="username"]').fill(username);
+    await page.locator('input[autocomplete="current-password"]').fill(password);
+    const login = page.waitForResponse(r => new URL(r.url()).pathname === '/api/auth/login');
+    await page.locator('.login-gate__connect').click();
+    const loggedIn = await login; expect(loggedIn.status()).toBe(200);
+    const token = (await loggedIn.json()).token; secrets.push(token);
+    await expect(page.locator('#fixture')).toHaveAttribute('data-authenticated', 'true');
+    const { session } = await identity.createSession(token);
     await pool.query('CREATE TABLE fixture_tool_effects (tool_id INT PRIMARY KEY)');
     let requests = 0; let executions = 0;
     const tools = new ToolRegistry();
@@ -109,7 +131,7 @@ test('MAX-129 real MySQL → Adapter → WS → Gateway → reducer → UI, refr
         await c.onContentDelta(final.content); return final;
       } };
     adapter = new DirectAdapter({ workspace, concurrentTools: true, tools, toolsForActor: () => tools, llmProvider: provider,
-      actorContextService: { authenticateAccessToken: async () => actor, revalidateActor: async () => actor } });
+      actorContextService: identity.actors });
     observeCalls(canonicalStore, ['getPage', 'saveCheckpoint']);
     observeCalls((adapter as any).contextBuilder, ['buildMessages']);
     observeCalls((adapter as any).sessionManager, ['save']);
@@ -134,13 +156,13 @@ test('MAX-129 real MySQL → Adapter → WS → Gateway → reducer → UI, refr
     });
     legacy = new WebSocket(`ws://127.0.0.1:${port}`);
     legacy.on('message', (data: Buffer) => { const event = JSON.parse(data.toString()); raw.legacy.push(event); if (event.type === 'auth_ok') legacy.send(JSON.stringify({ type: 'chat.watch', sessionKey: session.session_id })); });
-    await once(legacy, 'open'); legacy.send(JSON.stringify({ type: 'auth', token: 'fixture' }));
+    await once(legacy, 'open'); legacy.send(JSON.stringify({ type: 'auth', token }));
     await expect.poll(() => raw.legacy.some((e: any) => e.type === 'auth_ok')).toBe(true);
     const cdp = await page.context().newCDPSession(page);
     await cdp.send('Tracing.start', { categories: 'devtools.timeline,v8.execute,blink.user_timing', transferMode: 'ReturnAsStream' });
     const mount = async () => {
       await page.goto('/e2e/fixtures/chat-history.html'); await page.waitForFunction(() => Boolean((window as any).historyFixture));
-      await page.evaluate(async ({ port, sessionKey }) => {
+      await page.evaluate(async ({ port, sessionKey, token }) => {
         const { DirectGatewayClient, handleDirectAdapterEvent } = await import('/src/app/ui/direct-gateway.ts');
         const { getChatProjection } = await import('/src/app/ui/chat/message-projection.ts');
         const f = (window as any).historyFixture;
@@ -154,7 +176,7 @@ test('MAX-129 real MySQL → Adapter → WS → Gateway → reducer → UI, refr
         const host: any = new Proxy({ sessionKey, connected: true, chatRunId: null, chatStream: '', chatThinkingText: '', chatToolMessages: [], chatStreamSegments: [],
           toolStreamById: new Map(), toolStreamOrder: [], chatMessages: [], chatQueue: [], chatSending: false, settings: {}, applySettings() {}, refreshSessionsAfterChat: new Set() },
           { set(target, key, value) { Reflect.set(target, key, value); update(target); return true; } });
-        (window as any).__apiClient = { getToken: () => 'fixture' };
+        (window as any).__apiClient = { getToken: () => token };
         const samples: any[] = []; const received: any[] = [];
         let latestProjection: any;
         const gateway = new DirectGatewayClient({ url: `ws://127.0.0.1:${port}`, onStateChange: state => { if (state === 'connected') gateway.watchSession(sessionKey); },
@@ -168,7 +190,7 @@ test('MAX-129 real MySQL → Adapter → WS → Gateway → reducer → UI, refr
           } });
         host.client = gateway; gateway.connect();
         (window as any).live = { gateway, host, received, samples, get projection() { return latestProjection; } };
-      }, { port, sessionKey: session.session_id });
+      }, { port, sessionKey: session.session_id, token });
       await page.waitForFunction(() => (window as any).live.gateway.isConnected());
     };
     await mount();
@@ -224,22 +246,22 @@ test('MAX-129 real MySQL → Adapter → WS → Gateway → reducer → UI, refr
     const paintP95 = p95(samples.map(s => s.paintMs)); expect(paintP95).toBeLessThanOrEqual(100);
     const evidence = { sourceHead: spawnSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).stdout.trim(),
       hardware: { cpu: cpus()[0].model, cores: cpus().length, memoryBytes: totalmem(), platform: platform(), release: release() }, browser: browser.version(),
-      pid: process.pid, port, schema, cwd: process.cwd(), mode: 'real WS/MySQL/Gateway/reducer/renderChat; actor authentication and provider controlled; tools SELECT 1 plus isolated counter',
+      pid: process.pid, port, schema, cwd: process.cwd(), mode: 'real UI login/JWT/SQL identity, WS/MySQL/Gateway/reducer/renderChat; provider controlled; tools SELECT 1 plus isolated counter',
       fragments: 1000, generatedBytes: 100000, legacy: old, parts, reduction, refreshFrames: raw.parts.length - parts.frames,
       comparisonBoundary: 'same run prefix through 100th tool paused, before first refresh; all original connection subscriptions',
       includingRefresh: { parts: metrics(raw.parts), legacy: metrics(raw.legacy) },
       acceptedToActualMs, paintP95, applyP95: p95(samples.map(s => s.applyMs)), timing: 'same browser performance.now; 2 rAF conservative paint bound; server callback clock separately',
       executions, requests, assistantMessages: messages.length, durable: after.projection.durable, capacity: (adapter as any).displayStreams.stats(), samples, serverTimings };
     await writeFile(test.info().outputPath('MAX-129-live-metrics.json'), JSON.stringify(evidence, null, 2));
-    await writeFile(test.info().outputPath('MAX-129-wire.json'), JSON.stringify(raw));
+    await writeFile(test.info().outputPath('MAX-129-wire.json'), redact(JSON.stringify(raw)));
     const complete = new Promise<any>(resolve => cdp.once('Tracing.tracingComplete', resolve)); await cdp.send('Tracing.end'); const { stream } = await complete;
     const trace: Buffer[] = []; for (;;) { const value = await cdp.send('IO.read', { handle: stream }); trace.push(Buffer.from(value.data, value.base64Encoded ? 'base64' : 'utf8')); if (value.eof) break; }
-    await cdp.send('IO.close', { handle: stream }); await writeFile(test.info().outputPath('MAX-129-live-trace.json'), Buffer.concat(trace));
+    await cdp.send('IO.close', { handle: stream }); await writeFile(test.info().outputPath('MAX-129-live-trace.json'), redact(Buffer.concat(trace).toString('utf8')));
     await page.evaluate(() => (window as any).live.gateway.disconnect());
   } catch (error) {
     failure = error; cleanup.push({ stage: 'assertion-or-test-failed', at: performance.now() });
     try {
-      await writeFile(test.info().outputPath('MAX-129-failure-wire.json'), JSON.stringify(raw));
+      await writeFile(test.info().outputPath('MAX-129-failure-wire.json'), redact(JSON.stringify(raw)));
       console.log('MAX-129 failure boundary', await page.evaluate(() => {
         const live = (window as any).live;
         return { lastError: live?.host.lastError, runId: live?.host.chatRunId,

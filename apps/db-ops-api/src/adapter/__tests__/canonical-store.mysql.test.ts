@@ -29,8 +29,13 @@ describe.skipIf(!port)('T05-A canonical fact integrity with production MySQL', (
     pool = mysql.createPool({ ...options, database, connectionLimit: 10 });
     await new MigrationRunner(pool).run();
     await pool.query("INSERT INTO users (id, username, password_hash) VALUES (7, 'fact-owner', 'not-a-login'), (8, 'other-owner', 'not-a-login')");
+    await pool.query("INSERT INTO roles (name) VALUES ('chat-fixture')");
+    await pool.query("INSERT INTO role_permissions (role_id, permission_id) SELECT r.id, p.id FROM roles r CROSS JOIN permissions p WHERE r.name = 'chat-fixture' AND p.code = 'chat:view'");
+    await pool.query("INSERT INTO user_roles (user_id, role_id) SELECT u.id, r.id FROM users u CROSS JOIN roles r WHERE u.id IN (7, 8) AND r.name = 'chat-fixture'");
     const contexts = new ActorContextService(() => pool as never);
-    actor = await contexts.loadActiveActor(7, 1); other = await contexts.loadActiveActor(8, 1);
+    const secret = randomUUID();
+    actor = await contexts.authenticateAccessToken(signAccessToken(await contexts.loadActiveActor(7, 1), secret), secret);
+    other = await contexts.authenticateAccessToken(signAccessToken(await contexts.loadActiveActor(8, 1), secret), secret);
     store = new CanonicalStore(() => pool as never);
   }, 60_000);
   beforeEach(async () => {
@@ -42,6 +47,21 @@ describe.skipIf(!port)('T05-A canonical fact integrity with production MySQL', (
   });
   afterEach(() => { vi.restoreAllMocks(); vi.unstubAllEnvs(); cachedChat.pool = priorChatPool; });
   afterAll(async () => { await pool?.end(); if (admin) { await admin.query(`DROP DATABASE IF EXISTS ${database}`); await admin.end(); } });
+
+  it('revoked chat permission rejects reads and writes without changing canonical facts', async () => {
+    const before = await pool.query('SELECT * FROM chat_messages ORDER BY id');
+    const facts = await rows();
+    await pool.query('DELETE FROM user_roles WHERE user_id = 7');
+    try {
+      await expect(chatDatabaseService.getMessages(actor, 'owned')).rejects.toMatchObject({ code: 'CHAT_FORBIDDEN' });
+      await expect(chatDatabaseService.addMessage(actor, 'owned', { messageId: 'denied', role: 'user', content: 'denied' }))
+        .rejects.toMatchObject({ code: 'CHAT_FORBIDDEN' });
+      expect(await pool.query('SELECT * FROM chat_messages ORDER BY id')).toEqual(before);
+      expect(await rows()).toEqual(facts);
+    } finally {
+      await pool.query("INSERT INTO user_roles (user_id, role_id) SELECT 7, id FROM roles WHERE name = 'chat-fixture'");
+    }
+  });
 
   function intent(): SessionEntry {
     return migrateMessageParts({ id: 'intent', role: 'assistant', content: null, source: 'fact', runId: 'run', turnId: 'turn',

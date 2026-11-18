@@ -10,7 +10,7 @@ async function login(page) {
   const passwordInput = page.locator('input[type="password"]').first();
   if (await usernameInput.isVisible({ timeout: 3000 }).catch(() => false)) {
     await usernameInput.fill('admin');
-    await passwordInput.fill('Tpam1234');
+    await passwordInput.fill(process.env.QUALIFICATION_ADMIN_PASSWORD ?? 'SlideQa42');
     // Login button says "Connect" / "连接"
     await page.locator('button.login-gate__connect, button').filter({ hasText: /Connect|连接/i }).first().click();
     await page.waitForTimeout(3000);

@@ -1,3 +1,5 @@
+import { chatAuthorization, ChatForbiddenError } from './auth/chat-authorization.js';
+import { ActorAuthenticationError } from './auth/actor-context.js';
 /**
  * chat-handler.ts — Platform-level Chat RPC handler.
  *
@@ -112,6 +114,8 @@ export async function handleChatSend(
         });
       } catch (persistenceError) {
         if (chatFailed) {
+          if (chatError instanceof ActorAuthenticationError || chatError instanceof ChatForbiddenError) throw chatError;
+          if (persistenceError instanceof ActorAuthenticationError || persistenceError instanceof ChatForbiddenError) throw persistenceError;
           throw new AggregateError(
             [chatError, persistenceError],
             'Chat failed and assistant message could not be saved',
@@ -123,6 +127,7 @@ export async function handleChatSend(
     }
   }
 
+  await chatAuthorization.require(actor);
   return { ...result, sessionKey };
 }
 

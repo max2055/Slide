@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import mysql from 'mysql2/promise';
 import bcrypt from 'bcrypt';
 import { describe, it, expect, vi } from 'vitest';
@@ -27,44 +27,43 @@ describe.skipIf(!port)('MAX-267 production bootstrap on real MySQL', () => {
       expect(fresh.map(row => row.username)).toEqual(['operator']);
       const auth = new AuthDatabaseService(() => pool);
       expect(await auth.verifyPassword('operator', 'synthetic-bootstrap-password')).toBe(true);
-      for (const name of ['admin', 'user', 'operator']) expect(await auth.verifyPassword(name, 'Tpam1234')).toBe(false);
+      for (const name of ['admin', 'user', 'operator']) expect(await auth.verifyPassword(name, 'SlideQa42')).toBe(false);
       expect(await bcrypt.compare('synthetic-bootstrap-password', fresh[0].password_hash)).toBe(true);
-      expect(await bcrypt.compare('Tpam1234', fresh[0].password_hash)).toBe(false);
+      expect(await bcrypt.compare('SlideQa42', fresh[0].password_hash)).toBe(false);
       const [roles] = await pool.query<any[]>("SELECT r.name FROM user_roles ur JOIN roles r ON r.id=ur.role_id JOIN users u ON u.id=ur.user_id WHERE u.username='operator'");
       expect(roles.map(row => row.name)).toContain('admin');
       const before = await runner.inspect();
       await runner.run();
       expect(await runner.inspect()).toEqual(before);
       expect((await pool.query<any[]>('SELECT password_hash FROM users'))[0][0].password_hash).toBe(fresh[0].password_hash);
-      // Simulate deployed seed accounts, including a default migrated to bcrypt.
-      const changed = await bcrypt.hash('changed-real-account-password', 12);
-      const migratedDefault = await bcrypt.hash('Tpam1234', 12);
-      await pool.query("INSERT INTO users(username,password_hash) VALUES ('admin',?),('user',?),('retained',?)", [migratedDefault, changed, changed]);
+      const existingPassword = 'SlideQa42';
+      const shaHash = createHash('sha256').update(existingPassword).digest('hex');
+      const bcryptHash = await bcrypt.hash(existingPassword, 10);
+      await pool.query("INSERT INTO users(username,password_hash,status,session_version) VALUES ('admin',?,'active',4),('user',?,'active',7),('retained',?,'inactive',9)", [shaHash, bcryptHash, bcryptHash]);
+      await pool.query("INSERT INTO user_roles(user_id,role_id) SELECT u.id,r.id FROM users u JOIN roles r ON r.name=CASE u.username WHEN 'admin' THEN 'admin' ELSE 'viewer' END WHERE u.username IN ('admin','user','retained')");
+      const readAccounts = async () => (await pool.query<mysql.RowDataPacket[]>(
+        "SELECT u.id,u.username,u.status,u.session_version,u.password_hash,r.name AS role FROM users u LEFT JOIN user_roles ur ON ur.user_id=u.id LEFT JOIN roles r ON r.id=ur.role_id ORDER BY u.id,r.name",
+      ))[0];
+      const accounts = await readAccounts();
       await runner.run();
-      const [upgraded] = await pool.query<any[]>('SELECT username,password_hash,status FROM users ORDER BY username');
-      expect(upgraded.find(row => row.username === 'admin').status).toBe('inactive');
-      expect(await auth.verifyPassword('admin', 'Tpam1234')).toBe(false);
-      expect(await auth.verifyPassword('user', 'changed-real-account-password')).toBe(true);
-      expect(upgraded.find(row => row.username === 'user')).toMatchObject({ status: 'active', password_hash: changed });
-      expect(upgraded.find(row => row.username === 'retained')).toMatchObject({ status: 'active', password_hash: changed });
+      expect(await readAccounts()).toEqual(accounts);
       expect(await runner.inspect()).toEqual(before);
       await runner.run();
-      expect((await pool.query<any[]>('SELECT username,password_hash,status FROM users ORDER BY username'))[0]).toEqual(upgraded);
+      expect(await readAccounts()).toEqual(accounts);
       // Configured identity collisions fail closed without elevating an existing viewer.
-      vi.stubEnv('INITIAL_ADMIN_USERNAME', 'retained');
+      vi.stubEnv('INITIAL_ADMIN_USERNAME', 'user');
       await expect(runner.run()).rejects.toThrow('conflicts');
-      expect((await pool.query<any[]>("SELECT COUNT(*) n FROM user_roles ur JOIN users u ON u.id=ur.user_id WHERE u.username='retained'"))[0][0].n).toBe(0);
+      expect(await readAccounts()).toEqual(accounts);
       production();
-      // Recreate a complete historical development install, then upgrade under production.
-      await pool.query('DELETE FROM user_roles');
-      await pool.query('DELETE FROM users');
-      vi.stubEnv('NODE_ENV', 'development');
-      const legacyHash = '4f32fc2ba7f8dfa43328d1ee7e5eb7607c78ab2e73c5cd001979aeaf5532c817';
-      await pool.query("INSERT INTO users(username,password_hash) VALUES ('admin',?),('user',?)", [legacyHash, legacyHash]);
-      production();
-      await runner.run();
-      expect((await pool.query<any[]>("SELECT status FROM users WHERE username IN ('admin','user')"))[0].map(row => row.status)).toEqual(['inactive', 'inactive']);
-      expect(await runner.inspect()).toEqual(before);
+      expect(await auth.verifyPassword('user', existingPassword)).toBe(true);
+      expect(await auth.verifyPassword('retained', existingPassword)).toBe(false);
+      expect(await readAccounts()).toEqual(accounts);
+      expect(await auth.verifyPassword('admin', existingPassword)).toBe(true);
+      await expect.poll(async () => (await readAccounts()).find(row => row.username === 'admin')?.password_hash).toMatch(/^\$2/);
+      const upgraded = await readAccounts();
+      const adminHash = upgraded.find(row => row.username === 'admin')?.password_hash;
+      expect(await bcrypt.compare(existingPassword, adminHash)).toBe(true);
+      expect(upgraded.map(row => row.username === 'admin' ? { ...row, password_hash: shaHash } : row)).toEqual(accounts);
       // Reinitializing an empty user table uses an independent salt.
 
       await pool.query('DELETE FROM user_roles');
@@ -90,7 +89,16 @@ describe.skipIf(!port)('MAX-267 production bootstrap on real MySQL', () => {
       const runner = new MigrationRunner(pool);
       await runner.run();
       expect((await pool.query<any[]>('SELECT username FROM users ORDER BY username'))[0].map(row => row.username)).toEqual(['admin', 'user']);
+      const currentChecksum = '9f6952edd85f9cff7cd14571a5e70d79acb714ea0f2bd55771b4d52e76a0389a';
+      const oldChecksum = '729ec2cce91657443417503a6cf0a1852cb6002885fc6f9f9af5755560cdc2b9';
+      expect((await runner.inspect()).find(row => row.migration_id === '000_schema_baseline.sql')?.checksum).toBe(currentChecksum);
+      await pool.query("UPDATE app_schema_migrations SET checksum=? WHERE migration_id='000_schema_baseline.sql'", [oldChecksum]);
       const before = await runner.inspect();
+      const seedState = async () => (await pool.query<mysql.RowDataPacket[]>(
+        'SELECT u.id,u.status,u.session_version FROM users u JOIN development_account_seeds seed ON seed.user_id=u.id ORDER BY u.id',
+      ))[0];
+      const beforeSeeds = await seedState();
+      expect(beforeSeeds).toHaveLength(2);
       vi.stubEnv('NODE_ENV', 'production');
       vi.stubEnv('JWT_SECRET_KEY', 'j'.repeat(32));
       vi.stubEnv('ENCRYPTION_KEY', 'e'.repeat(32));
@@ -99,6 +107,10 @@ describe.skipIf(!port)('MAX-267 production bootstrap on real MySQL', () => {
       await runner.run();
       const [rows] = await pool.query<any[]>('SELECT username,status FROM users ORDER BY username');
       expect(rows).toEqual([{username:'admin',status:'inactive'}, {username:'operator',status:'active'}, {username:'user',status:'inactive'}]);
+      const afterSeeds = beforeSeeds.map(row => ({ ...row, status: 'inactive', session_version: Number(row.session_version) + 1 }));
+      expect(await seedState()).toEqual(afterSeeds);
+      await runner.run();
+      expect(await seedState()).toEqual(afterSeeds);
       expect(await runner.inspect()).toEqual(before);
     } finally {
       vi.unstubAllEnvs();

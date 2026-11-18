@@ -74,7 +74,7 @@ it('MAX-267 rejects blank identities, weak and bcrypt-truncated bootstrap passwo
   for (const INITIAL_ADMIN_USERNAME of [' ', 'x'.repeat(51)]) {
     expect(() => loadSecurityConfig({ ...secure, INITIAL_ADMIN_USERNAME })).toThrow();
   }
-  for (const INITIAL_ADMIN_PASSWORD of [' ', 'Tpam1234', 'x'.repeat(73)]) {
+  for (const INITIAL_ADMIN_PASSWORD of [' ', 'SlideQa42', 'x'.repeat(73)]) {
     expect(() => loadSecurityConfig({ ...secure, INITIAL_ADMIN_PASSWORD })).toThrow();
   }
 });

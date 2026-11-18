@@ -72,6 +72,12 @@ test(`investigation page two restores visible focus at ${viewport.width} and mis
     await expect.poll(()=>page.evaluate(()=>document.activeElement?.tagName)).not.toBe('BODY');
     await assertFilters();
     await measure('revoked-row-focus');
+    // MAX-684: losing this resource must clear rows, not invalidate the login.
+    expect(await page.evaluate(() => Boolean(localStorage.getItem('token')))).toBe(true);
+    const listStatus = await page.evaluate(async () => (await fetch('/api/investigations', {
+      headers: { Authorization: `Bearer ${localStorage.getItem('token')}` },
+    })).status);
+    expect(listStatus).toBe(200);
     expect(env.counts()).toEqual({toolCalls:0,providerCalls:0});
   } finally {await page.close();await env.close();}
 });

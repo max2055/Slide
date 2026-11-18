@@ -63,7 +63,21 @@ export function inspectSecrets(file, text) {
   return [...findings.values()].sort((a, b) => a.line - b.line || a.rule.localeCompare(b.rule));
 }
 
-export function scanRepository({ cwd = process.cwd(), base, head } = {}) {
+export function inspectKnownValues(file, text, values) {
+  if (!Array.isArray(values) || values.some(value => typeof value !== 'string' || !value.length)) {
+    throw new Error('INVALID_KNOWN_VALUES');
+  }
+  const lines = new Set();
+  for (const value of new Set(values)) {
+    for (let offset = text.indexOf(value); offset !== -1; offset = text.indexOf(value, offset + value.length)) {
+      lines.add(text.slice(0, offset).split('\n').length);
+    }
+  }
+  return [...lines].sort((left, right) => left - right)
+    .map(line => ({ path: file, line, rule: 'known-value' }));
+}
+
+export function scanRepository({ cwd = process.cwd(), base, head, knownValues = [] } = {}) {
   const git = (...args) => execFileSync('git', args, { cwd, encoding: 'buffer', maxBuffer: 128 * 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'] });
   const commit = ref => git('rev-parse', '--verify', '--end-of-options', `${ref}^{commit}`).toString().trim();
   if (head && !base) throw new Error('BASE_REQUIRED');
@@ -87,7 +101,9 @@ export function scanRepository({ cwd = process.cwd(), base, head } = {}) {
     }
     if (bytes.includes(0)) { binaryPaths.push(file); continue; }
     textFiles++;
-    const current = inspectSecrets(file, bytes.toString('utf8'));
+    const text = bytes.toString('utf8');
+    findings.push(...inspectKnownValues(file, text, knownValues));
+    const current = inspectSecrets(file, text);
     const previous = new Map();
     if (baseCommit && current.length && oldPaths.has(file)) {
       for (const finding of inspectSecrets(file, git('show', `${baseCommit}:${file}`).toString('utf8'))) {
@@ -106,12 +122,16 @@ export function scanRepository({ cwd = process.cwd(), base, head } = {}) {
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   try {
     const args = process.argv.slice(2);
+    const exact = args[0] === '--known-values-stdin';
+    if (exact) args.shift();
+    const knownValues = exact ? JSON.parse(readFileSync(0, 'utf8')) : [];
+    if (exact && (!Array.isArray(knownValues) || !knownValues.length)) throw new Error();
     let base, head;
     if (args.length) {
       if (![2, 4].includes(args.length) || args[0] !== '--base' || (args.length === 4 && args[2] !== '--head')) throw new Error();
       base = args[1]; head = args[3];
     }
-    const result = scanRepository({ base, head });
+    const result = scanRepository({ base, head, knownValues });
     // Structured output contains positions and fingerprints only, never matches.
     console.log(JSON.stringify(result, null, 2));
     process.exitCode = result.findings.length ? 1 : 0;
