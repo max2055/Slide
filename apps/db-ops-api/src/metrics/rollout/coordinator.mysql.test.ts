@@ -55,9 +55,11 @@ describe.skipIf(!port)('resource rollout coordinator', () => {
   };
 
   beforeAll(async () => {
-    root = mysql.createPool({ host: '127.0.0.1', port, user: 'root', password: process.env.METRICS_TEST_MYSQL_PASSWORD ?? '' });
+    if (process.env.METRICS_TEST_MYSQL_PASSWORD === undefined) throw new Error('METRICS_TEST_MYSQL_PASSWORD must be explicitly injected; explicit empty is reserved for isolated targets');
+
+    root = mysql.createPool({ host: '127.0.0.1', port, user: 'root', password: process.env.METRICS_TEST_MYSQL_PASSWORD! });
     await root.query(`CREATE DATABASE ${database}`);
-    pool = mysql.createPool({ host: '127.0.0.1', port, user: 'root', password: process.env.METRICS_TEST_MYSQL_PASSWORD ?? '', database, connectionLimit: 12 });
+    pool = mysql.createPool({ host: '127.0.0.1', port, user: 'root', password: process.env.METRICS_TEST_MYSQL_PASSWORD!, database, connectionLimit: 12 });
     await new MigrationRunner(pool as unknown as MigrationPool).run();
     coordinator = new MysqlRolloutCoordinator(pool);
     policies = new MysqlPolicyStore(() => pool);
@@ -126,7 +128,7 @@ describe.skipIf(!port)('resource rollout coordinator', () => {
       freshness_mismatches: 0, missing_mismatches: 0, derived_mismatches: 0, performance_regressions: 0,
     }, actor);
     const reader = mysql.createPool({ host: '127.0.0.1', port, user: 'root',
-      password: process.env.METRICS_TEST_MYSQL_PASSWORD ?? '', database, connectionLimit: 1 });
+      password: process.env.METRICS_TEST_MYSQL_PASSWORD!, database, connectionLimit: 1 });
     try {
       await reader.query(`SET SESSION TRANSACTION ISOLATION LEVEL ${isolation}`);
       const statusReader = new MysqlRolloutCoordinator(reader);

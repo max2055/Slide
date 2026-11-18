@@ -4,6 +4,11 @@ node_modules
 .env.*
 !.env.example
 !.env.*.example
+# Private test-resource handoff files must stay outside version control.
+**/resource-manifest.json
+**/connection-profiles.json
+*.password
+*.jwt
 *.log
 dist
 dist-runtime/

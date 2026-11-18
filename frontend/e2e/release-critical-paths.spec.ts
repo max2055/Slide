@@ -1,10 +1,11 @@
+import { qualificationPassword, qualificationMysqlTarget } from './qualification-credentials.js';
 import { expect, test } from '@playwright/test';
 
 test('qualification login authenticates through REST and enters the application', async ({ page }) => {
   await page.goto('/dashboard');
   await expect(page.locator('.login-gate')).toBeVisible();
   await page.locator('.login-gate input[autocomplete="username"]').fill('admin');
-  await page.locator('.login-gate input[autocomplete="current-password"]').fill('Tpam1234');
+  await page.locator('.login-gate input[autocomplete="current-password"]').fill(qualificationPassword());
 
   const response = page.waitForResponse((candidate) =>
     candidate.url().endsWith('/api/auth/login') && candidate.request().method() === 'POST',
@@ -22,7 +23,7 @@ test('legacy settings routes redirect to stable settings pages', async ({ page }
   ]) {
     await page.goto(legacyPath);
     await page.locator('.login-gate input[autocomplete="username"]').fill('admin');
-    await page.locator('.login-gate input[autocomplete="current-password"]').fill('Tpam1234');
+    await page.locator('.login-gate input[autocomplete="current-password"]').fill(qualificationPassword());
     await page.locator('.login-gate__connect').click();
     await expect(page).toHaveURL(new RegExp(`${targetPath}$`));
     await expect(page.locator('settings-shell')).toBeVisible();
@@ -32,7 +33,7 @@ test('legacy settings routes redirect to stable settings pages', async ({ page }
 
 test('resource readiness keeps an offline managed server visible and non-healthy', async ({ page }) => {
   const login = await page.request.post('/api/auth/login', {
-    data: { username: 'admin', password: 'Tpam1234' },
+    data: { username: 'admin', password: qualificationPassword() },
   });
   expect(login.status()).toBe(200);
   const headers = { Authorization: `Bearer ${(await login.json()).token}` };
@@ -65,8 +66,9 @@ test('resource readiness keeps an offline managed server visible and non-healthy
 });
 
 test('browser renders live MySQL metrics for an isolated managed instance', async ({ page }) => {
+  const target = qualificationMysqlTarget();
   const login = await page.request.post('/api/auth/login', {
-    data: { username: 'admin', password: 'Tpam1234' },
+    data: { username: 'admin', password: qualificationPassword() },
   });
   expect(login.status()).toBe(200);
   const headers = { Authorization: `Bearer ${(await login.json()).token}` };
@@ -77,11 +79,7 @@ test('browser renders live MySQL metrics for an isolated managed instance', asyn
       name,
       environment: 'testing',
       db_type: 'mysql',
-      host: '127.0.0.1',
-      port: 3306,
-      username: 'root',
-      password: 'Tpam1234',
-      database_name: 'db_ops_ai_qualification',
+      ...target,
     },
   });
   expect(created.status()).toBe(200);
@@ -91,13 +89,13 @@ test('browser renders live MySQL metrics for an isolated managed instance', asyn
   try {
     await page.goto('/?tab=instances-db');
     await page.locator('.login-gate input[autocomplete="username"]').fill('admin');
-    await page.locator('.login-gate input[autocomplete="current-password"]').fill('Tpam1234');
+    await page.locator('.login-gate input[autocomplete="current-password"]').fill(qualificationPassword());
     await page.locator('.login-gate__connect').click();
     const row = page.locator('instances-page .instance-row').filter({ hasText: name });
     await expect(row).toBeVisible({ timeout: 15_000 });
     await row.getByRole('button', { name: '测试' }).click();
     const dialog = page.locator('app-dialog');
-    await dialog.locator('input[type="password"]').fill('Tpam1234');
+    await dialog.locator('input[type="password"]').fill(target.password);
     const reloaded = page.waitForResponse((candidate) =>
       candidate.url().endsWith(`/api/database/instances/${id}/reload`) && candidate.request().method() === 'POST',
     );
@@ -135,9 +133,10 @@ test('browser renders live MySQL metrics for an isolated managed instance', asyn
 });
 
 test('fresh native MySQL metrics create a threshold alert visible in the browser', async ({ page }) => {
+  const target = qualificationMysqlTarget();
   test.setTimeout(180_000);
   const login = await page.request.post('/api/auth/login', {
-    data: { username: 'admin', password: 'Tpam1234' },
+    data: { username: 'admin', password: qualificationPassword() },
   });
   expect(login.status()).toBe(200);
   const headers = { Authorization: `Bearer ${(await login.json()).token}` };
@@ -150,11 +149,7 @@ test('fresh native MySQL metrics create a threshold alert visible in the browser
       name,
       environment: 'testing',
       db_type: 'mysql',
-      host: '127.0.0.1',
-      port: 3306,
-      username: 'root',
-      password: 'Tpam1234',
-      database_name: 'db_ops_ai_qualification',
+      ...target,
     },
   });
   expect(created.status()).toBe(200);
@@ -200,7 +195,7 @@ test('fresh native MySQL metrics create a threshold alert visible in the browser
 
     await page.goto('/alerts');
     await page.locator('.login-gate input[autocomplete="username"]').fill('admin');
-    await page.locator('.login-gate input[autocomplete="current-password"]').fill('Tpam1234');
+    await page.locator('.login-gate input[autocomplete="current-password"]').fill(qualificationPassword());
     await page.locator('.login-gate__connect').click();
     const alertRow = page.locator('alert-list tr').filter({ hasText: ruleName });
     await expect(alertRow).toBeVisible({ timeout: 15_000 });
@@ -241,7 +236,7 @@ test('fresh native MySQL metrics create a threshold alert visible in the browser
 test('server alert RCA can be started from the browser without an instance id', async ({ page }) => {
   await page.goto('/alerts');
   await page.locator('.login-gate input[autocomplete="username"]').fill('admin');
-  await page.locator('.login-gate input[autocomplete="current-password"]').fill('Tpam1234');
+  await page.locator('.login-gate input[autocomplete="current-password"]').fill(qualificationPassword());
   await page.locator('.login-gate__connect').click();
 
   const row = page.locator('alert-list tr').filter({ hasText: 'Qualification server RCA browser alert' });
@@ -257,12 +252,12 @@ test('server alert RCA can be started from the browser without an instance id', 
 test('notification recovery is reachable through the protected alerts workspace', async ({ page }) => {
   await page.goto('/dashboard');
   await page.locator('.login-gate input[autocomplete="username"]').fill('admin');
-  await page.locator('.login-gate input[autocomplete="current-password"]').fill('Tpam1234');
+  await page.locator('.login-gate input[autocomplete="current-password"]').fill(qualificationPassword());
   await page.locator('.login-gate__connect').click();
   await expect(page.locator('.login-gate')).toBeHidden({ timeout: 15_000 });
 
   const login = await page.request.post('/api/auth/login', {
-    data: { username: 'admin', password: 'Tpam1234' },
+    data: { username: 'admin', password: qualificationPassword() },
   });
   const headers = { Authorization: `Bearer ${(await login.json()).token}` };
   const deadLetters = await page.request.get('/api/notification/dead-letters', { headers });
@@ -286,7 +281,7 @@ test('notification recovery is reachable through the protected alerts workspace'
 test('Feishu settings saves a disabled channel without exposing its credentials', async ({ page }) => {
   await page.goto('/settings');
   await page.locator('.login-gate input[autocomplete="username"]').fill('admin');
-  await page.locator('.login-gate input[autocomplete="current-password"]').fill('Tpam1234');
+  await page.locator('.login-gate input[autocomplete="current-password"]').fill(qualificationPassword());
   await page.locator('.login-gate__connect').click();
   await expect(page.locator('settings-shell')).toBeVisible({ timeout: 15_000 });
 
@@ -325,7 +320,7 @@ test('Feishu settings saves a disabled channel without exposing its credentials'
 
 test('an incident cannot close until recovery has been verified', async ({ page }) => {
   const login = await page.request.post('/api/auth/login', {
-    data: { username: 'admin', password: 'Tpam1234' },
+    data: { username: 'admin', password: qualificationPassword() },
   });
   expect(login.status()).toBe(200);
   const headers = { Authorization: `Bearer ${(await login.json()).token}` };
@@ -374,7 +369,7 @@ test('an incident cannot close until recovery has been verified', async ({ page 
 test('a scheduled server report is persisted and downloadable', async ({ page }) => {
   test.setTimeout(90_000);
   const login = await page.request.post('/api/auth/login', {
-    data: { username: 'admin', password: 'Tpam1234' },
+    data: { username: 'admin', password: qualificationPassword() },
   });
   expect(login.status()).toBe(200);
   const headers = { Authorization: `Bearer ${(await login.json()).token}` };

@@ -10,7 +10,7 @@ for (const scenario of ['recovery', 'length', 'reject'] as const) {
     test.setTimeout(60_000);
     await page.goto('/chat');
     await page.locator('.login-gate input[autocomplete="username"]').fill('admin');
-    await page.locator('.login-gate input[autocomplete="current-password"]').fill(process.env.QUALIFICATION_ADMIN_PASSWORD ?? 'Tpam1234');
+    await page.locator('.login-gate input[autocomplete="current-password"]').fill(process.env.QUALIFICATION_ADMIN_PASSWORD ?? 'SlideQa42');
     const login = page.waitForResponse(r => new URL(r.url()).pathname === '/api/auth/login' && r.request().method() === 'POST');
     await page.locator('.login-gate__connect').click();
     const accessToken = (await (await login).json()).token;

@@ -79,11 +79,11 @@ post-v0.9 engineering route is now implemented and locally requalified; see the
 - Current managed E2E commands:
 
 ```sh
-QUALIFICATION_ADMIN_PASSWORD=Tpam1234 PLAYWRIGHT_MANAGED_ENV=1 \
+QUALIFICATION_ADMIN_PASSWORD=REDACTED PLAYWRIGHT_MANAGED_ENV=1 \
   pnpm --filter slide-frontend exec playwright test \
   e2e/release-security.spec.ts --workers=1
 
-QUALIFICATION_ADMIN_PASSWORD=Tpam1234 PLAYWRIGHT_MANAGED_ENV=1 \
+QUALIFICATION_ADMIN_PASSWORD=REDACTED PLAYWRIGHT_MANAGED_ENV=1 \
   pnpm --filter slide-frontend exec playwright test \
   e2e/release-critical-paths.spec.ts --workers=1
 ```

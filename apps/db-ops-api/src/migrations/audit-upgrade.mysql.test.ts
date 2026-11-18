@@ -38,7 +38,7 @@ describe.skipIf(!container)('W14 audited baseline upgrade and snapshot rollback'
         await writeFile(join(directory, migration.id), migration.sql);
       }
       expect(baseline).toHaveLength(108);
-      expect(digest.digest('hex')).toBe('75ac10941fde3172e0371ebb192eff510903bc3a4ae999683e96d9fe78552aa5');
+      expect(digest.digest('hex')).toBe('e9c7e7cda9c7bd82433cd6b34b346b461f6def29efbb0f021bc66708aba3cfb0');
       await admin.query(`CREATE DATABASE \`${database}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci`);
       pool = mysql.createPool({ ...options, database });
       const old = new MigrationRunner(pool as any, directory);

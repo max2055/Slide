@@ -1,3 +1,4 @@
+import { qualificationPassword } from './qualification-credentials.js';
 import { expect, test, type Page } from '@playwright/test';
 
 const routes = [
@@ -10,7 +11,7 @@ const routes = [
 
 async function authenticate(page: Page, locale = 'en') {
   const response = await page.request.post('/api/auth/login', {
-    data: { username: 'admin', password: 'Tpam1234' },
+    data: { username: 'admin', password: qualificationPassword() },
   });
   expect(response.ok()).toBe(true);
   const auth = await response.json() as { token: string; refreshToken: string };

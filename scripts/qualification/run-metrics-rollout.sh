@@ -23,6 +23,7 @@ for attempt in $(seq 1 60); do
   sleep 1
 done
 if [[ "$ready" != 1 ]]; then echo 'isolated container readiness failed' >&2; exit 1; fi
+export METRICS_TEST_MYSQL_PASSWORD=''
 export METRICS_TEST_MYSQL_PORT="$(docker port "$mysql_container" 3306/tcp | cut -d: -f2)"
 export METRICS_TEST_SSH_PORT="$(docker port "$host_container" 22/tcp | cut -d: -f2)"
 export METRICS_TEST_SSH_PASSWORD=isolated-fixture

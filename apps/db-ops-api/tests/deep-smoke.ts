@@ -10,13 +10,14 @@ import { multiTest, assertShape, workflow, getToken, setToken, getBaseUrl, setBa
 
 // Reuse basic auth
 async function login() {
-  const BASE = "http://localhost:3000";
+  const BASE = process.env.SMOKE_BASE_URL || "http://localhost:3000";
+  if (!process.env.SMOKE_PASS) throw new Error("SMOKE_PASS must be explicitly injected");
   setBaseUrl(BASE);
 
   const res = await fetch(`${BASE}/api/auth/login`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ username: "admin", password: "Tpam1234" }),
+    body: JSON.stringify({ username: process.env.SMOKE_USER || "admin", password: process.env.SMOKE_PASS }),
   });
   const data = await res.json() as { token?: string };
   if (!data.token) throw new Error("Login failed");

@@ -7,10 +7,13 @@
  * Requires the backend to be running: cd apps/db-ops-api && npx tsx server.ts
  */
 
+import { randomBytes } from "node:crypto";
+
 const BASE_URL = process.env.SMOKE_BASE_URL || "http://localhost:3000";
+if (!process.env.SMOKE_PASS) throw new Error("SMOKE_PASS must be explicitly injected");
 const CREDS = {
   username: process.env.SMOKE_USER || "admin",
-  password: process.env.SMOKE_PASS || "Tpam1234",
+  password: process.env.SMOKE_PASS,
 };
 
 interface TestCase {
@@ -362,7 +365,8 @@ const ROUTES: TestCase[] = [
 // Auto bodies for POST/PUT routes that accept minimal valid data
 // ---------------------------------------------------------------------------
 const AUTO_BODIES: Record<string, Record<string, unknown>> = {
-  "/api/users": { username: "smoke_test_user", password: "smoke1234", role: "viewer" },
+  // MAX-681: this request may create a real account on the selected target.
+  "/api/users": { username: "smoke_test_user", password: randomBytes(24).toString("hex"), role: "viewer" },
   "/api/database/instances": { name: "smoke-test", db_type: "mysql", host: "127.0.0.1", port: 3306, database_name: "test", username: "root", password: "x", environment: "test" },
   "/api/database/instances/1": { name: "updated-smoke", db_type: "mysql" },
   "/api/database/instances/test-connection": { db_type: "mysql", host: "127.0.0.1", port: 3306, username: "root", password: "x" },

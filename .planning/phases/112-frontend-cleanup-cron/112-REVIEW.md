@@ -76,7 +76,7 @@ for (const [id, ts] of rcaProcessedAlertsWithTimestamps) {
 ### CR-03: Hardcoded production password in migration runner
 
 **File:** `apps/db-ops-api/run-migration-009.ts:20`
-**Issue:** The database password fallback default is `'Tpam1234'`, which is the same known admin password documented in `CLAUDE.md`. Hardcoded secrets in source code are a security risk. Combined with `multipleStatements: true` (line 22-23), any accidental exposure of this file or injection at the DB_HOST/DB_NAME env var level could lead to arbitrary SQL execution.
+**Issue:** The database password fallback default is `'REDACTED'`, which is the same known admin password documented in `CLAUDE.md`. Hardcoded secrets in source code are a security risk. Combined with `multipleStatements: true` (line 22-23), any accidental exposure of this file or injection at the DB_HOST/DB_NAME env var level could lead to arbitrary SQL execution.
 
 **Fix:** Either remove the fallback entirely so migration fails loudly if no password is set, or use a less critical fallback and document the requirement:
 ```ts

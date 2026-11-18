@@ -1,3 +1,4 @@
+import { qualificationPassword, qualificationMysqlTarget } from './qualification-credentials.js';
 import { expect, test } from '@playwright/test';
 
 test('qualification security boundary rejects unauthenticated administration and invalid login', async ({ page }) => {
@@ -13,10 +14,10 @@ test('qualification security boundary rejects unauthenticated administration and
 
 test('viewer cannot read, modify or delete an administrator private chat session', async ({ page }) => {
   const viewerLogin = await page.request.post('/api/auth/login', {
-    data: { username: 'qualification-viewer', password: 'Tpam1234' },
+    data: { username: 'qualification-viewer', password: qualificationPassword() },
   });
   const adminLogin = await page.request.post('/api/auth/login', {
-    data: { username: 'admin', password: 'Tpam1234' },
+    data: { username: 'admin', password: qualificationPassword() },
   });
   expect(viewerLogin.status()).toBe(200);
   expect(adminLogin.status()).toBe(200);
@@ -40,7 +41,7 @@ test('viewer cannot read, modify or delete an administrator private chat session
 
 test('viewer WebSocket cannot watch or load an administrator private chat session', async ({ page }) => {
   const login = await page.request.post('/api/auth/login', {
-    data: { username: 'qualification-viewer', password: 'Tpam1234' },
+    data: { username: 'qualification-viewer', password: qualificationPassword() },
   });
   const { token } = await login.json();
   const errors = await page.evaluate(async ({ token }) => new Promise<string[]>((resolve, reject) => {
@@ -65,7 +66,7 @@ test('viewer WebSocket cannot watch or load an administrator private chat sessio
 
 test('disabling a user revokes REST, refresh, and WebSocket access immediately', async ({ page }) => {
   const adminLogin = await page.request.post('/api/auth/login', {
-    data: { username: 'admin', password: 'Tpam1234' },
+    data: { username: 'admin', password: qualificationPassword() },
   });
   expect(adminLogin.status()).toBe(200);
   const adminHeaders = { Authorization: `Bearer ${(await adminLogin.json()).token}` };
@@ -126,7 +127,7 @@ test('disabling a user revokes REST, refresh, and WebSocket access immediately',
 
 test('notification channels reject private targets and redact stored credentials', async ({ page }) => {
   const login = await page.request.post('/api/auth/login', {
-    data: { username: 'admin', password: 'Tpam1234' },
+    data: { username: 'admin', password: qualificationPassword() },
   });
   expect(login.status()).toBe(200);
   const headers = { Authorization: `Bearer ${(await login.json()).token}` };
@@ -165,8 +166,9 @@ test('notification channels reject private targets and redact stored credentials
 });
 
 test('direct SQL execution rejects write, DDL, and multi-statement input before the target driver', async ({ page }) => {
+  const target = qualificationMysqlTarget();
   const login = await page.request.post('/api/auth/login', {
-    data: { username: 'admin', password: 'Tpam1234' },
+    data: { username: 'admin', password: qualificationPassword() },
   });
   expect(login.status()).toBe(200);
   const headers = { Authorization: `Bearer ${(await login.json()).token}` };
@@ -177,11 +179,7 @@ test('direct SQL execution rejects write, DDL, and multi-statement input before 
       name,
       environment: 'testing',
       db_type: 'mysql',
-      host: '127.0.0.1',
-      port: 3306,
-      username: 'root',
-      password: 'Tpam1234',
-      database_name: 'db_ops_ai_qualification',
+      ...target,
     },
   });
   expect(created.status()).toBe(200);
@@ -189,7 +187,8 @@ test('direct SQL execution rejects write, DDL, and multi-statement input before 
   const { id } = createdBody;
   const assertNoCredential = (value: unknown) => {
     const serialized = JSON.stringify(value);
-    expect(serialized).not.toContain('Tpam1234');
+    expect(serialized).not.toContain(qualificationPassword());
+    if (target.password) expect(serialized).not.toContain(target.password);
     expect(serialized).not.toContain('password_encrypted');
     expect(serialized).not.toContain('connection_string');
   };
@@ -220,7 +219,7 @@ test('direct SQL execution rejects write, DDL, and multi-statement input before 
 
 test('adapter capability contract rejects unsupported database types before persistence', async ({ page }) => {
   const login = await page.request.post('/api/auth/login', {
-    data: { username: 'admin', password: 'Tpam1234' },
+    data: { username: 'admin', password: qualificationPassword() },
   });
   expect(login.status()).toBe(200);
   const headers = { Authorization: `Bearer ${(await login.json()).token}` };
@@ -251,9 +250,10 @@ test('adapter capability contract rejects unsupported database types before pers
 });
 
 test('concurrent approval reviews execute a write exactly once', async ({ page }) => {
+  const target = qualificationMysqlTarget();
   test.setTimeout(30_000);
   const login = await page.request.post('/api/auth/login', {
-    data: { username: 'admin', password: 'Tpam1234' },
+    data: { username: 'admin', password: qualificationPassword() },
   });
   expect(login.status()).toBe(200);
   const headers = { Authorization: `Bearer ${(await login.json()).token}` };
@@ -264,11 +264,7 @@ test('concurrent approval reviews execute a write exactly once', async ({ page }
       name,
       environment: 'testing',
       db_type: 'mysql',
-      host: '127.0.0.1',
-      port: 3306,
-      username: 'root',
-      password: 'Tpam1234',
-      database_name: 'db_ops_ai_qualification',
+      ...target,
     },
   });
   expect(created.status()).toBe(200);
@@ -281,7 +277,7 @@ test('concurrent approval reviews execute a write exactly once', async ({ page }
       data: {
         instance_id: id,
         sql_text: 'UPDATE qualification_approval_counter SET value = value + 1 WHERE id = 1',
-        database_name: 'db_ops_ai_qualification',
+        database_name: target.database_name,
       },
     });
     const submittedBody = await submitted.json();
@@ -339,9 +335,10 @@ test('concurrent approval reviews execute a write exactly once', async ({ page }
 });
 
 test('approval cancellation and retry keep the request attached to the current attempt', async ({ page }) => {
+  const target = qualificationMysqlTarget();
   test.setTimeout(30_000);
   const login = await page.request.post('/api/auth/login', {
-    data: { username: 'admin', password: 'Tpam1234' },
+    data: { username: 'admin', password: qualificationPassword() },
   });
   expect(login.status()).toBe(200);
   const headers = { Authorization: `Bearer ${(await login.json()).token}` };
@@ -351,11 +348,7 @@ test('approval cancellation and retry keep the request attached to the current a
       name: `qualification-approval-retry-${Date.now()}`,
       environment: 'testing',
       db_type: 'mysql',
-      host: '127.0.0.1',
-      port: 3306,
-      username: 'root',
-      password: 'Tpam1234',
-      database_name: 'db_ops_ai_qualification',
+      ...target,
     },
   });
   expect(instance.status()).toBe(200);
@@ -367,7 +360,7 @@ test('approval cancellation and retry keep the request attached to the current a
       data: {
         instance_id: instanceId,
         sql_text: sqlText,
-        database_name: 'db_ops_ai_qualification',
+        database_name: target.database_name,
       },
     });
     const body = await submitted.json();
@@ -377,10 +370,10 @@ test('approval cancellation and retry keep the request attached to the current a
 
     await page.goto('/dashboard');
     await page.locator('.login-gate input[autocomplete="username"]').fill('admin');
-    await page.locator('.login-gate input[autocomplete="current-password"]').fill('Tpam1234');
+    await page.locator('.login-gate input[autocomplete="current-password"]').fill(qualificationPassword());
     await page.locator('.login-gate__connect').click();
     await expect(page.locator('.login-gate')).toBeHidden({ timeout: 15_000 });
-    await page.getByRole('link', { name: 'Approval' }).click();
+    await page.goto('/approval');
     const dashboard = page.locator('approval-dashboard');
     const card = dashboard.locator('.card').filter({ hasText: sqlText });
     await expect(card).toBeVisible({ timeout: 15_000 });

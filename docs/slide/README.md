@@ -37,7 +37,7 @@ npm run dev
 ### 默认凭据
 
 - 管理员账号：`admin`
-- 默认密码：`Tpam1234`
+- 默认密码：`REDACTED`
 
 ## 文档维护
 

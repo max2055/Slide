@@ -1,23 +1,13 @@
 import bcrypt from 'bcrypt';
+import { disableDevelopmentAccountSeeds, prepareBaselineAccountScope } from './development-account-seeds.js';
 import type { MigrationConnection } from './types.js';
 
-const seedHash = '4f32fc2ba7f8dfa43328d1ee7e5eb7607c78ab2e73c5cd001979aeaf5532c817';
-
 /** Runs under the schema migration lock, before any authentication listener starts. */
-export async function bootstrapProductionAdmin(connection: MigrationConnection, env: NodeJS.ProcessEnv): Promise<void> {
+export async function bootstrapProductionAdmin(connection: MigrationConnection, env: NodeJS.ProcessEnv, legacyChecksums: readonly string[]): Promise<void> {
+  const baselineChecksum = await prepareBaselineAccountScope(connection);
   await connection.query('START TRANSACTION');
   try {
-    const [seeds] = await connection.query<Array<{ id: number; password_hash: string }>>(
-      "SELECT id,password_hash FROM users WHERE LOWER(username) IN ('admin','user') FOR UPDATE",
-    );
-    for (const seed of seeds) {
-      const knownPassword = seed.password_hash === seedHash
-        || (seed.password_hash.startsWith('$2') && await bcrypt.compare('Tpam1234', seed.password_hash));
-      if (knownPassword) {
-        // Preserve identity/history/password evidence; invalidate every existing session.
-        await connection.query("UPDATE users SET status='inactive', session_version=session_version+1 WHERE id=? AND status <> 'inactive'", [seed.id]);
-      }
-    }
+    await disableDevelopmentAccountSeeds(connection, env, legacyChecksums, baselineChecksum);
     const [existing] = await connection.query<Array<{ id: number; status: string }>>(
       'SELECT id,status FROM users WHERE username=? FOR UPDATE', [env.INITIAL_ADMIN_USERNAME],
     );
@@ -41,6 +31,7 @@ export async function bootstrapProductionAdmin(connection: MigrationConnection, 
     await connection.query('COMMIT');
   } catch (error) {
     await connection.query('ROLLBACK');
+    if (error instanceof Error && error.message === 'LEGACY_DEVELOPMENT_ACCOUNTS_RECONCILIATION_REQUIRED') console.error(error.message);
     throw error;
   }
 }

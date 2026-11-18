@@ -1,3 +1,4 @@
+import { drainWorkers } from './src/lifecycle/drain-workers.js';
 import { registerIndexRoutes } from './src/index-routes.js';
 import { recordSshTrustRequest } from './src/security/ssh-trust-audit.js';
 import { SystemEventWorkflow } from './src/investigations/system-event-workflow.js';
@@ -323,19 +324,21 @@ async function start() {
     dispatchAvailable = false;
     notificationWorkflowStore = undefined;
     if (workflowTimer) clearInterval(workflowTimer);
-    monitorCollector.stop();
-    networkDeviceCollector.stop();
-    stopSessionCleanup();
-    promptManager.stopWatch();
-    const results = await Promise.allSettled([
-      alertEngine.stopEvaluationLoop(), alertEscalationService.stop(), maintenanceWindowService.stopCacheRefresh(),
-      configBackupScheduler.stop(), cronManager?.stop(), disposeAgentEngine(),
-      metricLifecycle && waitForDrain(() => metricLifecycle!.stop()),
-      stopWorkflow && waitForDrain(stopWorkflow),
-      ...Array.from(recoveredConnections, id => databaseService.removeConnection(id)),
-    ]);
-    const failed = results.find(result => result.status === 'rejected');
-    if (failed?.status === 'rejected') throw new Error('WORKER_DRAIN_FAILED', { cause: failed.reason });
+    await drainWorkers([
+      { name: 'monitor-collector', stop: () => monitorCollector.stop() },
+      { name: 'network-collector', stop: () => networkDeviceCollector.stop() },
+      { name: 'session-cleanup', stop: () => stopSessionCleanup() },
+      { name: 'prompt-watch', stop: () => promptManager.stopWatch() },
+      { name: 'alerts', stop: () => alertEngine.stopEvaluationLoop() },
+      { name: 'escalation', stop: () => alertEscalationService.stop() },
+      { name: 'maintenance', stop: () => maintenanceWindowService.stopCacheRefresh() },
+      { name: 'config-backup', stop: () => configBackupScheduler.stop() },
+      { name: 'cron', stop: () => cronManager?.stop() },
+      { name: 'agent-engine', stop: () => disposeAgentEngine() },
+      { name: 'metrics', stop: () => metricLifecycle && waitForDrain(() => metricLifecycle!.stop()) },
+      { name: 'workflow', stop: () => stopWorkflow && waitForDrain(stopWorkflow) },
+      ...Array.from(recoveredConnections, id => ({ name: `connection:${id}`, stop: () => databaseService.removeConnection(id) })),
+    ], event => console.info('[WorkerDrain]', JSON.stringify(event)));
     recoveredConnections.clear();
   })();
   const recovery = new WorkerRecovery({
@@ -1441,12 +1444,12 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
       if (bodyError) return reply.code(400).send(bodyError);
       const result = await instanceDatabaseService.createInstance(data);
       if (result.success) {
-        reply.send({ id: result.instanceId, message: '创建成功' });
+        return reply.send({ id: result.instanceId, message: '创建成功' });
       } else {
-        reply.code(400).send({ error: result.error });
+        return reply.code(400).send({ error: result.error });
       }
     } catch (error: any) {
-      reply.code(500).send({ error: '创建实例失败：' + error.message });
+      return reply.code(500).send({ error: '创建实例失败：' + error.message });
     }
   });
 
@@ -1478,12 +1481,12 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
       const { id } = request.params as any;
       const result = await instanceDatabaseService.deleteInstance(Number(id));
       if (result.success) {
-        reply.send({ message: '删除成功', lifecycle_state: result.state });
+        return reply.send({ message: '删除成功', lifecycle_state: result.state });
       } else {
-        reply.code(result.statusCode ?? 409).send({ error: result.error, lifecycle_state: result.state, reasons: result.reasons ?? [] });
+        return reply.code(result.statusCode ?? 409).send({ error: result.error, lifecycle_state: result.state, reasons: result.reasons ?? [] });
       }
     } catch (error: any) {
-      reply.code(503).send({ error: 'INSTANCE_REMOVAL_FAILED', lifecycle_state: 'deleting' });
+      return reply.code(503).send({ error: 'INSTANCE_REMOVAL_FAILED', lifecycle_state: 'deleting' });
     }
   });
 
@@ -1862,9 +1865,9 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
       if (!result.success) {
         return reply.code(400).send({ ...result, operationId: operation.id });
       }
-      reply.send({ ...result, operationId: operation.id, correlationId: user.requestId });
+      return reply.send({ ...result, operationId: operation.id, correlationId: user.requestId });
     } catch (error: any) {
-      reply.code(500).send({ error: 'SQL 执行失败：' + error.message });
+      return reply.code(500).send({ error: 'SQL 执行失败：' + error.message });
     }
   });
 
@@ -1911,9 +1914,9 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
       });
       if (result.request_id) await operationService.setApproval(operation.id, result.request_id);
       await operationService.transition(operation.id, 'waiting_approval', 'NEEDS_APPROVAL', user.userId, { approvalRequestId: result.request_id ?? null, commandType: classification.commandType });
-      reply.send({ ...result, operationId: operation.id, correlationId: user.requestId });
+      return reply.send({ ...result, operationId: operation.id, correlationId: user.requestId });
     } catch (error: any) {
-      reply.code(500).send({ error: error.message });
+      return reply.code(500).send({ error: error.message });
     }
   });
 
@@ -2004,7 +2007,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
   fastify.post('/api/approval/:id/review', { preHandler: [verifyToken, requirePermission('approval:approve')] }, async (request, reply) => {
     try {
       const { id } = request.params as any;
-      if (!await requireApprovalAccess(request, reply, Number(id), 'read-write')) return;
+      if (!await requireApprovalAccess(request, reply, Number(id), 'read-write')) return reply;
       const check = strictBody(request.body as Record<string, unknown>,
           ['action', 'notes', 'execute_after_approve'], 'POST /api/approval/:id/review');
         if (check.error) return reply.code(400).send(check.error);
@@ -2056,9 +2059,9 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
         }
       }
 
-      reply.send(result);
+      return reply.send(result);
     } catch (error: any) {
-      reply.code(500).send({ error: error.message });
+      return reply.code(500).send({ error: error.message });
     }
   });
 
@@ -2173,11 +2176,11 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
   fastify.get('/api/approval/:id/events', { preHandler: [verifyToken, requirePermission('approval:view')] }, async (request, reply) => {
     try {
       const { id } = request.params as any;
-      if (!await requireApprovalAccess(request, reply, Number(id))) return;
+      if (!await requireApprovalAccess(request, reply, Number(id))) return reply;
       const events = await approvalService.getApprovalEvents(Number(id));
-      reply.send(events);
+      return reply.send(events);
     } catch (error: any) {
-      reply.code(500).send({ error: error.message });
+      return reply.code(500).send({ error: error.message });
     }
   });
 

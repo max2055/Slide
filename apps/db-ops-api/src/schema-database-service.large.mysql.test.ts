@@ -26,13 +26,15 @@ describe.skipIf(process.env.MAX539_MYSQL_TEST !== '1')('MAX-539 #554 large snaps
   const use = (target = pool) => vi.spyOn(dbConnection, 'getPool').mockReturnValue(target);
 
   beforeAll(async () => {
+    if (process.env.SNAPSHOT_MYSQL_PASSWORD === undefined) throw new Error('SNAPSHOT_MYSQL_PASSWORD must be explicitly injected; explicit empty is reserved for isolated targets');
+
     if (!process.env.SNAPSHOT_MYSQL_PORT || !process.env.SNAPSHOT_MYSQL_USER) {
       throw new Error('Explicit SNAPSHOT_MYSQL_PORT and SNAPSHOT_MYSQL_USER are required');
     }
     const config = {
       host: process.env.SNAPSHOT_MYSQL_HOST || '127.0.0.1',
       port: Number(process.env.SNAPSHOT_MYSQL_PORT), user: process.env.SNAPSHOT_MYSQL_USER,
-      password: process.env.SNAPSHOT_MYSQL_PASSWORD || '', connectionLimit: 1,
+      password: process.env.SNAPSHOT_MYSQL_PASSWORD!, connectionLimit: 1,
     };
     root = mysql.createPool(config);
     await root.query(`CREATE DATABASE ${schema}`);

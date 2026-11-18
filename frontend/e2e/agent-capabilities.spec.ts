@@ -7,7 +7,7 @@ test('DirectAdapter capabilities hide management controls without handlers', asy
   const connect = page.locator('.login-gate__connect, button:has-text("Connect"), button:has-text("连接")').first();
   if (await connect.count()) {
     await page.locator('input[type="text"], input[name="username"]').first().fill('admin');
-    await page.locator('input[type="password"]').first().fill('Tpam1234');
+    await page.locator('input[type="password"]').first().fill(process.env.QUALIFICATION_ADMIN_PASSWORD ?? 'SlideQa42');
     await connect.click();
   }
   await expect.poll(() => page.evaluate(() => localStorage.getItem('token'))).not.toBeNull();

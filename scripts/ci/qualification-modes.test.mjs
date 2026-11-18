@@ -88,16 +88,17 @@ test('failed rollout propagates failure while still cleaning up its container', 
 }));
 
 test('runtime-only retains real runtime qualification while standalone mysql retains SQL suites', () => harness(run => {
-  const lean = run('scripts/qualification/run-agent-runtime.sh', ['--mode', 'mysql', '--runtime-only']);
+  // MAX-681: this process harness supplies an explicit empty fixture password.
+  const lean = run('scripts/qualification/run-agent-runtime.sh', ['--mode', 'mysql', '--runtime-only'], { DB_PASSWORD: '' });
   assert.equal(lean.status, 0, lean.stderr);
   assert.match(lean.trace, /agent-runtime\.ts mysql/);
   assert.doesNotMatch(lean.trace, /vitest/);
-  const standalone = run('scripts/qualification/run-agent-runtime.sh', ['--mode', 'mysql']);
+  const standalone = run('scripts/qualification/run-agent-runtime.sh', ['--mode', 'mysql'], { DB_PASSWORD: '' });
   assert.equal(standalone.status, 0, standalone.stderr);
   assert.match(standalone.trace, /agent-tool-approval-execution\.mysql\.test\.ts/);
   assert.match(standalone.trace, /execution-recovery\.mysql\.test\.ts/);
   assert.equal(run('scripts/qualification/run-agent-runtime.sh', ['--runtime-only']).status, 64);
-  const failed = run('scripts/qualification/run-agent-runtime.sh', ['--mode', 'mysql', '--runtime-only'], { CI_STUB_EXIT: '23' });
+  const failed = run('scripts/qualification/run-agent-runtime.sh', ['--mode', 'mysql', '--runtime-only'], { DB_PASSWORD: '', CI_STUB_EXIT: '23' });
   assert.equal(failed.status, 23);
 }));
 

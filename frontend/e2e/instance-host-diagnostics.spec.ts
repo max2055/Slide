@@ -5,7 +5,7 @@ import type {
   ReplaceInstanceHostsResponse,
 } from '../src/api/generated/public-api.js';
 
-const ADMIN_PASSWORD = process.env.QUALIFICATION_ADMIN_PASSWORD ?? 'Tpam1234';
+const ADMIN_PASSWORD = process.env.QUALIFICATION_ADMIN_PASSWORD ?? 'SlideQa42';
 const HOST_KEY_FINGERPRINT = 'SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';
 
 interface AuthContext {

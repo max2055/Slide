@@ -30,13 +30,15 @@ describe.skipIf(process.env.SQL_AUDIT_MYSQL_TEST !== '1')('MAX-533 real MySQL au
   const rows = async (sql: string, values: unknown[] = []) => (await pool.query<any[]>(sql, values))[0];
 
   beforeAll(async () => {
+    if (process.env.SQL_AUDIT_MYSQL_PASSWORD === undefined) throw new Error('SQL_AUDIT_MYSQL_PASSWORD must be explicitly injected; explicit empty is reserved for isolated targets');
+
     if (!process.env.SQL_AUDIT_MYSQL_PORT || !process.env.SQL_AUDIT_MYSQL_USER) {
       throw new Error('Explicit SQL_AUDIT_MYSQL_PORT and SQL_AUDIT_MYSQL_USER are required');
     }
     const config = {
       host: process.env.SQL_AUDIT_MYSQL_HOST || '127.0.0.1',
       port: Number(process.env.SQL_AUDIT_MYSQL_PORT), user: process.env.SQL_AUDIT_MYSQL_USER,
-      password: process.env.SQL_AUDIT_MYSQL_PASSWORD || '', connectionLimit: 2, timezone: 'Z',
+      password: process.env.SQL_AUDIT_MYSQL_PASSWORD!, connectionLimit: 2, timezone: 'Z',
     };
     admin = mysql.createPool(config);
     await admin.query(`CREATE DATABASE ${schema}`); created = true;

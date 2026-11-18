@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+password="${QUALIFICATION_MYSQL_PASSWORD:?QUALIFICATION_MYSQL_PASSWORD must be explicitly injected}"
 set -euo pipefail
 
 scenario="${1:-}"
@@ -14,7 +15,6 @@ container="${QUALIFICATION_MYSQL_CONTAINER:-mysql}"
 host="${QUALIFICATION_MYSQL_HOST:-127.0.0.1}"
 port="${QUALIFICATION_MYSQL_PORT:-3306}"
 user="${QUALIFICATION_MYSQL_USER:-root}"
-password="${QUALIFICATION_MYSQL_PASSWORD:-Tpam1234}"
 run_id="$(date +%Y%m%d%H%M%S)-$RANDOM"
 database="slide_qualification_existing_${run_id//-/}"
 restore_database="${database}_restore"

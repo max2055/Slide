@@ -34,7 +34,7 @@
 # 登录测试
 curl -X POST "http://localhost:3000/api/auth/login" \
   -H "Content-Type: application/json" \
-  -d '{"username":"admin","password":"Tpam1234"}'
+  -d '{"username":"admin","password":"REDACTED"}'
 # ✅ 返回 token，登录成功
 ```
 

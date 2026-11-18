@@ -137,7 +137,7 @@ test('malformed JSON, message shape, and read failures stay on this mock and the
     setTimeout(resolve, 150);
   });
 
-  const recovered = await post({ messages: [{ role: 'user', content: 'hello' }] }, { read: 'first' });
+  const recovered = await post({ stream: true, messages: [{ role: 'user', content: 'hello' }] }, { read: 'first' });
   assert.equal(recovered.status, 200);
   assert.equal(recovered.headers['content-type'], 'text/event-stream');
   assert.match(recovered.body, /working /);
@@ -153,7 +153,7 @@ test('body limit still returns 413 and a later legal request is served', async (
     Buffer.from('"}]}'),
   ]);
   assert.equal((await post(body)).status, 413);
-  const next = await post({ messages: [{ role: 'user', content: 'after-limit' }] }, { read: 'first' });
+  const next = await post({ stream: true, messages: [{ role: 'user', content: 'after-limit' }] }, { read: 'first' });
   assert.equal(next.status, 200);
   assert.equal(next.headers['content-type'], 'text/event-stream');
   assert.match(next.body, /working /);
@@ -161,13 +161,13 @@ test('body limit still returns 413 and a later legal request is served', async (
 });
 
 test('cancelling the open SSE stream leaves the mock able to stream again', async () => {
-  const first = await post({ messages: [{ role: 'user', content: 'cancel-me' }] }, { read: 'first' });
+  const first = await post({ stream: true, messages: [{ role: 'user', content: 'cancel-me' }] }, { read: 'first' });
   assert.equal(first.status, 200);
   assert.equal(first.headers['content-type'], 'text/event-stream');
   assert.match(first.body, /qualification-cancellable/);
   first.close();
   await new Promise((resolve) => setTimeout(resolve, 400));
-  const second = await post({ messages: [{ role: 'user', content: 'after-cancel' }] }, { read: 'first' });
+  const second = await post({ stream: true, messages: [{ role: 'user', content: 'after-cancel' }] }, { read: 'first' });
   assert.equal(second.status, 200);
   assert.equal(second.headers['content-type'], 'text/event-stream');
   assert.match(second.body, /working /);
@@ -178,13 +178,29 @@ test('cancelling the open SSE stream leaves the mock able to stream again', asyn
 
 test('controlled qualification scenarios still complete without a real model', async () => {
   const key = 'runtime-qualification:length:max-289';
-  const first = await post({ messages: [{ role: 'user', content: key }] });
+  const first = await post({ stream: true, messages: [{ role: 'user', content: key }] });
   assert.equal(first.status, 200);
   assert.equal(first.headers['content-type'], 'text/event-stream');
   assert.match(first.body, /第一段。/);
   assert.match(first.body, /"finish_reason":"length"/);
   assert.match(first.body, /data: \[DONE\]/);
-  const second = await post({ messages: [{ role: 'user', content: key }] });
+  const second = await post({ stream: true, messages: [{ role: 'user', content: key }] });
   assert.match(second.body, /第二段。/);
   assert.match(second.body, /"finish_reason":"stop"/);
+});
+
+test('MAX-681 R4 non-streaming SQL review completes and cancellation streaming stays open', { timeout: 3000 }, async () => {
+  for (const streamOption of [{ stream: false }, {}]) {
+    const result = await post({ ...streamOption, messages: [{ role: 'user', content: 'UPDATE controlled_counter SET value = value + 1' }] });
+    assert.equal(result.status, 200);
+    assert.equal(result.headers['content-type'], 'application/json');
+    const body = JSON.parse(result.body);
+    assert.equal(body.choices[0].finish_reason, 'stop');
+    assert.equal(JSON.parse(body.choices[0].message.content).risk_level, 'high');
+    assert.equal(body.usage.total_tokens, 0);
+  }
+  const stream = await post({ stream: true, messages: [{ role: 'user', content: 'still-cancellable' }] }, { read: 'first' });
+  assert.equal(stream.headers['content-type'], 'text/event-stream');
+  assert.match(stream.body, /working /);
+  stream.close();
 });

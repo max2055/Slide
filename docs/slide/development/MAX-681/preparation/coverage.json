@@ -1,0 +1,37 @@
+{
+  "snapshotHead": "efa524f3265169cc0eac2edcb5b798fd0b2b0223",
+  "refKinds": {
+    "heads": 517,
+    "pull": 561,
+    "tags": 1
+  },
+  "artifacts": 7580,
+  "artifactBytes": 17170973841,
+  "expired": 0,
+  "releaseCount": 0,
+  "forks": [
+    {
+      "full_name": "mikemikimike/Slide",
+      "default_branch": "main",
+      "html_url": "https://github.com/mikemikimike/Slide"
+    }
+  ],
+  "contentAuditedArtifacts": [
+    14302744472,
+    14021232853
+  ],
+  "contentUnauditedArtifacts": 7578,
+  "lfs": {
+    "scope": "locally reachable refs only; remote-only refs not fetched; no git-lfs executable",
+    "objects": 97281,
+    "smallBlobsExamined": 15556,
+    "pointers": []
+  },
+  "historicalPathCandidateCommits": 641,
+  "historyNote": "Path-touched commits are investigation candidates, not confirmed secret-bearing commits; remote-only object contents and host internal refs remain uncovered.",
+  "advertisementLines": 1081,
+  "namedRefs": 1079,
+  "headAliases": 1,
+  "peeledAdvertisements": 1,
+  "oldArtifactSnapshotTiming": "Page times, per-page total_count and page boundaries not retained; historical equality with server count not independently reproducible."
+}

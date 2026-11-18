@@ -27,6 +27,8 @@ async function freePort() {
   return port;
 }
 test.beforeAll(async () => {
+    if (process.env.SLIDE_TEST_MYSQL_PASSWORD === undefined) throw new Error('SLIDE_TEST_MYSQL_PASSWORD must be explicitly injected; explicit empty is reserved for isolated targets');
+
   test.setTimeout(90_000); // Own-schema migrations, then bounded 60s API startup.
   await mkdir(output, { recursive: true });
   const port = Number(process.env.SLIDE_TEST_MYSQL_PORT);
@@ -35,7 +37,7 @@ test.beforeAll(async () => {
   }
   workspace = await mkdtemp(join(tmpdir(), 'slide-max558-'));
   const options = { host: process.env.SLIDE_TEST_MYSQL_HOST, port, user: process.env.SLIDE_TEST_MYSQL_USER,
-    password: process.env.SLIDE_TEST_MYSQL_PASSWORD ?? '' };
+    password: process.env.SLIDE_TEST_MYSQL_PASSWORD! };
   admin = mysql.createPool(options);
   await admin.query(`CREATE DATABASE \`${schema}\``);
   pool = mysql.createPool({ ...options, database: schema });

@@ -32,7 +32,7 @@ async function login(page: Page) {
     const u = page.locator('input[type="text"], input[name="username"]').first();
     const p = page.locator('input[type="password"]').first();
     await u.fill("admin");
-    await p.fill("Tpam1234");
+    await p.fill(process.env.QUALIFICATION_ADMIN_PASSWORD ?? 'SlideQa42');
     await page.locator('button[type="submit"], .login-gate__connect, button:has-text("Connect"), button:has-text("连接")').first().click();
     await page.waitForTimeout(4000);
   }
