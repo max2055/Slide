@@ -12,6 +12,13 @@ describe('current health evidence', () => {
     expect(resolveHealthScoreState(instance, 100, null, now).score).toBeNull();
     expect(currentHealthStatus(instance, null, now)).toBe('unknown');
   });
+  it('shows current formal health while withholding the historical score', () => {
+    const legacyInstance = { ...instance, health_status: 'unknown', last_health_check_at: '2026-10-17T00:00:00Z' };
+    expect(resolveHealthScoreState(legacyInstance, 100, evidence, now)).toEqual({
+      ready: false, score: null, status: 'healthy',
+    });
+    expect(currentHealthStatus(legacyInstance, null, now)).toBe('unknown');
+  });
   it.each(['inactive', 'paused', 'disabled', 'pending_credentials', 'error'])('does not promote stored 100 when instance is %s', status => {
     expect(resolveHealthScoreState({ ...instance, status }, 100, evidence, now).score).toBeNull();
   });

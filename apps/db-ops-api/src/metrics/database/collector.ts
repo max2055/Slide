@@ -1,7 +1,7 @@
 import type { RawObservation } from '../../contracts/metrics/index.js';
 import { AdapterError, classifyError, type DecodedRow, type DriverEvidence, type Transport } from '../packages/adapters.js';
 import { databaseReads, capacityReads, oracle1919Reads, vendorLifecycleReads, implementationId, type Engine } from './catalog.js';
-import { diagnosticReads } from './diagnostics.js';
+import { diagnosticReads, innodbDeadlocksRead } from './diagnostics.js';
 
 /** Adapt authorized PG/Oracle/DM driver rows. The owner supplies a bounded native execute
  * and must retain its connection until in-flight IO settles; this does not Promise.race IO. */
@@ -14,9 +14,46 @@ function uint(value: unknown): RawObservation['value'] {
   if (typeof text !== 'string' || !/^(0|[1-9]\d*)$/.test(text) || text.length > 20 || BigInt(text) >= 1n << 64n) throw new AdapterError('parse_error');
   return { encoding: 'uint64', value: text };
 }
+
+const deadlocksLifecycleFailure = () => new AdapterError('parse_error', 'MYSQL_COUNTER_LIFECYCLE_UNAVAILABLE');
+
+function snapshotTime(value: unknown, scale: number): number {
+  const parsed = typeof value === 'string' && /^\d{1,16}$/.test(value) ? Number(value) : value;
+  if (typeof parsed !== 'number' || !Number.isSafeInteger(parsed) || parsed <= 0 || parsed * scale > 8.64e15) {
+    throw deadlocksLifecycleFailure();
+  }
+  return parsed * scale;
+}
+
+async function collectInnodbDeadlocks(transport: Extract<Transport, { method: 'sql' }>, timeout: number): Promise<DecodedRow[]> {
+  let rows: unknown;
+  try { [rows] = await transport.pool.query({ sql: innodbDeadlocksRead.sql, timeout }); }
+  catch (error) { throw new AdapterError(classifyError(error)); }
+  if (!Array.isArray(rows) || rows.length > 1) throw deadlocksLifecycleFailure();
+  const row = rows[0];
+  // A disabled or absent counter has no trustworthy sample or lifecycle.
+  if (row?.counter_status !== 'enabled' || typeof row.server_uuid !== 'string'
+    || !/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(row.server_uuid)) throw deadlocksLifecycleFailure();
+  const enabled = snapshotTime(row.enabled_seconds, 1000);
+  const reset = row.reset_seconds === null ? null : snapshotTime(row.reset_seconds, 1000);
+  const sampled = snapshotTime(row.sampled_ms, 1);
+  const boundary = Math.max(enabled, reset ?? 0);
+  if (boundary > sampled || row.deadlocks === null) throw deadlocksLifecycleFailure();
+
+  // COUNT stays cumulative across a monitor reset. The reset still opens a new baseline.
+  const epoch = createHash('sha256').update(JSON.stringify([
+    'mysql.innodb.lock_deadlocks', row.server_uuid.toLowerCase(), enabled, reset,
+  ])).digest('hex');
+  return [{ dimensions: {}, fields: { deadlocks: uint(row.deadlocks) }, observed_at: new Date(sampled).toISOString(),
+    counter: { bits: '64', start_at: new Date(enabled).toISOString(), discontinuity: {
+      epoch, observed_at: new Date(boundary).toISOString(), reason: reset !== null && reset >= enabled ? 'reset' : 'initial',
+    } } }];
+}
+
 export async function collectDatabase(id: string, transport: Transport, evidence: DriverEvidence, timeoutMs: number): Promise<DecodedRow[]> {
   const read = [...databaseReads, ...capacityReads, ...oracle1919Reads, ...vendorLifecycleReads, ...diagnosticReads].find(r => implementationId(r) === id);
   if (!read || transport.method !== 'sql') throw new AdapterError('parse_error');
+  if (read === innodbDeadlocksRead) return collectInnodbDeadlocks(transport, timeoutMs);
   let response: unknown, counter = evidence.counter, observed_at: string | undefined;
   try {
     if (read.fields.some(f => f.definition.kind === 'counter') && transport.counterQuery) {
@@ -97,3 +134,4 @@ export async function collectDatabase(id: string, transport: Transport, evidence
   return [row];
 }
 export const supportedDatabaseEngines: Engine[] = ['mysql', 'postgresql', 'oracle', 'dameng'];
+import { createHash } from 'node:crypto';

@@ -38,11 +38,15 @@ describe('diagnostic definitions and exact scalar decoding', () => {
       .toEqual({ current_connections: null, used_percent: null });
     const registry = createConfigurationRegistry();
     const releases = registry.list().filter(r => r.package.id === 'mysql-diagnostics');
-    const release = releases.find(r => r.package.version === '1.2.0')!;
-    expect(new RegisteredCapabilityCatalog(registry).autofill({ package: release.package, metric: { id: 'mysql.connections.used_percent', semantic_version: '1.0.0' } }))
-      .toMatchObject({ raw_field: 'used_percent', unit: '%', implementation_id: implementationId(read) });
+    const catalog = new RegisteredCapabilityCatalog(registry);
+    const connectionVersions = ['1.2.0', '1.2.1'];
+    for (const version of connectionVersions) {
+      const release = releases.find(r => r.package.version === version)!;
+      expect(catalog.autofill({ package: release.package, metric: { id: 'mysql.connections.used_percent', semantic_version: '1.0.0' } }))
+        .toMatchObject({ raw_field: 'used_percent', unit: '%', implementation_id: implementationId(read) });
+    }
     for (const release of releases) expect(release.package.collectors.some(c => c.implementation_ref === implementationId(read)))
-      .toBe(release.package.version === '1.2.0');
+      .toBe(connectionVersions.includes(release.package.version));
   });
   it('every recommended package resolves within its default series budget', () => {
     const registry=createConfigurationRegistry(),at=new Date().toISOString();

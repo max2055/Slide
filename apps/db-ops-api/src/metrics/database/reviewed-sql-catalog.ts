@@ -2,7 +2,7 @@
  * Add a schema-validated manifest here after checking source_digest, definition, permissions,
  * bounded SELECT and engine/version evidence. No HTTP/configuration input can populate it.
  * Do not include credentials, connection addresses or SQL containing secrets. */
-export const reviewedSqlCatalog: unknown[] = [{
+const legacyMysqlScalars = [{
   id: 'mysql-custom-processlist-connections',
   version: '1.0.0',
   bundle: {id:'mysql-custom-existing-scalars',version:'1.0.0'},
@@ -42,3 +42,13 @@ export const reviewedSqlCatalog: unknown[] = [{
   permissions:['SELECT performance_schema.global_status'],
   review:{reference:'MAX-189 / PR #202: existing mysql3306 slow_queries gauge; MySQL 9.6 read-only validation',reviewed_by:'MAX-189 implementation review; independent PR review required'},
 }];
+
+// Keep the reviewed SQL and the existing pin available while upgrading its native collectors.
+export const reviewedSqlCatalog: unknown[] = [
+  ...legacyMysqlScalars.map(manifest => ({
+    ...manifest, version: '1.0.1', bundle: { ...manifest.bundle, version: '1.0.1' },
+    base: { id: 'mysql-diagnostics', version: '1.1.1',
+      digest: 'sha256:6ae202d92240001c3b3015b6b829155e00a54840567894af8d7fb921b9bf440d' },
+  })),
+  ...legacyMysqlScalars,
+];

@@ -113,6 +113,66 @@ describe('ResourceDiagnosticService', () => {
     expect(result.items[1].gaps).toContain('OBSERVATIONS_FUTURE');
   });
 
+  it.each([
+    { label: 'fresh formal metrics alongside a missing legacy alias', status: 'healthy', quality: 'good', stored: 'unknown' },
+    { label: 'stored healthy without the uptime sample', status: 'unknown', quality: 'partial', uptime: 'missing' },
+    { label: 'read failure on the compatibility projection', status: 'healthy', quality: 'good', compatibilityUnavailable: true },
+    { label: 'read failure on the formal projection', status: 'unknown', quality: 'unknown', formalUnavailable: true, freshness: 'missing' },
+    { label: 'old uptime alongside a fresh connection count', status: 'unknown', quality: 'good', uptime: 'expired', freshness: 'stale' },
+    { label: 'uptime expired according to the formal collector policy', status: 'unknown', quality: 'partial', uptime: 'formal-stale', freshness: 'stale' },
+    { label: 'future uptime', status: 'unknown', quality: 'good', uptime: 'future' },
+    { label: 'degraded connection count', status: 'unknown', quality: 'degraded', connectionQuality: 'degraded' as const },
+    { label: 'no formal observations', status: 'unknown', quality: 'unknown', noFormal: true, freshness: 'missing' },
+    { label: 'active warning', status: 'warning', quality: 'good', severity: 'warning' },
+    { label: 'active critical alert with missing uptime', status: 'critical', quality: 'partial', severity: 'critical', uptime: 'missing' },
+    { label: 'unavailable alerts', status: 'unknown', quality: 'good', alertsUnavailable: true },
+    { label: 'truncated resolved alerts', status: 'unknown', quality: 'good', alertsTruncated: true },
+    { label: 'paused resource with recent samples', status: 'unknown', quality: 'good', connection: 'inactive' },
+    { label: 'explicit connection outage without current metrics', status: 'unavailable', quality: 'unknown', connection: 'error', noFormal: true, freshness: 'missing' },
+  ])('derives MySQL overview health from formal evidence: $label', async ({
+    status, quality, stored = 'healthy', uptime, connectionQuality, noFormal, freshness = 'fresh',
+    severity, alertsUnavailable, alertsTruncated, connection = 'active', compatibilityUnavailable, formalUnavailable,
+  }) => {
+    const ref = { type: 'instance' as const, id: 11 };
+    const now = new Date('2026-08-26T00:02:00.000Z');
+    const mysql = { ...detail(ref), status: connection, attributes: { dbType: 'mysql', healthStatus: stored } };
+    const legacyAlias = observation(ref, 'qps', null, 'unknown');
+    const ready = observation(ref, 'db.uptime_seconds', 7200);
+    if (uptime === 'expired') ready.validUntil = new Date(now.getTime() - 1);
+    if (uptime === 'future') ready.observedAt = new Date(now.getTime() + 1);
+    if (uptime === 'formal-stale') Object.assign(ready, { reason: 'stale_observation', quality: 'unknown', value: null });
+    const count = { ...observation(ref, 'mysql.processlist.count', 3, connectionQuality),
+      observedAt: new Date('2026-08-26T00:01:30.000Z') };
+    const deps = dependencies({
+      list: async () => [mysql],
+      observations: vi.fn(async (_ref, _actor, options) => {
+        if (!options?.metricIds) {
+          if (compatibilityUnavailable) throw new Error('fixture compatibility projection unavailable');
+          return [legacyAlias];
+        }
+        if (formalUnavailable) throw new Error('fixture formal projection unavailable');
+        return noFormal ? [] : [count, ...(uptime === 'missing' ? [] : [ready])];
+      }),
+      alerts: async () => {
+        if (alertsUnavailable) throw new Error('fixture alerts unavailable');
+        if (alertsTruncated) return Array.from({ length: 100 }, (_, id) => ({ id, status: 'resolved' }));
+        return severity ? [{ id: 1, status: 'active', level: severity }] : [];
+      },
+    });
+    const overview = await new ResourceDiagnosticService(deps).overview(actor, now);
+    expect(overview.items).toHaveLength(1);
+    const [item] = overview.items;
+    expect(item).toMatchObject({ status, quality, freshness });
+    if (!compatibilityUnavailable) expect(item.observations).toContain(legacyAlias);
+    expect(deps.observations).toHaveBeenCalledWith(ref, actor, expect.objectContaining({
+      metricIds: ['db.uptime_seconds', 'mysql.processlist.count'],
+    }));
+    if (status === 'healthy') {
+      expect(item.observedAt).toBe(ready.observedAt?.toISOString());
+      expect(item.gaps).toEqual(compatibilityUnavailable ? ['COMPATIBILITY_OBSERVATIONS_UNAVAILABLE'] : []);
+    }
+  });
+
   it('orders bounded related evidence so an interface drop is visible beside database and host evidence', async () => {
     const subject = { type: 'instance' as const, id: 11 };
     const serverRef = { type: 'server' as const, id: 3 };

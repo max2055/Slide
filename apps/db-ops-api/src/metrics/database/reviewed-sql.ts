@@ -19,6 +19,7 @@ import { reviewedSqlCatalog } from "./reviewed-sql-catalog.js";
 
 const Digest = z.string().regex(/^sha256:[a-f0-9]{64}$/);
 const Pin = z.strictObject({ id: z.string().min(1), version: VersionSchema, digest: Digest });
+type ReviewedPackagePin = z.infer<typeof Pin>;
 const Manifest = z.strictObject({
   id: z.string().regex(/^(mysql|postgresql|oracle|dameng)-custom-[a-z0-9-]{1,100}$/),
   version: VersionSchema,
@@ -240,6 +241,7 @@ export function migrationItems(
   sources: LegacySqlSource[],
   engine: string,
   input: unknown[] = reviewedSqlCatalog,
+  currentPackage?: ReviewedPackagePin,
 ) {
   const compiled = compileReviewedSql(input);
   return sources
@@ -250,14 +252,14 @@ export function migrationItems(
     )
     .map((source) => {
       const hash = sourceDigest(source, engine);
-      const approved = compiled.manifests.find(
+      const approved = compiled.manifests.filter(
         (m) => m.source_id === source.id && m.engine === engine && m.source_digest === hash,
       );
-      const release =
-        approved &&
-        compiled.releases.find(
-          (r) => r.package.id === (approved.bundle?.id??approved.id) && r.package.version === (approved.bundle?.version??approved.version),
-        );
+      const releases = approved.flatMap(m => compiled.releases.filter(
+        r => r.package.id === (m.bundle?.id ?? m.id) && r.package.version === (m.bundle?.version ?? m.version),
+      ));
+      const release = (currentPackage && releases.find(({ package: p }) =>
+        p.id === currentPackage.id && p.version === currentPackage.version && p.digest === currentPackage.digest)) ?? releases[0];
       const pin = release
         ? {
             id: release.package.id,

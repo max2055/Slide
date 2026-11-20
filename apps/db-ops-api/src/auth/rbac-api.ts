@@ -57,9 +57,9 @@ export async function rbacApiRoutes(fastify: FastifyInstance, _options: any) {
     }, async (_request, reply) => {
       try {
         const roles = await rbacService.listRoles();
-        reply.send(roles);
+        return reply.send(roles);
       } catch (error: any) {
-        reply.code(500).send({ error: error.message });
+        return reply.code(500).send({ error: error.message });
       }
     });
 
@@ -151,9 +151,9 @@ export async function rbacApiRoutes(fastify: FastifyInstance, _options: any) {
       try {
         const { resource } = request.query as { resource?: string };
         const permissions = await rbacService.listPermissions(resource);
-        reply.send(permissions);
+        return reply.send(permissions);
       } catch (error: any) {
-        reply.code(500).send({ error: error.message });
+        return reply.code(500).send({ error: error.message });
       }
     });
 

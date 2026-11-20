@@ -58,6 +58,30 @@ describe('operations overview semantics', () => {
 });
 
 describe('dashboard behavior', () => {
+  it('expires an open MySQL overview without a network refresh and stops aging after detach', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(now);
+    try {
+      const mysql = item({ resource: { type: 'instance', id: 7 }, label: 'MySQL example', status: 'healthy',
+        attributes: { dbType: 'mysql' }, observedAt: new Date(now - 290_000).toISOString() });
+      authFetch.mockResolvedValue({ ok: true, json: async () => ({ collectedAt: new Date(now).toISOString(), items: [mysql] }) });
+      const dashboard = document.createElement('dashboard-page') as any;
+      document.body.append(dashboard);
+      await vi.advanceTimersByTimeAsync(0);
+      await dashboard.updateComplete;
+      const badge = () => dashboard.shadowRoot.querySelector('app-badge[title]')?.getAttribute('variant');
+      expect(badge()).toBe('ok');
+      await vi.advanceTimersByTimeAsync(30_000);
+      await dashboard.updateComplete;
+      expect(badge()).toBe('muted');
+      expect(authFetch).toHaveBeenCalledTimes(1);
+      dashboard.remove();
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      document.body.replaceChildren();
+      vi.useRealTimers();
+    }
+  });
   it('refreshes read data on recovery while retaining a date draft and cleans up on detach', async () => {
     authFetch.mockResolvedValue({ ok: true, json: async () => ({ collectedAt: new Date().toISOString(), items: [] }) });
     const dashboard = document.createElement('dashboard-page') as any;

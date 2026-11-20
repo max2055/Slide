@@ -9,7 +9,7 @@ import { decodeBindingPayload } from '../bindings/persistence-codec.js';
 import type { ConfigurationReader } from './status.js';
 
 export function configurationReader(pool: () => Pool): ConfigurationReader {
-  return { migration: ref => legacyConfigurationMigration(pool(),ref), inventory: configurationInventory,
+  return { migration: (ref, currentPackage) => legacyConfigurationMigration(pool(),ref,currentPackage), inventory: configurationInventory,
     async template(ref) {
       const [rows] = await pool().execute<RowDataPacket[]>('SELECT payload FROM metric_policy_bindings WHERE resource_key = ?', [refKey(ref)]);
       if (!rows[0]) return null;

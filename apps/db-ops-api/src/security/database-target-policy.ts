@@ -93,9 +93,8 @@ export async function authorizeDatabaseTarget(
     const family = version === 4 ? 'ipv4' : version === 6 ? 'ipv6' : undefined;
     if (!family) return false;
     const isLoopback = loopback.check(address, family);
-    const managedLoopback = Boolean(options.allowManagedLoopback && !production && isLoopback);
-    if (isLoopback) return managedLoopback;
-    return family && !denied.check(address, family);
+    if (isLoopback || hostname === 'localhost') return Boolean(isLoopback && options.allowManagedLoopback && !production);
+    return !denied.check(address, family);
   });
   if (authorized.length !== addresses.length) throw denyTarget('DB_TARGET_ADDRESS_DENIED');
 

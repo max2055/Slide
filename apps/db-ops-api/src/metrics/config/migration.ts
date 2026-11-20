@@ -2,9 +2,10 @@ import type { Pool, RowDataPacket } from "mysql2/promise";
 import { migrationItems, type LegacySqlSource } from "../database/reviewed-sql.js";
 import type { Ref } from "../policy/model.js";
 import { configurationInventory } from "./inventory.js";
+import type { PackagePin } from "../../contracts/metrics/templates.js";
 
 /** Resource manager only (enforced before this reader). SQL/credentials never enter this response. */
-export async function legacyConfigurationMigration(pool: Pool, ref: Ref) {
+export async function legacyConfigurationMigration(pool: Pool, ref: Ref, currentPackage?: PackagePin) {
   if (ref.type !== "instance") return [];
   const inventory = await configurationInventory(ref),
     engine = String(inventory.attributes["db.engine"]?.value ?? "");
@@ -12,7 +13,7 @@ export async function legacyConfigurationMigration(pool: Pool, ref: Ref) {
     RowDataPacket[]
   >(`SELECT id,target_type,unit,value_type,default_interval,collection_sqls,compute_expr
     FROM metric_definitions WHERE target_type='instance' AND is_collected=TRUE AND (collection_sqls IS NOT NULL OR compute_expr IS NOT NULL)`);
-  const custom = migrationItems(definitions as LegacySqlSource[], engine).map((item) => ({
+  const custom = migrationItems(definitions as LegacySqlSource[], engine, undefined, currentPackage).map((item) => ({
     ...item,
     kind: "custom_sql" as const,
   }));

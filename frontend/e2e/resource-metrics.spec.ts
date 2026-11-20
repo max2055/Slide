@@ -266,7 +266,7 @@ for (const [tag, file, , type] of lists) test(`${type} four direct actions and p
   await dialog.getByRole('button', { name: '取消', exact: true }).click();
   await expect(dialog).toHaveCount(0);
   await expect(actions().getByRole('button', { name: '删除', exact: true })).toBeFocused();
-  const probe = type === 'instance' ? '/api/database/instances/test-connection' : type === 'server' ? '/api/servers/1001/collect' : '/api/network-devices/1001/probe';
+  const probe = type === 'instance' ? '/api/database/instances/1001/test-connection' : type === 'server' ? '/api/servers/1001/collect' : '/api/network-devices/1001/probe';
   await page.route(`**${probe}`, route => route.fulfill({ status: 503, json: { success: false, error: '隔离测试：目标暂不可达' } }));
   await actions().getByRole('button', { name: '测试', exact: true }).click();
   if (type === 'instance') {
