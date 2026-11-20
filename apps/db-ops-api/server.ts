@@ -536,11 +536,11 @@ async function start() {
       ) as any;
       const config: Record<string, string> = {};
       for (const r of rows) config[r.config_key] = r.config_value;
-      reply.send({
+      return reply.send({
         version: config.slide_version || 'v0.10',
       });
     } catch {
-      reply.send({ version: 'v0.10' });
+      return reply.send({ version: 'v0.10' });
     }
   });
 
@@ -703,10 +703,10 @@ async function start() {
     try {
       const user = (request as any).user;
       if (!user) return reply.code(401).send({ error: '请先登录' });
-      reply.send([...user.permissions]);
+      return reply.send([...user.permissions]);
     } catch (error: any) {
       console.error('获取权限失败:', error);
-      reply.code(500).send({ error: '获取权限失败：' + error.message });
+      return reply.code(500).send({ error: '获取权限失败：' + error.message });
     }
   });
 
@@ -716,9 +716,9 @@ async function start() {
   fastify.get('/api/users', { preHandler: [verifyToken, requirePermission('admin:*')] }, async (request, reply) => {
     try {
       const users = await authDatabaseService.getAllUsers();
-      reply.send(users);
+      return reply.send(users);
     } catch (error: any) {
-      reply.code(500).send({ error: '获取用户列表失败：' + error.message });
+      return reply.code(500).send({ error: '获取用户列表失败：' + error.message });
     }
   });
 
@@ -820,9 +820,9 @@ async function start() {
     try {
       const userId = (request as any).user.userId;
       const preferences = await userPreferenceService.getPreferences(userId);
-      reply.send({ preferences });
+      return reply.send({ preferences });
     } catch (error: any) {
-      reply.code(500).send({ error: '获取偏好失败：' + error.message });
+      return reply.code(500).send({ error: '获取偏好失败：' + error.message });
     }
   });
 
@@ -866,9 +866,9 @@ async function start() {
   fastify.get('/api/llm/configs', { preHandler: [verifyToken, requirePermission('llm:view')] }, async (request, reply) => {
     try {
       const configs = await llmDatabaseService.getAllProviders();
-      reply.send(configs.map(publicLLMProvider));
+      return reply.send(configs.map(publicLLMProvider));
     } catch (error: any) {
-      reply.code(500).send({ error: '获取 LLM 配置失败：' + error.message });
+      return reply.code(500).send({ error: '获取 LLM 配置失败：' + error.message });
     }
   });
 
@@ -977,9 +977,9 @@ async function start() {
           });
         }
       }
-      reply.send(catalog);
+      return reply.send(catalog);
     } catch (err: any) {
-      reply.code(500).send({ error: '获取模型列表失败：' + err.message });
+      return reply.code(500).send({ error: '获取模型列表失败：' + err.message });
     }
   });
 
@@ -1175,7 +1175,7 @@ async function start() {
   // ========== Agent List API (DirectAdapter) ==========
   fastify.get('/api/agents', { preHandler: [verifyToken] }, async (_request, reply) => {
     const engine = await getAgentEngine();
-    reply.send({
+    return reply.send({
       defaultId: 'slide-db-ops',
       mainKey: 'main',
       scope: 'default',
@@ -1524,7 +1524,27 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
     }
   });
 
-  // 测试连接
+  // Test a persisted target with the password supplied for this probe only.
+  fastify.post('/api/database/instances/:id/test-connection', {
+    config: { rateLimit: sensitiveOperationRateLimitConfig },
+    preHandler: [verifyToken, requirePermission('instance:manage'), requireInstanceAccess('read-only')],
+  }, async (request, reply) => {
+    const check = strictBody(request.body as Record<string, unknown>, ['password'], 'POST /api/database/instances/:id/test-connection');
+    if (check.error) return reply.code(400).send(check.error);
+    const { password } = check.body;
+    if (typeof password !== 'string' || !password.trim()) return reply.code(400).send({ error: '请输入密码' });
+    try {
+      const { id } = request.params as { id: string };
+      const result = await instanceDatabaseService.testRegisteredConnection(Number(id), password);
+      if (!result) return reply.code(404).send({ error: '实例不存在' });
+      return reply.send(result);
+    } catch (error) {
+      if (error instanceof Error && error.message === 'INSTANCE_REMOVED') return reply.code(410).send({ error: 'INSTANCE_REMOVED' });
+      return reply.code(500).send({ error: '测试连接失败' });
+    }
+  });
+
+  // Test connection parameters that have not been saved.
   fastify.post('/api/database/instances/test-connection', {
     config: { rateLimit: sensitiveOperationRateLimitConfig },
     preHandler: [verifyToken, requirePermission('instance:manage')],
@@ -1543,9 +1563,9 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
         password,
         database: database_name,
       });
-      reply.send(result);
+      return reply.send(result);
     } catch (error: any) {
-      reply.code(500).send({ error: '测试连接失败：' + error.message });
+      return reply.code(500).send({ error: '测试连接失败：' + error.message });
     }
   });
 
@@ -1567,12 +1587,12 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
       if (data.credential_type === 'key') await recordSshTrustRequest(Number((request as any).user?.userId), 'server', String(data.host), data.ssh_trust_mode);
       const result = await serverDatabaseService.createServer(data);
       if (result.success) {
-        reply.send({ id: result.serverId, message: '创建成功' });
+        return reply.send({ id: result.serverId, message: '创建成功' });
       } else {
-        reply.code(400).send({ error: result.error });
+        return reply.code(400).send({ error: result.error });
       }
     } catch (error: any) {
-      reply.code(500).send({ error: '创建服务器失败：' + error.message });
+      return reply.code(500).send({ error: '创建服务器失败：' + error.message });
     }
   });
 
@@ -1633,9 +1653,9 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
       const { host, port, credential_type, credential_username, credential_value, host_key_fingerprint, ssh_trust_mode } = check.body as { host: string; port: number; credential_type: string; credential_username: string; credential_value: string; host_key_fingerprint?: string; ssh_trust_mode?: string };
       if (credential_type === 'key') await recordSshTrustRequest(Number((request as any).user?.userId), 'server_probe', String(host), ssh_trust_mode);
       const result = await serverDatabaseService.testConnection(String(host), Number(port), String(credential_type), String(credential_value), String(credential_username), host_key_fingerprint, ssh_trust_mode);
-      reply.send(result);
+      return reply.send(result);
     } catch (error: any) {
-      reply.code(500).send({ error: '测试连接失败：' + error.message });
+      return reply.code(500).send({ error: '测试连接失败：' + error.message });
     }
   });
 
@@ -2388,9 +2408,9 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
     handler: async (request, reply) => {
       try {
         const weights = await scoringConfigService.getWeights();
-        reply.send(weights);
+        return reply.send(weights);
       } catch (error: any) {
-        reply.code(500).send({ error: error.message });
+        return reply.code(500).send({ error: error.message });
       }
     },
   });
@@ -2419,9 +2439,9 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
     handler: async (request, reply) => {
       try {
         const config = await brandingConfigService.getBranding();
-        reply.send(config);
+        return reply.send(config);
       } catch (error: any) {
-        reply.code(500).send({ error: error.message });
+        return reply.code(500).send({ error: error.message });
       }
     },
   });
@@ -2715,9 +2735,9 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
             ? (request as any).user.resourceBoundary.serverIds.filter((id: number) => canReadResource((request as any).user, { type: 'server', id }))
             : canReadResource((request as any).user, { type: 'server', id: 1 }) ? null : [],
         );
-        reply.send(stats);
+        return reply.send(stats);
       } catch (error: any) {
-        reply.code(500).send({ error: error.message });
+        return reply.code(500).send({ error: error.message });
       }
     }
   });
@@ -2737,9 +2757,9 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
           offset: (Number(page) - 1) * Number(limit),
         };
         const reports = await reportDatabaseService.getReportsByFilters(filters);
-        reply.send(filterByInstanceAccess((request as any).user, reports, (report: any) => report.instance_id));
+        return reply.send(filterByInstanceAccess((request as any).user, reports, (report: any) => report.instance_id));
       } catch (error: any) {
-        reply.code(500).send({ error: error.message });
+        return reply.code(500).send({ error: error.message });
       }
     }
   });
@@ -2776,9 +2796,9 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
           }
           return { ...config, next_run };
         });
-        reply.send(result);
+        return reply.send(result);
       } catch (error: any) {
-        reply.code(503).send({ error: 'REPORT_CONFIG_LIST_UNAVAILABLE' });
+        return reply.code(503).send({ error: 'REPORT_CONFIG_LIST_UNAVAILABLE' });
       }
     }
   });
@@ -3504,9 +3524,9 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
         const { enabled } = request.query as { enabled?: 'true' | 'false' };
         const enabledFilter = enabled === 'true' ? true : enabled === 'false' ? false : undefined;
         const channels = await notificationDatabaseService.getChannels(enabledFilter);
-        reply.send(channels.map((channel) => publicNotificationDto(channel as unknown as Record<string, unknown>)));
+        return reply.send(channels.map((channel) => publicNotificationDto(channel as unknown as Record<string, unknown>)));
       } catch (error: any) {
-        reply.code(500).send({ error: error.message });
+        return reply.code(500).send({ error: error.message });
       }
     }
   });
@@ -3962,9 +3982,9 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
           limit: Number(limit),
           offset: (Number(page) - 1) * Number(limit),
         }, (request as any).user);
-        reply.send(analyses);
+        return reply.send(analyses);
       } catch (error: any) {
-        reply.code(500).send({ error: error.message });
+        return reply.code(500).send({ error: error.message });
       }
     }
   });
@@ -4046,9 +4066,9 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
     handler: async (request, reply) => {
       try {
         const config = await aiAnalysisConfigService.getConfig();
-        reply.send(config);
+        return reply.send(config);
       } catch (error: any) {
-        reply.code(500).send({ error: error.message });
+        return reply.code(500).send({ error: error.message });
       }
     }
   });
@@ -4558,9 +4578,9 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
       try {
         const { instanceId } = request.params as any;
         const times = await schemaDatabaseService.getSnapshotTimes(Number(instanceId));
-        reply.send(times);
+        return reply.send(times);
       } catch (error: any) {
-        reply.code(500).send({ error: error.message });
+        return reply.code(500).send({ error: error.message });
       }
     }
   });
@@ -4572,9 +4592,9 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
       try {
         const { instanceId } = request.params as any;
         const tableList = await schemaDatabaseService.getTableList(Number(instanceId));
-        reply.send({ tables: tableList });
+        return reply.send({ tables: tableList });
       } catch (error: any) {
-        reply.code(500).send({ error: error.message });
+        return reply.code(500).send({ error: error.message });
       }
     }
   });
@@ -4589,9 +4609,9 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
         if ('error' in result) {
           return reply.send({ changes: [] });
         }
-        reply.send({ changes: result });
+        return reply.send({ changes: result });
       } catch (error: any) {
-        reply.code(500).send({ error: error.message });
+        return reply.code(500).send({ error: error.message });
       }
     }
   });

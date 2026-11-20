@@ -1,9 +1,13 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { collectFixed, type Transport } from '../packages/adapters.js';
-import { databaseReads } from '../database/catalog.js';
-import { diagnosticReads } from '../database/diagnostics.js';
+import { databaseReads, implementationId } from '../database/catalog.js';
+import { collectDatabase } from '../database/collector.js';
+import { diagnosticReads, innodbDeadlocksRead } from '../database/diagnostics.js';
 import { MysqlCounterDiscovery, mysqlCounterTransport } from './mysql-counter.js';
 import { HostInterfaceDiscovery } from './host-interface-counter.js';
+import { createConfigurationRegistry } from './registry.js';
+import { runPackage } from '../packages/runner.js';
+import { aggregate } from '../query.js';
 
 const counterSql = databaseReads.find(r => r.engine === 'mysql' && r.name === 'transactions')!.sql;
 function statusRows(state: { uptime: number; flush: number; commits?: string }) {
@@ -88,6 +92,92 @@ describe('trusted MySQL counter lifecycle', () => {
     expect(seen).toContain('Uptime_since_flush_status');
     expect(statusResult.rows).toHaveLength(5);
     expect(statusResult.counter!.discontinuity!.reason).toBe('reset');
+  });
+});
+
+describe('MySQL InnoDB deadlock observations', () => {
+  const id = implementationId(innodbDeadlocksRead);
+  const baseTime = Date.parse('2026-11-20T03:00:00.000Z');
+  const timestamp = (seconds: number) => new Date(baseTime + seconds * 1000).toISOString();
+  const sample = {
+    counter_status: 'enabled', deadlocks: '0',
+    enabled_seconds: String(baseTime / 1000 - 3600), reset_seconds: null as string | null,
+    sampled_ms: String(baseTime), server_uuid: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+  };
+  const collector = (rows: unknown[]) => {
+    const execute = vi.fn(async (_sql: string, _timeout: number) => ({ rows }));
+    return { execute, read: () => collectDatabase(id, mysqlCounterTransport(execute), {}, 5000) };
+  };
+
+  it('reads an exact zero and source lifetime in one fixed SQL statement', async () => {
+    const { read, execute } = collector([sample]);
+    const [first] = await read();
+    const [restart] = await collector([{ ...sample, sampled_ms: baseTime + 60_000 }]).read();
+    const [differentSource] = await collector([{ ...sample, server_uuid: 'aaaaaaaa-bbbb-cccc-dddd-ffffffffffff' }]).read();
+    const [enabledAgain] = await collector([{ ...sample, enabled_seconds: baseTime / 1000 - 1 }]).read();
+    expect(execute).toHaveBeenCalledExactlyOnceWith(innodbDeadlocksRead.sql, 5000);
+    expect(first).toMatchObject({ fields: { deadlocks: { encoding: 'uint64', value: '0' } }, observed_at: timestamp(0),
+      counter: { bits: '64', start_at: timestamp(-3600), discontinuity: { reason: 'initial', observed_at: timestamp(-3600) } } });
+    expect(first.counter).toEqual(restart.counter);
+    expect(first.counter!.discontinuity!.epoch).not.toBe(differentSource.counter!.discontinuity!.epoch);
+    expect(first.counter!.discontinuity!.epoch).not.toBe(enabledAgain.counter!.discontinuity!.epoch);
+    expect(JSON.stringify(first)).not.toContain(sample.server_uuid);
+  });
+
+  it.each([
+    [],
+    [{ ...sample, counter_status: 'disabled' }],
+    [{ ...sample, deadlocks: null }],
+    [{ ...sample, enabled_seconds: null }],
+    [{ ...sample, reset_seconds: String(baseTime / 1000 + 1) }],
+    [sample, sample],
+  ].map(rows => ({ rows })))('rejects untrustworthy snapshots (%j)', async ({ rows }) => {
+    await expect(collector(rows).read()).rejects.toMatchObject({
+      code: 'parse_error', evidenceCode: 'MYSQL_COUNTER_LIFECYCLE_UNAVAILABLE',
+    });
+  });
+
+  it('keeps old gaps null and opens a new rate baseline even when COUNT increases across a reset', async () => {
+    const registry = createConfigurationRegistry();
+    const getPin = (version: string) => {
+      const { id, digest } = registry.list().find(r => r.package.id === 'mysql-custom-existing-scalars' && r.package.version === version)!.package;
+      return { id, digest, version };
+    };
+    const historical = getPin('1.0.0'), updated = getPin('1.0.1');
+    expect(historical.digest).toBe('sha256:13b333303dd9b28dbd26714a82be959b2761f8e2831095da4c4ff0019287e709');
+    const definition = innodbDeadlocksRead.fields[0].definition;
+    const metric = { id: definition.id, semantic_version: definition.semantic_version };
+    const read = async (seconds: number, count: string, resetAt?: number) => {
+      const observed_at = timestamp(seconds);
+      const packagePin = seconds === 0 ? historical : updated;
+      const result = await runPackage(registry, { package: packagePin, overrides: {}, credential_ref: 'credential:fixture' }, {
+        resource: { id: '1', type: 'instance', attributes: {
+          'db.engine': { value: 'mysql', source: 'driver', observed_at },
+          'db.version': { value: '9.6.0', source: 'driver', observed_at },
+        } },
+        binding_id: 'instance:1', attempt_id: `sample-${seconds}`, config_revision: seconds === 0 ? 4 : 5,
+        observed_at, clock: () => observed_at, evidence: {},
+        collector_ids: [seconds === 0 ? 'innodb_diagnostics' : innodbDeadlocksRead.name],
+        metric_keys: [`${metric.id}@${metric.semantic_version}`],
+        resolve: async () => mysqlCounterTransport(async () => ({ rows: seconds === 0 ? statusRows({ uptime: 500, flush: 500 })
+          : [{ ...sample, deadlocks: count, sampled_ms: baseTime + seconds * 1000,
+            reset_seconds: resetAt === undefined ? null : String(baseTime / 1000 + resetAt) }] }),
+          new MysqlCounterDiscovery(() => observed_at)),
+      });
+      expect(result.observations, JSON.stringify({ seconds, decision: result.decision, attempts: result.attempts })).toHaveLength(1);
+      return result.observations[0].observation;
+    };
+    const points = await Promise.all([read(0, ''), read(60, '2'), read(120, '5', 111), read(180, '5', 111), read(240, '8', 111)]);
+    expect(points[0]).toMatchObject({ value: null, quality: { status: 'unknown' } });
+    expect(points[2]).toMatchObject({ value: { value: '5' }, counter: { discontinuity: { reason: 'reset', observed_at: timestamp(111) } } });
+    expect(points[2].counter).not.toEqual(points[1].counter);
+    expect(points[3].counter).toEqual(points[2].counter);
+    const buckets = aggregate({ definition,
+      series: [{ resource_type: 'instance', resource_id: '1', metric, dimensions: {} }],
+      from: timestamp(0), to: timestamp(240), now: timestamp(240), interval_ms: 60_000, bucket_ms: 60_000,
+      max_gap_ms: 120_000, stale_after_ms: 120_000, mode: 'rate', space: 'none',
+    }, [points]);
+    expect(buckets.map(b => b.value && 'value' in b.value ? Number(b.value.value) : null)).toEqual([null, null, 0, 0.05]);
   });
 });
 

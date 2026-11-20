@@ -44,7 +44,11 @@ describe("reviewed custom SQL uses the unique package runner", () => {
     const existing = {id:'connections',target_type:'instance',unit:'count',value_type:'gauge',default_interval:300,
       collection_sqls:{mysql:'SELECT COUNT(*) as count FROM information_schema.PROCESSLIST'},compute_expr:null};
     const item = migrationItems([existing], 'mysql')[0];
-    expect(item).toMatchObject({state:'reviewed',code:'CUSTOM_SQL_ACTIVATION_REQUIRED',package:{id:'mysql-custom-existing-scalars'}});
+    expect(item).toMatchObject({state:'reviewed',code:'CUSTOM_SQL_ACTIVATION_REQUIRED',package:{id:'mysql-custom-existing-scalars',version:'1.0.1'}});
+    const { id, version, digest } = createConfigurationRegistry().list()
+      .find(r => r.package.id === 'mysql-custom-existing-scalars' && r.package.version === '1.0.0')!.package;
+    const current = { id, version, digest };
+    expect(migrationItems([existing], 'mysql', undefined, current)[0].package).toEqual(current);
     for (const patch of [{unit:'%'},{default_interval:60},{value_type:'counter'},
       {collection_sqls:{mysql:"SELECT COUNT(*) FROM information_schema.PROCESSLIST WHERE COMMAND <> 'Sleep'"}}]) {
       expect(migrationItems([{...existing,...patch}], 'mysql')[0].state).toBe('blocked');

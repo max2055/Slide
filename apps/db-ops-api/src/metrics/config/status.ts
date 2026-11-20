@@ -1,5 +1,6 @@
 import type { CollectionAttempt, Resource } from '../../contracts/metrics/index.js';
 import { MetricConfigurationStatusSchema, type MetricConfigurationStatus } from '../../contracts/metrics/configuration-status.js';
+import type { PackagePin } from '../../contracts/metrics/templates.js';
 import type { PolicyService } from '../policy/service.js';
 import type { Ref, Settings } from '../policy/model.js';
 import { metricKey, PolicyError } from '../policy/model.js';
@@ -36,7 +37,7 @@ export interface TemplateBindingFacts {
   }>;
 }
 export interface ConfigurationReader {
-  migration?(ref: Ref): Promise<NonNullable<MetricConfigurationStatus['legacy_configuration']>>;
+  migration?(ref: Ref, currentPackage?: PackagePin): Promise<NonNullable<MetricConfigurationStatus['legacy_configuration']>>;
   inventory(ref: Ref): Promise<Resource>;
   evidence(ref: Ref, revision: number | null): Promise<ConfigurationEvidence>;
   /** Only a `templates-v1` row answers; a legacy row keeps its own reader. */
@@ -172,7 +173,7 @@ export class MetricConfigurationReader {
       : configurationStatus(ref, effective, attempts, evidence, await this.reader.inventory(ref), canManageResource(actor, ref), this.clock());
     // Pending custom configurations must remain visible; never imply that preserving a row executes it.
     if(canManageResource(actor,ref)&&this.reader.migration){
-      result.legacy_configuration=(await this.reader.migration(ref)).map(item=>{
+      result.legacy_configuration=(await this.reader.migration(ref, result.binding.package ?? undefined)).map(item=>{
         const pin=result.binding.package, reviewed=item.package;
         // Migration review is definition-level; activation belongs to this
         // exact resource/revision/pin. An applied binding does not prove fresh

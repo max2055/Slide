@@ -67,4 +67,13 @@ describe('database target policy', () => {
       { allowedCidrs: '10.20.0.0/16', production: true },
     )).resolves.toMatchObject({ port: 3308 });
   });
+
+  it('requires every address for managed localhost to be loopback', async () => {
+    await expect(authorizeDatabaseTarget(
+      { host: 'localhost', port: 3306, dbType: 'mysql' },
+      { allowManagedLoopback: true, production: false, lookup: async () => [
+        { address: '127.0.0.1' }, { address: '192.0.2.1' },
+      ] },
+    )).rejects.toMatchObject({ reasonCode: 'DB_TARGET_ADDRESS_DENIED' });
+  });
 });

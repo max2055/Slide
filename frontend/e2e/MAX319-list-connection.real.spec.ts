@@ -24,6 +24,7 @@ test('列表试连：不同有效密码、失败重试、关闭均不保存或�
     expect(created.status()).toBe(200);
     const { id } = await created.json();
     expect(id).toBeGreaterThan(0);
+    const testPath = `/api/database/instances/${id}/test-connection`;
     const snapshot = async () => {
       const [rows] = await db.query('SELECT password_encrypted, updated_at FROM database_instances WHERE id = ?', [id]);
       return JSON.stringify(rows);
@@ -53,7 +54,7 @@ test('列表试连：不同有效密码、失败重试、关闭均不保存或�
       await input.fill(password);
       await input.press('Tab'); await expect(close).toBeFocused();
       await page.keyboard.press('Tab'); await expect(submit).toBeFocused();
-      const responsePromise = page.waitForResponse(r => r.url().endsWith('/api/database/instances/test-connection'));
+      const responsePromise = page.waitForResponse(r => new URL(r.url()).pathname === testPath && r.request().method() === 'POST');
       await page.keyboard.press('Enter');
       const response = await responsePromise;
       expect(response.status()).toBe(200);
@@ -89,7 +90,7 @@ test('列表试连：不同有效密码、失败重试、关闭均不保存或�
     await page.reload(); await expect(trigger).toBeVisible();
     expect(await snapshot() === original, 'persisted credentials remain unchanged after reload').toBe(true);
     expect(traffic.filter(r => r.method !== 'GET').map(r => `${r.method} ${r.path}`))
-      .toEqual(Array(3).fill('POST /api/database/instances/test-connection'));
+      .toEqual(Array(3).fill(`POST ${testPath}`));
     expect(errors).toEqual([]);
     const evidence = JSON.stringify({ traffic, savedCredentialUnchanged: true,
       realMysqlTests: ['different-valid:success', 'invalid:failure', 'retry:success'], modelCalls: 0 }, null, 2);

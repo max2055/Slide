@@ -24,10 +24,10 @@ export async function registerResourceIdentityRoutes(fastify:FastifyInstance,ver
     try {
       const servers = await serverDatabaseService.getAllServers();
       const current = await revalidateIdentityRead(request, reply, 'server');
-      if (!current) return;
-      reply.send(servers.filter(server=>canReadIdentity(current,{type:'server',id:server.id})).map((server) => publicServerDto(server as unknown as Record<string, unknown>)));
+      if (!current) return reply;
+      return reply.send(servers.filter(server=>canReadIdentity(current,{type:'server',id:server.id})).map((server) => publicServerDto(server as unknown as Record<string, unknown>)));
     } catch (error: any) {
-      reply.code(500).send({ error: '获取服务器列表失败：' + error.message });
+      return reply.code(500).send({ error: '获取服务器列表失败：' + error.message });
     }
   });
 
@@ -37,7 +37,7 @@ export async function registerResourceIdentityRoutes(fastify:FastifyInstance,ver
       const { id } = request.params as any;
       if(!canReadResource((request as any).user,{type:'server',id:Number(id)}))return reply.code(403).send({error:'无权读取服务器详情'});
       const server = await serverDatabaseService.getServerById(Number(id));
-      if (!await revalidateIdentityRead(request, reply, 'server', Number(id))) return;
+      if (!await revalidateIdentityRead(request, reply, 'server', Number(id))) return reply;
       if (!server) {
         return reply.code(404).send({ error: '服务器不存在' });
       }
@@ -50,9 +50,9 @@ export async function registerResourceIdentityRoutes(fastify:FastifyInstance,ver
       } catch {
         // If decryption fails, skip — frontend will show empty username field
       }
-      reply.send(publicServerDto({ ...safeServer, credential_encrypted }));
+      return reply.send(publicServerDto({ ...safeServer, credential_encrypted }));
     } catch (error: any) {
-      reply.code(500).send({ error: '获取服务器详情失败：' + error.message });
+      return reply.code(500).send({ error: '获取服务器详情失败：' + error.message });
     }
   });
 

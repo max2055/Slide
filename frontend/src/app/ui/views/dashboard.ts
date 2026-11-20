@@ -64,6 +64,7 @@ export class DashboardPage extends LitElement {
   private readonly onPopState = () => { this.readUrl(); this.normalizeSelection(); void this.loadTrend(); };
   private readonly onPermissions = () => this.readPermissions();
   private stopRecovery?: () => void;
+  private ageTimer?: ReturnType<typeof setInterval>;
 
   override connectedCallback() {
     super.connectedCallback(); this.readPermissions(); this.readUrl();
@@ -73,10 +74,12 @@ export class DashboardPage extends LitElement {
       this.trendCache.clear();
       void this.loadDashboardData();
     });
+    this.ageTimer = setInterval(() => this.requestUpdate(), 30_000);
     void this.loadDashboardData();
   }
   override disconnectedCallback() {
     this.stopRecovery?.(); this.stopRecovery = undefined;
+    clearInterval(this.ageTimer);
     this.overviewVersion++; this.trendVersion++; this.backupVersion++; this.disposeChart();
     window.removeEventListener('popstate', this.onPopState);
     window.removeEventListener('slide-permissions-loaded', this.onPermissions);

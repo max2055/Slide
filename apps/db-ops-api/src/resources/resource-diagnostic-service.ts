@@ -17,7 +17,7 @@ export interface ResourceDiagnosticDependencies {
   semantic?(ref: ResourceRef, actor: ActorContext): Promise<unknown>;
   list(actor: ActorContext): Promise<ResourceDetail[]>;
   detail(ref: ResourceRef, actor: ActorContext): Promise<ResourceDetail | null>;
-  observations(ref: ResourceRef, actor: ActorContext, options?: { metricIds?: string[]; limit?: number }): Promise<Observation[]>;
+  observations(ref: ResourceRef, actor: ActorContext, options?: { metricIds?: string[]; limit?: number; now?: Date }): Promise<Observation[]>;
   relations(ref: ResourceRef, actor: ActorContext): Promise<ResourceRelation[]>;
   alerts(ref: ResourceRef, actor: ActorContext, limit?: number): Promise<Array<Record<string, unknown>>>;
 }
@@ -127,6 +127,7 @@ const MAX_RELATED_ALERTS = 32;
 const DEFAULT_PACK_BYTES = 256 * 1024;
 const OVERVIEW_CONCURRENCY = 8;
 const OBSERVATION_FRESHNESS_MS = 5 * 60_000;
+const MYSQL_HEALTH_METRICS = ['db.uptime_seconds', 'mysql.processlist.count'];
 
 function validateRef(ref: ResourceRef): void {
   if (!ref || !['instance', 'server', 'network_device'].includes(ref.type)
@@ -218,9 +219,10 @@ function finiteDateMs(value: Date | null | undefined): number | null {
   return Number.isFinite(timestamp) ? timestamp : null;
 }
 
-function latestDatedObservation(
+function datedObservation(
   observations: Observation[],
   nowMs: number,
+  order: 'oldest' | 'latest',
 ): { observation?: Observation; expired: boolean } {
   const dated = observations
     .filter((entry) => {
@@ -228,7 +230,7 @@ function latestDatedObservation(
       return observedAtMs !== null && observedAtMs <= nowMs;
     })
     .sort((left, right) => finiteDateMs(right.observedAt)! - finiteDateMs(left.observedAt)!);
-  const observation = dated[0];
+  const observation = order === 'oldest' ? dated.at(-1) : dated[0];
   if (!observation) return { expired: false };
   if (observation.validUntil === null || observation.validUntil === undefined) return { observation, expired: false };
   const validUntilMs = finiteDateMs(observation.validUntil);
@@ -296,10 +298,14 @@ export class ResourceDiagnosticService {
     const resources = [...new Map(inventory.filter(item => canReadResource(actor, item.resource)).map(item => [`${item.resource.type}:${item.resource.id}`, item])).values()].slice(0, MAX_LIST_ITEMS);
     const items = await mapWithConcurrency(resources, OVERVIEW_CONCURRENCY, async (resource) => {
       const gaps: string[] = [];
-      const [observationResult, alertResult, relationResult] = await Promise.all([
-        this.dependencies.observations(resource.resource, actor, { limit: 32 })
+      const mysql = resource.resource.type === 'instance' && resource.attributes.dbType === 'mysql';
+      const readObservations = (metricIds?: string[]) => this.dependencies.observations(resource.resource, actor,
+        metricIds ? { limit: metricIds.length, metricIds, now } : { limit: 32 })
           .then((value) => ({ value, error: false }))
-          .catch(() => ({ value: [] as Observation[], error: true })),
+          .catch(() => ({ value: [] as Observation[], error: true }));
+      const [compatibility, mysqlHealth, alertResult, relationResult] = await Promise.all([
+        readObservations(),
+        mysql ? readObservations(MYSQL_HEALTH_METRICS) : null,
         this.dependencies.alerts(resource.resource, actor, MAX_ALERTS)
           .then((value) => ({ value, error: false }))
           .catch(() => ({ value: [] as Array<Record<string, unknown>>, error: true })),
@@ -308,29 +314,39 @@ export class ResourceDiagnosticService {
           .catch(() => ({ value: [] as ResourceRelation[], error: true })),
       ]);
 
+      const observationResult = mysqlHealth ?? compatibility;
       if (observationResult.error) gaps.push('OBSERVATIONS_UNAVAILABLE');
+      if (mysqlHealth && compatibility.error) gaps.push('COMPATIBILITY_OBSERVATIONS_UNAVAILABLE');
       if (alertResult.error) gaps.push('ALERTS_UNAVAILABLE');
       if (relationResult.error) gaps.push('RELATIONS_UNAVAILABLE');
 
-      const { observation: observed, expired } = latestDatedObservation(observationResult.value, now.getTime());
+      const indicators = mysql
+        ? observationResult.value.filter(entry => MYSQL_HEALTH_METRICS.includes(entry.metricId))
+        : observationResult.value;
+      // The oldest required sample governs how long a healthy conclusion remains current.
+      const { observation: observed, expired } = datedObservation(indicators, now.getTime(), mysql ? 'oldest' : 'latest');
       const observedAt = observed?.observedAt?.toISOString() ?? null;
+      const formalStale = mysql && indicators.some(entry => entry.reason === 'stale_observation');
       const freshness: ResourceFreshness = !observed
         ? 'missing'
-        : !expired && now.getTime() - observed.observedAt!.getTime() <= OBSERVATION_FRESHNESS_MS
+        : !expired && !formalStale && now.getTime() - observed.observedAt!.getTime() <= OBSERVATION_FRESHNESS_MS
           ? 'fresh'
           : 'stale';
       if (freshness === 'missing') gaps.push('OBSERVATIONS_EMPTY');
       else if (freshness === 'stale') gaps.push(expired ? 'OBSERVATIONS_EXPIRED' : 'OBSERVATIONS_STALE');
-      if (observationResult.value.some((entry) => {
+      const futureObservation = indicators.some((entry) => {
         const observedAtMs = finiteDateMs(entry.observedAt);
         return observedAtMs !== null && observedAtMs > now.getTime();
-      })) gaps.push('OBSERVATIONS_FUTURE');
+      });
+      if (futureObservation) gaps.push('OBSERVATIONS_FUTURE');
+      const completeMysqlHealth = !mysql || MYSQL_HEALTH_METRICS.every(id => indicators.some(entry =>
+        entry.metricId === id && entry.value !== null && Number.isFinite(entry.value) && entry.value >= 0));
 
-      const quality = observationResult.value.length === 0
+      const quality = indicators.length === 0
         ? 'unknown' as const
-        : observationResult.value.some((entry) => entry.quality === 'invalid' || entry.quality === 'degraded')
+        : indicators.some((entry) => entry.quality === 'invalid' || entry.quality === 'degraded')
           ? 'degraded' as const
-          : observationResult.value.some((entry) => entry.quality === 'unknown' || entry.value === null)
+          : !completeMysqlHealth || indicators.some((entry) => entry.quality === 'unknown' || entry.value === null)
             ? 'partial' as const
             : 'good' as const;
       const activeAlerts = [...new Map([...alertResult.value].reverse().filter(activeAlert).map((alert, index) => [String(alert.id ?? `${resource.resource.type}:${resource.resource.id}:unknown:${index}`), alert])).values()];
@@ -339,6 +355,15 @@ export class ResourceDiagnosticService {
       if (observationResult.value.length >= 32) gaps.push('OBSERVATIONS_TRUNCATED');
       const severityOrder = ['critical', 'error', 'warning', 'warn', 'info'];
       const alertSeverity = activeAlerts.map(alert => String(alert.level ?? alert.severity ?? 'info').toLowerCase()).sort((a, b) => (severityOrder.indexOf(a) < 0 ? 9 : severityOrder.indexOf(a)) - (severityOrder.indexOf(b) < 0 ? 9 : severityOrder.indexOf(b)))[0];
+      let status = resource.resource.type === 'instance' ? String(resource.attributes.healthStatus ?? resource.status ?? 'unknown') : resource.status || 'unknown';
+      if (mysql) {
+        status = 'unknown';
+        if (resource.status === 'error') status = 'unavailable';
+        else if (unresolvedAlerts > 0) status = alertSeverity === 'critical' || alertSeverity === 'error' ? 'critical' : 'warning';
+        else if (resource.status === 'active' && freshness === 'fresh' && quality === 'good' && !futureObservation
+          && indicators.every(entry => isUsableMetricObservation(entry, now.getTime()))
+          && !alertResult.error && alertResult.value.length < MAX_ALERTS) status = 'healthy';
+      }
       const impactScope = relationResult.value
         .map((relation) => relation.source.type === resource.resource.type && relation.source.id === resource.resource.id
           ? relation.target : relation.source)
@@ -350,9 +375,9 @@ export class ResourceDiagnosticService {
       return {
         resource: resource.resource,
         label: resource.label,
-        status: resource.resource.type === 'instance' ? String(resource.attributes.healthStatus ?? resource.status ?? 'unknown') : resource.status || 'unknown',
+        status,
         attributes: resource.attributes,
-        observations: observationResult.value.slice(0, 32),
+        observations: [...(mysqlHealth?.value ?? []), ...compatibility.value].slice(0, 32),
         alertIds: activeAlerts.map((alert, index) => String(alert.id ?? `${resource.resource.type}:${resource.resource.id}:unknown:${index}`)),
         alertSeverity,
         alertsTruncated: alertResult.value.length >= MAX_ALERTS,
@@ -671,10 +696,10 @@ async function defaultList(actor: ActorContext): Promise<ResourceDetail[]> {
   return Object.assign(result, { unavailableTypes });
 }
 
-async function formalObservations(ref: ResourceRef, actor: ActorContext, options: { metricIds?: string[]; limit?: number } = {}): Promise<Observation[]> {
+async function formalObservations(ref: ResourceRef, actor: ActorContext, options: Parameters<ObservationReader>[2] = {}): Promise<Observation[]> {
   const ids=options.metricIds??(ref.type==='instance'?['cpu_usage','memory_usage','disk_usage','connections','qps','tps','slow_queries']
     :ref.type==='server'?['cpu_usage','memory_usage','load_1min','uptime','process_count']:['device_uptime_seconds']);
-  const values=await Promise.all(ids.slice(0,Math.min(options.limit??32,32)).map(id=>observationService.latest(actor,ref,id,{validForMs:300000})));
+  const values=await Promise.all(ids.slice(0,Math.min(options.limit??32,32)).map(id=>observationService.latest(actor,ref,id,{validForMs:OBSERVATION_FRESHNESS_MS,now:options.now})));
   return values;
 }
 

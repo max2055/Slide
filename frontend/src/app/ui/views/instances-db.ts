@@ -939,19 +939,12 @@ export class InstancesPage extends LitElement {
     this.listTestMessage = "";
 
     try {
-      const res = await authFetch("/api/database/instances/test-connection", {
+      const res = await authFetch(`/api/database/instances/${this.testingInstance.id}/test-connection`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({
-          host: this.testingInstance.host,
-          port: this.testingInstance.port,
-          username: this.testingInstance.username,
-          password: this.testPassword,
-          database_name: this.testingInstance.database_name,
-          db_type: this.testingInstance.db_type,
-        }),
+        body: JSON.stringify({ password: this.testPassword }),
       });
       const result = await res.json();
       this.listTestStatus = res.ok && result.success ? "success" : "error";

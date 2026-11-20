@@ -399,7 +399,9 @@ class InstanceDatabaseService {
   }
 
   /** Load connection metadata without selecting encrypted secrets or connection strings. */
-  async getPublicConnectionMetadata(id: number): Promise<Record<string, unknown> | null> {
+  async getPublicConnectionMetadata(id: number): Promise<Pick<DatabaseInstance,
+    'id' | 'name' | 'db_type' | 'host' | 'port' | 'username' | 'database_name' | 'health_status' | 'environment'
+  > | null> {
     const pool = this.getPool();
     if (!pool || !Number.isSafeInteger(id) || id <= 0) return null;
     try {
@@ -731,8 +733,22 @@ class InstanceDatabaseService {
    * 测试数据库连接
    */
   async testConnection(config: DatabaseConnectionTestConfig, instanceId?: number): Promise<{ success: boolean; message: string }> {
-    const perform = () => this.performConnectionTest(config, instanceId);
-    return instanceId === undefined ? perform() : instanceAccessLifecycle.track(instanceId, async () => {
+    if (instanceId === undefined) return this.performConnectionTest(config);
+    return this.withConnectionTestLifecycle(instanceId, () => this.performConnectionTest(config, instanceId));
+  }
+
+  async testRegisteredConnection(instanceId: number, password: string): Promise<{ success: boolean; message: string } | null> {
+    const instance = await this.getPublicConnectionMetadata(instanceId);
+    if (!instance) return null;
+    const allowManagedLoopback = instance.db_type === 'mysql' && instance.host.trim().toLowerCase() === 'localhost';
+    return this.withConnectionTestLifecycle(instanceId, () => this.performConnectionTest({
+      db_type: instance.db_type, host: instance.host, port: instance.port,
+      username: instance.username, database: instance.database_name ?? undefined, password,
+    }, instanceId, allowManagedLoopback));
+  }
+
+  private withConnectionTestLifecycle<T>(instanceId: number, perform: () => Promise<T>): Promise<T> {
+    return instanceAccessLifecycle.track(instanceId, async () => {
       await instanceAccessLifecycle.assertAvailable(instanceId);
       const result = await perform();
       await instanceAccessLifecycle.assertAvailable(instanceId);
@@ -740,7 +756,7 @@ class InstanceDatabaseService {
     });
   }
 
-  private async performConnectionTest(config: DatabaseConnectionTestConfig, instanceId?: number): Promise<{ success: boolean; message: string }> {
+  private async performConnectionTest(config: DatabaseConnectionTestConfig, instanceId?: number, allowManagedLoopback = false): Promise<{ success: boolean; message: string }> {
     assertCreatableDatabaseType(config.db_type);
 
     try {
@@ -766,7 +782,10 @@ class InstanceDatabaseService {
     const guard = <T extends object>(driver: T): T => instanceId === undefined ? driver : instanceAccessLifecycle.guardDriver(instanceId, driver);
     try {
       if (instanceId !== undefined) await instanceAccessLifecycle.assertAvailable(instanceId);
-      const target = await authorizeDatabaseTarget({ host: config.host, port: config.port, dbType: config.db_type });
+      const target = await authorizeDatabaseTarget(
+        { host: config.host, port: config.port, dbType: config.db_type },
+        { allowManagedLoopback },
+      );
       if (instanceId !== undefined) await instanceAccessLifecycle.assertAvailable(instanceId);
       const pinnedHost = target.address;
       if (config.db_type === 'mysql') {
@@ -839,6 +858,7 @@ class InstanceDatabaseService {
       if (config.db_type === 'dameng') {
         // 达梦数据库使用官方 dmdb 驱动
         const dmdb = (await import('dmdb')).default;
+        if (instanceId !== undefined) await instanceAccessLifecycle.assertAvailable(instanceId);
 
         const host = pinnedHost;
         const connection = guard(await dmdb.getConnection({

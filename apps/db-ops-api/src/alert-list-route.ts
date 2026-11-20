@@ -25,9 +25,9 @@ export async function registerAlertListRoute(fastify:FastifyInstance,verifyToken
         level: q.level || undefined,
         strict: true,
       });
-      reply.send(alerts);
+      return reply.send(alerts);
     } catch (error: any) {
-      reply.code(500).send({ error: '获取告警列表失败：' + error.message });
+      return reply.code(500).send({ error: '获取告警列表失败：' + error.message });
     }
   });
 

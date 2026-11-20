@@ -91,11 +91,14 @@ const frozenDiagnosticReads: DatabaseRead[] = [
   { engine: 'dameng', name: 'deadlock_diagnostics', shape: 'array', sql: 'SELECT COUNT(*) FROM V$DEADLOCK_HISTORY',
     permissions: ['SELECT V$DEADLOCK_HISTORY'], fields: [field('events', 'dameng.deadlock_history.rows', 'Current retained V$DEADLOCK_HISTORY row count; not monotonic events since startup.')] },
 ];
-// Additive releases: do not change the contents/digests of diagnostics@1.0.0.
+const legacyDeadlocksField = counterField('Innodb_deadlocks', 'mysql.innodb.deadlocks_total',
+  'Cumulative Innodb_deadlocks since engine lifecycle; rate requires trusted epoch.');
+
+// Additive releases keep existing package pins and their source mappings intact.
 const compatibilityReads: DatabaseRead[] = [
   {engine:'mysql',name:'innodb_diagnostics',shape:'status',sql:"SHOW GLOBAL STATUS WHERE Variable_name IN ('Innodb_row_lock_time_avg','Innodb_deadlocks','Created_tmp_disk_tables')",permissions:['SHOW GLOBAL STATUS'],fields:[
     field('Innodb_row_lock_time_avg','mysql.innodb.row_lock_average_ms','Native InnoDB average row-lock acquisition time in milliseconds; not an interval average.','ms'),
-    counterField('Innodb_deadlocks','mysql.innodb.deadlocks_total','Cumulative Innodb_deadlocks since engine lifecycle; rate requires trusted epoch.'),
+    legacyDeadlocksField,
     counterField('Created_tmp_disk_tables','mysql.temporary.disk_tables_total','Cumulative internal on-disk temporary tables; not a ratio.'),
   ]},
   {engine:'mysql',name:'thread_cache',shape:'object',sql:"SELECT 100*(1-MAX(CASE WHEN VARIABLE_NAME='Threads_created' THEN CAST(VARIABLE_VALUE AS DECIMAL(30,0)) END)/NULLIF(MAX(CASE WHEN VARIABLE_NAME='Connections' THEN CAST(VARIABLE_VALUE AS DECIMAL(30,0)) END),0)) AS hit FROM performance_schema.global_status WHERE VARIABLE_NAME IN ('Threads_created','Connections')",permissions:['SELECT performance_schema.global_status'],fields:[field('hit','mysql.thread_cache.hit_percent','Cumulative 1 - Threads_created/Connections; NULL without connections.','%',true)]},
@@ -130,21 +133,40 @@ const connectionRead: DatabaseRead = {
     field('used_percent', 'mysql.connections.used_percent', 'Threads_connected/max_connections*100 in one SQL snapshot. NULL when current or limit is missing or limit is zero.', '%', true),
   ],
 };
-export const diagnosticReads = [...frozenDiagnosticReads, ...compatibilityReads, connectionRead];
+export const innodbDeadlocksRead: DatabaseRead = {
+  engine: 'mysql', name: 'innodb_lock_deadlocks', shape: 'object',
+  sql: `SELECT STATUS AS counter_status, CAST(COUNT AS CHAR) AS deadlocks,
+    TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', CONVERT_TZ(TIME_ENABLED, 'SYSTEM', '+00:00')) AS enabled_seconds,
+    CASE WHEN TIME_RESET IS NULL THEN NULL ELSE COALESCE(
+      TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', CONVERT_TZ(TIME_RESET, 'SYSTEM', '+00:00')), 0
+    ) END AS reset_seconds,
+    CAST(UNIX_TIMESTAMP(NOW(3)) * 1000 AS UNSIGNED) AS sampled_ms, @@GLOBAL.server_uuid AS server_uuid
+    FROM INFORMATION_SCHEMA.INNODB_METRICS WHERE NAME = 'lock_deadlocks'`,
+  permissions: ['PROCESS (read INFORMATION_SCHEMA.INNODB_METRICS)'],
+  fields: [{ ...legacyDeadlocksField, name: 'deadlocks' }],
+};
+const priorDiagnosticReads = [...frozenDiagnosticReads, ...compatibilityReads, connectionRead];
+export const diagnosticReads = [...priorDiagnosticReads, innodbDeadlocksRead];
 export const diagnosticSpecs: ImplementationSpec[] = diagnosticReads.map(read => ({
   id: implementationId(read), method: 'sql', resource_type: 'instance',
   applicability: [{ attribute: 'db.engine', values: [read.engine] }, { attribute: 'db.version', values: read.engine === 'mysql' ? [...databaseVersions.mysql, '9.6'] : databaseVersions[read.engine] }],
   outputs: read.fields.map(f => ({ raw_field: f.name, definition: f.definition, input_unit: f.definition.unit })), permissions: read.permissions,
-  discovery: 'Singleton diagnostic snapshot; missing data and zero denominators preserve NULL. No inferred counter epoch.',
+  discovery: read === innodbDeadlocksRead
+    ? 'Cumulative InnoDB lock_deadlocks COUNT. Enabled and reset timestamps define counter continuity; missing or disabled counters remain unknown.'
+    : 'Singleton diagnostic snapshot; missing data and zero denominators preserve NULL. No inferred counter epoch.',
 }));
 export function diagnosticReleases(): PackageRelease[] {
-  return (Object.keys(databaseVersions) as Engine[]).flatMap(engine => (engine === 'mysql' ? ['1.0.0','1.1.0','1.2.0'] : ['1.0.0','1.1.0']).map(version => {
+  return (Object.keys(databaseVersions) as Engine[]).flatMap(engine => (engine === 'mysql' ? ['1.0.0','1.1.0','1.1.1','1.2.0','1.2.1'] : ['1.0.0','1.1.0']).map(version => {
     const base = databaseReleases().find(r => r.package.id === `${engine}-representative`)!;
-    const reads = version === '1.0.0' ? frozenDiagnosticReads : version === '1.1.0' ? [...frozenDiagnosticReads, ...compatibilityReads] : diagnosticReads;
+    const useInnodbMetrics = version === '1.1.1' || version === '1.2.1';
+    const legacyReads = version === '1.0.0' ? frozenDiagnosticReads
+      : version.startsWith('1.1.') ? [...frozenDiagnosticReads, ...compatibilityReads] : priorDiagnosticReads;
+    const reads = useInnodbMetrics ? [...legacyReads, innodbDeadlocksRead] : legacyReads;
     const specs = diagnosticSpecs.filter(s => reads.some(r => implementationId(r)===s.id) && s.applicability[0].values[0] === engine);
     return sealRelease({ ...base, package: { ...base.package, id: `${engine}-diagnostics`, version, applicability: specs[0].applicability,
       collectors: [...(engine === 'mysql' ? [] : base.package.collectors), ...specs.map(s => ({ id: s.id.split('.').at(-2)!, implementation_ref: s.id, method: 'sql' as const,
-        timeout_ms: 5000, estimated_cost: 'low' as const, mappings: s.outputs.map(o => ({ metric: { id: o.definition.id, semantic_version: o.definition.semantic_version },
+        timeout_ms: 5000, estimated_cost: 'low' as const, mappings: s.outputs.filter(o => !useInnodbMetrics || o.raw_field !== legacyDeadlocksField.name)
+          .map(o => ({ metric: { id: o.definition.id, semantic_version: o.definition.semantic_version },
           raw_field: o.raw_field, input_unit: o.input_unit, output_unit: o.definition.unit, transform_version: '1.0.0', steps: ['decode', 'normalize'] as Array<'decode' | 'normalize'> })) }))] },
       extensions: [...new Map([...base.extensions,...specs.flatMap(s=>s.outputs.map(o=>o.definition)).filter((d):d is Extract<MetricDefinition,{category:'extension'}>=>d.category==='extension')].map(d=>[d.id,d])).values()],
       documentation: [...(engine === 'mysql' ? [] : base.documentation), ...specs.map(s => ({collector_id:s.id.split('.').at(-2)!, permissions:s.permissions, discovery:s.discovery}))] });

@@ -7,6 +7,7 @@ import './instances-db.js';
 
 const instance = Object.freeze({ id: 319, name: 'MAX319', host: 'db.example', port: 3306,
   username: 'monitor', db_type: 'mysql', database_name: 'app', hasCredential: true, credentialVersion: 7 });
+const registeredTestPath = `/api/database/instances/${instance.id}/test-connection`;
 const response = (body: unknown, ok = true) => ({ ok, json: async () => body });
 const createPage = () => {
   const page = document.createElement('instances-page') as any;
@@ -26,8 +27,8 @@ describe('MAX-319 / #662: list connection test has no credential write side effe
     page.testPassword = 'different-test-credential';
     await page._handleListTestConnection();
     expect(authFetch).toHaveBeenCalledTimes(1);
-    expect(authFetch).toHaveBeenCalledWith('/api/database/instances/test-connection', expect.objectContaining({ method: 'POST' }));
-    expect(JSON.parse(authFetch.mock.calls[0][1].body)).toMatchObject({ password: 'different-test-credential', username: instance.username });
+    expect(authFetch).toHaveBeenCalledWith(registeredTestPath, expect.objectContaining({ method: 'POST' }));
+    expect(JSON.parse(authFetch.mock.calls[0][1].body)).toEqual({ password: 'different-test-credential' });
     expect(page.listTestStatus).toBe('success');
     expect(page.listTestMessage).toBe('连接成功');
     expect(reload).not.toHaveBeenCalled();
@@ -57,7 +58,7 @@ describe('MAX-319 / #662: list connection test has no credential write side effe
     expect(page.testPassword).toBe('');
     expect(page.listTestStatus).toBe('idle');
     expect(authFetch.mock.calls.filter(([, options]) => options?.method).map(([url]) => url))
-      .toEqual(Array(2).fill('/api/database/instances/test-connection'));
+      .toEqual([registeredTestPath, registeredTestPath]);
   });
 
   it('rejects an empty password and reports transport failures without a write', async () => {
