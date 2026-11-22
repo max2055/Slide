@@ -151,6 +151,11 @@ export class ReportsPage extends LitElement {
       border-radius: var(--radius-sm);
     }
 
+    .report-preview-frame:focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: 2px;
+    }
+
     .report-preview-text {
       white-space: pre-wrap;
       overflow-wrap: anywhere;
@@ -906,7 +911,7 @@ export class ReportsPage extends LitElement {
     // The stored export format can be PDF or JSON even when the saved preview is HTML.
     const looksLikeHtml = /^\s*<(?:!doctype html\b|!--|[a-z][\w-]*(?:\s|\/?>))/i.test(content);
     const body = looksLikeHtml
-      ? html`<iframe class="report-preview-frame" title="报表正文" sandbox="" tabindex="-1" .srcdoc=${previewHtml(content)}></iframe>`
+      ? html`<iframe class="report-preview-frame" title="报表正文" sandbox="" tabindex="0" .srcdoc=${previewHtml(content)}></iframe>`
       : /^(?:%PDF-|JVBERi0)/.test(content.trimStart())
         ? html`<p>此报表可下载后查看。</p>`
         : html`<pre class="report-preview-text">${content}</pre>`;
