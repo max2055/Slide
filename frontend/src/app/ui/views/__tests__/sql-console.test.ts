@@ -1,4 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { CompletionContext } from '@codemirror/autocomplete';
+import { EditorState } from '@codemirror/state';
 import '../sql-console.js';
 import type { SqlConsolePage } from '../sql-console.js';
 
@@ -11,12 +13,8 @@ function page(): ConsoleUnderTest {
   return new ConsolePage() as ConsoleUnderTest;
 }
 
-function completionContext(text: string): any {
-  return {
-    pos: text.length,
-    matchBefore: () => ({ from: Math.max(0, text.length - 2) }),
-    state: { sliceDoc: () => text },
-  };
+function completionContext(text: string): CompletionContext {
+  return new CompletionContext(EditorState.create({ doc: text }), text.length, true);
 }
 
 describe('SQL Console', () => {
@@ -35,11 +33,14 @@ describe('SQL Console', () => {
   });
 
   describe('SQLC-01: Schema-driven autocomplete', () => {
-    it('provides table names and columns for a matching alias', () => {
+    it('provides table names and completes only the column prefix after a qualifier', () => {
       const subject = page();
       subject.schemas = [{ schema: 'app', tables: [{ name: 'orders', columns: [{ name: 'id', type: 'bigint', nullable: false }] }] }];
-      const result = subject._sqlCompletions(completionContext('select orders.'));
-      expect(result.options.map((option: any) => option.label)).toEqual(expect.arrayContaining(['orders', 'id']));
+      const tables = subject._sqlCompletions(completionContext('select ord'));
+      expect(tables.options.map((option: any) => option.label)).toEqual(['orders']);
+      const result = subject._sqlCompletions(completionContext('select orders.i'));
+      expect(result.from).toBe('select orders.'.length);
+      expect(result.options.map((option: any) => option.label)).toEqual(['id']);
     });
 
     it('falls back to SQL keywords without schema objects', () => {
@@ -206,8 +207,9 @@ describe('MAX-549 / #441 completion multiplicity', () => {
       columns: [{ name: '编号', type: 'int' }],
     })) }];
     const result = subject._sqlCompletions(completionContext('select a.'));
-    expect(result.options.filter((o: any) => o.type === 'property').map((o: any) => o.label)).toEqual(['编号']);
-    expect(result.options.filter((o: any) => o.type === 'keyword')).toHaveLength(1000);
+    expect(result.options).toEqual([{ label: '编号', type: 'property', detail: 'int' }]);
+    const tables = subject._sqlCompletions(completionContext('select t'));
+    expect(tables.options.filter((o: any) => o.type === 'keyword')).toHaveLength(1000);
   });
 });
 

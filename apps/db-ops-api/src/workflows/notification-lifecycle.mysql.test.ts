@@ -60,6 +60,7 @@ describe.skipIf(!config)('MAX-593 isolated MySQL notification lifecycle (#396/#5
     const scheduler = new NotificationDispatchScheduler(source, service, workflows);
     registerWorkflowHandlers(registry, {
       faultDiagnosisService: { diagnoseUnhealthyInstances: async () => {} },
+      databaseLogService: { collectLogs: async () => ({ succeeded: 0, unavailable: 0, failed: 0 }) },
       monitorCollector: { collectCapacityNow: async () => {} }, baselineCalculator: { cleanupOldBaselines: async () => {} },
       alertEngine: { triggerEvaluation: async () => {} }, workflowStore: workflows,
       capacityConsistencyMonitor: { runOnce: async () => {} }, notificationScheduler: scheduler,

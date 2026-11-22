@@ -137,7 +137,8 @@ describe('Cron creation, display and draft script testing', () => {
   it('keeps loading distinct from empty', async () => {
     authFetch.mockImplementation(() => new Promise(() => {}));
     const page = document.createElement('cron-jobs-settings') as Page; document.body.append(page); await page.updateComplete;
-    expect(page.shadowRoot!.textContent).toContain('加载中'); expect(page.shadowRoot!.querySelector('app-empty-state')).toBeNull();
+    expect(page.shadowRoot!.querySelector('[role="status"]')?.getAttribute('aria-label')).toBe('正在加载定时任务');
+    expect(page.shadowRoot!.querySelector('app-empty-state')).toBeNull();
   });
   it('disables creation for unknown or denied permission and reacts to revocation', async () => {
     localStorage.removeItem('permissions'); const page = await mount();

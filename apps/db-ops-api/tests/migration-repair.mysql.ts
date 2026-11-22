@@ -21,7 +21,18 @@ const admin = await mysql.createConnection(config);
 const directory = await mkdtemp(join(tmpdir(), 'slide-repair-mysql-'));
 let pool: mysql.Pool | undefined;
 let releaseVerification = () => {};
-let concurrent: Promise<unknown>[] = [];
+const concurrent: Promise<unknown>[] = [];
+
+async function waitForSessions(needle: string, count: number) {
+  for (let attempt = 0; attempt < 100; attempt++) {
+    const [processes] = await admin.query<mysql.RowDataPacket[]>('SHOW FULL PROCESSLIST');
+    const matches = processes.filter(row => row.db === database && row.Info?.includes(needle));
+    if (matches.length >= count) return matches;
+    await delay(25);
+  }
+  assert.fail(`Expected ${count} MySQL sessions executing ${needle}`);
+}
+
 try {
   await admin.query(`CREATE DATABASE \`${database}\` CHARACTER SET utf8mb4`);
   pool = mysql.createPool({ ...config, database, connectionLimit: 5 });
@@ -89,15 +100,8 @@ INSERT INTO missing_repair_source VALUES (1);
   const pendingRun = runner.run();
   const pendingRepair = runner.repair(id, 'second-operator', 'duplicate acknowledgement');
   const outcomes = Promise.allSettled([first, pendingRun, pendingRepair]);
-  concurrent = [outcomes];
-  let waiters = 0;
-  for (let attempt = 0; attempt < 100; attempt++) {
-    const [processes] = await admin.query<mysql.RowDataPacket[]>('SHOW PROCESSLIST');
-    waiters = processes.filter(row => row.db === database && /GET_LOCK/.test(row.Info || '')).length;
-    if (waiters >= 2) break;
-    await delay(25);
-  }
-  assert.equal(waiters, 2, 'run and second repair must wait on the same MySQL advisory lock');
+  concurrent.push(outcomes);
+  await waitForSessions("GET_LOCK('slide:db-ops:migrations:v1'", 2);
   assert.equal((await readEntry()).status, 'failed');
   releaseVerification();
   const [confirmed, ran, duplicate] = await outcomes;
@@ -118,8 +122,99 @@ INSERT INTO missing_repair_source VALUES (1);
   const [data] = await pool.query<mysql.RowDataPacket[]>('SELECT COUNT(*) AS count FROM missing_repair_source');
   assert.equal(Number(data[0].count), 1);
   console.log('PASS: concurrent run/repair serialize; audit/history preserved; no DDL or DML replay');
+
+  for (const scenario of ['completed', 'disconnected']) {
+    const interruptedId = `999_${scenario}_repair.sql`;
+    const probe = `repair_${scenario}_probe`;
+    const pauseLock = `repair:${database}`;
+    await writeFile(join(directory, interruptedId), `
+CREATE TABLE ${probe} (id INT PRIMARY KEY COMMENT 'Identifier') COMMENT='Repair receipt probe';
+SELECT GET_LOCK('${pauseLock}', 20);
+SELECT RELEASE_LOCK('${pauseLock}');
+INSERT INTO ${probe} VALUES (1);
+`);
+    const migration = (await loadMigrations(directory)).find(item => item.id === interruptedId)!;
+    const readProbe = async (connection: MigrationQuery) => {
+      const [rows] = await connection.query<Array<{ id: number }>>(`SELECT id FROM ${probe} ORDER BY id`);
+      return rows.map(row => row.id);
+    };
+    let verificationCalls = 0;
+    const repairRunner = new MigrationRunner(migrationPool, directory, {
+      [interruptedId]: {
+        checksum: migration.checksum,
+        verify: async (connection) => {
+          verificationCalls++;
+          assert.deepEqual(await readProbe(connection), [1], 'missing receipt probe data');
+        },
+      },
+    });
+    await admin.query('SELECT GET_LOCK(?, 0)', [pauseLock]);
+    const execution = Promise.allSettled([repairRunner.run()]);
+    concurrent.push(execution);
+    const [active] = await waitForSessions(`GET_LOCK('${pauseLock}'`, 1);
+    const readInterruptedEntry = async () => {
+      const [rows] = await pool!.query<mysql.RowDataPacket[]>(
+        'SELECT * FROM app_schema_migrations WHERE migration_id = ?', [interruptedId]);
+      return rows[0];
+    };
+    const activeEntry = await readInterruptedEntry();
+    assert.equal(activeEntry.status, 'running');
+    const maintenance = Promise.allSettled([
+      repairRunner.inspectMigrationForRepair(interruptedId),
+      repairRunner.acknowledgeExternallyRepairedMigration(interruptedId, 'mysql-test', 'while running'),
+    ]);
+    concurrent.push(maintenance);
+    await waitForSessions("GET_LOCK('slide:db-ops:migrations:v1'", 2);
+    assert.deepEqual(await readInterruptedEntry(), activeEntry);
+    assert.equal(verificationCalls, 0, 'active runner must retain exclusive access');
+    if (scenario === 'disconnected') await admin.query('KILL CONNECTION ?', [active.Id]);
+    await admin.query('SELECT RELEASE_LOCK(?)', [pauseLock]);
+
+    const [runResult] = await execution;
+    const [inspection, prematureConfirmation] = await maintenance;
+    assert.ok(prematureConfirmation.status === 'rejected', 'confirmation should have failed');
+    if (scenario === 'completed') {
+      assert.equal(runResult.status, 'fulfilled');
+      assert.equal(inspection.status, 'rejected');
+      assert.match(String(prematureConfirmation.reason), /not failed or running/);
+      assert.equal(verificationCalls, 0);
+      assert.equal((await readInterruptedEntry()).status, 'completed');
+      console.log('PASS: maintenance waits for an active migration and rejects its completed entry');
+      continue;
+    }
+    assert.ok(runResult.status === 'rejected', 'disconnected migration should have failed');
+    assert.match(String(runResult.reason), /failed at statement 1.*cleanup failed/);
+    assert.match(String(prematureConfirmation.reason), /missing receipt probe data/);
+    assert.deepEqual(await readInterruptedEntry(), activeEntry, 'failed verification must not change running entry');
+    assert.deepEqual(inspection, {
+      status: 'fulfilled',
+      value: {
+        migration_id: interruptedId, checksum: migration.checksum, status: 'running',
+        statement_index: null, error: null, executionOutcome: 'unknown',
+      },
+    });
+    await assert.rejects(repairRunner.run(), /requires explicit repair: running/);
+    assert.deepEqual(await readProbe(migrationPool), []);
+    console.log('PASS: killing the real MySQL session leaves an unknown receipt and blocks startup/replay');
+
+    await pool.query(`INSERT INTO ${probe} VALUES (1)`);
+    await repairRunner.acknowledgeExternallyRepairedMigration(interruptedId, 'mysql-test', 'verified external data repair');
+    const acknowledged = await readInterruptedEntry();
+    assert.equal(acknowledged.status, 'completed');
+    assert.equal(acknowledged.checksum, activeEntry.checksum);
+    assert.equal(acknowledged.started_at.getTime(), activeEntry.started_at.getTime());
+    assert.equal(acknowledged.statement_index, null);
+    assert.deepEqual(JSON.parse(acknowledged.error), {
+      action: 'acknowledgeExternallyRepairedMigration', actor: 'mysql-test', reason: 'verified external data repair',
+      checksum: migration.checksum, previousError: null, previousStatus: 'running', previousExecutionOutcome: 'unknown',
+    });
+    await repairRunner.run();
+    assert.deepEqual(await readProbe(migrationPool), [1]);
+    console.log('PASS: external repair is verified and acknowledged with the unknown receipt retained, without replay');
+  }
 } finally {
   releaseVerification();
+  await admin.query('SELECT RELEASE_ALL_LOCKS()');
   await Promise.allSettled(concurrent);
   await pool?.end();
   await admin.query(`DROP DATABASE IF EXISTS \`${database}\``);
