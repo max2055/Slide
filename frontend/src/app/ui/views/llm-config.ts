@@ -1,3 +1,4 @@
+import { sharedSettingsPageStyles } from "../../styles/shared-settings-page-styles.ts";
 import "../components/app-card.js";
 import "../components/app-form-field.js";
 import "../components/app-notice.js";
@@ -136,14 +137,11 @@ export class LLMConfigPage extends LitElement {
   private _sceneRequestVersion = 0;
   private _testRequestVersion = 0;
   private _savedOkTimer: ReturnType<typeof setTimeout> | null = null;
-  static styles = [sharedFieldStyles, sharedBtnStyles, css`
+  static styles = [sharedFieldStyles, sharedBtnStyles, sharedSettingsPageStyles, css`
 
-    :host { display: block; min-width: 0; container-type: inline-size; }
-    .page { max-width: 1120px; margin: 0 auto; }
+    :host { container-type: inline-size; }
     .shell { min-width: 0; }
-    .page-header { margin-bottom: var(--space-lg); }
-    .page-header h1 { font-size: calc(var(--text-lg) * 1.5); font-weight: 600; margin: 0 0 var(--space-xs); color: var(--text-strong); }
-    .page-header p { font-size: var(--text-md); color: var(--muted); margin: 0; line-height: 1.6; }
+    .page-header { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: flex-start; gap: var(--space-md); }
     .provider-selector { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-sm) var(--space-md); margin-bottom: var(--space-lg); }
     .provider-selector label { font-size: var(--text-md); font-weight: 500; color: var(--text); }
     .provider-selector select { flex: 1; min-width: 0; max-width: 32rem; }
@@ -153,6 +151,8 @@ export class LLMConfigPage extends LitElement {
     .config-section { padding: var(--space-lg) 0; border-bottom: 1px solid var(--border); }
     .config-section:first-child { padding-top: 0; }
     .section-intro { display: flex; align-items: baseline; flex-wrap: wrap; gap: var(--space-xs) var(--space-md); margin-bottom: var(--space-md); }
+    .connection-intro { align-items: center; }
+    .connection-intro .btn-primary { margin-inline-start: auto; }
     .section-intro h2 { margin: 0; font-size: var(--text-lg); font-weight: 600; color: var(--text-strong); }
     .section-intro p, .scope-hint { margin: 0; font-size: var(--text-sm); line-height: 1.6; color: var(--muted); }
     .connection-identity { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-md); }
@@ -725,6 +725,20 @@ export class LLMConfigPage extends LitElement {
   // ── Render ───────────────────────────────────────────────────────────────
 
   override render() {
+    const scenes = this.activeTab === 'scenes';
+    return html`
+      <div class="page-header">
+        <div>
+          <h1>${scenes ? '场景分配' : '模型配置'}</h1>
+          <p>${scenes ? '为不同场景分配提供商和模型，未单独分配时跟随全局默认' : '先配置连接，再管理模型与高级参数'}</p>
+        </div>
+        <slot name="page-tabs"></slot>
+      </div>
+      ${this._renderPageContent()}
+    `;
+  }
+
+  private _renderPageContent() {
     if (this.loading) {
       return html`<div class="loading" role="status" aria-label="正在读取模型配置" style="flex-direction:column;gap:16px;padding:var(--space-xl);">
         <div class="skeleton-block" style="width:200px;height:24px;"></div>
@@ -737,15 +751,9 @@ export class LLMConfigPage extends LitElement {
     }
 
     return html`
-      <div class="page">
-        <div class="page-header">
-          <h1>${this.activeTab === 'scenes' ? '场景分配' : '模型配置'}</h1>
-          <p>${this.activeTab === 'scenes' ? '为不同场景分配提供商和模型，未单独分配时跟随全局默认' : '先配置连接，再管理模型与高级参数'}</p>
-        </div>
-        <div class="shell ${this.activeTab === 'scenes' ? 'scenes' : ''}">
-          ${this.activeTab === "scenes" ? "" : this._renderSidebar()}
-          ${this._renderDetail()}
-        </div>
+      <div class="shell ${this.activeTab === 'scenes' ? 'scenes' : ''}">
+        ${this.activeTab === "scenes" ? "" : this._renderSidebar()}
+        ${this._renderDetail()}
       </div>
       ${this._renderModelDialog()}
       <app-dialog .open=${this.discardOpen} title="放弃未保存修改？" size="sm" @app-dialog-close=${() => { this.discardOpen = false; this.pendingNavigation = null; }}>
@@ -895,7 +903,26 @@ export class LLMConfigPage extends LitElement {
     return html`
       <app-card class="connection-card">
         <section class="config-section">
-          <div class="section-intro"><h2>基础连接</h2><p>先配置供应商，再管理模型与高级参数。</p></div>
+          <div class="section-intro connection-intro">
+            <h2>基础连接</h2><p>先配置供应商，再管理模型与高级参数。</p>
+            <button class="btn-primary ${this.savedOk ? 'btn-success' : ''}" @click=${this._save} ?disabled=${this.saving || this.modelSaving || !this.form.name}>
+              ${this.savedOk ? '✓ 已保存配置' : this.saving ? '保存中...' : '保存配置'}
+            </button>
+          </div>
+          ${this.mutationOk ? html`
+            <div role="status" aria-label="操作结果">
+              <app-notice severity="info">${this.mutationOk}</app-notice>
+            </div>` : ''}
+
+          ${this.applyWarning ? html`
+            <div role="alert" aria-label="运行时应用结果">
+              <app-notice severity="warning">
+                <span>${this.applyWarning.message}</span>
+                ${this.applyWarning.retry ? html`<button class="btn btn-sm" style="margin-inline-start:var(--space-md)" @click=${() => this.applyWarning?.retry?.()}>重试应用</button>` : ''}
+              </app-notice>
+            </div>` : ''}
+
+          ${this.formMsg ? html`<div class="msg msg-err" role="alert">${this.formMsg}</div>` : ''}
           <div class="section-body">
       <div class="connection-identity">
         <div class="form-group">
@@ -1027,21 +1054,6 @@ export class LLMConfigPage extends LitElement {
         </div>
       ` : ''}
 
-      ${this.mutationOk ? html`
-        <div role="status" aria-label="操作结果">
-          <app-notice severity="info">${this.mutationOk}</app-notice>
-        </div>` : ''}
-
-      ${this.applyWarning ? html`
-        <div role="alert" aria-label="运行时应用结果">
-          <app-notice severity="warning">
-            <span>${this.applyWarning.message}</span>
-            ${this.applyWarning.retry ? html`<button class="btn btn-sm" style="margin-inline-start:var(--space-md)" @click=${() => this.applyWarning?.retry?.()}>重试应用</button>` : ''}
-          </app-notice>
-        </div>` : ''}
-
-      ${this.formMsg ? html`<div class="msg msg-err" role="alert">${this.formMsg}</div>` : ''}
-
       <div class="actions-bar">
         ${isEdit ? html`
           <button class="btn" @click=${() => this._test(this.editing!)} .disabled=${this.testing}>
@@ -1050,13 +1062,10 @@ export class LLMConfigPage extends LitElement {
         ` : ''}
         <span class="spacer"></span>
         ${isEdit ? html`
-          <button class="btn" @click=${() => this._delete(this.editing!)}>删除</button>
+          <button class="btn-danger-outline" @click=${() => this._delete(this.editing!)}>删除</button>
         ` : html`
           <button class="btn" @click=${() => { this._navigate(() => this._openAddPicker()); }}>返回模板</button>
         `}
-        <button class="btn-primary ${this.savedOk ? 'btn-success' : ''}" @click=${this._save} ?disabled=${this.saving || this.modelSaving || !this.form.name}>
-          ${this.savedOk ? '✓ 已保存配置' : this.saving ? '保存中...' : '保存配置'}
-        </button>
       </div>
       ${isEdit ? html`
         <div role="status" aria-live="polite" aria-atomic="true" aria-label="连接测试结果">

@@ -1,3 +1,4 @@
+import { sharedSettingsPageStyles } from "../../styles/shared-settings-page-styles.ts";
 /** Runtime branding configuration; all four fields are saved together. */
 import { LitElement, html, css } from "lit";
 import { customElement, state } from "lit/decorators.js";
@@ -27,14 +28,11 @@ export class BrandingSettings extends LitElement {
   @state() private messageType: "success" | "error" = "success";
   private saved: BrandingConfig | null = null;
 
-  static styles = [sharedFieldStyles, sharedBtnStyles, css`
-    :host { display: block; max-width: 1100px; min-width: 0; }
+  static styles = [sharedFieldStyles, sharedBtnStyles, sharedSettingsPageStyles, css`
     * { box-sizing: border-box; }
-    .page-header { display: flex; justify-content: space-between; align-items: start; gap: var(--space-lg); margin-bottom: var(--space-xl); }
-    h1 { font-size: 24px; font-weight: 650; line-height: 1.35; margin: 0; color: var(--text-strong); }
-    h2 { font-size: 16px; font-weight: 600; margin: 0; color: var(--text-strong); }
+    .page-header { display: flex; justify-content: space-between; align-items: start; gap: var(--space-lg); }
+    h2 { font-size: var(--text-lg); font-weight: 600; margin: 0; color: var(--text-strong); }
     p { margin: var(--space-xs) 0 0; line-height: 1.6; }
-    .page-header p { font-size: 14px; color: var(--muted); }
     .form-group { display: grid; grid-template-columns: 180px minmax(0, 1fr); gap: var(--space-xl); padding: var(--space-xl) 0; }
     .form-group:first-child { padding-top: 0; }
     .form-group + .form-group { border-top: 1px solid var(--border); }
@@ -59,7 +57,7 @@ export class BrandingSettings extends LitElement {
     .feedback.success { color: var(--ok); background: var(--ok-subtle); }
     .loading { color: var(--muted); padding: var(--space-lg) 0; }
     @media (max-width: 850px) { .form-group { grid-template-columns: minmax(0, 1fr); gap: var(--space-md); } }
-    @media (max-width: 600px) { h1 { font-size: 22px; } .page-header { flex-wrap: wrap; } }
+    @media (max-width: 600px) { .page-header { flex-wrap: wrap; } }
   `];
 
   override connectedCallback() {
