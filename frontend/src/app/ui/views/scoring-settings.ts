@@ -7,6 +7,7 @@ import { sharedBtnStyles } from '../../styles/shared-btn-styles.ts';
 import { customElement, state } from "lit/decorators.js";
 import { authFetch } from "../../../api/index.js";
 import "../components/app-card.js";
+import "../components/app-notice.js";
 
 interface ScoringWeights { availability: number; performance: number; capacity: number; security: number; }
 
@@ -57,13 +58,6 @@ export class ScoringSettingsPage extends LitElement {
     .total-value.ok { color: var(--ok); }
     .total-value.warn { color: var(--warn); }
     .total-value.err { color: var(--danger); }
-    .total-feedback { font-size: 12px; color: var(--danger); margin: 0; }
-    .total-feedback:not(:empty) { margin-top: var(--space-sm); }
-
-    .toast { font-size: 12px; padding: 10px 14px; border-radius: var(--radius-sm); margin-bottom: 12px; }
-    .toast-ok { background: var(--ok-subtle); color: var(--ok); }
-    .toast-err { background: var(--danger-subtle); color: var(--danger); }
-
     .loading { padding: 48px; text-align: center; color: var(--muted); }
   `];
 
@@ -108,8 +102,8 @@ export class ScoringSettingsPage extends LitElement {
       ? `权重总和不足 100%，请增加 ${percent(1 - total)}`
       : `权重总和超过 100%，请减少 ${percent(total - 1)}`;
     return html`
-      ${this.ok ? html`<div class="toast toast-ok" role="status">${this.ok}</div>` : ""}
-      ${this.error ? html`<div class="toast toast-err" role="alert">${this.error}</div>` : ""}
+      ${this.ok ? html`<app-notice severity="success" role="status">${this.ok}</app-notice>` : ""}
+      ${this.error ? html`<app-notice severity="error" role="alert">${this.error}</app-notice>` : ""}
 
       <div class="page-header">
         <h1>评分权重</h1>
@@ -128,9 +122,9 @@ export class ScoringSettingsPage extends LitElement {
           <span class="total-label">权重总和</span>
           <span class="total-value ${valid ? 'ok' : Math.abs(total - 1) < 0.06 ? 'warn' : 'err'}">${percent(total)}${valid ? ' ✓' : ''}</span>
         </div>
-        <p id="scoring-total-feedback" class="total-feedback" role="status">${feedback}</p>
+        <div id="scoring-total-feedback" role="status">${valid ? nothing : html`<app-notice severity="error">${feedback}</app-notice>`}</div>
         <div slot="footer">
-          <button class="btn btn-primary" aria-describedby=${valid ? nothing : 'scoring-total-feedback'} @click=${this._save} ?disabled=${this.saving || !valid}>${this.saving ? '保存中...' : '保存配置'}</button>
+          <button class="btn btn-primary" aria-busy=${this.saving} aria-describedby=${valid ? nothing : 'scoring-total-feedback'} @click=${this._save} ?disabled=${this.saving || !valid}>${this.saving ? '保存中...' : '保存配置'}</button>
         </div>
       </app-card>
     `;

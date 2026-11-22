@@ -105,10 +105,6 @@ export class DatabaseLogTab extends LitElement {
       border-color: var(--border-strong);
     }
 
-    .btn:hover:not(:disabled) { background: var(--bg-secondary); }
-
-    .btn.primary:hover:not(:disabled) { background: var(--accent-solid-hover); }
-
     .table-container {
       overflow-x: auto;
       border: 1px solid var(--border);
@@ -768,6 +764,7 @@ export class DatabaseLogTab extends LitElement {
             <button aria-busy=${String(this.loading)} class="btn btn-refresh" ?disabled=${this.loading || this.accessInvalidated} @click=${this._handleFilterChange}>刷新</button>
             <button
               class="btn-primary"
+              aria-busy=${this.analysisLoading}
               ?disabled=${this.selectedIds.size === 0 || this.analysisLoading || this.observationPaused || this.accessInvalidated}
               @click=${this._triggerAnalysis}
             >
