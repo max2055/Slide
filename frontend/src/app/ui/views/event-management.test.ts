@@ -309,3 +309,50 @@ describe('latest event list query', () => {
     if (items.length) expect(page.shadowRoot.textContent).toContain('recovered');
   });
 });
+
+describe('current-page event filter counts', () => {
+  afterEach(() => { document.body.replaceChildren(); vi.mocked(authFetch).mockReset(); });
+
+  it('counts only the displayed rows and retains the server total when paging from zero matches', async () => {
+    const firstPage = Array.from({ length: 50 }, (_, index) => ({
+      id: index + 2, title: `事件 ${index + 2}`, severity: 'warning', status: 'open',
+    }));
+    const secondPage = [{ id: 1, title: '磁盘告警', severity: 'critical', status: 'open' }];
+    const api = vi.mocked(authFetch);
+    const listRequests: string[] = [];
+    api.mockImplementation(async url => {
+      const path = String(url);
+      if (!path.includes('/alerts/events?')) return Response.json({});
+      listRequests.push(path);
+      const items = path.includes('offset=50') ? secondPage : firstPage;
+      return Response.json({ items, total: 51 });
+    });
+
+    const page = new EventManagementPage();
+    document.body.append(page);
+    const root = page.shadowRoot!;
+    const summary = () => root.querySelector('[role="status"]')?.textContent?.replace(/\s+/g, ' ').trim();
+    await vi.waitFor(() => expect(summary()).toBe('本页命中 50 条 · 当前状态可见事件共 51 条'));
+
+    const search = root.querySelector<HTMLInputElement>('[aria-label="搜索本页事件"]')!;
+    search.value = '磁盘';
+    search.dispatchEvent(new Event('input'));
+    await page.updateComplete;
+    expect(summary()).toBe('本页命中 0 条 · 当前状态可见事件共 51 条');
+    expect(root.textContent).toContain('暂无匹配的事件');
+
+    root.querySelector<HTMLButtonElement>('.pagination button:last-child')!.click();
+    await vi.waitFor(() => expect(summary()).toBe('本页命中 1 条 · 当前状态可见事件共 51 条'));
+    expect(root.querySelectorAll('.event-item')).toHaveLength(1);
+
+    const severity = root.querySelector<HTMLSelectElement>('[aria-label="本页严重度"]')!;
+    severity.value = 'warning';
+    severity.dispatchEvent(new Event('change'));
+    await page.updateComplete;
+    expect(summary()).toBe('本页命中 0 条 · 当前状态可见事件共 51 条');
+    expect(listRequests).toEqual([
+      '/api/alerts/events?limit=50&offset=0&status=open,investigating,handled',
+      '/api/alerts/events?limit=50&offset=50&status=open,investigating,handled',
+    ]);
+  });
+});
