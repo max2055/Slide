@@ -286,10 +286,10 @@ jobs:
 
       # Each invocation owns a fresh managed API and its login rate-limit store.
       # Keep all R4 scenarios without sharing the earlier login burst or weakening auth.
-      - name: SQL boundary and approval browser qualification
+      - name: SQL editor, boundary and approval browser qualification
         run: >-
-          pnpm --filter slide-frontend exec playwright test release-security.spec.ts
-          --grep 'direct SQL execution|concurrent approval reviews|approval cancellation and retry'
+          pnpm --filter slide-frontend exec playwright test release-security.spec.ts sql-console-entry.spec.ts
+          --grep 'direct SQL execution|concurrent approval reviews|approval cancellation and retry|SQL workbench editor'
           --workers=1
 
       - name: Production administrator bootstrap and upgrade regression

@@ -333,7 +333,7 @@ test('controlled log and interface exceptional states remain explicit',async({pa
       const view=page.locator(kind==='logs'?'instance-detail-page':'network-device-detail');
       await view.getByRole('tab',{name:kind==='logs'?'日志':'接口',exact:true}).click();
       const section=kind==='logs'?view.locator('database-log-tab'):view;
-      await expect(section).toContainText(state==='loading'?(kind==='logs'?'加载日志':'读取接口'):state==='empty'?(kind==='logs'?'当前范围没有日志':'尚未取得接口记录'):state==='forbidden'?(kind==='logs'?'权限或登录状态':'没有访问此资源的权限'):(kind==='logs'?'日志读取失败':'接口读取失败'));
+      await expect(section).toContainText(state==='loading'?(kind==='logs'?'加载日志':'读取接口'):state==='empty'?(kind==='logs'?'当前范围没有日志':'设备没有已保存的接口记录'):state==='forbidden'?(kind==='logs'?'权限或登录状态':'没有访问此资源的权限'):(kind==='logs'?'日志读取失败':'接口记录读取失败'));
       expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
       await page.screenshot({path:`${output}/controlled-${kind}-${state}-${width}-${theme}.png`,fullPage:true});
       if(state==='loading') {release?.();release=undefined;}

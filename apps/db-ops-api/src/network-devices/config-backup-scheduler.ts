@@ -1,6 +1,6 @@
 import type { PoolConnection } from 'mysql2/promise';
 import { dbConnection } from '../db-connection.js';
-import { configBackupService, ConfigBackupError } from './config-backup-service.js';
+import { configBackupService, ConfigBackupError, CONFIG_BACKUP_RESULT_UNCONFIRMED } from './config-backup-service.js';
 
 export const BACKUP_TIME_ZONE = 'Asia/Shanghai';
 export interface BackupScheduleInput { enabled: boolean; dailyTime: string; }
@@ -83,17 +83,26 @@ export class MysqlBackupScheduleStore implements BackupScheduleStore {
     const connection = await this.pool().getConnection();
     try {
       await connection.beginTransaction();
-      const [rows] = await connection.execute<any[]>(`SELECT status, error_code, finished_at FROM network_config_backup_runs
-        WHERE device_id = ? AND scheduled_date = ? FOR UPDATE`, [deviceId, date]);
+      const [rows] = await connection.execute<any[]>(`SELECT status, error_code, finished_at, backup_id,
+        EXISTS (SELECT 1 FROM audit_log_entries a WHERE a.id = r.backup_audit_id) AS audit_saved
+        FROM network_config_backup_runs r WHERE device_id = ? AND scheduled_date = ? FOR UPDATE`, [deviceId, date]);
       const row = rows[0];
-      if (!row || (row.status !== 'running' && row.error_code !== 'CONFIG_BACKUP_INTERRUPTED')) {
+      const expired = row?.status === 'failed' &&
+        (row.error_code === CONFIG_BACKUP_RESULT_UNCONFIRMED || row.error_code === 'CONFIG_BACKUP_INTERRUPTED');
+      if (!row || (row.status !== 'running' && !expired)) {
         await connection.commit();
         return;
       }
-      // A late known outcome can correct an interruption inferred by another worker.
-      if (row.finished_at === null || row.error_code === 'CONFIG_BACKUP_INTERRUPTED') {
+      // A late checkpoint can replace an inferred expiry. A committed audit
+      // also confirms success if the audit write lost its acknowledgement.
+      if (row.finished_at === null || expired) {
+        let outcome = errorCode;
+        if (row.audit_saved) outcome = null;
+        else if (row.backup_id !== null && errorCode === 'CONFIG_BACKUP_STORE_UNAVAILABLE') {
+          outcome = CONFIG_BACKUP_RESULT_UNCONFIRMED;
+        }
         await connection.execute(`UPDATE network_config_backup_runs SET status = 'running', error_code = ?, finished_at = CURRENT_TIMESTAMP
-          WHERE device_id = ? AND scheduled_date = ?`, [errorCode, deviceId, date]);
+          WHERE device_id = ? AND scheduled_date = ?`, [outcome, deviceId, date]);
       }
       await connection.commit();
     } catch (error) {
@@ -108,9 +117,16 @@ export class MysqlBackupScheduleStore implements BackupScheduleStore {
     // Recover known outcomes immediately after restart, before expiring uncertain captures.
     await this.pool().execute(`UPDATE network_config_backup_runs SET status = IF(error_code IS NULL, 'success', 'failed')
       WHERE status = 'running' AND finished_at IS NOT NULL`);
-    // No durable result means the SSH outcome is uncertain. Do not recollect.
-    await this.pool().execute(`UPDATE network_config_backup_runs SET status = 'failed', error_code = 'CONFIG_BACKUP_INTERRUPTED', finished_at = CURRENT_TIMESTAMP
-      WHERE status = 'running' AND finished_at IS NULL AND started_at < DATE_SUB(CURRENT_TIMESTAMP, INTERVAL 10 MINUTE)`);
+    // The backup transaction and the audit can both finish before the first
+    // checkpoint. An expired run with neither proof has an unknown outcome.
+    await this.pool().execute(`UPDATE network_config_backup_runs r
+      LEFT JOIN audit_log_entries a ON a.id = r.backup_audit_id
+      SET r.status = IF(a.id IS NULL, 'failed', 'success'),
+          r.error_code = IF(a.id IS NULL, ?, NULL), r.finished_at = CURRENT_TIMESTAMP
+      WHERE (r.status = 'running' AND r.finished_at IS NULL AND
+        (a.id IS NOT NULL OR r.started_at < DATE_SUB(CURRENT_TIMESTAMP, INTERVAL 10 MINUTE)))
+      OR (r.status = 'failed' AND r.error_code = ? AND a.id IS NOT NULL)`,
+    [CONFIG_BACKUP_RESULT_UNCONFIRMED, CONFIG_BACKUP_RESULT_UNCONFIRMED]);
   }
 }
 
@@ -121,7 +137,7 @@ export class ConfigBackupScheduler {
   private readonly pending = new Map<string, { deviceId: number; date: string; errorCode: string | null }>();
   constructor(
     private readonly store: BackupScheduleStore,
-    private readonly collect: (deviceId: number) => Promise<unknown>,
+    private readonly collect: (deviceId: number, scheduledDate: string) => Promise<unknown>,
     private readonly clock: () => Date = () => new Date(),
   ) {}
   start(): void {
@@ -165,7 +181,7 @@ export class ConfigBackupScheduler {
       try {
         if (!await this.store.claim(target, local.date)) continue;
         let errorCode: string | null = null;
-        try { await this.collect(target.deviceId); }
+        try { await this.collect(target.deviceId, local.date); }
         catch (error) { errorCode = error instanceof ConfigBackupError ? error.code : 'CONFIG_BACKUP_FAILED'; }
         this.pending.set(`${target.deviceId}:${local.date}`, { deviceId: target.deviceId, date: local.date, errorCode });
         await this.flushResults();
@@ -177,4 +193,4 @@ export class ConfigBackupScheduler {
 }
 
 export const backupScheduleStore = new MysqlBackupScheduleStore();
-export const configBackupScheduler = new ConfigBackupScheduler(backupScheduleStore, id => configBackupService.collect(id));
+export const configBackupScheduler = new ConfigBackupScheduler(backupScheduleStore, (id, date) => configBackupService.collect(id, null, date));

@@ -214,6 +214,9 @@ export class ServersPage extends LitElement {
   @state() private _servers: ServerRow[] = [];
   @state() private _searchQuery = restoredListState('server')?.state.search ?? "";
   @state() private _loading = true;
+  @state() private inventoryError = "";
+  private inventoryRequest = 0;
+  private editorRequest = 0;
   @state() private _showDialog = false;
   @state() private _editingId: number | null = null;
   @state() private _showDeleteDialog = false;
@@ -255,13 +258,32 @@ export class ServersPage extends LitElement {
     this.renderRoot.querySelector<ResourceMetricsTable>('resource-metrics-table')?.openColumnSettings();
   }
 
-  private readonly listAccessChanged = () => this.requestUpdate();
+  private readonly listAccessChanged = (event: Event) => {
+    this.inventoryRequest++;
+    this.editorRequest++;
+    this._servers = [];
+    this.metricsLoading = false;
+    if (this._editingId !== null) {
+      this._editingId = null;
+      this._showDialog = false;
+    }
+    this._deletingServer = null;
+    this._showDeleteDialog = false;
+    if (event.type === 'slide-permissions-loaded' && hasListPermission('servers:view')) {
+      void this._loadServers();
+    } else {
+      this._loading = false;
+      this.inventoryError = '无法读取服务器清单，请确认登录和查看权限';
+    }
+  };
   override connectedCallback() {
     super.connectedCallback();
     window.addEventListener('slide-permissions-loaded', this.listAccessChanged);
     window.addEventListener('slide-session-expired', this.listAccessChanged);
   }
   override disconnectedCallback() {
+    this.inventoryRequest++;
+    this.editorRequest++;
     window.removeEventListener('slide-permissions-loaded', this.listAccessChanged);
     window.removeEventListener('slide-session-expired', this.listAccessChanged);
     super.disconnectedCallback();
@@ -274,27 +296,41 @@ export class ServersPage extends LitElement {
   async refreshReadData() { await this._loadServers(true); }
 
   private async _loadServers(background = false) {
-    if (background !== true) this._loading = true;
+    const request = ++this.inventoryRequest;
+    if (background !== true || this._servers.length === 0) this._loading = true;
+    this.inventoryError = '';
+    let failure = '服务器清单读取失败';
     try {
-      const serversRes = await authFetch("/api/servers");
+      const serversRes = await authFetch("/api/servers", { signal: AbortSignal.timeout(15000) });
+      if (request !== this.inventoryRequest) return;
       if (serversRes.status === 401) {
         showToast("请先登录", "warning");
         window.dispatchEvent(new CustomEvent("slide-navigate", { detail: { tab: "chat" } }));
         return;
       }
-      if (!serversRes.ok) throw new Error("加载服务器列表失败");
-      this._servers = await serversRes.json();
+      if (!serversRes.ok) {
+        if (serversRes.status === 403) failure = '无法读取服务器清单，请确认查看权限';
+        throw new Error();
+      }
+      const servers = await serversRes.json();
+      if (!Array.isArray(servers)) throw new Error();
+      if (request !== this.inventoryRequest) return;
+      this._servers = servers;
       const url = new URL(location.href), editId = Number(url.searchParams.get('edit'));
       const edit = this._servers.find(server => server.id === editId);
       if (edit && !this._showDialog) {
-        await this._openEditDialog(edit); this.editorTab = 'collection';
+        await this._openEditDialog(edit);
+        if (request !== this.inventoryRequest) return;
+        this.editorTab = 'collection';
         url.searchParams.delete('edit'); history.replaceState({}, '', url);
       }
       this.metricRefreshVersion++;
-    } catch (err: any) {
-      showToast(err.message || "网络错误", "error");
+    } catch {
+      if (request !== this.inventoryRequest) return;
+      this._servers = [];
+      this.inventoryError = failure;
     } finally {
-      this._loading = false;
+      if (request === this.inventoryRequest) this._loading = false;
     }
   }
 
@@ -320,6 +356,7 @@ export class ServersPage extends LitElement {
   }
 
   private async _openEditDialog(server: ServerRow) {
+    const request = ++this.editorRequest;
     this.editorTab = "basic";
     this.connectionPending = false;
     this._editingId = server.id;
@@ -332,6 +369,7 @@ export class ServersPage extends LitElement {
         credentialUsername = detail.credential_username || "";
       }
     } catch { /* fall back to empty */ }
+    if (request !== this.editorRequest || this._editingId !== server.id) return;
 
     const originalOsType = server.os_type ?? "";
     const recognized = canonicalOsKey(originalOsType);
@@ -675,11 +713,13 @@ export class ServersPage extends LitElement {
                 </button>
               </div>
             </div>
-            <app-empty-state
+            ${this.inventoryError ? html`<div class="error" role="alert">${this.inventoryError}
+              <button class="btn btn-refresh" @click=${() => this._loadServers()}>重试读取清单</button>
+            </div>` : html`<app-empty-state
               title="暂无服务器"
               description="点击右上角添加按钮创建第一个服务器"
               icon="server"
-            ></app-empty-state>
+            ></app-empty-state>`}
           </div>
 
           <!-- Add/Edit Dialog -->

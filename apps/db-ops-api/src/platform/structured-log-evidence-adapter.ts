@@ -16,14 +16,30 @@ export interface PlatformLogInput {
   streamBoundary?: { anchorId?: string; sourceRequestId?: string; discardedBytes?: number };
 }
 interface PlatformLogEntry extends PlatformLogInput { timestamp: string; level: 'info' | 'error' | 'warn'; }
+interface EvictionWindow { from: number; to: number; }
 const HOUR = 3_600_000;
+const MAX_TRACKED_EVICTION_COMPONENTS = 100;
 const label = (value: string) => typeof value === 'string' && /^[A-Za-z0-9_.:-]{1,128}$/.test(value);
+
+function extendEvictionWindow(window: EvictionWindow | undefined | null, timestamp: number): EvictionWindow {
+  return {
+    from: Math.min(window?.from ?? timestamp, timestamp),
+    to: Math.max(window?.to ?? timestamp, timestamp),
+  };
+}
+
+function pruneEvictionWindow(window: EvictionWindow | null, cutoff: number): EvictionWindow | null {
+  if (!window || window.to < cutoff) return null;
+  window.from = Math.max(window.from, cutoff);
+  return window;
+}
 
 export class StructuredLogEvidenceAdapter {
   private entries: PlatformLogEntry[] = [];
-  // FIFO evictions form an event-time interval. Keep constant-size metadata,
-  // rather than retaining one marker per dropped log.
-  private droppedWindow: { from: number; to: number } | null = null;
+  // Each interval conservatively covers evictions by event time.
+  private droppedWindow: EvictionWindow | null = null;
+  private readonly droppedByComponent = new Map<string, EvictionWindow>();
+  private untrackedDroppedWindow: EvictionWindow | null = null;
   private readonly startedAt: number;
   constructor(private readonly now: () => number = Date.now, private readonly capacity = 10_000) {
     if (!Number.isSafeInteger(capacity) || capacity < 1) throw new Error('PLATFORM_LOG_CAPACITY_INVALID');
@@ -33,12 +49,17 @@ export class StructuredLogEvidenceAdapter {
   private prune(now: number): void {
     const cutoff = now - HOUR;
     this.entries = this.entries.filter(entry => Date.parse(entry.timestamp) >= cutoff);
-    if (this.droppedWindow && this.droppedWindow.to < cutoff) this.droppedWindow = null;
-    else if (this.droppedWindow) this.droppedWindow.from = Math.max(this.droppedWindow.from, cutoff);
+    this.droppedWindow = pruneEvictionWindow(this.droppedWindow, cutoff);
+    this.untrackedDroppedWindow = pruneEvictionWindow(this.untrackedDroppedWindow, cutoff);
+    for (const [component, window] of this.droppedByComponent) {
+      if (!pruneEvictionWindow(window, cutoff)) this.droppedByComponent.delete(component);
+    }
   }
 
-  private hasDroppedLogs(from: number, to: number): boolean {
-    return this.droppedWindow !== null && this.droppedWindow.from <= to && this.droppedWindow.to >= from;
+  private hasDroppedLogs(from: number, to: number, component?: string): boolean {
+    const window = component === undefined ? this.droppedWindow
+      : this.droppedByComponent.get(component) ?? this.untrackedDroppedWindow;
+    return window !== null && window.from <= to && window.to >= from;
   }
 
   record(input: PlatformLogInput): void {
@@ -68,10 +89,15 @@ export class StructuredLogEvidenceAdapter {
       const dropped = this.entries.splice(0, this.entries.length - this.capacity);
       for (const row of dropped) {
         const timestamp = Date.parse(row.timestamp);
-        this.droppedWindow = {
-          from: Math.min(this.droppedWindow?.from ?? timestamp, timestamp),
-          to: Math.max(this.droppedWindow?.to ?? timestamp, timestamp),
-        };
+        this.droppedWindow = extendEvictionWindow(this.droppedWindow, timestamp);
+        const componentWindow = this.droppedByComponent.get(row.component);
+        // An untracked component may already have losses covered by the shared
+        // window. Admit new components only once that window expires.
+        if (componentWindow || (!this.untrackedDroppedWindow && this.droppedByComponent.size < MAX_TRACKED_EVICTION_COMPONENTS)) {
+          this.droppedByComponent.set(row.component, extendEvictionWindow(componentWindow, timestamp));
+        } else {
+          this.untrackedDroppedWindow = extendEvictionWindow(this.untrackedDroppedWindow, timestamp);
+        }
       }
     }
   }
@@ -136,7 +162,7 @@ export class StructuredLogEvidenceAdapter {
     if (omittedGroups) gaps.push('LOG_GROUPS_TRUNCATED');
     if (!rows.length) gaps.push('LOG_EVIDENCE_MISSING');
     if (from < this.startedAt) gaps.push('LOG_WINDOW_PRECEDES_PROCESS');
-    if (this.hasDroppedLogs(from, to)) gaps.push('LOG_BUFFER_TRUNCATED');
+    if (this.hasDroppedLogs(from, to, options.component)) gaps.push('LOG_BUFFER_TRUNCATED');
     if (rows.some(row => row.status === 'unknown')) gaps.push('LOG_STATUS_UNKNOWN');
     if (rows.length && now - Date.parse(rows.at(-1)!.timestamp) > 300_000) gaps.push('LOG_EVIDENCE_STALE');
     return { schemaVersion: 1, generatedAt: new Date(now).toISOString(), from: new Date(from).toISOString(), to: new Date(to).toISOString(),
