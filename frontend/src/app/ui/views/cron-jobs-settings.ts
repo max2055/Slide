@@ -1,6 +1,7 @@
 import { CronRunTracker } from "../controllers/cron-run-tracker.js";
 import { sharedFieldStyles } from "../../styles/shared-field-styles.ts";
 import { sharedSkeletonStyles } from "../../styles/shared-skeleton-styles.js";
+import { retryReadWithFocus } from '../controllers/retry-read-focus.js';
 /**
  * Cron 任务管理页面
  * 管理定时采集和分析任务的启用/停用、表达式编辑、手动触发和运行日志查看
@@ -804,12 +805,15 @@ export class CronJobsSettings extends LitElement {
         </div>
         ${!this.loading && !this.error ? html`<button class="btn-primary" @click=${this.openCreateDialog} ?disabled=${!this.canManage}>+ 新建任务</button>` : nothing}
       </div>
-      ${this.loading ? html`<div class="skeleton skeleton-block" role="status" aria-label="正在加载定时任务"></div>`
-        : this.error ? html`<app-notice severity="error">
-            <div role="alert">加载定时任务失败。 ${this.error}</div>
-            <button type="button" class="btn btn-refresh" @click=${this.loadCronJobs}>重试</button>
-          </app-notice>`
-        : this.renderJobs()}
+      <section data-read-results aria-label="定时任务结果" aria-busy=${String(this.loading)} tabindex="-1">
+        ${this.loading ? html`<div class="skeleton skeleton-block" role="status" aria-label="正在加载定时任务"></div>`
+          : this.error ? html`<app-notice severity="error">
+              <div role="alert">加载定时任务失败。 ${this.error}</div>
+              <button type="button" class="btn btn-refresh" data-read-retry
+                @click=${(event: Event) => retryReadWithFocus(this, event, () => this.loadCronJobs(), '#cron-filter-mode')}>重试</button>
+            </app-notice>`
+          : this.renderJobs()}
+      </section>
     `;
   }
 

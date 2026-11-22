@@ -149,3 +149,102 @@ test('approval retries the current tab and shows empty results only after a vali
   await expect(alert).toHaveCount(0);
   await expect(view.getByRole('searchbox', { name: '查找摘要或目标' })).toHaveValue('无匹配');
 });
+
+const retryPages = [
+  { path: '/cron-jobs', tag: 'cron-jobs-settings', api: '/api/cron/jobs', region: '定时任务结果',
+    json: [job], successText: job.name },
+  { path: '/scoring-settings', tag: 'scoring-settings-page', api: '/api/scoring/config', region: '评分权重结果',
+    json: weights, successText: '保存配置' },
+  { path: '/approval', tag: 'approval-dashboard', api: '/api/approval/unified', region: '待审批结果',
+    json: { items: [] }, successText: '暂无待审批请求' },
+  { path: '/approval', tag: 'approval-dashboard', api: '/api/approval/unified', region: '审批历史结果',
+    history: true, json: { items: [] }, successText: '暂无已审批记录' },
+];
+
+for (const routeCase of retryPages) {
+  test(`keyboard retry manages focus in ${routeCase.region}`, async ({ page }) => {
+    await page.addInitScript(() => {
+      localStorage.setItem('token', 'controlled-read-states');
+      localStorage.setItem('slide.control.session_token.v1', 'controlled-read-states');
+      localStorage.setItem('slide.control.settings.v1:default', JSON.stringify({ locale: 'zh-CN', themeMode: 'light' }));
+    });
+    await page.routeWebSocket('**/agent-ws', socket => socket.onMessage(message => {
+      if (JSON.parse(String(message)).type === 'auth') socket.send(JSON.stringify({ type: 'auth_ok' }));
+    }));
+    await page.route('**/__slide/control-ui-config.json', route => route.fulfill({ json: {} }));
+    await page.route(url => url.pathname.startsWith('/api/'), route => route.fulfill({ json: {} }));
+    await page.route('**/api/auth/permissions', route => route.fulfill({ json: ['*'] }));
+    await page.route('**/api/user/preferences', route => route.fulfill({ json: { preferences: {} } }));
+
+    const failed = { status: 503, json: { error: '读取暂不可用' } };
+    let response: Promise<{ status: number; json: unknown }> = Promise.resolve(failed);
+    await page.route(url => url.pathname === routeCase.api, async route => {
+      expect(route.request().method()).toBe('GET');
+      await route.fulfill(await response);
+    });
+
+    const view = page.locator(routeCase.tag);
+    const region = view.getByRole('region', { name: routeCase.region, exact: true });
+    const retry = view.getByRole('button', { name: '重试', exact: true });
+    const success = view.getByText(routeCase.successText, { exact: true });
+    const successFocus = routeCase.path === '/cron-jobs' ? region.getByRole('combobox', { name: '筛选模式' })
+      : routeCase.path === '/scoring-settings' ? region.getByRole('slider', { name: '可用性' }) : region;
+
+    async function openFailure() {
+      response = Promise.resolve(failed);
+      await page.goto(routeCase.path);
+      if (routeCase.history) await view.getByRole('button', { name: '审批历史', exact: true }).click();
+      await expect(retry).toBeVisible();
+    }
+
+    async function runRetry(succeeds: boolean, moveFocus = false) {
+      const pending = Promise.withResolvers<{ status: number; json: unknown }>();
+      response = pending.promise;
+      const result = succeeds ? { status: 200, json: routeCase.json } : failed;
+      try {
+        await retry.press('Enter');
+        await expect(retry).toHaveCount(0);
+        await expect(region).toBeFocused();
+        await expect(region).toHaveAttribute('aria-busy', 'true');
+        await expect(region).toBeInViewport();
+        await expect.poll(() => region.evaluate(el => el.matches(':focus-visible'))).toBe(true);
+
+        if (moveFocus) {
+          await page.keyboard.press('Shift+Tab');
+          await expect(region).not.toBeFocused();
+          const moved = await page.evaluateHandle(() => {
+            let active = document.activeElement;
+            while (active?.shadowRoot?.activeElement) active = active.shadowRoot.activeElement;
+            if (!active || active === document.body) throw new Error('The keyboard did not reach another control');
+            return active;
+          });
+          try {
+            pending.resolve(result);
+            await expect(succeeds ? success : retry).toBeVisible();
+            await expect(region).toHaveAttribute('aria-busy', 'false');
+            expect(await moved.evaluate(element => element.matches(':focus'))).toBe(true);
+          } finally {
+            await moved.dispose();
+          }
+        } else {
+          pending.resolve(result);
+          await expect(succeeds ? success : retry).toBeVisible();
+          await expect(succeeds ? successFocus : retry).toBeFocused();
+        }
+      } finally {
+        pending.resolve(result);
+      }
+    }
+
+    await openFailure();
+    await runRetry(false);
+    await runRetry(false, true);
+    await runRetry(true);
+    if (routeCase.history) {
+      await page.keyboard.press('Tab');
+      await expect(view.getByRole('searchbox', { name: '查找摘要或目标' })).toBeFocused();
+    }
+    await openFailure();
+    await runRetry(true, true);
+  });
+}

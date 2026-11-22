@@ -5,6 +5,7 @@ import { sharedFieldStyles } from "../../styles/shared-field-styles.ts";
 import { LitElement, html, css, nothing } from "lit";
 import { sharedBtnStyles } from '../../styles/shared-btn-styles.ts';
 import { sharedSkeletonStyles } from '../../styles/shared-skeleton-styles.js';
+import { retryReadWithFocus } from '../controllers/retry-read-focus.js';
 import { customElement, state } from "lit/decorators.js";
 import { authFetch } from "../../../api/index.js";
 import "../components/app-card.js";
@@ -112,12 +113,15 @@ export class ScoringSettingsPage extends LitElement {
         <h1>评分权重</h1>
         <p>调整各维度在实例健康评分中的占比，总和需为 100%</p>
       </div>
-      ${this.loading ? html`<div class="skeleton skeleton-block" role="status" aria-label="正在加载评分权重"></div>`
-        : this.weights ? this.renderWeights()
-        : html`<app-notice severity="error">
-            <div role="alert">加载评分权重失败。 ${this.error}</div>
-            <button type="button" class="btn btn-refresh" @click=${this._load}>重试</button>
-          </app-notice>`}
+      <section data-read-results aria-label="评分权重结果" aria-busy=${String(this.loading)} tabindex="-1">
+        ${this.loading ? html`<div class="skeleton skeleton-block" role="status" aria-label="正在加载评分权重"></div>`
+          : this.weights ? this.renderWeights()
+          : html`<app-notice severity="error">
+              <div role="alert">加载评分权重失败。 ${this.error}</div>
+              <button type="button" class="btn btn-refresh" data-read-retry
+                @click=${(event: Event) => retryReadWithFocus(this, event, () => this._load(), '#scoring-availability')}>重试</button>
+            </app-notice>`}
+      </section>
     `;
   }
 

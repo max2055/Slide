@@ -3,6 +3,7 @@ import { sharedFieldStyles } from "../../styles/shared-field-styles.ts";
 import { LitElement, html, css, nothing } from "lit";
 import { sharedBtnStyles } from "../../styles/shared-btn-styles.ts";
 import { sharedSkeletonStyles } from "../../styles/shared-skeleton-styles.js";
+import { retryReadWithFocus } from '../controllers/retry-read-focus.js';
 import { customElement, state } from "lit/decorators.js";
 import "../components/app-dialog.js";
 import "../components/app-card.js";
@@ -635,9 +636,12 @@ export class ApprovalDashboard extends LitElement {
         <button class="tab ${this.filter === 'pending' ? 'active' : ''}" aria-pressed=${this.filter === 'pending'} @click=${() => this.switchFilter('pending')}>待审批</button>
         <button class="tab ${this.filter === 'processed' ? 'active' : ''}" aria-pressed=${this.filter === 'processed'} @click=${() => this.switchFilter('processed')}>审批历史</button>
       </div>
+      <section data-read-results aria-label=${this.filter === 'processed' ? '审批历史结果' : '待审批结果'}
+        aria-busy=${String(this.loading)} tabindex="-1">
       ${this.listError ? html`<app-notice severity="error">
         <div role="alert">${this.listError}</div>
-        <button type="button" class="btn btn-refresh" @click=${this.loadRequests}>重试</button>
+        <button type="button" class="btn btn-refresh" data-read-retry
+          @click=${(event: Event) => retryReadWithFocus(this, event, () => this.loadRequests())}>重试</button>
       </app-notice>` : nothing}
       ${this.agentApprovalsError ? html`<app-notice severity="error" role="alert">${this.agentApprovalsError}</app-notice>` : nothing}
       ${this.filter === 'processed' ? this.renderHistory()
@@ -731,6 +735,7 @@ export class ApprovalDashboard extends LitElement {
 
       ${this._renderBatchDialog()}
       `}
+      </section>
     `;
   }
 
