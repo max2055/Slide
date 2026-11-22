@@ -275,6 +275,14 @@ export class SchemaManagementPage extends LitElement {
   @state() private snapshotTimes: SnapshotTime[] = [];
   private tableBrowser = new ListBrowser();
   @state() private tablesLoading = false;
+  @state() private snapshotsLoading = false;
+  @state() private snapshotsError = '';
+  @state() private changesLoading = false;
+  @state() private changesError = '';
+  @state() private instancesError = '';
+  @state() private accessInvalidated = false;
+  @state() private schemaAccessError = "";
+  private instancesRequest = 0;
   @state() private tablesError: string | null = null;
   private tableRequest = 0;
   private contextVersion = 0;
@@ -284,6 +292,7 @@ export class SchemaManagementPage extends LitElement {
   @state() private changes: SchemaChange[] = [];
   @state() private expandedTable: string | null = null;
   @state() private detailError: string | null = null;
+  @state() private detailLoading = false;
   private detailRequest = 0;
   @state() private tableDetail: TableSchemaRow[] = [];
   @state() private snapshotDetail: TableSchemaRow[] = [];
@@ -304,9 +313,15 @@ export class SchemaManagementPage extends LitElement {
   private ageTimer?: ReturnType<typeof setInterval>;
   override connectedCallback() {
     super.connectedCallback();
+    window.addEventListener('slide-permissions-loaded', this.accessChanged);
+    window.addEventListener('slide-session-expired', this.accessChanged);
     this.ageTimer = setInterval(() => this.requestUpdate(), 30_000);
   }
   override disconnectedCallback() {
+    this.instancesRequest++;
+    this.resetInstanceData();
+    window.removeEventListener('slide-permissions-loaded', this.accessChanged);
+    window.removeEventListener('slide-session-expired', this.accessChanged);
     clearInterval(this.ageTimer);
     super.disconnectedCallback();
   }
@@ -321,6 +336,16 @@ export class SchemaManagementPage extends LitElement {
       if (!this.loading) void this.refreshData();
     }
   }
+
+  private readonly accessChanged = () => {
+    this.instancesRequest++;
+    this.accessInvalidated = true;
+    this.resetInstanceData();
+    this.instances = [];
+    this.selectedInstance = null;
+    this.loading = false;
+    this.instancesError = '权限或登录状态已变更，请重新读取数据库实例清单';
+  };
 
   private resetInstanceData() {
     this.contextVersion++;
@@ -337,7 +362,12 @@ export class SchemaManagementPage extends LitElement {
     this.tableDetail = [];
     this.snapshotDetail = [];
     this.detailError = null;
+    this.detailLoading = false;
     this.tablesError = null;
+    this.schemaAccessError = "";
+    this.tablesLoading = false;
+    this.snapshotsError = this.changesError = '';
+    this.snapshotsLoading = this.changesLoading = false;
     this.readAt = null;
     this.collectResult = null;
     this.hint = null;
@@ -347,32 +377,39 @@ export class SchemaManagementPage extends LitElement {
   }
 
   private async loadInstances() {
+    const request = ++this.instancesRequest;
+    this.loading = true;
+    this.instancesError = '';
+    this.accessInvalidated = false;
     try {
-      if (this.instanceId) {
-        this.selectedInstance = this.instanceId;
-      }
       const res = await authFetch("/api/database/instances", {
-        headers: this._authHeaders(),
+        headers: this._authHeaders(), signal: AbortSignal.timeout(15000),
       });
-      if (!res.ok) throw new Error("Failed to load instances");
-      this.instances = await res.json();
-      if (this.instanceId) {
-        const inst = this.instances.find(i => i.id === this.instanceId);
-        this.selectedInstanceName = inst?.name || "";
-      } else if (this.instances.length > 0) {
-        this.selectedInstance = this.instances[0].id;
-        this.selectedInstanceName = this.instances[0].name;
-      }
-      this.loading = false;
-      await this.refreshData();
-    } catch (err: any) {
-      this.error = err.message;
-      this.loading = false;
+      if (!res.ok) throw new Error(this.readFailure('数据库实例清单', res.status));
+      const instances = await res.json();
+      if (!Array.isArray(instances)) throw new Error('数据库实例清单读取失败');
+      if (request !== this.instancesRequest) return;
+      this.instances = instances;
+      this.selectedInstance = this.instanceId ?? instances.find(instance => instance.id === this.selectedInstance)?.id ?? instances[0]?.id ?? null;
+      this.selectedInstanceName = instances.find(i => i.id === this._activeInstanceId)?.name ?? '';
+    } catch (error) {
+      if (request !== this.instancesRequest) return;
+      this.instances = [];
+      this.instancesError = error instanceof Error && error.message.startsWith('数据库实例清单') ? error.message : '数据库实例清单读取失败';
+    } finally {
+      if (request === this.instancesRequest) this.loading = false;
     }
+    if (request === this.instancesRequest) await this.refreshData();
+  }
+
+  private readFailure(label: string, status: number) {
+    return [401, 403, 404].includes(status)
+      ? `${label}不可访问，请确认登录和查看权限` : `${label}读取失败`;
   }
 
   private async refreshData() {
-    if (!this._activeInstanceId) return;
+    if (!this._activeInstanceId || this.accessInvalidated) return;
+    this.schemaAccessError = "";
     await Promise.all([
       this.loadSnapshotTimes(),
       this.loadTableList(),
@@ -380,21 +417,35 @@ export class SchemaManagementPage extends LitElement {
     ]);
   }
 
+  private restrictSchemaRead(response: Response) {
+    if (![401, 403].includes(response.status)) return false;
+    this.resetInstanceData();
+    this.schemaAccessError = '无法读取表结构，请确认登录和查看权限';
+    return true;
+  }
+
   private async loadSnapshotTimes() {
-    const id = this._activeInstanceId;
+    const id = this.accessInvalidated ? null : this._activeInstanceId;
     const request = ++this.snapshotRequest;
     if (!id) return;
+    const current = () => request === this.snapshotRequest && id === this._activeInstanceId;
+    this.snapshotsLoading = true;
+    this.snapshotTimes = [];
+    this.snapshotsError = '';
     try {
-      const res = await authFetch(`/api/schema/snapshots/${id}`, { headers: this._authHeaders() });
-      const data = res.ok ? await res.json() : [];
-      if (request === this.snapshotRequest && id === this._activeInstanceId) this.snapshotTimes = data;
+      const res = await authFetch(`/api/schema/snapshots/${id}`, { headers: this._authHeaders(), signal: AbortSignal.timeout(15000) });
+      if (!current() || this.restrictSchemaRead(res)) return;
+      if (!res.ok) throw new Error();
+      const data = await res.json();
+      if (!Array.isArray(data)) throw new Error();
+      if (current()) this.snapshotTimes = data;
     } catch {
-      if (request === this.snapshotRequest && id === this._activeInstanceId) this.snapshotTimes = [];
-    }
+      if (current()) this.snapshotsError = '快照历史读取失败';
+    } finally { if (current()) this.snapshotsLoading = false; }
   }
 
   private async loadTableList() {
-    const id = this._activeInstanceId;
+    const id = this.accessInvalidated ? null : this._activeInstanceId;
     const request = ++this.tableRequest;
     if (!id) { this.tableList = []; return; }
     this.tablesLoading = true;
@@ -402,42 +453,51 @@ export class SchemaManagementPage extends LitElement {
     this.tableList = [];
     this.readAt = null;
     this.expandedTable = null;
+    this.detailRequest++;
     this.tableDetail = [];
+    const current = () => request === this.tableRequest && id === this._activeInstanceId;
     try {
-      const res = await authFetch(`/api/schema/snapshot/${id}`, { headers: this._authHeaders() });
-      if (!res.ok) throw new Error(res.status === 403 ? '无权限查看表结构' : `表结构加载失败 (HTTP ${res.status})`);
+      const res = await authFetch(`/api/schema/snapshot/${id}`, { headers: this._authHeaders(), signal: AbortSignal.timeout(15000) });
+      if (!current() || this.restrictSchemaRead(res)) return;
+      if (!res.ok) throw new Error();
       const data = await res.json();
       if (!Array.isArray(data.tables)) throw new Error('表结构响应无效');
       if (request === this.tableRequest && id === this._activeInstanceId) { this.tableList = data.tables; this.readAt = new Date().toISOString(); }
-    } catch (err: any) {
-      if (request === this.tableRequest && id === this._activeInstanceId) this.tablesError = err.message;
+    } catch {
+      if (current()) this.tablesError = '表结构读取失败';
     } finally {
       if (request === this.tableRequest && id === this._activeInstanceId) this.tablesLoading = false;
     }
   }
 
   private async loadChanges() {
-    const id = this._activeInstanceId;
+    const id = this.accessInvalidated ? null : this._activeInstanceId;
     const request = ++this.changesRequest;
     if (!id) return;
+    const current = () => request === this.changesRequest && id === this._activeInstanceId;
+    this.changesLoading = true;
+    this.changes = [];
+    this.changesError = '';
+    this.hint = null;
     try {
-      const res = await authFetch(`/api/schema/changes/${id}`, { headers: this._authHeaders() });
-      if (!res.ok) throw new Error(`变更加载失败 (HTTP ${res.status})`);
+      const res = await authFetch(`/api/schema/changes/${id}`, { headers: this._authHeaders(), signal: AbortSignal.timeout(15000) });
+      if (!current() || this.restrictSchemaRead(res)) return;
+      if (!res.ok) throw new Error();
       const data = await res.json();
-      if (request !== this.changesRequest || id !== this._activeInstanceId) return;
-      this.changes = Array.isArray(data.changes) ? data.changes : [];
-      this.hint = data.hint || data.changes?.hint || null;
+      const changes = data?.changes;
+      const legacyHint = typeof changes?.hint === 'string' ? changes.hint : null;
+      if (!Array.isArray(changes) && !legacyHint) throw new Error();
+      if (!current()) return;
+      this.changes = Array.isArray(changes) ? changes : [];
+      this.hint = data.hint || legacyHint;
     } catch {
-      if (request === this.changesRequest && id === this._activeInstanceId) {
-        this.changes = [];
-        this.hint = null;
-      }
-    }
+      if (current()) this.changesError = '变更历史读取失败';
+    } finally { if (current()) this.changesLoading = false; }
   }
 
   private async handleCollect() {
     const id = this._activeInstanceId;
-    if (!id || this.collecting) return;
+    if (!id || this.collecting || this.accessInvalidated || this.schemaAccessError) return;
     const version = this.contextVersion;
     const isCurrent = () => version === this.contextVersion && id === this._activeInstanceId;
     this.collecting = true;
@@ -471,10 +531,11 @@ export class SchemaManagementPage extends LitElement {
 
   private async handleDetect() {
     const id = this._activeInstanceId;
-    if (!id || this.detecting) return;
+    if (!id || this.detecting || this.accessInvalidated || this.schemaAccessError) return;
     const version = this.contextVersion;
     const isCurrent = () => version === this.contextVersion && id === this._activeInstanceId;
     ++this.changesRequest;
+    this.changesLoading = false;
     this.hint = null;
     this.error = null;
     this.detecting = true;
@@ -494,6 +555,7 @@ export class SchemaManagementPage extends LitElement {
       const data = await res.json();
       if (!isCurrent()) return;
       if (data.success) {
+        this.changesError = "";
         this.changes = Array.isArray(data.changes) ? data.changes : [];
         this.hint = data.hint || data.changes?.hint || null;
       } else {
@@ -506,23 +568,31 @@ export class SchemaManagementPage extends LitElement {
   }
 
   private async handleTableClick(tableName: string) {
-    const request = ++this.detailRequest;
-    const id = this._activeInstanceId;
-    this.tableDetail = []; this.detailError = null;
-    if (this.expandedTable === tableName) { this.expandedTable = null; return; }
-    this.expandedTable = tableName;
-    if (!id) return;
-    try {
-      const res = await authFetch(`/api/schema/table/${id}/${encodeURIComponent(tableName)}`, { headers: this._authHeaders() });
-      if (!res.ok) throw new Error(`列信息加载失败 (HTTP ${res.status})`);
-      const data = await res.json();
-      if (!Array.isArray(data)) throw new Error('列信息响应无效');
-      if (request !== this.detailRequest || id !== this._activeInstanceId || this.expandedTable !== tableName) return;
-      this.tableDetail = data;
-      if (!data.length) this.detailError = '当前表暂无列信息';
-    } catch (err: any) {
-      if (request === this.detailRequest && id === this._activeInstanceId && this.expandedTable === tableName) this.detailError = err.message;
+    if (this.expandedTable === tableName) {
+      this.detailRequest++;
+      this.expandedTable = null;
+      return;
     }
+    this.expandedTable = tableName;
+    await this.loadTableDetail(tableName);
+  }
+
+  private async loadTableDetail(tableName: string) {
+    const id = this._activeInstanceId;
+    if (!id || this.accessInvalidated || this.schemaAccessError) return;
+    const request = ++this.detailRequest;
+    const current = () => request === this.detailRequest && id === this._activeInstanceId && this.expandedTable === tableName;
+    this.tableDetail = []; this.detailError = null; this.detailLoading = true;
+    try {
+      const res = await authFetch(`/api/schema/table/${id}/${encodeURIComponent(tableName)}`, { headers: this._authHeaders(), signal: AbortSignal.timeout(15000) });
+      if (!current() || this.restrictSchemaRead(res)) return;
+      if (!res.ok) throw new Error();
+      const data = await res.json();
+      if (!Array.isArray(data)) throw new Error();
+      if (current()) this.tableDetail = data;
+    } catch {
+      if (current()) this.detailError = '表列信息读取失败';
+    } finally { if (current()) this.detailLoading = false; }
   }
 
   private handleInstanceChange(e: Event) {
@@ -598,10 +668,13 @@ export class SchemaManagementPage extends LitElement {
         </div>`;
     }
 
-    // Error is shown inline as a dismissible banner below
+    const count = (value: number, loading: boolean, error: string | null) =>
+      loading ? '读取中' : error || !this._activeInstanceId || this.accessInvalidated || this.schemaAccessError ? '未知' : value;
 
     return html`
       <div class="page">
+        ${this.instancesError ? html`<p role="alert">${this.instancesError} <button class="btn btn-refresh" @click=${this.loadInstances}>重试读取实例清单</button></p>` : ""}
+        ${this.schemaAccessError ? html`<p role="alert">${this.schemaAccessError} <button class="btn btn-refresh" @click=${this.refreshData}>重试读取表结构</button></p>` : ""}
         ${this.error ? html`
           <div class="card" style="background: rgba(239, 68, 68, 0.06); border-color: rgba(239, 68, 68, 0.3); padding: var(--space-md) var(--space-lg); margin-bottom: var(--space-md); font-size: var(--text-base); color: var(--danger); display: flex; align-items: center; gap: var(--space-md);">
             <span style="flex: 1;">${this.error}</span>
@@ -611,10 +684,10 @@ export class SchemaManagementPage extends LitElement {
         ${this.hint ? html`<p role="status" style="color:var(--muted);padding:var(--space-md) var(--space-lg);">${this.hint}</p>` : ""}
         <!-- 统计概览 -->
         <div style="display:grid;gap:var(--space-md);grid-template-columns:repeat(4,1fr);margin-bottom:var(--space-xl)">
-          <stat-card label="表数量" value="${this.tablesLoading || this.tablesError ? '未知' : this.stats.totalTables}" hint="已存快照"></stat-card>
-          <stat-card label="快照数" value="${this.stats.totalSnapshots}" hint="历史记录" variant="info"></stat-card>
-          <stat-card label="新增" value="${this.stats.added}" hint="新增表/列" variant="ok"></stat-card>
-          <stat-card label="删除" value="${this.stats.deleted}" hint="删除表/列" variant="danger"></stat-card>
+          <stat-card label="表数量" value="${count(this.stats.totalTables, this.tablesLoading, this.tablesError)}" hint="已存快照"></stat-card>
+          <stat-card label="快照数" value="${count(this.stats.totalSnapshots, this.snapshotsLoading, this.snapshotsError)}" hint="历史记录" variant="info"></stat-card>
+          <stat-card label="新增" value="${count(this.stats.added, this.changesLoading, this.changesError)}" hint="新增表/列" variant="ok"></stat-card>
+          <stat-card label="删除" value="${count(this.stats.deleted, this.changesLoading, this.changesError)}" hint="删除表/列" variant="danger"></stat-card>
         </div>
 
         <p style="color:var(--muted);font-size:var(--text-sm);overflow-wrap:anywhere;">
@@ -635,11 +708,11 @@ export class SchemaManagementPage extends LitElement {
               </select>
             ` : html`<span style="font-size: var(--text-sm); font-weight: 500; color: var(--text-strong);">实例 ID: ${this.instanceId}</span>`}
 
-            <button class="btn-primary" @click=${this.handleCollect} ?disabled=${this.collecting || !this._activeInstanceId}>
+            <button class="btn-primary" @click=${this.handleCollect} ?disabled=${this.collecting || !this._activeInstanceId || this.accessInvalidated || !!this.schemaAccessError}>
               ${this.collecting ? html`<span class="spinner"></span> 采集中...` : "采集快照"}
             </button>
 
-            <button class="btn" @click=${this.handleDetect} ?disabled=${this.detecting || !this._activeInstanceId}>
+            <button class="btn" @click=${this.handleDetect} ?disabled=${this.detecting || !this._activeInstanceId || this.accessInvalidated || !!this.schemaAccessError}>
               ${this.detecting ? html`<span class="spinner"></span> 检测中...` : "检测变更"}
             </button>
 
@@ -672,6 +745,7 @@ export class SchemaManagementPage extends LitElement {
         </app-card>
 
         <!-- 快照时间线 -->
+        ${this.snapshotsError ? html`<app-card><p role="alert">${this.snapshotsError} <button class="btn btn-refresh" @click=${this.loadSnapshotTimes}>重试快照历史</button></p></app-card>` : ""}
         ${this.snapshotTimes.length > 0
           ? html`
               <app-card variant="default">
@@ -696,6 +770,8 @@ export class SchemaManagementPage extends LitElement {
   }
 
   private _renderTables() {
+    if (this.schemaAccessError) return "";
+    if (!this._activeInstanceId || this.accessInvalidated) return html`<p>请选择可访问的数据库实例</p>`;
     if (this.tablesLoading) return html`<div role="status" class="loading">加载表结构...</div>`;
     if (this.tablesError) return html`<div role="alert">${this.tablesError}<button class="btn" @click=${() => this.loadTableList()}>重试</button></div>`;
     const page = this.tableBrowser.select(this.tableList, row => `${row.table_name} ${row.table_comment || ''}`, row => row.table_name);
@@ -769,7 +845,8 @@ export class SchemaManagementPage extends LitElement {
                                   </tbody>
                                 </table>
                               `
-                            : html`<div role="status" class="loading" style="min-height: 60px;">${this.detailError || "加载列信息..."}</div>`
+                            : html`<div role="status" class="loading" style="min-height: 60px;">${this.detailLoading ? '正在读取表列信息…' : this.detailError ? html`<span role="alert">${this.detailError}</span>
+                              <button class="btn btn-refresh" @click=${() => this.loadTableDetail(table.table_name)}>重试读取表列信息</button>` : '当前表没有已保存的列信息'}</div>`
                           }
                         </td>
                       </tr>
@@ -784,6 +861,10 @@ export class SchemaManagementPage extends LitElement {
   }
 
   private _renderChanges() {
+    if (this.schemaAccessError) return "";
+    if (!this._activeInstanceId || this.accessInvalidated) return html`<p>请选择可访问的数据库实例</p>`;
+    if (this.changesLoading) return html`<div role="status" class="loading">正在读取变更历史…</div>`;
+    if (this.changesError) return html`<div role="alert">${this.changesError} <button class="btn btn-refresh" @click=${this.loadChanges}>重试变更历史</button></div>`;
     if (this.changes.length === 0) {
       return html`
         <app-empty-state title="暂无变更" description="点击「检测变更」对比最近两次快照">

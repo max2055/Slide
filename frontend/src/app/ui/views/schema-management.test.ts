@@ -101,6 +101,7 @@ it.each([[null, '0', 'NULL → 0'], ['0', null, '0 → NULL'], ['', 'value', '""
 it.each([403, 503])('#676 clears the former table on HTTP %s and recovers explicitly', async status => {
   const view = await mount();
   vi.mocked(authFetch).mockResolvedValueOnce(reply({}, status));
-  await view.loadTableList(); expect(view.tableList).toEqual([]); expect(view.tablesError).toBeTruthy();
-  await view.loadTableList(); expect(view.tableList[0].table_name).toBe('table-1'); expect(view.tablesError).toBeNull();
+  await view.loadTableList(); expect(view.tableList).toEqual([]); expect(status === 403 ? view.schemaAccessError : view.tablesError).toBeTruthy();
+  if (status === 403) await view.refreshData(); else await view.loadTableList();
+  expect(view.tableList[0].table_name).toBe('table-1'); expect(view.tablesError).toBeNull();
 });
