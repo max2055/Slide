@@ -70,8 +70,8 @@ describe('MAX-425 serialized model egress', () => {
         vi.mocked(store.getAllProviders).mockResolvedValue([provider]);
         const log: DatabaseLog = {
           id: 1, instance_id: 2, log_level: 'error', source: 'mysql_error',
-          message: "MY-010584 connection refused password=wirePassword425\nx-api-key: wireToken425\nSELECT q'[can' authentication denied ]' FROM dual\nBearer rollback",
-          raw_content: "ORA-00060 deadlock\nmysql://wireUser425:wirePassword425@wireHost425/db\nSELECT * FROM users WHERE phone=998877665544 AND name='wireSql425'\nSELECT Q'!can' authentication denied !' FROM dual\nbEaReR\trollback",
+          message: "MY-010584 connection refused password=wirePassword425\nx-api-key: wireToken425\nSELECT q'[can' authentication denied ]' FROM dual\nBearer rollback\npassword='ORA-01017'; ORA-00060: deadlock",
+          raw_content: "code='ERROR 1045 (28000): access denied' | ERROR 1213 (40001): deadlock\nmysql://wireUser425:wirePassword425@wireHost425/db\nSELECT * FROM users WHERE phone=998877665544 AND name='wireSql425'\nSELECT Q'!can' authentication denied !' FROM dual\nbEaReR\trollback",
           detected_patterns: [{ pattern: 'DEADLOCK', severity: 'error', message: 'wirePattern425' }],
           collected_at: new Date(), created_at: new Date(),
         };
@@ -91,11 +91,12 @@ describe('MAX-425 serialized model egress', () => {
         expect(requests).toHaveLength(1);
         const wire = JSON.stringify(requests);
         // Independent canary scan does not import the projector's vocabulary.
-        expect(wire).not.toMatch(/wire(?:Password|Token|User|Host|Sql|Pattern)425|998877665544/);
+        expect(wire).not.toMatch(/wire(?:Password|Token|User|Host|Sql|Pattern)425|998877665544|ORA-01017|1045|28000/);
         // #323 independent review: these valid diagnostic words occur only in
         // private Oracle/Bearer contexts. Scan the actual SDK request bytes.
         expect(wire).not.toMatch(/authentication|denied|rollback/i);
-        for (const diagnostic of ['MY-010584', 'ORA-00060', 'deadlock', 'connection refused', 'SELECT', 'WHERE']) {
+        for (const diagnostic of ['MY-010584', 'ORA-00060: deadlock', 'ERROR 1213 (40001): deadlock',
+          'connection refused', 'SELECT', 'WHERE']) {
           expect(wire).toContain(diagnostic);
         }
         expect(requests[0].path).toBe(protocol === 'ollama' ? '/api/chat'
