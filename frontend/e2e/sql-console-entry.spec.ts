@@ -46,6 +46,8 @@ test('SQL workbench editor restores comment drafts from the operations menu and 
     await db.query('CREATE TABLE ?? (id INT, `编号` INT, `名称` VARCHAR(32))', [primaryTable]);
     await db.query('CREATE DATABASE ??', [duplicateSchema]);
     await db.query('CREATE TABLE ?? (id INT, `编号` INT, `状态` INT)', [`${duplicateSchema}.${table}`]);
+    await db.query('CREATE TABLE ?? (unrelated INT)', [`${duplicateSchema}.shadow_alias`]);
+    await db.query('INSERT INTO ?? (id, `编号`) VALUES (1, 7)', [primaryTable]);
     const reloaded = await page.request.post(`${instancePath}/reload`, { headers });
     expect(reloaded.status()).toBe(200);
 
@@ -103,6 +105,27 @@ test('SQL workbench editor restores comment drafts from the operations menu and 
         await editor.press('ControlOrMeta+a');
         await editor.press('Backspace');
       }
+    });
+    await test.step('A query alias takes precedence over a same-named physical table', async () => {
+      const sql = `SELECT 1 AS matched FROM ${primaryTable} AS shadow_alias WHERE shadow_alias.`;
+      const candidates = page.getByRole('listbox');
+      const column = candidates.getByRole('option').filter({ has: page.getByText('编号', { exact: true }) });
+      await editor.pressSequentially(sql);
+      await expect(candidates).toBeVisible();
+      await expect(column).toHaveCount(1);
+      await expect(candidates.getByText('unrelated', { exact: true })).toHaveCount(0);
+      await editor.pressSequentially('编');
+      await expect(candidates.getByRole('option')).toHaveCount(1);
+      await expect(column).toHaveAttribute('aria-selected', 'true');
+      // CodeMirror delays keyboard acceptance for 75 ms after the popup opens.
+      await page.waitForTimeout(75);
+      await editor.press('Enter');
+      const completed = `${sql}编号`;
+      await expect(editor).toHaveText(completed);
+      const [rows] = await db!.query(completed);
+      expect(rows).toEqual([{ matched: 1 }]);
+      await editor.press('ControlOrMeta+a');
+      await editor.press('Backspace');
     });
     await editor.pressSequentially('-- 草稿 1');
     await editor.press('ArrowLeft');
