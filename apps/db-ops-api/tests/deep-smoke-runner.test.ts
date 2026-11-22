@@ -1,7 +1,11 @@
 import { execFile, spawnSync } from 'node:child_process';
-import { createServer } from 'node:http';
 import { fileURLToPath } from 'node:url';
-import { expect, it } from 'vitest';
+import Fastify from 'fastify';
+import { expect, it, vi } from 'vitest';
+import { alertDatabaseService } from '../src/alert-database-service.js';
+import { registerAlertListRoute } from '../src/alert-list-route.js';
+
+vi.mock('../src/alert-database-service.js', () => ({ alertDatabaseService: { getAlerts: vi.fn() } }));
 
 const cwd = fileURLToPath(new URL('..', import.meta.url));
 
@@ -33,7 +37,21 @@ it('MAX-681 deep smoke rejects missing credentials before fetch and forwards exp
 
 type FixtureResponse = { status: number; body: string; contentType?: string };
 
-async function runShapeChecks(responses: Record<string, FixtureResponse> = {}) {
+const emptyAlertPage = { items: [], total: 0, unread: 0, critical: 0, warning: 0, resolved: 0, level_counts: {} };
+const alertItem = {
+  id: 1, instance_id: 1, instance_name: 'Fixture instance', server_id: null, target_type: 'instance',
+  network_device_id: null, alert_type: 'performance', severity: 'warning', title: 'Fixture alert',
+  message: 'Fixture threshold exceeded', description: null, status: 'unread', acknowledged: false,
+  metric_name: 'cpu_usage', metric_value: '91', threshold_value: '90', created_at: '2026-01-01T00:00:00.000Z',
+};
+const alertPage = {
+  ...emptyAlertPage, items: [alertItem], total: 1, warning: 1, level_counts: { warning: 1 },
+};
+
+async function runShapeChecks(
+  responses: Record<string, FixtureResponse> = {},
+  alerts: typeof emptyAlertPage | typeof alertPage | Error = emptyAlertPage,
+) {
   const report = { id: 17, status: 'completed' };
   const jsonResponses: Record<string, unknown> = {
     '/api/auth/login': { token: 'fixture-token' },
@@ -42,28 +60,40 @@ async function runShapeChecks(responses: Record<string, FixtureResponse> = {}) {
     '/api/metrics/1': { cpu_usage: 1, memory_usage: 2, disk_usage: 3, connections: 4, instance_id: 1 },
     '/api/users': [{ id: 1, username: 'fixture-user', status: 'active' }],
   };
+  const server = Fastify();
+  const getAlerts = vi.mocked(alertDatabaseService.getAlerts);
+  getAlerts.mockReset().mockImplementation(async () => {
+    if (alerts instanceof Error) throw alerts;
+    return alerts;
+  });
+  let alertReads = 0;
+  server.addHook('onRequest', async (req, reply) => {
+    if (req.url !== '/api/alerts') return;
+    alertReads++;
+    const override = responses[req.url];
+    if (override) return reply.code(override.status).type(override.contentType ?? 'application/json').send(override.body);
+  });
   let reportsReads = 0;
-  const server = createServer((req, res) => {
-    const endpoint = req.url!;
+  server.setNotFoundHandler((req, reply) => {
+    const endpoint = req.url;
     if (endpoint === '/api/reports' && ++reportsReads <= 2) {
       // The lifecycle must find its report. The later shape check has its own response.
-      res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify([report]));
-      return;
+      return reply.send([report]);
     }
     const response = responses[endpoint] ?? { status: 200, body: JSON.stringify(jsonResponses[endpoint] ?? []) };
-    res.writeHead(response.status, { 'Content-Type': response.contentType ?? 'application/json' }).end(response.body);
-  });
-  await new Promise<void>((resolve, reject) => {
-    server.once('error', reject);
-    server.listen(0, '127.0.0.1', resolve);
+    return reply.code(response.status).type(response.contentType ?? 'application/json').send(response.body);
   });
   try {
-    const address = server.address();
-    if (!address || typeof address === 'string') throw new Error('Missing fixture HTTP port');
-    return await new Promise<{ status: number; output: string }>((resolve, reject) => {
+    await registerAlertListRoute(server, async request => {
+      if (request.headers.authorization === 'Bearer fixture-token') {
+        Object.assign(request, { user: { permissions: ['alert:view'], instanceScopes: { 1: 'read-only' } } });
+      }
+    });
+    const baseUrl = await server.listen({ host: '127.0.0.1', port: 0 });
+    const result = await new Promise<{ status: number; output: string }>((resolve, reject) => {
       execFile(process.execPath, ['--import', 'tsx', 'tests/deep-smoke.ts'], {
         cwd, timeout: 15000,
-        env: { ...process.env, SMOKE_BASE_URL: `http://127.0.0.1:${address.port}`,
+        env: { ...process.env, SMOKE_BASE_URL: baseUrl,
           SMOKE_USER: 'fixture-user', SMOKE_PASS: 'fixture-value' },
       }, (error, stdout, stderr) => {
         if (!error) resolve({ status: 0, output: stdout + stderr });
@@ -71,8 +101,11 @@ async function runShapeChecks(responses: Record<string, FixtureResponse> = {}) {
         else reject(error);
       });
     });
+    expect(alertReads).toBe(1);
+    expect(getAlerts).toHaveBeenCalledTimes(responses['/api/alerts'] ? 0 : 1);
+    return result;
   } finally {
-    await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+    await server.close();
   }
 }
 
@@ -83,6 +116,34 @@ it('#1026 counts successful JSON shapes and empty lists in the final summary', a
     expect(output).toContain(`✅ ${endpoint} — empty list`);
   }
   expect(output).toContain('DEEP SMOKE: 13 passed, 0 failed');
+});
+
+it('MAX-701 counts a valid nonempty page from the production alert route', async () => {
+  const { status, output } = await runShapeChecks({}, alertPage);
+  expect(status, output).toBe(0);
+  expect(output).toContain('✅ /api/alerts — response shape correct');
+  expect(output).toContain('DEEP SMOKE: 13 passed, 0 failed');
+});
+
+it.each([
+  { name: 'a top-level array', body: [], diagnostic: 'expected a JSON object with an items array' },
+  { name: 'missing items', body: { total: 0 }, diagnostic: 'expected a JSON object with an items array' },
+  { name: 'non-array items', body: { ...emptyAlertPage, items: null }, diagnostic: 'expected a JSON object with an items array' },
+  { name: 'an invalid item', body: { ...alertPage, items: [{ ...alertItem, id: '1' }] }, diagnostic: '[alert-item] id: expected number, got string' },
+])('MAX-701 rejects an alert page with $name', async ({ body, diagnostic }) => {
+  const { status, output } = await runShapeChecks({ '/api/alerts': { status: 200, body: JSON.stringify(body) } });
+  expect(status, output).toBe(1);
+  expect(output).toContain(`/api/alerts — HTTP 200: ${diagnostic}`);
+  expect(output).toContain('DEEP SMOKE: 12 passed, 1 failed');
+});
+
+it('MAX-701 counts a failed production alert request without exposing its response body', async () => {
+  const canary = 'fixture-alert-error';
+  const { status, output } = await runShapeChecks({}, new Error(canary));
+  expect(status, output).toBe(1);
+  expect(output).toContain('/api/alerts — HTTP 500: JSON response');
+  expect(output).toContain('DEEP SMOKE: 12 passed, 1 failed');
+  expect(output).not.toContain(canary);
 });
 
 it('#1026 keeps HTTP status and safe diagnostics for every failed shape check', async () => {

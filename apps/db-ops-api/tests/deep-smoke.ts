@@ -108,7 +108,7 @@ async function main() {
     {
       path: "/api/alerts",
       label: "alert-item",
-      list: true,
+      list: "items",
       fields: [
         { field: "id", type: "number" },
         { field: "severity", type: "string" },
@@ -167,7 +167,7 @@ interface ShapeCheck {
   path: string;
   label: string;
   fields: TypeAssertion[];
-  list?: boolean;
+  list?: true | "items";
 }
 
 async function checkShape({ path, label, fields, list }: ShapeCheck): Promise<string[]> {
@@ -186,12 +186,16 @@ async function checkShape({ path, label, fields, list }: ShapeCheck): Promise<st
 
   let item = body.raw;
   if (list) {
-    if (!Array.isArray(item)) return [`${status}: expected a JSON array`];
-    if (item.length === 0) {
+    const items = list === "items" ? (item as { items?: unknown } | null)?.items : item;
+    if (!Array.isArray(items)) {
+      const expected = list === "items" ? "a JSON object with an items array" : "a JSON array";
+      return [`${status}: expected ${expected}`];
+    }
+    if (items.length === 0) {
       console.log(`  ✅ ${path} — empty list`);
       return [];
     }
-    item = item[0];
+    item = items[0];
   }
 
   const errors = assertShape(label, item, fields);
