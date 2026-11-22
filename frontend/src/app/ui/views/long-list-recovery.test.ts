@@ -16,6 +16,7 @@ describe('list failure and compatibility', () => {
     await view.loadTableList(); expect(view.tableList).toHaveLength(1);
     await view.loadTableList(); expect(view.tableList).toEqual([]); expect(status === 403 ? view.schemaAccessError : view.tablesError).toBeTruthy();
     if (status === 403) {
+      authFetch.mockReset();
       authFetch.mockResolvedValueOnce(response([])).mockResolvedValueOnce(response({ tables: [] })).mockResolvedValueOnce(response({ changes: [] }));
       await view.refreshData();
     } else await view.loadTableList();

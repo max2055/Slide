@@ -777,7 +777,7 @@ export class InstancesPage extends LitElement {
 
           ${this.loading ? html`<div class="loading" role="status">正在读取数据库实例清单…</div>` :
             this.error ? html`<div class="loading" role="alert">${this.error} <button class="btn btn-refresh" @click=${this.refreshInstances}>重试读取清单</button></div>` : nothing}
-          <resource-metrics-table ?hidden=${!listReady} resourceType="instance" @resource-results-changed=${(e: CustomEvent<number>) => { this.searchResultCount = e.detail; }} .refreshVersion=${this.metricRefreshVersion} @resource-metrics-loading=${(e: CustomEvent<boolean>) => { this.metricsLoading = e.detail; }} .search=${this.searchQuery}
+          <resource-metrics-table resourceType="instance" ?hidden=${!listReady} @resource-results-changed=${(e: CustomEvent<number>) => { this.searchResultCount = e.detail; }} .refreshVersion=${this.metricRefreshVersion} @resource-metrics-loading=${(e: CustomEvent<boolean>) => { this.metricsLoading = e.detail; }} .search=${this.searchQuery}
             .columns=${[{ key: 'name', label: '实例' }, { key: 'address', label: '地址' }, { key: 'version', label: '版本' }, { key: 'health', label: '观测健康' }, { key: 'actions', label: '操作', width: '15rem' }]}
             .entries=${filtered.map(inst => ({ id: inst.id, type: inst.db_type, version: inst.db_version,
               searchValues: [inst.name, inst.host, this.currentStatus(inst), ({ healthy: "健康", warning: "警告", critical: "异常", error: "异常" } as Record<string, string>)[this.currentStatus(inst)] ?? "未知"],
