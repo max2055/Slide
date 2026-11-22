@@ -7,8 +7,8 @@ import "../components/app-notice.js";
 import { basicSetup } from "codemirror";
 import { EditorView } from "@codemirror/view";
 import { Compartment, EditorState } from "@codemirror/state";
-import { sql, MySQL, SQLDialect } from "@codemirror/lang-sql";
-import { autocompletion, CompletionContext, Completion } from "@codemirror/autocomplete";
+import { sql, MySQL, SQLDialect, schemaCompletionSource } from "@codemirror/lang-sql";
+import { autocompletion, CompletionContext, type Completion, type CompletionResult, type CompletionSource } from "@codemirror/autocomplete";
 import { oneDark } from "@codemirror/theme-one-dark";
 import { icons } from "../../../icons.js";
 import { authFetch } from '../../../api/index.js';
@@ -239,7 +239,7 @@ const OracleDialect = SQLDialect.define({
 });
 
 interface InstanceOption { id: number; name: string; db_type: string; host: string; port: number; }
-interface SchemaObject { schema: string; tables: Array<{ name: string; columns: Array<{ name: string; type: string; nullable: boolean }> }>; }
+interface SchemaObject { schema: string; tables: Array<{ name: string; alias?: string; columns: Array<{ name: string; type: string; nullable: boolean }> }>; }
 interface ExecuteResult { columns?: string[]; rows?: any[]; rowCount?: number; duration_ms?: number; error?: string; }
 
 interface HistoryItem {
@@ -422,6 +422,7 @@ export class SqlConsolePage extends LitElement {
   private _expandedNodes: Set<PlanNode> = new Set();
 
   private readonly _dialect = new Compartment();
+  private _qualifiedColumnSource?: { schemas: SchemaObject[]; complete: CompletionSource };
 
   private _sqlLanguage() {
     const type = this.instances.find(i => i.id === this.selectedId)?.db_type;
@@ -631,15 +632,32 @@ export class SqlConsolePage extends LitElement {
     }
   }
 
-  private _sqlCompletions(context: CompletionContext): import("@codemirror/autocomplete").CompletionResult | null {
+  private _sqlCompletions(context: CompletionContext): CompletionResult | null {
     const word = context.matchBefore(/[\w$.一-鿿]+/);
     if (!word) return null;
-    const from = word.from;
-    const textBefore = context.state.sliceDoc(0, context.pos);
+
+    const qualified = word.text.match(/([\w$一-鿿]+)\.([\w$一-鿿]*)$/);
+    if (qualified) {
+      const [, qualifier, prefix] = qualified;
+      const from = context.pos - prefix.length;
+      const scopedColumns = this._completeQualifiedColumns(context, from);
+      if (scopedColumns) return scopedColumns;
+
+      const columns = new Map<string, Completion>();
+      for (const schema of this.schemas) {
+        for (const table of schema.tables || []) {
+          if (table.name !== qualifier && table.alias !== qualifier) continue;
+          for (const col of table.columns || []) {
+            if (!columns.has(col.name)) {
+              columns.set(col.name, { label: col.name, type: 'property', detail: col.type || 'column' });
+            }
+          }
+        }
+      }
+      return columns.size ? { from, options: [...columns.values()] } : null;
+    }
 
     const completions: Completion[] = [];
-    const afterDot = textBefore.match(/([\w一-鿿]+)\.[\w一-鿿]*$/);
-    const columns = new Set<string>();
     for (const schema of this.schemas || []) {
       for (const table of (schema as any).tables || []) {
         completions.push({
@@ -647,13 +665,6 @@ export class SqlConsolePage extends LitElement {
           type: 'keyword',
           detail: `${(schema as any).schema || table.schema || 'public'}.${table.name}`,
         });
-        if (afterDot && (table.name === afterDot[1] || table.alias === afterDot[1])) {
-          for (const col of table.columns || []) {
-            if (columns.has(col.name)) continue;
-            columns.add(col.name);
-            completions.push({ label: col.name, type: 'property', detail: col.type || 'column' });
-          }
-        }
       }
     }
 
@@ -675,7 +686,31 @@ export class SqlConsolePage extends LitElement {
       );
     }
 
-    return { from, options: completions };
+    return { from: word.from, options: completions };
+  }
+
+  private _completeQualifiedColumns(context: CompletionContext, from: number): CompletionResult | null {
+    if (!this.schemas.length) return null;
+    if (this._qualifiedColumnSource?.schemas !== this.schemas) {
+      const namespace: Record<string, Completion[]> = Object.create(null);
+      for (const schema of this.schemas) {
+        const schemaKey = schema.schema.replaceAll('.', '\\.');
+        for (const table of schema.tables || []) {
+          const tableKey = table.name.replaceAll('.', '\\.');
+          const columns = (table.columns || []).map(col => ({
+            label: col.name, type: 'property', detail: col.type || 'column',
+          }));
+          namespace[`${schemaKey}.${tableKey}`] = columns;
+          (namespace[tableKey] ??= []).push(...columns);
+        }
+      }
+      this._qualifiedColumnSource = { schemas: this.schemas, complete: schemaCompletionSource({ schema: namespace }) };
+    }
+    // CodeMirror resolves statement aliases before catalog names. Resolve at the dot so the editor filters only the column prefix.
+    const match = this._qualifiedColumnSource.complete(new CompletionContext(context.state, from, context.explicit));
+    if (!match || !('options' in match) || match.from !== from) return null;
+    const options = match.options.filter(option => option.type === 'property');
+    return options.length ? { from, options } : null;
   }
 
   private getSQL(): string {

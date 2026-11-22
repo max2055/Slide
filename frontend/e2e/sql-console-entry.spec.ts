@@ -1,4 +1,6 @@
 import { expect, test, type Response } from '@playwright/test';
+import { randomUUID } from 'node:crypto';
+import mysql from '../../apps/db-ops-api/node_modules/mysql2/promise.js';
 import { qualificationMysqlTarget, qualificationPassword } from './qualification-credentials.js';
 
 const atPath = (path: string) => (response: Response) => new URL(response.url()).pathname === path;
@@ -34,8 +36,18 @@ test('SQL workbench editor restores comment drafts from the operations menu and 
   expect(created.status()).toBe(200);
   const { id } = await created.json();
   const instancePath = `/api/database/instances/${id}`;
+  const table = `qualification_columns_${randomUUID().replaceAll('-', '')}`;
+  const duplicateSchema = `${table}_copy`;
+  const primaryTable = `${target.database_name}.${table}`;
+  let db: Awaited<ReturnType<typeof mysql.createConnection>> | undefined;
 
   try {
+    db = await mysql.createConnection({ host: target.host, port: target.port, user: target.username, password: target.password });
+    await db.query('CREATE TABLE ?? (id INT, `编号` INT, `名称` VARCHAR(32))', [primaryTable]);
+    await db.query('CREATE DATABASE ??', [duplicateSchema]);
+    await db.query('CREATE TABLE ?? (id INT, `编号` INT, `状态` INT)', [`${duplicateSchema}.${table}`]);
+    await db.query('CREATE TABLE ?? (unrelated INT)', [`${duplicateSchema}.shadow_alias`]);
+    await db.query('INSERT INTO ?? (id, `编号`) VALUES (1, 7)', [primaryTable]);
     const reloaded = await page.request.post(`${instancePath}/reload`, { headers });
     expect(reloaded.status()).toBe(200);
 
@@ -66,6 +78,55 @@ test('SQL workbench editor restores comment drafts from the operations menu and 
     await expect(workbench.locator('.table-name').first()).toBeVisible();
 
     await expect(editor).toBeVisible();
+    await test.step('Complete and insert a unique column after a table name or a SQL alias', async () => {
+      const candidates = page.getByRole('listbox');
+      const column = candidates.getByRole('option').filter({ has: page.getByText('编号', { exact: true }) });
+      for (const sql of [`SELECT ${table}.`, `SELECT 1 FROM ${table} AS q WHERE q.`]) {
+        await editor.pressSequentially(sql);
+        await expect(column).toHaveCount(1);
+        await expect(column).toBeVisible();
+        await expect(candidates.getByText('名称', { exact: true })).toBeVisible();
+        await expect(candidates.getByText('状态', { exact: true })).toBeVisible();
+        await column.click();
+        await expect(editor).toHaveText(`${sql}编号`);
+        await editor.press('ControlOrMeta+a');
+        await editor.press('Backspace');
+
+        await editor.pressSequentially(sql);
+        await expect(column).toBeVisible();
+        await editor.pressSequentially('编');
+        await expect(column).toBeVisible();
+        await expect(candidates.getByRole('option')).toHaveCount(1);
+        await expect(column).toHaveAttribute('aria-selected', 'true');
+        // CodeMirror delays keyboard acceptance for 75 ms after the popup opens.
+        await page.waitForTimeout(75);
+        await editor.press('Enter');
+        await expect(editor).toHaveText(`${sql}编号`);
+        await editor.press('ControlOrMeta+a');
+        await editor.press('Backspace');
+      }
+    });
+    await test.step('A query alias takes precedence over a same-named physical table', async () => {
+      const sql = `SELECT 1 AS matched FROM ${primaryTable} AS shadow_alias WHERE shadow_alias.`;
+      const candidates = page.getByRole('listbox');
+      const column = candidates.getByRole('option').filter({ has: page.getByText('编号', { exact: true }) });
+      await editor.pressSequentially(sql);
+      await expect(candidates).toBeVisible();
+      await expect(column).toHaveCount(1);
+      await expect(candidates.getByText('unrelated', { exact: true })).toHaveCount(0);
+      await editor.pressSequentially('编');
+      await expect(candidates.getByRole('option')).toHaveCount(1);
+      await expect(column).toHaveAttribute('aria-selected', 'true');
+      // CodeMirror delays keyboard acceptance for 75 ms after the popup opens.
+      await page.waitForTimeout(75);
+      await editor.press('Enter');
+      const completed = `${sql}编号`;
+      await expect(editor).toHaveText(completed);
+      const [rows] = await db!.query(completed);
+      expect(rows).toEqual([{ matched: 1 }]);
+      await editor.press('ControlOrMeta+a');
+      await editor.press('Backspace');
+    });
     await editor.pressSequentially('-- 草稿 1');
     await editor.press('ArrowLeft');
     await editor.press('A');
@@ -148,7 +209,15 @@ test('SQL workbench editor restores comment drafts from the operations menu and 
     expect(queryRequests).toEqual([]);
     expect(pageErrors).toEqual([]);
   } finally {
-    const removed = await page.request.delete(instancePath, { headers }).catch(() => undefined);
-    expect.soft(removed?.status(), '清理隔离测试实例').toBe(200);
+    try {
+      if (db) {
+        await db.query('DROP TABLE IF EXISTS ??', [primaryTable]);
+        await db.query('DROP DATABASE IF EXISTS ??', [duplicateSchema]);
+      }
+    } finally {
+      await db?.end();
+      const removed = await page.request.delete(instancePath, { headers }).catch(() => undefined);
+      expect.soft(removed?.status(), '清理隔离测试实例').toBe(200);
+    }
   }
 });
