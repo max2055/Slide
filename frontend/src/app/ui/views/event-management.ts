@@ -865,7 +865,7 @@ export class EventManagementPage extends LitElement {
               <div class="empty-state">
                 <div class="empty-icon">${this.activeListTab === 'resolved' ? renderIcon('check-circle') : renderIcon('triangle-alert')}</div>
                 <div>${this.activeListTab === 'resolved' ? '没有已解决事件' : '暂无活跃事件'}</div>
-                <div style="font-size:var(--text-sm);margin-top:var(--space-sm);">${this.activeListTab === 'resolved' ? '已解决的事件会出现在这里' : '系统运行正常'}</div>
+                ${this.activeListTab === 'resolved' ? html`<div style="font-size:var(--text-sm);margin-top:var(--space-sm);">已解决的事件会出现在这里</div>` : nothing}
               </div>
             `
           : html`
@@ -874,7 +874,7 @@ export class EventManagementPage extends LitElement {
                   <div class="panel-header">事件列表</div>
                   <div class="event-list">
                     ${filtered.length === 0
-                      ? html`<div class="detail-empty">暂无匹配的事件</div>`
+                      ? (this.retryLoading ? nothing : html`<div class="detail-empty">暂无匹配的事件</div>`)
                       : filtered.map((event) => html`
                           <button type="button" data-event-id=${event.id} aria-label=${`查看事件 #${event.id} 详情`}
                             class="event-item ${this.selectedEvent?.id === event.id ? "selected" : ""}"
