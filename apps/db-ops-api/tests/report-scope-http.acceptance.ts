@@ -94,11 +94,13 @@ async function start() {
 async function request(base: string, path: string, body: unknown, status: number, token?: string, method = 'POST', json = true) {
   const response = await fetch(`${base}${path}`, { method, headers: { ...(json ? { 'content-type': 'application/json' } : {}),
     ...(token ? { authorization: `Bearer ${token}` } : {}) }, body: body === undefined ? undefined : JSON.stringify(body) });
-  const result = await response.json().catch(cause => {
-    throw new Error(`${method} ${path} returned invalid JSON (HTTP ${response.status})`, { cause });
-  }) as any;
+  const text = await response.text();
+  const bytes = Buffer.byteLength(text);
+  let result: any;
+  try { result = JSON.parse(text); }
+  catch { throw new Error(`${method} ${path} returned invalid JSON (HTTP ${response.status}, ${bytes} bytes)`); }
   observations.push({ round, path, method, input: body === undefined ? (json ? 'empty-json-body' : 'absent-body') :
-    body === null ? 'null' : Array.isArray(body) ? 'array' : typeof body, expected: status, actual: response.status,
+    body === null ? 'null' : Array.isArray(body) ? 'array' : typeof body, expected: status, actual: response.status, bytes,
     ...(response.status === 400 ? { error: result.error, message: result.message } : {}) });
   assert.equal(response.status, status, `${method} ${path} input ${body === null ? 'null' : typeof body}`);
   return result;
@@ -129,12 +131,12 @@ try {
   const counts = (n: number) => ({total:n*3, completed:n, running:n, failed:n});
   const list = (actor: string, query = '') => request(base, '/api/reports' + query, undefined, 200, actor, 'GET', false);
   const configs = (actor: string, query = '') => request(base, '/api/reports/configs' + query, undefined, 200, actor, 'GET', false);
-  const [reports] = await pool.query<(mysql.RowDataPacket & { id: number; instance_id: number | null; server_id: number | null })[]>(
-    'SELECT id, instance_id, server_id FROM reports ORDER BY id DESC',
+  const [reports] = await pool.query<(mysql.RowDataPacket & { id: number; instance_id: number | null; server_id: number | null; status: string })[]>(
+    'SELECT id, instance_id, server_id, status FROM reports ORDER BY id DESC',
   );
-  const instance = reports.find(row => row.instance_id === 701)!.id;
+  const instance = reports.find(row => row.instance_id === 701 && row.status === 'completed')!.id;
   const deniedInstance = reports.find(row => row.instance_id === 702)!.id;
-  const server = reports.find(row => row.server_id === 701)!.id;
+  const server = reports.find(row => row.server_id === 701 && row.status === 'completed')!.id;
   const byIds = (rows: { id: number }[]) => rows.map(row => row.id);
   await pool.execute("UPDATE reports SET content='fixture-body', data=JSON_OBJECT('marker','fixture-data')");
   await pool.execute("INSERT INTO report_notification_deliveries(workflow_job_id,report_id,channel_id,attempt_number,status) VALUES ('fixture',?,1,1,'sent')", [server]);
@@ -301,6 +303,32 @@ try {
   assert.deepEqual(await remove(token, `/api/reports/configs/${disposable.id}`, 200), { message: '删除成功' });
   assert.deepEqual(await remove(token, `/api/reports/${history.insertId}`, 200), { message: '删除成功' });
   await inspect(token, history.insertId, 404);
+
+  // MAX-718: a stored document, a completed row with no content, and a failed
+  // SQL read must remain distinguishable through production HTTP.
+  const [stored] = await pool.execute<mysql.RowDataPacket[]>(
+    'SELECT id, OCTET_LENGTH(content) AS bytes FROM reports WHERE id IN (?, ?) AND status = ?', [instance, server, 'completed'],
+  );
+  assert.equal(stored.length, 2);
+  assert(stored.every(row => row.bytes === Buffer.byteLength('fixture-body')));
+  const [emptyReport] = await pool.execute<mysql.ResultSetHeader>(
+    "INSERT INTO reports(name,type,instance_id,status) VALUES ('no content','health',701,'completed')",
+  );
+  const emptyDetail = await request(base, `/api/reports/${emptyReport.insertId}`, undefined, 200, token, 'GET', false);
+  assert.equal(emptyDetail.content, null);
+  assert.deepEqual(await remove(token, `/api/reports/${emptyReport.insertId}`, 200), { message: '删除成功' });
+  await pool.query('RENAME TABLE reports TO max718_reports_unavailable');
+  try {
+    assert.deepEqual(await request(base, '/api/reports', undefined, 503, token, 'GET', false), { error: 'REPORT_LIST_UNAVAILABLE' });
+    assert.deepEqual(await request(base, `/api/reports/${instance}`, undefined, 503, token, 'GET', false), { error: 'REPORT_DETAIL_UNAVAILABLE' });
+    assert.deepEqual(await request(base, `/api/reports/${instance}/download?format=json`, undefined, 500, token, 'GET', false), { error: 'INTERNAL_ERROR' });
+    assert(byIds(await configs(token)).includes(good.id));
+  } finally {
+    await pool.query('RENAME TABLE max718_reports_unavailable TO reports');
+  }
+  await inspect(token, instance, 200);
+  await inspect(token, server, 200);
+  observations.push({ check: 'completed documents, missing content and recovered SQL reads', storedBytes: stored.map(row => row.bytes), passed: true });
   await stop();
 
   // Formal durable occurrence/worker/persistence chain. Only the metric query
