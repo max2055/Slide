@@ -75,6 +75,12 @@ describe('MAX-425 serialized model egress', () => {
           detected_patterns: [{ pattern: 'DEADLOCK', severity: 'error', message: 'wirePattern425' }],
           collected_at: new Date(), created_at: new Date(),
         };
+        const quotedFieldsLog: DatabaseLog = {
+          ...log,
+          message: `tag="sample-message" | reason='sample ORA-01017' | ERROR 1213 (40001): deadlock detected`,
+          raw_content: `tag="sample-raw"; reason='sample | ERROR 1045 (28000): access denied' | ERROR 1213 (40001): lock wait timeout`,
+          detected_patterns: null,
+        };
         // Exercise paired/same-character and unterminated Oracle quotes, plus
         // bearer whitespace variants in both fields of real request messages.
         const privateContexts = [
@@ -85,13 +91,14 @@ describe('MAX-425 serialized model egress', () => {
           "SELECT q'[can' authentication denied", "SELECT q'!can' authentication denied",
           'bearer \t rollback', 'Bearer\nrollback', 'Bearer\u00a0rollback',
         ];
-        await databaseLogService.triggerLogAnalysis([log, ...privateContexts.map((sample) => ({
+        await databaseLogService.triggerLogAnalysis([log, quotedFieldsLog, ...privateContexts.map((sample) => ({
           ...log, message: sample, raw_content: sample, detected_patterns: null,
         }))], 2);
         expect(requests).toHaveLength(1);
         const wire = JSON.stringify(requests);
         // Independent canary scan does not import the projector's vocabulary.
         expect(wire).not.toMatch(/wire(?:Password|Token|User|Host|Sql|Pattern)425|998877665544|ORA-01017|1045|28000/);
+        expect(wire).not.toMatch(/sample-message|sample-raw/);
         // #323 independent review: these valid diagnostic words occur only in
         // private Oracle/Bearer contexts. Scan the actual SDK request bytes.
         expect(wire).not.toMatch(/authentication|denied|rollback/i);
@@ -99,6 +106,8 @@ describe('MAX-425 serialized model egress', () => {
           'connection refused', 'SELECT', 'WHERE']) {
           expect(wire).toContain(diagnostic);
         }
+        expect(wire).toContain('[error] [mysql_error] [REDACTED]=[REDACTED] | [REDACTED]=[REDACTED] | ERROR 1213 (40001): deadlock detected');
+        expect(wire).toContain('日志诊断投影: [REDACTED]=[REDACTED]; [REDACTED]=[REDACTED] | ERROR 1213 (40001): lock wait timeout');
         expect(requests[0].path).toBe(protocol === 'ollama' ? '/api/chat'
           : protocol === 'anthropic-messages' ? '/v1/messages' : '/chat/completions');
         expect(store.recordUsage).toHaveBeenCalledOnce();

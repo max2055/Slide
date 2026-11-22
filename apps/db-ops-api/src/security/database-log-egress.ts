@@ -108,17 +108,28 @@ function projectLogLine(line: string, splitQuotedField = true): string {
   }
 
   const masked = prefix + projectVocabulary(key + separator + MASK);
-  // Only a complete quoted value followed by an explicit separator can end
-  // an assignment early. Semicolons alone can also separate DSN attributes.
+  // Each assignment must have a complete quoted value and explicit separator.
+  // Semicolons alone can also separate DSN attributes.
   const boundary = splitQuotedField && separator === '=' && /^"\[REDACTED\]"[ \t]*([;|])[ \t]+/.exec(value);
   if (!boundary) return masked;
 
-  const diagnostic = value.slice(boundary[0].length);
-  const delimiter = boundary[1];
+  const parts = [masked];
+  let delimiter = boundary[1];
+  let offset = boundary[0].length;
+  const nextField = /([A-Za-z_][A-Za-z0-9_.-]*)[ \t]*=[ \t]*"\[REDACTED\]"[ \t]*([;|])[ \t]+/y;
+  nextField.lastIndex = offset;
+  for (let field = nextField.exec(value); field; field = nextField.exec(value)) {
+    parts.push(delimiter === ';' ? '; ' : ' | ', projectVocabulary(field[1] + '=' + MASK));
+    delimiter = field[2];
+    offset = nextField.lastIndex;
+  }
+
+  const diagnostic = value.slice(offset);
   const standaloneCode = /^(?:ORA-\d{5}|MY-\d{6})[ \t]*$/i.test(diagnostic);
   const standaloneState = delimiter === '|' && /^SQLSTATE(?:[ \t]+|[ \t]*[=:][ \t]*)[A-Z0-9]{5}[ \t]*$/i.test(diagnostic);
   if (standaloneCode || standaloneState || NATIVE_ERROR_HEADER.test(diagnostic)) {
-    return masked + (delimiter === ';' ? '; ' : ' | ') + projectLogLine(diagnostic, false);
+    parts.push(delimiter === ';' ? '; ' : ' | ', projectLogLine(diagnostic, false));
+    return parts.join('');
   }
   return masked;
 }
