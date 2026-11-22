@@ -35,7 +35,6 @@ test('synthetic case authoring → independent review → search → revocation 
   await page.goto(`${env.url}/operations-knowledge?sourceInvestigation=${env.source.inv.id}&resultVersion=${env.source.result.version}`);
   const knowledge=page.locator('operations-knowledge');
   await expect(knowledge.getByRole('heading',{name:'可信运维知识',exact:true})).toBeVisible();
-  await knowledge.getByRole('button',{name:'从调查整理案例',exact:true}).click();
   const dialog=knowledge.locator('app-dialog');
   const fields={'案例标题':'SYNTHETIC · 服务无响应后的受控恢复核验','问题现象':'合成只读指标用于浏览器验收，不是真实事故。','故障类型':'合成服务异常','已确认原因':'合成来源事实；不主张当前真实业务根因。','实际处理':'在隔离测试记录中核对健康观测，无外部执行。','实际效果':'合成指标恢复，仅用于功能验收。','反面证据与不适用条件':'资源耗尽、依赖故障、数据缺口均不适用。','适用条件':'有完整来源证据，资源与产品版本匹配。','产品版本':'synthetic-v1','资源版本':'synthetic-resource-v1'};
   for(const [name,value] of Object.entries(fields))await dialog.getByLabel(name,{exact:true}).fill(value);
@@ -43,6 +42,7 @@ test('synthetic case authoring → independent review → search → revocation 
   await dialog.getByLabel('有效期至',{exact:true}).fill(validUntil);
   await dialog.getByRole('checkbox').check();
   await dialog.getByRole('button',{name:'保存案例草稿',exact:true}).click();
+  await expect(page).toHaveURL(/\/operations-knowledge\?.*\bcase=[0-9a-f-]+/);
   await expect(knowledge).toContainText('SYNTHETIC · 服务无响应后的受控恢复核验');
   const id=new URL(page.url()).searchParams.get('case')!;expect(id).toBeTruthy();
   await knowledge.getByRole('button',{name:'提交独立审核',exact:true}).click();
