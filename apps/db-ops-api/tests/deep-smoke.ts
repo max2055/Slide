@@ -6,7 +6,7 @@
  */
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import { multiTest, assertShape, workflow, getToken, setToken, getBaseUrl, setBaseUrl, type WorkflowStep } from "./test-kit.js";
+import { multiTest, assertShape, workflow, getToken, setToken, getBaseUrl, setBaseUrl, readResponseBody, type TypeAssertion, type WorkflowStep } from "./test-kit.js";
 
 // Reuse basic auth
 async function login() {
@@ -81,88 +81,69 @@ async function main() {
   console.log("🔬 Type assertions: response shape validation");
   console.log("─".repeat(55));
 
-  // 3a. Metric response
-  const { raw: metricBody } = await safeGet("/api/metrics/1");
-  const metricErrors = assertShape("metrics", metricBody, [
-    { field: "cpu_usage", type: "number" },
-    { field: "memory_usage", type: "number" },
-    { field: "disk_usage", type: "number" },
-    { field: "connections", type: "number" },
-    { field: "instance_id", type: "number" },
-  ]);
-  if (metricErrors.length === 0) {
-    console.log("  ✅ /api/metrics/:id — all fields correct types");
-    totalPassed++;
-  } else {
-    for (const e of metricErrors) { console.log(`  ❌ ${e}`); totalFailed++; }
-  }
+  const shapeChecks: ShapeCheck[] = [
+    {
+      path: "/api/metrics/1",
+      label: "metrics",
+      fields: [
+        { field: "cpu_usage", type: "number" },
+        { field: "memory_usage", type: "number" },
+        { field: "disk_usage", type: "number" },
+        { field: "connections", type: "number" },
+        { field: "instance_id", type: "number" },
+      ],
+    },
+    {
+      path: "/api/reports",
+      label: "report-item",
+      list: true,
+      fields: [
+        { field: "id", type: "number" },
+        { field: "name", type: "string" },
+        { field: "type", type: "string" },
+        { field: "status", type: "string" },
+        { field: "created_at", type: "string" },
+      ],
+    },
+    {
+      path: "/api/alerts",
+      label: "alert-item",
+      list: true,
+      fields: [
+        { field: "id", type: "number" },
+        { field: "severity", type: "string" },
+        { field: "message", type: "string" },
+      ],
+    },
+    {
+      path: "/api/database/instances",
+      label: "instance-item",
+      list: true,
+      fields: [
+        { field: "id", type: "number" },
+        { field: "name", type: "string" },
+        { field: "db_type", type: "string" },
+        { field: "host", type: "string" },
+        { field: "port", type: "number" },
+      ],
+    },
+    {
+      path: "/api/users",
+      label: "user-item",
+      list: true,
+      fields: [
+        { field: "id", type: "number" },
+        { field: "username", type: "string" },
+        { field: "status", type: "string" },
+      ],
+    },
+  ];
 
-  // 3b. Report list item shape
-  const { raw: reportsBody } = await safeGet("/api/reports");
-  if (Array.isArray(reportsBody) && reportsBody.length > 0) {
-    const reportErrors = assertShape("report-item", reportsBody[0], [
-      { field: "id", type: "number" },
-      { field: "name", type: "string" },
-      { field: "type", type: "string" },
-      { field: "status", type: "string" },
-      { field: "created_at", type: "string" },
-    ]);
-    if (reportErrors.length === 0) {
-      console.log("  ✅ /api/reports — report item shape correct");
-      totalPassed++;
-    } else {
-      for (const e of reportErrors) { console.log(`  ❌ ${e}`); totalFailed++; }
-    }
-  }
-
-  // 3c. Alert item shape
-  const { raw: alertsBody } = await safeGet("/api/alerts");
-  if (Array.isArray(alertsBody) && alertsBody.length > 0) {
-    const alertErrors = assertShape("alert-item", alertsBody[0], [
-      { field: "id", type: "number" },
-      { field: "severity", type: "string" },
-      { field: "message", type: "string" },
-    ]);
-    if (alertErrors.length === 0) {
-      console.log("  ✅ /api/alerts — alert item shape correct");
-      totalPassed++;
-    } else {
-      for (const e of alertErrors) { console.log(`  ❌ ${e}`); totalFailed++; }
-    }
-  }
-
-  // 3d. Instance item shape
-  const { raw: instancesBody } = await safeGet("/api/database/instances");
-  if (Array.isArray(instancesBody) && instancesBody.length > 0) {
-    const instErrors = assertShape("instance-item", instancesBody[0], [
-      { field: "id", type: "number" },
-      { field: "name", type: "string" },
-      { field: "db_type", type: "string" },
-      { field: "host", type: "string" },
-      { field: "port", type: "number" },
-    ]);
-    if (instErrors.length === 0) {
-      console.log("  ✅ /api/database/instances — instance shape correct");
-      totalPassed++;
-    } else {
-      for (const e of instErrors) { console.log(`  ❌ ${e}`); totalFailed++; }
-    }
-  }
-
-  // 3e. User item shape
-  const { raw: usersBody } = await safeGet("/api/users");
-  if (Array.isArray(usersBody) && usersBody.length > 0) {
-    const userErrors = assertShape("user-item", usersBody[0], [
-      { field: "id", type: "number" },
-      { field: "username", type: "string" },
-      { field: "status", type: "string" },
-    ]);
-    if (userErrors.length === 0) {
-      console.log("  ✅ /api/users — user shape correct");
-      totalPassed++;
-    } else {
-      for (const e of userErrors) { console.log(`  ❌ ${e}`); totalFailed++; }
-    }
+  for (const check of shapeChecks) {
+    const errors = await checkShape(check);
+    if (errors.length === 0) totalPassed++;
+    for (const error of errors) console.log(`  ❌ ${error}`);
+    totalFailed += errors.length;
   }
 
   // ══════════════════════════════════════════════════════
@@ -182,14 +163,51 @@ async function main() {
   process.exit(totalFailed > 0 ? 1 : 0);
 }
 
-async function safeGet(path: string): Promise<{ res: Response; raw: unknown }> {
+interface ShapeCheck {
+  path: string;
+  label: string;
+  fields: TypeAssertion[];
+  list?: boolean;
+}
+
+async function checkShape({ path, label, fields, list }: ShapeCheck): Promise<string[]> {
   const headers: Record<string, string> = {};
-  const t = getToken();
-  if (t) headers["Authorization"] = `Bearer ${t}`;
-  const res = await fetch(`${getBaseUrl()}${path}`, { headers });
-  let raw: unknown;
-  try { raw = await res.json(); } catch { raw = await res.text(); }
-  return { res, raw };
+  const token = getToken();
+  if (token) headers["Authorization"] = `Bearer ${token}`;
+
+  const res = await fetch(`${getBaseUrl()}${path}`, { headers }).catch(() => undefined);
+  if (!res) return [`${path} — request failed`];
+
+  const status = `${path} — HTTP ${res.status}`;
+  const body = await readResponseBody(res).catch(() => undefined);
+  if (!body) return [`${status}: could not read response body`];
+  if (!body.isJson) return [`${status}: ${describeNonJson(res, body.raw)}`];
+  if (!res.ok) return [`${status}: JSON response`];
+
+  let item = body.raw;
+  if (list) {
+    if (!Array.isArray(item)) return [`${status}: expected a JSON array`];
+    if (item.length === 0) {
+      console.log(`  ✅ ${path} — empty list`);
+      return [];
+    }
+    item = item[0];
+  }
+
+  const errors = assertShape(label, item, fields);
+  if (errors.length === 0) console.log(`  ✅ ${path} — response shape correct`);
+  return errors.map(error => `${status}: ${error}`);
+}
+
+function describeNonJson(res: Response, raw: string): string {
+  // Response bodies may contain credentials or terminal control sequences.
+  const text = raw.trimStart();
+  if (!text) return "empty response body";
+  const mime = res.headers.get("content-type")?.split(";", 1)[0].trim().toLowerCase();
+  if (mime === "text/html" || mime === "application/xhtml+xml" || /^(?:<!doctype\s+html\b|<html[\s>])/i.test(text)) {
+    return "HTML response";
+  }
+  return "non-JSON text response";
 }
 
 /** Report workflow used by `pnpm smoke:deep`. Detail uses the id captured in step 1. */
