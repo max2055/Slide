@@ -18,12 +18,14 @@ async function setupAggregate(
   page: Page,
   list: (route: Route, query: URLSearchParams) => Promise<void>,
   open = 0,
+  accentColor?: string,
 ) {
-  await page.addInitScript(() => {
+  await page.addInitScript(color => {
     localStorage.setItem('token', 'event-browser-fixture');
     localStorage.setItem('slide.control.session_token.v1', 'event-browser-fixture');
-    localStorage.setItem('slide.control.settings.v1:default', JSON.stringify({ locale: 'zh-CN', theme: 'light' }));
-  });
+    const settingsKey = 'slide.control.settings.v1:default';
+    if (!localStorage.getItem(settingsKey)) localStorage.setItem(settingsKey, JSON.stringify({ locale: 'zh-CN', theme: 'light', accentColor: color }));
+  }, accentColor);
   await page.route('**/__slide/control-ui-config.json', route => route.fulfill({ json: {} }));
   await page.routeWebSocket('**/agent-ws', socket => socket.onMessage(message => {
     if (JSON.parse(String(message)).type === 'auth') socket.send(JSON.stringify({ type: 'auth_ok' }));
@@ -110,6 +112,11 @@ test('#1036 page filters preserve query scope and pagination', async ({ page }, 
   try {
     await page.goto(aggregateUrl);
     await expect(list.getByText('第 1/2 页，共 51 条')).toBeVisible();
+    const stats = list.locator('stat-card');
+    await expect(stats).toHaveCount(6);
+    await expect(stats.filter({ has: page.getByText('开放', { exact: true }) }).locator('[part="value"]')).toHaveText('51');
+    await expect(stats.filter({ has: page.getByText('平均 MTTR (分钟)', { exact: true }) }).locator('[part="value"]')).toHaveText('—');
+    await expect(page.locator('html')).toHaveCSS('--accent', '#265f99');
     await search.fill('无匹配标题');
     await expect(noMatch).toBeVisible();
     await search.fill('连接数');
@@ -260,4 +267,13 @@ test('late browser detail and save responses cannot overwrite a newly selected e
   const el=document.querySelector('event-management-page') as any;
   if(el.noteText!=='same'||el.selectedEvent.id!=='2')throw Error('old response changed current event');
  });
+});
+
+test('#1038 saved appearance is applied on reload', async ({ page }) => {
+  await setupAggregate(page, route => route.fulfill({ json: emptyList }), 0, '#6366f1');
+  await page.goto(aggregateUrl);
+  const root = page.locator('html');
+  await expect(root).toHaveCSS('--accent', '#6366f1');
+  await page.reload();
+  await expect(root).toHaveCSS('--accent', '#6366f1');
 });
