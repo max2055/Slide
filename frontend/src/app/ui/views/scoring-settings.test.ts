@@ -11,7 +11,7 @@ async function mount(body: unknown = defaults, status = 200) {
   authFetch.mockResolvedValue(response(body, status));
   const page = document.createElement('scoring-settings-page') as unknown as Page;
   document.body.append(page);
-  await vi.waitFor(() => expect(page.shadowRoot?.querySelector('.loading')).toBeNull());
+  await vi.waitFor(() => expect(page.shadowRoot?.querySelector('input[type="range"]')).not.toBeNull());
   await page.updateComplete;
   return page;
 }
