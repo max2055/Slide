@@ -2,6 +2,9 @@ import { findCodeRegions, isInsideCode } from "./code-regions.js";
 export type ReasoningTagMode = "strict" | "preserve";
 export type ReasoningTagTrim = "none" | "start" | "both";
 
+// Offsets describe each deletion in the text produced by the preceding edits.
+type OnTextRemoval = (start: number, end: number) => void;
+
 const QUICK_TAG_RE = /<\s*\/?\s*(?:(?:antml:)?(?:think(?:ing)?|thought|final)|antthinking)\b/i;
 const FINAL_TAG_RE = /<\s*\/?\s*(?:antml:)?final\b[^<>]*>/gi;
 const THINKING_TAG_RE =
@@ -22,6 +25,7 @@ export function stripReasoningTagsFromText(
   options?: {
     mode?: ReasoningTagMode;
     trim?: ReasoningTagTrim;
+    onRemove?: OnTextRemoval;
   },
 ): string {
   if (!text) {
@@ -33,6 +37,7 @@ export function stripReasoningTagsFromText(
 
   const mode = options?.mode ?? "strict";
   const trimMode = options?.trim ?? "both";
+  const onRemove = options?.onRemove;
 
   let cleaned = text;
   if (FINAL_TAG_RE.test(cleaned)) {
@@ -51,6 +56,7 @@ export function stripReasoningTagsFromText(
     for (let i = finalMatches.length - 1; i >= 0; i--) {
       const m = finalMatches[i];
       if (!m.inCode) {
+        onRemove?.(m.start, m.start + m.length);
         cleaned = cleaned.slice(0, m.start) + cleaned.slice(m.start + m.length);
       }
     }
@@ -64,6 +70,14 @@ export function stripReasoningTagsFromText(
   let result = "";
   let lastIndex = 0;
   let thinkingDepth = 0;
+  let retainedEnd = 0;
+  const appendVisible = (end: number) => {
+    if (lastIndex > retainedEnd) {
+      onRemove?.(result.length, result.length + lastIndex - retainedEnd);
+    }
+    result += cleaned.slice(lastIndex, end);
+    retainedEnd = end;
+  };
 
   for (const match of cleaned.matchAll(THINKING_TAG_RE)) {
     const idx = match.index ?? 0;
@@ -74,7 +88,7 @@ export function stripReasoningTagsFromText(
     }
 
     if (thinkingDepth === 0) {
-      result += cleaned.slice(lastIndex, idx);
+      appendVisible(idx);
     }
     // An inner close must not expose the remainder of the outer block.
     thinkingDepth = isClose ? Math.max(0, thinkingDepth - 1) : thinkingDepth + 1;
@@ -83,8 +97,23 @@ export function stripReasoningTagsFromText(
   }
 
   if (thinkingDepth === 0 || mode === "preserve") {
-    result += cleaned.slice(lastIndex);
+    appendVisible(cleaned.length);
+  } else if (retainedEnd < cleaned.length) {
+    onRemove?.(result.length, result.length + cleaned.length - retainedEnd);
   }
 
   return applyTrim(result, trimMode);
+}
+
+/** Prepare the assistant bubble's Markdown and optionally report deletions for source mapping. */
+export function prepareAssistantMarkdown(text: string, onRemove?: OnTextRemoval): string {
+  const trim = (input: string) => {
+    if (!onRemove) return input.trim();
+    const withoutTail = input.trimEnd();
+    if (withoutTail.length < input.length) onRemove(withoutTail.length, input.length);
+    const trimmed = withoutTail.trimStart();
+    if (trimmed.length < withoutTail.length) onRemove(0, withoutTail.length - trimmed.length);
+    return trimmed;
+  };
+  return trim(stripReasoningTagsFromText(trim(text), { mode: "preserve", trim: "none", onRemove }));
 }

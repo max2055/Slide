@@ -119,7 +119,7 @@ test('desktop layout and evidence dialog keyboard focus', async ({ page }) => {
     expect(await page.evaluate(() => { const rect = document.querySelector('investigations-page')!.getBoundingClientRect(); const nav = document.querySelector('.shell-nav')!.getBoundingClientRect(); return rect.left >= nav.right && rect.right <= innerWidth; })).toBe(true);
     if (width >= 1440) await expect(page.locator('.workspace-context')).toBeVisible();
     else {
-      const trigger = page.getByRole('button', { name: '查看证据与成果' });
+      const trigger = page.getByRole('button', { name: '查看完整结果与证据', exact: true });
       await trigger.click(); await expect(page.getByRole('dialog', { name: '证据与成果' })).toBeVisible();
       await page.keyboard.press('Escape'); await expect(trigger).toBeFocused();
     }
@@ -752,16 +752,83 @@ test('MAX-683 reads three independent long evidence records through authorized H
   expect(new Set(proofs.map(p=>p.contentHash)).size).toBe(3);
   const reads=new Set<string>();
   page.on('response',r=>{if(r.status()===200&&r.url().includes('/evidence/'))reads.add(r.url().split('/').pop()!);});
+  const before = env.counts();
   await login(page);await page.goto(`${env.url}/workbench?investigation=${investigationId}`);await observed(page);
   for(const proof of proofs) {
     const entry=page.locator(`.workspace-context [data-evidence="${proof.id}"]`);
-    await expect(entry).toContainText(proof.source);await expect(entry).toContainText('不能推广为真实目标采集结论');
-    await entry.locator('summary').click();await expect(entry).toContainText(proof.contentHash);
+    const disclosure = entry.locator(':scope > summary');
+    await expect(disclosure).toContainText(proof.source);
+    await disclosure.click();
+    await expect(entry.getByText(/不能推广为真实目标采集结论/)).toBeVisible();
+    await entry.getByText('原始标识与时间',{exact:true}).click();
+    await expect(entry.getByText(proof.contentHash,{exact:true})).toBeVisible();
+    const raw = page.waitForResponse(response => new URL(response.url()).pathname.endsWith(`/evidence/${proof.id}`)
+      && new URL(response.url()).search === '?raw=true');
+    await entry.getByRole('button',{name:'读取证据原文'}).click();
+    expect((await raw).status()).toBe(200);
+    await expect(entry.locator('pre')).toContainText('synthetic only');
   }
   expect(proofs.every(p=>reads.has(p.id))).toBe(true);
+  const [grants] = await env.pool.query('SELECT access_level FROM instance_permissions WHERE user_id=102 AND instance_id=101');
+  await env.pool.query('DELETE FROM instance_permissions WHERE user_id=102 AND instance_id=101');
+  try {
+    const unauthorized = await page.request.get(`${env.url}/api/investigations/${investigationId}/evidence/${proofs[0].id}?raw=true`,
+      { headers: { Authorization: `Bearer ${env.token(env.viewer)}` } });
+    expect(unauthorized.status()).toBe(404);
+    expect(await unauthorized.text()).not.toContain('synthetic only');
+  } finally {
+    if (grants[0]) await env.pool.query('INSERT INTO instance_permissions(user_id,instance_id,access_level) VALUES(102,101,?)', [grants[0].access_level]);
+  }
+  expect(env.counts()).toEqual(before);
   for(const [width,height] of [[1440,900],[1366,768],[1920,1080]]) {
     await page.setViewportSize({width,height});
     expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
     await page.screenshot({path:test.info().outputPath(`independent-evidence-${width}.png`),fullPage:true});
   }
+});
+
+test('same-event investigations are distinguishable by recorded time and open read-only from the workbench', async ({ page }) => {
+  const [inserted] = await env.pool.query(
+    "INSERT INTO alert_events(event_id,instance_id,title,severity,status) VALUES(UUID(),101,'合成值班事件','warning','open')");
+  const eventId = inserted.insertId;
+  const resources = [{ type: 'instance' as const, id: 101, role: 'primary' as const }];
+  const subject = { kind: 'resource' as const, resource: { type: 'instance' as const, id: 101 } };
+  const from = new Date(Date.now() - 120_000).toISOString(), to = new Date(Date.now() - 60_000).toISOString();
+  const entry = { schemaVersion: 1 as const, resourceRefs: resources, from, to, sourceEventIds: [eventId], returnTo: '/events' };
+  const title = '同一事件的合成调查';
+  const seed = () => env.bridge.create(env.owner, { title, goal: '核对已保存的样本', profileId: 'ops', profileVersion: 1,
+    resources, context: { subject, from, to, entry }, idempotencyKey: crypto.randomUUID() });
+  const previous = await seed(), later = await seed();
+  await env.pool.query('UPDATE investigations SET created_at = DATE_SUB(created_at, INTERVAL 3 MINUTE) WHERE id=?', [previous.investigation.id]);
+
+  const before = env.counts();
+  const writes: string[] = [];
+  page.on('request', request => {
+    if (request.method() !== 'GET' && /\/api\/(investigations|operations)\b/.test(new URL(request.url()).pathname)) writes.push(request.url());
+  });
+  await login(page);
+  await page.goto(`${env.url}/workbench`);
+  await page.getByRole('button', { name: '调查列表', exact: true }).click();
+  const create = page.getByRole('button', { name: '创建手动调查', exact: true });
+  await create.focus(); await page.keyboard.press('Enter');
+  await expect(page.getByRole('dialog', { name: '创建手动调查' })).toBeVisible();
+  const form = page.locator('investigation-create');
+  expect(await form.getByRole('heading', { level: 3 }).allTextContents()).toEqual(['调查场景', '资源范围', '观察时段']);
+  await expect(form.getByText('提交后启动所选范围内的只读分析，可能调用模型。')).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(create).toBeFocused();
+  const table = page.getByRole('region', { name: '调查记录表' });
+  const rows = table.getByRole('row').filter({ hasText: `事件 #${eventId}` });
+  await expect(rows).toHaveCount(2);
+  await expect(rows.first().getByText(title, { exact: true })).toBeVisible();
+  await expect(rows.last().getByText(title, { exact: true })).toBeVisible();
+  const time = await rows.locator('td:nth-child(2)').allTextContents();
+  expect(time[0]).not.toBe(time[1]);
+  await expect(table.getByRole('columnheader', { name: '主要证据缺口' })).toBeVisible();
+  await page.locator(`[data-investigation="${later.investigation.id}"]`).focus();
+  await page.keyboard.press('Enter');
+  await expect(page).toHaveURL(new RegExp(later.investigation.id));
+  await expect(page.getByRole('region', { name: '本次调查结果' })).toContainText('证据缺口待确认');
+  expect(writes).toEqual([]);
+  expect(env.counts()).toEqual(before);
 });

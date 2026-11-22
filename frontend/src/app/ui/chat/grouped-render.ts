@@ -7,7 +7,7 @@ import { icons } from "../../../icons.js";
 import { openExternalUrlSafe } from "../open-external-url.ts";
 import type { SidebarContent } from "../sidebar-content.ts";
 import { detectTextDirection } from "../text-direction.ts";
-import { stripReasoningTagsFromText } from "../../src/shared/text/reasoning-tags.ts";
+import { prepareAssistantMarkdown } from "../../src/shared/text/reasoning-tags.ts";
 import type {
   MessageContentItem,
   MessageGroup,
@@ -19,6 +19,7 @@ import { renderCopyAsMarkdownButton } from "./copy-as-markdown.ts";
 import { extractThinkingCached } from "./message-extract.ts";
 import {
   isToolResultMessage,
+  joinMessageText,
   normalizeMessage,
   normalizeRoleForGrouping,
 } from "./message-normalizer.ts";
@@ -1023,18 +1024,10 @@ function renderGroupedMessage(
   const toolCards = (opts.showToolCalls ?? true) ? extractToolCards(message, messageKey) : [];
   const hasToolCards = toolCards.length > 0;
   const normalizedMessage = normalizeMessage(message);
-  const normalizedText = normalizedMessage.content
-    .reduce<string[]>((lines, item) => {
-      if (item.type === "text" && typeof item.text === "string") {
-        lines.push(item.text);
-      }
-      return lines;
-    }, [])
-    .join("\n")
-    .trim();
+  const normalizedText = joinMessageText(normalizedMessage.content);
   const extractedText = normalizedRole === "assistant"
-    ? stripReasoningTagsFromText(normalizedText, { mode: "preserve" })
-    : normalizedText;
+    ? prepareAssistantMarkdown(normalizedText)
+    : normalizedText.trim();
   const assistantAttachments = normalizedMessage.content.filter(
     (item): item is Extract<MessageContentItem, { type: "attachment" }> =>
       item.type === "attachment",
