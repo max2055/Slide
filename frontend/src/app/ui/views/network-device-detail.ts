@@ -291,6 +291,14 @@ export class NetworkDeviceDetail extends LitElement {
 
   private renderBackupSchedule() {
     const schedule = this.backupSchedule;
+    let lastRunSummary = '尚未执行';
+    if (schedule?.lastRun) {
+      const { date, status, errorCode } = schedule.lastRun;
+      const outcome = errorCode === 'CONFIG_BACKUP_RESULT_UNCONFIRMED'
+        ? networkDeviceError(errorCode)
+        : [networkDeviceLabel(status), errorCode && networkDeviceError(errorCode)].filter(Boolean).join(' · ');
+      lastRunSummary = `${date} · ${outcome}`;
+    }
     return html`<app-card><span slot="header">每日定时备份</span>
       <p class="backup-note">默认每天 00:00（北京时间）执行。服务恢复时补做当天到期任务；当天已执行过则不重复，修改时间从下次未执行的日期生效。</p>
       ${!this.device?.hasSshCredential ? html`<p class="backup-note">尚未配置 SSH 凭据，自动备份暂不执行。请先编辑网络设备，配置 SSH 用户名和密码或私钥。</p>` : nothing}
@@ -299,7 +307,7 @@ export class NetworkDeviceDetail extends LitElement {
         <app-form-field label="每日执行时间" hint="北京时间（UTC+8）" .required=${true}><input aria-label="每日执行时间" type="time" step="60" required .value=${schedule.dailyTime} .disabled=${this.scheduleSaving || !hasListPermission('network_devices:backup')} title=${hasListPermission('network_devices:backup') ? '保存定时设置' : '需要 network_devices:backup 权限'} @input=${(event: Event) => { this.backupSchedule = { ...this.backupSchedule!, dailyTime: (event.target as HTMLInputElement).value }; }}></app-form-field>
         <button type="submit" class="btn-primary" .disabled=${this.scheduleSaving || !hasListPermission('network_devices:backup')} title=${hasListPermission('network_devices:backup') ? '保存定时设置' : '需要 network_devices:backup 权限'}>${this.scheduleSaving ? '保存中…' : '保存定时设置'}</button>
       </form>
-      <p class="meta">最近自动备份：${schedule.lastRun ? `${schedule.lastRun.date} · ${networkDeviceLabel(schedule.lastRun.status)}${schedule.lastRun.errorCode ? ` · ${networkDeviceError(schedule.lastRun.errorCode)}` : ''}` : '尚未执行'}</p>` : nothing}
+      <p class="meta">最近自动备份：${lastRunSummary}</p>` : nothing}
       ${this.scheduleError ? html`<p role="alert" class="error">${this.scheduleError}</p>${!schedule ? html`<button class="btn" @click=${() => this.loadBackupSchedule(this.validId()!)}>重新加载定时设置</button>` : nothing}` : nothing}
     </app-card>`;
   }
