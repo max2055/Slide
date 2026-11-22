@@ -20051,6 +20051,15 @@
                             ],
                             "type": "string"
                           },
+                          "dependencies": {
+                            "items": {
+                              "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$",
+                              "type": "string"
+                            },
+                            "maxItems": 63,
+                            "minItems": 1,
+                            "type": "array"
+                          },
                           "dimensions": {
                             "additionalProperties": {
                               "minLength": 1,
@@ -20396,6 +20405,15 @@
                               "capability_unknown"
                             ],
                             "type": "string"
+                          },
+                          "dependencies": {
+                            "items": {
+                              "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$",
+                              "type": "string"
+                            },
+                            "maxItems": 63,
+                            "minItems": 1,
+                            "type": "array"
                           },
                           "dimensions": {
                             "additionalProperties": {
@@ -23836,6 +23854,15 @@
                             ],
                             "type": "string"
                           },
+                          "dependencies": {
+                            "items": {
+                              "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$",
+                              "type": "string"
+                            },
+                            "maxItems": 63,
+                            "minItems": 1,
+                            "type": "array"
+                          },
                           "dimensions": {
                             "additionalProperties": {
                               "minLength": 1,
@@ -24181,6 +24208,15 @@
                               "capability_unknown"
                             ],
                             "type": "string"
+                          },
+                          "dependencies": {
+                            "items": {
+                              "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$",
+                              "type": "string"
+                            },
+                            "maxItems": 63,
+                            "minItems": 1,
+                            "type": "array"
                           },
                           "dimensions": {
                             "additionalProperties": {
@@ -31129,6 +31165,15 @@
                               ],
                               "type": "string"
                             },
+                            "dependencies": {
+                              "items": {
+                                "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$",
+                                "type": "string"
+                              },
+                              "maxItems": 63,
+                              "minItems": 1,
+                              "type": "array"
+                            },
                             "dimensions": {
                               "additionalProperties": {
                                 "minLength": 1,
@@ -31474,6 +31519,15 @@
                                 "capability_unknown"
                               ],
                               "type": "string"
+                            },
+                            "dependencies": {
+                              "items": {
+                                "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$",
+                                "type": "string"
+                              },
+                              "maxItems": 63,
+                              "minItems": 1,
+                              "type": "array"
                             },
                             "dimensions": {
                               "additionalProperties": {
@@ -42771,6 +42825,15 @@
                               ],
                               "type": "string"
                             },
+                            "dependencies": {
+                              "items": {
+                                "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$",
+                                "type": "string"
+                              },
+                              "maxItems": 63,
+                              "minItems": 1,
+                              "type": "array"
+                            },
                             "dimensions": {
                               "additionalProperties": {
                                 "minLength": 1,
@@ -43116,6 +43179,15 @@
                                 "capability_unknown"
                               ],
                               "type": "string"
+                            },
+                            "dependencies": {
+                              "items": {
+                                "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$",
+                                "type": "string"
+                              },
+                              "maxItems": 63,
+                              "minItems": 1,
+                              "type": "array"
                             },
                             "dimensions": {
                               "additionalProperties": {
@@ -47450,6 +47522,15 @@
                     "pattern": "^sha256:[a-f0-9]{64}$",
                     "type": "string"
                   },
+                  "dependencies": {
+                    "items": {
+                      "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$",
+                      "type": "string"
+                    },
+                    "maxItems": 63,
+                    "minItems": 1,
+                    "type": "array"
+                  },
                   "metric": {
                     "additionalProperties": false,
                     "properties": {
@@ -47673,6 +47754,15 @@
                   "content_hash": {
                     "pattern": "^sha256:[a-f0-9]{64}$",
                     "type": "string"
+                  },
+                  "dependencies": {
+                    "items": {
+                      "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$",
+                      "type": "string"
+                    },
+                    "maxItems": 63,
+                    "minItems": 1,
+                    "type": "array"
                   },
                   "metric": {
                     "additionalProperties": false,
@@ -48065,6 +48155,14 @@
                 ],
                 "type": "object"
               },
+              "dependencies": {
+                "items": {
+                  "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$",
+                  "type": "string"
+                },
+                "maxItems": 63,
+                "type": "array"
+              },
               "expected_content_hash": {
                 "pattern": "^sha256:[a-f0-9]{64}$",
                 "type": "string"
@@ -48249,6 +48347,14 @@
                   "nodata"
                 ],
                 "type": "object"
+              },
+              "dependencies": {
+                "items": {
+                  "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$",
+                  "type": "string"
+                },
+                "maxItems": 63,
+                "type": "array"
               },
               "expected_content_hash": {
                 "pattern": "^sha256:[a-f0-9]{64}$",
@@ -48599,6 +48705,15 @@
                           "pattern": "^sha256:[a-f0-9]{64}$",
                           "type": "string"
                         },
+                        "dependencies": {
+                          "items": {
+                            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$",
+                            "type": "string"
+                          },
+                          "maxItems": 63,
+                          "minItems": 1,
+                          "type": "array"
+                        },
                         "metric": {
                           "additionalProperties": false,
                           "properties": {
@@ -48822,6 +48937,15 @@
                         "content_hash": {
                           "pattern": "^sha256:[a-f0-9]{64}$",
                           "type": "string"
+                        },
+                        "dependencies": {
+                          "items": {
+                            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$",
+                            "type": "string"
+                          },
+                          "maxItems": 63,
+                          "minItems": 1,
+                          "type": "array"
                         },
                         "metric": {
                           "additionalProperties": false,
@@ -50852,6 +50976,15 @@
                                   "pattern": "^sha256:[a-f0-9]{64}$",
                                   "type": "string"
                                 },
+                                "dependencies": {
+                                  "items": {
+                                    "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$",
+                                    "type": "string"
+                                  },
+                                  "maxItems": 63,
+                                  "minItems": 1,
+                                  "type": "array"
+                                },
                                 "metric": {
                                   "additionalProperties": false,
                                   "properties": {
@@ -51075,6 +51208,15 @@
                                 "content_hash": {
                                   "pattern": "^sha256:[a-f0-9]{64}$",
                                   "type": "string"
+                                },
+                                "dependencies": {
+                                  "items": {
+                                    "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$",
+                                    "type": "string"
+                                  },
+                                  "maxItems": 63,
+                                  "minItems": 1,
+                                  "type": "array"
                                 },
                                 "metric": {
                                   "additionalProperties": false,
@@ -51351,6 +51493,15 @@
                                   "pattern": "^sha256:[a-f0-9]{64}$",
                                   "type": "string"
                                 },
+                                "dependencies": {
+                                  "items": {
+                                    "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$",
+                                    "type": "string"
+                                  },
+                                  "maxItems": 63,
+                                  "minItems": 1,
+                                  "type": "array"
+                                },
                                 "metric": {
                                   "additionalProperties": false,
                                   "properties": {
@@ -51574,6 +51725,15 @@
                                 "content_hash": {
                                   "pattern": "^sha256:[a-f0-9]{64}$",
                                   "type": "string"
+                                },
+                                "dependencies": {
+                                  "items": {
+                                    "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$",
+                                    "type": "string"
+                                  },
+                                  "maxItems": 63,
+                                  "minItems": 1,
+                                  "type": "array"
                                 },
                                 "metric": {
                                   "additionalProperties": false,

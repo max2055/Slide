@@ -31,7 +31,10 @@ import type { TemplatePin, TemplateTriggerRefSchema } from '../../contracts/metr
 import type { z } from 'zod';
 import { BindingPreflightError, preflightResourceBinding, type TemplateVersionReadPort } from '../bindings/preflight.js';
 import { templateResolutionIdentity, type ResolvedTemplateBinding } from '../bindings/resolve.js';
-import { expressionBudget, frozenCopy, referencedParameters, referencedTriggerItems, triggerRuleContentHash } from './model.js';
+import {
+  expressionBudget, frozenCopy, orderTriggerDependencies, referencedParameters, referencedTriggerItems,
+  triggerDependencyFields, TriggerDependencyError, triggerRuleContentHash, type TriggerDependencyErrorCode,
+} from './model.js';
 import { metricKey } from '../policy/model.js';
 
 /** The trusted rule catalog. It answers one exact identity or `null`; it never lists "latest". */
@@ -55,7 +58,7 @@ export type TriggerResolutionErrorCode =
   | 'TRIGGER_RULE_SCOPE'
   | 'TRIGGER_RULE_HASH_MISMATCH'
   | 'TRIGGER_RULE_CONFLICT'
-  | 'TRIGGER_RULE_BUDGET'
+  | TriggerDependencyErrorCode
   | 'TRIGGER_EXPRESSION_BUDGET'
   | 'TRIGGER_ITEM_UNKNOWN'
   | 'TRIGGER_ITEM_AMBIGUOUS'
@@ -468,6 +471,7 @@ function resolveOne(
     metric: { ...item.canonical_metric },
     unit: item.unit,
     ...(rule.severity ? { severity: rule.severity } : {}),
+    ...triggerDependencyFields(rule.dependencies),
     ...(rule.allow_manual_close !== undefined ? { allow_manual_close: rule.allow_manual_close } : {}),
     dimensions: { ...item.dimensions },
     decision: selection.decision,
@@ -509,6 +513,7 @@ export async function resolveTriggerRules(
 
   const rules: TriggerRuleCandidate[] = [];
   for (const pin of preflight.pins) {
+    const start = rules.length;
     for (const ref of pin.triggers) {
       const location: TriggerResolutionLocation = {
         pin: copyPin(pin.pin), template_id: pin.pin.template_id, item_id: ref.scope.slice('item:'.length),
@@ -520,6 +525,16 @@ export async function resolveTriggerRules(
         unit: item.unit, dimensions: item.dimensions,
       })) }, selected, overrides[rule.rule_id]));
       if (rules.length > TRIGGER_LIMITS.max_rules) fail('TRIGGER_RULE_BUDGET', location);
+    }
+    try {
+      orderTriggerDependencies(rules.slice(start));
+    } catch (error) {
+      if (!(error instanceof TriggerDependencyError)) throw error;
+      const ref = pin.triggers.find(candidate => candidate.rule_id === error.ruleId);
+      fail(error.code, {
+        pin: copyPin(pin.pin), template_id: pin.pin.template_id, rule_id: error.ruleId,
+        item_id: ref?.scope.slice('item:'.length), rule_version: ref?.version,
+      });
     }
   }
 

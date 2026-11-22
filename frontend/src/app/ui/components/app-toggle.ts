@@ -30,7 +30,12 @@ export class AppToggle extends LitElement {
       position: relative; flex-shrink: 0;
       transition: background 0.2s, box-shadow 0.2s;
     }
-    :host([compact]) .toggle { width: 36px; height: 20px; }
+    :host([compact]) .toggle {
+      width: 36px;
+      height: 28px;
+      border-block: 4px solid transparent;
+      background-clip: padding-box;
+    }
     :host([compact]) .toggle::after { width: 16px; height: 16px; }
     :host([compact]) .toggle.on::after { transform: translateX(16px); }
     .toggle.on { background: var(--accent); }
@@ -44,6 +49,7 @@ export class AppToggle extends LitElement {
     }
     .toggle.on::after { transform: translateX(20px); }
     .toggle:hover { box-shadow: 0 0 0 3px var(--accent-subtle); }
+    .toggle:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
   `;
 
   render() {

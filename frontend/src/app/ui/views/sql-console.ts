@@ -3,6 +3,7 @@ import { LitElement, html, css, nothing } from "lit";
 import { sharedBtnStyles } from "../../styles/shared-btn-styles.ts";
 import { customElement, state } from "lit/decorators.js";
 import "../components/app-dialog.js";
+import "../components/app-notice.js";
 import { basicSetup } from "codemirror";
 import { EditorView } from "@codemirror/view";
 import { Compartment, EditorState } from "@codemirror/state";
@@ -265,6 +266,7 @@ interface Tab {
   name: string;
   sql: string;
   editorView: EditorView | null;
+  editorMountFailed?: boolean;
   result: ExecuteResult | null;
 }
 
@@ -442,6 +444,10 @@ export class SqlConsolePage extends LitElement {
     return this.tabs.find(t => t.id === this.activeTabId);
   }
 
+  private get _canQuery(): boolean {
+    return Boolean(this.selectedId && this.activeTab?.editorView);
+  }
+
   private _headers() {
     const t = localStorage.getItem("token");
     return t ? { "Content-Type": "application/json", Authorization: `Bearer ${t}` } : { "Content-Type": "application/json" };
@@ -470,48 +476,63 @@ export class SqlConsolePage extends LitElement {
   }
 
   private _globalKeyHandler = (e: KeyboardEvent) => {
-    if ((e.ctrlKey || e.metaKey) && e.key === "Enter" && this.selectedId) {
+    if ((e.ctrlKey || e.metaKey) && e.key === "Enter" && this._canQuery && !this.loading) {
       e.preventDefault(); this._execute();
     }
   };
 
-  override firstUpdated() {
-    if (this.tabs.length > 0 && this.activeTabId) {
-      this._switchTab(this.activeTabId);
-    } else if (this.tabs.length > 0) {
-      this._switchTab(this.tabs[0].id);
+  private _switchTab(tabId: string) {
+    const tab = this.tabs.find(t => t.id === tabId);
+    if (!tab) return;
+    if (this.activeTabId !== tabId) {
+      this.activeTabId = tabId;
+      this._saveTabs();
+    }
+
+    const container = this.renderRoot.querySelector<HTMLElement>(".cm-wrap");
+    if (!container) return;
+
+    if (tab.editorView) {
+      if (tab.editorView.dom.parentElement !== container) {
+        container.replaceChildren(tab.editorView.dom);
+      }
+    } else {
+      container.replaceChildren();
+      if (tab.editorMountFailed) return;
+      try {
+        tab.editorView = new EditorView({
+          state: EditorState.create({
+            doc: tab.sql,
+            extensions: [
+              basicSetup,
+              this._dialect.of(this._sqlLanguage()),
+              oneDark,
+              autocompletion({ override: [this._sqlCompletions.bind(this)] }),
+              EditorView.updateListener.of((update) => { this.requestUpdate(); if (update.docChanged) this._saveTabs(); }),
+            ],
+          }),
+          parent: container,
+        });
+      } catch (error) {
+        container.replaceChildren();
+        tab.editorMountFailed = true;
+        console.error("SQL 编辑器初始化失败", error);
+      }
+      this.requestUpdate();
+    }
+
+    if (tab.editorView) {
+      void this.updateComplete.then(() => {
+        if (this.activeTab === tab) tab.editorView?.focus();
+      });
     }
   }
 
-  private _switchTab(tabId: string) {
-    const container = this.renderRoot.querySelector(".cm-wrap") as HTMLElement;
-    if (!container) return;
-
-    container.innerHTML = "";
-
-    const tab = this.tabs.find(t => t.id === tabId);
-    if (!tab) return;
-    this.activeTabId = tabId;
-
-    if (!tab.editorView) {
-      tab.editorView = new EditorView({
-        state: EditorState.create({
-          doc: tab.sql,
-          extensions: [
-            basicSetup,
-            this._dialect.of(this._sqlLanguage()),
-            oneDark,
-            autocompletion({ override: [this._sqlCompletions.bind(this)] }),
-            EditorView.updateListener.of((update) => { this.requestUpdate(); if (update.docChanged) this._saveTabs(); }),
-          ],
-        }),
-        parent: container as HTMLElement,
-      });
-      this.tabs = [...this.tabs];
-    } else {
-      container.appendChild(tab.editorView.dom);
-    }
-    tab.editorView.focus();
+  private _retryEditor() {
+    const tab = this.activeTab;
+    if (!tab?.editorMountFailed) return;
+    tab.editorMountFailed = false;
+    this._switchTab(tab.id);
   }
 
   private _createTab(sql?: string) {
@@ -526,18 +547,13 @@ export class SqlConsolePage extends LitElement {
     const newTab: Tab = { id, name, sql: sql || '', editorView: null, result: null };
     this.tabs = [...this.tabs, newTab];
     this._switchTab(id);
-
-    if (this.tabs.length >= 10) {
-      // Warning rendered in template
-    }
-    this._saveTabs();
   }
 
   private _closeTab(tabId: string, force = false) {
     const tab = this.tabs.find(t => t.id === tabId);
     if (!tab) return;
 
-    const hasContent = tab.editorView && tab.editorView.state.doc.toString().trim().length > 0;
+    const hasContent = (tab.editorView?.state.doc.toString() ?? tab.sql).trim().length > 0;
 
     if (hasContent && !force) {
       this._showTabConfirm = tabId;
@@ -588,11 +604,11 @@ export class SqlConsolePage extends LitElement {
       this.tabs = data.tabs.map((t: any) => ({
         id: t.id,
         name: t.name,
-        sql: t.sql,
+        sql: t.sql ?? '',
         editorView: null,
         result: null,
       }));
-      this.activeTabId = data.activeId || (this.tabs.length > 0 ? this.tabs[0].id : '');
+      this.activeTabId = this.tabs.find(tab => tab.id === data.activeId)?.id ?? this.tabs[0]?.id ?? '';
       if (this.tabs.length === 0) {
         this._createTab('');
       }
@@ -802,7 +818,7 @@ export class SqlConsolePage extends LitElement {
   }
 
   private async _execute() {
-    if (!this.selectedId) return;
+    if (!this._canQuery || this.loading) return;
     const sql = this.getSQL().trim();
     if (!sql) return;
     this.loading = true;
@@ -1151,8 +1167,9 @@ export class SqlConsolePage extends LitElement {
   /* ---- EXPLAIN fetch ---- */
 
   private async _fetchExplain() {
+    if (!this._canQuery || this.explainLoading) return;
     const sql = this.getSQL().trim();
-    if (!sql || !this.selectedId) return;
+    if (!sql) return;
     this.explainLoading = true;
     this.explainError = null;
     this.explainData = null;
@@ -1262,13 +1279,13 @@ export class SqlConsolePage extends LitElement {
             <option value=${db} ?selected=${this.selectedDatabase === db}>${db}</option>
           `)}
         </select>
-        <button class="btn btn-execute" ?disabled=${this.loading || !this.selectedId} @click=${this._execute}>
+        <button class="btn btn-execute" ?disabled=${this.loading || !this._canQuery} @click=${this._execute}>
           ${this.loading ? "执行中..." : "执行"} <span class="shortcut">Ctrl+Enter</span>
         </button>
-        <button class="btn btn-explain" ?disabled=${this.explainLoading || !this.selectedId || !this.getSQL().trim()} @click=${this._fetchExplain}>
+        <button class="btn btn-explain" ?disabled=${this.explainLoading || !this._canQuery || !this.getSQL().trim()} @click=${this._fetchExplain}>
           ${this.explainLoading ? "分析中..." : html`${icons['eye']} 分析计划`}
         </button>
-        <button class="btn btn-format" @click=${this._formatSQL}>格式化</button>
+        <button class="btn btn-format" ?disabled=${!this.activeTab?.editorView} @click=${this._formatSQL}>格式化</button>
         <span style="font-size:12px;color:var(--muted)">${instance ? `${instance.db_type?.toUpperCase()} SQL` : ""}</span>
       </div>
 
@@ -1366,7 +1383,13 @@ export class SqlConsolePage extends LitElement {
         </div>
 
         <div class="editor-area">
-          <div class="cm-wrap"></div>
+          <div class="cm-wrap" ?hidden=${this.activeTab?.editorMountFailed}></div>
+          ${this.activeTab?.editorMountFailed ? html`
+            <app-notice severity="error">
+              <div role="alert">SQL 编辑器初始化失败，现有草稿已保留。</div>
+              <button class="btn" type="button" @click=${this._retryEditor}>重试初始化</button>
+            </app-notice>
+          ` : nothing}
           ${this.approvalResult ? html`
             <div class="approval-notice">
               ⚠ 已提交审批 (ID: ${this.approvalResult.request_id}, 风险: ${this.approvalResult.risk_level})

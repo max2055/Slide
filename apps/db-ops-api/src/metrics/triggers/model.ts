@@ -18,6 +18,7 @@
  */
 import { createHash } from 'node:crypto';
 import { stable } from '../packages/model.js';
+import { TRIGGER_LIMITS } from '../../contracts/metrics/triggers.js';
 import type {
   ResolvedTriggerExpression, TriggerExpression, TriggerResourceSnapshot, TriggerRuleCandidate,
   TriggerRuleCandidateSet, TriggerRuleSnapshot, TriggerRuleVersion,
@@ -26,6 +27,10 @@ import type { HashId } from '../../contracts/metrics/templates.js';
 
 export const hashOf = (value: unknown): HashId =>
   `sha256:${createHash('sha256').update(stable(value)).digest('hex')}`;
+
+export function triggerDependencyFields(dependencies: readonly string[] | undefined): { dependencies?: string[] } {
+  return dependencies?.length ? { dependencies: [...dependencies].sort() } : {};
+}
 
 /** The hash boundary of a rule version body: every member except `content_hash`. */
 export const triggerRuleContentHash = (rule: Omit<TriggerRuleVersion, 'content_hash'>): HashId =>
@@ -36,6 +41,7 @@ export const triggerRuleContentHash = (rule: Omit<TriggerRuleVersion, 'content_h
     metric: rule.metric,
     unit: rule.unit,
     ...(rule.severity ? { severity: rule.severity } : {}),
+    ...triggerDependencyFields(rule.dependencies),
     parameters: rule.parameters,
     problem: rule.problem,
     ...(rule.recovery_mode ? { recovery_mode: rule.recovery_mode } : {}),
@@ -56,6 +62,7 @@ export const triggerRuleSnapshotHash = (rule: Omit<TriggerRuleSnapshot, 'snapsho
     metric: rule.metric,
     unit: rule.unit,
     ...(rule.severity ? { severity: rule.severity } : {}),
+    ...triggerDependencyFields(rule.dependencies),
     dimensions: rule.dimensions,
     ...(rule.inputs ? { inputs: rule.inputs } : {}),
     decision: rule.decision,
@@ -84,6 +91,60 @@ export const triggerSnapshotHash = (
   templates: snapshot.templates,
   rules: snapshot.rules,
 });
+
+export type TriggerDependencyErrorCode =
+  | 'TRIGGER_DEPENDENCY_DUPLICATE'
+  | 'TRIGGER_DEPENDENCY_UNKNOWN'
+  | 'TRIGGER_DEPENDENCY_SELF'
+  | 'TRIGGER_DEPENDENCY_CYCLE'
+  | 'TRIGGER_DEPENDENCY_AMBIGUOUS'
+  | 'TRIGGER_RULE_BUDGET';
+
+export class TriggerDependencyError extends Error {
+  constructor(public readonly code: TriggerDependencyErrorCode, public readonly ruleId: string) {
+    super(code);
+    this.name = 'TriggerDependencyError';
+  }
+}
+
+/** Validate one effective template and return upstream rules before their dependents. */
+export function orderTriggerDependencies<T extends { rule_id: string; dependencies?: readonly string[] }>(
+  rules: readonly T[],
+): T[] {
+  const dependent = rules.find(rule => rule.dependencies?.length);
+  if (!dependent) return [...rules];
+  if (rules.length > TRIGGER_LIMITS.max_rules) throw new TriggerDependencyError('TRIGGER_RULE_BUDGET', dependent.rule_id);
+
+  const byId = new Map<string, T>();
+  for (const rule of rules) {
+    if (byId.has(rule.rule_id)) throw new TriggerDependencyError('TRIGGER_DEPENDENCY_AMBIGUOUS', rule.rule_id);
+    byId.set(rule.rule_id, rule);
+  }
+
+  const visiting = new Set<T>();
+  const visited = new Set<T>();
+  const ordered: T[] = [];
+  const visit = (rule: T) => {
+    if (visited.has(rule)) return;
+    if (visiting.has(rule)) throw new TriggerDependencyError('TRIGGER_DEPENDENCY_CYCLE', rule.rule_id);
+    visiting.add(rule);
+    const dependencies = new Set<string>();
+    for (const id of rule.dependencies ?? []) {
+      if (dependencies.has(id)) throw new TriggerDependencyError('TRIGGER_DEPENDENCY_DUPLICATE', rule.rule_id);
+      dependencies.add(id);
+      if (id === rule.rule_id) throw new TriggerDependencyError('TRIGGER_DEPENDENCY_SELF', rule.rule_id);
+      const upstream = byId.get(id);
+      if (upstream === undefined) throw new TriggerDependencyError('TRIGGER_DEPENDENCY_UNKNOWN', rule.rule_id);
+      visit(upstream);
+    }
+    visiting.delete(rule);
+    visited.add(rule);
+    ordered.push(rule);
+  };
+
+  for (const rule of rules) visit(rule);
+  return ordered;
+}
 
 export interface ExpressionBudget {
   nodes: number;

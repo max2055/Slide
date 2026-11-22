@@ -62,8 +62,9 @@
  */
 import { TimestampSchema } from '../../contracts/metrics/index.js';
 import { TemplateError } from './errors.js';
+import { mergeTemplateTriggers } from './inheritance.js';
 import { mysqlTriggerCatalog } from '../triggers/persistence.js';
-import { referencedTriggerItems } from '../triggers/model.js';
+import { orderTriggerDependencies, referencedTriggerItems, TriggerDependencyError } from '../triggers/model.js';
 import {
   TemplateDraftSchema, TemplateItemVersionSchema, TemplateRecordSchema, TemplateVersionSchema,
   type HashId, type Revision, type TemplateDraft, type TemplateItemVersion, type TemplateRecord,
@@ -568,6 +569,13 @@ export class MySqlTemplateRepository implements TemplateRepository {
         updated_by: next.updated_by,
         updated_at: next.updated_at,
       });
+      const base = updated.aggregate.base;
+      // The pinned parent snapshot already contains its effective trigger refs.
+      const parentVersion = base ? await this.getVersionOn(connection, base.template_id, base.version) : null;
+      const triggers = parentVersion
+        ? mergeTemplateTriggers(parentVersion.aggregate.triggers, updated.aggregate.triggers)
+        : updated.aggregate.triggers;
+      await this.validateTriggerReferences(connection, triggers);
       const updatedAt = toSqlTimestamp('draft.updated_at', updated.updated_at);
       const updatedBy = sqlActorId('draft.updated_by', updated.updated_by);
       const [result] = await connection.execute(
@@ -691,14 +699,7 @@ export class MySqlTemplateRepository implements TemplateRepository {
         throw new TemplateError('TEMPLATE_DRAFT_CONFLICT',
           `draft ${command.templateId} is at revision ${draft.revision}, expected ${command.expectedDraftRevision}`);
       }
-      const itemIds = new Set(snapshot.items.map(item => item.item_id));
-      const triggerCatalog = mysqlTriggerCatalog(connection);
-      for (const ref of snapshot.aggregate.triggers) {
-        const rule = await triggerCatalog.getVersion(ref.rule_id, ref.version);
-        if (!rule) continue;
-        const operands = referencedTriggerItems(ref.scope.slice('item:'.length), rule.problem, rule.recovery);
-        if (operands.some(id => !itemIds.has(id))) throw new TemplateError('TEMPLATE_TRIGGER_ITEM_REFERENCED');
-      }
+      await this.validateTriggerReferences(connection, snapshot.aggregate.triggers, new Set(snapshot.items.map(item => item.item_id)));
       const existing = firstRow(await connection.execute(
         `SELECT ${VERSION_SELECT} FROM metric_template_versions WHERE template_id = ? AND content_hash = ?`,
         [command.templateId, command.contentHash],
@@ -856,13 +857,36 @@ export class MySqlTemplateRepository implements TemplateRepository {
   }
 
   async getVersion(templateId: string, version: VersionNumber): Promise<TemplateVersion | null> {
-    return this.withConnection(async connection => {
-      const row = firstRow(await connection.execute(
-        `SELECT ${VERSION_SELECT} FROM metric_template_versions WHERE template_id = ? AND version = ?`,
-        [templateId, version],
-      ));
-      return row ? this.versionFromRow(row) : null;
-    });
+    return this.withConnection(connection => this.getVersionOn(connection, templateId, version));
+  }
+
+  private async getVersionOn(connection: TemplateSqlConnection, templateId: string, version: VersionNumber): Promise<TemplateVersion | null> {
+    const row = firstRow(await connection.execute(
+      `SELECT ${VERSION_SELECT} FROM metric_template_versions WHERE template_id = ? AND version = ?`,
+      [templateId, version],
+    ));
+    return row ? this.versionFromRow(row) : null;
+  }
+
+  private async validateTriggerReferences(connection: TemplateSqlConnection, triggers: TemplateDraft['aggregate']['triggers'],
+    publishedItemIds?: ReadonlySet<string>): Promise<void> {
+    const catalog = mysqlTriggerCatalog(connection);
+    const rules = [];
+    for (const ref of triggers) {
+      const rule = await catalog.getVersion(ref.rule_id, ref.version);
+      if (!rule) continue;
+      if (publishedItemIds) {
+        const operands = referencedTriggerItems(ref.scope.slice('item:'.length), rule.problem, rule.recovery);
+        if (operands.some(id => !publishedItemIds.has(id))) throw new TemplateError('TEMPLATE_TRIGGER_ITEM_REFERENCED');
+      }
+      rules.push(rule);
+    }
+    try {
+      orderTriggerDependencies(rules);
+    } catch (error) {
+      if (error instanceof TriggerDependencyError) throw new TemplateError(error.code);
+      throw error;
+    }
   }
 
   async listVersions(templateId: string): Promise<TemplateVersionSummary[]> {

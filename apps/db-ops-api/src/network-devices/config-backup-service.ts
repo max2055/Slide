@@ -1,5 +1,5 @@
-import { createHash } from 'node:crypto';
-import type { Pool } from 'mysql2/promise';
+import { createHash, randomUUID } from 'node:crypto';
+import type { Pool, ResultSetHeader } from 'mysql2/promise';
 import { Client, type ClientChannel, type ConnectConfig } from 'ssh2';
 
 import { decryptData, dbConnection, encryptData } from '../db-connection.js';
@@ -11,6 +11,7 @@ import { networkDeviceDatabaseService, type NetworkDeviceCredentials, type Netwo
 
 export const CONFIG_BACKUP_MAX_BYTES = 2 * 1024 * 1024;
 export const CONFIG_BACKUP_DIFF_MAX_BYTES = 512 * 1024;
+export const CONFIG_BACKUP_RESULT_UNCONFIRMED = 'CONFIG_BACKUP_RESULT_UNCONFIRMED';
 export const CONFIG_BACKUP_COMMANDS = Object.freeze([
   'screen-length 0 temporary',
   'display current-configuration',
@@ -109,6 +110,7 @@ export interface ConfigBackupStore {
     sizeBytes: number;
     redactionStatus: ConfigBackupSummary['redactionStatus'];
     createdBy: number | null;
+    scheduledRun?: { date: string; auditId: string };
   }): Promise<ConfigBackupInsertResult>;
   /** Legacy capture seam (all methods are normalized by the constructor). */
   getTarget?(deviceId: number): Promise<ConfigBackupTarget | null>;
@@ -162,6 +164,7 @@ export interface ConfigBackupResult {
 }
 
 export interface ConfigBackupAuditEvent {
+  auditId?: string;
   action: 'collect' | 'read_raw' | 'read_denied' | 'failed';
   deviceId: number;
   backupId?: number;
@@ -193,6 +196,7 @@ export interface ConfigBackupServiceOptions {
  */
 export async function defaultConfigBackupAudit(event: ConfigBackupAuditEvent): Promise<void> {
   await auditLogManager.logConfigBackupAccess({
+    auditId: event.auditId,
     userId: event.actorId == null ? undefined : String(event.actorId),
     action: event.action,
     deviceId: event.deviceId,
@@ -251,20 +255,31 @@ export function createSqlStore(poolProvider: () => Pick<Pool, 'execute' | 'getCo
         // Serialize all versions for a device, including its very first backup.
         await connection.execute('SELECT id FROM network_devices WHERE id = ? FOR UPDATE', [input.deviceId]);
         const [existing] = await connection.execute('SELECT id, device_id AS deviceId, version_no AS versionNo, content_sha256 AS contentSha256, source_protocol AS sourceProtocol, collected_at AS collectedAt, size_bytes AS sizeBytes, redaction_status AS redactionStatus FROM network_device_config_backups WHERE device_id = ? AND content_sha256 = ? LIMIT 1 FOR UPDATE', [input.deviceId, input.contentSha256]);
-        if ((existing as any[])[0]) {
-          await connection.commit();
-          return { summary: asSummary((existing as any[])[0]), created: false };
+        const duplicate = (existing as any[])[0];
+        let summary: ConfigBackupSummary;
+        if (duplicate) {
+          summary = asSummary(duplicate);
+        } else {
+          const [versionRows] = await connection.execute('SELECT COALESCE(MAX(version_no), 0) + 1 AS nextVersion FROM network_device_config_backups WHERE device_id = ? FOR UPDATE', [input.deviceId]);
+          const versionNo = Number((versionRows as any[])[0]?.nextVersion ?? 1);
+          const [result] = await connection.execute<ResultSetHeader>(
+            `INSERT INTO network_device_config_backups
+             (device_id, version_no, content_encrypted, content_sha256, source_protocol, collected_at, size_bytes, redaction_status, created_by)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [input.deviceId, versionNo, input.contentEncrypted, input.contentSha256, input.sourceProtocol, input.collectedAt, input.sizeBytes, input.redactionStatus, input.createdBy],
+          );
+          summary = { id: result.insertId, deviceId: input.deviceId, versionNo, contentSha256: input.contentSha256, sourceProtocol: input.sourceProtocol, collectedAt: input.collectedAt.toISOString(), sizeBytes: input.sizeBytes, redactionStatus: input.redactionStatus };
         }
-        const [versionRows] = await connection.execute('SELECT COALESCE(MAX(version_no), 0) + 1 AS nextVersion FROM network_device_config_backups WHERE device_id = ? FOR UPDATE', [input.deviceId]);
-        const versionNo = Number((versionRows as any[])[0]?.nextVersion ?? 1);
-        const [result] = await connection.execute(
-          `INSERT INTO network_device_config_backups
-           (device_id, version_no, content_encrypted, content_sha256, source_protocol, collected_at, size_bytes, redaction_status, created_by)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-          [input.deviceId, versionNo, input.contentEncrypted, input.contentSha256, input.sourceProtocol, input.collectedAt, input.sizeBytes, input.redactionStatus, input.createdBy],
-        );
+        if (input.scheduledRun) {
+          // Publish the association with the backup or reuse in the same transaction.
+          const [linked] = await connection.execute<ResultSetHeader>(`UPDATE network_config_backup_runs
+            SET backup_id = ?, backup_audit_id = ? WHERE device_id = ? AND scheduled_date = ? AND backup_id IS NULL
+            AND ((status = 'running' AND finished_at IS NULL) OR (status = 'failed' AND error_code = ?))`,
+          [summary.id, input.scheduledRun.auditId, input.deviceId, input.scheduledRun.date, CONFIG_BACKUP_RESULT_UNCONFIRMED]);
+          if (linked.affectedRows !== 1) throw new ConfigBackupError('CONFIG_BACKUP_STORE_UNAVAILABLE');
+        }
         await connection.commit();
-        return { created: true, summary: { id: Number((result as any).insertId), deviceId: input.deviceId, versionNo, contentSha256: input.contentSha256, sourceProtocol: input.sourceProtocol, collectedAt: input.collectedAt.toISOString(), sizeBytes: input.sizeBytes, redactionStatus: input.redactionStatus } };
+        return { created: !duplicate, summary };
       } catch (error) {
         await connection.rollback().catch(() => undefined);
         throw error;
@@ -595,7 +610,7 @@ export class ConfigBackupService {
     }
   }
 
-  async collect(deviceId: number, actorId: number | null = null): Promise<ConfigBackupResult> {
+  async collect(deviceId: number, actorId: number | null = null, scheduledDate?: string): Promise<ConfigBackupResult> {
     if (this.inFlight.has(deviceId)) throw new ConfigBackupError('SSH_COMMAND_FAILED');
     this.inFlight.add(deviceId);
     let connection: ConfigBackupConnection | null = null;
@@ -630,10 +645,11 @@ export class ConfigBackupService {
       const digest = createHash('sha256').update(content, 'utf8').digest('hex');
       const redaction = redactConfiguration(content);
       failureStage = 'CONFIG_BACKUP_STORE_UNAVAILABLE';
-      const { summary, created } = await this.store.insert!({ deviceId, contentEncrypted: this.crypto.encrypt(content), contentSha256: digest, sourceProtocol: 'ssh', collectedAt: this.clock(), sizeBytes, redactionStatus: redaction.status, createdBy: actorId });
+      const scheduledRun = scheduledDate === undefined ? undefined : { date: scheduledDate, auditId: randomUUID() };
+      const { summary, created } = await this.store.insert!({ deviceId, contentEncrypted: this.crypto.encrypt(content), contentSha256: digest, sourceProtocol: 'ssh', collectedAt: this.clock(), sizeBytes, redactionStatus: redaction.status, createdBy: actorId, ...(scheduledRun && { scheduledRun }) });
       const result = { summary, preview: redaction.preview.slice(0, 64 * 1024), deduplicated: !created };
       try {
-        await this.recordAudit({ action: 'collect', deviceId, backupId: summary.id, contentSha256: digest, sizeBytes, actorId });
+        await this.recordAudit({ action: 'collect', deviceId, backupId: summary.id, contentSha256: digest, sizeBytes, actorId, ...(scheduledRun && { auditId: scheduledRun.auditId }) });
       } catch (error) {
         throw new ConfigBackupSavedAuditError(result, error);
       }

@@ -18,6 +18,8 @@ import { alertDatabaseService } from '../../alert-database-service.js';
 import { alertEventService } from '../../alert-event-service.js';
 import { registerTemplateTriggerRoutes } from '../triggers/routes.js';
 import { metricPublicSchemas } from '../../contracts/metrics/public-api.js';
+import { TriggerRuleVersionSchema, type TriggerExpression } from '../../contracts/metrics/triggers.js';
+import type { TriggerEpisodeRecord } from '../triggers/episode.js';
 import { evaluateTemplateClock, evaluateTemplateSamples } from '../triggers/runtime.js';
 import { decodeBindingPayload } from '../bindings/persistence-codec.js';
 import { createHash, randomBytes } from 'node:crypto';
@@ -85,6 +87,7 @@ describe.skipIf(!enabled)('immediate collection on a real platform, queue and re
   let scheduleStore: MysqlScheduleStore;
   let controlledValue: number|null = 95;
   let controlledCapacity: number|null = 50;
+  let controlledUptime: number | null = 10;
   const sourceTimes = new Map<string, string>();
   let clock = Date.now();
   let accessCheckHook: (() => Promise<void>) | undefined;
@@ -359,6 +362,7 @@ describe.skipIf(!enabled)('immediate collection on a real platform, queue and re
         { dimensions: {}, observed_at: sourceTimes.get(implementation), fields: {
           connections: controlledValue === null ? null : { encoding: 'uint64', value: String(controlledValue) },
           capacity: controlledCapacity === null ? null : { encoding: 'uint64', value: String(controlledCapacity) },
+          Uptime: controlledUptime === null ? null : { encoding: 'uint64', value: String(controlledUptime) },
         } },
       ],
       undefined,
@@ -1063,6 +1067,175 @@ describe.skipIf(!enabled)('immediate collection on a real platform, queue and re
         .rejects.toMatchObject({ code: 'TEMPLATE_TRIGGER_ITEM_REFERENCED' });
     } finally {
       sourceTimes.clear();
+    }
+  }, 120000);
+
+  it('uses same-batch upstream truth through a dependency chain for opening and recovery', async () => {
+    const resource = await insertInstance('template-trigger-dependencies');
+    await pool.execute("INSERT INTO instance_permissions(user_id,instance_id,access_level) VALUES(1,?,'admin')", [resource]);
+    const repository = new MySqlTemplateRepository(pool as never);
+    const templates = new MetricTemplateService(repository, registry);
+    const template = await templates.create(actor, { name: 'Trigger dependency fixture' });
+    const release = registry.list().map(entry => entry.package)
+      .find(pkg => pkg.id === 'mysql-representative' && pkg.version === '1.0.0')!;
+    const metricIds = ['mysql.processlist.count', 'mysql.connections.limit', 'db.uptime_seconds'];
+    const implementations = metricIds.map(id => release.collectors.find(collector =>
+      collector.mappings.some(mapping => mapping.metric.id === id))!.implementation_ref);
+    const selections = await Promise.all(metricIds.map(id => templates.selectMetric(actor, template.template_id, {
+      package: { id: release.id, version: release.version, digest: release.digest },
+      metric: { id, semantic_version: '1.0.0' },
+    })));
+    const draft = (await repository.getDraft(template.template_id))!;
+    const edited = await repository.updateDraft(template.template_id, draft.revision, {
+      aggregate: {
+        ...draft.aggregate,
+        items: selections.map(({ item }, index) => ({
+          item_id: item.item_id, version: item.version, interval_ms: index === 0 ? 60000 : 30000,
+        })).sort((a, b) => a.item_id.localeCompare(b.item_id)),
+      },
+      updated_by: 1,
+      updated_at: new Date().toISOString(),
+    });
+    let { version, content_hash: contentHash } = await templates.publish(actor, template.template_id, {
+      expected_draft_revision: edited.revision,
+      expected_revision: template.revision,
+    });
+    const record = (await repository.getTemplate(template.template_id))!;
+    await repository.updateTemplate(template.template_id, record.revision, {
+      status: 'active', updated_at: new Date().toISOString(),
+    });
+
+    const leaf = (value: number, itemId?: string): TriggerExpression => ({
+      node: 'compare', select: { aggregation: 'last', ...(itemId ? { item_id: itemId } : {}) },
+      operator: '>', threshold: { kind: 'constant', value },
+    });
+    const publish = async (source: number, severity: 'warning' | 'critical', problem: TriggerExpression, dependencies?: string[]) => {
+      const response = await call('POST', `/api/metrics/templates/${template.template_id}/triggers`, {
+        expected_version: version,
+        expected_content_hash: contentHash,
+        item_id: selections[source].item.item_id,
+        severity,
+        parameters: { schema: {}, defaults: {} },
+        problem,
+        recovery_mode: 'problem_expression',
+        quality: { accepted_quality: ['good'], min_coverage: 1, allow_estimated: false },
+        clock: { stale_after_ms: 120000, nodata: source === 1 ? { enabled: true, after_ms: 30000 } : { enabled: false } },
+        ...(dependencies ? { dependencies } : {}),
+      });
+      expect(response.status, JSON.stringify(response.data)).toBe(200);
+      version = Number(response.data.version);
+      contentHash = String(response.data.content_hash);
+      return { severity, id: TriggerRuleVersionSchema.parse(response.data.rule).rule_id };
+    };
+    // Choose the upstream by its real generated ID so the fixture always fails under lexical evaluation order.
+    const [middleCandidate, upstreamCandidate] = [
+      await publish(0, 'warning', leaf(1000)),
+      await publish(0, 'critical', leaf(1000)),
+    ].sort((a, b) => a.id.localeCompare(b.id));
+    const upstream = await publish(0, upstreamCandidate.severity, leaf(80));
+    const middle = await publish(0, middleCandidate.severity, leaf(40), [upstream.id]);
+    const downstream = await publish(1, 'warning', {
+      node: 'any', children: [leaf(50), leaf(50, selections[2].item.item_id)],
+    }, [middle.id]);
+    expect(upstream.id > middle.id).toBe(true);
+
+    const path = `/api/metrics/template-bindings/instance/${resource}`;
+    const binding = { ...body(), template_pins: [{ template_id: template.template_id, version, content_hash: contentHash }] };
+    for (const action of ['probe', 'trial', 'apply']) {
+      const response = await call('POST', `${path}/${action}`, {
+        ...binding,
+        ...(action === 'probe' ? {} : { receipt_id: 'dependencies-trial' }),
+        ...(action === 'apply' ? { caller_key: 'dependencies-apply' } : {}),
+      });
+      expect(response.status, JSON.stringify(response.data)).toBe(200);
+    }
+    const [channel] = await pool.execute<mysql.ResultSetHeader>(
+      "INSERT INTO notification_channels(name,type,config,enabled,delivery_start_at) VALUES(?,'webhook',?,1,NOW())",
+      ['Trigger dependencies fixture', JSON.stringify({ webhook_url: 'http://127.0.0.1:1/never-deliver', severity: 'warning' })],
+    );
+    const notifications = async () => (await pool.query<RowDataPacket[]>(
+      `SELECT payload->>'$.alertId' AS alert_id FROM workflow_jobs
+       WHERE job_type='notification.deliver' AND payload->>'$.channelId'=?`, [String(channel.insertId)],
+    ))[0].map(row => Number(row.alert_id));
+    const resourceKey = `instance:${resource}`;
+    const start = Math.max(Date.now() + 1000, clock + 1000);
+    const tick = async (offset: number, upstreamValue: number | null, downstreamValue: number,
+      options: { uptime?: number | null; downstreamAt?: number; scheduled?: boolean } = {}) => {
+      clock = start + offset;
+      controlledValue = upstreamValue;
+      controlledCapacity = downstreamValue;
+      controlledUptime = options.uptime === undefined ? 10 : options.uptime;
+      sourceTimes.set(implementations[0], new Date(clock).toISOString());
+      sourceTimes.set(implementations[1], new Date(start + (options.downstreamAt ?? offset)).toISOString());
+      sourceTimes.set(implementations[2], new Date(clock).toISOString());
+      if (options.scheduled) {
+        const entry = (await scheduleStore.scan()).templates.find(item => item.resource_key === resourceKey)!;
+        expect(await scheduleStore.enqueueTemplate(entry, clock)).toBe(true);
+        await drain();
+        return;
+      }
+      const caller_key = `dependencies-${offset}`;
+      const admitted = await call('POST', `${path}/collect`, { caller_key, expected_revision: 1 });
+      expect(admitted.status, JSON.stringify(admitted.data)).toBe(200);
+      await drain();
+      const result = await call('GET', `${path}/collect/${caller_key}`);
+      expect(result.data.state, JSON.stringify(result.data)).toBe('completed');
+    };
+    const episodes = async (): Promise<TriggerEpisodeRecord[]> => (await pool.query<RowDataPacket[]>(
+      'SELECT payload FROM metric_trigger_episodes WHERE resource_key=? ORDER BY event_id', [resourceKey],
+    ))[0].map(({ payload }) => typeof payload === 'string' ? JSON.parse(payload) : payload);
+
+    try {
+      // The initial applied batch must see the upstream sample committed on the previous cadence.
+      await pool.execute(
+        `INSERT INTO metric_schedule(resource_key,revision,next_due_ms,states,cadence)
+         VALUES(?,1,?,'{}',?) ON DUPLICATE KEY UPDATE next_due_ms=VALUES(next_due_ms),cadence=VALUES(cadence)`,
+        [resourceKey, start, JSON.stringify({ next: { 60000: start, 30000: start + 30000 }, through: null })],
+      );
+      await tick(0, 95, 95, { scheduled: true });
+      expect(await episodes()).toEqual([]);
+      expect(await notifications()).toEqual([]);
+      await tick(30000, 95, 95, { scheduled: true });
+      expect(await episodes()).toMatchObject([{ rule_id: upstream.id, state: 'open', opened: { value: 95 } }]);
+      const [alertIds] = await pool.query<RowDataPacket[]>(
+        'SELECT alert_id FROM metric_trigger_episodes WHERE resource_key=?', [resourceKey],
+      );
+      expect(await notifications()).toEqual([Number(alertIds[0].alert_id)]);
+
+      await tick(60000, null, 95);
+      expect(await episodes()).toMatchObject([{ rule_id: upstream.id, state: 'open', last: { quality: 'unknown' } }]);
+
+      await tick(90000, 10, 95);
+      expect(await episodes()).toMatchObject([
+        { rule_id: upstream.id, state: 'closed', recovery_count: 1 },
+        { rule_id: downstream.id, state: 'open', recovery_count: 0 },
+      ]);
+
+      await tick(120000, 95, 10);
+      const held = await episodes();
+      expect(held[1]).toMatchObject({ rule_id: downstream.id, state: 'open', recovery_count: 0 });
+      expect(held[2]).toMatchObject({ rule_id: upstream.id, state: 'open' });
+
+      await tick(150000, 10, 10);
+      expect(await episodes()).toMatchObject([
+        { rule_id: upstream.id, state: 'closed', recovery_count: 1 },
+        { episode_id: held[1].episode_id, state: 'closed', recovery_count: 1 },
+        { episode_id: held[2].episode_id, state: 'closed', recovery_count: 1 },
+      ]);
+
+      // Neither an unusable OR operand nor an elapsed no-data deadline releases the hold.
+      await tick(180000, 95, 95);
+      await tick(210000, 10, 95, { downstreamAt: 180000, uptime: null });
+      await evaluateTemplateClock(pool, start + 211000);
+      expect((await episodes()).map(episode => [episode.rule_id, episode.state])).toEqual([
+        [upstream.id, 'closed'], [downstream.id, 'closed'],
+        [upstream.id, 'closed'], [upstream.id, 'closed'],
+      ]);
+      await tick(240000, 10, 95);
+      expect((await episodes()).at(-1)).toMatchObject({ rule_id: downstream.id, state: 'open' });
+    } finally {
+      sourceTimes.clear();
+      await pool.execute('UPDATE notification_channels SET enabled=0 WHERE id=?', [channel.insertId]);
     }
   }, 120000);
 });
