@@ -213,31 +213,36 @@ export class CronJobsSettings extends LitElement {
     .error-state h3 { margin: 0 0 8px; font-size: 14px; font-weight: 600; color: var(--text); }
     .error-state p { font-size: 12px; color: var(--muted); margin: 0 0 16px; }
 
-    .table-head { display: flex; width: 100%; border-bottom: 1px solid var(--border); background: var(--bg-elevated); }
-    .table-head-cell { padding: 8px 10px; font-weight: 600; color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em; text-align: center; }
-    .table-head-cell.cell-name { text-align: left; }
-    .table-head-cell.cell-desc { text-align: left; }
-    .table-row { display: flex; width: 100%; border-bottom: 1px solid var(--border); transition: background 0.15s; }
-    .table-row:hover { background: var(--bg-elevated, rgba(255,255,255,0.03)); }
-    .table-cell { padding: 10px; display: flex; align-items: center; gap: 6px; overflow: hidden; justify-content: center; }
-    .table-cell.cell-name { justify-content: flex-start; }
-    .table-cell.cell-desc { justify-content: flex-start; }
-    .cell-index { width: 40px; min-width: 40px; font-size: 11px; color: var(--muted); }
-    .cell-name { flex: 1; min-width: 0; }
-    .cell-desc { flex: 3; min-width: 0; white-space: nowrap; }
-    .cell-expr { width: 140px; min-width: 140px; }
-    .cell-next { width: 110px; min-width: 110px; }
-    .cell-last { width: 110px; min-width: 110px; }
-    .cell-result { width: calc(var(--space-xl) * 6); min-width: calc(var(--space-xl) * 6); }
-    .table-cell.cell-result { flex-direction: column; gap: var(--space-xs); }
-    .run-summary { width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--muted); }
-    .cell-actions { width: 150px; min-width: 150px; justify-content: flex-end; gap: 4px; flex-shrink: 0; overflow: visible; }
-    .job-name { font-weight: 600; color: var(--text); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; }
+    .table-scroll { max-width: 100%; overflow-x: auto; }
+    .table-scroll:focus-visible { outline: 2px solid var(--ring); outline-offset: -2px; }
+    .jobs-table { width: 100%; min-width: 72rem; border-collapse: collapse; table-layout: fixed; }
+    .jobs-table th {
+      padding: var(--space-sm);
+      border-bottom: 2px solid var(--border);
+      color: var(--muted-strong);
+      font-size: var(--text-sm);
+      font-weight: 600;
+      text-align: left;
+    }
+    .jobs-table td { padding: var(--space-sm); border-bottom: 1px solid var(--border); }
+    .jobs-table tbody tr:last-child td { border-bottom: 0; }
+    .jobs-table tbody tr:hover { background: var(--bg-hover); }
+    .jobs-table .cell-index { width: 2rem; text-align: center; }
+    th.cell-mode { width: 4rem; }
+    th.cell-name { width: 18%; }
+    th.cell-expr { width: 7rem; }
+    th.cell-next, th.cell-last { width: 6rem; }
+    th.cell-result { width: 9rem; }
+    th.cell-actions { width: 11rem; }
+    .cell-index { font-size: var(--text-xs); color: var(--muted); }
+    .row-actions { display: flex; align-items: center; gap: var(--space-sm); }
+    .run-summary { display: block; margin-top: var(--space-xs); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--muted); }
+    .job-name { display: block; max-width: 100%; font-weight: 600; overflow: hidden; text-overflow: ellipsis; }
+    .job-name:focus-visible { outline-offset: 0; }
     .job-name:hover { color: var(--accent-text); }
     .job-name--disabled { color: var(--muted); }
-    .job-desc { font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    .cron-text { font-family: var(--mono, monospace); font-size: 11px; color: var(--text); cursor: pointer; white-space: nowrap; }
-    .cron-text:hover { color: var(--accent-text); }
+    .job-desc { display: block; font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .cron-text { display: block; font-family: var(--mono, monospace); font-size: var(--text-xs); color: var(--text); overflow-wrap: anywhere; }
     .relative-time { font-size: 11px; color: var(--muted); white-space: nowrap; }
 
 
@@ -803,64 +808,74 @@ export class CronJobsSettings extends LitElement {
         <span style="font-size:12px;color:var(--muted);">共 ${this.filteredJobs.length} 个任务</span>
       </div>
       ${this.jobs.length === 0 ? html`<app-empty-state title="暂无定时任务"></app-empty-state>` : html`
-      <app-card variant="default" style="overflow-x:auto;">
-        <div class="table-head">
-          <div class="table-head-cell cell-index">#</div>
-          <div class="table-head-cell cell-name">任务名称</div>
-          <div class="table-head-cell cell-mode" style="width:70px;min-width:70px;">模式</div>
-          <div class="table-head-cell cell-desc">描述</div>
-          <div class="table-head-cell cell-expr">Cron 表达式</div>
-          <div class="table-head-cell cell-next">下次执行</div>
-          <div class="table-head-cell cell-last">上次执行</div>
-          <div class="table-head-cell cell-result">结果</div>
-          <div class="table-head-cell cell-actions"></div>
+      <app-card compact>
+        <div class="table-scroll" tabindex="0" role="region" aria-label="定时任务表格，可横向滚动">
+          <table class="jobs-table" aria-label="定时任务">
+                  <thead>
+              <tr>
+                <th scope="col" class="cell-index">#</th>
+                <th scope="col" class="cell-name">任务名称</th>
+                <th scope="col" class="cell-mode">模式</th>
+                <th scope="col" class="cell-desc">描述</th>
+                <th scope="col" class="cell-expr">Cron 表达式</th>
+                <th scope="col" class="cell-next">下次执行</th>
+                <th scope="col" class="cell-last">上次执行</th>
+                <th scope="col" class="cell-result">结果</th>
+                <th scope="col" class="cell-actions">操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${this.filteredJobs.map((job, idx) => html`
+                <tr class="table-row">
+                  <td class="cell-index">${idx + 1}</td>
+                  <td class="cell-name">
+                    <button type="button" class="btn-ghost job-name ${job.enabled ? "" : "job-name--disabled"}"
+                      @click=${() => this.openLogViewer(job)}
+                      title=${job.name} aria-label=${`查看执行记录：${job.name}`}>${job.name}</button>
+                  </td>
+                  <td class="cell-mode">
+                    ${job.task_type === "script"
+                      ? html`<app-badge variant="muted">Script</app-badge>`
+                      : html`<app-badge variant="info">Agent</app-badge>`}
+                  </td>
+                  <td class="cell-desc">
+                    <span class="job-desc">${job.description || "—"}</span>
+                    ${job.task_type === "script" && job.script_id ? html`
+                      <div class="script-info" style="font-size:11px;color:var(--muted);white-space:nowrap;">
+                        ${job.target_instance_id ? html`实例ID: ${job.target_instance_id}` : html`目标: Slide自身DB`}
+                      </div>
+                    ` : nothing}
+                  </td>
+                  <td class="cell-expr">
+                    <span class="cron-text" title=${job.task_description ? job.task_description : ""}>${job.cron_expr}</span>
+                  </td>
+                  <td class="cell-next">
+                    <span class="relative-time">${job.enabled ? formatRelativeTime(job.next_run_at) : '—'}</span>
+                  </td>
+                  <td class="cell-last">
+                    <span class="relative-time">${formatRelativeTime(job.last_run_at)}</span>
+                  </td>
+                  <td class="cell-result">
+                    ${this.renderBadge(this.runTracker.runs.get(job.id)?.status ?? job.last_result)}
+                    ${this.runTracker.runs.get(job.id) ? html`<span class="run-summary" title=${this.runTracker.runs.get(job.id)?.summary ?? this.runTracker.runs.get(job.id)?.runId ?? ''}>本次运行${this.runTracker.runs.get(job.id)?.summary ? ` · ${this.runTracker.runs.get(job.id)?.summary}` : ''}</span>` : nothing}
+                  </td>
+                  <td class="cell-actions">
+                    <div class="row-actions">
+                      <app-toggle compact aria-label=${`启用任务：${job.name}`} .checked=${job.enabled} @change=${() => this.toggleJob(job)} title=${job.enabled ? "已启用" : "已停用"}></app-toggle>
+                      <button class="btn-ghost" @click=${() => this.openTriggerDialog(job)}>执行</button>
+                      <button class="btn-icon" title="编辑" @click=${() => this.openEditDialog(job)}>
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                      </button>
+                      <button class="btn-icon btn-danger-outline" title="删除" @click=${() => this.confirmDelete(job)}>
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              `)}
+            </tbody>
+          </table>
         </div>
-        ${this.filteredJobs.map((job, idx) => html`
-          <div class="table-row">
-            <div class="table-cell cell-index">${idx + 1}</div>
-            <div class="table-cell cell-name">
-              <span class="job-name ${job.enabled ? "" : "job-name--disabled"}"
-                @click=${() => this.openLogViewer(job)}
-                title="查看执行记录">${job.name}</span>
-            </div>
-            <div class="table-cell cell-mode" style="width:70px;min-width:70px;">
-              ${job.task_type === "script"
-                ? html`<app-badge variant="muted">Script</app-badge>`
-                : html`<app-badge variant="info">Agent</app-badge>`}
-            </div>
-            <div class="table-cell cell-desc">
-              <span class="job-desc">${job.description || "—"}</span>
-              ${job.task_type === "script" && job.script_id ? html`
-                <div class="script-info" style="font-size:11px;color:var(--muted);white-space:nowrap;">
-                  ${job.target_instance_id ? html`实例ID: ${job.target_instance_id}` : html`目标: Slide自身DB`}
-                </div>
-              ` : nothing}
-            </div>
-            <div class="table-cell cell-expr">
-              <span class="cron-text" title=${job.task_description ? job.task_description : ""}>${job.cron_expr}</span>
-            </div>
-            <div class="table-cell cell-next">
-              <span class="relative-time">${job.enabled ? formatRelativeTime(job.next_run_at) : '—'}</span>
-            </div>
-            <div class="table-cell cell-last">
-              <span class="relative-time">${formatRelativeTime(job.last_run_at)}</span>
-            </div>
-            <div class="table-cell cell-result">
-              ${this.renderBadge(this.runTracker.runs.get(job.id)?.status ?? job.last_result)}
-              ${this.runTracker.runs.get(job.id) ? html`<span class="run-summary" title=${this.runTracker.runs.get(job.id)?.summary ?? this.runTracker.runs.get(job.id)?.runId ?? ''}>本次运行${this.runTracker.runs.get(job.id)?.summary ? ` · ${this.runTracker.runs.get(job.id)?.summary}` : ''}</span>` : nothing}
-            </div>
-            <div class="table-cell cell-actions">
-              <app-toggle compact aria-label=${`启用任务：${job.name}`} .checked=${job.enabled} @change=${() => this.toggleJob(job)} title=${job.enabled ? "已启用" : "已停用"}></app-toggle>
-              <button class="btn-ghost" @click=${() => this.openTriggerDialog(job)}>执行</button>
-              <button class="btn-icon" title="编辑" @click=${() => this.openEditDialog(job)}>
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
-              </button>
-              <button class="btn-icon" title="删除" @click=${() => this.confirmDelete(job)}>
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
-              </button>
-            </div>
-          </div>
-        `)}
       </app-card>`}
 
       <!-- Log Viewer Dialog -->

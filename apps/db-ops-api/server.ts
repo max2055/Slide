@@ -53,7 +53,6 @@ import {
 } from './src/auth/actor-context.js';
 import { hasPermission, requirePermission } from './src/auth/require-permission.js';
 import {
-  filterByInstanceAccess,
   getAccessibleInstanceIds,
   hasInstanceAccess,
   hasUnrestrictedInstanceAccess,
@@ -106,6 +105,7 @@ import { registerInvestigationGovernanceRoutes } from './src/investigations/gove
 import { registerAnalysisBridgeRoutes } from './src/investigations/bridge-routes.js';
 import { registerChatRoutes } from './src/chat-routes.js';
 import { reportService } from './src/report-service.js';
+import { getReportAccessScope } from './src/report-access.js';
 import { reportDatabaseService } from './src/report-database-service.js';
 import { reportConfigService, ReportConfigCreateOutcomeUnknownError } from './src/report-config-database-service.js';
 import { InvalidReportCronError } from './src/report-cron.js';
@@ -2709,12 +2709,8 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
     preHandler: [verifyToken, requirePermission('report:view')],
     handler: async (request, reply) => {
       try {
-        const stats = await reportDatabaseService.getReportStats(
-          getAccessibleInstanceIds((request as any).user),
-          (request as any).user.resourceBoundary
-            ? (request as any).user.resourceBoundary.serverIds.filter((id: number) => canReadResource((request as any).user, { type: 'server', id }))
-            : canReadResource((request as any).user, { type: 'server', id: 1 }) ? null : [],
-        );
+        const { instanceIds, serverIds } = getReportAccessScope((request as any).user);
+        const stats = await reportDatabaseService.getReportStats(instanceIds, serverIds);
         return reply.send(stats);
       } catch (error: any) {
         return reply.code(500).send({ error: error.message });
@@ -2736,10 +2732,11 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
           limit: Number(limit),
           offset: (Number(page) - 1) * Number(limit),
         };
-        const reports = await reportDatabaseService.getReportsByFilters(filters);
-        return reply.send(filterByInstanceAccess((request as any).user, reports, (report: any) => report.instance_id));
-      } catch (error: any) {
-        return reply.code(500).send({ error: error.message });
+        const reports = await reportDatabaseService.getReportsByFilters(filters, getReportAccessScope((request as any).user));
+        return reply.send(reports);
+      } catch {
+        request.log.warn('REPORT_LIST_UNAVAILABLE');
+        return reply.code(503).send({ error: 'REPORT_LIST_UNAVAILABLE' });
       }
     }
   });
@@ -2752,10 +2749,10 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
     handler: async (request, reply) => {
       try {
         const { target_type } = request.query as any;
-        const configs = await reportConfigService.getConfigs();
+        const configs = await reportConfigService.getConfigs(getReportAccessScope((request as any).user));
 
         // Filter by target_type at route level
-        let filtered = filterByInstanceAccess((request as any).user, configs, (config: any) => config.instance_id);
+        let filtered = configs;
         if (target_type === 'server') {
           filtered = filtered.filter((c: any) => c.server_id != null);
         } else if (target_type === 'instance') {
@@ -2839,7 +2836,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
           enabled: enabled !== undefined ? enabled : true,
         });
 
-        reply.send({ id: result.id, message: '创建成功' });
+        return reply.send({ id: result.id, message: '创建成功' });
       } catch (error: any) {
         if (error instanceof ReportConfigCreateOutcomeUnknownError) {
           return reply.code(409).send({
@@ -2847,7 +2844,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
           });
         }
         if (error instanceof InvalidReportCronError) return reply.code(400).send({ error: error.message });
-        reply.code(500).send({ error: error.message });
+        return reply.code(500).send({ error: error.message });
       }
     }
   });
@@ -2861,20 +2858,15 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
         const body = request.body as any;
 
         // Validate config exists
-        const existing = await reportConfigService.getConfigById(Number(id));
+        const scope = getReportAccessScope((request as any).user);
+        const existing = await reportConfigService.getConfigById(Number(id), scope);
         if (!existing) {
-          return reply.code(404).send({ error: '报表配置不存在' });
-        }
-        if (existing.instance_id != null && !hasInstanceAccess((request as any).user, Number(existing.instance_id), 'read-only')) {
           return reply.code(404).send({ error: '报表配置不存在' });
         }
         if (body.instance_id != null && !hasInstanceAccess((request as any).user, Number(body.instance_id), 'read-only')) {
           return reply.code(403).send({ error: '无权访问该实例' });
         }
 
-        if (existing.server_id != null && !canReadResource((request as any).user, { type: 'server', id: existing.server_id })) {
-          return reply.code(404).send({ error: '报表配置不存在' });
-        }
         const target = {
           type: body.type === undefined ? existing.type : body.type,
           instance_id: body.instance_id === undefined ? existing.instance_id : body.instance_id,
@@ -2917,16 +2909,16 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
           format: body.format,
           notification_channel_ids: notificationChannelIds,
           enabled: body.enabled !== undefined ? body.enabled : undefined,
-        });
+        }, scope);
 
         if (!updated) {
           return reply.code(400).send({ error: '没有可更新的字段' });
         }
 
-        reply.send({ message: '更新成功' });
+        return reply.send({ message: '更新成功' });
       } catch (error: any) {
         if (error instanceof InvalidReportCronError) return reply.code(400).send({ error: error.message });
-        reply.code(500).send({ error: error.message });
+        return reply.code(500).send({ error: error.message });
       }
     }
   });
@@ -2937,18 +2929,13 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
     handler: async (request, reply) => {
       try {
         const { id } = request.params as any;
-
-        // Validate config exists
-        const existing = await reportConfigService.getConfigById(Number(id));
-        if (!existing) {
+        const configId = Number(id);
+        const deleted = Number.isSafeInteger(configId) && configId > 0
+          && await reportConfigService.deleteConfig(configId, getReportAccessScope((request as any).user));
+        if (!deleted) {
           return reply.code(404).send({ error: '报表配置不存在' });
         }
-        if (existing.instance_id != null && !hasInstanceAccess((request as any).user, Number(existing.instance_id), 'read-only')) {
-          return reply.code(404).send({ error: '报表配置不存在' });
-        }
-
-        await reportConfigService.deleteConfig(Number(id));
-        reply.send({ message: '删除成功' });
+        return reply.send({ message: '删除成功' });
       } catch (error: any) {
         reply.code(500).send({ error: error.message });
       }
@@ -2959,18 +2946,20 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
   fastify.get('/api/reports/:id', {
     preHandler: [verifyToken, requirePermission('report:view')],
     handler: async (request, reply) => {
+      const { id } = request.params as { id: string };
+      const reportId = Number(id);
+      if (!Number.isSafeInteger(reportId) || reportId <= 0) {
+        return reply.code(404).send({ error: '报表不存在' });
+      }
       try {
-        const { id } = request.params as any;
-        const report = await reportDatabaseService.getReportById(Number(id));
+        const report = await reportDatabaseService.getReportById(reportId, getReportAccessScope((request as any).user));
         if (!report) {
           return reply.code(404).send({ error: '报表不存在' });
         }
-        if (report.instance_id != null && !hasInstanceAccess((request as any).user, Number(report.instance_id), 'read-only')) {
-          return reply.code(404).send({ error: '报表不存在' });
-        }
-        reply.send(report);
-      } catch (error: any) {
-        reply.code(500).send({ error: error.message });
+        return reply.send(report);
+      } catch {
+        request.log.warn('REPORT_DETAIL_UNAVAILABLE');
+        return reply.code(503).send({ error: 'REPORT_DETAIL_UNAVAILABLE' });
       }
     }
   });
@@ -2981,8 +2970,8 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
       const { id } = request.params as { id: string };
       const reportId = Number(id);
       if (!Number.isSafeInteger(reportId) || reportId <= 0) return reply.code(400).send({ error: '无效的报表 ID' });
-      const report = await reportDatabaseService.getReportById(reportId);
-      if (!report || (report.instance_id != null && !hasInstanceAccess((request as any).user, Number(report.instance_id), 'read-only'))) {
+      const report = await reportDatabaseService.getReportById(reportId, getReportAccessScope((request as any).user));
+      if (!report) {
         return reply.code(404).send({ error: '报表不存在' });
       }
       return reply.send(await reportDatabaseService.getNotificationDeliveries(reportId));
@@ -3033,11 +3022,8 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
         const { id } = request.params as any;
         const { format } = request.query as { format?: 'pdf' | 'html' | 'json' | 'md' };
 
-        const report = await reportDatabaseService.getReportById(Number(id));
+        const report = await reportDatabaseService.getReportById(Number(id), getReportAccessScope((request as any).user));
         if (!report) {
-          return reply.code(404).send({ error: '报表不存在' });
-        }
-        if (report.instance_id != null && !hasInstanceAccess((request as any).user, Number(report.instance_id), 'read-only')) {
           return reply.code(404).send({ error: '报表不存在' });
         }
 
@@ -3045,12 +3031,12 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
         const content = await reportExporter.export(report, exportFormat);
         const mimeType = reportExporter.getFormatMimeType(exportFormat);
 
-        reply
+        return reply
           .header('Content-Type', mimeType)
           .header('Content-Disposition', reportAttachmentDisposition(report.name, reportExporter.getExtension(exportFormat), Number(id)))
           .send(content);
-      } catch (error: any) {
-        reply.code(500).send({ error: error.message });
+      } catch {
+        return reply.code(500).send({ error: 'INTERNAL_ERROR' });
       }
     }
   });
@@ -3061,12 +3047,13 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
     handler: async (request, reply) => {
       try {
         const { id } = request.params as any;
-        const report = await reportDatabaseService.getReportById(Number(id));
-        if (!report || (report.instance_id != null && !hasInstanceAccess((request as any).user, Number(report.instance_id), 'read-only'))) {
+        const reportId = Number(id);
+        const deleted = Number.isSafeInteger(reportId) && reportId > 0
+          && await reportDatabaseService.deleteReport(reportId, getReportAccessScope((request as any).user));
+        if (!deleted) {
           return reply.code(404).send({ error: '报表不存在' });
         }
-        await reportDatabaseService.deleteReport(Number(id));
-        reply.send({ message: '删除成功' });
+        return reply.send({ message: '删除成功' });
       } catch (error: any) {
         reply.code(500).send({ error: error.message });
       }

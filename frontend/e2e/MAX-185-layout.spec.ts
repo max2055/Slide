@@ -57,8 +57,9 @@ test('representative application shell: full-width connection, first model, sele
     measurements.push({ width, height: 720, theme, density: 'default', source: 'real API / task-owned MySQL', ...geometry });
     await page.screenshot({ path: `${out}/actual-${width}-${theme}.png`, animations: 'disabled' });
     expect(geometry.overflow).toEqual([]); expect(geometry.documentOverflow).toBe(false); expect(geometry.pageInsideViewport).toBe(true);
-    expect(geometry.title).toBe('24px');
+    expect(geometry.title).toBe('22px');
     if (width >= 1280) {
+      await expect(view.getByRole('button', { name: '保存配置', exact: true })).toBeInViewport({ ratio: 1 });
       expect(geometry.url.width).toBeGreaterThan(600);
       expect(geometry.key.width).toBe(geometry.url.width);
       expect(geometry.firstModel.bottom).toBeLessThan(720);
@@ -104,9 +105,15 @@ test('representative application shell: full-width connection, first model, sele
   await page.goto('/settings/ai/models?view=providers');
   await select.selectOption(String(result.providerId));
   await expect(view.locator('.model-row')).toHaveCount(1);
+  await view.locator('.advanced summary').press('Enter');
+  await view.getByLabel('Max Tokens', { exact: true }).fill('3072');
+  await view.getByRole('button', { name: '保存配置', exact: true }).press('Enter');
+  await expect(view.getByRole('button', { name: '✓ 已保存配置', exact: true })).toBeInViewport({ ratio: 1 });
+  await expect(view.locator('.advanced')).toHaveJSProperty('open', true);
   await page.screenshot({ path: `${out}/single-real-1280-light.png`, animations: 'disabled' });
   const providers = await (await request.get('/api/llm/configs', { headers })).json();
   const fixture = providers.find((provider: any) => provider.id === result.providerId);
+  expect(fixture.max_tokens).toBe(3072);
   for (const state of ['single-provider', 'long-provider', 'empty', 'loading', 'error', 'forbidden']) {
     for (const width of [1280, 1440, 768, 390]) for (const theme of ['light', 'dark']) {
       let release: (() => void) | undefined;
@@ -189,7 +196,7 @@ test('density typography in real application shell preserves wide fields and mod
           input: font('[aria-label="Base URL"]'), label: font('.section-body .form-label'),
           model: font('.model-summary strong'), auxiliary: font('.provider-count'),
           summary: font('.advanced summary') },
-        tokens: { body: parseFloat(style.getPropertyValue('--text-md')), section: parseFloat(style.getPropertyValue('--text-lg')), auxiliary: parseFloat(style.getPropertyValue('--text-sm')) },
+        tokens: { title: parseFloat(style.getPropertyValue('--text-2xl')), body: parseFloat(style.getPropertyValue('--text-md')), section: parseFloat(style.getPropertyValue('--text-lg')), auxiliary: parseFloat(style.getPropertyValue('--text-sm')) },
         url: rect('[aria-label="Base URL"]'), key: rect('#provider-key'), firstModel: rect('.model-row'),
         modelHeading: rect('.model-toolbar h2'), accent: style.getPropertyValue('--accent').trim(),
         overflow: [...root.querySelectorAll('.section-body,.model-list,.detail-inner,.provider-selector,.model-summary')].filter(e => e.scrollWidth > e.clientWidth + 1).map(e => e.className),
@@ -206,7 +213,7 @@ test('density typography in real application shell preserves wide fields and mod
       productModelCalls: 0, sharedProviderWrites: 0,
     }, null, 2));
     await page.screenshot({ path: `${output}/page-${name}.png`, animations: 'disabled' });
-    expect(geometry.fonts.title).toBeCloseTo(geometry.tokens.section * 1.5, 1);
+    expect(geometry.fonts.title).toBe(geometry.tokens.title);
     expect(geometry.fonts.section).toBe(geometry.tokens.section);
     for (const key of ['description', 'input', 'label', 'model', 'summary'] as const) expect(geometry.fonts[key]).toBe(geometry.tokens.body);
     expect(geometry.fonts.auxiliary).toBe(geometry.tokens.auxiliary);

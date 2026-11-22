@@ -3,6 +3,8 @@ import { sharedFieldStyles } from "../../styles/shared-field-styles.ts";
 import { LitElement, html, css } from "lit";
 import { sharedBtnStyles } from "../../styles/shared-btn-styles.ts";
 import { customElement, state } from "lit/decorators.js";
+import { repeat } from 'lit/directives/repeat.js';
+import DOMPurify from 'dompurify';
 import "../components/app-card.js";
 import "../components/app-badge.js";
 import "../components/app-empty-state.js";
@@ -12,21 +14,37 @@ import { icons } from "../../../icons.js";
 import { authFetch } from "../../../api/index.js";
 import { showToast } from "../components/app-toast-container.js";
 import { reportDownloadFilename } from './report-download.js';
+import { readReportDetail, readReportHistory, type Report, type ReportPreviewResult } from './report-requests.js';
 
-interface Report {
-  id: number;
-  name: string;
-  type?: string;
-  title: string;
-  instance_name?: string;
-  server_id?: number;
-  server_name?: string;
-  target_type?: string;
-  status: "completed" | "running" | "failed";
-  created_at: string;
-  created_by?: string;
-  file_path?: string;
-  format?: string;
+type ReportTarget = 'instance' | 'server';
+type ReadState = 'loading' | 'ready' | 'error';
+type Preview = { report: Report; trigger: HTMLButtonElement } & (ReportPreviewResult | { state: 'loading' });
+
+const previewMessages = {
+  'no-content': '这份报表未保存正文。可尝试下载原报表。',
+  'empty-response': '服务返回了空响应，无法读取报表正文。可重试查看。',
+  'not-found': '该报表不存在或当前不可查看。',
+  forbidden: '当前无权查看报表。',
+  unavailable: '暂时无法读取这份报表。可重试查看。',
+};
+
+function isServerReport(report: Report): boolean {
+  return report.target_type === 'server' || report.type === 'server_health' || report.server_id != null;
+}
+
+function previewHtml(content: string): string {
+  const documentElement = DOMPurify.sanitize(content, {
+    WHOLE_DOCUMENT: true,
+    RETURN_DOM: true,
+    ADD_TAGS: ['style'],
+    FORBID_TAGS: ['meta', 'link', 'base', 'form', 'object', 'embed', 'iframe'],
+    FORBID_ATTR: ['href', 'xlink:href', 'srcset'],
+  }) as HTMLElement;
+  const csp = document.createElement('meta');
+  csp.httpEquiv = 'Content-Security-Policy';
+  csp.content = "default-src 'none'; style-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'none'";
+  documentElement.querySelector('head')?.prepend(csp);
+  return `<!doctype html>${documentElement.outerHTML}`;
 }
 
 interface ReportConfig {
@@ -84,14 +102,6 @@ export class ReportsPage extends LitElement {
       border: 1px solid var(--border);
       border-radius: var(--radius-md);
       background: var(--card);
-      cursor: pointer;
-      transition: all var(--duration-normal) var(--ease-out);
-    }
-
-    .report-type-card:hover {
-      border-color: var(--accent);
-      transform: translateY(-1px);
-      box-shadow: var(--shadow-sm);
     }
 
     .report-type-card__icon {
@@ -115,6 +125,11 @@ export class ReportsPage extends LitElement {
       flex: 1;
     }
 
+    .report-type-card button {
+      align-self: center;
+      flex-shrink: 0;
+    }
+
     .report-type-card__title {
       font-size: var(--text-md);
       font-weight: 600;
@@ -128,22 +143,25 @@ export class ReportsPage extends LitElement {
       line-height: 1.5;
     }
 
-    .report-type-card__action {
-      padding: var(--space-sm) var(--space-md);
-      border: 1px solid var(--accent);
+    .report-preview-frame {
+      display: block;
+      width: 100%;
+      height: 60vh;
+      border: 1px solid var(--border);
       border-radius: var(--radius-sm);
-      font-size: var(--text-sm);
-      font-weight: 500;
-      color: var(--accent-text);
-      background: transparent;
-      cursor: pointer;
-      transition: all var(--duration-normal) var(--ease-out);
-      flex-shrink: 0;
     }
 
-    .report-type-card__action:hover {
-      background: var(--accent-solid);
-      color: var(--accent-solid-foreground);
+    .report-preview-text {
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      margin: 0;
+    }
+
+    .report-view-message {
+      margin: var(--space-xs) 0 0;
+      max-width: 14rem;
+      text-align: left;
+      color: var(--muted);
     }
 
     /* 表格样式 */
@@ -299,18 +317,20 @@ export class ReportsPage extends LitElement {
 
   private historyBrowser = new ListBrowser();
   private historyBatch = 0;
-  @state() private historyLoadingMore = false;
+  @state() private historyLoading: 'refresh' | 'append' | null = null;
   @state() private historyTotal: number | null = null;
   @state() private reports: Report[] = [];
-  @state() private loading = true;
-  @state() private error: string | null = null;
-  @state() private stats = { total: 0, completed: 0, running: 0, failed: 0 };
+  @state() private historyError: { message: string; batches: number } | null = null;
+  @state() private preview: Preview | null = null;
+  @state() private targetReads: Record<ReportTarget, ReadState> = { instance: 'loading', server: 'loading' };
   @state() private instances: Array<{ id: number; name: string }> = [];
-  @state() private servers: any[] = [];
+  @state() private servers: Array<{ id: number; host: string; label?: string }> = [];
   @state() private notificationChannels: Array<{ id: number; name: string }> = [];
+  @state() private notificationChannelsRead: ReadState = 'loading';
   @state() private selectedInstanceId: number | null = null;
-  @state() private selectedTargetType: 'instance' | 'server' = 'instance';
+  @state() private selectedTargetType: ReportTarget = 'instance';
   @state() private selectedServerId: number | null = null;
+  @state() private generating = false;
   @state() private configs: ReportConfig[] = [];
   @state() private configsLoading = true;
   @state() private configsError = false;
@@ -326,7 +346,7 @@ export class ReportsPage extends LitElement {
     { type: "performance", icon: "zap", title: "性能分析报告", desc: "SQL 性能分析和索引优化建议" },
     { type: "slow_query", icon: "clock", title: "慢查询报告", desc: "慢查询日志分析和性能瓶颈识别" },
     { type: "capacity", icon: "trending-up", title: "容量规划报告", desc: "存储使用趋势和扩容建议" },
-    { type: "server_health", icon: "server", title: "服务器巡检报告", desc: "所有纳管服务器健康状态检查与评分" },
+    { type: "server_health", icon: "server", title: "服务器巡检报告", desc: "检查所选服务器的健康状态并评分" },
   ];
 
   private get token() {
@@ -341,28 +361,26 @@ export class ReportsPage extends LitElement {
   }
 
   override firstUpdated() {
-    this.loadReports();
-    this.loadStats();
-    this.loadInstances();
+    this.refreshReadData();
+    this.loadTargets('instance');
+    this.loadTargets('server');
     this.loadConfigs();
     this.loadNotificationChannels();
   }
 
-  private async loadInstances() {
+  private async loadTargets(scope: ReportTarget) {
+    this.targetReads = { ...this.targetReads, [scope]: 'loading' };
     try {
-      const [instRes, srvRes] = await Promise.all([
-        authFetch('/api/database/instances'),
-        authFetch('/api/servers'),
-      ]);
-      if (instRes.ok) {
-        this.instances = await instRes.json();
-      }
-      if (srvRes.ok) {
-        const data = await srvRes.json();
-        this.servers = Array.isArray(data) ? data : (data.servers || []);
-      }
-    } catch (err: any) {
-      showToast('Failed to load data', 'error');
+      const response = await authFetch(scope === 'instance' ? '/api/database/instances' : '/api/servers');
+      if (!response.ok) throw new Error();
+      const data = await response.json();
+      const rows = scope === 'server' && !Array.isArray(data) ? data?.servers : data;
+      if (!Array.isArray(rows)) throw new Error();
+      if (scope === 'instance') this.instances = rows;
+      else this.servers = rows;
+      this.targetReads = { ...this.targetReads, [scope]: 'ready' };
+    } catch {
+      this.targetReads = { ...this.targetReads, [scope]: 'error' };
     }
   }
 
@@ -386,133 +404,131 @@ export class ReportsPage extends LitElement {
   private async loadNotificationChannels() {
     try {
       const response = await authFetch('/api/notification/channels?enabled=true');
-      if (response.ok) {
-        this.notificationChannels = await response.json();
-      }
+      if (!response.ok) throw new Error();
+      const channels = await response.json();
+      if (!Array.isArray(channels)) throw new Error();
+      this.notificationChannels = channels;
+      this.notificationChannelsRead = 'ready';
     } catch {
-      this.notificationChannels = [];
+      this.notificationChannelsRead = 'error';
     }
   }
 
   private async loadStats() {
     try {
       const res = await authFetch('/api/reports/stats');
-      if (res.ok) {
-        this.stats = await res.json();
-        this.historyTotal = Number(this.stats.total);
-      }
-    } catch (err: any) {
-      showToast('Failed to load statistics', 'error');
+      if (!res.ok) throw new Error();
+      const { total } = await res.json();
+      this.historyTotal = Number.isInteger(total) && total >= 0 ? total : null;
+    } catch {
+      this.historyTotal = null;
     }
   }
 
   async refreshReadData() {
-    // Re-read the already loaded range without resetting pagination or drafts.
-    if (this.historyLoadingMore) return;
+    await this.loadHistory();
+  }
+
+  private async loadHistory(append = false) {
+    if (this.historyLoading) return;
+    this.historyLoading = append ? 'append' : 'refresh';
     const initialBatch = this.historyBatch;
-    const batches = Math.max(1, initialBatch);
+    const firstBatch = append ? initialBatch + 1 : 1;
+    const lastBatch = append ? firstBatch : (this.historyError?.batches ?? Math.max(1, initialBatch));
     try {
-      const reports: Report[] = [];
-      for (let batch = 1; batch <= batches; batch++) {
-        const response = await authFetch(`/api/reports?page=${batch}&limit=100`, { headers: this.headers });
-        if (!response.ok) throw new Error(`报表历史加载失败 (HTTP ${response.status})`);
-        const data = await response.json();
-        if (!Array.isArray(data)) throw new Error('报表历史响应无效');
-        reports.push(...data);
+      const reports = append ? [...this.reports] : [];
+      for (let batch = firstBatch; batch <= lastBatch; batch++) {
+        reports.push(...await readReportHistory(batch));
       }
-      if (!this.isConnected || this.historyBatch !== initialBatch || this.historyLoadingMore) return;
+      if (!this.isConnected || this.historyBatch !== initialBatch) return;
       this.reports = [...new Map(reports.map(report => [report.id, report])).values()];
-      this.historyBatch = batches; this.error = null; this.loading = false;
-      await this.loadStats();
+      this.historyBatch = lastBatch;
+      this.historyError = null;
+      if (!append) await this.loadStats();
     } catch (error) {
-      if (this.isConnected && this.historyBatch === initialBatch && !this.historyLoadingMore) {
-        this.error = error instanceof Error ? error.message : '报表历史加载失败';
+      if (this.isConnected && this.historyBatch === initialBatch) {
+        this.reports = [];
+        this.historyBatch = 0;
+        this.historyError = {
+          message: error instanceof Error ? error.message : '暂时无法读取报表历史，请重试。',
+          batches: lastBatch,
+        };
       }
+    } finally {
+      this.historyLoading = null;
     }
   }
 
-  private async loadReports(append = false) {
-    if (this.historyLoadingMore) return;
-    if (append) this.historyLoadingMore = true;
-    else { this.loading = true; this.error = null; this.historyBatch = 0; this.reports = []; }
-    const batch = this.historyBatch + 1;
-    try {
-      const res = await authFetch(`/api/reports?page=${batch}&limit=100`, { headers: this.headers });
-      if (!res.ok) throw new Error(res.status === 403 ? '无权限查看报表历史' : `报表历史加载失败 (HTTP ${res.status})`);
-      const data = await res.json();
-      if (!Array.isArray(data)) throw new Error('报表历史响应无效');
-      this.reports = [...new Map([...this.reports, ...data].map(report => [report.id, report])).values()];
-      this.historyBatch = batch;
-    } catch (err: any) {
-      this.reports = [];
-      this.historyBatch = 0;
-      this.error = err.message;
-    } finally {
-      this.loading = false; this.historyLoadingMore = false;
-    }
+  private _selectTarget(scope: ReportTarget) {
+    if (this.selectedTargetType === scope) return;
+    this.selectedTargetType = scope;
+    this.selectedInstanceId = null;
+    this.selectedServerId = null;
+    this.historyBrowser.page = 1;
+    this.preview = null;
+  }
+
+  private _renderGeneration() {
+    const scope = this.selectedTargetType;
+    const isServer = scope === 'server';
+    const targetLabel = isServer ? '服务器' : '数据库实例';
+    const read = this.targetReads[scope];
+    const options = isServer
+      ? this.servers.map(server => ({ id: server.id, name: server.label ? `${server.host} (${server.label})` : server.host }))
+      : this.instances;
+    const selectedId = isServer ? this.selectedServerId : this.selectedInstanceId;
+
+    return html`
+      <app-card variant="default">
+        <div slot="header">
+          ${icons['bar-chart']} 生成报表
+          <div style="margin-top:var(--space-md);display:flex;align-items:center;gap:var(--space-md);flex-wrap:wrap;">
+            <div role="group" aria-label="报表目标类型">
+              <button class=${isServer ? 'btn' : 'btn-primary'} aria-pressed=${String(!isServer)} @click=${() => this._selectTarget('instance')}>数据库实例</button>
+              <button class=${isServer ? 'btn-primary' : 'btn'} aria-pressed=${String(isServer)} @click=${() => this._selectTarget('server')}>服务器</button>
+            </div>
+            ${read === 'loading' ? html`<span role="status">正在读取${targetLabel}…</span>`
+              : read === 'error' ? html`
+                  <span role="alert">暂时无法读取${targetLabel}。</span>
+                  <button class="btn btn-refresh" @click=${() => this.loadTargets(scope)}>重新读取目标</button>
+                `
+              : options.length === 0 ? html`<span role="status">暂无可选${targetLabel}。</span>`
+              : html`
+                <select class="field-input" aria-label=${`生成报表的${targetLabel}`}
+                  @change=${(event: Event) => {
+                    const id = Number((event.target as HTMLSelectElement).value) || null;
+                    if (isServer) this.selectedServerId = id;
+                    else this.selectedInstanceId = id;
+                  }}>
+                  <option value="" .selected=${selectedId === null}>${isServer ? '全量巡检（所有可巡检服务器）' : '选择数据库实例'}</option>
+                  ${options.map(option => html`<option value=${option.id} .selected=${option.id === selectedId}>${option.name}</option>`)}
+                </select>
+                ${isServer ? html`<span>也可选择一台服务器进行单目标巡检。</span>` : ''}
+              `}
+          </div>
+        </div>
+        <div class="report-types-grid">
+          ${this.reportTypes.filter(type => (type.type === 'server_health') === isServer).map(type => html`
+            <div class="report-type-card">
+              <div class="report-type-card__icon">${icons[type.icon as keyof typeof icons]}</div>
+              <div class="report-type-card__content">
+                <div class="report-type-card__title">${type.title}</div>
+                <div class="report-type-card__desc">${type.desc}</div>
+              </div>
+              <button class="btn" aria-label=${`生成${type.title}`}
+                ?disabled=${this.generating || read !== 'ready' || options.length === 0 || (!isServer && !selectedId)}
+                @click=${() => this._generateReport(type.type)}>生成</button>
+            </div>
+          `)}
+        </div>
+      </app-card>
+    `;
   }
 
   override render() {
-    if (this.loading) {
-      return html`<div role="status" class="loading" style="flex-direction:column;gap:12px;padding:var(--space-xl);">加载中...
-          <div class="skeleton-block" style="width:100%;"></div>
-          <div class="skeleton-block" style="width:100%;"></div>
-          <div class="skeleton-block" style="width:100%;"></div>
-          <div class="skeleton-block" style="width:100%;"></div>
-          <div class="skeleton-block" style="width:100%;"></div>
-        </div>`;
-    }
-
-    if (this.error) {
-      return html`<div role="alert" class="loading" style="color: var(--danger);">${this.error}<button class="btn" @click=${() => this.loadReports()}>重试</button></div>`;
-    }
-
-    const historyPage = this.historyBrowser.select(this.reports, row => `${row.name || row.title || ''} ${row.instance_name || ''} ${row.server_name || ''} ${row.id}`, row => `${row.name || row.title || ''} ${row.id}`);
     return html`
       <div class="page">
-        <!-- 生成报表卡片 -->
-        <app-card variant="default">
-          <div slot="header">
-            ${icons['bar-chart']} 生成报表
-            <div style="font-size:var(--text-base);color:var(--muted);margin-top:var(--space-xs)">选择报表类型生成分析报告</div>
-            <div style="margin-top: var(--space-md);display:flex;align-items:center;gap:var(--space-md);flex-wrap:wrap;">
-              <div style="display:flex;gap:0;border:1px solid var(--border);border-radius:var(--radius-sm);overflow:hidden;">
-                <button style="padding:var(--space-sm) var(--space-lg);border:none;font-size:var(--text-sm);font-weight:500;cursor:pointer;background:${this.selectedTargetType === 'instance' ? 'var(--accent)' : 'var(--secondary)'};color:${this.selectedTargetType === 'instance' ? 'var(--accent-foreground)' : 'var(--text)'};" @click=${() => { this.selectedTargetType = 'instance'; this.selectedServerId = null; }}>数据库实例</button>
-                <button style="padding:var(--space-sm) var(--space-lg);border:none;font-size:var(--text-sm);font-weight:500;cursor:pointer;background:${this.selectedTargetType === 'server' ? 'var(--accent)' : 'var(--secondary)'};color:${this.selectedTargetType === 'server' ? 'var(--accent-foreground)' : 'var(--text)'};" @click=${() => { this.selectedTargetType = 'server'; this.selectedInstanceId = null; }}>服务器</button>
-              </div>
-              ${this.selectedTargetType === 'instance' ? html`
-                <select
-                  style="padding: 6px 10px; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--input); color: var(--text); font-size: var(--text-base); min-width: 200px;"
-                  @change=${(e: Event) => { this.selectedInstanceId = Number((e.target as HTMLSelectElement).value); }}
-                >
-                  <option value="">— 选择实例 —</option>
-                  ${this.instances.map(i => html`<option value=${i.id}>${i.name}</option>`)}
-                </select>
-              ` : html`
-                <select
-                  style="padding: 6px 10px; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--input); color: var(--text); font-size: var(--text-base); min-width: 200px;"
-                  @change=${(e: Event) => { this.selectedServerId = Number((e.target as HTMLSelectElement).value); }}
-                >
-                  <option value="">— 选择服务器 —</option>
-                  ${this.servers.map((srv: any) => html`<option value=${srv.id}>${srv.host}${srv.label ? ` (${srv.label})` : ''}</option>`)}
-                </select>
-              `}
-            </div>
-          </div>
-
-          <div class="report-types-grid">
-            ${this.reportTypes.map(rt => html`
-              <div class="report-type-card" @click=${() => this._generateReport(rt.type)}>
-                <div class="report-type-card__icon">${icons[rt.icon as keyof typeof icons]}</div>
-                <div class="report-type-card__content">
-                  <div class="report-type-card__title">${rt.title}</div>
-                  <div class="report-type-card__desc">${rt.desc}</div>
-                </div>
-                <button class="report-type-card__action">生成</button>
-              </div>
-            `)}
-          </div>
-        </app-card>
+        ${this._renderGeneration()}
 
         <app-card variant="default">
           <div slot="header" style="display:flex;align-items:center;justify-content:space-between;gap:var(--space-md);">
@@ -535,19 +551,45 @@ export class ReportsPage extends LitElement {
             </tbody></table></div>` : html`<app-empty-state title="暂无定时报表" description="新建计划后，系统会在到期时生成并保存报表。"><div slot="icon">${icons['clock']}</div></app-empty-state>`}
         </app-card>
 
-        <!-- 历史报告卡片 -->
-        <app-card variant="default">
-          <div slot="header">
-            ${icons['file-text']} 历史报告
-          </div>
+        ${this._renderHistory()}
+        ${this._renderConfigDialogs()}
+        ${this._renderPreview()}
+      </div>
+    `;
+  }
 
-          ${renderListBrowser(this.historyBrowser, historyPage.total, this.reports.length, "报表历史", () => this.requestUpdate(), "已载入（仅检索已载入历史）")}
+  private _renderHistory() {
+    const servers = this.selectedTargetType === 'server';
+    const scope = servers ? '服务器' : '数据库实例';
+    const content = this.historyError
+      ? html`<div class="list-browser">
+          <span role="alert">${this.historyError.message}</span>
+          <button class="btn btn-refresh" ?disabled=${this.historyLoading !== null}
+            @click=${this.refreshReadData}>重试历史</button>
+        </div>`
+      : this.historyBatch === 0
+        ? html`<div role="status" class="loading">正在读取报表历史…</div>`
+        : this._renderHistoryList(servers, scope);
+    return html`
+      <app-card variant="default">
+        <div slot="header">${icons['file-text']} 历史报告 <span>· ${scope}</span></div>
+        ${content}
+      </app-card>
+    `;
+  }
+
+  private _renderHistoryList(servers: boolean, scope: string) {
+    const scopedReports = this.reports.filter(report => isServerReport(report) === servers);
+    const historyPage = this.historyBrowser.select(scopedReports, row => `${row.name || row.title || ''} ${row.instance_name || ''} ${row.server_name || ''} ${row.id}`, row => `${row.name || row.title || ''} ${row.id}`);
+    const hasMore = this.historyTotal === null || this.reports.length < this.historyTotal;
+    return html`
+          ${renderListBrowser(this.historyBrowser, historyPage.total, scopedReports.length, "报表历史", () => this.requestUpdate(), "已载入（仅检索已载入历史）")}
           <div class="list-browser">
-            <span>可见历史总数：${this.historyTotal === null ? '未知' : this.historyTotal} · 已读取 ${this.historyBatch} 批</span>
-            <button aria-busy=${String(this.historyLoadingMore)} class="btn btn-refresh" ?disabled=${this.historyLoadingMore} @click=${() => this.loadReports()}>刷新历史</button>
-            ${this.historyTotal === null || this.reports.length < this.historyTotal ? html`<button class="btn" ?disabled=${this.historyLoadingMore} @click=${() => this.loadReports(true)}>${this.historyLoadingMore ? '读取中...' : '读取下一批历史'}</button>` : ''}
+            <span>全部类型可见历史总数：${this.historyTotal ?? '未知'} · 已读取 ${this.historyBatch} 批</span>
+            <button class="btn btn-refresh" ?disabled=${this.historyLoading !== null} @click=${this.refreshReadData}>刷新历史</button>
+            ${hasMore ? html`<button class="btn" ?disabled=${this.historyLoading !== null} @click=${() => this.loadHistory(true)}>${this.historyLoading === 'append' ? '读取中...' : '读取下一批历史'}</button>` : ''}
           </div>
-          ${this.reports.length > 0
+          ${historyPage.rows.length > 0
             ? html`
                 <div class="table-container">
                   <table class="table">
@@ -563,15 +605,15 @@ export class ReportsPage extends LitElement {
                       </tr>
                     </thead>
                     <tbody>
-                      ${historyPage.rows.map((report) => html`
+                      ${repeat(historyPage.rows, report => report.id, report => html`
                         <tr>
                           <td class="report-title">${report.name || report.title}</td>
                           <td style="text-align:center;"><span class="type-badge">${this._reportTypeLabel(report.type)}</span></td>
                           <td style="text-align:center;">
-                            <span class="type-badge" style="font-size:10px;background:${report.target_type === 'server' ? 'rgba(34,197,94,0.12);color:var(--ok)' : 'rgba(59,130,246,0.12);color:var(--info)'}">${report.target_type === 'server' ? '服务器' : '实例'}</span>
+                            <span class="type-badge" style="font-size:10px;background:${servers ? 'rgba(34,197,94,0.12);color:var(--ok)' : 'rgba(59,130,246,0.12);color:var(--info)'}">${servers ? '服务器' : '实例'}</span>
                           </td>
                           <td style="text-align:center;">
-                            ${report.target_type === 'server'
+                            ${servers
                               ? (report.server_name
                                   ? html`<span class="instance-badge">${report.server_name}</span>`
                                   : html`<span style="color: var(--muted);">—</span>`)
@@ -580,13 +622,15 @@ export class ReportsPage extends LitElement {
                                   : html`<span style="color: var(--muted);">—</span>`)
                             }
                           </td>
-                          <td style="text-align:center;"><app-badge variant="${report.status === 'completed' ? 'ok' : report.status === 'running' ? 'info' : 'danger'}">${this._statusLabel(report.status)}</app-badge></td>
+                          <td style="text-align:center;"><app-badge variant="${report.status === 'completed' ? 'ok' : report.status === 'failed' ? 'danger' : 'info'}">${this._statusLabel(report.status)}</app-badge></td>
                           <td style="text-align:center;"><span class="time-ago">${this._formatTime(report.created_at)}</span></td>
                           <td style="text-align:center;">
                             <div class="actions">
                               <button class="btn-primary" @click=${() => this._download(report)}>下载</button>
-                              <button class="btn-sm action-btn" @click=${() => this._view(report)}>查看</button>
+                              <button class="btn-sm action-btn" aria-disabled=${String(this.preview?.report.id === report.id && this.preview.state === 'loading')}
+                                @click=${(event: MouseEvent) => this._view(report, event.currentTarget as HTMLButtonElement)}>${this._previewButtonLabel(report)}</button>
                             </div>
+                            ${this._renderPreviewFeedback(report)}
                           </td>
                         </tr>
                       `)}
@@ -595,18 +639,16 @@ export class ReportsPage extends LitElement {
                 </div>
               `
             : html`
-                <app-empty-state title=${this.historyTotal === 0 ? "暂无历史报告" : "已读取批次暂无可见报告"} description=${this.historyTotal === 0 ? "选择上方的报表类型生成第一份报告" : "可继续读取后续历史，检索仅覆盖已载入记录"}>
+                <app-empty-state title=${scopedReports.length ? '没有匹配的报表' : `暂无${scope}历史报告`}
+                  description=${hasMore ? '可继续读取后续历史，检索仅覆盖已载入记录。' : ''}>
                   <div slot="icon">${icons['file-text']}</div>
                 </app-empty-state>
               `
           }
-        </app-card>
-        ${this._renderConfigDialogs()}
-      </div>
     `;
   }
 
-  private _reportTypeLabel(type: string): string {
+  private _reportTypeLabel(type?: string): string {
     const labels: Record<string, string> = {
       health: "健康检查",
       performance: "性能分析",
@@ -614,11 +656,11 @@ export class ReportsPage extends LitElement {
       capacity: "容量规划",
       server_health: "服务器巡检",
     };
-    return labels[type] || type;
+    return type ? labels[type] || type : '—';
   }
 
   private _statusLabel(status: string): string {
-    const labels: Record<string, string> = { completed: "已完成", running: "生成中", failed: "失败" };
+    const labels: Record<string, string> = { completed: "已完成", running: "生成中", pending: "生成中", failed: "失败" };
     return labels[status] || status;
   }
 
@@ -748,59 +790,52 @@ export class ReportsPage extends LitElement {
         <app-form-field label="报表类型" required><select class="field-input" .value=${this.configForm.type ?? 'health'} @change=${(e: Event) => set('type', (e.target as HTMLSelectElement).value)}>${this.reportTypes.map(t => html`<option value=${t.type}>${t.title}</option>`)}</select></app-form-field>
         <app-form-field label="目标类型" required><select class="field-input" .value=${this.configForm.server_id ? 'server' : 'instance'} @change=${(e: Event) => { const server = (e.target as HTMLSelectElement).value === 'server'; this.configForm = { ...this.configForm, instance_id: server ? undefined : this.instances[0]?.id, server_id: server ? this.servers[0]?.id : undefined, type: server ? 'server_health' : 'health' }; }}><option value="instance">数据库实例</option><option value="server">服务器</option></select></app-form-field>
         ${this.configForm.server_id ? html`<app-form-field label="服务器" required><select class="field-input" .value=${String(this.configForm.server_id)} @change=${(e: Event) => set('server_id', Number((e.target as HTMLSelectElement).value))}>${this.servers.map(s => html`<option value=${s.id}>${s.host}</option>`)}</select></app-form-field>` : html`<app-form-field label="数据库实例" required><select class="field-input" .value=${String(this.configForm.instance_id ?? '')} @change=${(e: Event) => set('instance_id', Number((e.target as HTMLSelectElement).value))}>${this.instances.map(i => html`<option value=${i.id}>${i.name}</option>`)}</select></app-form-field>`}
-        <app-form-field label="通知渠道" hint="可选，报告完成后投递"><select class="field-input" multiple @change=${(e: Event) => set('notification_channel_ids', Array.from((e.target as HTMLSelectElement).selectedOptions).map((option) => Number(option.value)))}>${this.notificationChannels.map(channel => html`<option value=${channel.id} .selected=${(this.configForm.notification_channel_ids ?? []).includes(channel.id)}>${channel.name}</option>`)}</select></app-form-field>
+        ${this._renderNotificationChannels(set)}
         <div slot="footer"><button class="btn" @click=${() => this.showConfigDialog = false}>取消</button><button class="btn-primary" ?disabled=${this.saving} @click=${this._saveConfig}>保存</button></div>
       </app-dialog>` : ''}
       ${this.showDeleteConfirm ? html`<app-dialog .open=${true} size="sm" title="删除定时报表" @app-dialog-close=${() => this.showDeleteConfirm = false}><p>删除 “${this.deletingConfig?.name}” 后无法恢复。</p><div slot="footer"><button class="btn" @click=${() => this.showDeleteConfirm = false}>取消</button><button class="btn-primary" @click=${this._deleteConfig}>删除</button></div></app-dialog>` : ''}
     `;
   }
 
+  private _renderNotificationChannels(set: (key: keyof ReportConfig, value: unknown) => void) {
+    const read = this.notificationChannelsRead;
+    if (read === 'loading') return html`<p role="status">正在读取可选通知通道…</p>`;
+    if (read === 'error' || this.notificationChannels.length === 0) {
+      const message = read === 'error' ? '暂时无法读取通知通道。' : '暂无可用的通知通道。';
+      return html`<p role="status">${message}通知通道可不选，可到「设置 → 平台设置 → 通知通道」配置。</p>`;
+    }
+    return html`
+      <app-form-field label="通知通道" hint="可选，报告完成后投递">
+        <select class="field-input" multiple
+          @change=${(event: Event) => set('notification_channel_ids', Array.from((event.target as HTMLSelectElement).selectedOptions, option => Number(option.value)))}>
+          ${this.notificationChannels.map(channel => html`
+            <option value=${channel.id} .selected=${(this.configForm.notification_channel_ids ?? []).includes(channel.id)}>${channel.name}</option>
+          `)}
+        </select>
+      </app-form-field>
+    `;
+  }
+
   private async _generateReport(type: string) {
+    if (this.generating) return;
+    const isServer = type === 'server_health';
+    const url = isServer ? '/api/servers/reports/generate' : '/api/reports/generate';
+    const body = isServer ? { type, server_id: this.selectedServerId } : { type, instanceId: this.selectedInstanceId };
+    this.generating = true;
     try {
-      if (type === 'server_health') {
-        const res = await authFetch('/api/servers/reports/generate', {
-          method: 'POST',
-          headers: this.headers,
-          body: JSON.stringify({
-            type: 'server_health',
-            server_id: this.selectedServerId || null,
-          }),
-        });
-        if (res.ok) {
-          const result = await res.json();
-          showToast(`Report generated: ${result.name}`, 'success');
-          this.loadReports();
-          this.loadStats();
-        } else {
-          const err = await res.json();
-          showToast(`Generation failed: ${err.error}`, 'error');
-        }
+      const response = await authFetch(url, { method: 'POST', headers: this.headers, body: JSON.stringify(body) });
+      if (!response.ok) {
+        const result = await response.json().catch(() => null);
+        const message = typeof result?.error === 'string' ? `：${result.error}` : '，请稍后重试。';
+        showToast(`生成报表失败${message}`, 'error');
         return;
       }
-
-      if (!this.selectedInstanceId) {
-        showToast('Please select a database instance first', 'warning');
-        return;
-      }
-      const instanceId = this.selectedInstanceId;
-
-      const res = await authFetch('/api/reports/generate', {
-        method: 'POST',
-        headers: this.headers,
-        body: JSON.stringify({ type, instanceId }),
-      });
-
-      if (res.ok) {
-        const result = await res.json();
-        showToast(`Report generated: ${result.name}`, 'success');
-        this.loadReports();
-        this.loadStats();
-      } else {
-        const err = await res.json();
-        showToast(`Generation failed: ${err.error}`, 'error');
-      }
-    } catch (err: any) {
-      showToast(`Generation failed: ${err.message}`, 'error');
+      showToast('报表已生成。', 'success');
+      await this.refreshReadData();
+    } catch {
+      showToast('暂时无法确认生成结果，请先查看历史报告。', 'error');
+    } finally {
+      this.generating = false;
     }
   }
 
@@ -810,7 +845,11 @@ export class ReportsPage extends LitElement {
       const res = await authFetch(`/api/reports/${report.id}/download`, {
         headers: token ? { Authorization: `Bearer ${token}` } : {},
       });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      if (res.status === 404) {
+        showToast(previewMessages['not-found'], 'error');
+        return;
+      }
+      if (!res.ok) throw new Error();
       const blob = await res.blob();
       const url = URL.createObjectURL(blob);
       const link = document.createElement('a');
@@ -821,31 +860,66 @@ export class ReportsPage extends LitElement {
       link.remove();
       // Allow the browser to consume the Blob before releasing it.
       setTimeout(() => URL.revokeObjectURL(url), 1000);
-    } catch (err: any) {
-      showToast(`Download failed: ${err.message}`, 'error');
+    } catch {
+      showToast('无法下载这份报表，请稍后重试。', 'error');
     }
   }
 
-  private async _view(report: Report) {
-    try {
-      const res = await authFetch(`/api/reports/${report.id}`, {
-        headers: this.headers,
-      });
-      if (res.ok) {
-        const data = await res.json();
-        if (data.content) {
-          // Open in new window with HTML content via Blob URL
-          const blob = new Blob([data.content], { type: 'text/html' });
-          const url = URL.createObjectURL(blob);
-          window.open(url, '_blank');
-          setTimeout(() => URL.revokeObjectURL(url), 1000);
-        } else {
-          showToast('Report content is empty', 'warning');
-        }
-      }
-    } catch (err: any) {
-      showToast(`View failed: ${err.message}`, 'error');
+  private _previewButtonLabel(report: Report): string {
+    if (this.preview?.report.id === report.id) {
+      if (this.preview.state === 'loading') return '读取中…';
+      if (this.preview.state === 'empty-response' || this.preview.state === 'unavailable') return '重试查看';
     }
+    return '查看';
+  }
+
+  private _renderPreviewFeedback(report: Report) {
+    const preview = this.preview;
+    if (preview?.report.id !== report.id || preview.state === 'ready') return '';
+    if (preview.state === 'loading') return html`<span role="status" class="report-view-message">正在读取正文…</span>`;
+    return html`<p class="report-view-message" role=${preview.state === 'no-content' ? 'status' : 'alert'}>
+      ${previewMessages[preview.state]}
+    </p>`;
+  }
+
+  private async _view(report: Report, trigger: HTMLButtonElement) {
+    if (this.preview?.report.id === report.id && this.preview.state === 'loading') return;
+    const pending = { report, trigger, state: 'loading' } as const;
+    this.preview = pending;
+    const result = await readReportDetail(report.id);
+    if (this.isConnected && this.preview === pending && trigger.isConnected) {
+      this.preview = { report, trigger, ...result };
+    }
+  }
+
+  private async _closePreview() {
+    const trigger = this.preview?.trigger;
+    this.preview = null;
+    await this.updateComplete;
+    if (trigger?.isConnected) trigger.focus({ preventScroll: true });
+  }
+
+  private _renderPreview() {
+    const preview = this.preview;
+    if (!preview || preview.state !== 'ready') return '';
+    const { report, content } = preview;
+    // The stored export format can be PDF or JSON even when the saved preview is HTML.
+    const looksLikeHtml = /^\s*<(?:!doctype html\b|!--|[a-z][\w-]*(?:\s|\/?>))/i.test(content);
+    const body = looksLikeHtml
+      ? html`<iframe class="report-preview-frame" title="报表正文" sandbox="" tabindex="-1" .srcdoc=${previewHtml(content)}></iframe>`
+      : /^(?:%PDF-|JVBERi0)/.test(content.trimStart())
+        ? html`<p>此报表可下载后查看。</p>`
+        : html`<pre class="report-preview-text">${content}</pre>`;
+    return html`
+      <app-dialog .open=${true} size="wide" title=${report.name || report.title || '报表预览'}
+        @app-dialog-close=${this._closePreview}>
+        ${body}
+        <div slot="footer">
+          <button class="btn" @click=${() => this._download(report)}>下载</button>
+          <button class="btn-primary" @click=${this._closePreview}>关闭</button>
+        </div>
+      </app-dialog>
+    `;
   }
 }
 
