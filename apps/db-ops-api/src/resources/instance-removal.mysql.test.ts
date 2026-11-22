@@ -7,6 +7,8 @@ import { ToolRegistry } from '@slide/agent-core';
 import { MigrationRunner } from '../migrations/runner.js';
 import type { MigrationPool } from '../migrations/types.js';
 import { InstanceRemovalResponseSchema } from '../contracts/public-api.js';
+import { requireInstanceAccess, type AccessLevel } from '../auth/require-instance-access.js';
+import { requirePermission } from '../auth/require-permission.js';
 
 const control = vi.hoisted(() => ({ pool: null as Pool | null }));
 vi.mock('../db-connection', () => ({ dbConnection: { getPool: () => control.pool, isConnected: () => !!control.pool },
@@ -23,7 +25,7 @@ import { cronJobService } from '../cron/cron-job-service.js';
 import { cronAuthorityService } from '../cron/cron-authority.js';
 import { cronRunStore } from '../cron/cron-run-store.js';
 import { instanceAccessLifecycle, InstanceAccessLifecycle } from './instance-access-lifecycle.js';
-import { instanceRemovalService, instanceRemovalStore, InstanceRemovalService } from './instance-removal-service.js';
+import { instanceRemovalService, instanceRemovalStore, InstanceRemovalService, MysqlInstanceRemovalStore } from './instance-removal-service.js';
 import { instanceHistoryContext } from './instance-history-context.js';
 import { monitorCollector } from '../monitor-collector.js';
 import { MysqlInstanceHostStore } from './instance-host-service.js';
@@ -31,6 +33,7 @@ import { MysqlResourceRelationStore } from './resource-service.js';
 import { DatabaseAuditLogStore } from '../audit/audit-log.js';
 
 const port = Number(process.env.INSTANCE_REMOVAL_TEST_MYSQL_PORT);
+const mysqlConfig = { host: '127.0.0.1', port, user: 'root', password: process.env.INSTANCE_REMOVAL_TEST_MYSQL_PASSWORD ?? '' };
 describe.skipIf(!port)('instance removal / isolated MySQL', () => {
   let admin: Pool, pool: Pool, instanceId: number, serverId: number;
   let manager: CronManager;
@@ -38,9 +41,9 @@ describe.skipIf(!port)('instance removal / isolated MySQL', () => {
   const database = `max119_removal_${process.pid}`;
 
   beforeAll(async () => {
-    admin = mysql.createPool({ host: '127.0.0.1', port, user: 'root', password: '' });
+    admin = mysql.createPool(mysqlConfig);
     await admin.query(`CREATE DATABASE ${database}`);
-    pool = mysql.createPool({ host: '127.0.0.1', port, user: 'root', password: '', database, connectionLimit: 12 });
+    pool = mysql.createPool({ ...mysqlConfig, database, connectionLimit: 12 });
     await new MigrationRunner(pool as unknown as MigrationPool).run();
     control.pool = pool;
     instanceAccessLifecycle.configure(id => instanceRemovalStore.available(id));
@@ -84,19 +87,21 @@ describe.skipIf(!port)('instance removal / isolated MySQL', () => {
     return (await cronJobService.getJobById(result.insertId))!;
   }
   async function connect() {
-    expect(await databaseService.addConnection(instanceId, 'fixture', { host: '127.0.0.1', port, user: 'root', password: '', database, db_type: 'mysql' })).toBe(true);
+    expect(await databaseService.addConnection(instanceId, 'fixture', { ...mysqlConfig, database, db_type: 'mysql' })).toBe(true);
     return databaseService.getConnection(instanceId)!;
   }
   async function snapshot() {
     const [rows] = await pool.execute<any[]>('SELECT * FROM database_instances WHERE id = ?', [instanceId]);
     return rows[0];
   }
-  async function routeApp() {
+  async function routeApp(service: Pick<typeof instanceDatabaseService, 'deleteInstance'> = instanceDatabaseService, level: AccessLevel = 'admin') {
     const app = Fastify();
     const source = readFileSync(new URL('../../server.ts', import.meta.url), 'utf8');
     const routes = source.slice(source.indexOf("  fastify.delete('/api/database/instances/:id'"), source.indexOf('  // 重新加载实例连接'));
     const register = new Function('fastify', 'verifyToken', 'requirePermission', 'requireInstanceAccess', 'instanceDatabaseService', 'InstanceRemovalResponseSchema', transpileModule(routes, {}).outputText);
-    register(app, async () => {}, () => async () => {}, () => async () => {}, instanceDatabaseService, InstanceRemovalResponseSchema);
+    register(app, async (request: { user?: unknown }) => {
+      request.user = { permissions: ['instance:delete'], instanceScopes: { [instanceId]: level } };
+    }, requirePermission, requireInstanceAccess, service, InstanceRemovalResponseSchema);
     return app;
   }
 
@@ -157,6 +162,63 @@ describe.skipIf(!port)('instance removal / isolated MySQL', () => {
       expect(response.headers['x-instance-lifecycle-state']).toBe('deleted');
       expect(response.json()).toHaveLength(1);
     } finally { await historyApp.close(); }
+  });
+
+  it('returns a persisted tombstone over HTTP without a cleanup runtime (#1016)', async () => {
+    const apiOnly = new InstanceRemovalService(instanceRemovalStore, new InstanceAccessLifecycle());
+    const deleteInstance = vi.fn((id: number) => apiOnly.remove(id));
+    const app = await routeApp({ deleteInstance });
+    const deniedApp = await routeApp({ deleteInstance }, 'read-write');
+    const request = { method: 'DELETE', url: `/api/database/instances/${instanceId}` } as const;
+    try {
+      const available = await snapshot();
+      expect(available.lifecycle_state).toBe('available');
+      const first = await app.inject(request);
+      expect(first.statusCode).toBe(503);
+      expect(first.json()).toEqual({ error: 'INSTANCE_CLEANUP_UNAVAILABLE', lifecycle_state: 'deleting', reasons: [] });
+      expect(await snapshot()).toEqual(available);
+
+      await instanceRemovalStore.begin(instanceId);
+      const deleting = await snapshot();
+      expect(deleting.lifecycle_state).toBe('deleting');
+      const pending = await app.inject(request);
+      expect(pending.statusCode).toBe(503);
+      expect(pending.json()).toEqual(first.json());
+      expect(await snapshot()).toEqual(deleting);
+
+      expect(await instanceDatabaseService.deleteInstance(instanceId)).toEqual({ success: true, state: 'deleted' });
+      const tombstone = await snapshot();
+      expect((await deniedApp.inject(request)).statusCode).toBe(403);
+      expect(deleteInstance).toHaveBeenCalledTimes(2);
+
+      const repeat = await app.inject(request);
+      expect(repeat.statusCode).toBe(200);
+      expect(repeat.json()).toEqual({ message: '删除成功', lifecycle_state: 'deleted' });
+      expect(await snapshot()).toEqual(tombstone);
+    } finally {
+      await Promise.all([app.close(), deniedApp.close()]);
+    }
+  });
+
+  it('rolls back an inherited uncommitted tombstone before observing the committed row', async () => {
+    const single = mysql.createPool({ ...mysqlConfig, database, connectionLimit: 1 });
+    try {
+      const before = await snapshot();
+      const dirty = await single.getConnection();
+      try {
+        await dirty.beginTransaction();
+        await dirty.execute("UPDATE database_instances SET lifecycle_state = 'deleted' WHERE id = ?", [instanceId]);
+      } finally {
+        dirty.release();
+      }
+      const store = new MysqlInstanceRemovalStore(() => single);
+      await expect(store.observe(instanceId)).resolves.toBe('available');
+      expect(await snapshot()).toEqual(before);
+      await expect(store.observe(instanceId)).resolves.toBe('available');
+      await expect(instanceRemovalService.remove(instanceId)).resolves.toEqual({ success: true, state: 'deleted' });
+    } finally {
+      await single.end();
+    }
   });
 
   it('multi-instance scopes are disabled without nulling targets; late scheduled and manual executions never reach the executor', async () => {
