@@ -61,10 +61,16 @@ export function renderInvestigationDetail(controller: InvestigationsController, 
   };
   const otherEvents = events.length > 1 ? html`<details data-restore-open><summary>其他来源事件</summary><ul>${events.slice(1).map(id =>
     html`<li>${renderEventLink(id)}</li>`)}</ul></details>` : nothing;
-  const summary = result?.result.summary?.trim() || '未提供调查结论';
+  const summary = result?.result.summary || '未提供调查结论';
+  const summaryPreview = recordExcerpt(summary);
+  const gap = result?.result.unresolvedQuestions.find(question => question.trim());
+  const priorities = ['critical', 'high', 'medium', 'low'];
   const recommendations = [...(result?.result.recommendations ?? [])].sort((a,b) =>
-    ['high','medium','low'].indexOf(a.priority) - ['high','medium','low'].indexOf(b.priority));
-  const recommendation = recommendations[0]?.action || '先核对已有证据与停止原因。';
+    priorities.indexOf(a.priority) - priorities.indexOf(b.priority));
+  const firstRecommendation = recommendations[0]?.action;
+  const recommendation = active ? '查看本次执行进度，等待结果保存。'
+    : firstRecommendation && Array.from(firstRecommendation.trim()).length <= 100 ? firstRecommendation
+    : gap ? '先核对上面的证据缺口及相关记录。' : '先核对已有证据与停止原因。';
   return html`
     <a @click=${(e:MouseEvent)=>returnToWorkbench(e,returnTo)} href=${returnTo}>返回来源页面</a>
     <app-card class="investigation-decision"><span slot="header">调查详情 · V${detail.version}</span>
@@ -82,40 +88,46 @@ export function renderInvestigationDetail(controller: InvestigationsController, 
       <section aria-label="本次调查结果">
       ${result ? html`
         ${active ? html`<p role="status">当前执行仍在进行；以下为上一份已保存结果 V${result.version}。</p>` : nothing}
-        <p class="investigation-result-summary">${recordExcerpt(summary)}</p>
-        <p class="investigation-next"><strong>建议下一步</strong> ${recordExcerpt(recommendation, 100)}</p>
+        <p class="investigation-result-summary">${summaryPreview}</p>
+        <p><strong>主要证据缺口</strong> ${gap ? recordExcerpt(gap, 120) : '未记录具体缺口，不代表根因与恢复已验证。'}</p>
+        <p class="investigation-next"><strong>建议下一步</strong> ${recommendation}</p>
         <div class="investigation-next-actions">
           ${events[0] ? renderEventLink(events[0], 'btn-primary') : nothing}
           <button class=${events.length ? 'btn' : 'btn-primary'} @click=${options.onEvidence}>查看完整结果与证据</button>
           ${otherEvents}
         </div>
         <details class="investigation-full-result"><summary>展开完整结论与检查</summary>
-        <p class="investigation-result-summary">${summary}</p>
-        <p class="muted">执行状态与业务问题分别记录；工具返回不代表根因或恢复已验证。</p>
+        ${summaryPreview !== summary ? html`<p class="investigation-result-summary">${summary}</p>` : nothing}
         <h3>已完成的检查</h3>
-        ${result.result.facts.length ? html`<ul>${result.result.facts.slice(0, 6).map(f => html`<li>${f.statement}</li>`)}</ul>`
+        ${result.result.facts.length ? html`<ul>${result.result.facts.map(f => html`<li>${f.statement}</li>`)}</ul>`
           : html`<p>没有已绑定的检查事实。历史结果可能未整理工具记录，请查看证据与执行过程。</p>`}
-        <h3>证据缺口</h3>${result.result.unresolvedQuestions.length ? result.result.unresolvedQuestions.map(q => html`<p>${q}</p>`) : html`<p>未记录具体缺口，不代表根因与恢复已验证。</p>`}
+        ${result.result.unresolvedQuestions.length ? html`<h3>已保存的证据缺口</h3>
+          ${result.result.unresolvedQuestions.map(q => html`<p class="investigation-result-summary">${q}</p>`)}` : nothing}
         <h3>${active ? '最近结果的停止原因' : '停止原因'}</h3>
         <p>${result.result.execution?.reasonCode ? stopLabels[result.result.execution.reasonCode] ?? '已记录停止原因码，请展开执行过程与技术详情核对原始记录。' : '历史记录未保留具体停止原因；不能据此认定检查已完整完成。'}</p>
-        <h3>建议（尚未执行）</h3>${recommendations.length ? recommendations.map(r => html`<p>${r.action}</p>`) : html`<p>${recommendation}</p>`}
+        ${recommendations.length ? html`<h3>已保存的建议</h3>${recommendations.map(r => html`<p class="investigation-result-summary">${r.action}</p>`)}` : nothing}
         </details>
-      ` : html`<p role="status">${active ? '正在检查，尚无持久化结果。' : execution === 'cancelled' ? '执行已取消，未发布结果。可核对已保留的执行过程。' : '暂无持久化结果；可查看已保留的证据与执行过程。'}</p>
+      ` : html`<p role="status">${active ? '正在检查，尚无持久化结果。'
+        : detail.legacyAnalysis ? '历史记录只保存了自由文本，未记录结构化证据缺口。'
+        : execution === 'cancelled' ? '执行已取消，未发布结果。' : '暂无持久化结果，证据缺口待确认。'}</p>
+        <p class="investigation-next"><strong>建议下一步</strong> ${active ? '查看本次执行进度，等待结果保存。'
+          : detail.legacyAnalysis ? '展开历史原文，核对当时记录的依据。' : '查看已有证据与执行过程。'}</p>
         ${events[0] ? renderEventLink(events[0], 'btn') : nothing}${otherEvents}`}
       </section>
       <details aria-label="调查目标"><summary>调查目标</summary><p style="white-space:pre-wrap;overflow-wrap:anywhere">${detail.goal}</p></details>
       <p class="muted">${detail.profileId === 'system' ? '平台调查' : '资源调查'} · 只读检查</p>
       <p class="investigation-resource-links">${detail.resources.map(ref => html`<a href=${resourceDetailUrl(ref.type, ref.id)}>返回原资源 ${ref.type}:${ref.id}</a> `)}</p>
-      ${detail.legacyAnalysis ? html`<p>历史 Analysis #${detail.legacyAnalysis.analysisId} · 只读兼容结果 · ${executionLabels[detail.legacyAnalysis.status] ?? detail.legacyAnalysis.status}</p>
-        <p class="muted">原结果不补跑；根因与恢复尚未验证。</p><pre class="legacy-analysis-result" style="white-space:pre-wrap;overflow-wrap:anywhere">${detail.legacyAnalysis.view.summary}</pre>` : nothing}
-      <button class="btn evidence-toggle" @click=${options.onEvidence}>查看证据与成果</button>
+      ${detail.legacyAnalysis ? html`<details><summary>展开历史调查原文</summary>
+        <p>历史 Analysis #${detail.legacyAnalysis.analysisId} · ${executionLabels[detail.legacyAnalysis.status] ?? detail.legacyAnalysis.status}</p>
+        <pre class="legacy-analysis-result" style="white-space:pre-wrap;overflow-wrap:anywhere">${detail.legacyAnalysis.view.summary}</pre></details>` : nothing}
+      ${!result ? html`<button class="btn" @click=${options.onEvidence}>查看证据与成果</button>` : nothing}
       <button aria-busy=${String(controller.busy)} class="btn btn-refresh" ?disabled=${controller.busy} @click=${() => void controller.select(detail.id)}>刷新调查</button>
       ${active ? html`<button class="btn" ?disabled=${controller.busy || controller.operationForbidden || controller.cancelRequested || !controller.online}
         @click=${() => void controller.cancel()}>${controller.cancelRequested ? '等待取消确认' : '取消本次执行'}</button>` : nothing}
       ${controller.cancelRequested ? html`<p role="status">取消请求已发送，等待后端确认；工具可能仍在收尾。</p>` : nothing}
     </app-card>
     ${options.sourceEvidence ? html`<details class="investigation-source"><summary>调查来源与授权事实</summary>${options.sourceEvidence}</details>` : nothing}
-    ${result&&!active&&result.result.unresolvedQuestions.length&&detail.lifecycle!=='closed'&&detail.lifecycle!=='archived'?html`<app-card><span slot="header">需要你处理 · 当前调查记录</span><p>${result.result.unresolvedQuestions[0]}</p><button class="btn" @click=${()=>document.querySelector('investigation-supplement')?.scrollIntoView({block:'center'})}>补充当前缺口</button><p class="muted">来自当前结果 V${result.version}，不创建第二套待办或事件状态。</p></app-card>`:nothing}
+    ${result&&!active&&result.result.unresolvedQuestions.length&&detail.lifecycle!=='closed'&&detail.lifecycle!=='archived'?html`<app-card><span slot="header">需要你处理 · 当前调查记录</span><button class="btn" @click=${()=>document.querySelector('investigation-supplement')?.scrollIntoView({block:'center'})}>补充当前缺口</button><p class="muted">来自当前结果 V${result.version}，不创建第二套待办或事件状态。</p></app-card>`:nothing}
     ${detail.profileId === 'system' ? html`<system-investigation-facts .investigationId=${detail.id} .version=${detail.version}
       .disabled=${active || controller.busy || controller.operationForbidden || !controller.online || detail.lifecycle === 'closed' || detail.lifecycle === 'archived'}
       @platform-verification-saved=${() => void controller.select(detail.id)}></system-investigation-facts>` : nothing}
