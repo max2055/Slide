@@ -9,6 +9,14 @@ import { llmService } from './llm-service.js';
 import { aiAnalysisDatabaseService } from './ai-analysis-database-service.js';
 import mysql from 'mysql2/promise';
 import { projectDatabaseLogForModel } from './security/database-log-egress.js';
+import { instanceAccessLifecycle } from './resources/instance-access-lifecycle.js';
+
+export interface DatabaseLogCollectionResult {
+  succeeded: number;
+  unavailable: number;
+  failed: number;
+  reason?: 'PLATFORM_STORAGE_UNAVAILABLE' | 'INSTANCE_ENUMERATION_UNAVAILABLE' | 'NO_SUPPORTED_INSTANCES';
+}
 
 export interface DetectedPattern {
   pattern: string;
@@ -52,38 +60,44 @@ class DatabaseLogService {
   /**
    * 主采集入口：遍历所有实例，采集错误日志
    */
-  async collectLogs(): Promise<void> {
-    const pool = this.getPool();
-    if (!pool) {
-      console.warn('[日志] 系统数据库未连接，跳过日志采集');
-      return;
-    }
+  async collectLogs(signal?: AbortSignal): Promise<DatabaseLogCollectionResult> {
+    signal?.throwIfAborted();
+    const result: DatabaseLogCollectionResult = { succeeded: 0, unavailable: 0, failed: 0 };
+    if (!this.getPool()) return { ...result, reason: 'PLATFORM_STORAGE_UNAVAILABLE' };
 
-    const instances = await instanceDatabaseService.getAllInstances();
-    if (instances.length === 0) {
-      return;
+    let instances;
+    try {
+      instances = await instanceDatabaseService.getAllInstances();
+    } catch {
+      signal?.throwIfAborted();
+      return { ...result, reason: 'INSTANCE_ENUMERATION_UNAVAILABLE' };
     }
-
     for (const instance of instances) {
+      signal?.throwIfAborted();
+      if (instance.db_type !== 'mysql' && instance.db_type !== 'postgresql') continue;
       try {
-        if (instance.db_type === 'mysql') {
-          await this.collectMySQLErrorLogs(instance);
-        } else if (instance.db_type === 'postgresql') {
-          await this.collectPostgreSQLLogs(instance);
-        }
+        const collected = await instanceAccessLifecycle.track(instance.id, () => instance.db_type === 'mysql'
+          ? this.collectMySQLErrorLogs(instance, signal)
+          : this.collectPostgreSQLLogs(instance, signal));
+        result[collected ? 'succeeded' : 'unavailable']++;
       } catch (error) {
+        signal?.throwIfAborted();
+        result.failed++;
         console.error(`[日志] 采集实例 ${instance.name} 日志失败:`, error);
       }
     }
+    signal?.throwIfAborted();
+    if (!result.succeeded && !result.unavailable && !result.failed) result.reason = 'NO_SUPPORTED_INSTANCES';
+    return result;
   }
 
   /**
    * MySQL 8.0.22+ error_log 的 LOGGED 是微秒级主键。
    * 用十进制字符串保留子毫秒顺序，并以已落库的连续前缀恢复水位。
    */
-  private async collectMySQLErrorLogs(instance: any): Promise<void> {
+  private async collectMySQLErrorLogs(instance: any, signal?: AbortSignal): Promise<boolean> {
     const conn = databaseService.getConnection(instance.id);
-    if (!conn?.connected || !conn.pool || this.mysqlCollecting.has(instance.id)) return;
+    if (!conn?.connected || !conn.pool || this.mysqlCollecting.has(instance.id)) return false;
 
     this.mysqlCollecting.add(instance.id);
     const newLogs: DatabaseLog[] = [];
@@ -96,9 +110,10 @@ class DatabaseLogService {
       );
       if (!checkResult[0]?.cnt) {
         console.warn(`[日志] [${instance.name}] performance_schema.error_log 不可用，跳过`);
-        return;
+        return false;
       }
 
+      signal?.throwIfAborted();
       const [positions] = await pool.execute<mysql.RowDataPacket[]>(
         `SELECT MAX(source_position) AS position FROM database_logs
          WHERE instance_id = ? AND source = 'mysql_error'`, [instance.id]
@@ -112,7 +127,10 @@ class DatabaseLogService {
          ${lastPosition == null ? '' : 'WHERE LOGGED > FROM_UNIXTIME(CAST(? AS DECIMAL(20,6)))'}
          ORDER BY LOGGED ASC LIMIT 200`, lastPosition == null ? [] : [lastPosition]
       );
+      await instanceAccessLifecycle.assertAvailable(instance.id);
       for (const row of rows) {
+        signal?.throwIfAborted();
+        if (instanceAccessLifecycle.isRevoked(instance.id)) return false;
         const position = row.source_position;
         if (typeof position !== 'string' || !/^\d{1,14}\.\d{6}$/.test(position)) {
           throw new Error('MySQL 日志源水位无效');
@@ -129,10 +147,11 @@ class DatabaseLogService {
         };
         if (await this.insertLog(log, position)) newLogs.push(log);
       }
+      return true;
     } finally {
       this.mysqlCollecting.delete(instance.id);
       // 只分析已确认新插入的行；失败行及幂等重取不产生分析。
-      if (newLogs.length) {
+      if (newLogs.length && !signal?.aborted && !instanceAccessLifecycle.isRevoked(instance.id)) {
         console.log(`[日志] [${instance.name}] 采集 ${newLogs.length} 条 MySQL 错误日志`);
         this.triggerLogAnalysis(newLogs, instance.id).catch((err) => {
           console.error(`[日志] [${instance.name}] AI 分析触发失败:`, err);
@@ -145,10 +164,10 @@ class DatabaseLogService {
    * 采集 PostgreSQL 日志代理信号（pg_stat_database）
    * PostgreSQL 错误日志写入 OS 文件，不可通过 SQL 直接读取
    */
-  private async collectPostgreSQLLogs(instance: any): Promise<void> {
+  private async collectPostgreSQLLogs(instance: any, signal?: AbortSignal): Promise<boolean> {
     const conn = databaseService.getConnection(instance.id);
     if (!conn || !conn.connected || !conn.pgClient) {
-      return;
+      return false;
     }
 
     const previousStats = this.pgLastStats.get(instance.id);
@@ -275,6 +294,8 @@ class DatabaseLogService {
       }
 
       // 单条批量写入保证这一轮信号全部成功或全部失败；失败时保留旧基线。
+      await instanceAccessLifecycle.assertAvailable(instance.id);
+      signal?.throwIfAborted();
       if (newLogs.length > 0) {
         const pool = this.getPool();
         if (!pool) throw new Error('系统数据库未连接');
@@ -290,7 +311,7 @@ class DatabaseLogService {
       this.pgLastStats.set(instance.id, statsCache);
       this.lastCollectTime.set(instance.id, new Date());
 
-      if (newLogs.length > 0) {
+      if (newLogs.length > 0 && !signal?.aborted && !instanceAccessLifecycle.isRevoked(instance.id)) {
         console.log(`[日志] [${instance.name}] 采集 ${newLogs.length} 条 PostgreSQL 异常信号`);
 
         // 触发 AI 分析（fire-and-forget）
@@ -298,8 +319,9 @@ class DatabaseLogService {
           console.error(`[日志] [${instance.name}] AI 分析触发失败:`, err);
         });
       }
-    } catch (error: any) {
-      console.error(`[日志] [${instance.name}] PostgreSQL 日志采集异常:`, error.message);
+      return true;
+    } catch (error) {
+      throw new Error('PostgreSQL 日志采集异常', { cause: error });
     }
   }
 

@@ -5221,6 +5221,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
   registerWorkflowHandlers(workflowRegistry, {
     ...(systemComposition.enabled ? { systemEventBridge: systemComposition.bridge } : {}),
     investigationEngine: getAgentEngine,
+    databaseLogService,
     faultDiagnosisService, monitorCollector, baselineCalculator, alertEngine,
     workflowStore, capacityConsistencyMonitor, notificationScheduler, enqueueNotificationDispatch,
     reportSchedule: {
