@@ -194,6 +194,7 @@ export class NativeTemplateConfiguration extends LitElement {
   @state() private busy = false;
   @state() private error = '';
   @state() private statusError = '';
+  private statusRequest = 0;
   @state() private polling = false;
   @state() private pollLimitReached = false;
   private pollTimer?: ReturnType<typeof setTimeout>;
@@ -286,7 +287,7 @@ export class NativeTemplateConfiguration extends LitElement {
     // Intents are keyed by the current principal + resource: a session switch
     // reads the new principal's records and never projects the old one's.
     this.unresolved = this.storedIntents();
-    this.loaded = false; this.dirty = false; this.error = '权限或登录状态已变更，请重新打开资源后读取配置';
+    this.loaded = false; this.dirty = false; this.error = '权限或登录状态已变更，请重新读取采集配置';
   };
   private readonly navigate = (event: Event) => {
     if (!this.dirty) return;
@@ -393,7 +394,7 @@ export class NativeTemplateConfiguration extends LitElement {
       if (generation !== this.generation) return;
       if (binding.source === 'template' && !this.terminal(status)) this.startPolling();
     } catch (error) {
-      if (generation === this.generation) this.error = nativeError(error);
+      if (generation === this.generation) this.error = `采集配置读取失败。${nativeError(error)}`;
     } finally { if (generation === this.generation) this.busy = false; }
   }
   /**
@@ -427,19 +428,21 @@ export class NativeTemplateConfiguration extends LitElement {
   private startPolling() { this.stopPolling(); this.pollCount = 0; this.pollLimitReached = false; this.polling = true; this.schedulePoll(); }
   private schedulePoll() { this.pollTimer = setTimeout(() => void this.refreshStatus(), 2000); }
   private async refreshStatus() {
-    const generation = this.generation;
+    const generation = this.generation, request = ++this.statusRequest;
     this.statusError = '';
     try {
       const status = await readCollectionStatus(this.resourceType, this.resourceId);
-      if (generation !== this.generation || !this.isConnected) return;
+      if (request !== this.statusRequest || generation !== this.generation || !this.isConnected) return;
       this.collection = status;
       if (this.terminal(status)) { this.stopPolling(); return; }
       if (++this.pollCount >= 15) { this.pollLimitReached = true; this.stopPolling(); return; }
       if (this.polling) this.schedulePoll();
     } catch (error) {
-      if (generation !== this.generation) return;
-      if (error instanceof MetricRequestError && [401, 403, 404].includes(error.status)) this.accessChanged();
-      this.statusError = nativeError(error); this.stopPolling();
+      if (request !== this.statusRequest || generation !== this.generation) return;
+      if (error instanceof MetricRequestError && [401, 403, 404].includes(error.status)) { this.accessChanged(); return; }
+      this.collection = null;
+      this.statusError = '采集状态读取失败';
+      this.stopPolling();
     }
   }
 
@@ -1401,7 +1404,7 @@ export class NativeTemplateConfiguration extends LitElement {
         <div><dt>发布（已提交）</dt><dd>${binding?.revision ?? '—'}${binding?.published_at ? html` · ${new Date(binding.published_at).toLocaleString('zh-CN')}` : nothing}</dd></div>
         <div><dt>等待应用</dt><dd>${pending ? `目标版本 ${pending.target_revision} · ${new Date(pending.decided_at).toLocaleString('zh-CN')}` : '无待应用版本'}</dd></div>
         <div><dt>调度应用</dt><dd>${application ? `${statusLabel(application.status)} · 已应用 ${application.applied_revision ?? '—'}` : '未知'}</dd></div>
-        <div><dt>${stopped ? '历史首样本' : '首样本'}</dt><dd>${status?.formal_visibility.last_observed_at ? new Date(status.formal_visibility.last_observed_at).toLocaleString('zh-CN') : '尚未收到正式首样本'}</dd></div>
+        <div><dt>${stopped ? '历史首样本' : '首样本'}</dt><dd>${status?.formal_visibility.last_observed_at ? new Date(status.formal_visibility.last_observed_at).toLocaleString('zh-CN') : status ? '尚未收到正式首样本' : '未知'}</dd></div>
         <div><dt>${stopped ? '历史正式采集' : '正式采集'}</dt><dd>${status ? statusLabel(status.formal_visibility.state) : '未知'}${status?.formal_visibility.generation ? ` · 第 ${status.formal_visibility.generation} 代` : ''}</dd></div>
       </dl>
       <p class="muted">已发布、等待应用、已应用、等待首样本与正式采集分别确认；配置发布成功或 API 返回 200 不代表健康。</p>
@@ -1412,7 +1415,7 @@ export class NativeTemplateConfiguration extends LitElement {
         未确认的意图会保留，编辑、放弃或重新加载都不会清掉它。</p>` : nothing}
       ${this.intentStorageError ? html`<p class="notice error" role="alert">${this.intentStorageError}</p>` : nothing}
       ${this.intentStorageLimited ? html`<p class="notice" role="status">${intentStorageMessage}</p>` : nothing}
-      <div class="actions"><button class="btn btn-refresh" .disabled=${this.busy} @click=${() => void this.refreshStatus()}>刷新状态</button></div>
+      <div class="actions"><button class="btn btn-refresh" .disabled=${this.busy} @click=${() => void this.refreshStatus()}>${this.statusError ? '重试读取采集状态' : '刷新状态'}</button></div>
       ${this.statusError ? html`<p role="alert">${this.statusError}</p>` : nothing}
       ${this.polling ? html`<p role="status">正在确认：发布 → 应用 → 首样本 → 正式可见（最多刷新 15 次）</p>` : nothing}
       ${this.pollLimitReached ? html`<p role="status">本次自动刷新已结束，尚未确认正式可见。</p>` : nothing}
@@ -1426,7 +1429,8 @@ export class NativeTemplateConfiguration extends LitElement {
       ${!this.loaded && !this.error ? html`<div class="notice" role="status">正在读取采集配置…</div>` : nothing}
       ${this.loaded && !this.canManage ? html`<p class="notice">只读：未获得此资源的管理权限。</p>` : nothing}
       ${this.connectionPending ? html`<p class="notice" role="status">连接信息尚未保存，请先保存连接后再检查或应用采集配置。</p>` : nothing}
-      ${this.error && !this.previewIssue ? html`<p class="notice error" role="alert">${this.error}</p>` : nothing}
+      ${this.error && !this.previewIssue ? html`<p class="notice error" role="alert">${this.error}</p>
+        ${!this.loaded && this.resourceId > 0 ? html`<button class="btn btn-refresh" ?disabled=${this.busy} @click=${this.load}>重试读取采集配置</button>` : nothing}` : nothing}
       ${this.loaded ? html`
         ${this.renderCatalog()}
         ${this.renderUnbindImpact()}

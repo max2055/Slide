@@ -122,9 +122,7 @@ class SchemaDatabaseService {
    */
   async getLatestSnapshot(instanceId: number): Promise<TableSchemaRow[]> {
     const pool = this.getPool();
-    if (!pool) {
-      return [];
-    }
+    if (!pool) throw new Error('SCHEMA_READ_FAILED');
 
     try {
       const [rows] = await pool.execute(
@@ -143,7 +141,7 @@ class SchemaDatabaseService {
       return rows as TableSchemaRow[];
     } catch (error) {
       console.error('获取最新快照失败:', error);
-      return [];
+      throw error;
     }
   }
 
@@ -152,9 +150,7 @@ class SchemaDatabaseService {
    */
   async getSnapshotTimes(instanceId: number, limit: number = 10): Promise<{ snapshot_time: Date; tables: number; columns: number }[]> {
     const pool = this.getPool();
-    if (!pool) {
-      return [];
-    }
+    if (!pool) throw new Error('SCHEMA_READ_FAILED');
 
     try {
       const [rows] = await pool.execute(
@@ -176,7 +172,7 @@ class SchemaDatabaseService {
       }));
     } catch (error) {
       console.error('获取快照时间列表失败:', error);
-      return [];
+      throw error;
     }
   }
 
@@ -186,9 +182,7 @@ class SchemaDatabaseService {
    */
   async compareWithSnapshot(instanceId: number, sinceTime: Date): Promise<SchemaChange[]> {
     const pool = this.getPool();
-    if (!pool) {
-      return [];
-    }
+    if (!pool) throw new Error('SCHEMA_READ_FAILED');
 
     try {
       // 获取目标时间的快照
@@ -202,8 +196,8 @@ class SchemaDatabaseService {
 
       // 获取最新快照
       const latest = await this.getLatestSnapshot(instanceId);
-      if (latest.length === 0) {
-        return [];
+      if (sinceRows.length === 0 || latest.length === 0) {
+        throw new Error('SCHEMA_READ_FAILED');
       }
 
       const sinceMap = new Map<string, any>();
@@ -288,7 +282,7 @@ class SchemaDatabaseService {
       return changes;
     } catch (error) {
       console.error('获取快照变更失败:', error);
-      return [];
+      throw error;
     }
   }
 
@@ -297,9 +291,7 @@ class SchemaDatabaseService {
    */
   async getTableDetail(instanceId: number, tableName: string): Promise<TableSchemaRow[]> {
     const pool = this.getPool();
-    if (!pool) {
-      return [];
-    }
+    if (!pool) throw new Error('SCHEMA_READ_FAILED');
 
     try {
       const [rows] = await pool.execute(
@@ -319,7 +311,7 @@ class SchemaDatabaseService {
       return rows as TableSchemaRow[];
     } catch (error) {
       console.error('获取表详情失败:', error);
-      return [];
+      throw error;
     }
   }
 
@@ -328,9 +320,7 @@ class SchemaDatabaseService {
    */
   async getTableList(instanceId: number): Promise<{ table_name: string; table_comment: string | null; table_rows: number; data_length: number | null; column_count: number; snapshot_time: Date }[]> {
     const pool = this.getPool();
-    if (!pool) {
-      return [];
-    }
+    if (!pool) throw new Error('SCHEMA_READ_FAILED');
 
     try {
       const [rows] = await pool.execute(
@@ -360,7 +350,7 @@ class SchemaDatabaseService {
       }));
     } catch (error) {
       console.error('获取表列表失败:', error);
-      return [];
+      throw error;
     }
   }
 }

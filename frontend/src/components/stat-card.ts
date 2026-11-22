@@ -5,7 +5,7 @@ export class StatCard extends LitElement {
   @property({ type: String }) label = '';
   @property({ type: String }) value = '';
   @property({ type: String }) hint: string | TemplateResult = '';
-  @property({ type: String }) variant?: 'ok' | 'warn' | 'danger' | 'info';
+  @property({ type: String }) variant?: 'ok' | 'warn' | 'danger' | 'info' | 'muted';
 
   static override styles = css`
     :host {
@@ -98,6 +98,10 @@ export class StatCard extends LitElement {
 
     .stat-card.variant-info {
       border-left: 3px solid var(--info);
+    }
+
+    .stat-card.variant-muted {
+      border-left: 3px solid var(--muted);
     }
 
     @keyframes rise {
