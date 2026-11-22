@@ -2,15 +2,18 @@ import { sharedFieldStyles } from "../../styles/shared-field-styles.ts";
 import { LitElement, css, html, nothing } from 'lit';
 import { live } from 'lit/directives/live.js';
 import { customElement, state } from 'lit/decorators.js';
-import { apiClient } from '../../../api/index.js';
+import { apiClient, authFetch, SESSION_EXPIRED_EVENT } from '../../../api/index.js';
 import { icons } from '../../../icons.js';
 import { copyTextToClipboard } from '../chat/copy-as-markdown.js';
 import { sharedBtnStyles } from '../../styles/shared-btn-styles.js';
+import { sharedSkeletonStyles } from '../../styles/shared-skeleton-styles.js';
+import { retryReadWithFocus } from '../controllers/retry-read-focus.js';
 import '../components/app-badge.js';
 import '../components/app-card.js';
 import '../components/app-data-table.js';
 import '../components/app-dialog.js';
 import '../components/app-form-field.js';
+import '../components/app-notice.js';
 import { showToast } from '../components/app-toast-container.js';
 
 interface FeedbackItem {
@@ -26,6 +29,11 @@ interface FeedbackItem {
 }
 
 type FeedbackStatus = 'pending' | 'accepted' | 'resolved';
+type FeedbackReadState =
+  | { status: 'loading' | 'ready' }
+  | { status: 'error'; message: string };
+
+const FEEDBACK_ACCESS_DENIED = '当前无法查看问题反馈，请确认登录状态和访问权限。';
 
 const FEEDBACK_STATUSES: ReadonlyArray<{ value: FeedbackStatus; label: string }> = [
   { value: 'pending', label: '未接收' },
@@ -36,7 +44,8 @@ const FEEDBACK_STATUSES: ReadonlyArray<{ value: FeedbackStatus; label: string }>
 @customElement('feedback-page')
 export class FeedbackPage extends LitElement {
   @state() private items: FeedbackItem[] = [];
-  @state() private loading = true;
+  @state() private readState: FeedbackReadState = { status: 'loading' };
+  @state() private lastReadAt: string | null = null;
   @state() private saving = false;
   @state() private editorOpen = false;
   @state() private editing: FeedbackItem | null = null;
@@ -50,8 +59,11 @@ export class FeedbackPage extends LitElement {
   @state() private overflowingIds = new Set<number>();
   private descriptionObserver: ResizeObserver | undefined;
   private copyResetTimer: number | undefined;
+  private readController: AbortController | undefined;
+  private accessGeneration = 0;
+  private sessionContext = 0;
 
-  static styles = [sharedFieldStyles, sharedBtnStyles, css`
+  static styles = [sharedFieldStyles, sharedBtnStyles, sharedSkeletonStyles, css`
     :host { display: block; }
     .page-header {
       display: flex;
@@ -71,6 +83,9 @@ export class FeedbackPage extends LitElement {
       font-size: var(--text-sm);
     }
     .table-wrap { overflow-x: auto; }
+    [data-read-results]:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
+    .read-error p { margin: var(--space-xs) 0; }
+    .header-actions { display: flex; align-items: center; gap: var(--space-sm); }
     .feedback-description {
       display: block;
       min-width: 18rem;
@@ -153,7 +168,7 @@ export class FeedbackPage extends LitElement {
     .delete-copy strong { color: var(--text-strong); }
     @media (max-width: 640px) {
       .page-header { align-items: stretch; flex-direction: column; }
-      .page-header .btn-primary { justify-content: center; }
+      .page-header .btn-primary { flex: 1; justify-content: center; }
       .table-wrap { overflow-x: visible; }
       app-data-table .data-table,
       app-data-table .data-table tbody { display: block; width: 100%; }
@@ -213,6 +228,10 @@ export class FeedbackPage extends LitElement {
 
   connectedCallback(): void {
     super.connectedCallback();
+    this.sessionContext = apiClient.getSessionContext();
+    window.addEventListener('slide-permissions-loaded', this.permissionsChanged);
+    window.addEventListener(SESSION_EXPIRED_EVENT, this.sessionExpired);
+    window.addEventListener('storage', this.storageChanged);
     if (typeof ResizeObserver !== 'undefined') {
       this.descriptionObserver = new ResizeObserver(() => this.measureDescriptions());
     }
@@ -247,21 +266,104 @@ export class FeedbackPage extends LitElement {
   }
 
   disconnectedCallback(): void {
+    window.removeEventListener('slide-permissions-loaded', this.permissionsChanged);
+    window.removeEventListener(SESSION_EXPIRED_EVENT, this.sessionExpired);
+    window.removeEventListener('storage', this.storageChanged);
+    this.clearAccess();
     this.descriptionObserver?.disconnect();
-    if (this.copyResetTimer !== undefined) window.clearTimeout(this.copyResetTimer);
     super.disconnectedCallback();
   }
 
-  private async load(): Promise<void> {
-    this.loading = true;
-    try {
-      const response = await apiClient.get<{ feedback: FeedbackItem[] }>('/feedback');
-      this.items = response.feedback ?? [];
-    } catch {
-      showToast('加载问题反馈失败', 'error');
-    } finally {
-      this.loading = false;
+  private clearAccess(): void {
+    this.accessGeneration++;
+    this.sessionContext = apiClient.getSessionContext();
+    this.readController?.abort();
+    this.readController = undefined;
+    this.items = [];
+    this.lastReadAt = null;
+    this.expandedIds = new Set();
+    this.statusSavingIds = new Set();
+    this.copiedId = null;
+    if (this.copyResetTimer !== undefined) window.clearTimeout(this.copyResetTimer);
+    this.copyResetTimer = undefined;
+    this.saving = false;
+    this.editorOpen = false;
+    this.editing = null;
+    this.deleteTarget = null;
+    this.titleValue = '';
+    this.descriptionValue = '';
+    this.formError = '';
+  }
+
+  private readonly sessionExpired = () => {
+    this.clearAccess();
+    this.readState = { status: 'error', message: FEEDBACK_ACCESS_DENIED };
+  };
+
+  private readonly permissionsChanged = () => {
+    // Feedback visibility is resolved by the server for the current actor.
+    this.sessionExpired();
+    if (apiClient.getToken()) void this.load();
+  };
+
+  private readonly storageChanged = (event: StorageEvent) => {
+    if (event.storageArea === localStorage && [null, 'token', 'permissions'].includes(event.key)) {
+      this.permissionsChanged();
     }
+  };
+
+  private ownsAccess(generation: number): boolean {
+    return this.isConnected && generation === this.accessGeneration
+      && this.sessionContext === apiClient.getSessionContext();
+  }
+
+  private async load(): Promise<void> {
+    if (this.sessionContext !== apiClient.getSessionContext()) this.clearAccess();
+    this.readController?.abort();
+    const controller = new AbortController();
+    this.readController = controller;
+    const generation = this.accessGeneration;
+    const isCurrent = () => this.readController === controller && this.ownsAccess(generation);
+    this.readState = { status: 'loading' };
+    try {
+      const response = await authFetch('/api/feedback', {
+        cache: 'no-store',
+        signal: AbortSignal.any([controller.signal, AbortSignal.timeout(15_000)]),
+      });
+      if (!isCurrent()) return;
+      if (!response.ok) {
+        const authUnconfirmed = response.status === 503
+          && (await response.json().catch(() => null))?.error === 'SESSION_REFRESH_UNCONFIRMED';
+        if (!isCurrent()) return;
+        if (response.status === 401 || response.status === 403 || authUnconfirmed) {
+          this.sessionExpired();
+        } else {
+          this.readState = { status: 'error', message: `反馈列表请求未成功（HTTP ${response.status}）。` };
+        }
+        return;
+      }
+      const responseBody: { feedback?: FeedbackItem[] } | null = await response.json().catch(() => null);
+      if (!isCurrent()) return;
+      if (!Array.isArray(responseBody?.feedback)) {
+        this.readState = { status: 'error', message: '反馈列表响应格式无效。' };
+        return;
+      }
+      this.items = responseBody.feedback;
+      this.lastReadAt = new Date().toISOString();
+      this.readState = { status: 'ready' };
+    } catch {
+      if (isCurrent()) this.readState = { status: 'error', message: '请求超时或网络连接中断。' };
+    } finally {
+      if (this.readController === controller) {
+        this.readController = undefined;
+        if (!this.ownsAccess(generation)) this.sessionExpired();
+      }
+    }
+  }
+
+  private refresh(event: Event): void {
+    if (this.readController || this.saving || this.statusSavingIds.size) return;
+    void retryReadWithFocus(this, event, () => this.load());
   }
 
   private openCreate(): void {
@@ -287,6 +389,8 @@ export class FeedbackPage extends LitElement {
   }
 
   private async save(): Promise<void> {
+    const generation = this.accessGeneration;
+    if (this.saving || !this.editorOpen || !this.ownsAccess(generation)) return;
     const title = this.titleValue.trim();
     const description = this.descriptionValue.trim();
     if (!title || !description) {
@@ -298,32 +402,34 @@ export class FeedbackPage extends LitElement {
     try {
       if (this.editing) {
         await apiClient.put(`/feedback/${this.editing.id}`, { title, description });
-        showToast('问题反馈已更新', 'success');
       } else {
         await apiClient.post('/feedback', { title, description });
-        showToast('问题反馈已提交', 'success');
       }
+      if (!this.ownsAccess(generation)) return;
+      showToast(this.editing ? '问题反馈已更新' : '问题反馈已提交', 'success');
       this.editorOpen = false;
       await this.load();
     } catch {
-      this.formError = this.editing ? '更新问题反馈失败' : '提交问题反馈失败';
+      if (this.ownsAccess(generation)) this.formError = this.editing ? '更新问题反馈失败' : '提交问题反馈失败';
     } finally {
-      this.saving = false;
+      if (this.ownsAccess(generation)) this.saving = false;
     }
   }
 
   private async deleteFeedback(): Promise<void> {
-    if (!this.deleteTarget || this.saving) return;
+    const generation = this.accessGeneration;
+    if (!this.deleteTarget || this.saving || !this.ownsAccess(generation)) return;
     this.saving = true;
     try {
       await apiClient.delete(`/feedback/${this.deleteTarget.id}`);
+      if (!this.ownsAccess(generation)) return;
       showToast('问题反馈已删除', 'success');
       this.deleteTarget = null;
       await this.load();
     } catch {
-      showToast('删除问题反馈失败', 'error');
+      if (this.ownsAccess(generation)) showToast('删除问题反馈失败', 'error');
     } finally {
-      this.saving = false;
+      if (this.ownsAccess(generation)) this.saving = false;
     }
   }
 
@@ -335,7 +441,10 @@ export class FeedbackPage extends LitElement {
   }
 
   private async copyDescription(item: FeedbackItem): Promise<void> {
+    const generation = this.accessGeneration;
+    if (!this.ownsAccess(generation)) return;
     const copied = await copyTextToClipboard(item.description);
+    if (!this.ownsAccess(generation)) return;
     if (!copied) {
       showToast('复制问题描述失败', 'error');
       return;
@@ -350,7 +459,9 @@ export class FeedbackPage extends LitElement {
   }
 
   private async updateStatus(item: FeedbackItem, status: FeedbackStatus): Promise<void> {
-    if (status === item.status || this.statusSavingIds.has(item.id)) return;
+    const generation = this.accessGeneration;
+    if (this.readState.status !== 'ready' || !this.ownsAccess(generation)
+      || status === item.status || this.statusSavingIds.has(item.id)) return;
     this.statusSavingIds = new Set([...this.statusSavingIds, item.id]);
     try {
       const response = await apiClient.put<{ feedback: FeedbackItem }>(`/feedback/${item.id}`, {
@@ -358,14 +469,17 @@ export class FeedbackPage extends LitElement {
         description: item.description,
         status,
       });
+      if (!this.ownsAccess(generation)) return;
       this.items = this.items.map((current) => current.id === item.id ? response.feedback : current);
       showToast('问题状态已更新', 'success');
     } catch {
-      showToast('更新问题状态失败', 'error');
+      if (this.ownsAccess(generation)) showToast('更新问题状态失败', 'error');
     } finally {
-      const statusSavingIds = new Set(this.statusSavingIds);
-      statusSavingIds.delete(item.id);
-      this.statusSavingIds = statusSavingIds;
+      if (this.ownsAccess(generation)) {
+        const statusSavingIds = new Set(this.statusSavingIds);
+        statusSavingIds.delete(item.id);
+        this.statusSavingIds = statusSavingIds;
+      }
     }
   }
 
@@ -374,7 +488,7 @@ export class FeedbackPage extends LitElement {
     return Number.isNaN(date.getTime()) ? '-' : date.toLocaleString('zh-CN');
   }
 
-  private rows(): Record<string, unknown>[] {
+  private rows(readOnly: boolean): Record<string, unknown>[] {
     return this.items.map((item) => {
       const expanded = this.expandedIds.has(item.id);
       const canExpand = this.overflowingIds.has(item.id);
@@ -400,7 +514,7 @@ export class FeedbackPage extends LitElement {
             ` : nothing}
           </div>
         `,
-        status: html`
+        status: readOnly ? FEEDBACK_STATUSES.find(option => option.value === item.status)?.label : html`
           <select
             class="status-select status-select--${item.status}"
             aria-label="更新 ${item.title} 的状态"
@@ -427,14 +541,19 @@ export class FeedbackPage extends LitElement {
             aria-label="复制 ${item.title} 的问题描述"
             @click=${() => { void this.copyDescription(item); }}
           >${this.copiedId === item.id ? icons.check : icons.copy}</button>
-          <button class="btn-icon" type="button" title="编辑" aria-label="编辑 ${item.title}" @click=${() => this.openEdit(item)}>${icons.pencil}</button>
-          <button class="btn-icon" type="button" title="删除" aria-label="删除 ${item.title}" @click=${() => { this.deleteTarget = item; }}>${icons.trash}</button>
+          ${readOnly ? nothing : html`
+            <button class="btn-icon" type="button" title="编辑" aria-label="编辑 ${item.title}" @click=${() => this.openEdit(item)}>${icons.pencil}</button>
+            <button class="btn-icon" type="button" title="删除" aria-label="删除 ${item.title}" @click=${() => { this.deleteTarget = item; }}>${icons.trash}</button>
+          `}
         </span>`,
       };
     });
   }
 
   render() {
+    const { readState } = this;
+    const loading = readState.status === 'loading';
+    const staleAt = readState.status === 'error' && this.items.length ? this.lastReadAt : null;
     const columns = [
       { key: 'serial', label: '序号', width: '3rem' },
       { key: 'title', label: '标题', width: '8rem' },
@@ -453,19 +572,42 @@ export class FeedbackPage extends LitElement {
           <h1>问题反馈</h1>
           <p>提交、修改和查看问题反馈，Agent 代为记录的问题也会显示在这里。</p>
         </div>
-        <button class="btn-primary" type="button" @click=${this.openCreate}>${icons.plus} 新增反馈</button>
+        <div class="header-actions">
+          ${readState.status === 'ready' ? html`
+            <button class="btn btn-refresh" type="button" @click=${this.refresh}
+              ?disabled=${this.saving || this.statusSavingIds.size > 0}>刷新</button>
+          ` : nothing}
+          <button class="btn-primary" type="button" @click=${this.openCreate}>${icons.plus} 新增反馈</button>
+        </div>
       </div>
 
       <app-card .compact=${true}>
-        <div class="table-wrap">
-          <app-data-table
-            .columns=${columns}
-            .rows=${this.rows()}
-            .loading=${this.loading}
-            .dense=${true}
-            emptyMessage="暂无问题反馈"
-          ></app-data-table>
-        </div>
+        <section data-read-results aria-label="问题反馈列表" aria-busy=${String(loading)} tabindex="-1">
+          ${readState.status === 'error' ? html`
+            <app-notice severity="error">
+              <div class="read-error" role="alert">
+                <strong>加载问题反馈失败</strong>
+                <p>${readState.message}</p>
+                ${staleAt ? html`
+                  <p>显示上次读取成功的记录（<time datetime=${staleAt}>${this.formatTime(staleAt)}</time>），当前仅供查看。</p>
+                ` : nothing}
+              </div>
+              <button class="btn btn-refresh" type="button" data-read-retry @click=${this.refresh}>重试</button>
+            </app-notice>
+          ` : nothing}
+          ${readState.status !== 'error' || staleAt ? html`
+            <div class="table-wrap" role=${loading ? 'status' : nothing}
+              aria-label=${loading ? '正在加载问题反馈' : nothing}>
+              <app-data-table
+                .columns=${columns}
+                .rows=${loading ? [] : this.rows(Boolean(staleAt))}
+                .loading=${loading}
+                .dense=${true}
+                emptyMessage="暂无问题反馈"
+              ></app-data-table>
+            </div>
+          ` : nothing}
+        </section>
       </app-card>
 
       <app-dialog

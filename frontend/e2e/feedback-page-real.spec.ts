@@ -5,6 +5,7 @@ import { randomBytes } from 'node:crypto';
 import { resolve } from 'node:path';
 import { FeedbackService } from '../../apps/db-ops-api/src/feedback-service.ts';
 import { registerFeedbackRoutes } from '../../apps/db-ops-api/src/feedback-routes.ts';
+import { openFeedbackFromSidebar } from './fixtures/feedback-shell.js';
 
 // Explicit opt-in; default CI never reads private credentials or shared databases.
 test.skip(process.env.FEEDBACK_REAL_MYSQL !== '1', 'Requires an explicitly injected MySQL connection');
@@ -12,9 +13,10 @@ const require = createRequire(resolve('../apps/db-ops-api/package.json'));
 const mysql = require('mysql2/promise');
 const jwt = require('jsonwebtoken');
 let db: any, pool: any, app: any, api: string;
-const schema = `slide_max430_${process.pid}`;
+const schema = `slide_feedback_${process.pid}_${randomBytes(4).toString('hex')}`;
 const secret = randomBytes(32).toString('hex');
 const token = (id: number) => jwt.sign({ userId: id }, secret, { expiresIn: '10m' });
+let ownerCanAccessAll = true;
 
 test.beforeAll(async () => {
   const config = JSON.parse(process.env.FEEDBACK_MYSQL_CONNECTION || '{}');
@@ -37,7 +39,8 @@ test.beforeAll(async () => {
       const claims = jwt.verify((request.headers.authorization || '').replace(/^Bearer /, ''), secret);
       const [users] = await pool.execute('SELECT id, username FROM users WHERE id=?', [claims.userId]);
       if (!users[0]) return reply.code(401).send({ error: 'UNAUTHORIZED' });
-      request.user = { userId: users[0].id, username: users[0].username, roles: [], permissions: [], instanceScopes: {}, sessionVersion: 1, requestId: 'max430-real' };
+      const roles = claims.userId === 7 && ownerCanAccessAll ? ['admin'] : [];
+      request.user = { userId: users[0].id, username: users[0].username, roles, permissions: [], instanceScopes: {}, sessionVersion: 1, requestId: 'feedback-real' };
     } catch { return reply.code(401).send({ error: 'UNAUTHORIZED' }); }
   }, new FeedbackService(() => pool));
   api = await app.listen({ host: '127.0.0.1', port: 0 });
@@ -52,39 +55,57 @@ test.afterAll(async () => {
   }
 });
 
-test('real feedback routes/MySQL: create, display, expand, denied write rollback, successful retry and reload', async ({ page }, info) => {
+test('MAX-724/MAX-430: real feedback reads, permission downgrade, status rollback and persistence through the sidebar', async ({ page }, info) => {
   const description = '第一行真实反馈\n第二行真实反馈\n第三行完整内容';
-  const created = await fetch(`${api}/api/feedback`, {
-    method: 'POST', headers: { Authorization: `Bearer ${token(7)}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ title: '真实反馈验收', description }),
-  });
-  expect(created.status).toBe(201);
-  const { feedback } = await created.json();
+  async function createFeedback(userId: number, title: string) {
+    const response = await fetch(`${api}/api/feedback`, {
+      method: 'POST', headers: { Authorization: `Bearer ${token(userId)}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title, description }),
+    });
+    expect(response.status).toBe(201);
+    return (await response.json()).feedback;
+  }
+  const feedback = await createFeedback(8, '真实反馈验收');
+  await createFeedback(7, '自己的反馈');
   const sqlStatus = async () => (await db.execute('SELECT status FROM problem_feedback WHERE id=?', [feedback.id]))[0][0].status;
+  let failNextRead = true;
+  let writes = 0;
+
   // Forward requests to the task-owned Fastify listener instead of a shared API.
   await page.route('**/api/feedback**', async route => {
-    const response = await route.fetch({ url: api + new URL(route.request().url()).pathname });
+    const request = route.request();
+    if (request.method() === 'GET' && failNextRead) {
+      failNextRead = false;
+      return route.fulfill({ status: 503, json: { error: 'SERVICE_UNAVAILABLE' } });
+    }
+    if (request.method() === 'PUT') writes++;
+    const response = await route.fetch({ url: api + new URL(request.url()).pathname });
     await route.fulfill({ response });
   });
-  await page.route('**/feedback-real', route => route.fulfill({ contentType: 'text/html', body: `<!doctype html><html><head>
-    <link rel="stylesheet" href="/src/app/styles.css"></head><body><feedback-page></feedback-page><app-toast-container></app-toast-container>
-    <script type="module" src="/src/app/ui/views/feedback-page.ts"></script></body></html>` }));
-  await page.addInitScript(ownerToken => localStorage.setItem('token', ownerToken), token(7));
-  await page.goto('/feedback-real');
-  const select = page.getByRole('combobox', { name: '更新 真实反馈验收 的状态' });
+  const view = await openFeedbackFromSidebar(page, token(7), ['view_dashboard']);
+  const results = view.getByRole('region', { name: '问题反馈列表' });
+  const retry = results.getByRole('button', { name: '重试', exact: true });
+  const failure = results.getByRole('alert');
+  await expect(failure).toContainText('HTTP 503');
+  const restored = page.waitForResponse(r => new URL(r.url()).pathname === '/api/feedback' && r.status() === 200);
+  await retry.click();
+  await restored;
+  const select = view.getByRole('combobox', { name: '更新 真实反馈验收 的状态' });
   await expect(select).toHaveValue('pending');
-  const toggle = page.locator('.description-toggle');
-  await toggle.focus(); await page.keyboard.press('Enter');
-  await expect(toggle).toHaveAttribute('aria-expanded', 'true');
-  await expect(page.locator('.feedback-description__text')).toHaveText(description);
-  await page.evaluate(otherToken => localStorage.setItem('token', otherToken), token(8));
+  expect(writes).toBe(0);
+  const toggle = view.getByRole('button', { name: '展开 真实反馈验收 的问题描述' });
+  await toggle.press('Enter');
+  // The toggle name changes when the row is expanded.
+  await expect(view.getByRole('button', { name: '收起 真实反馈验收 的问题描述' })).toHaveAttribute('aria-expanded', 'true');
+  await expect(view.getByRole('row').filter({ hasText: '真实反馈验收' }).locator('.feedback-description__text')).toHaveText(description);
+  ownerCanAccessAll = false;
   const denied = page.waitForResponse(r => r.request().method() === 'PUT');
   await select.selectOption('resolved');
   expect((await denied).status()).toBe(404);
   await expect(page.getByText('更新问题状态失败', { exact: true })).toBeVisible();
   await expect(select).toHaveValue('pending');
   expect(await sqlStatus()).toBe('pending');
-  await page.evaluate(ownerToken => localStorage.setItem('token', ownerToken), token(7));
+  ownerCanAccessAll = true;
   const success = page.waitForResponse(r => r.request().method() === 'PUT');
   await select.selectOption('resolved');
   expect((await success).status()).toBe(200);
@@ -93,10 +114,27 @@ test('real feedback routes/MySQL: create, display, expand, denied write rollback
   await page.reload();
   await expect(select).toHaveValue('resolved');
   await page.screenshot({ path: info.outputPath('real-feedback.png'), fullPage: true });
+  expect(writes).toBe(2);
+  ownerCanAccessAll = false;
+  failNextRead = true;
+  await page.evaluate(() => {
+    const permissions = ['view_dashboard'];
+    localStorage.setItem('permissions', JSON.stringify(permissions));
+    window.dispatchEvent(new CustomEvent('slide-permissions-loaded', { detail: { permissions } }));
+  });
+  await expect(failure).toContainText('HTTP 503');
+  await expect(view.getByText('真实反馈验收', { exact: true })).toHaveCount(0);
+  await expect(results.locator('time')).toHaveCount(0);
+  await retry.click();
+  await expect(results.getByRole('cell', { name: '自己的反馈', exact: true })).toBeVisible();
+  await expect(results.getByRole('cell', { name: '真实反馈验收', exact: true })).toHaveCount(0);
+  expect(writes).toBe(2);
+  await page.screenshot({ path: info.outputPath('real-feedback-scoped.png'), fullPage: true });
   const evidence = info.outputPath('real-evidence.json');
   await writeFile(evidence, JSON.stringify({
-    schema, api, databaseVersion: (await db.query('SELECT VERSION() AS version'))[0][0].version,
+    databaseVersion: (await db.query('SELECT VERSION() AS version'))[0][0].version,
     create: 201, denied: 404, statusAfterDenial: 'pending', retry: 200, statusAfterReload: await sqlStatus(),
+    listRecovery: [503, 200], scopedReadRecovery: [503, 200], writes,
     auth: 'isolated JWT actor harness', storage: 'real MySQL, production feedback migrations/routes/service', modelCalls: 0,
   }, null, 2));
   await info.attach('real-evidence', { contentType: 'application/json', path: evidence });
