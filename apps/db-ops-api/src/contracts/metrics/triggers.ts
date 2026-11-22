@@ -58,6 +58,8 @@ export const TRIGGER_LIMITS = Object.freeze({
 export const TriggerOperatorSchema = z.enum(['>', '>=', '<', '<=', '=', '!=']);
 export const TriggerAggregationSchema = z.enum(['last', 'avg', 'min', 'max']);
 const TriggerSeveritySchema = z.enum(['warning', 'critical']);
+const TriggerDependenciesInputSchema = z.array(RuleIdSchema).max(TRIGGER_LIMITS.max_rules - 1);
+const TriggerDependenciesSchema = TriggerDependenciesInputSchema.min(1);
 
 /**
  * A leaf selector. `last` reads the newest acceptable sample; the windowed
@@ -171,6 +173,8 @@ export const TriggerRuleVersionSchema = withRecoveryMode({
   metric: MetricRefSchema,
   unit: UnitSchema,
   severity: TriggerSeveritySchema.optional(),
+  /** Stable rule IDs of upstream triggers in the same effective template. */
+  dependencies: TriggerDependenciesSchema.optional(),
   /** Declaration and defaults of the thresholds/parameters this body may reference. */
   parameters: TemplateParametersSchema,
   problem: TriggerExpressionSchema,
@@ -190,6 +194,7 @@ export const TemplateTriggerPublishSchema = withRecoveryMode({
   expected_content_hash: HashIdSchema,
   item_id: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/),
   severity: TriggerSeveritySchema.optional(),
+  dependencies: TriggerDependenciesInputSchema.optional(),
   parameters: TemplateParametersSchema,
   problem: TriggerExpressionSchema,
   quality: TriggerQualityPolicySchema,
@@ -227,6 +232,7 @@ const candidateRuleFields = {
     decision: z.enum(['collect', 'derive', 'disabled', 'unsupported', 'capability_unknown']),
   })).min(1).max(TRIGGER_LIMITS.max_nodes).optional(),
   severity: TriggerSeveritySchema.optional(),
+  dependencies: TriggerDependenciesSchema.optional(),
   dimensions: z.record(z.string(), z.string().min(1)),
   /** The B2C selection decision for the item, carried — never re-derived from a name. */
   decision: z.enum(['collect', 'derive', 'disabled', 'unsupported', 'capability_unknown']),

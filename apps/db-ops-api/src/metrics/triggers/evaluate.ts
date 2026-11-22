@@ -121,7 +121,7 @@ interface EvaluationContext {
 }
 
 /** Mirror the accepted consumer gate: quality, accuracy and coverage must all be acceptable. */
-function gate(sample: TriggerSample, quality: TriggerQualityPolicy): TriggerEvaluationReason | null {
+export function triggerSampleQualityFault(sample: TriggerSample, quality: TriggerQualityPolicy): TriggerEvaluationReason | null {
   if (!quality.accepted_quality.includes(sample.quality.status as 'good' | 'partial')) return 'insufficient_evidence';
   if (sample.accuracy === 'unknown') return 'insufficient_evidence';
   if (sample.accuracy === 'estimated' && !quality.allow_estimated) return 'insufficient_evidence';
@@ -157,7 +157,7 @@ function selectValueUncached(selector: TriggerSelector, context: EvaluationConte
     if (context.now - Date.parse(newest.observed_at) >= context.clock.stale_after_ms) {
       return { kind: 'reason', reason: 'stale' };
     }
-    const problem = gate(newest, context.quality);
+    const problem = triggerSampleQualityFault(newest, context.quality);
     if (problem !== null) return { kind: 'reason', reason: problem };
     return { kind: 'value', value: numericOf(newest) };
   }
@@ -189,7 +189,7 @@ function selectValueUncached(selector: TriggerSelector, context: EvaluationConte
   if (context.now - last > context.clock.stale_after_ms) return { kind: 'reason', reason: 'stale' };
 
   for (const sample of inWindow) {
-    const problem = gate(sample, context.quality);
+    const problem = triggerSampleQualityFault(sample, context.quality);
     if (problem !== null) return { kind: 'reason', reason: problem };
   }
 
@@ -274,7 +274,7 @@ function describe(rule: TriggerRuleSnapshot, at: string, outcome: Outcome): Trig
  */
 export function evaluateTriggerRule(
   snapshot: TriggerResourceSnapshot,
-  key: { rule_id: string; scope: string },
+  key: { rule_id: string; scope: string; template_id?: string },
   request: TriggerEvaluationRequest,
 ): TriggerEvaluationResult {
   const at = evaluatedAt(request.input);
@@ -285,7 +285,8 @@ export function evaluateTriggerRule(
   const carryProblem = parsedInput.success
     ? parsedInput.data.previous === 'problem'
     : rawPrevious === 'problem';
-  const rule = snapshot.rules.find(entry => entry.rule_id === key.rule_id && entry.scope === key.scope);
+  const rule = snapshot.rules.find(entry => entry.rule_id === key.rule_id && entry.scope === key.scope
+    && (key.template_id === undefined || entry.item.template_id === key.template_id));
 
   if (rule === undefined) {
     // A missing rule has no identity to report; the stable reason is the answer.

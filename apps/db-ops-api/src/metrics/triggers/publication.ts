@@ -12,7 +12,8 @@ import type { PackageRegistry } from '../packages/model.js';
 import { stable } from '../packages/model.js';
 import { MetricTemplateService } from '../templates/service.js';
 import { discoveryPublication } from '../templates/discovery.js';
-import { referencedTriggerItems, triggerRuleContentHash } from './model.js';
+import { inheritTemplate, mergeTemplateTriggers } from '../templates/inheritance.js';
+import { referencedTriggerItems, triggerDependencyFields, triggerRuleContentHash } from './model.js';
 import { mysqlTriggerCatalog } from './persistence.js';
 import { rule } from '../policy/model.js';
 
@@ -79,11 +80,14 @@ export class TriggerPublicationService {
       rule(draft, 'TEMPLATE_NOT_FOUND', 404);
       // Never discard someone else's unpublished edits.
       const { package_composition: _composition, ...aggregate } = current.aggregate;
-      rule(stable({ ...draft.aggregate, ...discoveryPublication(draft.aggregate) }) === stable(aggregate), 'TEMPLATE_DRAFT_CONFLICT', 409);
+      const inherited = draft.aggregate.base ? await inheritTemplate(repository, templateId, draft.aggregate) : null;
+      const effective = inherited?.aggregate ?? draft.aggregate;
+      rule(stable({ ...effective, ...discoveryPublication(effective), ...(inherited ? { inheritance: inherited.origins } : {}) })
+        === stable(aggregate), 'TEMPLATE_DRAFT_CONFLICT', 409);
       const severity = input.severity ?? 'warning';
       const scope = `item:${item.item_id}`;
       const identity = `${templateId}\0${item.item_id}${severity === 'critical' ? '\0critical' : ''}`;
-      const ruleId = `trg-${createHash('sha256').update(identity).digest('hex').slice(0, 40)}`;
+      const defaultRuleId = `trg-${createHash('sha256').update(identity).digest('hex').slice(0, 40)}`;
       const replaced = new Set<string>();
       const catalog = mysqlTriggerCatalog(c);
       for (const ref of aggregate.triggers.filter(ref => ref.scope === scope)) {
@@ -91,6 +95,13 @@ export class TriggerPublicationService {
         rule(existing, 'TRIGGER_RULE_NOT_FOUND', 422);
         if ((existing.severity ?? 'warning') === severity) replaced.add(ref.rule_id);
       }
+      // Copies and inherited rules keep their stable IDs when revised. Lock the
+      // first version so publishers in different templates serialize new versions.
+      const ruleId = replaced.size === 1 ? [...replaced][0] : defaultRuleId;
+      if (replaced.size) await c.execute(
+        'SELECT version FROM metric_trigger_rule_versions WHERE rule_id = ? ORDER BY version LIMIT 1 FOR UPDATE',
+        [ruleId],
+      );
       const [rows] = await c.execute<RowDataPacket[]>(
         'SELECT COALESCE(MAX(version),0) AS version FROM metric_trigger_rule_versions WHERE rule_id = ?',
         [ruleId],
@@ -103,6 +114,7 @@ export class TriggerPublicationService {
         metric: item.canonical_metric,
         unit: item.unit,
         ...(severity === 'critical' ? { severity } : {}),
+        ...triggerDependencyFields(input.dependencies),
         parameters: input.parameters,
         problem: input.problem,
         ...(input.recovery_mode ? { recovery_mode: input.recovery_mode } : {}),
@@ -124,10 +136,10 @@ export class TriggerPublicationService {
       );
       const next = TemplateDraftAggregateSchema.parse({
         ...draft.aggregate,
-        triggers: [
-          ...aggregate.triggers.filter((r) => r.scope !== scope || !replaced.has(r.rule_id)),
-          { rule_id: ruleId, version, scope: publishedRule.scope },
-        ].sort((a, b) => a.rule_id.localeCompare(b.rule_id) || a.scope.localeCompare(b.scope)),
+        triggers: mergeTemplateTriggers(
+          draft.aggregate.triggers.filter(ref => ref.scope !== scope || !replaced.has(ref.rule_id)),
+          [{ rule_id: ruleId, version, scope: publishedRule.scope }],
+        ),
       });
       const service = new MetricTemplateService(repository, this.registry);
       const updated = await service.updateDraft(live, templateId, {

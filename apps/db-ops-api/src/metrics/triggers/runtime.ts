@@ -1,12 +1,14 @@
 import { continuesAfterPinRemoval } from './provider-state.js';
 import type { Pool, PoolConnection, RowDataPacket } from 'mysql2/promise';
 import { NormalizedObservationSchema, type NormalizedObservation } from '../../contracts/metrics/index.js';
-import { TriggerSampleSchema, TRIGGER_LIMITS, type TriggerSample } from '../../contracts/metrics/triggers.js';
+import {
+  TriggerSampleSchema, TRIGGER_LIMITS, type TriggerRuleSnapshot, type TriggerSample,
+} from '../../contracts/metrics/triggers.js';
 import { BINDING_APPLIED_ENVELOPE, decodeBindingPayload, type DecodedTemplateBindingPayload } from '../bindings/persistence-codec.js';
 import { verifyTriggerSnapshot, checkTriggerSnapshotFence } from './compile.js';
-import { evaluateTriggerRule } from './evaluate.js';
+import { evaluateTriggerRule, triggerSampleQualityFault } from './evaluate.js';
 import { nextTriggerEpisode, triggerEpisodeIdentityHash, type TriggerEpisodeRecord } from './episode.js';
-import { hashOf, triggerSelectors } from './model.js';
+import { hashOf, orderTriggerDependencies, triggerSelectors } from './model.js';
 import { stable } from '../packages/model.js';
 import { blockingDependencies } from '../../alert-dependencies.js';
 import { alertEventService } from '../../alert-event-service.js';
@@ -37,6 +39,54 @@ async function readTriggerInputs(c: PoolConnection, hash: string, now: number, s
 
 type CombinationInput = { metric: NormalizedObservation['metric']; observed_at: string; sample: TriggerSample | null };
 type TriggerApplicationProof = ReadonlyMap<string, { sample: string; attempt: string; observed_ms: number }>;
+
+function triggerDependencyOrder(rules: readonly TriggerRuleSnapshot[]) {
+  const upstreamByRule = new Map<TriggerRuleSnapshot, TriggerRuleSnapshot[]>();
+  if (!rules.some(rule => rule.dependencies?.length)) return { rules, upstreamByRule };
+  const templates = new Map<string, TriggerRuleSnapshot[]>();
+  for (const rule of rules) {
+    const id = rule.item.template_id;
+    const group = templates.get(id) ?? [];
+    group.push(rule);
+    templates.set(id, group);
+  }
+  const ordered = [...templates.values()].flatMap(group => {
+    const byId = new Map(group.map(rule => [rule.rule_id, rule]));
+    return orderTriggerDependencies(group).map(rule => {
+      const upstream = (rule.dependencies ?? []).flatMap(id => {
+        const parent = byId.get(id)!;
+        return [parent, ...upstreamByRule.get(parent)!];
+      });
+      upstreamByRule.set(rule, [...new Set(upstream)]);
+      return rule;
+    });
+  });
+  return { rules: ordered, upstreamByRule };
+}
+
+const activeTriggerInput = (input: Pick<TriggerRuleSnapshot, 'decision'>) =>
+  input.decision === 'collect' || input.decision === 'derive';
+
+async function allowDependentEvaluation(c: PoolConnection, identity: { hash: string; key: string; ruleId: string; at: string },
+  blockers: string[], evidence: { accepted: number; usable: boolean; clockOnly: boolean }) {
+  const { hash, key, ruleId, at } = identity;
+  if (blockers.length) {
+    await c.execute('INSERT INTO alert_dependency_decisions VALUES(?,?,?) ON DUPLICATE KEY UPDATE payload=VALUES(payload)',
+      [hash, key, JSON.stringify({ at, rule_id: ruleId, blocked: true, dependencies: [],
+        template_dependencies: blockers, waiting_for_sample: true })]);
+    return false;
+  }
+  if (!evidence.accepted && !evidence.clockOnly) return false;
+  const [decisions] = await c.execute<RowDataPacket[]>(
+    'SELECT payload FROM alert_dependency_decisions WHERE identity_hash=?', [hash]);
+  const waiting = decisions[0] && decode<{ waiting_for_sample?: boolean }>(decisions[0].payload).waiting_for_sample;
+  if (!waiting) return true;
+  // A clock tick or unusable input cannot replay evidence held by the dependency.
+  if (!evidence.usable) return false;
+  await c.execute('UPDATE alert_dependency_decisions SET payload=? WHERE identity_hash=?',
+    [JSON.stringify({ at, rule_id: ruleId, blocked: false, dependencies: [], template_dependencies: [] }), hash]);
+  return true;
+}
 
 function combinationSamples(inputs: RowDataPacket[], windows: Map<string, number>, intervals: Map<string, number>,
   defaultInterval: number, now: number) {
@@ -105,10 +155,13 @@ export async function evaluateTemplateSamples(
     plan_identity: binding.application.resolution_identity,
   };
   requireRule(checkTriggerSnapshotFence(snapshot, applied).ok, 'TRIGGER_NOT_APPLIED');
+  // Like Zabbix's event dependency check, use the upstream transitions from this batch.
+  const dependencyOrder = triggerDependencyOrder(snapshot.rules);
+  const upstreamRules = new Set([...dependencyOrder.upstreamByRule.values()].flat());
   const primed: NormalizedObservation[] = [];
-  const combinations = snapshot.rules.filter(rule => rule.inputs);
-  if (applicationProof && combinations.length) {
-    const keys = new Set(combinations.flatMap(rule => [rule, ...rule.inputs!].map(input => metricKey(input.metric))));
+  const primingRules = snapshot.rules.filter(rule => rule.inputs || upstreamRules.has(rule));
+  if (applicationProof && primingRules.length) {
+    const keys = new Set(primingRules.flatMap(rule => [rule, ...(rule.inputs ?? [])].map(input => metricKey(input.metric))));
     const arriving = new Set(observations.map(observation => observation.id));
     const ids = [...new Set([...applicationProof].filter(([key, fact]) => keys.has(key) && !arriving.has(fact.sample))
       .map(([, fact]) => fact.sample))];
@@ -128,12 +181,46 @@ export async function evaluateTemplateSamples(
   const at = new Date(now).toISOString();
   const discoveries = await discoveryRows(c, key);
   const intervals = itemIntervals(binding.pending.plan.releases);
-  for (const rule of snapshot.rules) {
+  const discoveryFor = (rule: TriggerRuleSnapshot) => discoveries.filter(row =>
+    row.template_id === rule.item.template_id && row.state.config_revision === snapshot.config_revision
+    && row.state.triggers.some(t => t.rule_id === rule.rule_id && t.scope === rule.scope));
+  const admittedMembers = (rows: ReturnType<typeof discoveryFor>) => new Map(rows.flatMap(row =>
+    row.state.members.filter(m => ['active', 'waiting'].includes(m.state)).map(m => [stable(m.dimensions), m] as const)));
+  const openUpstream = new Map<TriggerRuleSnapshot, boolean>();
+  const isUpstreamOpen = async (rule: TriggerRuleSnapshot) => {
+    const cached = openUpstream.get(rule);
+    if (cached !== undefined) return cached;
+    let open = false;
+    if ([rule, ...(rule.inputs ?? [])].some(activeTriggerInput)) {
+      const discovered = discoveryFor(rule);
+      const admitted = admittedMembers(discovered);
+      const revisions = [snapshot.config_revision];
+      if (!discovered.length && continuesAfterPinRemoval(priorSnapshot, snapshot, rule)) {
+        revisions.push(snapshot.config_revision - 1);
+      }
+      const [heads] = await c.execute<RowDataPacket[]>(
+        `SELECT dimensions,payload FROM metric_trigger_heads
+         WHERE resource_key=? AND config_revision IN (${revisions.map(() => '?').join(',')})
+           AND rule_id=? AND payload IS NOT NULL FOR SHARE`,
+        [key, ...revisions, rule.rule_id],
+      );
+      open = heads.some(row => {
+        const previous = decode<TriggerEpisodeRecord>(row.payload);
+        // An unknown evaluation retains an already open upstream problem.
+        return previous.state === 'open' && previous.version === rule.version && previous.body_hash === rule.body_hash
+          && previous.scope === rule.scope && previous.opened.item.template_id === rule.item.template_id
+          && (!discovered.length || admitted.has(stable(decode(row.dimensions))));
+      });
+    }
+    openUpstream.set(rule, open);
+    return open;
+  };
+  for (const rule of dependencyOrder.rules) {
     const primaryKey = metricKey(rule.metric);
     const defaultInterval = binding.pending.plan.settings.interval_ms;
     const interval = intervals.get(primaryKey) ?? defaultInterval;
     const inputsByItem = new Map([rule, ...(rule.inputs ?? [])].map(input => [input.item.item_id, input]));
-    const activeMetrics = new Set([...inputsByItem.values()].filter(input => ['collect', 'derive'].includes(input.decision))
+    const activeMetrics = new Set([...inputsByItem.values()].filter(activeTriggerInput)
       .map(input => metricKey(input.metric)));
     if (!activeMetrics.size) continue;
     const operandKey = (id: string | undefined) => {
@@ -151,10 +238,16 @@ export async function evaluateTemplateSamples(
       : TRIGGER_LIMITS.max_window_ms;
     const operandWindows = new Map([...activeMetrics].map(key =>
       [key, maxWindow(windowSelectors.filter(selector => operandKey(selector.item_id) === key))]));
-    const matching = (rule.inputs ? [...primed, ...observations] : observations).filter(
+    const matching = (rule.inputs || upstreamRules.has(rule) ? [...primed, ...observations] : observations).filter(
       (o) => activeMetrics.has(metricKey(o.metric)) && (!rule.inputs || !Object.keys(o.dimensions).length),
     );
-    if (rule.inputs && !clockOnly && !matching.length) continue;
+    const upstream = dependencyOrder.upstreamByRule.get(rule) ?? [];
+    const unitsByMetric = new Map([...inputsByItem.values()].map(input => [metricKey(input.metric), input.unit]));
+    const templateBlockers: string[] = [];
+    for (const parent of upstream) {
+      if (await isUpstreamOpen(parent)) templateBlockers.push(parent.rule_id);
+    }
+    if (rule.inputs && !clockOnly && !matching.length && !templateBlockers.length) continue;
     const dimensions = new Map<string, Record<string, string>>();
     for (const o of matching) dimensions.set(stable(o.dimensions), o.dimensions);
     // Clock and failed/missing collection also revisit existing dimensional heads.
@@ -169,10 +262,8 @@ export async function evaluateTemplateSamples(
       }
     }
     if (!dimensions.size) dimensions.set('{}', {});
-    const discovered = discoveries.filter(row => row.template_id === rule.item.template_id && row.state.config_revision === snapshot.config_revision
-      && row.state.triggers.some(t => t.rule_id === rule.rule_id && t.scope === rule.scope));
-    const admitted = new Map(discovered.flatMap(row => row.state.members.filter(m => ['active','waiting'].includes(m.state))
-      .map(m => [stable(m.dimensions), m] as const)));
+    const discovered = discoveryFor(rule);
+    const admitted = admittedMembers(discovered);
     if (discovered.length) {
       for (const dim of dimensions.keys()) if (!admitted.has(dim)) dimensions.delete(dim);
     } else {
@@ -240,6 +331,7 @@ export async function evaluateTemplateSamples(
         || Date.parse(sourceWatermarks.get(primaryKey)!) < Date.parse(watermark))) sourceWatermarks.set(primaryKey, watermark);
       let accepted = 0;
       let problemChanged = false;
+      const usableSampleTimes = new Map<string, number>();
       for (const o of matching
         .filter((o) => stable(o.dimensions) === stable(dims))
         .sort((a, b) => a.observed_at.localeCompare(b.observed_at) || a.id.localeCompare(b.id))) {
@@ -270,10 +362,18 @@ export async function evaluateTemplateSamples(
         sourceWatermarks.set(source, o.observed_at);
         if (source === primaryKey) watermark = o.observed_at;
         if (problemMetrics.has(source) && (manuallyClosedAt === null || observed > manuallyClosedAt)) problemChanged = true;
+        if (upstream.length) {
+          if (sample && sample.unit === unitsByMetric.get(source) && observed <= now
+            && now - observed < rule.clock.stale_after_ms && !triggerSampleQualityFault(sample, rule.quality)) {
+            usableSampleTimes.set(source, observed);
+          } else {
+            usableSampleTimes.delete(source);
+          }
+        }
         accepted++;
       }
       // Repeated messages cannot open another occurrence after recovery.
-      if (!clockOnly && matching.length && !accepted) continue;
+      if (!clockOnly && matching.length && !accepted && !templateBlockers.length) continue;
       // The current batch can push the cache past the bound before old rows are trimmed.
       const inputs = await readTriggerInputs(c, hash, now, activeMetrics.size, rule.inputs ? accepted : 0);
       const samples = inputs
@@ -301,9 +401,14 @@ export async function evaluateTemplateSamples(
       // A null newest formal value must not fall back to an older good value.
       const lastInput = inputs.at(-1);
       const newestUsable = lastInput && decode<{ sample: TriggerSample | null }>(lastInput.payload).sample;
-      const evaluation = evaluateTriggerRule(
+      const usable = usableSampleTimes.size > 0;
+      if (upstream.length) problemChanged = [...usableSampleTimes].some(([source, observed]) => problemMetrics.has(source)
+        && (manuallyClosedAt === null || observed > manuallyClosedAt));
+      const allowed = !upstream.length || await allowDependentEvaluation(c,
+        { hash, key, ruleId: rule.rule_id, at }, templateBlockers, { accepted, usable, clockOnly });
+      const evaluation = allowed ? evaluateTriggerRule(
         snapshot,
-        { rule_id: rule.rule_id, scope: rule.scope },
+        { rule_id: rule.rule_id, scope: rule.scope, template_id: rule.item.template_id },
         {
           applied,
           input: {
@@ -313,19 +418,23 @@ export async function evaluateTemplateSamples(
             samples: rule.inputs || newestUsable ? selected : [],
           },
         },
-      );
-      const verdict = evaluation.nodata
-        ? { ...evaluation, business: 'problem' as const, problem_open: true }
-        : evaluation;
-      let next = nextTriggerEpisode({ identity, previous, evaluation: verdict });
-      // Zabbix admits recovery-only samples to the expression history without opening a new problem.
-      if (rule.inputs && !problemChanged && !evaluation.nodata && previous?.state !== 'open' && next?.state === 'open') next = previous;
-      if (manuallyClosedAt !== null && next?.state === 'open' && !problemChanged) {
-        // A new no-data deadline is evidence; a repeated clock tick over the same problem is not.
-        const nodata = rule.clock.nodata;
-        const newDeadline = evaluation.nodata && nodata.enabled && watermark
-          && Date.parse(watermark) + nodata.after_ms > manuallyClosedAt;
-        if (!newDeadline) next = previous;
+      ) : null;
+      let next = previous;
+      if (evaluation && (!upstream.length || usable || clockOnly && evaluation.nodata
+        || evaluation.business === 'unknown' && previous?.state === 'open' && !evaluation.nodata)) {
+        const verdict = evaluation.nodata
+          ? { ...evaluation, business: 'problem' as const, problem_open: true }
+          : evaluation;
+        next = nextTriggerEpisode({ identity, previous, evaluation: verdict });
+        // Zabbix admits recovery-only samples to the expression history without opening a new problem.
+        if (rule.inputs && !problemChanged && !evaluation.nodata && previous?.state !== 'open' && next?.state === 'open') next = previous;
+        if (manuallyClosedAt !== null && next?.state === 'open' && !problemChanged) {
+          // A new no-data deadline is evidence; a repeated clock tick over the same problem is not.
+          const nodata = rule.clock.nodata;
+          const newDeadline = evaluation.nodata && nodata.enabled && watermark
+            && Date.parse(watermark) + nodata.after_ms > manuallyClosedAt;
+          if (!newDeadline) next = previous;
+        }
       }
       if (next?.state === 'open' && previous?.state !== 'open') {
         const blockers = await blockingDependencies(c, binding.binding.resource, rule.rule_id);
@@ -333,12 +442,12 @@ export async function evaluateTemplateSamples(
           [hash,key,JSON.stringify({at,rule_id:rule.rule_id,blocked:!!blockers.length,dependencies:blockers})]);
         if (blockers.length) next = previous; // Formal inputs remain; no new problem, no acknowledgement or fake recovery.
       }
-      const evidenceKeys = new Set(selected.map(sample => `${metricKey(sample.metric)}\0${sample.observed_at}`));
-      const evidenceRows = inputs.filter(row => {
-        const { sample } = decode<{ sample: TriggerSample | null }>(row.payload);
-        return sample && evidenceKeys.has(`${metricKey(sample.metric)}\0${sample.observed_at}`);
-      });
-      if (next)
+      if (next && (next !== previous || !upstream.length)) {
+        const evidenceKeys = new Set(selected.map(sample => `${metricKey(sample.metric)}\0${sample.observed_at}`));
+        const evidenceRows = inputs.filter(row => {
+          const { sample } = decode<{ sample: TriggerSample | null }>(row.payload);
+          return sample && evidenceKeys.has(`${metricKey(sample.metric)}\0${sample.observed_at}`);
+        });
         await alertEventService.persistTemplateTransition(c, previous, next, snapshot, {
           sample_ids: evidenceRows.map((row) => String(row.sample_id)),
           attempt_ids: [
@@ -351,6 +460,7 @@ export async function evaluateTemplateSamples(
           unit: rule.unit,
           dimensions: dims,
         });
+      }
       await c.execute(`UPDATE metric_trigger_heads SET payload=?,sample_watermark=?${rule.inputs ? ',source_watermarks=?' : ''} WHERE identity_hash=?`, [
         next ? JSON.stringify(next) : null,
         watermark,

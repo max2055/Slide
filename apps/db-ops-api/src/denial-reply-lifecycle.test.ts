@@ -12,7 +12,7 @@ import { createVerifyToken } from './auth-middleware.js';
 import { ActorAuthenticationError, actorContextService, type ActorContext } from './auth/actor-context.js';
 import { rbacApiRoutes } from './auth/rbac-api.js';
 import { RbacService } from './auth/rbac-service.js';
-import { filterByInstanceAccess, getAccessibleInstanceIds, hasInstanceAccess, requireInstanceAccess } from './auth/require-instance-access.js';
+import { getAccessibleInstanceIds, hasInstanceAccess, requireInstanceAccess } from './auth/require-instance-access.js';
 import { requirePermission } from './auth/require-permission.js';
 import { registerChatRoutes } from './chat-routes.js';
 import { instanceDatabaseService } from './instance-database-service.js';
@@ -20,7 +20,7 @@ import { PlatformUnavailableError } from './lifecycle/platform-unavailable.js';
 import { publicLLMProvider } from './llm/public-provider.js';
 import { instanceAccessLifecycle } from './resources/instance-access-lifecycle.js';
 import { registerResourceIdentityRoutes } from './resources/resource-identity-routes.js';
-import { canReadResource } from './resources/resource-service.js';
+import { getReportAccessScope } from './report-access.js';
 import { registerHttpSecurity, sensitiveOperationRateLimitConfig } from './security/http-security.js';
 import * as publicDto from './security/public-dto.js';
 import { serverDatabaseService, type ServerRow } from './server-database-service.js';
@@ -134,8 +134,8 @@ it.each([
       await registerAlertListRoute(fastify, verifyAdmin);
     } else {
       registerInline({
-        fastify, verifyToken: verifyAdmin, requirePermission, filterByInstanceAccess,
-        getAccessibleInstanceIds, requireInstanceAccess, hasInstanceAccess, canReadResource, publicLLMProvider,
+        fastify, verifyToken: verifyAdmin, requirePermission, getReportAccessScope,
+        getAccessibleInstanceIds, requireInstanceAccess, hasInstanceAccess, publicLLMProvider,
         publicNotificationDto: publicDto.publicNotificationDto,
         dbConnection: { getPool: () => ({ query: async () => [[{ config_key: 'slide_version', config_value: 'test-version' }]] }) },
         brandingConfigService: { getBranding: async () => ({ cli_name: 'slide' }) },

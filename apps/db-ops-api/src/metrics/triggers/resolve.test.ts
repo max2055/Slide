@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { TriggerRuleVersion } from '../../contracts/metrics/triggers.js';
 import { resolveTemplateBinding, templateResolutionIdentity, type ResolvedTemplateBinding } from '../bindings/resolve.js';
 import {
-  AT, FixtureCatalog, alpha, baseline, beta, bindingOf, capabilities, fixtureRegistry, fixtureRelease,
+  AT, FixtureCatalog, alpha, averageRule, baseline, beta, bindingOf, capabilities, fixtureRegistry, fixtureRelease,
   item, metricRef, pinOf, portOf, resource, templateVersion, thresholdRule, type Baseline,
 } from './test-support.js';
 import { resolveTriggerRules, TriggerResolutionError, type TriggerRuleCatalogPort } from './resolve.js';
@@ -82,6 +82,33 @@ describe('fixed-version trigger resolution', () => {
     expect(Object.isFrozen(candidate.rules)).toBe(true);
     expect(Object.isFrozen(candidate.rules[0].problem)).toBe(true);
     expect(structuredClone({ resolution: base.resolution, rules: base.rules })).toEqual(before);
+  });
+
+  it('resolves stable upstream IDs from the same fixed template', async () => {
+    const base = await baseline();
+    const downstream = averageRule({ dependencies: ['alpha-threshold'] });
+    const candidate = await resolveWith(base, [downstream, thresholdRule()]);
+    expect(candidate.rules[0]).toMatchObject({ rule_id: downstream.rule_id, dependencies: ['alpha-threshold'] });
+    expect(candidate.rules[1]).not.toHaveProperty('dependencies');
+    expect(Object.isFrozen(candidate.rules[0].dependencies)).toBe(true);
+  });
+
+  it.each([
+    { dependencies: ['alpha-threshold', 'alpha-threshold'], code: 'TRIGGER_DEPENDENCY_DUPLICATE' },
+    { dependencies: ['alpha-average'], code: 'TRIGGER_DEPENDENCY_SELF' },
+    { dependencies: ['unknown'], code: 'TRIGGER_DEPENDENCY_UNKNOWN' },
+  ])('rejects invalid dependencies with $code', async ({ dependencies, code }) => {
+    const base = await baseline();
+    const error = await failure(resolveWith(base, [averageRule({ dependencies }), thresholdRule()]));
+    expect(error).toMatchObject({ code, location: { template_id: 'tpl-monitoring', rule_id: 'alpha-average' } });
+  });
+
+  it('rejects a dependency cycle in a fixed template', async () => {
+    const base = await baseline();
+    const error = await failure(resolveWith(base, [
+      averageRule({ dependencies: ['alpha-threshold'] }), thresholdRule({ dependencies: ['alpha-average'] }),
+    ]));
+    expect(error).toMatchObject({ code: 'TRIGGER_DEPENDENCY_CYCLE', location: { template_id: 'tpl-monitoring' } });
   });
 
   it('applies an explicit numeric override without leaking it to another rule', async () => {
