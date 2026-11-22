@@ -187,8 +187,14 @@ test('MAX-718：键盘可读到长报表末尾，关闭后回到历史原位', a
   await page.keyboard.press('Tab');
   await expect(frame).toBeFocused();
   await page.keyboard.press('Tab');
-  await expect(preview.getByRole('button', { name: '下载' })).toBeFocused();
+  const download = preview.getByRole('button', { name: '下载' });
+  await expect(download).toBeFocused();
   await expect(frame).toHaveCSS('outline-style', 'none');
+  await page.keyboard.press('Shift+Tab');
+  await expect(frame).toBeFocused();
+  await expect(frame).toHaveCSS('outline-style', 'solid');
+  await page.keyboard.press('Tab');
+  await expect(download).toBeFocused();
   await page.keyboard.press('Escape');
 
   await expect(dialog).toHaveCount(0);
