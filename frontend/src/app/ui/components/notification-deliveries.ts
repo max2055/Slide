@@ -56,7 +56,7 @@ export class NotificationDeliveries extends LitElement {
       if (!r.ok) throw Error(r.status === 403 ? "无权查看投递回执" : "投递回执暂时无法查询");
       const v = await r.json();
       if (!this.isConnected || g !== this.epoch || s !== localStorage.getItem("token")) return;
-      if (!Array.isArray(v)) throw Error("投递回执格式异常");
+      if (!Array.isArray(v) || v.some(row => !row || typeof row !== "object")) throw Error("投递回执格式异常");
       this.rows = v;
     } catch (e) {
       if (this.isConnected && g === this.epoch && s === localStorage.getItem("token"))

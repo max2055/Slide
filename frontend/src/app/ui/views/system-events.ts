@@ -43,7 +43,7 @@ export class SystemEventsPageElement extends LitElement {
   override disconnectedCallback() { this.invalidate(); window.removeEventListener('slide-session-expired', this.invalidate); window.removeEventListener('slide-permissions-loaded', this.invalidate); super.disconnectedCallback(); }
   private async request<T>(path: string): Promise<T> {
     const response = await authFetch(`/api/platform/system-events${path}`, { cache: 'no-store' });
-    if (!response.ok) throw new Error([401, 403, 404].includes(response.status) ? '无访问权限或登录已失效。' : '事件暂不可用，请刷新重试。');
+    if (!response.ok) throw new Error([401, 403, 404].includes(response.status) ? '无访问权限或登录已失效。' : '异常记录暂不可读，请刷新重试。');
     return response.json();
   }
   private async readCollectionState(): Promise<boolean | null> {
@@ -90,7 +90,7 @@ export class SystemEventsPageElement extends LitElement {
         }
       }
     } catch (error) {
-      if (generation === this.generation) this.error = error instanceof Error && !(error instanceof SyntaxError)
+      if (generation === this.generation) this.error = error instanceof Error && !(error instanceof SyntaxError || error instanceof TypeError)
         ? error.message : '异常记录暂不可读，请刷新重试。';
     } finally { if (generation === this.generation) this.loading = false; }
   }

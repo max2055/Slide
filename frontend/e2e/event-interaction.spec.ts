@@ -166,6 +166,40 @@ test('#1036 forbidden event reads show permission feedback', async ({ page }, in
   await page.screenshot({ path: info.outputPath('permission-denied.png') });
 });
 
+test('statistics failure leaves the successful current event group readable', async ({ page }) => {
+  await setupAggregate(page, route => route.fulfill({ json: { items: [sampleEvent], total: 1 } }), 1);
+  let unavailable = true;
+  await page.route('**/api/alerts/events/stats', route => unavailable ? route.fulfill({ status: 503, json: {} }) : route.fallback());
+  await page.goto(aggregateUrl);
+  const list = page.locator('event-management-page');
+  await expect(list.getByText('全局统计暂不可读', { exact: false })).toBeVisible();
+  await expect(list.locator('stat-card[label="可见事件总计"] [part="value"]')).toHaveText('未知');
+  await expect(list.getByRole('button', { name: /^历史未归类/ })).toHaveText(/未知/);
+  await expect(list.getByText('本页命中 1 条', { exact: false })).toBeVisible();
+  unavailable = false;
+  await list.getByRole('button', { name: '刷新事件' }).click();
+  await expect(list.locator('stat-card[label="可见事件总计"] [part="value"]')).toHaveText('1');
+});
+
+test('platform collection state and successful empty records are independent', async ({ page }) => {
+  await setupAggregate(page, route => route.fulfill({ json: emptyList }));
+  let active = false;
+  let unavailable = false;
+  await page.route('**/api/platform/observations', route => route.fulfill({ json: { system: { collection: { effective: active } } } }));
+  await page.route('**/api/platform/system-events', route => route.fulfill(unavailable
+    ? { status: 503, json: {} } : { json: { items: [], truncated: false } }));
+  await page.goto('/events?view=system');
+  const system = page.locator('system-events-page');
+  await expect(system.getByText('已关闭', { exact: true })).toBeVisible();
+  await expect(system.getByText('暂无可见的异常记录')).toBeVisible();
+  active = true;
+  unavailable = true;
+  await system.getByRole('button', { name: '刷新异常' }).click();
+  await expect(system.getByText('已启用', { exact: true })).toBeVisible();
+  await expect(system.getByRole('alert')).toContainText('异常记录暂不可读');
+  await expect(system.getByText('暂无可见的异常记录')).toHaveCount(0);
+});
+
 for (const withData of [false, true]) {
   test(`#1036 failed event reads recover to ${withData ? 'rows' : 'empty'}`, async ({ page }, info) => {
     const retry = Promise.withResolvers<void>();

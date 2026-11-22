@@ -764,7 +764,7 @@ export class AlertsPage extends LitElement {
       if (this.activeListTab === 'active') {
         this._statsP0 = this._levelCounts === null ? undefined : this._levelCounts.p0 ?? 0;
         this._statsUnread = data.unread ?? 0;
-        this._statsCritical = data.critical ?? 0;
+        this._statsCritical = this._levelCounts ? this._levelCounts.critical ?? 0 : data.critical;
         this._statsWarning = data.warning ?? 0;
         this._statsActiveTotal = this._levelCounts ? Object.values(this._levelCounts).reduce((sum, count) => sum + count, 0) : data.total ?? 0;
       }
@@ -835,7 +835,7 @@ export class AlertsPage extends LitElement {
   @state() private _levelCounts: Record<string, number> | null = null;
   @state() private _statsP0: number | undefined;
   @state() private _statsUnread = 0;
-  @state() private _statsCritical = 0;
+  @state() private _statsCritical: number | undefined;
   @state() private _statsWarning = 0;
   @state() private _statsResolved = 0;
   @state() private _statsActiveTotal = 0;

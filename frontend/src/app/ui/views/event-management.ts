@@ -564,7 +564,7 @@ export class EventManagementPage extends LitElement {
 
   private async _readEventList() {
     const offset = this.eventsPage * this.eventsPageSize;
-    const res = await authFetch(`${API_BASE}/alerts/events?limit=${this.eventsPageSize}&offset=${offset}&status=${EVENT_GROUPS[this.activeListTab].status}`);
+    const res = await authFetch(`${API_BASE}/alerts/events?limit=${this.eventsPageSize}&offset=${offset}&status=${EVENT_GROUPS[this.activeListTab].status}`, { cache: 'no-store' });
     if (!res.ok) throw new Error(res.status === 403 ? '无权访问事件' : `事件加载失败: ${res.status}`);
     const data = await res.json();
     if (!Array.isArray(data?.items ?? data)) throw new Error('事件返回格式异常');
@@ -573,7 +573,7 @@ export class EventManagementPage extends LitElement {
   }
 
   private async _readEventStats(): Promise<EventStats> {
-    const res = await authFetch(`${API_BASE}/alerts/events/stats`);
+    const res = await authFetch(`${API_BASE}/alerts/events/stats`, { cache: 'no-store' });
     if (!res.ok) throw new Error('事件统计读取失败');
     const stats: EventStats = await res.json();
     if (!stats || ![stats.total, stats.open, stats.investigating, stats.handled, stats.resolved, stats.closed]
@@ -589,7 +589,7 @@ export class EventManagementPage extends LitElement {
     const [list, stats, mttr] = await Promise.allSettled([
       this._readEventList(),
       this._readEventStats(),
-      authFetch(`${API_BASE}/alerts/events/mttr`).then(res => res.ok ? res.json() : null),
+      authFetch(`${API_BASE}/alerts/events/mttr`, { cache: 'no-store' }).then(res => res.ok ? res.json() : null),
     ]);
     if (request !== this.listRequest) return;
     this.loadError = list.status === 'fulfilled' ? null

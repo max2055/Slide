@@ -244,7 +244,8 @@ export class AlertList extends LitElement {
         <td style="text-align:center;"><span class="time-ago" style="font-size:var(--text-xs);">${this._formatTime(alert.created_at)}</span></td>
         <td style="text-align:center;">
           <div class="actions" style="flex-wrap:wrap;gap:3px;">
-            <button class="btn-sm action-btn" @click=${() => this._emit('alert-select', { id: alert.id })}>详情</button>
+            <button class="btn-sm action-btn" aria-description=${this._cleanTitle(alert.title)}
+              @click=${() => this._emit('alert-select', { id: alert.id })}>详情</button>
             ${alert.status === 'unread' || alert.status === 'read'
               ? html`<button class="btn-primary btn-sm action-btn primary" @click=${() => this._emit('alert-acknowledge', { id: alert.id })}>确认</button>`
               : nothing}
