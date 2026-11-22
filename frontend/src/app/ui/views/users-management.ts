@@ -755,8 +755,8 @@ export class UsersManagement extends LitElement {
 
             ${this.editingUser ? html`
               <div class="form-group">
-                <label>状态</label>
-                <select ?disabled=${this.saving} .value=${this.formStatus} @change=${(e: Event) => { this.formStatus = (e.target as HTMLSelectElement).value; }}>
+                <label for="user-status">状态</label>
+                <select id="user-status" ?disabled=${this.saving} .value=${this.formStatus} @change=${(e: Event) => { this.formStatus = (e.target as HTMLSelectElement).value; }}>
                   <option value="active">活跃</option>
                   <option value="inactive">停用</option>
                   <option value="locked">锁定</option>

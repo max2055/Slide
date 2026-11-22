@@ -3,7 +3,7 @@
  * Usage: <app-select-field label="Page Size" .value=${10} .options=${opts} @change=${handler}></app-select-field>
  */
 import { sharedFieldStyles } from "../../styles/shared-field-styles.ts";
-import { LitElement, html, css } from "lit";
+import { LitElement, html, css, nothing } from "lit";
 import { customElement, property } from "lit/decorators.js";
 
 export interface SelectOption {
@@ -14,6 +14,7 @@ export interface SelectOption {
 @customElement("app-select-field")
 export class AppSelectField extends LitElement {
   @property() label = "";
+  @property({ attribute: "aria-label" }) accessibleLabel = "";
   @property() desc = "";
   @property() value: string | number = "";
   @property({ type: Array }) options: SelectOption[] = [];
@@ -42,7 +43,7 @@ export class AppSelectField extends LitElement {
     return html`
       ${this.label ? html`<label for="value">${this.label}</label>` : null}
       ${this.desc ? html`<div class="desc">${this.desc}</div>` : null}
-      <select id="value" .value=${String(this.value)} @change=${this._onChange}>
+      <select id="value" aria-label=${this.accessibleLabel || nothing} .value=${String(this.value)} @change=${this._onChange}>
         ${this.options.map((o) => html`
           <option value=${o.value} ?selected=${String(this.value) === String(o.value)}>${o.label}</option>
         `)}
