@@ -7,7 +7,7 @@ import { describe, expect, it } from "vitest";
 const cwd = fileURLToPath(new URL("..", import.meta.url));
 function run(scenario: string) {
   return spawnSync(process.execPath, ["--import", "tsx", "--input-type=module", "-e", `
-    let guards = 0;
+    const guards = new Set();
     const { createHash } = await import('node:crypto');
     globalThis.fetch = async (url, options) => {
       const path = new URL(url).pathname;
@@ -29,10 +29,24 @@ function run(scenario: string) {
         options.method === "POST" && ["/api/users", "/api/database/instances"].includes(path);
       let status = 200;
       if (guard) {
-        guards++;
-        // First two are catalog checks; last two are the separate guard phase.
-        status = guards <= 2 ? 401 : Number(scenario.match(/^guard-(\\d+)$/)?.[1] || 401);
-        if (guards > 2 && scenario === "guard-error") throw new Error("controlled guard offline");
+        if (guards.has(path)) throw new Error("Guard request repeated: " + path);
+        guards.add(path);
+        const body = JSON.parse(options.body);
+        const valid = path === "/api/users"
+          ? typeof body.username === "string" && body.username.length > 0 &&
+            typeof body.password === "string" && body.password.length >= 8 && !("role" in body)
+          : ["name", "environment", "db_type", "host", "username"].every(
+              field => typeof body[field] === "string" && body[field].length > 0,
+            ) && Number.isInteger(body.port);
+        if (!valid) return new Response('{"code":"FST_ERR_VALIDATION"}', { status: 400 });
+        if (scenario === "guard-error") throw new Error("controlled guard offline");
+        if (scenario === "guard-redirect") {
+          return options.redirect === "manual"
+            ? new Response(null, { status: 302, headers: { Location: "/unrelated" } })
+            : new Response("{}", { status: 401 });
+        }
+        if (scenario === "guard-mixed") status = path === "/api/users" ? 400 : 401;
+        else status = Number(scenario.match(/^guard-(\\d+)$/)?.[1] || 401);
       }
       if (path === "/api/health" && scenario === "business-failure") status = 503;
       if (path === "/api/health" && scenario === "request-error") throw new Error("controlled offline");
@@ -58,16 +72,20 @@ describe("smoke CLI exit and summary (#399)", () => {
     expect(digest(second.stdout)).toBeDefined();
     expect(digest(first.stdout)).not.toBe(digest(second.stdout));
   });
+  // #1025: only a direct 401 verifies the no-token guard.
   it.each([
-    ["pass", 0, 0],
-    ["guard-400", 0, 0],
-    ["guard-200", 1, 2],
-    ["guard-403", 1, 2],
-    ["guard-500", 1, 2],
-    ["guard-error", 1, 2],
-    ["business-failure", 1, 1],
-    ["request-error", 1, 1],
-  ])("%s exits %i and reports %i failures", (scenario, code, failures) => {
+    ["pass", 0, 0, "401 as expected"],
+    ["guard-400", 1, 2, "Auth not verified — Expected 401, got 400"],
+    ["guard-mixed", 1, 1, "Auth not verified — Expected 401, got 400"],
+    ["guard-200", 1, 2, "UNPROTECTED — Expected 401, got 200"],
+    ["guard-201", 1, 2, "UNPROTECTED — Expected 401, got 201"],
+    ["guard-403", 1, 2, "Auth not verified — Expected 401, got 403"],
+    ["guard-500", 1, 2, "Auth not verified — Expected 401, got 500"],
+    ["guard-redirect", 1, 2, "Auth not verified — Expected 401, got 302"],
+    ["guard-error", 1, 2, "Auth not verified — Fetch error: controlled guard offline"],
+    ["business-failure", 1, 1, "Expected 200, got 503"],
+    ["request-error", 1, 1, "Fetch error: controlled offline"],
+  ])("%s exits %i and reports %i failures", (scenario, code, failures, diagnostic) => {
     const result = run(scenario);
     expect(result.error).toBeUndefined();
     expect(result.status, result.stdout + result.stderr).toBe(code);
@@ -80,7 +98,7 @@ describe("smoke CLI exit and summary (#399)", () => {
     expect(groups.reduce((sum, group) => sum + Number(group[2]), 0)).toBe(total);
     expect(groups.reduce((sum, group) => sum + Number(group[1]), 0)).toBe(total - failures);
     if (failures) expect(result.stdout).toContain("FAILURES:");
-    if (scenario === "guard-200") expect(result.stdout).toContain("UNPROTECTED");
+    expect(result.stdout).toContain(diagnostic);
   });
 
   it("exits nonzero before checking routes when login is unavailable", () => {

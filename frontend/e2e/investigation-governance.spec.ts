@@ -95,12 +95,12 @@ test('real durable five-state/mixed-rate/two-currency facts use grouped paging a
   const before = await snapshot(); await login(page); await read(page, 'usage');
   await view(page).getByRole('button', { name: '查看汇总口径' }).click();
   const totals = view(page).locator('[data-usage="totals"]');
-  await expect(totals).toContainText('Reservation 总数7'); await expect(totals).toContainText('分组总数6');
+  await expect(totals).toContainText('额度预留记录总数7'); await expect(totals).toContainText('分组总数6');
   await expect(totals).toContainText('已知用量数3'); await expect(totals).toContainText('未知用量数1'); await expect(totals).toContainText('待返回用量数1');
   await view(page).getByText('精确成本值', { exact: true }).click();
-  await expect(view(page).locator('[data-currency="USD"]')).toContainText('USD 0.000164（164 micro）');
-  await expect(view(page).locator('[data-currency="USD"]')).toContainText('USD 0.006000（6000 micro）');
-  await expect(view(page).locator('[data-currency="EUR"]')).toContainText('EUR 0.000164（164 micro）');
+  await expect(view(page).locator('[data-currency="USD"]')).toContainText('USD 0.000164（164 × 10⁻⁶ 货币单位）');
+  await expect(view(page).locator('[data-currency="USD"]')).toContainText('USD 0.006000（6,000 × 10⁻⁶ 货币单位）');
+  await expect(view(page).locator('[data-currency="EUR"]')).toContainText('EUR 0.000164（164 × 10⁻⁶ 货币单位）');
   await page.keyboard.press('Escape');
   await view(page).locator('[data-usage-group="USD/settled/manual"]').click();
   const settled = view(page).locator('app-dialog');
@@ -114,7 +114,7 @@ test('real durable five-state/mixed-rate/two-currency facts use grouped paging a
   await expect(view(page).locator('[data-usage-group]')).toHaveCount(1); await expect(view(page)).toContainText('当前分组 6–6 / 6');
   await expect(view(page).getByRole('button', { name: '下一组页' })).toBeDisabled();
   await view(page).getByRole('button', { name: '上一组页' }).click(); await expect(view(page).locator('[data-usage-group]')).toHaveCount(5);
-  await page.reload(); await view(page).getByRole('button', { name: '查看汇总口径' }).click(); await expect(totals).toContainText('Reservation 总数7'); await page.keyboard.press('Escape'); await expect(view(page).locator('[data-usage-group]')).toHaveCount(6);
+  await page.reload(); await view(page).getByRole('button', { name: '查看汇总口径' }).click(); await expect(totals).toContainText('额度预留记录总数7'); await page.keyboard.press('Escape'); await expect(view(page).locator('[data-usage-group]')).toHaveCount(6);
   expect(await snapshot()).toEqual(before);
 });
 test('effective budget matching and real frozen hash conflict never become a remaining balance', async ({ page }) => {
