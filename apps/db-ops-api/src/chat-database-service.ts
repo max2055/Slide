@@ -40,6 +40,14 @@ export class ChatRetentionDeniedError extends Error {
   }
 }
 
+export class ChatMaintenanceCapDeadlockError extends Error {
+  readonly code = 'CHAT_MAINTENANCE_CAP_DEADLOCK';
+  constructor(cause: unknown) {
+    super('Session message cap transaction rolled back after a deadlock', { cause });
+    this.name = 'ChatMaintenanceCapDeadlockError';
+  }
+}
+
 export interface ChatSessionRecord {
   id: number;
   session_id: string;
@@ -88,6 +96,7 @@ interface TransactionConnection extends QueryExecutor {
   commit(): Promise<void>;
   rollback(): Promise<void>;
   release(): void;
+  destroy(): void;
 }
 
 interface ChatPool extends QueryExecutor {
@@ -577,67 +586,90 @@ export class ChatDatabaseService {
     const pool = this.getPool();
     if (!pool.getConnection) throw new Error('Chat transaction support is unavailable');
     const connection = await pool.getConnection();
+    let reusable = false;
     try {
       await connection.beginTransaction();
-      if (actor) {
-        await this.authorizeSession(actor, sessionId, 'cap', connection, true);
-      } else {
-        const [rows] = await connection.query<RowDataPacket[]>(
-          'SELECT id FROM chat_sessions WHERE session_id = ? FOR UPDATE',
-          [sessionId],
-        );
-        if (!rows[0]) throw new ChatSessionNotFoundError();
-        const [bindings] = await connection.query<RowDataPacket[]>(
-          'SELECT id FROM investigations WHERE session_id = ?', [sessionId]);
-        if (bindings.length) throw new ChatRetentionDeniedError('INVESTIGATION_RETENTION_DENIED');
+      let deleted: number;
+      try {
+        deleted = await this.capSessionMessages(connection, actor, sessionId, maxMessages);
+      } catch (error) {
+        try {
+          await connection.rollback();
+          reusable = true;
+        } catch (rollbackError) {
+          throw new AggregateError([error, rollbackError], 'Session message cap rollback failed', { cause: error });
+        }
+        // This transaction only caps one session. A server-reported deadlock
+        // in its body is recoverable for maintenance once rollback succeeds.
+        if (!actor && error instanceof Error && 'code' in error && error.code === 'ER_LOCK_DEADLOCK') {
+          throw new ChatMaintenanceCapDeadlockError(error);
+        }
+        throw error;
       }
+      await connection.commit();
+      reusable = true;
+      return deleted;
+    } finally {
+      if (reusable) connection.release();
+      else connection.destroy();
+    }
+  }
 
-      const [countRows] = await connection.query<RowDataPacket[]>(
-        'SELECT COUNT(*) AS cnt FROM chat_messages WHERE session_id = ?',
+  private async capSessionMessages(
+    connection: TransactionConnection,
+    actor: ActorContext | null,
+    sessionId: string,
+    maxMessages: number,
+  ): Promise<number> {
+    if (actor) {
+      await this.authorizeSession(actor, sessionId, 'cap', connection, true);
+    } else {
+      const [rows] = await connection.query<RowDataPacket[]>(
+        'SELECT id FROM chat_sessions WHERE session_id = ? FOR UPDATE',
         [sessionId],
       );
-      if (Number(countRows[0]?.cnt || 0) <= maxMessages) {
-        await connection.commit();
-        return 0;
-      }
-
-      const [active] = await connection.query<RowDataPacket[]>(
-        "SELECT id FROM agent_runs WHERE session_id = ? AND state = 'running' LIMIT 1", [sessionId]);
-      if (active.length) throw new ChatRetentionDeniedError('UNSETTLED_INTENT_RETENTION_DENIED');
-      // Move the requested count boundary backwards to its complete user turn.
-      const [boundaries] = await connection.query<RowDataPacket[]>(
-        `SELECT MAX(id) AS boundary FROM chat_messages WHERE session_id = ? AND role = 'user' AND id <= (
-          SELECT MIN(id) FROM (SELECT id FROM chat_messages WHERE session_id = ? ORDER BY id DESC LIMIT ?) retained
-        )`, [sessionId, sessionId, maxMessages]);
-      const boundary = Number(boundaries[0]?.boundary ?? 0);
-      if (!boundary) { await connection.commit(); return 0; }
-      const [checkpointRows] = await connection.query<RowDataPacket[]>(
-        "SELECT metadata FROM chat_sessions WHERE session_id = ?", [sessionId]);
-      const metadata = typeof checkpointRows[0]?.metadata === 'string' ? JSON.parse(checkpointRows[0].metadata) : checkpointRows[0]?.metadata;
-      const cp = metadata?.canonicalRuntimeCheckpoint;
-      if ((cp?.pendingToolCalls ?? cp?.pending_tool_calls ?? []).length) throw new ChatRetentionDeniedError('UNSETTLED_INTENT_RETENTION_DENIED');
-      const prior = metadata?.canonicalRetentionBoundaries ?? [];
-      if (prior.length >= 1000) throw new ChatRetentionDeniedError('RETENTION_AUDIT_CAPACITY_EXCEEDED');
-      await connection.query(
-        "UPDATE chat_sessions SET metadata = JSON_SET(COALESCE(metadata, JSON_OBJECT()), '$.canonicalRetentionBoundaries', CAST(? AS JSON)) WHERE session_id = ?",
-        [JSON.stringify([...prior, { beforeSequence: boundary, at: new Date().toISOString(), requestedMaxMessages: maxMessages, reason: 'explicit_message_cap' }]), sessionId]);
-      await connection.query('DELETE FROM agent_canonical_facts WHERE session_id = ? AND turn_sequence < ?', [sessionId, boundary]);
-
-      const [result] = await connection.query<ResultSetHeader>(
-        `DELETE cm FROM chat_messages cm
-         LEFT JOIN chat_messages parent_turn ON parent_turn.session_id = cm.session_id AND parent_turn.message_id = cm.parent_id AND parent_turn.role = 'user'
-         WHERE cm.session_id = ? AND (cm.id < ? OR parent_turn.id < ?)`,
-        [sessionId, boundary, boundary],
-      );
-      await this.updateSessionStats(connection, sessionId, actor?.userId);
-      await connection.commit();
-      return result.affectedRows || 0;
-    } catch (error) {
-      await connection.rollback();
-      throw error;
-    } finally {
-      connection.release();
+      if (!rows[0]) throw new ChatSessionNotFoundError();
+      const [bindings] = await connection.query<RowDataPacket[]>(
+        'SELECT id FROM investigations WHERE session_id = ?', [sessionId]);
+      if (bindings.length) throw new ChatRetentionDeniedError('INVESTIGATION_RETENTION_DENIED');
     }
+
+    const [countRows] = await connection.query<RowDataPacket[]>(
+      'SELECT COUNT(*) AS cnt FROM chat_messages WHERE session_id = ?',
+      [sessionId],
+    );
+    if (Number(countRows[0]?.cnt || 0) <= maxMessages) return 0;
+
+    const [active] = await connection.query<RowDataPacket[]>(
+      "SELECT id FROM agent_runs WHERE session_id = ? AND state = 'running' LIMIT 1", [sessionId]);
+    if (active.length) throw new ChatRetentionDeniedError('UNSETTLED_INTENT_RETENTION_DENIED');
+    // Move the requested count boundary backwards to its complete user turn.
+    const [boundaries] = await connection.query<RowDataPacket[]>(
+      `SELECT MAX(id) AS boundary FROM chat_messages WHERE session_id = ? AND role = 'user' AND id <= (
+        SELECT MIN(id) FROM (SELECT id FROM chat_messages WHERE session_id = ? ORDER BY id DESC LIMIT ?) retained
+      )`, [sessionId, sessionId, maxMessages]);
+    const boundary = Number(boundaries[0]?.boundary ?? 0);
+    if (!boundary) return 0;
+    const [checkpointRows] = await connection.query<RowDataPacket[]>(
+      "SELECT metadata FROM chat_sessions WHERE session_id = ?", [sessionId]);
+    const metadata = typeof checkpointRows[0]?.metadata === 'string' ? JSON.parse(checkpointRows[0].metadata) : checkpointRows[0]?.metadata;
+    const cp = metadata?.canonicalRuntimeCheckpoint;
+    if ((cp?.pendingToolCalls ?? cp?.pending_tool_calls ?? []).length) throw new ChatRetentionDeniedError('UNSETTLED_INTENT_RETENTION_DENIED');
+    const prior = metadata?.canonicalRetentionBoundaries ?? [];
+    if (prior.length >= 1000) throw new ChatRetentionDeniedError('RETENTION_AUDIT_CAPACITY_EXCEEDED');
+    await connection.query(
+      "UPDATE chat_sessions SET metadata = JSON_SET(COALESCE(metadata, JSON_OBJECT()), '$.canonicalRetentionBoundaries', CAST(? AS JSON)) WHERE session_id = ?",
+      [JSON.stringify([...prior, { beforeSequence: boundary, at: new Date().toISOString(), requestedMaxMessages: maxMessages, reason: 'explicit_message_cap' }]), sessionId]);
+    await connection.query('DELETE FROM agent_canonical_facts WHERE session_id = ? AND turn_sequence < ?', [sessionId, boundary]);
+
+    const [result] = await connection.query<ResultSetHeader>(
+      `DELETE cm FROM chat_messages cm
+       LEFT JOIN chat_messages parent_turn ON parent_turn.session_id = cm.session_id AND parent_turn.message_id = cm.parent_id AND parent_turn.role = 'user'
+       WHERE cm.session_id = ? AND (cm.id < ? OR parent_turn.id < ?)`,
+      [sessionId, boundary, boundary],
+    );
+    await this.updateSessionStats(connection, sessionId, actor?.userId);
+    return result.affectedRows || 0;
   }
 
   async deleteOldSessionsForMaintenance(retentionDays: number): Promise<number> {

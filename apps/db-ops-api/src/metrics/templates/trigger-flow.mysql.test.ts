@@ -41,8 +41,10 @@ import { MetricTemplateService } from './service.js';
 import { TemplateBindingService } from './binding-service.js';
 import { CollectNowService, createCollectNowAuthorizer } from './collect-now.js';
 import { registerMetricTemplateRoutes } from './routes.js';
-import { MysqlScheduleStore, COLLECT_NOW_JOB_TYPE } from '../scheduler/store.js';
+import { MysqlScheduleStore, COLLECT_NOW_JOB_TYPE, JOB_TYPE } from '../scheduler/store.js';
 import { MetricScheduler } from '../scheduler/service.js';
+import { MetricSchedulerLifecycle } from '../scheduler/lifecycle.js';
+import { assertMetricSchedulerSchema } from '../scheduler/runtime.js';
 import { JobRegistry } from '../../workflows/job-registry.js';
 import { MysqlWorkflowStore, WorkerRuntime } from '../../workflows/worker-runtime.js';
 import {
@@ -84,6 +86,7 @@ describe.skipIf(!enabled)('immediate collection on a real platform, queue and re
   let contentHash = '';
   let worker: WorkerRuntime;
   let jobs: JobRegistry;
+  let scheduler: MetricScheduler;
   let scheduleStore: MysqlScheduleStore;
   let controlledValue: number|null = 95;
   let controlledCapacity: number|null = 50;
@@ -342,7 +345,7 @@ describe.skipIf(!enabled)('immediate collection on a real platform, queue and re
         actorContextService.loadActiveActorOn(executor as never, userId, sessionVersion, undefined, true),
     });
     const access = createAssetCollectorAccess();
-    const scheduler = new MetricScheduler(
+    scheduler = new MetricScheduler(
       store,
       registry,
       {
@@ -415,14 +418,72 @@ describe.skipIf(!enabled)('immediate collection on a real platform, queue and re
     expect(result.data.state, JSON.stringify(result.data)).toBe('completed');
     return result.data;
   };
-  it('normal formal writer promotes applied and produces one existing event through 95/85/60', async () => {
+  // Use dependencies of the open/recovery transaction as fixtures. A missing
+  // startup probe must not remove the corresponding fault from this matrix.
+  it.each([
+    ['alerts', 'resolved_by'],
+    ['alert_events', 'source_type'],
+    ['alert_event_members', 'role'],
+    ['alert_event_logs', 'details'],
+    ['maintenance_interval_history', 'revision'],
+    ['maintenance_event_links', 'payload'],
+    ['notification_channels', 'delivery_start_at'],
+    ['notification_delivery_states', 'business_key'],
+  ].flatMap(([table, column]) => [{ table, missingColumn: null }, { table, missingColumn: column }]))(
+    'blocks startup after a partial restore of $table (omitted column: $missingColumn)',
+    async ({ table, missingColumn }) => {
+      const runner = new MigrationRunner(pool as unknown as MigrationPool);
+      const ledger = await runner.inspect();
+      expect(ledger.length).toBeGreaterThan(0);
+      expect(ledger.every(row => row.status === 'completed' || row.status === 'baselined')).toBe(true);
+      const before = await counts();
+      const registry = new JobRegistry();
+      const report = vi.fn();
+      const lifecycle = new MetricSchedulerLifecycle(scheduler, { enabled: true, report });
+      const original = 'max703_restored_table';
+      await pool.query('RENAME TABLE ?? TO ??', [table, original]);
+      let replacementCreated = false;
+      try {
+        if (missingColumn) {
+          const [columns] = await pool.query<RowDataPacket[]>(
+            'SELECT COLUMN_NAME FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?',
+            [original],
+          );
+          const names = columns.map(row => row.COLUMN_NAME);
+          expect(names).toContain(missingColumn);
+          // Preserve the migrated table and its foreign keys during the fault.
+          await pool.query('CREATE TABLE ?? AS SELECT ?? FROM ?? LIMIT 0', [table, names.filter(name => name !== missingColumn), original]);
+          replacementCreated = true;
+        }
+        expect(await runner.inspect()).toEqual(ledger);
+        await expect(lifecycle.start(registry, () => assertMetricSchedulerSchema(pool)))
+          .rejects.toThrow(/^METRIC_SCHEMA_NOT_READY$/);
+        expect(registry.has(JOB_TYPE)).toBe(false);
+        expect(registry.has(COLLECT_NOW_JOB_TYPE)).toBe(false);
+        expect(report).not.toHaveBeenCalled();
+        expect(await counts()).toEqual(before);
+      } finally {
+        await lifecycle.stop();
+        if (replacementCreated) await pool.query('DROP TABLE ??', [table]);
+        await pool.query('RENAME TABLE ?? TO ??', [original, table]);
+      }
+    },
+  );
+
+  it('publishes the formal sample and event atomically after schema restoration, then recovers the episode', async () => {
+    await assertMetricSchedulerSchema(pool);
     await pool.execute(
       "INSERT INTO notification_channels(name,type,config,enabled,delivery_start_at) VALUES('MAX239 rollback only','webhook',?,1,NOW())",
       [JSON.stringify({ webhook_url: 'http://127.0.0.1:1/never-deliver', severity: 'warning' })],
     );
     const original = alertEventService.persistTemplateTransition.bind(alertEventService);
+    let outboxBeforeRollback: number | undefined;
     vi.spyOn(alertEventService, 'persistTemplateTransition').mockImplementationOnce(async (...args) => {
       await original(...args);
+      const [rows] = await args[0].query<RowDataPacket[]>(
+        "SELECT COUNT(*) AS n FROM workflow_jobs WHERE job_type='notification.deliver'",
+      );
+      outboxBeforeRollback = Number(rows[0].n);
       throw Error('controlled transaction interruption');
     });
     controlledValue = 95;
@@ -433,12 +494,16 @@ describe.skipIf(!enabled)('immediate collection on a real platform, queue and re
     });
     expect(interrupted.status).toBe(200);
     await drain();
+    expect(outboxBeforeRollback).toBe(1);
     for (const table of [
       'metric_observations',
       'metric_trigger_episodes',
       'metric_trigger_heads',
       'alert_events',
+      'alert_event_members',
+      'alert_event_logs',
       'alerts',
+      'maintenance_event_links',
     ]) {
       expect(
         Number((await pool.query<RowDataPacket[]>(`SELECT COUNT(*) AS n FROM ${table}`))[0][0].n),
@@ -469,6 +534,22 @@ describe.skipIf(!enabled)('immediate collection on a real platform, queue and re
     );
     expect(events).toHaveLength(1);
     const id = Number(events[0].event_id);
+    const sampleIds = (first.samples as Array<{ id: string }>).map(sample => sample.id);
+    expect(sampleIds.length).toBeGreaterThan(0);
+    const [published] = await pool.query<RowDataPacket[]>(
+      "SELECT id FROM metric_observations WHERE stage = 'normalized' AND id IN (?)",
+      [sampleIds],
+    );
+    expect(published).toHaveLength(sampleIds.length);
+    const [opened] = await pool.query<RowDataPacket[]>(
+      `SELECT m.role, l.details->>'$.action' AS action, ml.payload->>'$.state' AS maintenance
+       FROM alert_event_members m
+       JOIN alert_event_logs l ON l.event_id = m.event_id
+       JOIN maintenance_event_links ml ON ml.alert_id = m.alert_id
+       WHERE m.event_id = ? AND m.alert_id = ?`,
+      [id, events[0].alert_id],
+    );
+    expect(opened).toEqual([{ role: 'triggered', action: 'trigger_opened', maintenance: 'inactive' }]);
     expect((await alertEventService.deleteEvent(id)).success).toBe(false);
     expect((await alertDatabaseService.deleteAlert(Number(events[0].alert_id))).success).toBe(false);
     expect((await pool.query<RowDataPacket[]>('SELECT * FROM alert_event_members WHERE event_id=?',[id]))[0]).toHaveLength(1);

@@ -66,7 +66,7 @@ async function startWorkers(pool: Pick<Pool, 'execute'>) {
     'consistencyChecker', 'alertDatabaseService', 'faultDiagnosisService', 'monitorCollector',
     'baselineCalculator', 'alertEngine', 'reportConfigService', 'serverReportService',
     'reportService', 'reportDatabaseService', 'networkDeviceCollector', 'configBackupScheduler',
-    'alertEscalationService', 'instanceDatabaseService', 'databaseService', 'cronJobService',
+    'alertEscalationService', 'instanceDatabaseService', 'databaseService', 'databaseLogService', 'cronJobService',
     'maintenanceWindowService']) context[name] = service;
   for (const name of ['MysqlWorkflowStore', 'JobRegistry', 'NotificationDispatchScheduler',
     'CapacityConsistencyMonitor', 'MysqlReportOccurrenceStore', 'BoundedWorkflowRuntime',

@@ -375,9 +375,12 @@ test('approval cancellation and retry keep the request attached to the current a
     await expect(page.locator('.login-gate')).toBeHidden({ timeout: 15_000 });
     await page.goto('/approval');
     const dashboard = page.locator('approval-dashboard');
-    const card = dashboard.locator('.card').filter({ hasText: sqlText });
+    const card = dashboard.locator('app-card.approval-card').filter({
+      has: page.getByRole('checkbox', { name: `选择审批 ${approvalId}`, exact: true }),
+    });
     await expect(card).toBeVisible({ timeout: 15_000 });
-    await card.locator('.card-header').click();
+    await expect(card).toContainText(sqlText);
+    await card.getByRole('button', { name: '查看完整证据', exact: true }).click();
     await expect(dashboard.getByText('审批详情')).toBeVisible();
     const cancelResponse = page.waitForResponse((response) =>
       response.url().endsWith(`/api/operations/${originalOperationId}/cancel`) && response.request().method() === 'POST',

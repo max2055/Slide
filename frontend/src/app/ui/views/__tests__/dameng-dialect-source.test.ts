@@ -40,8 +40,7 @@ const source = fs.readFileSync(SQL_CONSOLE_PATH, 'utf-8');
 
 describe('DamengDialect definition', () => {
   it('SQLDialect 应从 @codemirror/lang-sql 导入', () => {
-    expect(source).toContain("import { sql, MySQL, SQLDialect }");
-    expect(source).toContain('from "@codemirror/lang-sql"');
+    expect(source).toMatch(/import\s*\{[^}]*\bSQLDialect\b[^}]*\}\s+from ["']@codemirror\/lang-sql["']/);
   });
 
   it('DamengDialect 应通过 SQLDialect.define() 定义', () => {
