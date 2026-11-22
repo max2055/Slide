@@ -44,7 +44,8 @@ describe('PostgreSQL log collection baseline', () => {
   afterEach(() => vi.restoreAllMocks());
 
   it('establishes the first successful baseline without inserting historical anomalies', async () => {
-    await collect([row({ xact_rollback: '500', deadlocks: '80', temp_files: '900', blk_read_time: 9000 })]);
+    await collect([row({ xact_rollback: '500', deadlocks: '80', temp_files: '900', blk_read_time: 9000,
+      blk_write_time: 8000 })]);
     expect(service.lastCollectTime.get(instance.id)).toBeInstanceOf(Date);
     expect(service.pgLastStats.has(instance.id)).toBe(true);
     expect(mocks.execute).not.toHaveBeenCalled();
@@ -63,6 +64,42 @@ describe('PostgreSQL log collection baseline', () => {
     await collect([next]);
     expect(mocks.execute).not.toHaveBeenCalled();
   });
+
+  // GitHub #1023: each I/O direction qualifies on its own cumulative time and delta.
+  it.each([
+    { label: 'read only', readTime: 2600, writeTime: 1300, directions: ['read'] },
+    { label: 'write only', readTime: 1400, writeTime: 3050, directions: ['write'] },
+    { label: 'both directions', readTime: 2600, writeTime: 3050, directions: ['read', 'write'] },
+    { label: 'neither direction', readTime: 1200, writeTime: 1300, directions: [] },
+  ] as const)('emits I/O latency for $label', async ({ readTime, writeTime, directions }) => {
+    await collect([row({ blk_read_time: 1200, blk_write_time: 1300 })]);
+    const next = row({ blk_read_time: readTime, blk_write_time: writeTime });
+    await collect([next]);
+
+    const expected = {
+      read: { message: expect.stringContaining('读 +1400.00 ms'),
+        raw: { datname: 'app', direction: 'read', blk_read_time: 2600, delta: 1400 } },
+      write: { message: expect.stringContaining('写 +1750.00 ms'),
+        raw: { datname: 'app', direction: 'write', blk_write_time: 3050, delta: 1750 } },
+    };
+    expect(inserted()).toEqual(directions.map(direction => expected[direction]));
+    expect(mocks.execute).toHaveBeenCalledTimes(directions.length ? 1 : 0);
+    expect(databaseLogService.triggerLogAnalysis).toHaveBeenCalledTimes(directions.length ? 1 : 0);
+
+    await collect([next]);
+    expect(mocks.execute).toHaveBeenCalledTimes(directions.length ? 1 : 0);
+  });
+
+  it('applies the cumulative and incremental thresholds to each direction independently', async () => {
+    await collect([row({ blk_read_time: 100, blk_write_time: 2000 })]);
+    await collect([row({ blk_read_time: 1000, blk_write_time: 2500 })]);
+    expect(mocks.execute).not.toHaveBeenCalled();
+    await collect([row({ blk_read_time: 1500, blk_write_time: 3001 })]);
+    expect(inserted().map(log => log.raw)).toEqual([
+      { datname: 'app', direction: 'write', blk_write_time: 3001, delta: 501 },
+    ]);
+  });
+
   it('advances quiet rounds so below-threshold increments do not accumulate into an anomaly', async () => {
     await collect([row()]);
     await collect([row({ xact_rollback: '20' })]);
@@ -91,14 +128,20 @@ describe('PostgreSQL log collection baseline', () => {
     await collect([row()]);
     const time = service.lastCollectTime.get(instance.id), stats = service.pgLastStats.get(instance.id);
     mocks.execute.mockRejectedValueOnce(new Error('write failed'));
-    const next = row({ xact_rollback: '35', deadlocks: '3' });
+    const next = row({ xact_rollback: '35', deadlocks: '3', blk_read_time: 1500, blk_write_time: 2000 });
     await collect([next]);
+    expect(mocks.execute).toHaveBeenCalledTimes(1);
+    expect(inserted().map(log => log.raw.delta)).toEqual([25, 2, 1400, 2000]);
     expect(service.lastCollectTime.get(instance.id)).toBe(time);
     expect(service.pgLastStats.get(instance.id)).toBe(stats);
     expect(databaseLogService.triggerLogAnalysis).not.toHaveBeenCalled();
     mocks.execute.mockClear();
     await collect([next]);
-    expect(inserted().map(log => log.raw.delta)).toEqual([25, 2]);
+    expect(inserted().map(log => log.raw.delta)).toEqual([25, 2, 1400, 2000]);
+    expect(databaseLogService.triggerLogAnalysis).toHaveBeenCalledTimes(1);
+    await collect([next]);
+    expect(mocks.execute).toHaveBeenCalledTimes(1);
+    expect(databaseLogService.triggerLogAnalysis).toHaveBeenCalledTimes(1);
   });
   it('preserves the baseline if the destination pool disappears', async () => {
     await collect([row()]);
@@ -114,11 +157,12 @@ describe('PostgreSQL log collection baseline', () => {
   ])('rebaselines without signals on reset or counter regression: %j', async change => {
     await collect([row({ blk_write_time: 10 })]);
     const reset = row({ xact_rollback: '100', deadlocks: '9', temp_files: '300', blk_read_time: 3000,
-      blk_write_time: 20, ...change });
+      blk_write_time: 2000, ...change });
     await collect([reset]);
     expect(mocks.execute).not.toHaveBeenCalled();
-    await collect([{ ...reset, xact_rollback: String(Number(reset.xact_rollback) + 25) }]);
-    expect(inserted()[0].raw.delta).toBe(25);
+    await collect([{ ...reset, xact_rollback: String(Number(reset.xact_rollback) + 25),
+      blk_write_time: reset.blk_write_time + 1500 }]);
+    expect(inserted().map(log => log.raw.delta)).toEqual([25, 1500]);
   });
   it('baselines new/reappearing databases independently while retaining existing database signals', async () => {
     await collect([row()]);
