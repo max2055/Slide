@@ -11,9 +11,9 @@ import { MigrationRunner } from '../../migrations/runner.js';
 import type { MigrationPool } from '../../migrations/types.js';
 import { configurationInventory } from './inventory.js';
 import { createConfigurationRegistry } from './registry.js';
-import { createTrialStore, registerMetricConfigurationRoutes } from './routes.js';
+import { createTrialStore } from './routes.js';
+import { legacyConfigurationReader, registerPackageConfigurationTestRoutes } from './legacy-configuration-test-support.js';
 import { MetricConfigurationService } from './service.js';
-import { configurationReader } from './status-store.js';
 import { PolicyService, intentFingerprint } from '../policy/service.js';
 import { MysqlPolicyStore } from '../policy/store.js';
 import { refKey, type Ref } from '../policy/model.js';
@@ -69,7 +69,7 @@ describe.skipIf(!port)('MAX-238 R2 lifecycle on a disposable MySQL schema', () =
     packages = createConfigurationRegistry();
     const recommendations = await new MetricConfigurationService(policyFor(), packages,
       createTrialStore(() => pool, packages), { resolve: async () => { throw new Error('status must not collect'); } },
-      configurationReader(() => pool)).recommendations(admin, restartRef);
+      legacyConfigurationReader(() => pool)).recommendations(admin, restartRef);
     const release = recommendations.packages.find(entry => entry.compatibility === 'compatible')?.release.package;
     expect(release, 'the fixture resource must have a compatible release').toBeDefined();
     pin = { id: release!.id, version: release!.version, digest: release!.digest };
@@ -121,7 +121,7 @@ await pool.end();
 
   it('clears a claim only when the publication transaction provably rolled back', async () => {
     const input = { expected_revision: 0, package: pin, overrides: { enabled: 'disable' as const }, operation_key: 'r2-rollback' };
-    const service = new MetricConfigurationService(policyFor(), packages, createTrialStore(() => pool, packages), {} as never, configurationReader(() => pool));
+    const service = new MetricConfigurationService(policyFor(), packages, createTrialStore(() => pool, packages), {} as never, legacyConfigurationReader(() => pool));
     service.trial = async () => trial as never;
     await pool.query(`CREATE TRIGGER r2_block_journal BEFORE INSERT ON metric_policy_apply_operations
       FOR EACH ROW SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'blocked journal write'`);
@@ -139,14 +139,14 @@ await pool.end();
   it('recovers a publication whose HTTP response was lost, and does not repeat it', async () => {
     const app = Fastify();
     const service = new MetricConfigurationService(policyFor(), packages, createTrialStore(() => pool, packages), {} as never,
-      configurationReader(() => pool), async seed => seed);
+      legacyConfigurationReader(() => pool), async seed => seed);
     service.trial = async () => trial as never;
     let committed!: () => void;
     const committedAt = new Promise<void>(resolve => { committed = resolve; });
     const activate = service.activate.bind(service);
     service.activate = (actor, target, input, guard = {}) =>
       activate(actor, target, input, { ...guard, published: () => committed() });
-    await registerMetricConfigurationRoutes(app, async request => {
+    registerPackageConfigurationTestRoutes(app, async request => {
       (request as unknown as { user?: ActorContext }).user = admin;
     }, service);
     await app.listen({ host: '127.0.0.1', port: 0 });
@@ -176,12 +176,12 @@ await pool.end();
   it('reports a keyed activate as pending over real HTTP and never starts a second trial', async () => {
     const app = Fastify();
     const service = new MetricConfigurationService(policyFor(), packages, createTrialStore(() => pool, packages), {} as never,
-      configurationReader(() => pool), async seed => seed);
+      legacyConfigurationReader(() => pool), async seed => seed);
     let trials = 0, enter!: () => void, release!: () => void;
     const started = new Promise<void>(resolve => { enter = resolve; });
     const gate = new Promise<void>(resolve => { release = resolve; });
     service.trial = async () => { trials++; enter(); await gate; return trial as never; };
-    await registerMetricConfigurationRoutes(app, async request => {
+    registerPackageConfigurationTestRoutes(app, async request => {
       (request as unknown as { user?: ActorContext }).user = admin;
     }, service);
     await app.listen({ host: '127.0.0.1', port: 0 });
