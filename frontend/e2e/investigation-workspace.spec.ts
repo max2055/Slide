@@ -659,7 +659,9 @@ for (const action of ['revocation', 'selection'] as const) {
     try {
       await openProcess(page); await page.getByRole('button', { name: '加载更早消息', exact: true }).click(); await fetched;
       if (action === 'revocation') {
-        await page.getByRole('button', { name: '创建手动调查', exact: true }).click();
+        // The create action lives on the list. Seed an unsaved form alongside
+        // the pending detail read to exercise both revocation cleanup paths.
+        await page.locator('investigations-page').evaluate((view: any) => { view.createOpen = true; });
         await page.getByLabel('常见场景', { exact: true }).selectOption('custom');
         await page.getByRole('textbox', { name: '调查目标', exact: true }).fill('需随撤权清空的创建草稿');
         await page.evaluate(() => (window as any).t06Page.form = document.querySelector('investigation-create'));
