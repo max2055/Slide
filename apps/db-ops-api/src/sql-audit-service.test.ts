@@ -75,6 +75,23 @@ describe('MAX-545 / #594: audit context table names', () => {
     expect(internal._extractTableNames(sql, dialect).map((parts: string[]) => parts.join('.'))).toEqual(expected);
   });
 
+  it.each([
+    [String.raw`WITH U&"e\0076ents" AS (SELECT 999 AS id) SELECT id FROM events`, []],
+    [String.raw`WITH events AS (SELECT 999 AS id) SELECT id FROM U&"e\0076ents"`, []],
+    [String.raw`WITH u&"e!+000076ents" /* nested /* note */ comment */ UESCAPE '!' AS (SELECT 1 id) TABLE events`, []],
+    [String.raw`WITH U&"e!0076ents" UESCAPE $$!$$ AS (SELECT 1 id) TABLE events`, []],
+    [String.raw`WITH U&"e!0076ents" UESCAPE E'\x21' AS (SELECT 1 id) TABLE events`, []],
+    [String.raw`WITH U&"e!!vents" UESCAPE '!' AS (SELECT 1 id) TABLE "e!vents"`, []],
+    [String.raw`WITH U&"a\D83D\DE00""b" AS (SELECT 1 id) TABLE "a😀""b"`, []],
+    [String.raw`TABLE U&"Some\002eSchema".U&"\0045v""ents"`, ['"Some.Schema"."Ev""ents"']],
+    ['WITH events AS (TABLE events) SELECT id FROM events', ['events']],
+    ['WITH events AS (TABLE ONLY (app.events)) TABLE events', ['app.events']],
+    ['SELECT id FROM app.events UNION ALL TABLE other.events', ['app.events', 'other.events']],
+    ['CREATE TABLE destination AS TABLE app.events; DROP TABLE unrelated', ['app.events']],
+  ])('recognizes PostgreSQL Unicode identifiers and TABLE operands: %s', (sql, expected) => {
+    expect(internal._extractTableNames(sql, 'postgresql').map((parts: string[]) => parts.join('.'))).toEqual(expected);
+  });
+
   it.each([0, 1, 2])('uses the target MySQL case mode %s only for ambiguous CTE names', async mode => {
     const execute = vi.fn().mockResolvedValueOnce([[{ case_mode: mode }]]).mockResolvedValueOnce([[]]);
     vi.mocked(databaseService.getConnection).mockReturnValue({ db_type: 'mysql', connected: true, pool: { execute } } as any);
@@ -183,19 +200,31 @@ it.skipIf(process.env.SQL_AUDIT_PG_TEST !== '1')('resolves PostgreSQL catalog ev
     expect(evidence.table_stats).toContain(`表: ${second}."events"\n  行数: 2`);
     expect(evidence.table_stats).toContain(`表: ${hidden}.events - 表统计证据不可用`);
 
+    const tableBody = 'WITH events AS (TABLE events) TABLE events ORDER BY id';
+    expect((await pgClient.query(tableBody)).rows).toEqual([{ id: 1 }, { id: 2 }]);
+    await sqlAuditService.submitAudit(tableBody, 1, actor);
+    expect(vi.mocked(dispatchOrReuse).mock.lastCall?.[0].evidenceData).toMatchObject({
+      index_info: expect.stringContaining(`表: ${second}."events"\n  CREATE INDEX second_idx`),
+      table_stats: expect.stringContaining(`表: ${second}."events"\n  行数: 2`),
+    });
+
     await pgClient.query(`SET search_path TO ${hidden}, ${second};`);
     await sqlAuditService.submitAudit('SELECT id FROM events', 1, actor);
-    expect(vi.mocked(dispatchOrReuse).mock.calls[1][0].evidenceData).toMatchObject({
+    expect(vi.mocked(dispatchOrReuse).mock.lastCall?.[0].evidenceData).toMatchObject({
       index_info: expect.stringContaining('表: events - 索引证据不可用'),
     });
 
-    const quoted = 'WITH events AS (SELECT 999 AS id) SELECT id FROM "Events"';
-    expect((await pgClient.query(quoted)).rows).toEqual([{ id: 3 }]);
-    await sqlAuditService.submitAudit(quoted, 1, actor);
-    expect(vi.mocked(dispatchOrReuse).mock.lastCall?.[0].evidenceData).toMatchObject({
-      index_info: expect.stringContaining(`表: ${second}."Events"\n  CREATE INDEX quoted_idx`),
-      table_stats: expect.stringContaining(`表: ${second}."Events"\n  行数: 1`),
-    });
+    for (const quoted of [
+      'WITH events AS (SELECT 999 AS id) SELECT id FROM "Events"',
+      String.raw`WITH events AS (SELECT 999 AS id) SELECT id FROM U&"!0045vents" UESCAPE '!'`,
+    ]) {
+      expect((await pgClient.query(quoted)).rows).toEqual([{ id: 3 }]);
+      await sqlAuditService.submitAudit(quoted, 1, actor);
+      expect(vi.mocked(dispatchOrReuse).mock.lastCall?.[0].evidenceData).toMatchObject({
+        index_info: expect.stringContaining(`表: ${second}."Events"\n  CREATE INDEX quoted_idx`),
+        table_stats: expect.stringContaining(`表: ${second}."Events"\n  行数: 1`),
+      });
+    }
 
     const filtered = 'WITH RECURSIVE earlier AS (SELECT id FROM events), events AS (SELECT 999 AS id) SELECT id FROM earlier';
     expect((await pgClient.query(filtered)).rows).toEqual([{ id: 999 }]);

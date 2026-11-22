@@ -52,19 +52,105 @@ const mysqlBlockComment = /\/\*[\s\S]*?(?:\*\/|$)/u;
 const mysqlAuditParts = new RegExp(
   [mysqlAuditLexemes.source, mysqlBlockComment.source, /[\p{L}_$][\p{L}\p{N}_$]*|[^\s]/u.source].join('|'), 'gu',
 );
+const auditParts = /--[^\r\n]*|#[^\r\n]*|\/\*[\s\S]*?\*\/|\$(?<dollarTag>[A-Za-z_]\w*|)\$[\s\S]*?\$\k<dollarTag>\$|'(?:''|\\[\s\S]|[^'\\])*'|"(?:""|\\[\s\S]|[^"\\])*"|`(?:``|[^`])*`|[\p{L}_][\p{L}\p{N}_$]*|[^\s]/gu;
+const postgresAuditParts = new RegExp([
+  /[uU]&"(?<unicodeName>(?:""|[^"])*)"|"(?:""|[^"])*"/u.source,
+  auditParts.source,
+].join('|'), 'gu');
+
+function skipPostgresAuditTrivia(sql: string, start: number): number {
+  const trivia = /\s+|--[^\r\n]*|\/\*/y;
+  const markers = /\/\*|\*\//g;
+  let cursor = start;
+  trivia.lastIndex = cursor;
+  for (let match = trivia.exec(sql); match; match = trivia.exec(sql)) {
+    if (match[0] === '/*') {
+      markers.lastIndex = trivia.lastIndex;
+      let depth = 1;
+      while (depth > 0) {
+        const marker = markers.exec(sql);
+        if (!marker) return sql.length;
+        depth += marker[0] === '/*' ? 1 : -1;
+      }
+      trivia.lastIndex = markers.lastIndex;
+    }
+    cursor = trivia.lastIndex;
+  }
+  return cursor;
+}
+
+function decodePostgresIdentifier(raw: string, escape = '\\'): string | undefined {
+  if (escape === '\0' || Buffer.byteLength(escape) !== 1 || /[0-9a-f+"'\s]/i.test(escape)) return undefined;
+  const hexEscape = /(?:\+([0-9a-f]{6})|([0-9a-f]{4}))/iy;
+  const value = raw.replaceAll('""', '"');
+  let decoded = '';
+  let cursor = 0;
+  for (let next = value.indexOf(escape); next !== -1; next = value.indexOf(escape, cursor)) {
+    decoded += value.slice(cursor, next);
+    cursor = next + escape.length;
+    if (value.startsWith(escape, cursor)) {
+      decoded += escape;
+      cursor += escape.length;
+      continue;
+    }
+    hexEscape.lastIndex = cursor;
+    const hex = hexEscape.exec(value);
+    if (!hex) return undefined;
+    const codePoint = Number.parseInt(hex[1] ?? hex[2], 16);
+    if (codePoint === 0 || codePoint > 0x10ffff) return undefined;
+    decoded += String.fromCodePoint(codePoint);
+    cursor += hex[0].length;
+  }
+  decoded += value.slice(cursor);
+  // Supplementary characters can also be written as two escaped surrogates.
+  if (!decoded || /[\uD800-\uDFFF]/u.test(decoded)) return undefined;
+  return decoded;
+}
+
+function postgresEscapeCharacter(value: string): string {
+  if (!value.startsWith('\\')) return value;
+  const code = value.slice(1);
+  if (/^[0-7]+$/.test(code)) return String.fromCharCode(Number.parseInt(code, 8) & 0xff);
+  if (/^[xuU][0-9a-f]+$/i.test(code)) {
+    const number = Number.parseInt(code.slice(1), 16);
+    return number <= 0x7f ? String.fromCharCode(number) : '';
+  }
+  return ({ b: '\b', f: '\f', n: '\n', r: '\r', t: '\t' } as Record<string, string>)[code] ?? code;
+}
 
 // Lightweight lexical context for advisory rules, not an execution validator.
 // Keep literals atomic so their keywords, commas and parentheses cannot alter
 // statement shape. Quoted identifiers remain available for metadata lookup.
-function auditTokens(sql: string, mysql = false): AuditToken[] {
+function auditTokens(sql: string, dialect?: string): AuditToken[] {
   const tokens: AuditToken[] = [];
-  const parts = mysql
-    ? mysqlAuditParts
-    : /--[^\r\n]*|#[^\r\n]*|\/\*[\s\S]*?\*\/|\$([A-Za-z_]\w*|)\$[\s\S]*?\$\1\$|'(?:''|\\[\s\S]|[^'\\])*'|"(?:""|\\[\s\S]|[^"\\])*"|`(?:``|[^`])*`|[\p{L}_][\p{L}\p{N}_$]*|[^\s]/gu;
+  const parts = dialect === 'mysql' ? mysqlAuditParts : dialect === 'postgresql' ? postgresAuditParts : auditParts;
+  const scanner = new RegExp(parts);
+  const escapeClause = /UESCAPE(?![\p{L}\p{N}_$])/iuy;
+  const escapeValue = /'(?<single>[^'])'|[eE]'(?<eString>\\(?:[0-7]{1,3}|x[\da-fA-F]{1,2}|u[\da-fA-F]{4}|U[\da-fA-F]{8}|[^'])|[^'\\])'|(?<tag>\$(?:[A-Za-z_]\w*)?\$)(?<dollar>.)\k<tag>/suy;
   let depth = 0;
-  for (const match of sql.matchAll(parts)) {
+  for (let match = scanner.exec(sql); match; match = scanner.exec(sql)) {
     const text = match[0];
+    if (dialect === 'postgresql' && text.startsWith('/*')) {
+      scanner.lastIndex = skipPostgresAuditTrivia(sql, match.index);
+      continue;
+    }
     if (text.startsWith('--') || text.startsWith('#') || text.startsWith('/*')) continue;
+    if (match.groups?.unicodeName !== undefined) {
+      escapeClause.lastIndex = skipPostgresAuditTrivia(sql, scanner.lastIndex);
+      let escape: string | undefined;
+      if (escapeClause.test(sql)) {
+        escapeValue.lastIndex = skipPostgresAuditTrivia(sql, escapeClause.lastIndex);
+        const value = escapeValue.exec(sql);
+        const escaped = value?.groups?.eString;
+        escape = escaped === undefined ? value?.groups?.single ?? value?.groups?.dollar ?? '' : postgresEscapeCharacter(escaped);
+        if (value) scanner.lastIndex = escapeValue.lastIndex;
+      }
+      const identifier = decodePostgresIdentifier(match.groups.unicodeName, escape);
+      // regclass accepts ordinary quoted names as input, without U& or UESCAPE.
+      tokens.push({ text: identifier === undefined ? text : '"' + identifier.replaceAll('"', '""') + '"',
+        keyword: '', depth, identifier });
+      continue;
+    }
     if (text === ')') depth = Math.max(0, depth - 1);
     const word = /^[\p{L}_][\p{L}\p{N}_$]*$/u.test(text);
     const quoted = text.startsWith('`') || text.startsWith('"');
@@ -118,9 +204,10 @@ function afterCteBody(tokens: AuditToken[], cursor: number, dialect: string): nu
 // calling query block keeps it visible until that block closes.
 function cteDeclarations(
   tokens: AuditToken[], start: number, closes: ReadonlyMap<number, number>, dialect: string,
-): { name: AuditToken; visibleFrom: number }[] {
+): { declarations: { name: AuditToken; visibleFrom: number }[]; queryStart?: number } {
   const recursive = tokens[start + 1]?.keyword === 'RECURSIVE';
   const declarations: { name: AuditToken; visibleFrom: number }[] = [];
+  let queryStart: number | undefined;
   let cursor = start + (recursive ? 2 : 1);
   while (tokens[cursor]?.identifier) {
     const name = tokens[cursor++];
@@ -154,9 +241,13 @@ function cteDeclarations(
     }
     declarations.push({ name, visibleFrom });
     cursor = afterCteBody(tokens, bodyEnd + 1, dialect);
-    if (tokens[cursor++]?.text !== ',') break;
+    if (tokens[cursor]?.text !== ',') {
+      queryStart = cursor;
+      break;
+    }
+    cursor++;
   }
-  return declarations;
+  return { declarations, queryStart };
 }
 
 function mysqlVersionId(version: string | null): number | undefined {
@@ -299,13 +390,13 @@ class SqlAuditService {
    * 预 LLM 风险检测（正则匹配常见 SQL 反模式）
    */
   detectRisks(sqlText: string, dialect?: string, mysqlVersion: string | null = null): SqlRiskItem[] {
-    if (dialect !== 'mysql') return this._detectRisks(sqlText);
+    if (dialect !== 'mysql') return this._detectRisks(sqlText, dialect);
     const version = mysqlVersionId(mysqlVersion);
     const expanded = expandMysqlAuditComments(sqlText, version);
-    const results = this._detectRisks(expanded.sql, true);
+    const results = this._detectRisks(expanded.sql, dialect);
     if (expanded.conditional && version === undefined) {
       // A conditional clause can remove a risk finding as well as introduce one.
-      for (const risk of this._detectRisks(expandMysqlAuditComments(sqlText, 0).sql, true)) {
+      for (const risk of this._detectRisks(expandMysqlAuditComments(sqlText, 0).sql, dialect)) {
         if (!results.some(item => item.pattern === risk.pattern && item.level === risk.level)) results.push(risk);
       }
       results.push({
@@ -317,11 +408,11 @@ class SqlAuditService {
     return results;
   }
 
-  private _detectRisks(sqlText: string, mysql = false): SqlRiskItem[] {
+  private _detectRisks(sqlText: string, dialect?: string): SqlRiskItem[] {
     const results: SqlRiskItem[] = [];
     const normalized = sqlText.replace(/\s+/g, ' ').trim();
     const upper = normalized.toUpperCase();
-    const tokens = auditTokens(sqlText, mysql);
+    const tokens = auditTokens(sqlText, dialect);
 
     // SELECT *
     if (/SELECT\s+\*/i.test(upper)) {
@@ -496,12 +587,13 @@ class SqlAuditService {
 
   /** Retain each identifier component, including its original quoting. */
   private _extractTableNames(sql: string, dialect: string, ignoreCase = false): string[][] {
-    const tokens = auditTokens(sql, dialect === 'mysql');
+    const tokens = auditTokens(sql, dialect);
     const tables = new Map<string, string[]>();
     const tableLists = new Set<number>();
     const commands = new Set<number>();
     const ctes = new Map<number, Set<string>>();
     const pendingCtes = new Map<number, { name: string; depth: number }[]>();
+    const cteQueryStarts = new Set<number>();
     let closes: Map<number, number> | undefined;
     for (let i = 0; i < tokens.length; i++) {
       const { keyword, text, depth } = tokens[i];
@@ -517,7 +609,9 @@ class SqlAuditService {
       }
       if (keyword === 'WITH') {
         closes ??= closingParentheses(tokens);
-        for (const { name, visibleFrom } of cteDeclarations(tokens, i, closes, dialect)) {
+        const { declarations, queryStart } = cteDeclarations(tokens, i, closes, dialect);
+        if (queryStart !== undefined) cteQueryStarts.add(queryStart);
+        for (const { name, visibleFrom } of declarations) {
           const pending = pendingCtes.get(visibleFrom) ?? [];
           pending.push({ name: cteName(name, dialect, ignoreCase), depth });
           pendingCtes.set(visibleFrom, pending);
@@ -538,12 +632,25 @@ class SqlAuditService {
       }
       if (keyword === 'FROM' && commands.has(depth)) tableLists.add(depth);
 
-      if (!(keyword === 'FROM' && commands.has(depth)) && keyword !== 'JOIN'
-        && !(keyword === 'UPDATE' && !['FOR', 'KEY', 'DUPLICATE'].includes(tokens[i - 1]?.keyword))
-        && !(keyword === 'INTO' && ['INSERT', 'REPLACE', 'MERGE'].includes(tokens[i - 1]?.keyword))
+      const previous = tokens[i - 1];
+      // TABLE is a PostgreSQL SELECT form at a query boundary. In DDL it
+      // describes the object type and does not start a table read.
+      const tableQuery = dialect === 'postgresql' && keyword === 'TABLE' && (
+        !previous || [';', '('].includes(previous.text) || previous.keyword === 'AS'
+        || cteQueryStarts.has(i)
+        || ['UNION', 'INTERSECT', 'EXCEPT'].includes(
+          ['ALL', 'DISTINCT'].includes(previous.keyword) ? tokens[i - 2]?.keyword : previous.keyword,
+        )
+      );
+      if (!tableQuery && !(keyword === 'FROM' && commands.has(depth)) && keyword !== 'JOIN'
+        && !(keyword === 'UPDATE' && !['FOR', 'KEY', 'DUPLICATE'].includes(previous?.keyword))
+        && !(keyword === 'INTO' && ['INSERT', 'REPLACE', 'MERGE'].includes(previous?.keyword))
         && !(text === ',' && tableLists.has(depth))) continue;
       let cursor = i + 1;
-      if (tokens[cursor]?.keyword === 'ONLY') cursor++;
+      if (tokens[cursor]?.keyword === 'ONLY') {
+        cursor++;
+        if (tableQuery && tokens[cursor]?.text === '(') cursor++;
+      }
       const first = tokens[cursor];
       if (!first?.identifier || ['SELECT', 'WHERE', 'JOIN', 'ON', 'GROUP', 'ORDER', 'LIMIT', 'HAVING', 'SET'].includes(first.keyword)) continue;
       const parts = [first.text];
@@ -557,7 +664,7 @@ class SqlAuditService {
       // PostgreSQL DML targets resolve as catalog relations even with a CTE of
       // that name. MySQL UPDATE, by contrast, can resolve a reference to a CTE.
       const catalogTarget = keyword === 'INTO' || (dialect === 'postgresql'
-        && (keyword === 'UPDATE' || (keyword === 'FROM' && tokens[i - 1]?.keyword === 'DELETE')));
+        && (keyword === 'UPDATE' || (keyword === 'FROM' && previous?.keyword === 'DELETE')));
       if (parts.length === 1 && !catalogTarget && ctes.size
         && [...ctes.values()].some(aliases => aliases.has(cteName(first, dialect, ignoreCase)))) continue;
       tables.set(parts.join('.'), parts);
