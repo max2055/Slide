@@ -79,6 +79,86 @@ function auditTokens(sql: string, mysql = false): AuditToken[] {
   return tokens;
 }
 
+function cteName(token: AuditToken, dialect: string, ignoreCase: boolean): string {
+  const name = token.identifier!;
+  if (ignoreCase) return name.toLowerCase();
+  if (!token.keyword || dialect === 'mysql') return name;
+  if (dialect === 'postgresql') return name.replace(/[A-Z]/g, letter => letter.toLowerCase());
+  return token.keyword;
+}
+
+function closingParentheses(tokens: AuditToken[]): Map<number, number> {
+  const opens: number[] = [];
+  const closes = new Map<number, number>();
+  for (const [i, token] of tokens.entries()) {
+    if (token.text === '(') opens.push(i);
+    if (token.text === ')') {
+      const open = opens.pop();
+      if (open !== undefined) closes.set(open, i);
+    }
+  }
+  return closes;
+}
+
+function afterCteBody(tokens: AuditToken[], cursor: number, dialect: string): number {
+  if (dialect !== 'postgresql' && dialect !== 'oracle') return cursor;
+  if (tokens[cursor]?.keyword === 'SEARCH') {
+    while (tokens[cursor] && tokens[cursor].keyword !== 'SET') cursor++;
+    cursor += 2; // SET ordering_column
+  }
+  if (tokens[cursor]?.keyword === 'CYCLE') {
+    const delimiter = dialect === 'postgresql' ? 'USING' : 'DEFAULT';
+    while (tokens[cursor] && tokens[cursor].keyword !== delimiter) cursor++;
+    cursor += 2; // USING path_column or DEFAULT 'non_cycle_value'
+  }
+  return cursor;
+}
+
+// Index each declaration by the first token that can see its name. The
+// calling query block keeps it visible until that block closes.
+function cteDeclarations(
+  tokens: AuditToken[], start: number, closes: ReadonlyMap<number, number>, dialect: string,
+): { name: AuditToken; visibleFrom: number }[] {
+  const recursive = tokens[start + 1]?.keyword === 'RECURSIVE';
+  const declarations: { name: AuditToken; visibleFrom: number }[] = [];
+  let cursor = start + (recursive ? 2 : 1);
+  while (tokens[cursor]?.identifier) {
+    const name = tokens[cursor++];
+    const hasColumns = tokens[cursor]?.text === '(';
+    if (hasColumns) {
+      const close = closes.get(cursor);
+      if (close === undefined) break;
+      cursor = close + 1;
+    }
+    if (tokens[cursor++]?.keyword !== 'AS') break;
+    if (dialect === 'postgresql') {
+      if (tokens[cursor]?.keyword === 'NOT') cursor++;
+      if (tokens[cursor]?.keyword === 'MATERIALIZED') cursor++;
+    }
+    const bodyEnd = closes.get(cursor);
+    if (bodyEnd === undefined) break;
+
+    let visibleFrom = bodyEnd + 1;
+    if (recursive && dialect === 'postgresql') {
+      // PostgreSQL makes forward references visible in a recursive WITH.
+      visibleFrom = start;
+    } else if (recursive && dialect === 'mysql') {
+      // MySQL allows self-reference but still resolves later names outside this WITH.
+      visibleFrom = cursor + 1;
+    } else if (hasColumns && (dialect === 'oracle' || dialect === 'dameng')) {
+      // Recursive factoring uses an explicit column list and a UNION ALL member.
+      for (let i = cursor + 1; i < bodyEnd; i++) {
+        if (tokens[i].keyword === 'UNION' && tokens[i + 1]?.keyword === 'ALL') visibleFrom = i + 2;
+        i = closes.get(i) ?? i;
+      }
+    }
+    declarations.push({ name, visibleFrom });
+    cursor = afterCteBody(tokens, bodyEnd + 1, dialect);
+    if (tokens[cursor++]?.text !== ',') break;
+  }
+  return declarations;
+}
+
 function mysqlVersionId(version: string | null): number | undefined {
   if (!version || /mariadb/i.test(version)) return undefined;
   const match = /^(\d{1,2})\.(\d{1,2})\.(\d{1,2})(?=$|[.-])/.exec(version);
@@ -415,43 +495,43 @@ class SqlAuditService {
   }
 
   /** Retain each identifier component, including its original quoting. */
-  private _extractTableNames(sql: string, mysql: boolean): string[][] {
-    const tokens = auditTokens(sql, mysql);
+  private _extractTableNames(sql: string, dialect: string, ignoreCase = false): string[][] {
+    const tokens = auditTokens(sql, dialect === 'mysql');
     const tables = new Map<string, string[]>();
     const tableLists = new Set<number>();
     const commands = new Set<number>();
     const ctes = new Map<number, Set<string>>();
+    const pendingCtes = new Map<number, { name: string; depth: number }[]>();
+    let closes: Map<number, number> | undefined;
     for (let i = 0; i < tokens.length; i++) {
       const { keyword, text, depth } = tokens[i];
       if (text === ';') {
         commands.clear();
         tableLists.clear();
         ctes.clear();
+        pendingCtes.clear();
       } else if (text === ')') {
         commands.delete(depth + 1);
         tableLists.delete(depth + 1);
         ctes.delete(depth + 1);
       }
       if (keyword === 'WITH') {
-        const aliases = new Set<string>();
-        let cursor = i + (tokens[i + 1]?.keyword === 'RECURSIVE' ? 2 : 1);
-        while (tokens[cursor]?.identifier) {
-          const name = tokens[cursor++].identifier!;
-          if (tokens[cursor]?.text === '(') {
-            cursor++;
-            while (tokens[cursor]?.depth > depth) cursor++;
-            if (tokens[cursor++]?.text !== ')') break;
-          }
-          if (tokens[cursor++]?.keyword !== 'AS') break;
-          if (tokens[cursor]?.keyword === 'NOT') cursor++;
-          if (tokens[cursor]?.keyword === 'MATERIALIZED') cursor++;
-          if (tokens[cursor++]?.text !== '(') break;
-          aliases.add(name.toLowerCase());
-          while (tokens[cursor]?.depth > depth) cursor++;
-          if (tokens[cursor++]?.text !== ')' || tokens[cursor++]?.text !== ',') break;
+        closes ??= closingParentheses(tokens);
+        for (const { name, visibleFrom } of cteDeclarations(tokens, i, closes, dialect)) {
+          const pending = pendingCtes.get(visibleFrom) ?? [];
+          pending.push({ name: cteName(name, dialect, ignoreCase), depth });
+          pendingCtes.set(visibleFrom, pending);
         }
-        if (aliases.size) ctes.set(depth, aliases);
       }
+      for (const declaration of pendingCtes.get(i) ?? []) {
+        // The anchor / recursive member can start in a child block, but the
+        // CTE belongs to the block containing WITH.
+        if (declaration.depth > depth) continue;
+        const aliases = ctes.get(declaration.depth) ?? new Set<string>();
+        aliases.add(declaration.name);
+        ctes.set(declaration.depth, aliases);
+      }
+      pendingCtes.delete(i);
       if (['SELECT', 'DELETE', 'UPDATE'].includes(keyword)) commands.add(depth);
       if (['WHERE', 'GROUP', 'ORDER', 'LIMIT', 'HAVING', 'SET', 'RETURNING', 'UNION', 'INTERSECT', 'EXCEPT'].includes(keyword)) {
         tableLists.delete(depth);
@@ -474,9 +554,12 @@ class SqlAuditService {
       // Do not resolve a function, database link or incomplete qualifier as a local table.
       const following = tokens[cursor + 1]?.text;
       if (following === '@' || following === '.' || (following === '(' && keyword !== 'INTO')) continue;
-      // A bare CTE reference has no catalog identity. Qualified references
-      // remain eligible even when their final component matches a CTE.
-      if (parts.length === 1 && [...ctes.values()].some(aliases => aliases.has(first.identifier!.toLowerCase()))) continue;
+      // PostgreSQL DML targets resolve as catalog relations even with a CTE of
+      // that name. MySQL UPDATE, by contrast, can resolve a reference to a CTE.
+      const catalogTarget = keyword === 'INTO' || (dialect === 'postgresql'
+        && (keyword === 'UPDATE' || (keyword === 'FROM' && tokens[i - 1]?.keyword === 'DELETE')));
+      if (parts.length === 1 && !catalogTarget && ctes.size
+        && [...ctes.values()].some(aliases => aliases.has(cteName(first, dialect, ignoreCase)))) continue;
       tables.set(parts.join('.'), parts);
     }
     return [...tables.values()];
@@ -495,15 +578,43 @@ class SqlAuditService {
       if (expanded.conditional && version === undefined) return unavailable('无法确认 MySQL 版本及表引用');
       sql = expanded.sql;
     }
-    const tables = this._extractTableNames(sql, dialect === 'mysql');
-    if (!tables.length) return unavailable('未识别到可查询的表');
+    const caseSensitiveTables = this._extractTableNames(sql, dialect);
+    const caseInsensitiveTables = (dialect === 'mysql' || dialect === 'dameng') && /\bWITH\b/i.test(sql)
+      ? this._extractTableNames(sql, dialect, true) : caseSensitiveTables;
+    // Case-insensitive comparison can only suppress additional bare names.
+    const needsCaseMode = caseSensitiveTables.length !== caseInsensitiveTables.length;
+    if (!caseSensitiveTables.length) return unavailable('未识别到可查询的表');
     const conn = databaseService.getConnection(instanceId);
     if (!conn?.connected) return unavailable('数据库实例未连接');
     if (!['mysql', 'postgresql', 'oracle', 'dameng'].includes(dialect)) return unavailable('当前数据库类型不支持表元数据查询');
 
     const collect = async (): Promise<AuditMetadataEvidence> => {
-      const indexes: string[] = [];
-      const stats: string[] = [];
+      let tables = caseSensitiveTables;
+      let caseModeGap: AuditMetadataEvidence | undefined;
+      if (needsCaseMode) {
+        // Consult the target only when the case mode can change attribution.
+        let mode: unknown;
+        try {
+          if (dialect === 'mysql' && conn.pool) {
+            const [rows] = await conn.pool.execute<RowDataPacket[]>('SELECT @@lower_case_table_names AS case_mode');
+            mode = rows[0]?.case_mode;
+          } else if (dialect === 'dameng' && conn.dmConnection) {
+            const result = await conn.dmConnection.execute('SELECT SESS_CASE_SENSITIVE()');
+            mode = (result.rows as unknown[][] | undefined)?.[0]?.[0];
+          }
+        } catch {
+          // Keep evidence for references whose identity is independent of case mode.
+        }
+        if (mode !== 0 && mode !== 1 && (dialect !== 'mysql' || mode !== 2)) {
+          caseModeGap = unavailable('无法确认目标数据库标识符大小写规则');
+          tables = caseInsensitiveTables;
+        } else if (dialect === 'mysql' ? mode !== 0 : mode === 0) {
+          tables = caseInsensitiveTables;
+        }
+      }
+      if (!tables.length) return caseModeGap ?? unavailable('未识别到可查询的表');
+      const indexes = caseModeGap ? [caseModeGap.index_info] : [];
+      const stats = caseModeGap ? [caseModeGap.table_stats] : [];
       const resolved = new Set<string>();
       for (const table of tables) {
         let label = table.join('.');

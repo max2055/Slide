@@ -48,7 +48,55 @@ describe('MAX-545 / #594: audit context table names', () => {
     ['SELECT * FROM "a.b".users JOIN a."b.users" ON 1=1', ['"a.b".users', 'a."b.users"']],
     ['WITH users(id) AS (SELECT id FROM origin.users), events AS (SELECT id FROM users) SELECT id FROM events', ['origin.users']],
   ])('extracts actual table names: %s', (sql, expected) => {
-    expect(internal._extractTableNames(sql, sql.includes('`')).map((parts: string[]) => parts.join('.'))).toEqual(expected);
+    expect(internal._extractTableNames(sql, sql.includes('`') ? 'mysql' : 'postgresql').map((parts: string[]) => parts.join('.'))).toEqual(expected);
+  });
+
+  it.each([
+    ['mysql', 'WITH events AS (SELECT id FROM events) SELECT id FROM events', ['events']],
+    ['postgresql', 'WITH events AS (SELECT id FROM events) SELECT id FROM events', ['events']],
+    ['postgresql', 'WITH "Events" AS (SELECT 999 AS id) SELECT id FROM events', ['events']],
+    ['postgresql', 'WITH "events" AS (SELECT 999 AS id) SELECT id FROM EVENTS', []],
+    ['postgresql', 'WITH "Ev""ents" AS (SELECT 999 AS id) SELECT id FROM "Ev""ents"', []],
+    ['postgresql', 'WITH earlier AS NOT MATERIALIZED (SELECT id FROM later), later AS (SELECT 999 AS id) SELECT id FROM earlier', ['later']],
+    ['postgresql', 'WITH RECURSIVE earlier AS (SELECT id FROM later), later AS (SELECT 999 AS id) SELECT id FROM earlier', []],
+    ['postgresql', 'WITH RECURSIVE events(id) AS (SELECT id FROM app.events UNION ALL SELECT id + 1 FROM events WHERE id < 3) SEARCH DEPTH FIRST BY id SET ord CYCLE id SET looped USING path, next AS (SELECT id FROM events) SELECT id FROM next', ['app.events']],
+    ['postgresql', 'WITH events AS (SELECT 1 AS id) UPDATE events SET id=(SELECT id FROM events)', ['events']],
+    ['postgresql', 'WITH events AS (SELECT 1 AS id) DELETE FROM events WHERE id IN (SELECT id FROM events)', ['events']],
+    ['mysql', 'WITH RECURSIVE earlier AS (SELECT id FROM later), later AS (SELECT 999 AS id) SELECT id FROM earlier', ['later']],
+    ['mysql', 'WITH RECURSIVE events(id) AS (SELECT id FROM app.events UNION ALL SELECT id + 1 FROM events WHERE id < 3) SELECT id FROM events', ['app.events']],
+    ['mysql', 'WITH `Events` AS (SELECT 999 AS id) SELECT id FROM events', ['events']],
+    ['postgresql', 'WITH events AS (SELECT id FROM app.events) SELECT * FROM (WITH events AS (SELECT id FROM events) SELECT id FROM events) v JOIN events e ON 1=1', ['app.events']],
+    ['postgresql', 'SELECT * FROM (WITH events AS (SELECT 1 AS id) SELECT id FROM events) a JOIN (SELECT id FROM events) b ON 1=1', ['events']],
+    ['postgresql', 'WITH events AS (SELECT 1 AS id) SELECT id FROM events; SELECT id FROM events', ['events']],
+    ['oracle', 'WITH "Events" AS (SELECT 1 AS id FROM dual) SELECT id FROM events', ['dual', 'events']],
+    ['dameng', 'WITH "EVENTS" AS (SELECT 1 AS id FROM dual) SELECT id FROM events', ['dual']],
+    ['oracle', 'WITH events(id) AS (SELECT id FROM app.events UNION ALL SELECT id + 1 FROM events WHERE id < 3) SELECT id FROM events', ['app.events']],
+  ])('resolves CTE visibility for %s: %s', (dialect, sql, expected) => {
+    expect(internal._extractTableNames(sql, dialect).map((parts: string[]) => parts.join('.'))).toEqual(expected);
+  });
+
+  it.each([0, 1, 2])('uses the target MySQL case mode %s only for ambiguous CTE names', async mode => {
+    const execute = vi.fn().mockResolvedValueOnce([[{ case_mode: mode }]]).mockResolvedValueOnce([[]]);
+    vi.mocked(databaseService.getConnection).mockReturnValue({ db_type: 'mysql', connected: true, pool: { execute } } as any);
+    await sqlAuditService.submitAudit('WITH `Events` AS (SELECT 1 AS id) SELECT id FROM events', 1, actor);
+    expect(execute).toHaveBeenNthCalledWith(1, 'SELECT @@lower_case_table_names AS case_mode');
+    expect(execute).toHaveBeenCalledTimes(mode === 0 ? 2 : 1);
+    if (mode === 0) expect(execute).toHaveBeenNthCalledWith(2, expect.stringContaining('information_schema.TABLES'), [null, 'events']);
+  });
+
+  it('preserves qualified evidence when the MySQL case mode cannot be read', async () => {
+    const execute = vi.fn().mockRejectedValueOnce(new Error('mode unavailable')).mockResolvedValueOnce([[{
+      table_schema: 'other', table_name: 'events', table_rows: 2, index_name: 'events_idx', column_name: 'id',
+    }]]);
+    vi.mocked(databaseService.getConnection).mockReturnValue({ db_type: 'mysql', connected: true, pool: { execute } } as any);
+    await sqlAuditService.submitAudit('WITH `Events` AS (SELECT 1 AS id) SELECT a.id FROM events a JOIN other.events b ON b.id=a.id', 1, actor);
+    expect(execute).toHaveBeenCalledTimes(2);
+    expect(execute).toHaveBeenNthCalledWith(2, expect.stringContaining('information_schema.TABLES'), ['other', 'events']);
+    const evidence = vi.mocked(dispatchOrReuse).mock.lastCall?.[0].evidenceData as { index_info: string; table_stats: string };
+    expect(evidence.index_info).toContain('索引证据不可用（无法确认目标数据库标识符大小写规则）');
+    expect(evidence.index_info).toContain('表: `other`.`events`\n  events_idx');
+    expect(evidence.table_stats).toContain('表统计证据不可用（无法确认目标数据库标识符大小写规则）');
+    expect(evidence.table_stats).toContain('表: `other`.`events`\n  行数: 2');
   });
 
   it('binds both evidence fields to each qualified MySQL table and the connection default', async () => {
@@ -114,12 +162,14 @@ it.skipIf(process.env.SQL_AUDIT_PG_TEST !== '1')('resolves PostgreSQL catalog ev
       CREATE SCHEMA ${first}; CREATE SCHEMA ${second}; CREATE SCHEMA ${hidden};
       CREATE TABLE ${first}.events (id int); CREATE INDEX first_idx ON ${first}.events(id);
       CREATE TABLE ${second}.events (id int); CREATE INDEX second_idx ON ${second}.events(id);
+      CREATE TABLE ${second}."Events" (id int); CREATE INDEX quoted_idx ON ${second}."Events"(id);
       CREATE TABLE ${hidden}.events (id int); CREATE INDEX hidden_idx ON ${hidden}.events(id);
       INSERT INTO ${first}.events VALUES (1);
       INSERT INTO ${second}.events VALUES (1), (2);
-      ANALYZE ${first}.events; ANALYZE ${second}.events;
+      INSERT INTO ${second}."Events" VALUES (3);
+      ANALYZE ${first}.events; ANALYZE ${second}.events; ANALYZE ${second}."Events";
       GRANT USAGE ON SCHEMA ${first}, ${second}, ${hidden} TO ${role};
-      GRANT SELECT ON ${first}.events, ${second}.events TO ${role};
+      GRANT SELECT ON ${first}.events, ${second}.events, ${second}."Events" TO ${role};
       SET ROLE ${role}; SET search_path TO ${second}, ${first};`);
     vi.mocked(databaseService.getConnection).mockReturnValue({ db_type: 'postgresql', connected: true, pgClient } as any);
     await sqlAuditService.submitAudit(`SELECT a.id FROM ${first}.EVENTS a JOIN events b ON a.id=b.id
@@ -137,6 +187,22 @@ it.skipIf(process.env.SQL_AUDIT_PG_TEST !== '1')('resolves PostgreSQL catalog ev
     await sqlAuditService.submitAudit('SELECT id FROM events', 1, actor);
     expect(vi.mocked(dispatchOrReuse).mock.calls[1][0].evidenceData).toMatchObject({
       index_info: expect.stringContaining('表: events - 索引证据不可用'),
+    });
+
+    const quoted = 'WITH events AS (SELECT 999 AS id) SELECT id FROM "Events"';
+    expect((await pgClient.query(quoted)).rows).toEqual([{ id: 3 }]);
+    await sqlAuditService.submitAudit(quoted, 1, actor);
+    expect(vi.mocked(dispatchOrReuse).mock.lastCall?.[0].evidenceData).toMatchObject({
+      index_info: expect.stringContaining(`表: ${second}."Events"\n  CREATE INDEX quoted_idx`),
+      table_stats: expect.stringContaining(`表: ${second}."Events"\n  行数: 1`),
+    });
+
+    const filtered = 'WITH RECURSIVE earlier AS (SELECT id FROM events), events AS (SELECT 999 AS id) SELECT id FROM earlier';
+    expect((await pgClient.query(filtered)).rows).toEqual([{ id: 999 }]);
+    await sqlAuditService.submitAudit(filtered, 1, actor);
+    expect(vi.mocked(dispatchOrReuse).mock.lastCall?.[0].evidenceData).toMatchObject({
+      index_info: '索引证据不可用（未识别到可查询的表）',
+      table_stats: '表统计证据不可用（未识别到可查询的表）',
     });
   } finally {
     try {

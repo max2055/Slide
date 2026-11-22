@@ -342,4 +342,20 @@ describe.skipIf(process.env.SQL_AUDIT_MYSQL_TEST !== '1')('MAX-533 real MySQL au
       await admin.query(`DROP DATABASE IF EXISTS ${hidden}`);
     }
   });
+
+  it('follows the target MySQL case mode for a quoted CTE with a physical namesake', async () => {
+    const [{ case_mode: caseMode }] = await rows('SELECT @@lower_case_table_names AS case_mode');
+    const sql = 'WITH `Audit_Subject` AS (SELECT 999 AS id) SELECT id FROM audit_subject';
+    expect(await rows(sql)).toEqual([{ id: caseMode === 0 ? 1 : 999 }]);
+    const { analysisId } = await submit(sql);
+    const [dispatch] = await rows('SELECT request_snapshot FROM analysis_dispatches WHERE analysis_id=?', [analysisId]);
+    const evidence = dispatch.request_snapshot.evidence.data;
+    if (caseMode === 0) {
+      expect(evidence.index_info).toContain('PRIMARY (id)');
+      expect(evidence.table_stats).toContain(`表: \`${schema}\`.\`audit_subject\`\n  行数:`);
+    } else {
+      expect(evidence.index_info).toContain('索引证据不可用（未识别到可查询的表）');
+      expect(evidence.table_stats).toContain('表统计证据不可用（未识别到可查询的表）');
+    }
+  });
 });
