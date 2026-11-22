@@ -1011,6 +1011,7 @@ export class EventManagementPage extends LitElement {
         ${workspace ? html`<a class="btn" href=${workspace} @click=${(e: MouseEvent) => returnToWorkbench(e, workspace)}>${returnLabel}</a>` : nothing}
       </nav>
       ${this.detailLoading && !event ? html`<p role="status">正在读取事件 #${this.eventId}…</p>` : nothing}
+      ${this.error ? html`<div class="error" role="alert">操作失败: ${this.error}</div>` : nothing}
       ${this.detailError ? html`<p role="alert" class="error">${this.detailError}
         ${this.detailError.startsWith('读取') ? html`<button class="btn" @click=${() => void this._readDetail(event?.id ?? this.eventId, event ?? undefined)}>重试</button>` : nothing}</p>` : nothing}
       ${event ? html`${this.canViewInvestigations ? keyed(event.id,html`<div class="record-overview">
