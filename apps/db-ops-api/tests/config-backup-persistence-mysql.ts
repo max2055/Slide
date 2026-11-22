@@ -214,6 +214,19 @@ try {
 
   await pool.query('DELETE FROM network_config_backup_runs');
   await pool.query("CREATE TRIGGER max600_audit_fail BEFORE INSERT ON audit_log_entries FOR EACH ROW SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'injected audit outage'");
+  before = captures;
+  checkpointFailures = 3;
+  await run(faulty).tick();
+  const [unauditedRun] = await pool.query<mysql.RowDataPacket[]>('SELECT backup_id FROM network_config_backup_runs');
+  assert.equal(unauditedRun[0].backup_id, savedRun[0].backup_id);
+  assert.equal(checkpointFailures, 0);
+  await pool.query('UPDATE network_config_backup_runs SET started_at = DATE_SUB(CURRENT_TIMESTAMP, INTERVAL 11 MINUTE)');
+  await run().tick();
+  assert.deepEqual((await base.get(7)).lastRun, { date: '2026-11-13', status: 'failed', errorCode: 'CONFIG_BACKUP_RESULT_UNCONFIRMED' });
+  assert.equal(captures, before + 1);
+  console.log('PASS #1015: prior audits for a reused backup do not confirm the current run when its audit and checkpoint both fail');
+
+  await pool.query('DELETE FROM network_config_backup_runs');
   content += '\n description audit-outage';
   before = captures;
   const failed = await service.capture(7);
@@ -221,22 +234,12 @@ try {
   assert.equal(failed.backupSaved, true); assert.equal(failed.retryable, false);
   assert.ok((await service.list(7)).some(row => row.id === failed.backup.id));
   assert.equal((await service.get(7, failed.backup.id))?.preview?.includes('synthetic-secret'), false);
-  checkpointFailures = 3;
-  await run(faulty).tick();
-  assert.equal(checkpointFailures, 0);
-  await pool.query('UPDATE network_config_backup_runs SET started_at = DATE_SUB(CURRENT_TIMESTAMP, INTERVAL 11 MINUTE)');
-  await run().tick();
-  assert.deepEqual((await base.get(7)).lastRun, { date: '2026-11-13', status: 'failed', errorCode: 'CONFIG_BACKUP_RESULT_UNCONFIRMED' });
-  assert.equal(captures, before + 2);
-  console.log('PASS #1015: prior audits for a reused backup do not confirm the current run when its audit and checkpoint both fail');
-
-  await pool.query('DELETE FROM network_config_backup_runs');
   finalizationFailures = 3;
   await run(faulty).tick();
   await pool.query('DROP TRIGGER max600_audit_fail');
   await run().tick();
   assert.deepEqual((await base.get(7)).lastRun, { date: '2026-11-13', status: 'failed', errorCode: 'CONFIG_BACKUP_SAVED_AUDIT_FAILED' });
-  assert.equal(captures, before + 3); // Explicit capture + two scheduled fixtures, no recovery/retry capture.
+  assert.equal(captures, before + 2); // Explicit capture + scheduled run, no recovery/retry capture.
   await auditManager.logConfigBackupAccess({ action: 'read_raw', deviceId: 7, backupId: failed.backup.id });
   const [audits] = await pool.query<mysql.RowDataPacket[]>('SELECT event_type, details_json FROM audit_log_entries');
   assert.ok(audits.length >= 8);
