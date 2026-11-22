@@ -2,7 +2,7 @@
  * Reusable toggle switch — consistent styling via CSS custom properties.
  * Usage: <app-toggle ?checked=${this.val} @change=${(e) => this.val = e.detail}>Label</app-toggle>
  */
-import { LitElement, html, css } from "lit";
+import { LitElement, html, css, nothing } from "lit";
 import { customElement, property } from "lit/decorators.js";
 
 @customElement("app-toggle")
@@ -10,6 +10,7 @@ export class AppToggle extends LitElement {
   @property({ type: Boolean }) checked = false;
   @property({ type: Boolean, reflect: true }) disabled = false;
   @property({ type: Boolean, reflect: true }) compact = false;
+  @property({ attribute: "aria-label" }) accessibleLabel = "";
 
   static styles = css`
     :host {
@@ -54,6 +55,7 @@ export class AppToggle extends LitElement {
           type="button"
           ?disabled=${this.disabled}
           @click=${this._toggle}
+          aria-label=${this.accessibleLabel || nothing}
           aria-pressed=${this.checked}
         ></button>
       </label>
