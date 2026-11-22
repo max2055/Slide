@@ -136,6 +136,7 @@ it.each([
       await fastify.register(rbacApiRoutes);
     } else if (path === '/api/alerts') {
       vi.spyOn(alertDatabaseService, 'getAlerts').mockResolvedValue(alertPage);
+      vi.spyOn(actorContextService, 'revalidateActor').mockResolvedValue({ ...actor, permissions: ['*'] });
       await registerAlertListRoute(fastify, verifyAdmin);
     } else {
       registerInline({

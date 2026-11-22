@@ -15,17 +15,37 @@ import { showToast } from "../components/app-toast-container.js";
 import { workspaceReturnTo } from '../workbench-routing.ts';
 import { returnToWorkbench } from '../workbench-position.ts';
 import { eventDisplayTitle } from '../controllers/event-investigation-api.ts';
+import { ALERT_LEVELS, alertLevelLabel, alertLevelVariant } from '../alert-levels.js';
 
 const API_BASE = "/api";
+const EVENT_GROUPS = {
+  active: { status: 'open,investigating,handled', label: '活跃事件' },
+  resolved: { status: 'resolved,closed', label: '已解决 / 已关闭' },
+  other: { status: 'other', label: '历史未归类' },
+} as const;
+type EventGroup = keyof typeof EVENT_GROUPS;
+
+function eventTarget(event: AlertEvent) {
+  if (event.target_type === 'network_device' || event.network_device_id)
+    return event.network_device_name || (event.network_device_id ? `网络设备 #${event.network_device_id}` : '网络设备未知');
+  if (event.target_type === 'server' || event.server_id)
+    return event.server_name || (event.server_id ? `服务器 #${event.server_id}` : '服务器未知');
+  return event.instance_name || (event.instance_id ? `实例 #${event.instance_id}` : '目标未记录');
+}
 
 interface AlertEvent {
   id: string;
   title: string;
   source_type?: string;
-  status: "open" | "investigating" | "handled" | "resolved" | "closed";
+  status: string;
   severity: string;
   instance_id: number | null;
   instance_name?: string;
+  target_type?: string;
+  server_id?: number | null;
+  server_name?: string;
+  network_device_id?: number | null;
+  network_device_name?: string;
   alert_count?: number;
   root_cause?: string;
   assignee?: string;
@@ -127,7 +147,21 @@ export class EventManagementPage extends LitElement {
       margin-bottom: var(--space-lg);
     }
 
-    .stats-row stat-card::part(hint) { display: none; }
+    .scope-note { margin: 0 0 var(--space-md); color: var(--muted); font-size: var(--text-sm); }
+    .groups { display: flex; flex-wrap: wrap; gap: var(--space-sm); margin-bottom: var(--space-md); }
+    .groups .tab {
+      display: inline-flex;
+      align-items: center;
+      gap: var(--space-sm);
+      padding: var(--space-sm) var(--space-md);
+      border: 0;
+      border-bottom: 2px solid transparent;
+      background: transparent;
+      color: var(--muted);
+      font: inherit;
+      cursor: pointer;
+    }
+    .groups .tab:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 
     .filter-bar {
       display: flex;
@@ -160,7 +194,9 @@ export class EventManagementPage extends LitElement {
       display: flex;
       align-items: center;
       gap: var(--space-sm);
-      margin-bottom: var(--space-lg);
+      flex: 1 1 240px;
+      max-width: 380px;
+      min-width: 0;
     }
 
     .search-bar input {
@@ -286,14 +322,20 @@ export class EventManagementPage extends LitElement {
     .event-item.selected { background: var(--bg-secondary); border-left: 3px solid var(--primary, #3b82f6); }
 
     .event-item .event-title {
+      display: flex;
+      align-items: baseline;
+      gap: var(--space-sm);
       font-size: var(--text-base);
       font-weight: 500;
       color: var(--text);
       margin-bottom: var(--space-xs);
     }
+    .event-number { flex: none; color: var(--muted); font-variant-numeric: tabular-nums; }
+    .event-name { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 
     .event-item .event-meta {
       display: flex;
+      flex-wrap: wrap;
       gap: var(--space-sm);
       font-size: var(--text-xs);
       color: var(--muted);
@@ -445,8 +487,9 @@ export class EventManagementPage extends LitElement {
   @state() private loading = true;
   @state() private error: string | null = null;
   @state() private loadError: string | null = null;
+  @state() private statsError = false;
   @state() private retryLoading = false;
-  @state() private activeListTab: 'active' | 'resolved' = 'active';
+  @state() private activeListTab: EventGroup = 'active';
   @state() private filterSeverity = "all";
   @state() private filterSearch = "";
   @state() private noteText = "";
@@ -457,7 +500,7 @@ export class EventManagementPage extends LitElement {
   @state() private rcaLoading = false;
   @state() private rcaResult: { analysisIds: number[]; sessionKeys: string[]; eventId: number } | null = null;
   @state() private eventsPage = 0;
-  @state() private eventsTotal = 0;
+  @state() private eventsTotal: number | null = null;
   private readonly eventsPageSize = 50;
   private closeDetail = (event?: KeyboardEvent) => {
     if (event && (event.key !== 'Escape' || event.defaultPrevented
@@ -519,43 +562,54 @@ export class EventManagementPage extends LitElement {
 
   private listRequest = 0;
 
+  private async _readEventList() {
+    const offset = this.eventsPage * this.eventsPageSize;
+    const res = await authFetch(`${API_BASE}/alerts/events?limit=${this.eventsPageSize}&offset=${offset}&status=${EVENT_GROUPS[this.activeListTab].status}`, { cache: 'no-store' });
+    if (!res.ok) throw new Error(res.status === 403 ? '无权访问事件' : `事件加载失败: ${res.status}`);
+    const data = await res.json();
+    if (!Array.isArray(data?.items ?? data)) throw new Error('事件返回格式异常');
+    const total = data.total;
+    return { items: data.items ?? data, total: Number.isSafeInteger(total) && total >= 0 ? total : null };
+  }
+
+  private async _readEventStats(): Promise<EventStats> {
+    const res = await authFetch(`${API_BASE}/alerts/events/stats`, { cache: 'no-store' });
+    if (!res.ok) throw new Error('事件统计读取失败');
+    const stats: EventStats = await res.json();
+    if (!stats || ![stats.total, stats.open, stats.investigating, stats.handled, stats.resolved, stats.closed]
+      .every(count => Number.isSafeInteger(count) && count >= 0)
+      || stats.total < stats.open + stats.investigating + stats.handled + stats.resolved + stats.closed)
+      throw new Error('事件统计返回格式异常');
+    return stats;
+  }
+
   private async _loadEvents() {
     const request = ++this.listRequest;
     this.retryLoading = true;
-    try {
-      const offset = this.eventsPage * this.eventsPageSize;
-      const statusFilter = this.activeListTab === 'active'
-        ? 'open,investigating,handled'
-        : 'resolved,closed';
-      const [eventsRes, statsRes, mttrRes] = await Promise.all([
-        authFetch(`${API_BASE}/alerts/events?limit=${this.eventsPageSize}&offset=${offset}&status=${statusFilter}`),
-        authFetch(`${API_BASE}/alerts/events/stats`),
-        authFetch(`${API_BASE}/alerts/events/mttr`),
-      ]);
-      if (!eventsRes.ok) throw new Error(eventsRes.status === 403 ? '无权访问事件' : `事件加载失败: ${eventsRes.status}`);
-      if (!statsRes.ok) throw new Error(`Failed to load stats: ${statsRes.status}`);
-      const data = await eventsRes.json();
-      if (!Array.isArray(data?.items ?? data)) throw new Error('事件返回格式异常');
-      const stats = await statsRes.json();
-      const mttr = mttrRes.ok ? await mttrRes.json() : null;
-      if (request !== this.listRequest) return;
-      this.loadError = null;
-      this.events = data.items ?? data;
-      this.eventsTotal = data.total ?? 0;
-      this.stats = stats;
-      this.mttr = mttr;
-    } catch (e: any) {
-      if (request === this.listRequest) {
-        this.loadError = e.message;
-        this.events = []; this.stats = null; this.mttr = null;
-        this.closeDetail();
-      }
-    } finally {
-      if (request === this.listRequest) {
-        this.loading = false;
-        this.retryLoading = false;
+    const [list, stats, mttr] = await Promise.allSettled([
+      this._readEventList(),
+      this._readEventStats(),
+      authFetch(`${API_BASE}/alerts/events/mttr`, { cache: 'no-store' }).then(res => res.ok ? res.json() : null),
+    ]);
+    if (request !== this.listRequest) return;
+    this.loadError = list.status === 'fulfilled' ? null
+      : list.reason instanceof Error ? list.reason.message : '事件暂不可读';
+    if (this.loadError) this.closeDetail();
+    this.events = list.status === 'fulfilled' ? list.value.items : [];
+    this.eventsTotal = list.status === 'fulfilled' ? list.value.total : null;
+    this.stats = stats.status === 'fulfilled' ? stats.value : null;
+    this.statsError = stats.status === 'rejected';
+    this.mttr = mttr.status === 'fulfilled' ? mttr.value : null;
+    if (this.eventsTotal !== null) {
+      const lastPage = Math.max(0, Math.ceil(this.eventsTotal / this.eventsPageSize) - 1);
+      if (this.eventsPage > lastPage) {
+        this.eventsPage = lastPage;
+        await this._loadEvents();
+        return;
       }
     }
+    this.loading = false;
+    this.retryLoading = false;
   }
 
   private detailRequest = 0;
@@ -806,7 +860,7 @@ export class EventManagementPage extends LitElement {
         `#${e.id}`.includes(q) ||
         e.title.toLowerCase().includes(q) ||
         (e.root_cause && e.root_cause.toLowerCase().includes(q)) ||
-        (e.instance_name && e.instance_name.toLowerCase().includes(q))
+        eventTarget(e).toLowerCase().includes(q)
       );
     }
     return result;
@@ -826,8 +880,9 @@ export class EventManagementPage extends LitElement {
       handled: "已处理",
       resolved: "已解决",
       closed: "已关闭",
+      reviewed: "已审阅（历史）",
     };
-    return html`<app-badge variant=${variantMap[status] || "muted"}>${labelMap[status] || status}</app-badge>`;
+    return html`<app-badge variant=${variantMap[status] || "muted"}>${labelMap[status] || `未归类（${status || '空状态'}）`}</app-badge>`;
   }
 
   private _severityColor(severity: string): string {
@@ -836,18 +891,20 @@ export class EventManagementPage extends LitElement {
       warning: "var(--warn, #f59e0b)",
       error: "var(--danger, #ef4444)",
       critical: "var(--danger)",
+      p0: "var(--danger)",
     };
     return colors[severity] || "var(--muted)";
   }
 
   private _renderPagination() {
+    if (this.eventsTotal === null) return nothing;
     const totalPages = Math.max(1, Math.ceil(this.eventsTotal / this.eventsPageSize));
     if (totalPages <= 1) return html``;
     return html`
       <div class="pagination">
-        <button class="btn" ?disabled=${this.eventsPage === 0} @click=${() => { this.eventsPage--; this._loadEvents(); }}>← 上一页</button>
+        <button class="btn" ?disabled=${this.retryLoading || this.eventsPage === 0} @click=${() => { this.eventsPage--; this._loadEvents(); }}>← 上一页</button>
         <span class="event-list-info">第 ${this.eventsPage + 1}/${totalPages} 页</span>
-        <button class="btn" ?disabled=${this.eventsPage >= totalPages - 1} @click=${() => { this.eventsPage++; this._loadEvents(); }}>下一页 →</button>
+        <button class="btn" ?disabled=${this.retryLoading || this.eventsPage >= totalPages - 1} @click=${() => { this.eventsPage++; this._loadEvents(); }}>下一页 →</button>
       </div>`;
   }
 
@@ -890,48 +947,30 @@ export class EventManagementPage extends LitElement {
         <div class="page-top">
         <div class="header"><button class="btn btn-refresh" aria-label="刷新事件" ?disabled=${this.retryLoading} @click=${this._loadEvents}>${this.retryLoading ? '刷新中...' : '刷新事件'}</button></div>
 
-        ${this.stats ? this._renderStats() : nothing}
+        ${this._renderStats()}
+        ${this.statsError ? html`<p class="scope-note" role="status">全局统计暂不可读，可通过「刷新事件」重试。</p>` : nothing}
+        <p class="scope-note">统计和分组覆盖当前账号可查看的全部时间。全局总计包含活跃、已解决或关闭、历史未归类三组。</p>
+        ${this._renderGroups()}
+        ${this.activeListTab === 'other' ? html`<p class="scope-note">这里保留未归入活跃或已解决的历史状态，可按事件编号打开原记录核对。</p>` : nothing}
 
-        <div class="search-bar">
-          <input
-            type="text"
-            aria-label="搜索本页事件"
-            placeholder="搜索本页事件标题、实例或根因..."
-            .value=${this.filterSearch}
-            @input=${(e: Event) => { this.filterSearch = (e.target as HTMLInputElement).value; }}
-          />
-        </div>
-
-        <p>搜索和严重度仅筛选本页；分页总数为当前状态的全部事件数。</p>
-
-        <!-- 活跃/已解决 Tab -->
-        <div style="display:flex;gap:var(--space-md);margin-bottom:var(--space-lg);">
-          <button class="tab ${this.activeListTab === 'active' ? 'active' : ''}"
-            @click=${() => { this.activeListTab = 'active'; this.eventsPage = 0; this._loadEvents(); }}
-            style="padding:var(--space-sm) var(--space-lg);font-size:var(--text-base);font-weight:500;background:transparent;border:none;border-bottom:2px solid transparent;cursor:pointer;color:var(--muted);position:relative;">
-            活跃事件
-            ${this.stats ? html`<span style="position:absolute;top:2px;right:-4px;min-width:16px;height:16px;padding:0 var(--space-xs);background:var(--accent-solid);color:var(--accent-solid-foreground);border-radius:var(--radius-full);font-size:10px;font-weight:600;display:flex;align-items:center;justify-content:center;">${this.stats.open + this.stats.investigating + this.stats.handled}</span>` : nothing}
-          </button>
-          <button class="tab ${this.activeListTab === 'resolved' ? 'active' : ''}"
-            @click=${() => { this.activeListTab = 'resolved'; this.eventsPage = 0; this._loadEvents(); }}
-            style="padding:var(--space-sm) var(--space-lg);font-size:var(--text-base);font-weight:500;background:transparent;border:none;border-bottom:2px solid transparent;cursor:pointer;color:var(--muted);position:relative;">
-            已解决
-            ${this.stats ? html`<span style="position:absolute;top:2px;right:-4px;min-width:16px;height:16px;padding:0 var(--space-xs);background:var(--ok-subtle, #dcfce7);color:var(--ok, #22c55e);border-radius:var(--radius-full);font-size:10px;font-weight:600;display:flex;align-items:center;justify-content:center;">${this.stats.resolved + this.stats.closed}</span>` : nothing}
-          </button>
-        </div>
-
+        <p class="scope-note">搜索和严重度仅筛选本页；分页总数为当前分组的可见记录数。</p>
         <div class="filter-bar">
-          <label>本页严重度:</label>
-          <select aria-label="本页严重度" @change=${(e: Event) => { this.filterSeverity = (e.target as HTMLSelectElement).value; }}>
-            <option value="all">全部</option>
-            <option value="critical" ?selected=${this.filterSeverity === 'critical'}>严重</option>
-            <option value="error" ?selected=${this.filterSeverity === 'error'}>错误</option>
-            <option value="warning" ?selected=${this.filterSeverity === 'warning'}>警告</option>
-            <option value="info" ?selected=${this.filterSeverity === 'info'}>提示</option>
+          <div class="search-bar">
+            <input
+              type="text"
+              aria-label="搜索本页事件"
+              placeholder="搜索本页编号、标题、目标或根因"
+              .value=${this.filterSearch}
+              @input=${(e: Event) => { this.filterSearch = (e.target as HTMLInputElement).value; }}
+            />
+          </div>
+          <select aria-label="本页严重度" .value=${this.filterSeverity} @change=${(e: Event) => { this.filterSeverity = (e.target as HTMLSelectElement).value; }}>
+            <option value="all">全部严重度</option>
+            ${ALERT_LEVELS.map(level => html`<option value=${level} ?selected=${this.filterSeverity === level}>${alertLevelLabel(level)}</option>`)}
           </select>
           <span class="event-list-info" role="status">
             ${this.retryLoading ? '正在加载事件…' : this.loadError ? nothing : html`
-              本页命中 ${filtered.length} 条 · 当前状态可见事件共 ${this.eventsTotal} 条
+              本页命中 ${filtered.length} 条 · ${this.eventsTotal === null ? '当前分组总量未知' : `当前状态可见事件共 ${this.eventsTotal} 条`}
             `}
           </span>
         </div>
@@ -941,8 +980,8 @@ export class EventManagementPage extends LitElement {
           ? this.loadError || this.retryLoading ? nothing : html`
               <div class="empty-state">
                 <div class="empty-icon">${this.activeListTab === 'resolved' ? renderIcon('check-circle') : renderIcon('triangle-alert')}</div>
-                <div>${this.activeListTab === 'resolved' ? '没有已解决事件' : '暂无活跃事件'}</div>
-                ${this.activeListTab === 'resolved' ? html`<div style="font-size:var(--text-sm);margin-top:var(--space-sm);">已解决的事件会出现在这里</div>` : nothing}
+                <div>${{active: '暂无活跃事件', resolved: '没有已解决事件', other: '暂无历史未归类事件'}[this.activeListTab]}</div>
+                ${this.activeListTab === 'resolved' ? html`<div style="font-size:var(--text-sm);margin-top:var(--space-sm);">此分组包含已解决和已关闭事件</div>` : nothing}
               </div>
             `
           : html`
@@ -950,19 +989,22 @@ export class EventManagementPage extends LitElement {
                 <div class="panel">
                   <div class="panel-header">事件列表</div>
                   <div class="event-list">
-                    ${filtered.length === 0
-                      ? (this.retryLoading ? nothing : html`<div class="detail-empty">暂无匹配的事件</div>`)
+                    ${this.retryLoading ? nothing : filtered.length === 0
+                      ? html`<div class="detail-empty">暂无匹配的事件</div>`
                       : filtered.map((event) => html`
-                          <button type="button" data-event-id=${event.id} aria-label=${`查看事件 #${event.id} 详情`}
+                          <button type="button" data-event-id=${event.id} aria-label=${`查看事件 #${event.id} 详情`} aria-description=${event.title}
                             class="event-item ${this.selectedEvent?.id === event.id ? "selected" : ""}"
                             @click=${() => this._selectEvent(event)}
                           >
-                            <div class="event-title">${event.title}</div>
+                            <div class="event-title">
+                              <span class="event-number">#${event.id}</span>
+                              <span class="event-name" title=${event.title}>${event.title}</span>
+                            </div>
                             <div class="event-meta">
                               ${this._statusBadge(event.status)}
-                              <span style="color: ${this._severityColor(event.severity)}">${event.severity.toUpperCase()}</span>
-                              <span>${event.alert_count} 条告警</span>
-                              <span>${event.instance_name || "N/A"}</span>
+                              <app-badge variant=${alertLevelVariant(event.severity)}>${alertLevelLabel(event.severity)}</app-badge>
+                              ${event.alert_count != null ? html`<span>${event.alert_count} 条告警</span>` : nothing}
+                              <span>${eventTarget(event)}</span>
                               <span>${this._formatTime(event.created_at)}</span>
                             </div>
                           </button>
@@ -974,7 +1016,6 @@ export class EventManagementPage extends LitElement {
               </div>
             `}
       </div>
-    </div>
     `;
   }
 
@@ -983,8 +1024,8 @@ export class EventManagementPage extends LitElement {
     const origin = workspaceReturnTo(this.returnTo);
     const workspace = origin && new URL(origin,location.origin).pathname === '/workbench' ? origin : null;
     const returnLabel = workspace && new URL(workspace,location.origin).searchParams.has('investigation') ? '返回调查' : '返回工作台';
-    const severity: Record<string, string> = { critical: '严重', error: '错误', warning: '警告', info: '提示' };
-    const template = event?.source_type === 'template-trigger';
+    const historical = !!event && !['open', 'investigating', 'handled', 'resolved', 'closed'].includes(event.status);
+    const template = !historical && event?.source_type === 'template-trigger';
     return html`<section class="record" aria-label="事件详情">
       <nav class="record-nav" aria-label="返回">
         ${this.eventId ? html`<a class="btn" href="/events?view=aggregate">返回事件列表</a>`
@@ -995,7 +1036,7 @@ export class EventManagementPage extends LitElement {
       ${this.error ? html`<div class="error" role="alert">操作失败: ${this.error}</div>` : nothing}
       ${this.detailError ? html`<p role="alert" class="error">${this.detailError}
         ${this.detailError.startsWith('读取') ? html`<button class="btn" @click=${() => void this._readDetail(event?.id ?? this.eventId, event ?? undefined)}>重试</button>` : nothing}</p>` : nothing}
-      ${event ? html`${this.canViewInvestigations ? keyed(event.id,html`<div class="record-overview">
+      ${event ? html`${this.canViewInvestigations && !historical ? keyed(event.id,html`<div class="record-overview">
         <event-investigation-record .event=${event} .lookup=${true} .full=${true} .allowStart=${true}
           @template-event-closed=${() => void this._action(async () => {})}
           @event-investigation-denied=${() => this._clearDetail('事件不可访问或已不存在。')}></event-investigation-record>
@@ -1003,15 +1044,15 @@ export class EventManagementPage extends LitElement {
         <h3 tabindex="-1">事件 #${event.id}：${eventDisplayTitle(event)}</h3>
         <div class="record-status">
           <span>事件处理 ${this._statusBadge(event.status)}</span>
-          <span>严重度 <app-badge variant="muted">${severity[event.severity] ?? '未知'}</app-badge></span>
+          <span>严重度 <app-badge variant=${alertLevelVariant(event.severity)}>${alertLevelLabel(event.severity)}</app-badge></span>
           ${event.source_type !== 'template-trigger' ? html`<span>恢复确认 <app-badge variant="muted">${event.verification_passed_at ? '已人工确认' : '待核对'}</app-badge></span>` : nothing}
         </div>
         <p class="record-meta">发生于 ${this._formatTime(event.created_at)}
           ${event.alert_count != null ? html` · ${event.alert_count} 条关联告警` : nothing}
-          ${event.instance_name ? html` · ${event.instance_name}` : nothing}</p>
-        <template-event-evidence .eventId=${Number(event.id)} .compact=${template} .allowClose=${template}
-          @template-event-closed=${() => void this._action(async () => {})}></template-event-evidence>
-        ${event.source_type !== 'template-trigger' ? html`<button class="btn" @click=${() => this.renderRoot.querySelector<HTMLElement>('.detail-panel')?.scrollIntoView({block:'start'})}>查看事件记录与操作</button>` : nothing}
+           · ${eventTarget(event)}</p>
+        ${historical ? nothing : html`<template-event-evidence .eventId=${Number(event.id)} .compact=${template} .allowClose=${template}
+          @template-event-closed=${() => void this._action(async () => {})}></template-event-evidence>`}
+        ${event.source_type !== 'template-trigger' ? html`<button class="btn" @click=${() => this.renderRoot.querySelector<HTMLElement>('.detail-panel')?.scrollIntoView({block:'start'})}>${historical ? '查看事件记录' : '查看事件记录与操作'}</button>` : nothing}
       </app-card>`}${template ? html`<details class="record-more" ?open=${this.recordMore}
         @toggle=${(e:Event) => {this.recordMore = (e.target as HTMLDetailsElement).open;}}>
         <summary>更多事件记录与操作</summary>
@@ -1022,18 +1063,37 @@ export class EventManagementPage extends LitElement {
   }
 
   private _renderStats() {
-    const s = this.stats!;
-    const avgMttr = this.mttr?.avg_mttr_minutes ?? s.avg_resolution_time ?? null;
+    const avgMttr = this.mttr?.total_resolved === 0 ? null : this.mttr?.avg_mttr_minutes ?? this.stats?.avg_resolution_time ?? null;
     return html`
       <div class="stats-row">
-        <stat-card label="总计" .value=${String(s.total)}></stat-card>
-        <stat-card label="开放" .value=${String(s.open)} variant="danger"></stat-card>
-        <stat-card label="调查中" .value=${String(s.investigating)} variant="warn"></stat-card>
-        <stat-card label="已解决" .value=${String(s.resolved)} variant="ok"></stat-card>
-        <stat-card label="已关闭" .value=${String(s.closed)} variant="muted"></stat-card>
-        <stat-card label="平均 MTTR (分钟)" .value=${avgMttr === null ? "—" : String(Math.round(avgMttr))}></stat-card>
+        <stat-card label="可见事件总计" .value=${String(this.stats?.total ?? '未知')} hint="全部时间 · 所有状态"></stat-card>
+        <stat-card label="开放" .value=${String(this.stats?.open ?? '未知')} variant="danger"></stat-card>
+        <stat-card label="调查中" .value=${String(this.stats?.investigating ?? '未知')} variant="warn"></stat-card>
+        <stat-card label="已处理" .value=${String(this.stats?.handled ?? '未知')}></stat-card>
+        <stat-card label="已解决" .value=${String(this.stats?.resolved ?? '未知')} variant="ok"></stat-card>
+        <stat-card label="已关闭" .value=${String(this.stats?.closed ?? '未知')} variant="muted"></stat-card>
+        <stat-card label="平均 MTTR（分钟）" .value=${avgMttr === null ? '—' : String(Math.round(avgMttr))} hint="有解决时间的已结束事件"></stat-card>
       </div>
     `;
+  }
+
+  private _renderGroups() {
+    const stats = this.stats;
+    const active = stats ? stats.open + stats.investigating + stats.handled : null;
+    const resolved = stats ? stats.resolved + stats.closed : null;
+    const other = stats ? stats.total - (active ?? 0) - (resolved ?? 0) : null;
+    const counts = { active, resolved, other };
+    const groups: EventGroup[] = ['active', 'resolved', 'other'];
+    return html`<div class="groups" role="group" aria-label="事件状态分组">
+      ${groups.map(group => html`
+        <button type="button" class="tab ${this.activeListTab === group ? 'active' : ''}"
+          aria-pressed=${this.activeListTab === group}
+          @click=${() => { this.activeListTab = group; this.eventsPage = 0; void this._loadEvents(); }}>
+          ${EVENT_GROUPS[group].label}
+          <app-badge variant=${this.activeListTab === group ? 'info' : 'muted'}>${counts[group] ?? '未知'}</app-badge>
+        </button>
+      `)}
+    </div>`;
   }
 
   private _renderDetail() {
@@ -1046,7 +1106,7 @@ export class EventManagementPage extends LitElement {
           <div class="detail-row"><span class="label">状态</span><span class="value">${this._statusBadge(e.status)}</span></div>
           <div class="detail-row"><span class="label">严重度</span><span class="value" style="color: ${this._severityColor(e.severity)}">${e.severity.toUpperCase()}</span></div>
           <div class="detail-row"><span class="label">告警数</span><span class="value">${e.alert_count ?? '未知'}</span></div>
-          <div class="detail-row"><span class="label">实例</span><span class="value">${e.instance_name || "N/A"}</span></div>
+          <div class="detail-row"><span class="label">目标</span><span class="value">${eventTarget(e)}</span></div>
           <div class="detail-row"><span class="label">负责人</span><span class="value">${e.assignee || "未分配"}</span></div>
           <div class="detail-row"><span class="label">创建时间</span><span class="value">${this._formatTime(e.created_at)}</span></div>
           ${e.verification_passed_at ? html`
@@ -1089,7 +1149,7 @@ export class EventManagementPage extends LitElement {
           </div>
         ` : nothing}
 
-        ${e.status !== "closed" ? html`
+        ${['open', 'investigating', 'handled', 'resolved'].includes(e.status) ? html`
           <div class="action-bar">
             ${e.status === "open" ? html`<button class="btn btn-primary" @click=${this._startInvestigation} ?disabled=${this.actionLoading}>开始调查</button>` : nothing}
             <button class="btn" @click=${this._triggerRCA} ?disabled=${this.rcaLoading} style="border-color:var(--accent);color:var(--accent-text);">${this.rcaLoading ? "分析中..." : "AI 根因分析"}</button>

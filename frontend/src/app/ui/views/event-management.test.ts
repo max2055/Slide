@@ -265,15 +265,17 @@ describe('latest event list query', () => {
     expect(urls.filter(url => url.includes('events?'))).toHaveLength(2);
     if (kind === 'tab') expect(urls[3]).toContain('status=resolved,closed');
     if (kind === 'page') expect(urls[3]).toContain('offset=50');
-    finish[3](response({ items: [{ id: 'new' }], total: 1 }));
-    finish[4](response({ open: 1 })); finish[5](response({ value: 'new' }));
+    const total = kind === 'page' ? 51 : 1;
+    const stats = { total, open: total, investigating: 0, handled: 0, resolved: 0, closed: 0 };
+    finish[3](response({ items: [{ id: 'new' }], total }));
+    finish[4](response(stats)); finish[5](response({ value: 'new' }));
     await current;
     finish[0](response({ items: [{ id: 'old' }], total: 2 }));
     finish[1](response({ open: 2 })); finish[2](response({ value: 'old' }));
     await old;
     expect(page.events).toEqual([{ id: 'new' }]);
-    expect(page.eventsTotal).toBe(1);
-    expect(page.stats).toEqual({ open: 1 });
+    expect(page.eventsTotal).toBe(total);
+    expect(page.stats).toEqual(stats);
     expect(page.mttr).toEqual({ value: 'new' });
     expect(page.retryLoading).toBe(false);
     expect(write).toHaveBeenCalledTimes(kind === 'action' ? 1 : 0);
@@ -331,7 +333,7 @@ describe('current-page event filter counts', () => {
     const page = new EventManagementPage();
     document.body.append(page);
     const root = page.shadowRoot!;
-    const summary = () => root.querySelector('[role="status"]')?.textContent?.replace(/\s+/g, ' ').trim();
+    const summary = () => root.querySelector('.event-list-info[role="status"]')?.textContent?.replace(/\s+/g, ' ').trim();
     await vi.waitFor(() => expect(summary()).toBe('本页命中 50 条 · 当前状态可见事件共 51 条'));
 
     const search = root.querySelector<HTMLInputElement>('[aria-label="搜索本页事件"]')!;
