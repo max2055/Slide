@@ -1,8 +1,14 @@
 import { workspaceReturnTo } from './workbench-routing.ts';
 
+type WorkbenchOrigin = { url: string; queueRows: HTMLElement };
+
 /** History holds only viewport/DOM keys, never result content or authority. */
-export function rememberWorkbenchPosition(key: string) {
-  history.replaceState({...history.state, workbenchPosition:{key,y:window.scrollY}}, '', location.href);
+export function rememberWorkbenchPosition(key: string, origin?: WorkbenchOrigin) {
+  const queue = origin ? {
+    listY: origin.queueRows.scrollTop,
+    mainY: document.querySelector('main.content')?.scrollTop ?? 0,
+  } : undefined;
+  history.replaceState({...history.state, workbenchPosition:{key,y:window.scrollY,queue}}, '', origin?.url ?? location.href);
   return location.pathname + location.search;
 }
 
@@ -14,16 +20,16 @@ export function returnToWorkbench(event: MouseEvent, destination: string) {
   }
 }
 
-export function openWorkbenchRecord(event: MouseEvent, destination: string, key: string) {
+export function openWorkbenchRecord(event: MouseEvent, destination: string, key: string, fromQueue?: WorkbenchOrigin) {
   if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
   if (workspaceReturnTo(destination) !== destination) return;
   event.preventDefault();
-  const origin = rememberWorkbenchPosition(key);
+  const origin = rememberWorkbenchPosition(key, fromQueue);
   history.pushState({workbenchOrigin:origin}, '', destination);
   window.dispatchEvent(new PopStateEvent('popstate'));
 }
 
-export async function restoreWorkbenchPosition(root: ParentNode) {
+export async function restoreWorkbenchPosition(root: ParentNode, queueRows?: HTMLElement | null) {
   await Promise.all([...root.querySelectorAll('app-data-table')].map(table=>(table as HTMLElement & {updateComplete:Promise<unknown>}).updateComplete));
   if (root instanceof Node && !root.isConnected) return;
   const position = history.state?.workbenchPosition;
@@ -45,9 +51,13 @@ export async function restoreWorkbenchPosition(root: ParentNode) {
     if (target.tagName === 'H2') target.tabIndex = -1;
     target.focus({preventScroll:true});
     if (target === match) window.scrollTo(0,position.y);
-    // The full application scrolls main.content, not the window. Reveal the
-    // focused row through its scrollable ancestors after restoring the page.
-    target.scrollIntoView({block:'center',inline:'nearest',behavior:'instant'});
+    if (target === match && queueRows && Number.isFinite(position.queue?.listY) && Number.isFinite(position.queue?.mainY)) {
+      queueRows.scrollTop = position.queue.listY;
+      const main = document.querySelector('main.content');
+      if (main) main.scrollTop = position.queue.mainY;
+    } else {
+      target.scrollIntoView({block:'center',inline:'nearest',behavior:'instant'});
+    }
   }
   const {workbenchPosition: _position,...state} = history.state;
   history.replaceState(state,'',location.href);

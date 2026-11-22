@@ -8,11 +8,13 @@ import { actorContextService, type ActorContext } from './auth/actor-context.js'
 import { hasPermission } from './auth/require-permission.js';
 import { hasInstanceAccess } from './auth/require-instance-access.js';
 import { evidenceHash } from './analysis/analysis-evidence.js';
-import { databaseService } from './database-service.js';
+import { databaseService, type DatabaseConnection } from './database-service.js';
+import { withInstanceExecutionLock } from './instance-execution-lock.js';
 import { instanceDatabaseService } from './instance-database-service.js';
 import { aiAnalysisDatabaseService } from './ai-analysis-database-service.js';
 import { dbConnection } from './db-connection.js';
 import { withTimeout } from './promise-timeout.js';
+import type { RowDataPacket } from 'mysql2/promise';
 import crypto from 'crypto';
 
 interface AuditToken {
@@ -20,6 +22,26 @@ interface AuditToken {
   keyword: string;
   depth: number;
   identifier?: string;
+}
+
+interface AuditMetadataRow {
+  table_schema: string;
+  table_name: string;
+  table_rows: number | string | null;
+  avg_row_length?: number | string | null;
+  data_length?: number | string | null;
+  index_length?: number | string | null;
+  data_free?: number | string | null;
+  index_name: string | null;
+  column_name?: string | null;
+  non_unique?: number;
+  index_type?: string;
+  index_definition?: string;
+}
+
+interface AuditMetadataEvidence {
+  index_info: string;
+  table_stats: string;
 }
 
 // MySQL's double dash must be followed by whitespace or an ASCII control character.
@@ -30,19 +52,130 @@ const mysqlBlockComment = /\/\*[\s\S]*?(?:\*\/|$)/u;
 const mysqlAuditParts = new RegExp(
   [mysqlAuditLexemes.source, mysqlBlockComment.source, /[\p{L}_$][\p{L}\p{N}_$]*|[^\s]/u.source].join('|'), 'gu',
 );
+const auditParts = /--[^\r\n]*|#[^\r\n]*|\/\*[\s\S]*?\*\/|\$(?<dollarTag>[A-Za-z_]\w*|)\$[\s\S]*?\$\k<dollarTag>\$|'(?:''|\\[\s\S]|[^'\\])*'|"(?:""|\\[\s\S]|[^"\\])*"|`(?:``|[^`])*`|[\p{L}_][\p{L}\p{N}_$]*|[^\s]/gu;
+const postgresAuditParts = new RegExp([
+  /[uU]&"(?<unicodeName>(?:""|[^"])*)"|"(?:""|[^"])*"/u.source,
+  auditParts.source,
+].join('|'), 'gu');
+
+function skipPostgresAuditTrivia(sql: string, start: number): number {
+  const trivia = /\s+|--[^\r\n]*|\/\*/y;
+  const markers = /\/\*|\*\//g;
+  let cursor = start;
+  trivia.lastIndex = cursor;
+  for (let match = trivia.exec(sql); match; match = trivia.exec(sql)) {
+    if (match[0] === '/*') {
+      markers.lastIndex = trivia.lastIndex;
+      let depth = 1;
+      while (depth > 0) {
+        const marker = markers.exec(sql);
+        if (!marker) return sql.length;
+        depth += marker[0] === '/*' ? 1 : -1;
+      }
+      trivia.lastIndex = markers.lastIndex;
+    }
+    cursor = trivia.lastIndex;
+  }
+  return cursor;
+}
+
+function decodePostgresIdentifier(raw: string, escape = '\\'): string | undefined {
+  if (escape === '\0' || Buffer.byteLength(escape) !== 1 || /[0-9a-f+"'\s]/i.test(escape)) return undefined;
+  const hexEscape = /(?:\+([0-9a-f]{6})|([0-9a-f]{4}))/iy;
+  const value = raw.replaceAll('""', '"');
+  let decoded = '';
+  let cursor = 0;
+  for (let next = value.indexOf(escape); next !== -1; next = value.indexOf(escape, cursor)) {
+    decoded += value.slice(cursor, next);
+    cursor = next + escape.length;
+    if (value.startsWith(escape, cursor)) {
+      decoded += escape;
+      cursor += escape.length;
+      continue;
+    }
+    hexEscape.lastIndex = cursor;
+    const hex = hexEscape.exec(value);
+    if (!hex) return undefined;
+    const codePoint = Number.parseInt(hex[1] ?? hex[2], 16);
+    if (codePoint === 0 || codePoint > 0x10ffff) return undefined;
+    decoded += String.fromCodePoint(codePoint);
+    cursor += hex[0].length;
+  }
+  decoded += value.slice(cursor);
+  // Supplementary characters can also be written as two escaped surrogates.
+  if (!decoded || /[\uD800-\uDFFF]/u.test(decoded)) return undefined;
+  return decoded;
+}
+
+function postgresEscapeCharacter(value: string): string {
+  if (!value.startsWith('\\')) return value;
+  const code = value.slice(1);
+  if (/^[0-7]+$/.test(code)) return String.fromCharCode(Number.parseInt(code, 8) & 0xff);
+  if (/^[xuU][0-9a-f]+$/i.test(code)) {
+    const number = Number.parseInt(code.slice(1), 16);
+    return number <= 0x7f ? String.fromCharCode(number) : '\ufffd';
+  }
+  return ({ b: '\b', f: '\f', n: '\n', r: '\r', t: '\t' } as Record<string, string>)[code] ?? code;
+}
+
+function readPostgresAuditEscape(sql: string, start: number): { value: string; end: number } | undefined {
+  const dollar = /(?<tag>\$(?:[A-Za-z_]\w*)?\$)(?<value>.*?)\k<tag>/sy;
+  dollar.lastIndex = start;
+  const dollarString = dollar.exec(sql);
+  if (dollarString) return { value: dollarString.groups!.value, end: dollar.lastIndex };
+
+  // Only the first segment carries E. Escape sequences end at the segment
+  // boundary even when more string content follows on the next line.
+  const escaped = /^[eE]'/.test(sql.slice(start, start + 2));
+  const quoted = escaped ? /'(?:''|\\[\s\S]|[^'\\])*'/y : /'(?:''|[^'])*'/y;
+  const backslash = /''|\\(?:[0-7]{1,3}|x[\da-fA-F]{1,2}|u[\da-fA-F]{4}|U[\da-fA-F]{8}|[\s\S])/g;
+  // CR and LF both permit continuation. Line comments are allowed in the
+  // gap, while a block comment terminates the quoted string token.
+  const continuation = /[ \t\f]*(?:--[^\r\n]*)?[\r\n](?:[ \t\r\n\f]|--[^\r\n]*[\r\n])*'/y;
+  let value = '';
+  quoted.lastIndex = start + (escaped ? 1 : 0);
+  for (let segment = quoted.exec(sql); segment; segment = quoted.exec(sql)) {
+    const content = segment[0].slice(1, -1);
+    value += escaped
+      ? content.replace(backslash, match => match === "''" ? "'" : postgresEscapeCharacter(match))
+      : content.replaceAll("''", "'");
+    continuation.lastIndex = quoted.lastIndex;
+    if (!continuation.test(sql)) return { value, end: quoted.lastIndex };
+    quoted.lastIndex = continuation.lastIndex - 1;
+  }
+  return undefined;
+}
 
 // Lightweight lexical context for advisory rules, not an execution validator.
 // Keep literals atomic so their keywords, commas and parentheses cannot alter
 // statement shape. Quoted identifiers remain available for metadata lookup.
-function auditTokens(sql: string, mysql = false): AuditToken[] {
+function auditTokens(sql: string, dialect?: string): AuditToken[] {
   const tokens: AuditToken[] = [];
-  const parts = mysql
-    ? mysqlAuditParts
-    : /--[^\r\n]*|#[^\r\n]*|\/\*[\s\S]*?\*\/|\$([A-Za-z_]\w*|)\$[\s\S]*?\$\1\$|'(?:''|\\[\s\S]|[^'\\])*'|"(?:""|\\[\s\S]|[^"\\])*"|`(?:``|[^`])*`|[\p{L}_][\p{L}\p{N}_$]*|[^\s]/gu;
+  const parts = dialect === 'mysql' ? mysqlAuditParts : dialect === 'postgresql' ? postgresAuditParts : auditParts;
+  const scanner = new RegExp(parts);
+  const escapeClause = /UESCAPE(?![\p{L}\p{N}_$])/iuy;
   let depth = 0;
-  for (const match of sql.matchAll(parts)) {
+  for (let match = scanner.exec(sql); match; match = scanner.exec(sql)) {
     const text = match[0];
+    if (dialect === 'postgresql' && text.startsWith('/*')) {
+      scanner.lastIndex = skipPostgresAuditTrivia(sql, match.index);
+      continue;
+    }
     if (text.startsWith('--') || text.startsWith('#') || text.startsWith('/*')) continue;
+    if (match.groups?.unicodeName !== undefined) {
+      escapeClause.lastIndex = skipPostgresAuditTrivia(sql, scanner.lastIndex);
+      let escape: string | undefined;
+      if (escapeClause.test(sql)) {
+        const argument = readPostgresAuditEscape(sql, skipPostgresAuditTrivia(sql, escapeClause.lastIndex));
+        escape = argument?.value ?? '';
+        if (argument) scanner.lastIndex = argument.end;
+      }
+      const identifier = decodePostgresIdentifier(match.groups.unicodeName, escape);
+      // regclass accepts ordinary quoted names as input, without U& or UESCAPE.
+      tokens.push({ text: identifier === undefined ? text : '"' + identifier.replaceAll('"', '""') + '"',
+        keyword: '', depth, identifier });
+      continue;
+    }
     if (text === ')') depth = Math.max(0, depth - 1);
     const word = /^[\p{L}_][\p{L}\p{N}_$]*$/u.test(text);
     const quoted = text.startsWith('`') || text.startsWith('"');
@@ -55,6 +188,91 @@ function auditTokens(sql: string, mysql = false): AuditToken[] {
     if (text === '(') depth += 1;
   }
   return tokens;
+}
+
+function cteName(token: AuditToken, dialect: string, ignoreCase: boolean): string {
+  const name = token.identifier!;
+  if (ignoreCase) return name.toLowerCase();
+  if (!token.keyword || dialect === 'mysql') return name;
+  if (dialect === 'postgresql') return name.replace(/[A-Z]/g, letter => letter.toLowerCase());
+  return token.keyword;
+}
+
+function closingParentheses(tokens: AuditToken[]): Map<number, number> {
+  const opens: number[] = [];
+  const closes = new Map<number, number>();
+  for (const [i, token] of tokens.entries()) {
+    if (token.text === '(') opens.push(i);
+    if (token.text === ')') {
+      const open = opens.pop();
+      if (open !== undefined) closes.set(open, i);
+    }
+  }
+  return closes;
+}
+
+function afterCteBody(tokens: AuditToken[], cursor: number, dialect: string): number {
+  if (dialect !== 'postgresql' && dialect !== 'oracle') return cursor;
+  if (tokens[cursor]?.keyword === 'SEARCH') {
+    while (tokens[cursor] && tokens[cursor].keyword !== 'SET') cursor++;
+    cursor += 2; // SET ordering_column
+  }
+  if (tokens[cursor]?.keyword === 'CYCLE') {
+    const delimiter = dialect === 'postgresql' ? 'USING' : 'DEFAULT';
+    while (tokens[cursor] && tokens[cursor].keyword !== delimiter) cursor++;
+    cursor += 2; // USING path_column or DEFAULT 'non_cycle_value'
+  }
+  return cursor;
+}
+
+// Index each declaration by the first token that can see its name. The
+// calling query block keeps it visible until that block closes.
+function cteDeclarations(
+  tokens: AuditToken[], start: number, closes: ReadonlyMap<number, number>, dialect: string,
+): { declarations: { name: AuditToken; visibleFrom: number }[]; queryStart?: number } {
+  const recursive = tokens[start + 1]?.keyword === 'RECURSIVE';
+  const declarations: { name: AuditToken; visibleFrom: number }[] = [];
+  let queryStart: number | undefined;
+  let cursor = start + (recursive ? 2 : 1);
+  while (tokens[cursor]?.identifier) {
+    const name = tokens[cursor++];
+    const hasColumns = tokens[cursor]?.text === '(';
+    if (hasColumns) {
+      const close = closes.get(cursor);
+      if (close === undefined) break;
+      cursor = close + 1;
+    }
+    if (tokens[cursor++]?.keyword !== 'AS') break;
+    if (dialect === 'postgresql') {
+      if (tokens[cursor]?.keyword === 'NOT') cursor++;
+      if (tokens[cursor]?.keyword === 'MATERIALIZED') cursor++;
+    }
+    const bodyEnd = closes.get(cursor);
+    if (bodyEnd === undefined) break;
+
+    let visibleFrom = bodyEnd + 1;
+    if (recursive && dialect === 'postgresql') {
+      // PostgreSQL makes forward references visible in a recursive WITH.
+      visibleFrom = start;
+    } else if (recursive && dialect === 'mysql') {
+      // MySQL allows self-reference but still resolves later names outside this WITH.
+      visibleFrom = cursor + 1;
+    } else if (hasColumns && (dialect === 'oracle' || dialect === 'dameng')) {
+      // Recursive factoring uses an explicit column list and a UNION ALL member.
+      for (let i = cursor + 1; i < bodyEnd; i++) {
+        if (tokens[i].keyword === 'UNION' && tokens[i + 1]?.keyword === 'ALL') visibleFrom = i + 2;
+        i = closes.get(i) ?? i;
+      }
+    }
+    declarations.push({ name, visibleFrom });
+    cursor = afterCteBody(tokens, bodyEnd + 1, dialect);
+    if (tokens[cursor]?.text !== ',') {
+      queryStart = cursor;
+      break;
+    }
+    cursor++;
+  }
+  return { declarations, queryStart };
 }
 
 function mysqlVersionId(version: string | null): number | undefined {
@@ -169,10 +387,9 @@ class SqlAuditService {
     let explainPlan = 'EXPLAIN 获取失败';
     try { explainPlan = await databaseService.getExplainPlan(instanceId, sqlText) || explainPlan; }
     catch { /* Keep the evidence gap explicit. */ }
-    const indexInfo = await this._getIndexInfo(instanceId, sqlText);
-    const tableStats = await this._getTableStats(instanceId, sqlText);
+    const metadata = await this._getTableEvidence(instanceId, dialect, sqlText, mysqlVersion);
     const evidenceData = { sql_text: sqlText, dialect, explain: explainPlan,
-      index_info: indexInfo, table_stats: tableStats, pre_audit_results: preAuditResults };
+      ...metadata, pre_audit_results: preAuditResults };
     current = await actorContextService.revalidateActor(current);
     if (!hasPermission(new Set(current.permissions), 'sql:audit')
       || !hasInstanceAccess(current, instanceId)) throw new Error('ANALYSIS_AUTHORITY_REVOKED');
@@ -198,13 +415,13 @@ class SqlAuditService {
    * 预 LLM 风险检测（正则匹配常见 SQL 反模式）
    */
   detectRisks(sqlText: string, dialect?: string, mysqlVersion: string | null = null): SqlRiskItem[] {
-    if (dialect !== 'mysql') return this._detectRisks(sqlText);
+    if (dialect !== 'mysql') return this._detectRisks(sqlText, dialect);
     const version = mysqlVersionId(mysqlVersion);
     const expanded = expandMysqlAuditComments(sqlText, version);
-    const results = this._detectRisks(expanded.sql, true);
+    const results = this._detectRisks(expanded.sql, dialect);
     if (expanded.conditional && version === undefined) {
       // A conditional clause can remove a risk finding as well as introduce one.
-      for (const risk of this._detectRisks(expandMysqlAuditComments(sqlText, 0).sql, true)) {
+      for (const risk of this._detectRisks(expandMysqlAuditComments(sqlText, 0).sql, dialect)) {
         if (!results.some(item => item.pattern === risk.pattern && item.level === risk.level)) results.push(risk);
       }
       results.push({
@@ -216,11 +433,11 @@ class SqlAuditService {
     return results;
   }
 
-  private _detectRisks(sqlText: string, mysql = false): SqlRiskItem[] {
+  private _detectRisks(sqlText: string, dialect?: string): SqlRiskItem[] {
     const results: SqlRiskItem[] = [];
     const normalized = sqlText.replace(/\s+/g, ' ').trim();
     const upper = normalized.toUpperCase();
-    const tokens = auditTokens(sqlText, mysql);
+    const tokens = auditTokens(sqlText, dialect);
 
     // SELECT *
     if (/SELECT\s+\*/i.test(upper)) {
@@ -393,128 +610,276 @@ class SqlAuditService {
     return analysis;
   }
 
-  /**
-   * 从 SQL 中提取表名
-   */
-  private _extractTableNames(sql: string): string[] {
-    const tables = new Set<string>();
-    const tokens = auditTokens(sql);
+  /** Retain each identifier component, including its original quoting. */
+  private _extractTableNames(sql: string, dialect: string, ignoreCase = false): string[][] {
+    const tokens = auditTokens(sql, dialect);
+    const tables = new Map<string, string[]>();
+    const tableLists = new Set<number>();
+    const commands = new Set<number>();
+    const ctes = new Map<number, Set<string>>();
+    const pendingCtes = new Map<number, { name: string; depth: number }[]>();
+    const cteQueryStarts = new Set<number>();
+    let closes: Map<number, number> | undefined;
     for (let i = 0; i < tokens.length; i++) {
-      const keyword = tokens[i].keyword;
-      if (!['FROM', 'JOIN', 'UPDATE'].includes(keyword)
-        && !(keyword === 'INTO' && tokens[i - 1]?.keyword === 'INSERT')) continue;
+      const { keyword, text, depth } = tokens[i];
+      if (text === ';') {
+        commands.clear();
+        tableLists.clear();
+        ctes.clear();
+        pendingCtes.clear();
+      } else if (text === ')') {
+        commands.delete(depth + 1);
+        tableLists.delete(depth + 1);
+        ctes.delete(depth + 1);
+      }
+      if (keyword === 'WITH') {
+        closes ??= closingParentheses(tokens);
+        const { declarations, queryStart } = cteDeclarations(tokens, i, closes, dialect);
+        if (queryStart !== undefined) cteQueryStarts.add(queryStart);
+        for (const { name, visibleFrom } of declarations) {
+          const pending = pendingCtes.get(visibleFrom) ?? [];
+          pending.push({ name: cteName(name, dialect, ignoreCase), depth });
+          pendingCtes.set(visibleFrom, pending);
+        }
+      }
+      for (const declaration of pendingCtes.get(i) ?? []) {
+        // The anchor / recursive member can start in a child block, but the
+        // CTE belongs to the block containing WITH.
+        if (declaration.depth > depth) continue;
+        const aliases = ctes.get(declaration.depth) ?? new Set<string>();
+        aliases.add(declaration.name);
+        ctes.set(declaration.depth, aliases);
+      }
+      pendingCtes.delete(i);
+      if (['SELECT', 'DELETE', 'UPDATE'].includes(keyword)) commands.add(depth);
+      if (['WHERE', 'GROUP', 'ORDER', 'LIMIT', 'HAVING', 'SET', 'RETURNING', 'UNION', 'INTERSECT', 'EXCEPT'].includes(keyword)) {
+        tableLists.delete(depth);
+      }
+      if (keyword === 'FROM' && commands.has(depth)) tableLists.add(depth);
+
+      const previous = tokens[i - 1];
+      // TABLE is a PostgreSQL SELECT form at a query boundary. In DDL it
+      // describes the object type and does not start a table read.
+      const tableQuery = dialect === 'postgresql' && keyword === 'TABLE' && (
+        !previous || [';', '('].includes(previous.text) || previous.keyword === 'AS'
+        || cteQueryStarts.has(i)
+        || ['UNION', 'INTERSECT', 'EXCEPT'].includes(
+          ['ALL', 'DISTINCT'].includes(previous.keyword) ? tokens[i - 2]?.keyword : previous.keyword,
+        )
+      );
+      if (!tableQuery && !(keyword === 'FROM' && commands.has(depth)) && keyword !== 'JOIN'
+        && !(keyword === 'UPDATE' && !['FOR', 'KEY', 'DUPLICATE'].includes(previous?.keyword))
+        && !(keyword === 'INTO' && ['INSERT', 'REPLACE', 'MERGE'].includes(previous?.keyword))
+        && !(text === ',' && tableLists.has(depth))) continue;
       let cursor = i + 1;
-      let name = tokens[cursor]?.identifier;
-      if (!name || ['SELECT', 'WHERE', 'JOIN', 'ON', 'GROUP', 'ORDER', 'LIMIT', 'HAVING', 'SET'].includes(tokens[cursor].keyword)) continue;
-      // Metadata stores TABLE_NAME, not the database/schema prefix.
+      if (tokens[cursor]?.keyword === 'ONLY') {
+        cursor++;
+        if (tableQuery && tokens[cursor]?.text === '(') cursor++;
+      }
+      const first = tokens[cursor];
+      if (!first?.identifier || ['SELECT', 'WHERE', 'JOIN', 'ON', 'GROUP', 'ORDER', 'LIMIT', 'HAVING', 'SET'].includes(first.keyword)) continue;
+      const parts = [first.text];
       while (tokens[cursor + 1]?.text === '.' && tokens[cursor + 2]?.identifier) {
         cursor += 2;
-        name = tokens[cursor].identifier;
+        parts.push(tokens[cursor].text);
       }
-      if (name) tables.add(name);
+      // Do not resolve a function, database link or incomplete qualifier as a local table.
+      const following = tokens[cursor + 1]?.text;
+      if (following === '@' || following === '.' || (following === '(' && keyword !== 'INTO')) continue;
+      // PostgreSQL DML targets resolve as catalog relations even with a CTE of
+      // that name. MySQL UPDATE, by contrast, can resolve a reference to a CTE.
+      const catalogTarget = keyword === 'INTO' || (dialect === 'postgresql'
+        && (keyword === 'UPDATE' || (keyword === 'FROM' && previous?.keyword === 'DELETE')));
+      if (parts.length === 1 && !catalogTarget && ctes.size
+        && [...ctes.values()].some(aliases => aliases.has(cteName(first, dialect, ignoreCase)))) continue;
+      tables.set(parts.join('.'), parts);
     }
-    return Array.from(tables);
+    return [...tables.values()];
   }
 
-  /**
-   * 获取表索引信息
-   */
-  private async _getIndexInfo(instanceId: number, sqlText: string): Promise<string> {
-    const tables = this._extractTableNames(sqlText);
-    if (tables.length === 0) {
-      return '未识别到表名';
+  private async _getTableEvidence(
+    instanceId: number, dialect: string, sql: string, mysqlVersion: string | null,
+  ): Promise<AuditMetadataEvidence> {
+    const unavailable = (reason: string) => ({
+      index_info: `索引证据不可用（${reason}）`,
+      table_stats: `表统计证据不可用（${reason}）`,
+    });
+    if (dialect === 'mysql') {
+      const version = mysqlVersionId(mysqlVersion);
+      const expanded = expandMysqlAuditComments(sql, version);
+      if (expanded.conditional && version === undefined) return unavailable('无法确认 MySQL 版本及表引用');
+      sql = expanded.sql;
     }
+    const caseSensitiveTables = this._extractTableNames(sql, dialect);
+    const caseInsensitiveTables = (dialect === 'mysql' || dialect === 'dameng') && /\bWITH\b/i.test(sql)
+      ? this._extractTableNames(sql, dialect, true) : caseSensitiveTables;
+    // Case-insensitive comparison can only suppress additional bare names.
+    const needsCaseMode = caseSensitiveTables.length !== caseInsensitiveTables.length;
+    if (!caseSensitiveTables.length) return unavailable('未识别到可查询的表');
+    const conn = databaseService.getConnection(instanceId);
+    if (!conn?.connected) return unavailable('数据库实例未连接');
+    if (!['mysql', 'postgresql', 'oracle', 'dameng'].includes(dialect)) return unavailable('当前数据库类型不支持表元数据查询');
 
-    const pool = dbConnection.getPool();
-    if (!pool) return '数据库未连接';
-
-    let output = '';
-    for (const table of tables) {
-      try {
-        const [rows] = await pool.execute(
-          `SELECT TABLE_NAME, INDEX_NAME, COLUMN_NAME, SEQ_IN_INDEX, NON_UNIQUE, INDEX_TYPE
-           FROM index_info
-           WHERE instance_id = ? AND TABLE_NAME = ?
-           ORDER BY INDEX_NAME, SEQ_IN_INDEX`,
-          [instanceId, table]
-        ) as any;
-
-        if (Array.isArray(rows) && rows.length > 0) {
-          output += `\n表: ${table}\n`;
-          let currentIndex: string | null = null;
-          let columns: string[] = [];
-          let indexType = '';
-          let nonUnique = false;
-
-          for (const row of rows) {
-            if (row.INDEX_NAME !== currentIndex && currentIndex !== null) {
-              output += `  ${currentIndex} (${columns.join(', ')})${nonUnique ? '' : ' [UNIQUE]'} ${indexType}\n`;
-              columns = [];
-            }
-            currentIndex = row.INDEX_NAME;
-            columns.push(row.COLUMN_NAME);
-            indexType = row.INDEX_TYPE || '';
-            nonUnique = row.NON_UNIQUE === 1;
+    const collect = async (): Promise<AuditMetadataEvidence> => {
+      let tables = caseSensitiveTables;
+      let caseModeGap: AuditMetadataEvidence | undefined;
+      if (needsCaseMode) {
+        // Consult the target only when the case mode can change attribution.
+        let mode: unknown;
+        try {
+          if (dialect === 'mysql' && conn.pool) {
+            const [rows] = await conn.pool.execute<RowDataPacket[]>('SELECT @@lower_case_table_names AS case_mode');
+            mode = rows[0]?.case_mode;
+          } else if (dialect === 'dameng' && conn.dmConnection) {
+            const result = await conn.dmConnection.execute('SELECT SESS_CASE_SENSITIVE()');
+            mode = (result.rows as unknown[][] | undefined)?.[0]?.[0];
           }
-          if (currentIndex) {
-            output += `  ${currentIndex} (${columns.join(', ')})${nonUnique ? '' : ' [UNIQUE]'} ${indexType}\n`;
-          }
-        } else {
-          output += `表: ${table} - 无索引信息（可能未被采集）\n`;
+        } catch {
+          // Keep evidence for references whose identity is independent of case mode.
         }
-      } catch {
-        output += `表: ${table} - 索引查询失败\n`;
+        if (mode !== 0 && mode !== 1 && (dialect !== 'mysql' || mode !== 2)) {
+          caseModeGap = unavailable('无法确认目标数据库标识符大小写规则');
+          tables = caseInsensitiveTables;
+        } else if (dialect === 'mysql' ? mode !== 0 : mode === 0) {
+          tables = caseInsensitiveTables;
+        }
       }
-    }
+      if (!tables.length) return caseModeGap ?? unavailable('未识别到可查询的表');
+      const indexes = caseModeGap ? [caseModeGap.index_info] : [];
+      const stats = caseModeGap ? [caseModeGap.table_stats] : [];
+      const resolved = new Set<string>();
+      for (const table of tables) {
+        let label = table.join('.');
+        let rows: AuditMetadataRow[];
+        try {
+          rows = await this._readTableMetadata(conn, dialect, table);
+        } catch {
+          indexes.push(`表: ${label} - 索引证据不可用（查询失败）`);
+          stats.push(`表: ${label} - 表统计证据不可用（查询失败）`);
+          continue;
+        }
+        const first = rows[0];
+        if (!first) {
+          indexes.push(`表: ${label} - 索引证据不可用（无法确认表或不可见）`);
+          stats.push(`表: ${label} - 表统计证据不可用（无法确认表或不可见）`);
+          continue;
+        }
 
-    return output || '无索引信息';
+        const quote = dialect === 'mysql' ? '`' : '"';
+        label = [first.table_schema, first.table_name]
+          .map(part => quote + part.replaceAll(quote, quote + quote) + quote).join('.');
+        if (resolved.has(label)) continue;
+        resolved.add(label);
+        indexes.push(`表: ${label}\n${this._formatIndexes(rows)}`);
+
+        const bytes = (value: number | string | null | undefined) => value == null
+          ? 'N/A'
+          : this._formatBytes(Number(value));
+        const counts = first.table_rows == null ? '行数不可用' : `行数: ${first.table_rows}`;
+        stats.push(`表: ${label}\n  ${counts}\n`
+          + `  平均行大小: ${bytes(first.avg_row_length)}\n  数据大小: ${bytes(first.data_length)}\n`
+          + `  索引大小: ${bytes(first.index_length)}\n  碎片: ${bytes(first.data_free)}`);
+      }
+      return { index_info: indexes.join('\n'), table_stats: stats.join('\n') };
+    };
+
+    // PostgreSQL and the Oracle-compatible drivers share sessions with the SQL executor.
+    return dialect === 'mysql' ? collect() : withInstanceExecutionLock(instanceId, collect);
   }
 
-  /**
-   * 获取表统计信息
-   */
-  private async _getTableStats(instanceId: number, sqlText: string): Promise<string> {
-    const tables = this._extractTableNames(sqlText);
-    if (tables.length === 0) {
-      return '未识别到表名';
+  private async _readTableMetadata(conn: DatabaseConnection, dialect: string, parts: string[]): Promise<AuditMetadataRow[]> {
+    const mysql = dialect === 'mysql';
+    const names = parts.map(part => {
+      if (part.startsWith('`') || part.startsWith('"')) {
+        return part.slice(1, -1).replaceAll(part[0].repeat(2), part[0]);
+      }
+      return dialect === 'oracle' || dialect === 'dameng' ? part.toUpperCase() : part;
+    });
+    const schema = names.length > 1 ? names.at(-2)! : null;
+    const name = names.at(-1)!;
+
+    // Use the target connection for both evidence fields. The platform index
+    // cache cannot prove the schema identity or current catalog visibility.
+    if (mysql && conn.pool && parts.length <= 2) {
+      const [rows] = await conn.pool.execute<(RowDataPacket & AuditMetadataRow)[]>(`
+        SELECT t.TABLE_SCHEMA AS table_schema, t.TABLE_NAME AS table_name,
+          t.TABLE_ROWS AS table_rows, t.AVG_ROW_LENGTH AS avg_row_length,
+          t.DATA_LENGTH AS data_length, t.INDEX_LENGTH AS index_length, t.DATA_FREE AS data_free,
+          s.INDEX_NAME AS index_name, s.COLUMN_NAME AS column_name,
+          s.NON_UNIQUE AS non_unique, s.INDEX_TYPE AS index_type
+        FROM information_schema.TABLES t
+        JOIN (SELECT COALESCE(?, DATABASE()) AS schema_name, ? AS table_name) ref
+          ON t.TABLE_SCHEMA = ref.schema_name AND t.TABLE_NAME = ref.table_name
+        LEFT JOIN information_schema.STATISTICS s
+          ON s.TABLE_SCHEMA = t.TABLE_SCHEMA AND s.TABLE_NAME = t.TABLE_NAME
+          AND CAST(s.TABLE_SCHEMA AS BINARY) = CAST(t.TABLE_SCHEMA AS BINARY)
+          AND CAST(s.TABLE_NAME AS BINARY) = CAST(t.TABLE_NAME AS BINARY)
+        WHERE CASE WHEN @@lower_case_table_names = 0
+          THEN CAST(t.TABLE_SCHEMA AS BINARY) = CAST(ref.schema_name AS BINARY)
+           AND CAST(t.TABLE_NAME AS BINARY) = CAST(ref.table_name AS BINARY)
+          ELSE CAST(LOWER(t.TABLE_SCHEMA) AS BINARY) = CAST(LOWER(ref.schema_name) AS BINARY)
+           AND CAST(LOWER(t.TABLE_NAME) AS BINARY) = CAST(LOWER(ref.table_name) AS BINARY)
+        END
+        ORDER BY s.INDEX_NAME, s.SEQ_IN_INDEX`, [schema, name]);
+      return rows;
     }
-
-    try {
-      const conn = databaseService.getConnection(instanceId);
-      if (!conn || !conn.connected || !conn.pool) {
-        return '数据库实例未连接';
-      }
-
-      // 获取 schema 名（如果有）
-      const schemaName = conn.config?.database || '';
-
-      const placeholders = tables.map(() => '?').join(', ');
-      const [rows] = await conn.pool.execute(
-        `SELECT TABLE_NAME, TABLE_ROWS, AVG_ROW_LENGTH, DATA_LENGTH, INDEX_LENGTH,
-                DATA_FREE, CREATE_TIME, UPDATE_TIME
-         FROM information_schema.TABLES
-         WHERE TABLE_SCHEMA = ? AND TABLE_NAME IN (${placeholders})`,
-        [schemaName, ...tables]
-      ) as any;
-
-      if (!Array.isArray(rows) || rows.length === 0) {
-        return '未找到表统计信息';
-      }
-
-      let output = '';
-      for (const row of rows) {
-        output += `\n表: ${row.TABLE_NAME}\n`;
-        output += `  行数: ${row.TABLE_ROWS ?? 'N/A'}\n`;
-        output += `  平均行大小: ${row.AVG_ROW_LENGTH ? row.AVG_ROW_LENGTH + ' bytes' : 'N/A'}\n`;
-        output += `  数据大小: ${row.DATA_LENGTH ? this._formatBytes(row.DATA_LENGTH) : 'N/A'}\n`;
-        output += `  索引大小: ${row.INDEX_LENGTH ? this._formatBytes(row.INDEX_LENGTH) : 'N/A'}\n`;
-        output += `  碎片: ${row.DATA_FREE ? this._formatBytes(row.DATA_FREE) : 'N/A'}\n`;
-      }
-
-      return output;
-    } catch {
-      return '表统计信息查询失败';
+    if (dialect === 'postgresql' && conn.pgClient && parts.length <= 3 && !parts.some(part => part.startsWith('`'))) {
+      // regclass resolves quoting, case and the active search_path before the
+      // privilege check, so an inaccessible table cannot fall through to a namesake.
+      const result = await conn.pgClient.query<AuditMetadataRow>(`
+        SELECT ns.nspname AS table_schema, t.relname AS table_name,
+          CASE WHEN t.reltuples >= 0 THEN t.reltuples END AS table_rows,
+          pg_catalog.pg_table_size(t.oid) AS data_length,
+          pg_catalog.pg_indexes_size(t.oid) AS index_length,
+          i.relname AS index_name, pg_catalog.pg_get_indexdef(i.oid) AS index_definition
+        FROM pg_catalog.pg_class t
+        JOIN pg_catalog.pg_namespace ns ON ns.oid = t.relnamespace
+        LEFT JOIN pg_catalog.pg_index ix ON ix.indrelid = t.oid
+        LEFT JOIN pg_catalog.pg_class i ON i.oid = ix.indexrelid
+        WHERE t.oid = pg_catalog.to_regclass($1) AND t.relkind IN ('r', 'p', 'm')
+          AND pg_catalog.has_schema_privilege(ns.oid, 'USAGE')
+          AND (pg_catalog.has_table_privilege(t.oid, 'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER')
+            OR pg_catalog.has_any_column_privilege(t.oid, 'SELECT,INSERT,UPDATE,REFERENCES'))
+        ORDER BY i.relname`, [parts.join('.')]);
+      return result.rows;
     }
+    const oracle = dialect === 'oracle' ? conn.oracleConnection : null;
+    const dameng = dialect === 'dameng' ? conn.dmConnection : null;
+    if ((!oracle && !dameng) || parts.length > 2 || parts.some(part => part.startsWith('`'))) return [];
+    const dictionarySql = `
+      SELECT t.OWNER, t.TABLE_NAME, t.NUM_ROWS, ${oracle ? 't.AVG_ROW_LEN' : 'NULL'},
+        i.INDEX_NAME, c.COLUMN_NAME, i.UNIQUENESS, i.INDEX_TYPE
+      FROM ALL_TABLES t
+      LEFT JOIN ALL_INDEXES i ON i.TABLE_OWNER = t.OWNER AND i.TABLE_NAME = t.TABLE_NAME
+      LEFT JOIN ALL_IND_COLUMNS c ON c.INDEX_OWNER = i.OWNER AND c.INDEX_NAME = i.INDEX_NAME
+        AND c.TABLE_NAME = i.TABLE_NAME
+      WHERE t.OWNER = COALESCE(:1, SYS_CONTEXT('USERENV', 'CURRENT_SCHEMA')) AND t.TABLE_NAME = :2
+      ORDER BY i.INDEX_NAME, c.COLUMN_POSITION`;
+    const result = oracle
+      ? await oracle.execute<unknown[]>(dictionarySql, [schema, name])
+      : await dameng!.execute(dictionarySql, [schema, name]);
+    return ((result.rows ?? []) as unknown[][]).map(row => ({
+      table_schema: String(row[0]), table_name: String(row[1]),
+      table_rows: row[2] as number | string | null, avg_row_length: row[3] as number | string | null,
+      index_name: row[4] as string | null, column_name: row[5] as string | null,
+      non_unique: row[6] === 'UNIQUE' ? 0 : 1, index_type: row[7] as string,
+    }));
+  }
+
+  private _formatIndexes(rows: AuditMetadataRow[]): string {
+    const indexes = new Map<string, { columns: string[]; type: string; unique: boolean; definition?: string }>();
+    for (const row of rows) {
+      if (!row.index_name) continue;
+      const index = indexes.get(row.index_name) ?? {
+        columns: [], type: row.index_type ?? '', unique: Number(row.non_unique) === 0,
+        definition: row.index_definition,
+      };
+      index.columns.push(row.column_name ?? '表达式');
+      indexes.set(row.index_name, index);
+    }
+    if (!indexes.size) return '  无可见索引';
+    return [...indexes].map(([name, index]) => '  ' + (index.definition
+      ?? `${name} (${index.columns.join(', ')})${index.unique ? ' [UNIQUE]' : ''} ${index.type}`)).join('\n');
   }
 
   /**

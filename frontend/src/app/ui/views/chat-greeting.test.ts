@@ -35,7 +35,7 @@ it.each([
   await vi.waitFor(() => expect(updated).toHaveBeenCalledOnce());
   for (let index = 0; index < 5; index++) update();
   expect(fetch).toHaveBeenCalledOnce();
-  expect(root.textContent).toContain('Ready to chat');
+  expect(root.textContent).toContain('可以开始对话');
   root.querySelector<HTMLButtonElement>('.agent-chat__suggestion')!.click();
   expect(onDraftChange).toHaveBeenCalledWith('查看实例运行状态');
   expect(onSend).toHaveBeenCalledOnce();

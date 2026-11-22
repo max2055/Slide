@@ -5,6 +5,7 @@ import { unsafeHTML } from "lit/directives/unsafe-html.js";
 import { icons } from "../../../icons.js";
 import { toSanitizedMarkdownHtml } from "../markdown.ts";
 import { copyTextToClipboard } from "../chat/copy-as-markdown.ts";
+import { DEFAULT_ASSISTANT_NAME } from "../assistant-identity.ts";
 import { authFetch } from "../../../api/index.js";
 import type { SidebarContent } from "../sidebar-content.ts";
 import type { ChatItem, MessageGroup } from "../types/chat-types.ts";
@@ -78,9 +79,9 @@ function renderBackLinks(group: MessageGroup, toolInstanceIds: Set<number>, tool
   return html`<div class="chat-link-row">${buttons}</div>`;
 }
 
-function renderWelcomeState(assistantName: string, assistantAvatar: string | null, assistantAvatarUrl: string | undefined, basePath: string, requestUpdate: () => void): TemplateResult {
-  const name = assistantName || "Assistant";
-  if (_agentGreeting === null && !_agentGreetingPending) _fetchAgentGreeting(requestUpdate);
+function renderWelcomeState(assistantName: string, assistantAvatar: string | null, assistantAvatarUrl: string | undefined, basePath: string, connected: boolean, requestUpdate: () => void): TemplateResult {
+  const name = assistantName || DEFAULT_ASSISTANT_NAME;
+  if (connected && _agentGreeting === null && !_agentGreetingPending) _fetchAgentGreeting(requestUpdate);
   const avatar = resolveAgentAvatarUrl({ identity: { avatar: assistantAvatar ?? undefined, avatarUrl: assistantAvatarUrl ?? undefined } });
   const logoUrl = agentLogoUrl(basePath ?? "");
   return html`
@@ -89,9 +90,10 @@ function renderWelcomeState(assistantName: string, assistantAvatar: string | nul
       ${avatar ? html`<img src=${avatar} alt=${name} style="width:56px;height:56px;border-radius:50%;object-fit:cover;" />`
         : html`<div class="agent-chat__avatar agent-chat__avatar--logo"><img src=${logoUrl} alt="Slide" /></div>`}
       <h2>${name}</h2>
-      ${_agentGreeting ? html`<div class="agent-chat__badges"><div class="agent-chat__badge agent-chat__badge--greeting">${unsafeHTML(toSanitizedMarkdownHtml(_agentGreeting!))}</div></div>`
-        : html`<div class="agent-chat__badges"><span class="agent-chat__badge"><img src=${logoUrl} alt="" /> Ready to chat</span></div><p class="agent-chat__hint">Type a message below &middot; <kbd>/</kbd> for commands</p>`}
-      <div class="agent-chat__suggestions">${WELCOME_SUGGESTIONS.map(text => html`<button type="button" class="agent-chat__suggestion" @click=${(e: Event) => { (e.currentTarget as HTMLElement).dispatchEvent(new CustomEvent("suggest", { detail: { text }, bubbles: true, composed: true })); }}>${text}</button>`)}</div>
+      ${connected && _agentGreeting ? html`<div class="agent-chat__badges"><div class="agent-chat__badge agent-chat__badge--greeting">${unsafeHTML(toSanitizedMarkdownHtml(_agentGreeting!))}</div></div>`
+        : html`<div class="agent-chat__badges"><span class="agent-chat__badge"><img src=${logoUrl} alt="" /> ${connected ? "可以开始对话" : "正在连接"}</span></div>
+          ${connected ? html`<p class="agent-chat__hint">在下方输入消息，输入 <kbd>/</kbd> 查看命令</p>` : nothing}`}
+      <div class="agent-chat__suggestions">${WELCOME_SUGGESTIONS.map(text => html`<button type="button" class="agent-chat__suggestion" ?disabled=${!connected} @click=${(e: Event) => { (e.currentTarget as HTMLElement).dispatchEvent(new CustomEvent("suggest", { detail: { text }, bubbles: true, composed: true })); }}>${text}</button>`)}</div>
     </div>`;
 }
 
@@ -139,13 +141,13 @@ export class ChatMessageList extends LitElement {
     return html`
       <div class="chat-thread" role="log" aria-live="polite" @scroll=${this.onChatScroll} @click=${this.handleCodeBlockCopy}>
         <div class="chat-thread-inner">
-          ${this.loading ? html`<div class="chat-loading-skeleton" aria-label="Loading chat">
+          ${this.loading ? html`<div class="chat-loading-skeleton" aria-label="正在加载对话">
             <div class="chat-line assistant"><div class="chat-msg"><div class="chat-bubble"><div class="skeleton skeleton-line skeleton-line--long" style="margin-bottom:8px"></div><div class="skeleton skeleton-line skeleton-line--medium" style="margin-bottom:8px"></div><div class="skeleton skeleton-line skeleton-line--short"></div></div></div></div>
             <div class="chat-line user" style="margin-top:12px"><div class="chat-msg"><div class="chat-bubble"><div class="skeleton skeleton-line skeleton-line--medium"></div></div></div></div>
             <div class="chat-line assistant" style="margin-top:12px"><div class="chat-msg"><div class="chat-bubble"><div class="skeleton skeleton-line skeleton-line--long" style="margin-bottom:8px"></div><div class="skeleton skeleton-line skeleton-line--short"></div></div></div></div>
           </div>` : nothing}
-          ${isEmpty && !this.searchOpen ? renderWelcomeState(this.assistantName, this.assistantAvatar, this.assistantAvatarUrl ?? undefined, this.basePath, ru) : nothing}
-          ${isEmpty && this.searchOpen ? html`<div class="agent-chat__empty">No matching messages</div>` : nothing}
+          ${isEmpty && !this.searchOpen ? renderWelcomeState(this.assistantName, this.assistantAvatar, this.assistantAvatarUrl ?? undefined, this.basePath, this.connected, ru) : nothing}
+          ${isEmpty && this.searchOpen ? html`<div class="agent-chat__empty">未找到匹配的消息</div>` : nothing}
           ${repeat(this.chatItems, (item) => item.key, (item) => {
             if (item.kind === "divider") return html`<div class="chat-divider" role="separator" data-ts=${String(item.timestamp)}><span class="chat-divider__line"></span><span class="chat-divider__label">${item.label}</span><span class="chat-divider__line"></span></div>`;
             if (item.kind === "reading-indicator") return renderReadingIndicatorGroup({ name: this.assistantName, avatar: this.assistantAvatar }, this.basePath);
