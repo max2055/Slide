@@ -78,7 +78,7 @@ export class WorkbenchPage extends LitElement {
       workbench-page investigations-page .workspace-header h2, workbench-page investigations-page .workspace-header p { display:none; }
       workbench-page investigations-page .workspace-header { justify-content:flex-end; }
       workbench-page > header { margin-bottom:var(--space-lg); }
-      workbench-page > header h1 { font-size:31px; line-height:1.32; margin:var(--space-xs) 0; color:var(--text-strong); letter-spacing:-1px; }
+      workbench-page > header h1 { font-size:var(--text-2xl); font-weight:700; line-height:1.35; margin:var(--space-xs) 0; color:var(--text-strong); }
       workbench-page > header p { color:var(--muted); margin:0; }
       workbench-page > .workbench-followup { margin-top:var(--space-lg); }
       workbench-page > .workbench-followup > summary { cursor:pointer; color:var(--accent-text); }

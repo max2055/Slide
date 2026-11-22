@@ -235,7 +235,7 @@ export class AlertsPage extends LitElement {
     }
 
     .table tbody tr.critical:hover {
-      background: rgba(239, 68, 68, 0.12);
+      background: color-mix(in srgb, var(--danger-subtle), var(--danger) 5%);
     }
 
     /* 严重程度徽章 */
@@ -265,7 +265,7 @@ export class AlertsPage extends LitElement {
     }
 
     .severity-badge.blue {
-      background: rgba(59, 130, 246, 0.12);
+      background: var(--info-subtle);
       color: var(--info);
     }
 
@@ -284,7 +284,7 @@ export class AlertsPage extends LitElement {
       display: inline-flex;
       align-items: center;
       padding: var(--space-xs) var(--space-sm);
-      background: rgba(59, 130, 246, 0.12);
+      background: var(--info-subtle);
       color: var(--info);
       border-radius: var(--radius-sm);
       font-size: var(--text-xs);
@@ -362,7 +362,7 @@ export class AlertsPage extends LitElement {
     .form-input:focus, .form-select:focus {
       outline: none;
       border-color: var(--accent);
-      box-shadow: 0 0 0 2px var(--accent-subtle, rgba(99, 102, 241, 0.1));
+      box-shadow: var(--focus-ring);
     }
 
     .form-actions {
@@ -420,7 +420,7 @@ export class AlertsPage extends LitElement {
     }
 
     .status-badge-sm.disabled {
-      background: var(--muted-subtle, rgba(107, 114, 128, 0.1));
+      background: var(--bg-hover);
       color: var(--muted);
     }
 
@@ -444,7 +444,7 @@ export class AlertsPage extends LitElement {
     }
 
     .checkbox-label.active {
-      background: var(--accent-subtle, rgba(99, 102, 241, 0.1));
+      background: var(--accent-subtle);
       border-color: var(--accent);
       color: var(--accent-text);
     }
@@ -470,7 +470,7 @@ export class AlertsPage extends LitElement {
       right: 0;
       bottom: 0;
       background: var(--border);
-      border-radius: 24px;
+      border-radius: var(--radius-full);
       transition: 0.2s;
     }
 
@@ -481,7 +481,7 @@ export class AlertsPage extends LitElement {
       width: 18px;
       left: 3px;
       bottom: 3px;
-      background: white;
+      background: var(--card);
       border-radius: 50%;
       transition: 0.2s;
     }
@@ -1404,21 +1404,21 @@ export class AlertsPage extends LitElement {
                           <div style="font-size:11px;color:var(--muted);margin-top:1px;">
                             <span class="type-badge" style="font-size:10px;">${rule.metric_name}</span>
                             ${(rule.db_types && rule.db_types.length > 0) ? html`<span style="margin-left:4px;">${rule.db_types.join(', ')}</span>` : ''}
-                            ${rule.target_type === 'server' ? html`<span class="type-badge" style="font-size:10px;margin-left:4px;background:rgba(34,197,94,0.12);color:var(--ok);">server</span>` : ''}
+                            ${rule.target_type === 'server' ? html`<span class="type-badge" style="margin-left:var(--space-xs);background:var(--ok-subtle);color:var(--ok);">server</span>` : ''}
                             ${rule.description ? html`<span style="margin-left:4px;">${rule.description.substring(0,40)}${rule.description.length>40?'...':''}</span>` : ''}
                           </div>
                         </td>
                         <td style="text-align:center;">
-                          <span class="type-badge" style="font-size:10px;background:${rule.target_type === 'server' ? 'rgba(34,197,94,0.12);color:var(--ok)' : 'rgba(59,130,246,0.12);color:var(--info)'}">${rule.target_type === 'server' ? '服务器' : '实例'}</span>
+                          <span class="type-badge" style="background:${rule.target_type === 'server' ? 'var(--ok-subtle);color:var(--ok)' : 'var(--info-subtle);color:var(--info)'}">${rule.target_type === 'server' ? '服务器' : '实例'}</span>
                         </td>
                         <td>
                           ${rule.threshold_type === 'dynamic'
                             ? html`<span style="color:var(--accent-text);font-size:11px;font-weight:500;">动态基线</span>`
                             : rule.threshold_template
-                              ? html`<div style="display:flex;gap:3px;flex-wrap:wrap;">
-                                  ${rule.threshold_template.warning != null ? html`<span style="padding:1px 6px;border-radius:3px;font-size:10px;font-weight:500;background:rgba(234,179,8,0.15);color:var(--warn);">W&ge;${rule.threshold_template.warning}</span>` : ''}
-                                  ${rule.threshold_template.error != null ? html`<span style="padding:1px 6px;border-radius:3px;font-size:10px;font-weight:500;background:rgba(249,115,22,0.15);color:var(--warn);">E&ge;${rule.threshold_template.error}</span>` : ''}
-                                  ${rule.threshold_template.critical != null ? html`<span style="padding:1px 6px;border-radius:3px;font-size:10px;font-weight:500;background:rgba(239,68,68,0.12);color:var(--danger);">C&ge;${rule.threshold_template.critical}</span>` : ''}
+                              ? html`<div style="display:flex;gap:var(--space-xs);flex-wrap:wrap;">
+                                  ${rule.threshold_template.warning != null ? html`<app-badge variant="warn">W&ge;${rule.threshold_template.warning}</app-badge>` : ''}
+                                  ${rule.threshold_template.error != null ? html`<app-badge variant="danger">E&ge;${rule.threshold_template.error}</app-badge>` : ''}
+                                  ${rule.threshold_template.critical != null ? html`<app-badge variant="danger">C&ge;${rule.threshold_template.critical}</app-badge>` : ''}
                                 </div>`
                               : html`<span style="font-size:11px;color:var(--muted);">${rule.operator} ${rule.threshold}</span>`
                           }
@@ -1433,9 +1433,9 @@ export class AlertsPage extends LitElement {
                             <span class="slider"></span>
                           </label>
                         </td>
-                        <td style="text-align:center;">
+                        <td style="text-align:center;white-space:nowrap;">
                           <button class="btn-sm action-btn" @click=${() => this._openRuleModal(rule)}>编辑</button>
-                          <button class="btn-sm danger action-btn" style="margin-left:4px;" @click=${() => this._deleteRule(rule)}>删除</button>
+                          <button class="btn-sm danger action-btn" style="margin-left:var(--space-xs);" @click=${() => this._deleteRule(rule)}>删除</button>
                         </td>
                       </tr>
                     `)}
@@ -1947,7 +1947,7 @@ export class AlertsPage extends LitElement {
               }
             `
           : html`
-              <div style="text-align:center;padding:40px 20px;color:var(--muted);">
+              <div style="text-align:center;padding:var(--space-xl);color:var(--muted);">
                 <div style="font-size: var(--text-md);font-weight:500;margin-bottom:var(--space-sm);">暂无基线数据</div>
                 <div style="font-size: var(--text-sm);">点击上方「重新计算全部」为所有实例计算指标基线</div>
               </div>

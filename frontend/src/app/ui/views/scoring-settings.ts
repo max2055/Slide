@@ -4,9 +4,12 @@ import { sharedFieldStyles } from "../../styles/shared-field-styles.ts";
  */
 import { LitElement, html, css, nothing } from "lit";
 import { sharedBtnStyles } from '../../styles/shared-btn-styles.ts';
+import { sharedSkeletonStyles } from '../../styles/shared-skeleton-styles.js';
+import { retryReadWithFocus } from '../controllers/retry-read-focus.js';
 import { customElement, state } from "lit/decorators.js";
 import { authFetch } from "../../../api/index.js";
 import "../components/app-card.js";
+import "../components/app-notice.js";
 
 interface ScoringWeights { availability: number; performance: number; capacity: number; security: number; }
 
@@ -35,7 +38,8 @@ export class ScoringSettingsPage extends LitElement {
   @state() private saving = false;
   @state() private error: string | null = null;
   @state() private ok: string | null = null;
-  static styles = [sharedFieldStyles, sharedBtnStyles, css`
+  private loadGeneration = 0;
+  static styles = [sharedFieldStyles, sharedBtnStyles, sharedSkeletonStyles, css`
 
     :host { display: block; max-width: 800px; }
     .page-header { margin-bottom: 24px; }
@@ -57,29 +61,28 @@ export class ScoringSettingsPage extends LitElement {
     .total-value.ok { color: var(--ok); }
     .total-value.warn { color: var(--warn); }
     .total-value.err { color: var(--danger); }
-    .total-feedback { font-size: 12px; color: var(--danger); margin: 0; }
-    .total-feedback:not(:empty) { margin-top: var(--space-sm); }
-
-    .toast { font-size: 12px; padding: 10px 14px; border-radius: var(--radius-sm); margin-bottom: 12px; }
-    .toast-ok { background: var(--ok-subtle); color: var(--ok); }
-    .toast-err { background: var(--danger-subtle); color: var(--danger); }
-
-    .loading { padding: 48px; text-align: center; color: var(--muted); }
+    .skeleton-block { min-height: 12rem; }
   `];
 
   override connectedCallback() { super.connectedCallback(); this._load(); }
 
   private async _load() {
+    const generation = ++this.loadGeneration;
     this.loading = true; this.error = null; this.weights = null; this.ok = null;
     try {
       const res = await authFetch("/api/scoring/config");
       if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || `加载失败 (${res.status})`);
-      const value: unknown = await res.json();
-      if (value == null) throw new Error('无法加载配置');
-      if (!isWeights(value)) throw new Error('评分权重配置不完整或无效，请刷新后重试');
-      this.weights = Object.fromEntries(DIMS.map(({ key }) => [key, value[key]])) as unknown as ScoringWeights;
-    } catch (e: any) { this.error = e.message; }
-    finally { this.loading = false; }
+      const value: unknown = await res.json().catch(() => undefined);
+      if (value === null) throw new Error('未读取到评分权重配置');
+      if (!isWeights(value)) throw new Error('评分权重配置不完整或无效');
+      if (generation === this.loadGeneration) {
+        this.weights = Object.fromEntries(DIMS.map(({ key }) => [key, value[key]])) as unknown as ScoringWeights;
+      }
+    } catch (error) {
+      if (generation === this.loadGeneration) this.error = error instanceof Error ? error.message : "请稍后重试";
+    } finally {
+      if (generation === this.loadGeneration) this.loading = false;
+    }
   }
 
   private async _save() {
@@ -98,23 +101,32 @@ export class ScoringSettingsPage extends LitElement {
   _valid() { return isWeights(this.weights) && Math.abs(this._total() - 1) < Number.EPSILON * 8; }
 
   override render() {
-    if (this.loading) return html`<div class="loading" role="status">加载中...</div>`;
-    if (this.error && !this.weights) return html`<div class="loading" role="alert" style="color:var(--danger)">${this.error}</div>`;
-    if (!this.weights) return html`<div class="loading" style="color:var(--danger)">无法加载配置</div>`;
+    return html`
+      <div class="page-header">
+        <h1>评分权重</h1>
+        <p>调整各维度在实例健康评分中的占比，总和需为 100%</p>
+      </div>
+      <section data-read-results aria-label="评分权重结果" aria-busy=${String(this.loading)} tabindex="-1">
+        ${this.loading ? html`<div class="skeleton skeleton-block" role="status" aria-label="正在加载评分权重"></div>`
+          : this.weights ? this.renderWeights()
+          : html`<app-notice severity="error">
+              <div role="alert">加载评分权重失败。 ${this.error}</div>
+              <button type="button" class="btn btn-refresh" data-read-retry
+                @click=${(event: Event) => retryReadWithFocus(this, event, () => this._load(), '#scoring-availability')}>重试</button>
+            </app-notice>`}
+      </section>
+    `;
+  }
 
+  private renderWeights() {
     const total = this._total();
     const valid = this._valid();
     const feedback = valid ? '' : total < 1
       ? `权重总和不足 100%，请增加 ${percent(1 - total)}`
       : `权重总和超过 100%，请减少 ${percent(total - 1)}`;
     return html`
-      ${this.ok ? html`<div class="toast toast-ok" role="status">${this.ok}</div>` : ""}
-      ${this.error ? html`<div class="toast toast-err" role="alert">${this.error}</div>` : ""}
-
-      <div class="page-header">
-        <h1>评分权重</h1>
-        <p>调整各维度在实例健康评分中的占比，总和需为 100%</p>
-      </div>
+      ${this.ok ? html`<app-notice severity="success" role="status">${this.ok}</app-notice>` : ""}
+      ${this.error ? html`<app-notice severity="error" role="alert">${this.error}</app-notice>` : ""}
 
       <app-card variant="default">
         ${DIMS.map(d => html`
@@ -128,9 +140,9 @@ export class ScoringSettingsPage extends LitElement {
           <span class="total-label">权重总和</span>
           <span class="total-value ${valid ? 'ok' : Math.abs(total - 1) < 0.06 ? 'warn' : 'err'}">${percent(total)}${valid ? ' ✓' : ''}</span>
         </div>
-        <p id="scoring-total-feedback" class="total-feedback" role="status">${feedback}</p>
+        <div id="scoring-total-feedback" role="status">${valid ? nothing : html`<app-notice severity="error">${feedback}</app-notice>`}</div>
         <div slot="footer">
-          <button class="btn btn-primary" aria-describedby=${valid ? nothing : 'scoring-total-feedback'} @click=${this._save} ?disabled=${this.saving || !valid}>${this.saving ? '保存中...' : '保存配置'}</button>
+          <button class="btn btn-primary" aria-busy=${this.saving} aria-describedby=${valid ? nothing : 'scoring-total-feedback'} @click=${this._save} ?disabled=${this.saving || !valid}>${this.saving ? '保存中...' : '保存配置'}</button>
         </div>
       </app-card>
     `;

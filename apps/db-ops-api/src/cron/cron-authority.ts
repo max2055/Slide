@@ -5,10 +5,11 @@ import { hasPermission } from '../auth/require-permission.js';
 import { dbConnection } from '../db-connection.js';
 import type { CronJobConfig } from './types.js';
 import type { CronToolAuthority } from '../adapter/get-agent-engine.js';
+import { DATABASE_LOG_COLLECTION_HANDLER } from './database-log-collection.js';
 
 export const CRON_MAINTENANCE_HANDLERS = new Set([
   'capacity.collect', 'baseline.cleanup', 'report.schedule', 'alert.evaluate',
-  'notification.dispatch', 'fault.diagnose-unhealthy',
+  'notification.dispatch', 'fault.diagnose-unhealthy', DATABASE_LOG_COLLECTION_HANDLER,
 ]);
 
 export function validateCronScope(job: CronJobConfig): NonNullable<CronJobConfig['resource_scope']> {
