@@ -158,19 +158,19 @@ export class AlertList extends LitElement {
             <option value="">全部级别</option>
             ${levels.map(level => html`<option value=${level} ?selected=${this.filterSeverity === level}>${alertLevelLabel(level)}</option>`)}
           </select>
-          <select class="filter-btn" style="font-size:var(--text-sm);" @change=${(e: any) => this._emit('alert-filter-target-type', { value: e.target.value })}>
+          <select aria-label="目标类型" class="filter-btn" style="font-size:var(--text-sm);" @change=${(e: any) => this._emit('alert-filter-target-type', { value: e.target.value })}>
             <option value="">全部目标</option>
             <option value="instance" ?selected=${this.filterTargetType==='instance'}>实例</option>
             <option value="server" ?selected=${this.filterTargetType==='server'}>服务器</option>
             <option value="network_device" ?selected=${this.filterTargetType==='network_device'}>网络设备</option>
           </select>
           ${this.filterTargetType === 'server' ? html`
-            <select class="filter-btn" style="font-size:var(--text-sm);" @change=${(e: any) => this._emit('alert-filter-server-id', { value: e.target.value ? Number(e.target.value) : null })}>
+            <select aria-label="服务器" class="filter-btn" style="font-size:var(--text-sm);" @change=${(e: any) => this._emit('alert-filter-server-id', { value: e.target.value ? Number(e.target.value) : null })}>
               <option value="">全部服务器</option>
               ${this.servers.map((srv: any) => html`<option value="${srv.id}">${srv.host}${srv.label ? ` (${srv.label})` : ''}</option>`)}
             </select>
           ` : ''}
-          <input class="form-input" type="text" placeholder="搜索编号/标题/实例..." style="flex:1;max-width:240px;padding:var(--space-sm) var(--space-md);font-size:var(--text-sm);" .value=${this.searchText} @input=${(e: any) => this._emit('alert-search', { value: e.target.value })} />
+          <input aria-label="搜索告警" class="form-input" type="text" placeholder="搜索编号/标题/实例..." style="flex:1;max-width:240px;padding:var(--space-sm) var(--space-md);font-size:var(--text-sm);" .value=${this.searchText} @input=${(e: any) => this._emit('alert-search', { value: e.target.value })} />
           <button class="btn btn-refresh" @click=${() => this._emit('alert-refresh')}>刷新</button>
         </div>
 
