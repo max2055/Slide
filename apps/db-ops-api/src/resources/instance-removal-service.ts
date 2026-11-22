@@ -49,7 +49,14 @@ export class InstanceRemovalService {
     return pending;
   }
   private async perform(id: number): Promise<RemovalResult> {
-    if (!this.runtime) return { success: false, state: 'deleting', statusCode: 503, error: 'INSTANCE_CLEANUP_UNAVAILABLE' };
+    if (!this.runtime) {
+      try {
+        if (await this.store.observe(id) === 'deleted') return { success: true, state: 'deleted' };
+      } catch {
+        // A failed read cannot confirm a terminal state.
+      }
+      return { success: false, state: 'deleting', statusCode: 503, error: 'INSTANCE_CLEANUP_UNAVAILABLE' };
+    }
     // Block new access before the first await, but do not abort in-flight work until intent is durable.
     const fence = this.access.hold(id);
     const covered = this.access.unresolvedSnapshot(id);

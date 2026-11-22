@@ -44,6 +44,40 @@ function fixture() {
 }
 
 describe('instance removal lifecycle', () => {
+  describe('without a cleanup runtime (#1016)', () => {
+    const unavailable = { success: false, state: 'deleting', statusCode: 503, error: 'INSTANCE_CLEANUP_UNAVAILABLE' };
+
+    it.each([
+      ['deleted', { success: true, state: 'deleted' }],
+      ['available', unavailable],
+      ['deleting', unavailable],
+      [null, unavailable],
+    ] as const)('returns the expected result for observed state %s without writing', async (state, expected) => {
+      const { access, store } = fixture();
+      vi.mocked(store.observe).mockResolvedValue(state);
+      const service = new InstanceRemovalService(store, access);
+
+      expect(await service.remove(8)).toEqual(expected);
+      expect(store.observe).toHaveBeenCalledExactlyOnceWith(8);
+      expect(store.begin).not.toHaveBeenCalled();
+      expect(store.detach).not.toHaveBeenCalled();
+      expect(store.record).not.toHaveBeenCalled();
+      expect(store.complete).not.toHaveBeenCalled();
+      expect(access.isRevoked(8)).toBe(false);
+    });
+
+    it('keeps returning cleanup unavailable when the persisted state cannot be read', async () => {
+      const { access, store } = fixture();
+      vi.mocked(store.observe).mockRejectedValue(new Error('store unavailable'));
+      const service = new InstanceRemovalService(store, access);
+
+      expect(await service.remove(8)).toEqual(unavailable);
+      expect(store.observe).toHaveBeenCalledExactlyOnceWith(8);
+      expect(store.begin).not.toHaveBeenCalled();
+      expect(access.isRevoked(8)).toBe(false);
+    });
+  });
+
   it('fences before persisting intent and completes only after all cleanup', async () => {
     const f = fixture();
     f.store.begin = vi.fn(async () => {
