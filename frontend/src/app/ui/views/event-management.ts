@@ -24,6 +24,14 @@ const EVENT_GROUPS = {
   other: { status: 'other', label: '历史未归类' },
 } as const;
 type EventGroup = keyof typeof EVENT_GROUPS;
+type EventListPosition = {
+  key: string;
+  mainTop: number;
+  listTop: number;
+  row?: { id: string; viewportTop: number; listOffset: number };
+};
+
+class EventListAccessError extends Error {}
 
 function eventTarget(event: AlertEvent) {
   if (event.target_type === 'network_device' || event.network_device_id)
@@ -561,11 +569,63 @@ export class EventManagementPage extends LitElement {
   }
 
   private listRequest = 0;
+  private loadedListScope = '';
+  private listPosition?: EventListPosition;
+
+  private get listScope() { return `${this.activeListTab}:${this.eventsPage}`; }
+
+  private get listPositionKey() {
+    return JSON.stringify([this.listScope, this.filterSeverity, this.filterSearch]);
+  }
+
+  private _listScroller() {
+    const root = this.getRootNode();
+    const host = root instanceof ShadowRoot ? root.host : this;
+    return host.closest('main.content') ?? document.scrollingElement;
+  }
+
+  private _rememberListPosition(key: string) {
+    const main = this._listScroller();
+    const list = this.renderRoot?.querySelector<HTMLElement>('.event-list');
+    if (!main || !list) return;
+    const viewport = main.getBoundingClientRect();
+    const listRect = list.getBoundingClientRect();
+    const top = Math.max(viewport.top, listRect.top, 0);
+    const bottom = Math.min(viewport.bottom, listRect.bottom, window.innerHeight);
+    const row = Array.from(list.querySelectorAll<HTMLButtonElement>('button[data-event-id]')).find(button => {
+      const rect = button.getBoundingClientRect();
+      return rect.bottom > top && rect.top < bottom;
+    });
+    const rect = row?.getBoundingClientRect();
+    this.listPosition = {
+      key, mainTop: main.scrollTop, listTop: list.scrollTop,
+      ...(rect && row?.dataset.eventId ? {
+        row: { id: row.dataset.eventId, viewportTop: rect.top, listOffset: rect.top - listRect.top },
+      } : {}),
+    };
+  }
+
+  private _restoreListPosition(position: EventListPosition) {
+    const main = this._listScroller();
+    const list = this.renderRoot.querySelector<HTMLElement>('.event-list');
+    if (!main || !list) return;
+    const anchor = position.row;
+    const row = anchor && Array.from(list.querySelectorAll<HTMLButtonElement>('button[data-event-id]'))
+      .find(button => button.dataset.eventId === anchor.id);
+    if (row && anchor) {
+      list.scrollTop += row.getBoundingClientRect().top - list.getBoundingClientRect().top - anchor.listOffset;
+      main.scrollTop += row.getBoundingClientRect().top - anchor.viewportTop;
+    } else {
+      list.scrollTop = position.listTop;
+      main.scrollTop = position.mainTop;
+    }
+  }
 
   private async _readEventList() {
     const offset = this.eventsPage * this.eventsPageSize;
     const res = await authFetch(`${API_BASE}/alerts/events?limit=${this.eventsPageSize}&offset=${offset}&status=${EVENT_GROUPS[this.activeListTab].status}`, { cache: 'no-store' });
-    if (!res.ok) throw new Error(res.status === 403 ? '无权访问事件' : `事件加载失败: ${res.status}`);
+    if (res.status === 401 || res.status === 403) throw new EventListAccessError('无权访问事件');
+    if (!res.ok) throw new Error(`事件加载失败: ${res.status}`);
     const data = await res.json();
     if (!Array.isArray(data?.items ?? data)) throw new Error('事件返回格式异常');
     const total = data.total;
@@ -574,6 +634,7 @@ export class EventManagementPage extends LitElement {
 
   private async _readEventStats(): Promise<EventStats> {
     const res = await authFetch(`${API_BASE}/alerts/events/stats`, { cache: 'no-store' });
+    if (res.status === 401 || res.status === 403) throw new EventListAccessError('无权访问事件');
     if (!res.ok) throw new Error('事件统计读取失败');
     const stats: EventStats = await res.json();
     if (!stats || ![stats.total, stats.open, stats.investigating, stats.handled, stats.resolved, stats.closed]
@@ -585,21 +646,44 @@ export class EventManagementPage extends LitElement {
 
   private async _loadEvents() {
     const request = ++this.listRequest;
+    const scope = this.listScope;
+    if (this.listPosition?.key !== this.listPositionKey) this.listPosition = undefined;
     this.retryLoading = true;
+    let denied = false;
+    const read = <T>(operation: Promise<T>) => operation.catch(error => {
+      if (request === this.listRequest && !denied && error instanceof EventListAccessError) {
+        denied = true;
+        this.listPosition = undefined;
+        this.loadedListScope = '';
+        this.events = [];
+        this.eventsTotal = null;
+        this.stats = null;
+        this.statsError = false;
+        this.mttr = null;
+        this.closeDetail();
+        this.loadError = error.message;
+        this.loading = false;
+      }
+      throw error;
+    });
     const [list, stats, mttr] = await Promise.allSettled([
-      this._readEventList(),
-      this._readEventStats(),
+      read(this._readEventList()),
+      read(this._readEventStats()),
       authFetch(`${API_BASE}/alerts/events/mttr`, { cache: 'no-store' }).then(res => res.ok ? res.json() : null),
     ]);
     if (request !== this.listRequest) return;
-    this.loadError = list.status === 'fulfilled' ? null
+    const key = this.listPositionKey;
+    if (!denied && this.loadedListScope === scope) this._rememberListPosition(key);
+    const readable = !denied && list.status === 'fulfilled';
+    this.loadError = denied ? '无权访问事件' : list.status === 'fulfilled' ? null
       : list.reason instanceof Error ? list.reason.message : '事件暂不可读';
-    if (this.loadError) this.closeDetail();
-    this.events = list.status === 'fulfilled' ? list.value.items : [];
-    this.eventsTotal = list.status === 'fulfilled' ? list.value.total : null;
-    this.stats = stats.status === 'fulfilled' ? stats.value : null;
-    this.statsError = stats.status === 'rejected';
-    this.mttr = mttr.status === 'fulfilled' ? mttr.value : null;
+    if (this.loadError && !denied) this.closeDetail();
+    this.events = readable ? list.value.items : [];
+    this.eventsTotal = readable ? list.value.total : null;
+    this.loadedListScope = readable ? scope : '';
+    this.stats = !denied && stats.status === 'fulfilled' ? stats.value : null;
+    this.statsError = !denied && stats.status === 'rejected';
+    this.mttr = !denied && mttr.status === 'fulfilled' ? mttr.value : null;
     if (this.eventsTotal !== null) {
       const lastPage = Math.max(0, Math.ceil(this.eventsTotal / this.eventsPageSize) - 1);
       if (this.eventsPage > lastPage) {
@@ -610,6 +694,13 @@ export class EventManagementPage extends LitElement {
     }
     this.loading = false;
     this.retryLoading = false;
+    const position = this.listPosition;
+    if (readable && position) {
+      this.listPosition = undefined;
+      await this.updateComplete;
+      if (request === this.listRequest && position.key === this.listPositionKey
+        && this.isConnected && !this.eventId && !this.selectedEvent) this._restoreListPosition(position);
+    }
   }
 
   private detailRequest = 0;
@@ -976,7 +1067,7 @@ export class EventManagementPage extends LitElement {
         </div>
         </div>
 
-        ${this.events.length === 0
+        ${this.loadedListScope !== this.listScope || this.events.length === 0
           ? this.loadError || this.retryLoading ? nothing : html`
               <div class="empty-state">
                 <div class="empty-icon">${this.activeListTab === 'resolved' ? renderIcon('check-circle') : renderIcon('triangle-alert')}</div>
@@ -988,13 +1079,14 @@ export class EventManagementPage extends LitElement {
               <div class="main-layout">
                 <div class="panel">
                   <div class="panel-header">事件列表</div>
-                  <div class="event-list">
-                    ${this.retryLoading ? nothing : filtered.length === 0
+                  <div class="event-list" aria-busy=${this.retryLoading}>
+                    ${filtered.length === 0
                       ? html`<div class="detail-empty">暂无匹配的事件</div>`
                       : filtered.map((event) => html`
                           <button type="button" data-event-id=${event.id} aria-label=${`查看事件 #${event.id} 详情`} aria-description=${event.title}
+                            aria-disabled=${this.retryLoading}
                             class="event-item ${this.selectedEvent?.id === event.id ? "selected" : ""}"
-                            @click=${() => this._selectEvent(event)}
+                            @click=${() => { if (!this.retryLoading) this._selectEvent(event); }}
                           >
                             <div class="event-title">
                               <span class="event-number">#${event.id}</span>

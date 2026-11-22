@@ -181,6 +181,125 @@ test('statistics failure leaves the successful current event group readable', as
   await expect(list.locator('stat-card[label="可见事件总计"] [part="value"]')).toHaveText('1');
 });
 
+test('MAX-722 keeps the visible aggregate row through refresh and same-page retry', async ({ page }, info) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  const rows = Array.from({ length: 50 }, (_, index) => ({
+    ...sampleEvent, id: String(index + 101), title: `历史验收事件 ${index + 1}`, status: 'reviewed',
+  }));
+  const reads: string[] = [];
+  let listStatus = 200;
+  let statsStatus = 200;
+  let holdStats: Promise<void> | undefined;
+  await setupAggregate(page, async (route, query) => {
+    reads.push(`${query.get('status')}:${query.get('offset')}`);
+    if (query.get('status') !== 'other') return route.fulfill({ json: emptyList });
+    if (listStatus !== 200) return route.fulfill({ status: listStatus, json: {} });
+    return route.fulfill({ json: {
+      total: 103, items: query.get('offset') === '50' ? rows : rows.map(row => ({ ...row, id: String(Number(row.id) + 100) })),
+    } });
+  });
+  await page.route('**/api/alerts/events/stats', async route => {
+    await holdStats;
+    return route.fulfill({ status: statsStatus, json: statsStatus === 200
+      ? { total: 103, open: 0, investigating: 0, handled: 0, resolved: 0, closed: 0 } : {} });
+  });
+  await page.goto(aggregateUrl);
+  const list = page.locator('event-management-page');
+  const group = list.getByRole('button', { name: /^历史未归类/ });
+  const refresh = list.getByRole('button', { name: '刷新事件' });
+  const card = list.locator('stat-card[label="可见事件总计"] [part="value"]');
+  const filter = list.getByRole('textbox', { name: '搜索本页事件' });
+  const severity = list.getByRole('combobox', { name: '本页严重度' });
+  const rowButtons = list.getByRole('button', { name: /查看事件 #\d+ 详情/ });
+  const main = page.locator('main.content');
+  await group.press('Enter');
+  await list.getByRole('button', { name: /下一页/ }).press('Enter');
+  await expect(list.getByText('第 2/3 页', { exact: true })).toBeVisible();
+  await filter.fill('历史验收');
+  await severity.selectOption('warning');
+  await expect(rowButtons).toHaveCount(50);
+
+  const position = () => list.evaluate(element => {
+    const host = (element.getRootNode() as ShadowRoot).host;
+    const scroller = host.closest('main.content')!;
+    const viewport = scroller.getBoundingClientRect();
+    const rows = [...element.shadowRoot!.querySelectorAll<HTMLButtonElement>('button[data-event-id]')];
+    const first = rows.find(row => row.getBoundingClientRect().bottom > viewport.top && row.getBoundingClientRect().top < viewport.bottom);
+    return { scrollTop: scroller.scrollTop, id: first?.dataset.eventId,
+      top: first ? Math.round(first.getBoundingClientRect().top - viewport.top) : null };
+  });
+  await refresh.focus();
+  await main.evaluate(element => { element.scrollTop = 960; });
+  const before = await position();
+  expect(before.scrollTop).toBe(960);
+  expect(before.id).toBeTruthy();
+  const assertPosition = async () => {
+    await expect.poll(async () => (await position()).id).toBe(before.id);
+    await expect.poll(async () => Math.abs((await position()).top! - before.top!)).toBeLessThanOrEqual(3);
+    expect((await position()).scrollTop).toBeGreaterThan(800);
+    await expect(group).toHaveAttribute('aria-pressed', 'true');
+    await expect(list.getByText('第 2/3 页', { exact: true })).toBeVisible();
+    await expect(filter).toHaveValue('历史验收');
+    await expect(severity).toHaveValue('warning');
+  };
+  const snapshots = [before];
+  const pending = Promise.withResolvers<void>();
+  holdStats = pending.promise;
+  statsStatus = 503;
+  try {
+    await page.keyboard.press('Enter');
+    await expect(refresh).toBeDisabled();
+    await expect(rowButtons).toHaveCount(50);
+    expect((await position()).scrollTop).toBe(before.scrollTop);
+    await assertPosition();
+  } finally {
+    holdStats = undefined;
+    pending.resolve();
+  }
+  await expect(card).toHaveText('未知');
+  await assertPosition();
+  snapshots.push(await position());
+  statsStatus = 200;
+  await refresh.evaluate((button: HTMLButtonElement) => button.focus({ preventScroll: true }));
+  await page.keyboard.press('Enter');
+  await expect(card).toHaveText('103');
+  await assertPosition();
+  snapshots.push(await position());
+  await page.screenshot({ path: info.outputPath('aggregate-stats-restored.png') });
+
+  listStatus = 503;
+  await refresh.evaluate((button: HTMLButtonElement) => button.focus({ preventScroll: true }));
+  await page.keyboard.press('Enter');
+  await expect(list.getByRole('alert')).toContainText('503');
+  await expect(rowButtons).toHaveCount(0);
+  await expect(list.getByText('暂无历史未归类事件')).toHaveCount(0);
+  listStatus = 200;
+  await list.getByRole('button', { name: '重试加载' }).press('Enter');
+  await expect(rowButtons).toHaveCount(50);
+  await assertPosition();
+  snapshots.push(await position());
+  expect(reads.slice(-4)).toEqual(Array(4).fill('other:50'));
+  await page.screenshot({ path: info.outputPath('aggregate-list-restored.png') });
+
+  listStatus = 403;
+  const deniedPending = Promise.withResolvers<void>();
+  holdStats = deniedPending.promise;
+  await refresh.evaluate((button: HTMLButtonElement) => button.focus({ preventScroll: true }));
+  try {
+    await page.keyboard.press('Enter');
+    await expect(list.getByRole('alert')).toContainText('无权访问事件');
+    await expect(rowButtons).toHaveCount(0);
+    await expect(card).toHaveText('未知');
+  } finally {
+    holdStats = undefined;
+    deniedPending.resolve();
+  }
+  await expect(refresh).toBeEnabled();
+  await expect(card).toHaveText('未知');
+  await expect(list.getByText('第 2/3 页', { exact: true })).toHaveCount(0);
+  await info.attach('aggregate-scroll-positions', { body: JSON.stringify(snapshots), contentType: 'application/json' });
+});
+
 test('platform collection state and successful empty records are independent', async ({ page }) => {
   await setupAggregate(page, route => route.fulfill({ json: emptyList }));
   let active = false;
