@@ -163,11 +163,20 @@ export class NetworkDeviceDetail extends LitElement {
     const current = () => version === this.contextVersion && id === this.validId() && request === this.interfaceRequest;
     this.interfaces = []; this.interfacesLoading = true; this.interfacesError = '';
     try {
-      const body = await this.json<{interfaces: NetworkDeviceInterface[]}>(`/api/network-devices/${id}/interfaces`);
+      const response = await authFetch(`/api/network-devices/${id}/interfaces`, { signal: AbortSignal.timeout(15000) });
       if (!current()) return;
-      if (!Array.isArray(body.interfaces)) throw new Error('接口列表格式异常');
+      if (!response.ok) {
+        if ([401, 403, 404].includes(response.status)) {
+          this.interfacesError = '无法访问此设备的接口记录，请确认登录和查看权限';
+          return;
+        }
+        throw new Error();
+      }
+      const body = await response.json();
+      if (!current()) return;
+      if (!Array.isArray(body?.interfaces)) throw new Error();
       this.interfaces = body.interfaces;
-    } catch (error) { if (current()) this.interfacesError = networkDeviceError(error, '接口读取失败'); }
+    } catch { if (current()) this.interfacesError = '接口记录读取失败'; }
     finally { if (current()) this.interfacesLoading = false; }
   }
   private renderInterfaces() {
@@ -175,11 +184,11 @@ export class NetworkDeviceDetail extends LitElement {
     const status = (value: string) => ({up:'已启用',down:'已停用',testing:'测试中',unknown:'未知',notPresent:'不存在',lowerLayerDown:'下层链路中断',dormant:'休眠'}[value] ?? value);
     return html`<app-card><h2 slot="header">网络接口</h2><div class="interface-filters">
       <label>名称或别名 <input aria-label="接口名称或别名" .value=${this.interfaceSearch} @input=${(e:Event)=>this.interfaceSearch=(e.target as HTMLInputElement).value}></label>
-      <label>运行状态 <select aria-label="接口运行状态" .value=${this.interfaceStatus} @change=${(e:Event)=>this.interfaceStatus=(e.target as HTMLSelectElement).value}><option value="">全部状态</option>${[...new Set(this.interfaces.map(row=>row.operStatus))].map(value=>html`<option value=${value}>${status(value)}</option>`)}</select></label>
-      <button aria-busy=${String(this.interfacesLoading)} class="btn btn-refresh" ?disabled=${this.interfacesLoading} @click=${()=>this.loadInterfaces()}>刷新接口</button>
-    </div><p class="meta">显示 ${rows.length} / ${this.interfaces.length} 个已保存接口。速率为接口标称容量，不代表实测流量；最后发现时间不代表当前在线。</p>
+      <label>运行状态 <select aria-label="接口运行状态" .value=${this.interfaceStatus} @change=${(e:Event)=>this.interfaceStatus=(e.target as HTMLSelectElement).value}><option value="">全部状态</option>${[...new Set([...this.interfaces.map(row=>row.operStatus), this.interfaceStatus].filter(Boolean))].map(value=>html`<option value=${value}>${status(value)}</option>`)}</select></label>
+      <button aria-busy=${String(this.interfacesLoading)} class="btn btn-refresh" ?disabled=${this.interfacesLoading} @click=${()=>this.loadInterfaces()}>${this.interfacesError ? "重试读取接口" : "刷新接口"}</button>
+    </div>${!this.interfacesLoading && !this.interfacesError ? html`<p class="meta">显示 ${rows.length} / ${this.interfaces.length} 个已保存接口。速率为接口标称容量，不代表实测流量；最后发现时间不代表当前在线。</p>` : nothing}
       ${this.interfacesError ? html`<p role="alert" class="error">${this.interfacesError}</p>` : this.interfacesLoading ? html`<p role="status">正在读取接口…</p>` : rows.length ? html`<app-data-table tabindex="0" role="region" aria-label="接口列表，可横向滚动" .dense=${true} .columns=${[{key:'name',label:'接口 / 别名'},{key:'status',label:'管理 / 运行状态'},{key:'speed',label:'标称容量'},{key:'seen',label:'最后发现'}]}
-        .rows=${rows.map(row=>({name:html`<strong>${row.ifName}</strong><div>${row.ifAlias || '无别名'} · #${row.ifIndex}</div>`,status:`${status(row.adminStatus)} / ${status(row.operStatus)}`,speed:row.speedBps === null ? '未知' : `${row.speedBps} bit/s`,seen:row.lastSeenAt ? new Date(row.lastSeenAt).toLocaleString('zh-CN') : '未知'}))}></app-data-table>` : html`<app-empty-state title=${this.interfaces.length ? '没有匹配的接口' : '尚未取得接口记录'} description="接口记录缺失不代表设备没有接口，也不能推断设备健康。"></app-empty-state>`}
+        .rows=${rows.map(row=>({name:html`<strong>${row.ifName}</strong><div>${row.ifAlias || '无别名'} · #${row.ifIndex}</div>`,status:`${status(row.adminStatus)} / ${status(row.operStatus)}`,speed:row.speedBps === null ? '未知' : `${row.speedBps} bit/s`,seen:row.lastSeenAt ? new Date(row.lastSeenAt).toLocaleString('zh-CN') : '未知'}))}></app-data-table>` : html`<app-empty-state title=${this.interfaces.length ? '没有匹配的接口' : '设备没有已保存的接口记录'} description="接口记录缺失不代表设备没有接口，也不能推断设备健康。"></app-empty-state>`}
     </app-card>`;
   }
   private renderOverview() {
