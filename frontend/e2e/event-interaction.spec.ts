@@ -111,7 +111,8 @@ test('#1036 page filters preserve query scope and pagination', async ({ page }, 
 
   try {
     await page.goto(aggregateUrl);
-    await expect(list.getByText('第 1/2 页，共 51 条')).toBeVisible();
+    await expect(list.getByText(/第 1\/2 页/)).toBeVisible();
+    await expect(list.getByText(/共 51 条/)).toBeVisible();
     const stats = list.locator('stat-card');
     await expect(stats).toHaveCount(6);
     await expect(stats.filter({ has: page.getByText('开放', { exact: true }) }).locator('[part="value"]')).toHaveText('51');
@@ -139,7 +140,8 @@ test('#1036 page filters preserve query scope and pagination', async ({ page }, 
   await expect(noMatch).toBeVisible();
   await expect(search).toHaveValue('连接数');
   await expect(severity).toHaveValue('critical');
-  await expect(list.getByText('第 2/2 页，共 51 条')).toBeVisible();
+  await expect(list.getByText(/第 2\/2 页/)).toBeVisible();
+  await expect(list.getByText(/共 51 条/)).toBeVisible();
   await severity.selectOption('warning');
   await expect(list.getByRole('button', { name: /查看事件 #51 详情/ })).toBeVisible();
 });
