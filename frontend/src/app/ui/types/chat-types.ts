@@ -60,7 +60,7 @@ export type NormalizedMessage = {
   timestamp: number;
   id?: string;
   senderLabel?: string | null;
-  replyTarget?: NormalizedMessage | null;
+  replyTarget?: { kind: "id"; id: string } | { kind: "current" } | null;
 };
 
 /** Tool card representation for tool calls and results */
