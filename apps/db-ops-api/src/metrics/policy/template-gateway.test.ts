@@ -655,14 +655,16 @@ describe('legacy readers refuse a stored template row (shared fence)', () => {
     expect(await rejection(schedulerStore.enqueue(legacyCandidate, 0))).toBe('BINDING_PAYLOAD_MISSING_SOURCE');
     expect(assertAvailable).not.toHaveBeenCalled();
 
-    // tick() isolates the rejected row and a stale enqueue instead of throwing.
+    // The normal tick reports a rejected row and never enqueues package snapshots.
     const record = vi.spyOn(platformLogs, 'record');
+    const enqueueLegacy = vi.fn();
     const stub = {
       scan: async () => ({ published: [legacyPublished() as never], templates: [],
         rejected: [{ resource_key: RESOURCE_KEY, code: TEMPLATE_BINDING_UNSUPPORTED }] }),
-      enqueue: async () => { throw new TemplateBindingUnsupportedError(); },
+      enqueue: enqueueLegacy,
     } as unknown as MysqlScheduleStore;
     expect(await new MetricScheduler(stub, fixtureRegistry(), {} as never, () => 0).tick()).toBe(0);
+    expect(enqueueLegacy).not.toHaveBeenCalled();
     expect(record).toHaveBeenCalledWith(expect.objectContaining({ errorCode: TEMPLATE_BINDING_UNSUPPORTED, status: 'failed' }));
 
     // A job with no current template revision ends before collection.

@@ -264,7 +264,7 @@ describe.skipIf(!port)('V23 foreground source control on isolated MySQL', () => 
     await policies.changeBinding(admin, ref, { expected_revision: 0, package: { id: pin.id, version: pin.version, digest: pin.digest },
       overrides: { interval_ms: { mode: 'set', value: 1000 }, timeout_ms: { mode: 'set', value: 1000 } } }, true);
     let reads = 0;
-    const scheduler = new MetricScheduler(new MysqlScheduleStore(pool, packages, 'production'), packages, {
+    const scheduler = MetricScheduler.forLegacyPackages(new MysqlScheduleStore(pool, packages, 'production'), packages, {
       resolve: async () => ({ resource: inventory(), credential_ref: 'credential:local-only', evidence: {},
         resolve: async () => ({ method: 'sql', pool: { query: async options => {
           expect(options.sql).toBe(MYSQL_STATUS_SQL); reads++; return root.query(options);

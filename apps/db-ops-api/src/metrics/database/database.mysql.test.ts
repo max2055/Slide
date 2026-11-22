@@ -46,7 +46,7 @@ describe.skipIf(!port)('MAX-71 isolated MySQL collection → Worker → storage 
   }, 120000);
   afterAll(async () => { await pool?.end(); if (root) { await root.query(`DROP DATABASE IF EXISTS ${database}`); await root.end(); } });
   function setup(ticket?: Ticket) {
-    const scheduler = new MetricScheduler(new MysqlScheduleStore(pool, packages, ticket), packages, { resolve: async () => ({ resource, credential_ref: 'credential:isolated-mysql', evidence: { counter: { bits: '64', start_at: startAt } }, resolve: async () => bindMySql(pool) }) }, () => now, async (...args) => {
+    const scheduler = MetricScheduler.forLegacyPackages(new MysqlScheduleStore(pool, packages, ticket), packages, { resolve: async () => ({ resource, credential_ref: 'credential:isolated-mysql', evidence: { counter: { bits: '64', start_at: startAt } }, resolve: async () => bindMySql(pool) }) }, () => now, async (...args) => {
       const started = performance.now(); try { return await collectFixed(...args); } finally { collectorWallMs.push(performance.now() - started); }
     });
     const registry = new JobRegistry(); scheduler.register(registry);

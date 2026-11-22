@@ -76,6 +76,9 @@ export const templateQueryPort: TemplateQueryPort = {
     };
   },
 };
+// V23's explicit standalone package evaluator reads its owned legacy binding.
+export const legacyPackageMetricConsumerService = new MetricConsumerService(policyService, registry, consumerStore);
+
 // Existing scheduler/report adapters construct resource-scoped internal actors;
 // they are not authenticated user sessions. Keep their reader inside the server.
 export const internalMetricConsumerService = new MetricConsumerService(policyService, registry, consumerStore,

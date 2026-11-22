@@ -12,6 +12,7 @@ import { createConfigurationRegistry } from './registry.js';
 import { createTrialStore, registerMetricConfigurationRoutes } from './routes.js';
 import { MetricConfigurationService } from './service.js';
 import { configurationReader } from './status-store.js';
+import { upgradeMonitoringBindings } from '../templates/upgrade-bindings.js';
 
 const port = Number(process.env.METRICS_TEST_MYSQL_PORT);
 const ref = { type: 'instance' as const, id: 1 };
@@ -20,6 +21,7 @@ const jobId = 'aaaaaaaa-0000-4000-8000-000000000001';
 describe.skipIf(!port)('configuration status with mixed MySQL collations', () => {
   const database = `max189_status_${process.pid}`;
   let root: Pool, pool: Pool, app: ReturnType<typeof Fastify>, policy: PolicyService;
+  const registry = createConfigurationRegistry();
   let poolSpy: ReturnType<typeof vi.spyOn>;
   beforeAll(async () => {
     root = mysql.createPool({ host: '127.0.0.1', port, user: 'root', password: '' });
@@ -34,7 +36,6 @@ describe.skipIf(!port)('configuration status with mixed MySQL collations', () =>
     vi.stubEnv('METRICS_COLLECTION_ENABLED', 'true');
     await pool.execute(`INSERT INTO database_instances(id,name,host,port,username,password_encrypted,db_type,db_version,status)
       VALUES(1,'status fixture','127.0.0.1',3306,'fixture','','mysql','8.0.46','active')`);
-    const registry = createConfigurationRegistry();
     policy = new PolicyService(new MysqlPolicyStore(() => pool), registry,
       { exists: async r => r.id === 1, inventory: configurationInventory });
     const service = new MetricConfigurationService(policy, registry, createTrialStore(() => pool, registry),
@@ -55,8 +56,10 @@ describe.skipIf(!port)('configuration status with mixed MySQL collations', () =>
     }
   });
   const status = () => app.inject('/api/metrics/config/resources/instance/1/status');
-  const seed = async (key = 'instance:1', revision = 1, scheduledId: string | null = jobId, state = 'running') => {
+  const publishedRevision = 2;
+  const seed = async (key = 'instance:1', revision = publishedRevision, scheduledId: string | null = jobId, state = 'running') => {
     await policy.changeBinding(admin, ref, { expected_revision: 0, package: pin }, true);
+    expect(await upgradeMonitoringBindings(pool, registry)).toBe(1);
     await pool.execute(`INSERT INTO workflow_jobs(id,job_type,schema_version,payload,idempotency_key,state)
       VALUES(?,'metrics.collect',1,'{}',?,?)`, [jobId, jobId, state]);
     await pool.execute(`INSERT INTO metric_schedule(resource_key,revision,next_due_ms,job_id,states)
@@ -82,21 +85,21 @@ describe.skipIf(!port)('configuration status with mixed MySQL collations', () =>
     await seed();
     const response = await status();
     expect(response.statusCode).toBe(200);
-    expect(response.json()).toMatchObject({ binding: { state: 'bound', published_revision: 1 },
+    expect(response.json()).toMatchObject({ binding: { state: 'bound', published_revision: publishedRevision },
       collection: { state: 'running', in_flight: true, last_success_at: null },
       formal_visibility: { state: 'pending', last_observed_at: null, freshness: 'unknown' } });
   });
 
   it.each([
-    ['other resource', 'instance:2', 1, jobId, 'running'],
-    ['old revision', 'instance:1', 2, jobId, 'running'],
-    ['case mismatch', 'instance:1', 1, jobId.toUpperCase(), 'running'],
-    ['trailing space', 'instance:1', 1, `${jobId} `, 'running'],
-    ['missing job', 'instance:1', 1, 'missing-job', 'running'],
-    ['no job', 'instance:1', 1, null, 'running'],
-    ['queued', 'instance:1', 1, jobId, 'queued'],
-    ['completed', 'instance:1', 1, jobId, 'completed'],
-    ['cancelled', 'instance:1', 1, jobId, 'cancelled'],
+    ['other resource', 'instance:2', publishedRevision, jobId, 'running'],
+    ['old revision', 'instance:1', 1, jobId, 'running'],
+    ['case mismatch', 'instance:1', publishedRevision, jobId.toUpperCase(), 'running'],
+    ['trailing space', 'instance:1', publishedRevision, `${jobId} `, 'running'],
+    ['missing job', 'instance:1', publishedRevision, 'missing-job', 'running'],
+    ['no job', 'instance:1', publishedRevision, null, 'running'],
+    ['queued', 'instance:1', publishedRevision, jobId, 'queued'],
+    ['completed', 'instance:1', publishedRevision, jobId, 'completed'],
+    ['cancelled', 'instance:1', publishedRevision, jobId, 'cancelled'],
   ])('does not mark %s as in flight', async (_name, key, revision, id, state) => {
     await seed(key as string, revision as number, id as string | null, state as string);
     const response = await status();

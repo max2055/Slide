@@ -3,15 +3,48 @@ import { dbConnection } from '../../db-connection.js';
 import type { ActorContext } from '../../auth/actor-context.js';
 import { compileAlertRule } from '../../alerts/compiled-rule.js';
 import { configurationInventory } from '../config/inventory.js';
-import type { Ref } from '../policy/model.js';
-import { internalMetricConsumerService as metricConsumerService, operationalSource, templateQueryPort } from './runtime.js';
+import { PolicyError, type Ref } from '../policy/model.js';
+import { policyService } from '../policy/service.js';
+import type { MetricConsumerService } from './service.js';
+import { internalMetricConsumerService as metricConsumerService, legacyPackageMetricConsumerService,
+  operationalSource, templateQueryPort } from './runtime.js';
 import { migrateReference } from './migration.js';
 import { evaluateMetric } from './evaluation.js';
 const actorFor = (ref: Ref): ActorContext => ({ userId: 0, username: 'metric-policy-evaluator', roles: [],
   permissions: [ref.type === 'instance' ? 'instance:view' : ref.type === 'server' ? 'servers:view' : 'network_devices:view'],
   instanceScopes: ref.type === 'instance' ? { [ref.id]: 'read-only' } : {}, sessionVersion: 0, requestId: `metric-evaluation:${ref.type}:${ref.id}` });
 type Rule = Parameters<typeof compileAlertRule>[0] & { missing_policy?: 'unknown'; threshold_type?: string; recovery_threshold?: number; dimensions?: Record<string, string> };
-export async function evaluateOperationalRule(ref: Ref, rule: Rule, seconds: number, macros: Record<string, number> = {}, strictErrors = false) {
+type OperationalBinding = { enabled: boolean; interval_ms: number; engine: string };
+type ReadBinding = (actor: ActorContext, ref: Ref) => Promise<OperationalBinding | null>;
+
+const readTemplateBinding: ReadBinding = async (_actor, ref) => {
+  const binding = await templateQueryPort.read(ref);
+  if (!binding?.settings.enabled) return null;
+  const inventory = await configurationInventory(ref);
+  return { ...binding.settings, engine: String(inventory.attributes['db.engine']?.value ?? '') };
+};
+
+export function evaluateOperationalRule(ref: Ref, rule: Rule, seconds: number, macros: Record<string, number> = {}, strictErrors = false) {
+  return evaluateRule(ref, rule, seconds, macros, strictErrors, readTemplateBinding, metricConsumerService);
+}
+
+const readLegacyBinding: ReadBinding = async (actor, ref) => {
+  try {
+    const { resolved } = await policyService.effective(actor, ref);
+    return { ...resolved.settings, engine: resolved.plan.binding.package.id.split('-')[0] };
+  } catch (error) {
+    if (error instanceof PolicyError && error.code === 'POLICY_NOT_FOUND') return null;
+    throw error;
+  }
+};
+
+/** Read exact package-bound observations for the V23 standalone source qualification. */
+export function evaluateLegacyPackageRule(ref: Ref, rule: Rule, seconds: number, macros: Record<string, number> = {}, strictErrors = false) {
+  return evaluateRule(ref, rule, seconds, macros, strictErrors, readLegacyBinding, legacyPackageMetricConsumerService);
+}
+
+async function evaluateRule(ref: Ref, rule: Rule, seconds: number, macros: Record<string, number>, strictErrors: boolean,
+  readBinding: ReadBinding, consumer: Pick<MetricConsumerService, 'query'>) {
   const unavailable = { handled: true, state: 'unknown', level: null as 'warning' | 'error' | 'critical' | null,
     observation: null as {from:string;to:string;observedAt:string|null;quality:'good'|'partial'} | null,
     recovery: false, value: null as number | null, dimensions: null as Record<string, string> | null, migration: null as ReturnType<typeof migrateReference> | null };
@@ -20,13 +53,11 @@ export async function evaluateOperationalRule(ref: Ref, rule: Rule, seconds: num
   try {
     const source = await operationalSource(ref);
     if (source !== 'semantic') return unavailable;
-    const binding = await templateQueryPort.read(ref);
-    if (!binding?.settings.enabled) return unavailable;
-    const inventory = await configurationInventory(ref);
-    const engine = String(inventory.attributes['db.engine']?.value ?? '');
-    const migration = migrateReference(ref, engine, rule.metric_name);
+    const binding = await readBinding(actor, ref);
+    if (!binding?.enabled) return unavailable;
+    const migration = migrateReference(ref, binding.engine, rule.metric_name);
     if (!migration.metric_id || rule.threshold_type === 'dynamic') return { ...unavailable, migration };
-    const interval = binding.settings.interval_ms;
+    const interval = binding.interval_ms;
     // Sustained rules need one extra bucket to absorb the gap between the query
     // edge and the latest collection. Without it the trailing partial bucket has
     // no samples and every multi-bucket rule would be unknown; a real outage
@@ -34,7 +65,7 @@ export async function evaluateOperationalRule(ref: Ref, rule: Rule, seconds: num
     // Instant rules (duration 0) keep the original edge window.
     const lookback = Math.max(seconds * 1000, interval) + (seconds > 0 ? interval : 0);
     const to = new Date().toISOString(), from = new Date(Date.parse(to) - lookback).toISOString();
-    const result = await metricConsumerService.query(actor, { resource: ref, metric_ids: [migration.metric_id], from, to });
+    const result = await consumer.query(actor, { resource: ref, metric_ids: [migration.metric_id], from, to });
     const metric = result.metrics[0];
     if (seconds > 0) {
       for (const series of metric.series) {
