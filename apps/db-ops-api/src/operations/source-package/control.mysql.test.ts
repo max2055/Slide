@@ -195,7 +195,10 @@ describe.skipIf(!port)('V23 foreground source control on isolated MySQL', () => 
   });
   it.each(['deadline', 'lease', 'signature', 'cancel', 'valid'])('rechecks %s after the final worker lease row-lock wait', async kind => {
     const f = await failedAudit(), blocker = await pool.getConnection(), cancel = new AbortController();
-    const expiry = Date.now() + 2000;
+    const future = Date.now() + 2000;
+    // The lease column has second precision. Match the stored timestamp so
+    // releasing after expiry always exercises the intended post-wait check.
+    const expiry = kind === 'lease' ? Math.ceil(future / 1000) * 1000 : future;
     if (kind === 'deadline') {
       f.config.deadline = new Date(expiry).toISOString();
       f.receipt.successor.deadline = f.config.deadline; f.receipt.expiresAt = f.config.deadline;
