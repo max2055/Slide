@@ -297,11 +297,6 @@ export class InstancesPage extends LitElement {
       text-align: right;
     }
 
-    .actions {
-      display: flex;
-      gap: var(--space-sm);
-    }
-
     /* 加载和空状态 */
     .loading, .empty {
       display: flex;
@@ -484,6 +479,7 @@ export class InstancesPage extends LitElement {
     .confirm-text {
       font-size: var(--text-md);
       color: var(--muted);
+      overflow-wrap: anywhere;
     }
   `];
 
@@ -760,12 +756,17 @@ export class InstancesPage extends LitElement {
           </div>
 
           <resource-metrics-table resourceType="instance" @resource-results-changed=${(e: CustomEvent<number>) => { this.searchResultCount = e.detail; }} .refreshVersion=${this.metricRefreshVersion} @resource-metrics-loading=${(e: CustomEvent<boolean>) => { this.metricsLoading = e.detail; }} .search=${this.searchQuery}
-            .columns=${[{ key: 'name', label: '实例' }, { key: 'address', label: '地址' }, { key: 'version', label: '版本' }, { key: 'health', label: '观测健康' }, { key: 'actions', label: '操作', width: '14rem' }]}
+            .columns=${[{ key: 'name', label: '实例' }, { key: 'address', label: '地址' }, { key: 'version', label: '版本' }, { key: 'health', label: '观测健康' }, { key: 'actions', label: '操作', width: '15rem' }]}
             .entries=${filtered.map(inst => ({ id: inst.id, type: inst.db_type, version: inst.db_version,
               searchValues: [inst.name, inst.host, this.currentStatus(inst), ({ healthy: "健康", warning: "警告", critical: "异常", error: "异常" } as Record<string, string>)[this.currentStatus(inst)] ?? "未知"],
               name: html`<span class="resource-name"><button class="btn-ghost" title=${inst.name} @click=${() => this._viewDetail(inst)}>${inst.name}</button><span class="full-value" aria-hidden="true">${inst.name}</span></span>`,
               address: `${inst.host}:${inst.port}`, health: this.renderHealthEvidence(inst),
-              actions: html`<div class="actions"><button class="btn-sm" data-resource-detail-id=${inst.id} @click=${() => this._viewDetail(inst)}>详情</button><button class="btn-sm" title=${hasListPermission("instance:update") ? "编辑实例" : "需要实例修改权限"} .disabled=${!hasListPermission("instance:update")} data-resource-edit-id=${inst.id} @click=${() => this._editInstance(inst)}>编辑</button><button class="btn-sm" @click=${() => this._testConnection(inst)} .disabled=${!hasListPermission("instance:manage") || this.listTestStatus === "testing"} title=${hasListPermission("instance:manage") ? "输入密码进行连接测试" : "需要实例管理权限"}>测试</button><button class="btn-sm danger" title=${hasListPermission("instance:delete") ? "删除实例" : "需要实例删除权限"} .disabled=${!hasListPermission("instance:delete")} @click=${() => this._deleteInstance(inst)}>删除</button></div>`
+              actions: html`<div class="actions instance-actions">
+                <button type="button" class="btn-ghost" data-resource-detail-id=${inst.id} @click=${() => this._viewDetail(inst)}>详情</button>
+                <button type="button" class="btn-sm" title=${hasListPermission("instance:update") ? "编辑实例" : "需要实例修改权限"} .disabled=${!hasListPermission("instance:update")} data-resource-edit-id=${inst.id} @click=${() => this._editInstance(inst)}>编辑</button>
+                <button type="button" class="btn-sm" @click=${() => this._testConnection(inst)} .disabled=${!hasListPermission("instance:manage") || this.listTestStatus === "testing"} title=${hasListPermission("instance:manage") ? "输入密码进行连接测试" : "需要实例管理权限"}>测试</button>
+                <button type="button" class="btn-sm danger" title=${hasListPermission("instance:delete") ? "删除实例" : "需要实例删除权限"} .disabled=${!hasListPermission("instance:delete")} @click=${() => this._deleteInstance(inst)}>删除</button>
+              </div>`
             }))}
             @resource-metric-open=${(e: CustomEvent<{ id: number }>) => { const inst = this.instances.find(i => i.id === e.detail.id); if (inst) this._viewDetail(inst); }}
           ></resource-metrics-table>

@@ -16,7 +16,8 @@ class FakePool {
   async query(sql: string, values: any[] = []): Promise<any> {
     this.calls.push(sql);
     if (sql.includes('GET_LOCK')) return [[{ locked: this.lockAvailable ? 1 : 0 }]];
-    if (sql.includes('RELEASE_LOCK') || sql.startsWith('CREATE TABLE')) return [[{}]];
+    if (sql.includes('RELEASE_LOCK')) return [[{ released: 1 }]];
+    if (sql.startsWith('CREATE TABLE')) return [[{}]];
     if (sql.includes('COUNT(*) AS count') || sql.includes('information_schema.TABLES')) return [[]];
     if (sql.includes("TABLE_NAME = 'alerts'")) {
       return [[{ column_type: "enum('info','warning','error','critical','p0')" }]];
@@ -73,9 +74,11 @@ class FakePool {
       return [{ affectedRows: 1 }];
     }
     if (sql.startsWith('UPDATE app_schema_migrations SET status = \'completed\'')) {
-      const repair = sql.includes("status = 'failed'");
+      const repair = sql.includes('AND status = ?');
       const entry = this.entries.get(values[repair ? 1 : 0]);
-      if (!entry || (repair && entry.status !== 'failed')) return [{ affectedRows: 0 }];
+      if (!entry || (repair && (entry.status !== values[2] || entry.checksum !== values[3]))) {
+        return [{ affectedRows: 0 }];
+      }
       entry.status = 'completed';
       if (repair) entry.error = values[0];
       return [{ affectedRows: 1 }];
@@ -351,31 +354,55 @@ describe('external migration repair acknowledgement', () => {
     expect(pool.entries.get(id).status).toBe('failed');
   });
 
-  it('requires global and migration-specific checks and never replays DDL', async () => {
+  it.each(['failed', 'running'])('requires both checks and never replays DDL for %s entries', async status => {
     const { id, directory, pool, verify, validators } = await fixture();
+    const original = { ...pool.entries.get(id), status };
+    pool.entries.set(id, { ...original });
     const runner = new MigrationRunner(pool, directory, validators);
     pool.schemaValid = false;
     await expect(runner.acknowledgeExternallyRepairedMigration(id, 'operator', 'fixed externally'))
       .rejects.toThrow('Schema invariant');
-    expect(pool.entries.get(id).status).toBe('failed');
+    expect(pool.entries.get(id)).toEqual(original);
     pool.schemaValid = true;
     verify.mockRejectedValueOnce(new Error('example.id missing'));
     await expect(runner.acknowledgeExternallyRepairedMigration(id, 'operator', 'fixed externally'))
       .rejects.toThrow('example.id missing');
-    expect(pool.entries.get(id).status).toBe('failed');
+    expect(pool.entries.get(id)).toEqual(original);
     await runner.acknowledgeExternallyRepairedMigration(id, 'operator', 'fixed externally');
     const entry = pool.entries.get(id);
     expect(entry.status).toBe('completed');
     expect(entry.statement_index).toBe(1);
     expect(JSON.parse(entry.error)).toMatchObject({ actor: 'operator', reason: 'fixed externally',
       previousError: 'original DDL failure', action: 'acknowledgeExternallyRepairedMigration' });
+    if (status === 'running') {
+      expect(JSON.parse(entry.error)).toMatchObject({ previousStatus: 'running', previousExecutionOutcome: 'unknown' });
+    }
     await runner.run();
     expect(pool.calls.filter(sql => sql.startsWith('CREATE TABLE example'))).toHaveLength(0);
     expect(pool.calls.filter(sql => sql.includes('RELEASE_LOCK'))).toHaveLength(4);
     expect(pool.released).toBe(4);
   });
 
-  it.each(['running', 'completed', 'baselined', 'absent'])('rejects %s state', async status => {
+  it('inspects an unresolved migration under the lock without writing the ledger', async () => {
+    const { id, directory, pool } = await fixture();
+    const entry = pool.entries.get(id);
+    entry.status = 'running';
+    const runner = new MigrationRunner(pool, directory);
+    pool.lockAvailable = false;
+    await expect(runner.inspectMigrationForRepair(id)).rejects.toThrow('Could not acquire migration lock');
+    expect(pool.calls).toHaveLength(1);
+    pool.lockAvailable = true;
+    await expect(runner.inspectMigrationForRepair(id)).resolves.toEqual({
+      ...entry, executionOutcome: 'unknown',
+    });
+    expect(pool.calls.slice(1)).toEqual([
+      expect.stringContaining('GET_LOCK'), expect.stringContaining('FROM app_schema_migrations'),
+      expect.stringContaining('RELEASE_LOCK'),
+    ]);
+    expect(pool.entries.get(id)).toBe(entry);
+  });
+
+  it.each(['completed', 'baselined', 'absent'])('rejects %s state', async status => {
     const { id, directory, pool, validators, verify } = await fixture();
     if (status === 'absent') pool.entries.delete(id);
     else pool.entries.get(id).status = status;
@@ -401,12 +428,14 @@ describe('external migration repair acknowledgement', () => {
     expect(pool.calls.filter(sql => sql.includes('RELEASE_LOCK'))).toHaveLength(0);
   });
 
-  it('refuses checksum drift and validators for a different migration revision', async () => {
+  it.each(['failed', 'running'])('refuses checksum drift and validators for a different %s revision', async status => {
     const { id, directory, pool, validators, verify } = await fixture();
     const runner = new MigrationRunner(pool, directory, validators);
     const entry = pool.entries.get(id);
+    entry.status = status;
     const checksum = entry.checksum;
     entry.checksum = 'changed';
+    await expect(runner.inspectMigrationForRepair(id)).rejects.toThrow('Checksum mismatch');
     await expect(runner.acknowledgeExternallyRepairedMigration(id, 'operator', 'fixed'))
       .rejects.toThrow('Checksum mismatch');
     entry.checksum = checksum;
@@ -414,7 +443,7 @@ describe('external migration repair acknowledgement', () => {
     await expect(runner.acknowledgeExternallyRepairedMigration(id, 'operator', 'fixed'))
       .rejects.toThrow('verification');
     expect(verify).not.toHaveBeenCalled();
-    expect(entry.status).toBe('failed');
+    expect(entry.status).toBe(status);
     expect(entry.error).toBe('original DDL failure');
   });
 
@@ -435,14 +464,34 @@ describe('external migration repair acknowledgement', () => {
     expect(pool.released).toBe(1);
   });
 
-  it('does not report success if the guarded ledger update loses its failed state', async () => {
+  it.each(['status', 'checksum'])('does not confirm a ledger entry when its %s changes during verification', async field => {
     const { id, directory, pool, validators, verify } = await fixture();
+    const entry = pool.entries.get(id);
     // Simulate an external writer that does not respect the advisory lock.
-    verify.mockImplementationOnce(async () => { pool.entries.get(id).status = 'running'; });
+    verify.mockImplementationOnce(async () => {
+      entry[field] = field === 'status' ? 'running' : entry.checksum.toUpperCase();
+    });
     await expect(new MigrationRunner(pool, directory, validators)
       .repair(id, 'operator', 'fixed')).rejects.toThrow('changed during repair verification');
     expect(pool.entries.get(id).error).toBe('original DDL failure');
     expect(pool.released).toBe(1);
+  });
+
+  it('destroys the maintenance connection when lock cleanup fails and preserves the verification failure', async () => {
+    const { id, directory, pool, validators, verify } = await fixture();
+    const verificationError = new Error('migration data missing');
+    const cleanupError = new Error('lock cleanup failed');
+    verify.mockRejectedValueOnce(verificationError);
+    const query = pool.query.bind(pool);
+    pool.query = async (sql, values) => {
+      if (sql.includes('RELEASE_LOCK')) throw cleanupError;
+      return query(sql, values);
+    };
+    await expect(new MigrationRunner(pool, directory, validators).repair(id, 'operator', 'fixed'))
+      .rejects.toMatchObject({ errors: [verificationError, cleanupError] });
+    expect(pool.entries.get(id).status).toBe('failed');
+    expect(pool.destroyed).toBe(1);
+    expect(pool.released).toBe(0);
   });
 
 });
