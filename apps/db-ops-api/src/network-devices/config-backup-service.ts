@@ -30,6 +30,7 @@ export type ConfigBackupErrorCode =
   | 'CONFIG_BACKUP_VENDOR_UNSUPPORTED'
   | 'SSH_CREDENTIAL_REQUIRED'
   | 'SSH_HOST_KEY_FINGERPRINT_REQUIRED'
+  | 'SSH_HOST_KEY_MISMATCH'
   | 'SSH_TARGET_DENIED'
   | 'SSH_CONNECT_FAILED'
   | 'SSH_COMMAND_FAILED'
@@ -72,6 +73,7 @@ export interface ConfigBackupSshTransport {
     credentialValue: string;
     sshTrustMode?: string | null;
     hostKeyFingerprint?: string;
+    onHostKeyCheck?: (verified: boolean) => void;
     readyTimeoutMs: number;
   }): Promise<ConfigBackupConnection>;
 }
@@ -372,7 +374,14 @@ class DefaultSshTransport implements ConfigBackupSshTransport {
       const hostVerifier = createCredentialSshHostVerifier(input.credentialType, input.hostKeyFingerprint, input.sshTrustMode);
       const connectConfig: ConnectConfig = {
         host: input.target.address, port: input.target.port, username: input.username,
-        readyTimeout: input.readyTimeoutMs, ...(hostVerifier ? { hostVerifier } : {}),
+        readyTimeout: input.readyTimeoutMs,
+        ...(hostVerifier ? {
+          hostVerifier: (key: Buffer) => {
+            const verified = hostVerifier(key) === true;
+            input.onHostKeyCheck?.(verified);
+            return verified;
+          },
+        } : {}),
       };
       if (input.credentialType === 'password') connectConfig.password = input.credentialValue;
       else connectConfig.privateKey = input.credentialValue;
@@ -382,13 +391,13 @@ class DefaultSshTransport implements ConfigBackupSshTransport {
 }
 
 /**
- * Verify an SSH endpoint without running a device command. When an operator
- * supplies a host-key fingerprint, the handshake also verifies that pin.
+ * Complete an SSH handshake without running a device command and report
+ * whether the transport verified the remote host key.
  */
 export async function verifySshHostKey(
   input: SshHostKeyProbeInput,
   options: SshHostKeyProbeOptions = {},
-): Promise<void> {
+): Promise<{ verified: boolean }> {
   const authorizeTarget = options.authorizeTarget ?? authorizeNetworkDeviceTarget;
   const target = await authorizeTarget(
     { host: input.host, port: input.port },
@@ -402,6 +411,7 @@ export async function verifySshHostKey(
   const fingerprint = normalizeOptionalSshHostKeyFingerprint(input.hostKeyFingerprint);
   const transport = options.transport ?? new DefaultSshTransport();
   let connection: ConfigBackupConnection | null = null;
+  let hostKeyVerified: boolean | undefined;
   try {
     connection = await transport.connect({
       target,
@@ -409,9 +419,12 @@ export async function verifySshHostKey(
       credentialType: input.credentialType,
       credentialValue: input.credentialValue,
       sshTrustMode: input.sshTrustMode, hostKeyFingerprint: fingerprint,
+      onHostKeyCheck: verified => { hostKeyVerified = verified; },
       readyTimeoutMs: options.readyTimeoutMs ?? 30_000,
     });
+    return { verified: hostKeyVerified === true };
   } catch (error) {
+    if (hostKeyVerified === false) throw new ConfigBackupError('SSH_HOST_KEY_MISMATCH', { cause: error });
     if (error instanceof ConfigBackupError) throw error;
     throw new ConfigBackupError('SSH_CONNECT_FAILED', { cause: error });
   } finally {

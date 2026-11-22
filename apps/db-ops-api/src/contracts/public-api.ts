@@ -175,7 +175,9 @@ export const NetworkDeviceProbeResultSchema = Type.Object({
 export const NetworkDeviceTestConnectionResponseSchema = Type.Object({
   success: Type.Boolean(),
   probe: Type.Optional(NetworkDeviceProbeResultSchema),
-  ssh: Type.Optional(Type.Object({ verified: Type.Boolean() }, { additionalProperties: false })),
+  ssh: Type.Optional(Type.Object({
+    verified: Type.Boolean({ description: 'Whether the SSH handshake verified the remote host key against the configured fingerprint. A successful handshake without a fingerprint returns false.' }),
+  }, { additionalProperties: false })),
   error: Type.Optional(Type.String()),
 }, { $id: 'NetworkDeviceTestConnectionResponse', additionalProperties: false });
 export const NetworkDeviceProbeResponseSchema = Type.Object({
