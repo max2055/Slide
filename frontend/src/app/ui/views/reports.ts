@@ -151,7 +151,8 @@ export class ReportsPage extends LitElement {
       border-radius: var(--radius-sm);
     }
 
-    .report-preview-frame:focus-visible {
+    /* The sandboxed document owns focus while the reader is inside the frame. */
+    app-dialog:not(:focus-within) .report-preview-frame {
       outline: 2px solid var(--accent);
       outline-offset: 2px;
     }

@@ -163,6 +163,7 @@ test('MAX-718：键盘可读到长报表末尾，关闭后回到历史原位', a
   await expect(dialog).toBeVisible();
   const frame = preview.locator('iframe[title="报表正文"]');
   await expect(frame).toHaveAttribute('sandbox', '');
+  await expect(frame).toHaveCSS('outline-style', 'none');
   const documentBody = frame.contentFrame().locator('body');
   const end = documentBody.getByText('合成报表末尾', { exact: true });
   await expect(end).not.toBeInViewport();
@@ -171,6 +172,7 @@ test('MAX-718：键盘可读到长报表末尾，关闭后回到历史原位', a
 
   await page.keyboard.press('Tab');
   await expect(frame).toBeFocused();
+  await expect(frame).toHaveCSS('outline-style', 'solid');
   await page.keyboard.press('PageDown');
   await expect.poll(scrollTop).toBeGreaterThan(0);
   await page.keyboard.press('End');
@@ -186,6 +188,7 @@ test('MAX-718：键盘可读到长报表末尾，关闭后回到历史原位', a
   await expect(frame).toBeFocused();
   await page.keyboard.press('Tab');
   await expect(preview.getByRole('button', { name: '下载' })).toBeFocused();
+  await expect(frame).toHaveCSS('outline-style', 'none');
   await page.keyboard.press('Escape');
 
   await expect(dialog).toHaveCount(0);
