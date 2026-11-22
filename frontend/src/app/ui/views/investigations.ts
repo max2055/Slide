@@ -2,6 +2,7 @@ import {rememberWorkbenchPosition, restoreWorkbenchPosition} from '../workbench-
 import '../components/investigation-entry.ts';
 import { readInvestigationEntry } from '../controllers/investigation-entry.ts';
 import { LitElement, html, nothing } from 'lit';
+import { keyed } from 'lit/directives/keyed.js';
 import { customElement, property, state } from 'lit/decorators.js';
 import { authFetch } from '../../../api/index.ts';
 import type { DirectGatewayClient } from '../direct-gateway.ts';
@@ -46,17 +47,6 @@ function investigationListState(row: InvestigationRecord, hasGap: boolean) {
   if (hasGap) return { label: '有证据缺口', variant: 'warn' };
   if (row.latestOutcome) return { label: '已有结果', variant: 'info' };
   return { label: '执行状态未提供', variant: 'muted' };
-}
-
-function investigationListNext(row: InvestigationRecord, hasGap: boolean) {
-  switch (row.derivedRunState) {
-    case 'failed': case 'timed_out': case 'cancelled': return '查看调查，核对本次执行的停止原因。';
-    case 'unknown': return '查看原调查，核对本次执行的结果。';
-    case 'queued': case 'running': return '等待本次调查保存结果。';
-  }
-  if (row.activeRequestId) return '等待本次调查保存结果。';
-  if (hasGap) return '核对缺失证据，再决定是否补充调查。';
-  return row.latestOutcome ? '查看完整结论，核对支持证据。' : '查看调查进度和已有记录。';
 }
 
 @customElement('investigations-page')
@@ -180,13 +170,13 @@ export class InvestigationsPage extends LitElement {
     }
   }
   private listRow(row: InvestigationRecord) {
-    const entry = hasSlidePermission(this.permissions, 'alert:view') ? row.context?.entry : undefined;
-    const events = [...new Set(entry?.sourceEventIds ?? [])].filter(id => Number.isSafeInteger(id) && id > 0);
+    const events = hasSlidePermission(this.permissions, 'alert:view')
+      ? [...new Set(row.context?.entry?.sourceEventIds ?? row.sourceEventIds ?? [])].filter(id => Number.isSafeInteger(id) && id > 0)
+      : [];
     const resources = row.resources ?? [];
     const primary = resources.find(ref => ref.role === 'primary') ?? resources[0];
     const gap = row.latestOutcome?.gaps.find(question => question.trim());
     const state = investigationListState(row, Boolean(gap));
-    const summary = row.latestOutcome?.summary.trim();
     return {
       subject: html`<div class="investigation-list-cell">
         <strong>${events.length ? `事件 ${events.slice(0, 2).map(id => `#${id}`).join('、')}${events.length > 2 ? ` 等 ${events.length} 项` : ''}`
@@ -196,19 +186,23 @@ export class InvestigationsPage extends LitElement {
         ${events.length || primary ? html`<small>${row.title}</small>` : nothing}
       </div>`,
       state: html`<div class="investigation-list-cell"><app-badge variant=${state.variant}>${state.label}</app-badge>
-        <small>${lifecycleLabels[row.lifecycle] ?? '记录状态未知'} · ${displayTime(row.updatedAt)}</small></div>`,
-      result: html`<div class="investigation-list-cell">
-        <span>${summary ? recordExcerpt(summary) : '暂无可用调查结论'}</span>
-        ${summary && row.activeRequestId ? html`<small>上次保存的结果</small>` : nothing}
-        ${gap ? html`<small>待核对：${recordExcerpt(gap, 80)}</small>` : nothing}
+        <small>${lifecycleLabels[row.lifecycle] ?? '记录状态未知'}</small></div>`,
+      time: html`<div class="investigation-list-cell">
+        <span>创建 ${displayTime(row.createdAt)}</span>
+        <small>更新 ${displayTime(row.updatedAt)}</small>
       </div>`,
-      next: html`<div class="investigation-list-cell"><span>${investigationListNext(row, Boolean(gap))}</span>
-        <button class="btn-ghost btn-sm" data-investigation=${row.id} data-workbench-key=${row.id}
-          @click=${() => void this.openInvestigation(row.id)}>查看调查</button></div>`,
+      gap: html`<div class="investigation-list-cell">
+        <span>${gap ? recordExcerpt(gap, 100) : row.activeRequestId ? '本次待保存结果' : row.latestOutcome ? '未记录具体缺口' : '暂无已保存结果'}</span>
+        ${gap && row.activeRequestId ? html`<small>来自上次已保存结果</small>` : nothing}
+      </div>`,
+      open: html`<button class="btn-ghost btn-sm" data-investigation=${row.id} data-workbench-key=${row.id}
+        @click=${() => void this.openInvestigation(row.id)}>查看调查</button>`,
     };
   }
   render() {
     const c = this.controller;
+    const evidencePending = !c.snapshot || c.snapshot.evidenceIds.some(id => !c.evidence.some(evidence => evidence.id === id));
+    const evidenceState = evidencePending ? c.error ? 'unavailable' : 'pending' : 'ready';
     const reminder=new URL(location.href).searchParams;
     const reminderStale=!!c.detail && (reminder.has('attentionVersion') && reminder.get('attentionVersion')!==String(c.detail.version)
       || reminder.has('attentionResult') && reminder.get('attentionResult')!==c.results.items[0]?.id
@@ -240,6 +234,10 @@ export class InvestigationsPage extends LitElement {
       investigations-page .investigation-decision { --border:color-mix(in srgb,var(--accent) 24%,var(--bg-elevated)); }
       investigations-page .investigation-decision .investigation-detail-title { margin:0 0 var(--space-sm); overflow-wrap:anywhere; }
       investigations-page .investigation-next { border-top:1px solid var(--border); padding-top:var(--space-sm); }
+      investigations-page .workspace-context { min-width:0; }
+      investigations-page .workspace-detail .workspace-context { display:none; }
+      @media(min-width:1101px) { investigations-page .workspace-detail .workspace-context { display:block; } }
+      @media(max-width:1100px) { investigations-page .workspace.workspace-detail { grid-template-columns:minmax(0,1fr); } }
       investigations-page .investigation-next-actions { display:flex; align-items:center; flex-wrap:wrap; gap:var(--space-sm); }
       investigations-page .investigation-source > summary { padding:var(--space-sm) 0; }
       investigations-page { display:block; min-width:0; }
@@ -248,7 +246,6 @@ export class InvestigationsPage extends LitElement {
       investigations-page .workspace-list .workspace-main, investigations-page .workspace-list .workspace-context { display:none; }
       investigations-page .workspace.workspace-detail { grid-template-columns:minmax(0,1.98fr) minmax(280px,1fr); }
       investigations-page .workspace-detail > aside[aria-label="调查导航"] { display:none; }
-      investigations-page .workspace-detail .workspace-context { display:block; }
       investigations-page .workspace > * { min-width:0; }
       investigations-page .workspace-main { display:grid; gap:var(--space-md); }
       investigations-page .workspace-header, investigations-page .workspace-actions { display:flex; align-items:center; justify-content:space-between; gap:var(--space-sm); flex-wrap:wrap; margin-bottom:var(--space-md); }
@@ -317,13 +314,12 @@ export class InvestigationsPage extends LitElement {
       investigations-page details dd { overflow-wrap:anywhere; }
       investigations-page .investigation-messages .chat-group { max-width:100%; }
       investigations-page .investigation-messages pre { max-width:100%; overflow:auto; }
-      investigations-page .evidence-toggle { display:none; }
       investigations-page .workspace-error { margin:var(--space-md) 0; color:var(--danger); }
-      @media(max-width:1439px) { investigations-page .workspace { grid-template-columns:minmax(160px, 220px) minmax(0, 1fr); } investigations-page .workspace-context { display:none; } investigations-page .evidence-toggle { display:inline-flex; } }
+      @media(max-width:1439px) { investigations-page .workspace { grid-template-columns:minmax(160px, 220px) minmax(0, 1fr); } }
       @media(max-width:767px) { investigations-page .workspace { grid-template-columns:minmax(0,1fr); } investigations-page .investigation-list { max-height:220px; overflow:auto; } }
     </style>
     ${!this.canView ? html`<app-empty-state title="无访问权限" description="需要对话读取权限。"></app-empty-state>` : html`
-      ${!c.detail && !c.detailLoading ? html`<div class="workspace-header"><div><h2>调查列表</h2><p>按事件和资源核对调查进度、结论与证据缺口。</p></div><button class="btn-primary" @click=${() => this.createOpen = true}>创建手动调查</button></div>` : nothing}
+      ${!c.detail && !c.detailLoading ? html`<div class="workspace-header"><div><h2>调查列表</h2><p>按时间、对象和主要证据缺口查找调查。</p></div><button class="btn-primary" @click=${() => this.createOpen = true}>创建手动调查</button></div>` : nothing}
       ${c.error || c.acceptanceUnknown ? html`<div class="workspace-error" role="alert">${c.error || "提交结果尚未确认，请核对原请求。"}${c.acceptanceUnknown ? html`<button class="btn" ?disabled=${c.busy} @click=${() => void c.retryPending()}>核对原请求</button>` : nothing}<button class="btn" @click=${this.reload}>重试读取</button></div>` : nothing}
       ${entryError ? html`<p role="alert">${entryError}</p>` : entry && !c.detail ? html`<investigation-entry
         .context=${entry}
@@ -336,8 +332,8 @@ export class InvestigationsPage extends LitElement {
           ${listFilters}
           ${firstUse ? nothing : html`<app-data-table class="investigation-list-table" tabindex="0" role="region" aria-label="调查记录表"
             .striped=${false} .loading=${c.loading} .emptyMessage=${c.listError ? '调查列表暂不可用' : c.listLoaded ? '暂无匹配调查' : '等待读取调查'} .columns=${[
-              {key:'subject',label:'事件与资源',width:'28%'}, {key:'state',label:'调查状态',width:'17%'},
-              {key:'result',label:'调查结论',width:'32%'}, {key:'next',label:'建议下一步',width:'23%'}
+              {key:'subject',label:'事件与资源',width:'26%'}, {key:'time',label:'本地时间',width:'20%'},
+              {key:'state',label:'调查阶段',width:'15%'}, {key:'gap',label:'主要证据缺口',width:'28%'}, {key:'open',label:'操作',width:'11%'}
             ]} .rows=${c.listError ? [] : c.list.items.map(row => this.listRow(row))}></app-data-table>`}
           ${c.list.nextCursor && !c.listError ? html`<div class="investigation-list-footer"><button class="btn" ?disabled=${c.loading} @click=${() => void this.loadMore()}>加载更多调查</button></div>` : nothing}
         </app-card></aside>
@@ -345,7 +341,8 @@ export class InvestigationsPage extends LitElement {
           sourceEvidence: c.detail?.context?.entry && !entryError ? html`<investigation-entry .investigationId=${c.detail.id}
             @investigation-entry-denied=${() => { this.controller.clearSensitive(); this.refreshControllerView(); }}></investigation-entry>` : undefined,
           onContinue: () => void c.continue(this.draft).then(result => { if (result) this.draft = ''; }), onEvidence: () => this.evidenceOpen = true })}</section>
-        <aside class="workspace-context" aria-label="证据成果"><investigation-context .results=${c.results} .evidence=${c.evidence} .onMore=${() => void c.loadResults()}></investigation-context></aside>
+        <aside class="workspace-context" aria-label="证据成果">${c.detail ? keyed(c.detail.id, html`<investigation-context
+          .results=${c.results} .evidence=${c.evidence} .evidenceState=${evidenceState} .onMore=${() => void c.loadResults()}></investigation-context>`) : nothing}</aside>
       </div>
       ${firstUse ? html`<div class="workspace-start"><app-card class="start-intro"><div class="start-panel">
         <div class="start-signature">${icons.activity}<span>从一个具体问题开始</span></div>
@@ -356,7 +353,8 @@ export class InvestigationsPage extends LitElement {
         ${[['调查与对话', '临时交流可进入对话；需要保留过程与证据时，创建调查。'], ['不会扩大资源权限', '仅显示当前可读取的资源，提交时仍需核验当前授权与操作权限。'], ['没有证据，不代表正常', '缺失、失效和未知结果会单独提示。']].map(([title, text]) => html`<div class="start-note"><h3>${title}</h3><p>${text}</p></div>`)}
       </app-card></aside></div>` : nothing}
       <app-dialog .open=${this.evidenceOpen && !c.forbidden} title="证据与成果" size="lg" @app-dialog-close=${() => this.evidenceOpen = false}>
-        <investigation-context .results=${c.results} .evidence=${c.evidence} .onMore=${() => void c.loadResults()}></investigation-context>
+        ${this.evidenceOpen && c.detail ? html`<investigation-context .results=${c.results} .evidence=${c.evidence} .evidenceState=${evidenceState}
+          .onMore=${() => void c.loadResults()}></investigation-context>` : nothing}
       </app-dialog>
       ${c.forbidden ? nothing : html`<investigation-create .open=${this.createOpen} .client=${this.client} @investigation-create-close=${() => this.createOpen = false}
         @investigation-created=${(e: CustomEvent<{ id: string }>) => { void this.openInvestigation(e.detail.id); void c.loadList(); }}></investigation-create>`}

@@ -8,7 +8,8 @@ import {
 import { investigationEntryHref } from '../controllers/investigation-entry.ts';
 import { openWorkbenchRecord } from '../workbench-position.ts';
 import { displayTime } from '../views/diagnosis-presentation.ts';
-import { recordExcerpt } from '../views/record-summary.ts';
+import type { TemplateEventEvidence } from '../../../api/generated/public-api.ts';
+import { metricDisplayName } from './metric-display.ts';
 import { resourceDetailUrl, type ResourceType } from './resource-investigation-links.ts';
 import { metricRequest } from './metric-api.ts';
 import './app-dialog.ts';
@@ -28,6 +29,11 @@ interface Rule {
   unit: string;
   problem: Condition;
   recovery?: Condition;
+  recovery_mode?: 'problem_expression' | 'recovery_expression' | 'none';
+  version?: number;
+  body_hash?: string;
+  scope?: string;
+  inputs?: Array<{metric: Rule['metric']}>;
   parameters?: Array<{name:string; value:unknown}>;
 }
 interface Telemetry {
@@ -35,6 +41,9 @@ interface Telemetry {
   episode: {
     resource: {type: ResourceType; id: number | string};
     rule_id: string;
+    version?: number;
+    body_hash?: string;
+    scope?: string;
     state: 'open' | 'closed';
     opened: {at: string; value: number | null};
     closed_at: string | null;
@@ -43,7 +52,7 @@ interface Telemetry {
   };
   snapshot: {
     configuration: {rules: Rule[]};
-    opening: {dimensions?: Record<string,string>; sample_ids?: string[]};
+    opening: {dimensions?: Record<string,string>; sample_ids?: string[]; samples?: TemplateEventEvidence['snapshot']['opening']['samples']};
   };
   evaluation?: {state: string};
 }
@@ -64,10 +73,7 @@ function describeRule(condition: Condition | undefined, parameters: Rule['parame
 }
 const formatNumber = (value: number) => new Intl.NumberFormat('zh-CN', {maximumSignificantDigits:17}).format(value);
 const formattedValue = (value: number | null, unit: string) => value == null ? '观测值未知' : `${formatNumber(value)} ${unit === 'By' ? '字节' : unit}`;
-function plainRecommendation(value: string) {
-  return value.replace(/capability\s*\/\s*coverage\s*\/\s*freshness/gi, '采集能力、覆盖范围与数据时效')
-    .replaceAll('最新桶','最新采集数据');
-}
+
 
 @customElement('event-investigation-record')
 export class EventInvestigationRecord extends LitElement {
@@ -135,6 +141,9 @@ export class EventInvestigationRecord extends LitElement {
     .drawer-facts { display:grid; grid-template-columns:105px minmax(0,1fr); gap:var(--space-md); }
     .drawer-facts dd { overflow-wrap:anywhere; }
     .drawer-note { margin-top:var(--space-md); }
+    .timeline-status { margin-bottom:var(--space-md); }
+    .original { white-space:pre-wrap; }
+    .sample-value { font-variant-numeric:tabular-nums; }
     .subtle-error { color:var(--danger); }
     button:focus-visible { outline:2px solid var(--ring); outline-offset:2px; }
     @media(max-width:1050px) { .overview { grid-template-columns:minmax(0,1fr); } }
@@ -225,7 +234,13 @@ export class EventInvestigationRecord extends LitElement {
       && Number.isFinite(Date.parse(this.telemetry.episode.closed_at ?? ''));
   }
   private get rule() {
-    return this.telemetry?.snapshot.configuration.rules.find(rule => rule.rule_id === this.telemetry?.episode.rule_id);
+    const telemetry = this.telemetry;
+    if (!telemetry) return;
+    const { episode, snapshot } = telemetry;
+    return snapshot.configuration.rules.find(rule => rule.rule_id === episode.rule_id
+      && (episode.version === undefined || rule.version === episode.version)
+      && (episode.scope === undefined || rule.scope === episode.scope)
+      && (episode.body_hash === undefined || rule.body_hash === episode.body_hash));
   }
   focusHeading() {
     void this.updateComplete.then(() => this.renderRoot.querySelector<HTMLElement>('.record-title')?.focus({preventScroll:true}));
@@ -263,7 +278,7 @@ export class EventInvestigationRecord extends LitElement {
     if (!episode || !this.rule) return [];
     return [
       {key:'trigger' as const,label:'触发样本',at:episode.opened.at,value:episode.opened.value,rule:this.rule.problem},
-      ...(this.recovered ? [{key:'recovery' as const,label:'恢复样本',at:episode.closed_at,value:episode.last.value,rule:this.rule.recovery}] : []),
+      ...(this.recovered ? [{key:'recovery' as const,label:'恢复样本',at:episode.closed_at,value:episode.last.value,rule:this.rule.recovery_mode === 'problem_expression' ? this.rule.problem : this.rule.recovery}] : []),
     ];
   }
   private summarySamples() {
@@ -280,36 +295,67 @@ export class EventInvestigationRecord extends LitElement {
   private timeline(link: LinkedInvestigation | null | undefined) {
     const samples = this.samples();
     const episode = this.telemetry?.episode;
-    return html`<ol class="timeline" aria-label="事件时间线">
-      ${samples.length ? samples.map(sample => html`<li><strong>${sample.label}</strong> · ${displayTime(sample.at)}
-        <small>${formattedValue(sample.value,this.rule!.unit)}</small></li>`) : html`<li><strong>记录事件</strong> · ${displayTime(this.event?.created_at)}</li>`}
-      ${episode?.manual_close ? html`<li><strong>手动关闭</strong> · ${displayTime(episode.closed_at)}
-        <small>操作者 #${episode.manual_close.actor_id}</small></li>` : nothing}
-      ${link ? html`<li><strong>关联调查更新</strong> · ${displayTime(link.updatedAt)}<small>${linkedInvestigationLabels[link.state]}</small></li>` : nothing}
-      ${this.telemetry?.evaluation?.state === 'stopped' ? html`<li><strong>当前评估已停止</strong><small>资源现时健康待确认。</small></li>` : nothing}
-    </ol>`;
+    const nodes = samples.length ? samples.map(sample => ({
+      at: sample.at, label: sample.label, note: formattedValue(sample.value, this.rule!.unit),
+    })) : [{ at: this.event?.created_at, label: '记录事件', note: '' }];
+    if (episode?.manual_close) nodes.push({ at: episode.closed_at, label: '手动关闭', note: `操作者 #${episode.manual_close.actor_id}` });
+    if (link) nodes.push({ at: link.updatedAt, label: '关联调查更新', note: linkedInvestigationLabels[link.state] });
+    const dated = nodes.flatMap(node => node.at && Number.isFinite(Date.parse(node.at)) ? [{ ...node, at: node.at }] : [])
+      .sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
+    return html`
+      ${this.telemetry?.evaluation?.state === 'stopped' ? html`<p class="timeline-status"><strong>当前评估已停止。</strong>资源现时健康待确认。</p>` : nothing}
+      ${dated.length ? html`<ol class="timeline" aria-label="事件时间线">${dated.map(node => html`
+        <li><strong>${node.label}</strong> · <time datetime=${node.at}>${displayTime(node.at)}</time>
+          ${node.note ? html`<small>${node.note}</small>` : nothing}</li>`)}</ol>`
+        : html`<p>暂无带时间戳的事件记录。</p>`}`;
+  }
+  private metricCheck() {
+    const episode = this.telemetry?.episode;
+    const rule = this.rule;
+    if (!episode || !rule?.metric.id || !readEventId(episode.resource.id) || !Number.isFinite(Date.parse(episode.opened.at))) return;
+    const matchingSample = this.telemetry?.snapshot.opening.samples?.find(sample =>
+      sample.metric.id === rule.metric.id && sample.metric.semantic_version === rule.metric.semantic_version
+      && sample.window && Number.isFinite(Date.parse(sample.window.from)) && Number.isFinite(Date.parse(sample.window.to)));
+    return {
+      metric: metricDisplayName(rule.metric.id),
+      from: matchingSample?.window?.from ?? episode.opened.at,
+      to: matchingSample?.window?.to ?? episode.opened.at,
+    };
   }
   private overview(link: LinkedInvestigation | null | undefined) {
-    const conclusion = link?.conclusion?.trim();
-    const recommendation = link?.recommendation?.trim();
+    const check = this.metricCheck();
+    const specific = check && this.recovered && link?.state !== 'running';
     const start = link === null ? this.draftHref() : undefined;
+    const fact = this.recovered ? '本次告警已恢复，资源现时健康待确认'
+      : this.telemetry?.episode.manual_close ? '告警已手动关闭'
+      : this.telemetry?.episode.state === 'open' ? '告警尚未记录恢复'
+      : this.event?.source_type === 'template-trigger' ? '告警的触发与恢复证据待核对' : '已记录事件';
+    const gap = this.recovered ? '已记录触发与恢复样本，现有记录未确认恢复后的资源状态。'
+      : link?.state === 'running' ? '本次调查尚未结束，当前结论待确认。'
+      : link?.state === 'insufficient' ? '关联调查的证据不足，具体缺口需查原记录。'
+      : link === null ? '当前无可见的关联调查。'
+      : link?.conclusion ? '历史结论已保存，具体证据缺口需查原记录。'
+      : link ? '关联调查尚无可展示的结论。' : '关联调查状态待确认。';
+    const next = specific ? `核对触发时的${check.metric}采集记录，再看恢复后是否有新样本。`
+      : link?.state === 'running' ? '查看原调查的执行进度。'
+      : link ? '打开原调查，核对现有证据和待确认问题。'
+      : start ? '打开只读调查草稿，核对目标和时间范围。'
+      : this.samples().length ? '先核对告警样本及当时的判定规则。' : '先核对事件详情和关联告警。';
     return html`<div class="overview">
-      <section aria-label="调查结论">
-        <span class="label">调查结论${link?.state === 'running' && conclusion ? ' · 最近保存' : ''}</span>
+      <section aria-label="告警事实与证据缺口">
+        <h4 class="finding">${fact}</h4>
+        <p><strong>证据缺口</strong> ${gap}</p>
+        ${this.telemetry?.evaluation?.state === 'stopped' ? html`<p class="limit">当前评估已停止。</p>` : nothing}
         ${this.linkLoading ? html`<p role="status">正在读取关联调查…</p>` : this.linkError ? html`<p role="alert" class="subtle-error">${this.linkError}</p>` : nothing}
-        ${this.recovered ? html`<h4 class="finding">本次告警已恢复，资源现时健康待确认</h4>
-          <p>正式历史观测记录了触发与恢复。${this.telemetry?.evaluation?.state === 'stopped' ? '当前评估已停止。' : ''}</p>` : nothing}
-        ${conclusion ? html`<p class=${this.recovered ? 'limit' : 'finding'}>${recordExcerpt(conclusion, this.recovered ? 110 : 160)}</p>
-          ${recordExcerpt(conclusion,110) !== conclusion ? html`<details><summary>查看完整调查结论</summary><p>${conclusion}</p></details>` : nothing}`
-          : html`<p class="limit">${link ? '这份调查尚无可展示的结论。' : link === null ? '当前无可见的关联调查。' : nothing}</p>`}
       </section>
-      <aside class="suggestion" aria-label="处理建议">
-        <span class="label">处理建议</span>
-        ${recommendation ? html`<h4>${recordExcerpt(plainRecommendation(recommendation),96)}</h4>
-          <div class="actions"><button class="btn-primary btn-sm" type="button" @click=${() => {this.drawer = 'recommendation';}}>查看建议详情</button></div>`
-          : html`<p>${link?.state === 'running' ? '等待本次调查结论。' : '尚无已保存的处理建议。'}</p>`}
-        ${start ? html`<div class="actions"><a class="btn-primary btn-sm" href=${start}>进入只读调查</a></div>` : nothing}
-        ${this.linkError && this.lookup ? html`<button class="btn btn-sm btn-refresh" type="button" @click=${() => void this.loadLink()}>重试读取调查</button>` : nothing}
+      <aside class="suggestion" aria-label="建议下一步">
+        <span class="label">建议下一步</span>
+        <h4>${next}</h4>
+        <div class="actions">
+          ${link || check ? html`<button class="btn-primary btn-sm" type="button" @click=${() => {this.drawer = 'recommendation';}}>查看建议详情</button>` : nothing}
+          ${start ? html`<a class="btn btn-sm" href=${start}>进入只读调查</a>` : nothing}
+          ${this.linkError && this.lookup ? html`<button class="btn btn-sm btn-refresh" type="button" @click=${() => void this.loadLink()}>重试读取调查</button>` : nothing}
+        </div>
       </aside>
     </div>
     ${this.telemetryLoading ? html`<p class="limit" role="status">正在读取正式监控证据…</p>` : this.telemetryError ? html`<p class="limit">${this.telemetryError}</p>` : nothing}
@@ -320,15 +366,46 @@ export class EventInvestigationRecord extends LitElement {
     const sample = this.samples().find(item => item.key === this.drawer);
     const title = sample?.label ?? '调查处理建议';
     const resource = this.telemetry?.episode.resource;
+    const check = this.metricCheck();
+    const rule = this.rule;
     return html`<app-dialog .open=${true} placement="end" title=${title} @app-dialog-close=${() => {this.drawer = undefined;}}>
-      ${sample && this.rule ? html`<dl class="drawer-facts">
-        <dt>判定时间</dt><dd>${displayTime(sample.at)}</dd><dt>观测值</dt><dd>${formattedValue(sample.value,this.rule.unit)}</dd>
-        <dt>当时规则</dt><dd>${describeRule(sample.rule,this.rule.parameters)}</dd>
-        <dt>指标</dt><dd>${this.rule.metric.id} · ${this.rule.metric.semantic_version}</dd>
-        ${sample.key === 'recovery' ? html`<dt>证据质量</dt><dd>${qualityLabels[this.telemetry?.episode.last.quality ?? ''] ?? '待确认'}</dd>`
-          : html`<dt>正式样本</dt><dd>${this.telemetry?.snapshot.opening.sample_ids?.join('、') || '未提供样本引用'}</dd>`}
-        </dl><p class="drawer-note">此处展示事件时点的证据。资源现时健康待确认。</p>`
-       : html`<p>${plainRecommendation(link?.recommendation ?? '')}</p>${link ? html`<p class="drawer-note">${this.entryLink(link)}</p>` : nothing}`}
+      ${sample && rule ? html`<dl class="drawer-facts">
+        <dt>判定时间</dt><dd>${displayTime(sample.at)}</dd><dt>观测值</dt><dd class="sample-value">${formattedValue(sample.value,rule.unit)}</dd>
+        <dt>当时规则</dt><dd>${sample.key === 'recovery' && rule.recovery_mode === 'problem_expression' ? '问题条件转假：' : ''}${describeRule(sample.rule,rule.parameters)}</dd>
+        <dt>指标</dt><dd>${metricDisplayName(rule.metric.id)}</dd>
+        ${sample.key === 'recovery' ? html`<dt>证据质量</dt><dd>${qualityLabels[this.telemetry?.episode.last.quality ?? ''] ?? '待确认'}</dd>` : nothing}
+        </dl>
+        <details><summary>原始时间、规则版本与样本</summary>
+          <dl class="drawer-facts">
+            <dt>原始时间（UTC）</dt><dd>${sample.at}</dd><dt>原始观测值</dt><dd>${sample.value ?? '未提供'} ${rule.unit}</dd>
+            <dt>指标标识与版本</dt><dd>${rule.metric.id} · ${rule.metric.semantic_version}</dd>
+            <dt>规则标识与版本</dt><dd>${rule.rule_id} · ${rule.version ?? '未提供'}</dd>
+            ${rule.body_hash ? html`<dt>规则哈希</dt><dd>${rule.body_hash}</dd>` : nothing}
+            ${sample.key === 'trigger' ? html`<dt>正式样本引用</dt><dd>${this.telemetry?.snapshot.opening.sample_ids?.join('、') || '未提供样本引用'}</dd>` : nothing}
+          </dl>
+          ${sample.key === 'trigger' ? this.telemetry?.snapshot.opening.samples?.map(item => html`
+            <p class="original">${item.id} · ${item.metric.id} · ${item.observed_at}<br>
+            ${item.value.value} ${item.unit}${item.window ? html`<br>${item.window.from} — ${item.window.to}` : nothing}</p>`) : nothing}
+        </details><p class="drawer-note">此处展示事件时点的证据。资源现时健康待确认。</p>`
+       : html`
+        ${check ? html`<dl class="drawer-facts">
+          <dt>关联指标</dt><dd>${[...new Set([check.metric, ...(rule?.inputs ?? []).map(input => metricDisplayName(input.metric.id))])].join('、')}</dd>
+          <dt>${check.from === check.to ? '触发时点' : '触发样本窗口'}</dt><dd>${displayTime(check.from)}${check.from === check.to ? '' : ` — ${displayTime(check.to)}`}（本地时间）</dd>
+          ${this.recovered ? html`<dt>恢复时点</dt><dd>${displayTime(this.telemetry?.episode.closed_at)}（本地时间）</dd>` : nothing}
+        </dl>
+        <p class="drawer-note"><button class="btn" type="button" @click=${() => {
+          this.tab = 'evidence'; this.drawer = undefined;
+          void this.updateComplete.then(() => this.renderRoot.querySelector<HTMLButtonElement>('.tabs [aria-pressed=true]')?.focus());
+        }}>${this.recovered ? '查看触发与恢复证据' : '查看触发证据'}</button></p>
+        <details><summary>指标标识与原始时间</summary><p>${rule?.metric.id} · ${rule?.metric.semantic_version}</p>
+          <p>${check.from}${check.from === check.to ? '' : ` — ${check.to}`}${this.recovered ? html`<br>${this.telemetry?.episode.closed_at}` : nothing}</p></details>`
+          : html`<p>当前记录未提供可关联的指标和时间范围。</p>`}
+        ${link ? html`<p class="drawer-note">${this.entryLink(link)}</p>` : nothing}
+        ${link?.conclusion?.trim() || link?.recommendation?.trim() ? html`<details>
+          <summary>展开已保存的调查原文</summary>
+          ${link.conclusion?.trim() ? html`<h4>原始结论</h4><p class="original">${link.conclusion}</p>` : nothing}
+          ${link.recommendation?.trim() ? html`<h4>原始建议</h4><p class="original">${link.recommendation}</p>` : nothing}
+        </details>` : nothing}`}
       ${resource ? html`<a slot="footer" class="btn" href=${resourceDetailUrl(resource.type,readEventId(resource.id))}>查看当前资源</a>` : nothing}
     </app-dialog>`;
   }
