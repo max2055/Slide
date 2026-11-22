@@ -133,6 +133,69 @@ test('报告详情区分空正文和读取失败，预览关闭后回到筛选�
   expect(calls.filter(call => /^(POST|PUT|DELETE) /.test(call))).toEqual([]);
 });
 
+test('MAX-718：键盘可读到长报表末尾，关闭后回到历史原位', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  const paragraphs = Array.from({ length: 120 }, (_, index) => `<p>合成报表段落 ${index + 1}</p>`).join('');
+  const content = `<!doctype html><html><body>${paragraphs}<p>合成报表末尾</p></body></html>`;
+  const { view, calls } = await openReports(page, route => {
+    switch (new URL(route.request().url()).pathname) {
+      case '/api/reports': return route.fulfill({ json: reports });
+      case '/api/reports/stats': return route.fulfill({ json: { total: reports.length } });
+      case '/api/reports/configs': return route.fulfill({ json: [] });
+      case '/api/reports/29': return route.fulfill({ json: { content } });
+      default: return route.fulfill({ status: 404 });
+    }
+  });
+  const search = view.getByRole('searchbox', { name: '搜索报表历史' });
+  await search.fill('合成数据库');
+  await view.getByRole('button', { name: '报表历史：下一页' }).click();
+  const pageNumber = view.getByText('第 2 / 2 页');
+  await expect(pageNumber).toBeVisible();
+  const row = view.getByRole('row').filter({ has: page.getByRole('cell', { name: '合成数据库报告 29', exact: true }) });
+  const trigger = row.getByRole('button', { name: '查看', exact: true });
+  await trigger.evaluate(element => element.scrollIntoView({ block: 'center' }));
+  const rowTop = () => row.evaluate(element => element.getBoundingClientRect().top);
+  const originalTop = await rowTop();
+
+  await trigger.press('Enter');
+  const preview = view.locator('app-dialog');
+  const dialog = preview.getByRole('dialog', { name: '合成数据库报告 29' });
+  await expect(dialog).toBeVisible();
+  const frame = preview.locator('iframe[title="报表正文"]');
+  await expect(frame).toHaveAttribute('sandbox', '');
+  const documentBody = frame.contentFrame().locator('body');
+  const end = documentBody.getByText('合成报表末尾', { exact: true });
+  await expect(end).not.toBeInViewport();
+  const scrollTop = () => documentBody.evaluate(body => body.ownerDocument.scrollingElement!.scrollTop);
+  expect(await scrollTop()).toBe(0);
+
+  await page.keyboard.press('Tab');
+  await expect(frame).toBeFocused();
+  await page.keyboard.press('PageDown');
+  await expect.poll(scrollTop).toBeGreaterThan(0);
+  await page.keyboard.press('End');
+  await expect(end).toBeInViewport();
+  await expect.poll(() => documentBody.evaluate(body => {
+    const scroll = body.ownerDocument.scrollingElement!;
+    return scroll.scrollHeight - scroll.clientHeight - scroll.scrollTop;
+  })).toBeLessThanOrEqual(1);
+
+  await page.keyboard.press('Shift+Tab');
+  await expect(preview.getByRole('button', { name: 'Close dialog' })).toBeFocused();
+  await page.keyboard.press('Tab');
+  await expect(frame).toBeFocused();
+  await page.keyboard.press('Tab');
+  await expect(preview.getByRole('button', { name: '下载' })).toBeFocused();
+  await page.keyboard.press('Escape');
+
+  await expect(dialog).toHaveCount(0);
+  await expect(trigger).toBeFocused();
+  await expect(search).toHaveValue('合成数据库');
+  await expect(pageNumber).toBeVisible();
+  expect(await rowTop()).toBeCloseTo(originalTop, 0);
+  expect(calls.filter(call => call.endsWith('/api/reports/29'))).toEqual(['GET /api/reports/29']);
+});
+
 test('历史 503 只影响历史，恢复后可核对计划和数据库、服务器范围', async ({ page }) => {
   await page.setViewportSize({ width: 1366, height: 768 });
   let failHistory = true;
