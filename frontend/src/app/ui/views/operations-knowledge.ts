@@ -17,6 +17,13 @@ const freshCandidate = (): CaseCandidate => ({ investigationId: '', resultVersio
 
 type CandidateSource = Pick<CaseCandidate, 'investigationId' | 'resultVersion'> & { investigation?: InvestigationRecord; title?: string };
 type PreparedCase = { candidate: Omit<CaseCandidate, 'humanConfirmed'>; redactionPolicyVersion: string };
+const isCandidateSourceRejection = (error: unknown) => error instanceof OperationsApiError
+  && ([403, 404, 409, 410].includes(error.status) || error.code === 'OPERATIONS_PRECONDITION_FAILED'
+    || error.code === 'OPERATIONS_INPUT_INVALID');
+const readCandidateSource = (source: CandidateSource, options?: RequestInit) => {
+  const query = new URLSearchParams({ investigationId: source.investigationId, resultVersion: String(source.resultVersion) });
+  return operationsApi<PreparedCase>(`/knowledge/prepare?${query}`, options);
+};
 const sourceKey = (id: string, version: number) => `${id}:${version}`;
 const validVersion = (version: number) => Number.isSafeInteger(version) && version > 0;
 const sourceDate = new Intl.DateTimeFormat('zh-CN', { dateStyle: 'medium', timeStyle: 'medium' });
@@ -53,16 +60,19 @@ export class OperationsKnowledge extends LitElement {
   @state() private sourceResource = '';
   @state() private sourceNotice = '';
   @state() private preparing = false;
+  @state() private checkingSource = false;
   @state() private preparedPolicy = '';
   private candidateGeneration = 0;
   private readonly unavailableSources = new Set<string>();
   private readonly sourcePages = new OperationsResource<InvestigationList>(this, undefined, authorizedJson);
   private readonly inventory = new OperationsResource<WorkspaceInventory>(this, undefined, authorizedJson);
   private pages = new OperationsResource<CasePage>(this, () => this.clearDrafts());
-  private record = new OperationsResource<CaseRecord>(this, () => this.clearDrafts());
+  private record = new OperationsResource<CaseRecord>(this, () => this.clearDrafts(),
+    (path, options) => this.requestKnowledge(path, options));
   private clearPreparation() {
     ++this.candidateGeneration;
     this.preparing = false;
+    this.checkingSource = false;
     this.preparedPolicy = '';
     this.candidate = freshCandidate();
     this.humanConfirmed = false;
@@ -184,6 +194,12 @@ export class OperationsKnowledge extends LitElement {
     this.source = { investigationId: row.id, resultVersion, investigation: row };
     void this.focusCandidate('#prepare-case');
   }
+  private discardSource(source: CandidateSource) {
+    this.unavailableSources.add(sourceKey(source.investigationId, source.resultVersion));
+    this.inventory.reset();
+    this.sourceResource = '';
+    this.chooseAnotherSource('该来源或结果版本已不可引用，请重新选择。');
+  }
   private async prepareCandidate() {
     const source = this.source;
     if (!source?.investigationId || !validVersion(source.resultVersion) || !this.formOpen
@@ -191,9 +207,8 @@ export class OperationsKnowledge extends LitElement {
     this.clearPreparation();
     const generation = this.candidateGeneration;
     this.preparing = true;
-    const query = new URLSearchParams({ investigationId: source.investigationId, resultVersion: String(source.resultVersion) });
     try {
-      const { candidate, redactionPolicyVersion } = await operationsApi<PreparedCase>(`/knowledge/prepare?${query}`);
+      const { candidate, redactionPolicyVersion } = await readCandidateSource(source);
       if (generation !== this.candidateGeneration) return;
       if (candidate.investigationId !== source.investigationId || candidate.resultVersion !== source.resultVersion) {
         this.formError = '返回的来源与选择不一致，请重试读取。';
@@ -202,19 +217,45 @@ export class OperationsKnowledge extends LitElement {
       if (!source.investigation) this.source = { ...source, title: candidate.content.title };
       this.candidate = { ...candidate, humanConfirmed: true };
       this.preparedPolicy = redactionPolicyVersion;
+      this.record.error = '';
     } catch (error) {
       if (generation !== this.candidateGeneration) return;
-      if (error instanceof OperationsApiError && ([403, 404, 409, 410].includes(error.status)
-        || error.code === 'OPERATIONS_PRECONDITION_FAILED' || error.code === 'OPERATIONS_INPUT_INVALID')) {
-        this.unavailableSources.add(sourceKey(source.investigationId, source.resultVersion));
-        this.inventory.reset();
-        this.sourceResource = '';
-        this.chooseAnotherSource('该来源或结果版本已不可引用，请重新选择。');
-      } else {
+      if (isCandidateSourceRejection(error)) this.discardSource(source);
+      else {
         this.formError = `读取脱敏草稿失败。${operationsErrorText(error)}`;
       }
     } finally {
       if (generation === this.candidateGeneration) this.preparing = false;
+    }
+  }
+  private async requestKnowledge<T>(path: string, options?: RequestInit): Promise<T> {
+    const submitting = path === '/knowledge' && options?.method === 'POST' && this.source;
+    const source = submitting && { investigationId: this.candidate.investigationId, resultVersion: this.candidate.resultVersion };
+    const generation = this.candidateGeneration;
+    const ownsDraft = () => this.isConnected && generation === this.candidateGeneration && this.can('manage');
+    try {
+      return await operationsApi<T>(path, options);
+    } catch (error) {
+      if (!source || !ownsDraft() || !isCandidateSourceRejection(error)) throw error;
+      this.checkingSource = true;
+      try {
+        const { candidate } = await readCandidateSource(source, { signal: AbortSignal.timeout(15_000) });
+        if (ownsDraft() && (candidate.investigationId !== source.investigationId || candidate.resultVersion !== source.resultVersion)) {
+          this.formError = '来源核对结果与提交时不一致，请重新选择来源。';
+        }
+      } catch (checkError) {
+        if (ownsDraft()) {
+          if (isCandidateSourceRejection(checkError)) {
+            this.discardSource(source);
+            // Keep the known write rejection without letting a source-specific 403/404 close the picker.
+            throw new OperationsApiError(422, 'OPERATIONS_PRECONDITION_FAILED');
+          }
+          this.formError = '暂无法核对提交时的来源。可稍后重试或重新选择来源。';
+        }
+      } finally {
+        if (generation === this.candidateGeneration) this.checkingSource = false;
+      }
+      throw error;
     }
   }
   private get canSaveCandidate() {
@@ -223,6 +264,7 @@ export class OperationsKnowledge extends LitElement {
   }
   private async saveCandidate(e: Event) {
     e.preventDefault(); if (!this.canSaveCandidate) return;
+    this.formError = '';
     const c = this.candidate;
     if (!Number.isSafeInteger(c.resultVersion) || c.resultVersion < 1 || !Number.isFinite(Date.parse(c.validUntil))) { this.formError = '请填写有效结果版本与到期时间。'; return; }
     const body = { ...c, validUntil: new Date(c.validUntil).toISOString() };
@@ -385,6 +427,7 @@ export class OperationsKnowledge extends LitElement {
         ${Object.entries({conditions:'适用条件',productVersion:'产品版本',resourceVersion:'资源版本'}).map(([key,label]) => field(label,c.applicability[key as keyof typeof c.applicability],v => this.candidate = {...this.candidate,applicability:{...this.candidate.applicability,[key]:v}},key === 'conditions' ? 4000 : 128))}
         <label>有效期至<input aria-label="有效期至" type="datetime-local" step="0.001" required .value=${c.validUntil ? localDate(c.validUntil) : ''} ?disabled=${this.record.locked} @input=${(e: Event) => this.candidate = {...c,validUntil:(e.target as HTMLInputElement).value}}></label>
         <label class="check"><input type="checkbox" required .checked=${this.humanConfirmed} ?disabled=${this.record.locked} @change=${(e: Event) => this.humanConfirmed = (e.target as HTMLInputElement).checked}>我已人工确认来源结果、处理效果与脱敏内容</label>
+        ${this.checkingSource ? html`<p role="status">正在核对提交时的来源与结果版本…</p>` : nothing}
         ${this.formError ? html`<p role="alert">${this.formError}</p>` : nothing}${this.status(this.record)}
       </form>`;
   }

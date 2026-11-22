@@ -1,5 +1,6 @@
 import { createServer } from 'vite';
 import { randomBytes, randomUUID } from 'node:crypto';
+import { writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { test, expect } from '@playwright/test';
 import { createVerifyToken } from '../../apps/db-ops-api/src/auth-middleware.ts';
@@ -17,7 +18,7 @@ import { registerResourceRoutes } from '../../apps/db-ops-api/src/resources/reso
 
 test.skip(!process.env.MAX725_MYSQL_PORT, 'Requires MAX-725 task-owned MySQL');
 
-test('normal knowledge menu discovers authorized exact results and recovers after source access is revoked', async ({ page }, info) => {
+test('normal knowledge menu checks exact sources before preparation and after a rejected save', async ({ page }, info) => {
   test.setTimeout(90_000);
   const fixture = await startFeedbackFixture(Number(process.env.MAX725_MYSQL_PORT));
   const { app, pool, rows, secret, contexts, bridge, seed, results } = fixture;
@@ -49,6 +50,7 @@ test('normal knowledge menu discovers authorized exact results and recovers afte
     await rows('DELETE FROM investigation_members WHERE investigation_id=? AND user_id=?', [privateSource.inv.id, actor.userId]);
 
     const preparations: { id: string | null; version: string | null }[] = [];
+    const preparationStatuses: number[] = [];
     const writes: string[] = [];
     app.addHook('onRequest', async request => {
       const url = new URL(request.url, 'http://localhost');
@@ -56,6 +58,9 @@ test('normal knowledge menu discovers authorized exact results and recovers afte
         preparations.push({ id: url.searchParams.get('investigationId'), version: url.searchParams.get('resultVersion') });
       }
       if (request.method !== 'GET' && /^\/api\/(operations|investigations)\b/.test(url.pathname)) writes.push(url.pathname);
+    });
+    app.addHook('onResponse', async (request, reply) => {
+      if (request.url.startsWith('/api/operations/knowledge/prepare?')) preparationStatuses.push(reply.statusCode);
     });
     const apiUrl = await app.listen({ host: '127.0.0.1', port: 0 });
     vite = await createServer({ root: resolve('.'), configFile: resolve('vite.config.js'),
@@ -154,6 +159,85 @@ test('normal knowledge menu discovers authorized exact results and recovers afte
     expect(writes).toEqual([]);
     expect(Number((await rows('SELECT COUNT(*) AS n FROM trusted_cases'))[0].n)).toBe(0);
     expect(Number((await rows('SELECT COUNT(*) AS n FROM action_executions'))[0].n)).toBe(0);
+
+    const submitted = await seed(), alternate = await seed();
+    const submittedVersion = await results.put(fixture.owner, submitted.binding, randomUUID(), submitted.result.version, {
+      ...submitted.value, provenance: { ...submitted.value.provenance, toolVersions: { readonly_fixture: '1' } },
+    });
+    await rows("UPDATE investigation_results SET result_json=JSON_SET(result_json, '$.provenance.toolVersions', JSON_OBJECT('readonly_fixture','1')) WHERE id=?", [alternate.result.id]);
+    await rows("UPDATE investigations SET lifecycle='closed', title='待失效的来源' WHERE id=?", [submitted.inv.id]);
+    await rows("UPDATE investigations SET lifecycle='closed', title='仍可选择的来源' WHERE id=?", [alternate.inv.id]);
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.keyboard.press('Escape');
+    await entry.click();
+    await source(submitted.inv.id).press('Enter');
+    await prepare.press('Enter');
+    await expect(title).toHaveValue('待失效的来源');
+    const save = dialog.getByRole('button', { name: '保存案例草稿' });
+    const confirmation = dialog.getByRole('checkbox', { name: /我已人工确认/ });
+    const faultType = dialog.getByRole('textbox', { name: '故障类型' });
+    const waitForSave = () => page.waitForResponse(response =>
+      new URL(response.url()).pathname === '/api/operations/knowledge' && response.request().method() === 'POST');
+    const checks: Array<{ reason: string; status: number; error: string }> = [];
+    const beforeRejectedSaves = preparations.length;
+    await title.fill('需要保留的人工整理标题');
+    await faultType.fill('   ');
+    await confirmation.check();
+    const validation = waitForSave();
+    await save.press('Enter');
+    const invalid = await validation;
+    expect(invalid.status()).toBe(422);
+    expect(await invalid.json()).toEqual({ error: 'OPERATIONS_INPUT_INVALID' });
+    checks.push({ reason: 'field validation', status: invalid.status(), error: 'OPERATIONS_INPUT_INVALID' });
+    await expect(dialog.getByRole('alert')).toContainText('请求未被接受');
+    await expect(title).toHaveValue('需要保留的人工整理标题');
+    await expect(faultType).toHaveValue('   ');
+    await expect(confirmation).toBeChecked();
+    await expect(save).toBeEnabled();
+    await faultType.fill('指标采样异常');
+    await rows('UPDATE investigation_evidence SET expired_at=UTC_TIMESTAMP(3) WHERE id=?', [submitted.proof.id]);
+
+    const rejected = waitForSave();
+    const writesBeforeExpiry = writes.length;
+    await save.press('Enter');
+    const expired = await rejected;
+    expect(expired.status()).toBe(422);
+    expect(await expired.json()).toEqual({ error: 'OPERATIONS_PRECONDITION_FAILED' });
+    checks.push({ reason: 'source evidence expired', status: expired.status(), error: 'OPERATIONS_PRECONDITION_FAILED' });
+    const submittedScope = { id: submitted.inv.id, version: String(submittedVersion.version) };
+    expect(expired.request().postDataJSON()).toMatchObject({
+      investigationId: submittedScope.id, resultVersion: submittedVersion.version,
+    });
+    await expect(dialog.getByRole('alert')).toContainText('该来源或结果版本已不可引用');
+    await expect(titleQuery).toBeFocused();
+    await expect(title).toHaveCount(0);
+    await expect(confirmation).toHaveCount(0);
+    await expect(save).toHaveCount(0);
+    await expect(dialog).not.toContainText(submitted.inv.id);
+    await expect(source(submitted.inv.id)).toHaveCount(0);
+    await expect(source(alternate.inv.id)).toBeVisible();
+    const checkedScope = preparations.slice(beforeRejectedSaves);
+    expect(checkedScope).toEqual([submittedScope, submittedScope]);
+    expect(preparationStatuses.slice(beforeRejectedSaves)).toEqual([200, 422]);
+    await page.screenshot({ path: info.outputPath('expired-save-source-picker.png') });
+
+    await source(alternate.inv.id).press('Enter');
+    await prepare.press('Enter');
+    await expect(title).toHaveValue('仍可选择的来源');
+    await expect(dialog.getByRole('alert')).toHaveCount(0);
+    await expect(confirmation).not.toBeChecked();
+    await expect(save).toBeDisabled();
+    expect(writes.slice(writesBeforeExpiry)).toEqual(['/api/operations/knowledge']);
+    expect(writes).toEqual(['/api/operations/knowledge', '/api/operations/knowledge']);
+    const caseCount = Number((await rows('SELECT COUNT(*) AS n FROM trusted_cases'))[0].n);
+    const caseVersions = Number((await rows('SELECT COUNT(*) AS n FROM trusted_case_versions'))[0].n);
+    expect(caseCount).toBe(0);
+    expect(caseVersions).toBe(0);
+    await writeFile(info.outputPath('rejected-save-evidence.json'), JSON.stringify({
+      browser: page.context().browser()?.version(), viewport: page.viewportSize(), checks, checkedScope,
+      readBackStatuses: preparationStatuses.slice(beforeRejectedSaves, beforeRejectedSaves + 2),
+      alternate: preparations.at(-1), writes, expiredSaveWrites: writes.length - writesBeforeExpiry, caseCount, caseVersions,
+    }, null, 2));
   } finally {
     try {
       await page.context().close();

@@ -161,3 +161,40 @@ it('clears the source and ignores a late draft on a permission change', async ()
   expect(root.querySelector('textarea')).toBeNull();
   expect(button(root, '从调查整理案例')?.disabled).toBe(true);
 });
+
+it.each([
+  { saveStatus: 404, saveError: 'OPERATIONS_NOT_FOUND', checkStatus: 404, checkError: 'OPERATIONS_NOT_FOUND' },
+  { saveStatus: 422, saveError: 'OPERATIONS_PRECONDITION_FAILED', checkStatus: 503, checkError: 'OPERATIONS_DEPENDENCY_UNAVAILABLE' },
+])('does one read-only check of the submitted source after $saveStatus and handles verification $checkStatus',
+  async ({ saveStatus, saveError, checkStatus, checkError }) => {
+    api.mockResolvedValueOnce(emptyKnowledge()).mockResolvedValueOnce(prepared(firstId, 2, '待保存正文'));
+    const root = await mountHome(`/operations-knowledge?sourceInvestigation=${firstId}&resultVersion=2`);
+    root.querySelector<HTMLInputElement>('input[type="checkbox"]')!.click();
+    await flush();
+    let finishCheck!: (value: Response) => void;
+    api.mockResolvedValueOnce(json({ error: saveError }, saveStatus))
+      .mockImplementationOnce(() => new Promise(resolve => { finishCheck = resolve; }));
+    root.querySelector('form#case-candidate')!.dispatchEvent(new Event('submit', { cancelable: true }));
+    await flush();
+    expect(root.textContent).toContain('正在核对提交时的来源与结果版本');
+    expect(button(root, '保存案例草稿')?.disabled).toBe(true);
+    expect(button(root, '重新选择来源')?.disabled).toBe(true);
+    if (checkStatus === 404) api.mockResolvedValueOnce(inventory()).mockResolvedValueOnce(investigations([
+      investigation(firstId, 2), investigation(secondId, 3),
+    ]));
+    finishCheck(json({ error: checkError }, checkStatus));
+    await flush();
+    const exactRead = `/api/operations/knowledge/prepare?investigationId=${firstId}&resultVersion=2`;
+    expect(prepareReads()).toEqual([exactRead, exactRead]);
+    expect(api.mock.calls.filter(([, options]) => options?.method === 'POST')).toHaveLength(1);
+    if (checkStatus === 404) {
+      expect(root.textContent).toContain('该来源或结果版本已不可引用');
+      expect(root.textContent).not.toContain(firstId);
+      expect(root.querySelector('form#case-candidate')).toBeNull();
+      expect(button(root, '选择结果 V3')).toBeDefined();
+    } else {
+      expect(root.textContent).toContain('暂无法核对提交时的来源');
+      expect(root.querySelector<HTMLTextAreaElement>('textarea[aria-label="案例标题"]')?.value).toBe('待保存正文');
+    }
+  },
+);
