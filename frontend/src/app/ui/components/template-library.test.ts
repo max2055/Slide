@@ -63,6 +63,19 @@ it('keeps edit fields out of the published view and confirms leaving an unsaved 
   expect(element.editor).toBeNull();
 });
 
+it.each([false, true])('explains removed trigger dependencies when saving with publish=%s', async publish => {
+  const element = await mounted();
+  await element.open('custom', true);
+  authFetch.mockResolvedValueOnce(new Response(JSON.stringify({ error: 'TRIGGER_DEPENDENCY_UNKNOWN' }), { status: 422 }));
+  await element.save(publish);
+  await element.updateComplete;
+  expect(authFetch.mock.calls.at(-1)?.[0]).toBe('/api/metrics/templates/custom/save');
+  expect(JSON.parse(authFetch.mock.calls.at(-1)?.[1].body).publish).toBe(publish);
+  expect(element.shadowRoot.querySelector('[role="alert"]')?.textContent).toContain('先在已发布模板中解除触发器依赖');
+  expect(element.editing).toBe(true);
+  expect(element.retry).toBeNull();
+});
+
 it('R1 session rejection clears facts even on a built-in write',async()=>{
  const element=await mounted();element.editor={...fixture(),builtin:true};
  authFetch.mockResolvedValueOnce(new Response('{}',{status:401}));await element.mutate('name',{},()=>{});

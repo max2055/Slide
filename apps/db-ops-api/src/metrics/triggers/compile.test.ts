@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { TriggerResourceSnapshot } from '../../contracts/metrics/triggers.js';
 import { baseline, portOf, thresholdRule } from './test-support.js';
 import { resolveTriggerRules } from './resolve.js';
-import { hashOf, triggerRuleContentHash } from './model.js';
+import { hashOf, orderTriggerDependencies, triggerRuleContentHash, triggerRuleSnapshotHash, triggerSnapshotHash } from './model.js';
 import {
   checkTriggerSnapshotFence, compileTriggerSnapshot, verifyTriggerSnapshot, TriggerCompileError,
 } from './compile.js';
@@ -131,6 +131,44 @@ describe('immutable trigger snapshot', () => {
     expect(failureOf(() => verifyTriggerSnapshot({ kind: 'template_trigger_snapshot' })).code)
       .toBe('TRIGGER_SNAPSHOT_INVALID');
     expect(failureOf(() => compileTriggerSnapshot({})).code).toBe('TRIGGER_CANDIDATE_INVALID');
+  });
+
+  it('canonically hashes dependency sets and retains legacy rule hashes when omitted', async () => {
+    const { candidate, snapshot } = await compiled();
+    const [dependent, upstream] = candidate.rules;
+    const other = { ...upstream, rule_id: 'a-upstream', dependencies: [upstream.rule_id] };
+    const rules = [{ ...dependent, dependencies: [upstream.rule_id, other.rule_id] }, other, upstream];
+    const withDependencies = compileTriggerSnapshot({ ...candidate, rules });
+    const [frozenDependent] = withDependencies.rules;
+    expect(frozenDependent.dependencies).toEqual([other.rule_id, upstream.rule_id]);
+    expect(orderTriggerDependencies(rules).map(rule => rule.rule_id)).toEqual([upstream.rule_id, other.rule_id, dependent.rule_id]);
+    expect(verifyTriggerSnapshot(JSON.parse(JSON.stringify(withDependencies)))).toEqual(withDependencies);
+    expect(withDependencies.rules[2].snapshot_hash).toBe(snapshot.rules[1].snapshot_hash);
+    expect(frozenDependent.snapshot_hash).not.toBe(snapshot.rules[0].snapshot_hash);
+    expect(compileTriggerSnapshot({ ...candidate, rules: [
+      { ...rules[0], dependencies: [...rules[0].dependencies!].reverse() }, other, upstream,
+    ] })).toEqual(withDependencies);
+
+    const { content_hash, ...body } = thresholdRule();
+    expect(triggerRuleContentHash({ ...body, dependencies: [] })).toBe(content_hash);
+    expect(triggerRuleContentHash({ ...body, dependencies: ['z', 'a'] }))
+      .toBe(triggerRuleContentHash({ ...body, dependencies: ['a', 'z'] }));
+  });
+
+  it('rejects dependencies on another effective template when compiling or verifying', async () => {
+    const { candidate, snapshot } = await compiled();
+    const [dependent, upstream] = candidate.rules;
+    const upstreamItem = { ...upstream.item, template_id: 'another-template' };
+    expect(failureOf(() => compileTriggerSnapshot({ ...candidate, rules: [
+      { ...dependent, dependencies: [upstream.rule_id] }, { ...upstream, item: upstreamItem },
+    ] })).code).toBe('TRIGGER_DEPENDENCY_UNKNOWN');
+
+    const tampered = structuredClone(snapshot);
+    tampered.rules[0].dependencies = [upstream.rule_id];
+    tampered.rules[1].item = upstreamItem;
+    for (const rule of tampered.rules) rule.snapshot_hash = triggerRuleSnapshotHash(rule);
+    tampered.snapshot_hash = triggerSnapshotHash(tampered);
+    expect(failureOf(() => verifyTriggerSnapshot(tampered)).code).toBe('TRIGGER_DEPENDENCY_UNKNOWN');
   });
 
   it('keeps the previous 90 snapshot unchanged when the rule is re-authored to 95', async () => {
