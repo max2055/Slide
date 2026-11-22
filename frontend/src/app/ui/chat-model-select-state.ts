@@ -107,7 +107,7 @@ export function resolveChatModelSelectState(
     currentOverride,
     defaultModel,
     defaultDisplay,
-    defaultLabel: defaultModel ? `Default (${defaultDisplay})` : "Default model",
+    defaultLabel: defaultModel ? `默认模型（${defaultDisplay}）` : "默认模型",
     options: buildChatModelOptions(catalog, displayLookup, currentOverride, defaultModel),
   };
 }
