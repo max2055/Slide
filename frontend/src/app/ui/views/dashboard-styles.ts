@@ -11,6 +11,11 @@ export const dashboardStyles = css`
   .toolbar { justify-content: space-between; }
   .metadata, small { color: var(--muted-strong, var(--muted)); font-size: var(--text-sm); }
   a { color: var(--overview-action); text-decoration: none; overflow-wrap: anywhere; }
+  .resource-name, .table-scroll td:first-child a, .metric-row > a {
+    display: inline-block;
+    min-height: var(--control-height-sm);
+    padding-block: var(--space-xs);
+  }
   a:hover { text-decoration: underline; }
   button:focus-visible, a:focus-visible, select:focus-visible, input:focus-visible, summary:focus-visible, stat-card:focus-visible { outline: 2px solid var(--overview-action); outline-offset: 2px; }
   button, a, stat-card { -webkit-tap-highlight-color: transparent; }

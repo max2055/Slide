@@ -7,6 +7,7 @@ import mysql from 'mysql2/promise';
 import { dbConnection } from '../db-connection';
 import { CronJobConfig, CronJobLog, CronJobParam } from './types';
 import { validateCronTimeoutSeconds } from '../adapter/runtime-policy.js';
+import { DATABASE_LOG_COLLECTION_DESCRIPTION, DATABASE_LOG_COLLECTION_HANDLER } from './database-log-collection.js';
 
 export class CronJobDatabaseService {
   /**
@@ -202,7 +203,7 @@ export class CronJobDatabaseService {
       const [rows] = await pool.execute('SELECT COUNT(*) as cnt FROM cron_jobs') as any;
       if (rows[0].cnt > 0) return;
 
-      const defaults: Array<{name: string; task_description: string; cron_expr: string; handler_key?: string; description?: string}> = [
+      const defaults: Array<{name: string; task_description: string; cron_expr: string; handler_key?: string; description?: string; enabled?: boolean}> = [
         { name: 'TopSQL 自动分析', cron_expr: '*/10 * * * * *', task_description: 'Every 10 seconds, scan all active database instances for slow queries with average execution time >= 10 seconds. For each new slow query found, perform an automated AI analysis to identify optimization opportunities. Skip queries that have already been analyzed within the last 30 minutes. Call slide_complete_cron with your findings summary.', description: '自动分析慢查询并给出优化建议' },
         { name: '告警 RCA 分析', cron_expr: '*/10 * * * * *', task_description: 'Every 10 seconds, check for new alerts created within the last 30 seconds. For each alert matching configured severity levels and active time windows, perform automated root cause analysis. Call slide_complete_cron with the RCA findings.', description: '对告警进行根因分析' },
         { name: '故障自动诊断', cron_expr: '0 * * * * *', handler_key: 'fault.diagnose-unhealthy', task_description: 'Every 60 seconds, diagnose database instances that are reporting unhealthy status. For each affected instance, run comprehensive diagnostics: health check, performance analysis, connection check. Generate a diagnostic report. Call slide_complete_cron when diagnosis is complete.', description: '自动诊断不健康实例' },
@@ -211,7 +212,8 @@ export class CronJobDatabaseService {
         { name: '索引信息采集', cron_expr: '15,45 * * * *', task_description: 'Every 30 minutes at :15 and :45, collect index information from all active database instances. Gather index names, columns, types, and usage statistics. Call slide_complete_cron with the index inventory results.', description: '定期采集索引信息' },
         { name: '基线计算', cron_expr: '0 2 * * *', task_description: 'Every day at 2:00 AM, calculate performance metric baselines for all database instances. For each instance, compute per-metric baselines for CPU usage, memory utilization, IOPS, query latency, and connection counts. Call slide_complete_cron with baseline computation results.', description: '每日计算性能基线' },
         { name: '基线清理', cron_expr: '0 3 * * 0', task_description: 'Every Sunday at 3:00 AM, clean up baseline data older than 30 days. Call slide_complete_cron when cleanup is complete.', description: '每周清理过期基线' },
-        { name: '数据库日志采集', cron_expr: '0 */5 * * * *', task_description: 'Every 5 minutes, collect and store database logs from all available sources. Call slide_complete_cron with a summary of collected log entries.', description: '定期采集数据库日志' },
+        { name: '数据库日志采集', cron_expr: '0 */5 * * * *', handler_key: DATABASE_LOG_COLLECTION_HANDLER,
+          task_description: DATABASE_LOG_COLLECTION_DESCRIPTION, description: DATABASE_LOG_COLLECTION_DESCRIPTION, enabled: false },
         { name: '静默过期清理', cron_expr: '0 * * * *', task_description: 'Every hour, check for expired alert silence rules. Remove any silence rules whose validity period has ended. Call slide_complete_cron with the count of expired rules cleaned.', description: '每小时清理过期静默规则' },
         { name: '定时报表调度', cron_expr: '0 * * * * *', task_description: 'Every 60 seconds, scan all enabled report configurations. For each matching cron schedule, generate the scheduled report in the configured format. Call slide_complete_cron with the report generation results.', description: '按配置生成定时报表' },
         { name: '(预留) 升级规则监控', cron_expr: '*/10 * * * * *', task_description: 'Every 10 seconds, check alert escalation rules for pending escalations. Process auto-escalation logic for unacknowledged alerts. Call slide_complete_cron with status.', description: '监控告警升级规则' },
@@ -221,7 +223,7 @@ export class CronJobDatabaseService {
       for (const d of defaults) {
         await pool.execute(
           'INSERT INTO cron_jobs (name, task_description, cron_expr, handler_key, timezone, description, timeout_seconds, enabled, principal_type, identity_status, resource_scope, identity_audit) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-          [d.name, d.task_description, d.cron_expr, d.handler_key ?? null, 'Asia/Shanghai', d.description || null, 300, Boolean(d.handler_key), d.handler_key ? 'system-maintenance' : 'user', d.handler_key ? 'bound' : 'owner-required', JSON.stringify({ version: 1, targetInstanceId: null, instanceIds: [], serverIds: [], networkDeviceIds: [] }), JSON.stringify({ source: 'trusted-seed', capability: d.handler_key ?? null })]
+          [d.name, d.task_description, d.cron_expr, d.handler_key ?? null, 'Asia/Shanghai', d.description || null, 300, d.enabled ?? Boolean(d.handler_key), d.handler_key ? 'system-maintenance' : 'user', d.handler_key ? 'bound' : 'owner-required', JSON.stringify({ version: 1, targetInstanceId: null, instanceIds: [], serverIds: [], networkDeviceIds: [] }), JSON.stringify({ source: 'trusted-seed', capability: d.handler_key ?? null })]
         );
       }
       console.log(`[CronJobService] Seeded ${defaults.length} default cron jobs`);

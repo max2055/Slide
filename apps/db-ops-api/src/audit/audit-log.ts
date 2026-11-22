@@ -657,6 +657,7 @@ export class AuditLogManager {
    * credentials, and transport details must never enter the audit payload.
    */
   async logConfigBackupAccess(params: {
+    auditId?: string;
     userId?: string;
     action: 'collect' | 'read_raw' | 'read_denied' | 'failed';
     deviceId: number;
@@ -667,7 +668,7 @@ export class AuditLogManager {
   }): Promise<void> {
     const failed = params.action === 'read_denied' || params.action === 'failed';
     const entry: AuditLogEntry = {
-      id: this.generateId(),
+      id: params.auditId ?? this.generateId(),
       eventType: 'config_backup_access',
       level: failed ? 'warning' : 'info',
       userId: params.userId,
