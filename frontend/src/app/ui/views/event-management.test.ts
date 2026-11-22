@@ -265,15 +265,17 @@ describe('latest event list query', () => {
     expect(urls.filter(url => url.includes('events?'))).toHaveLength(2);
     if (kind === 'tab') expect(urls[3]).toContain('status=resolved,closed');
     if (kind === 'page') expect(urls[3]).toContain('offset=50');
-    finish[3](response({ items: [{ id: 'new' }], total: 1 }));
-    finish[4](response({ open: 1 })); finish[5](response({ value: 'new' }));
+    const total = kind === 'page' ? 51 : 1;
+    const stats = { total, open: total, investigating: 0, handled: 0, resolved: 0, closed: 0 };
+    finish[3](response({ items: [{ id: 'new' }], total }));
+    finish[4](response(stats)); finish[5](response({ value: 'new' }));
     await current;
     finish[0](response({ items: [{ id: 'old' }], total: 2 }));
     finish[1](response({ open: 2 })); finish[2](response({ value: 'old' }));
     await old;
     expect(page.events).toEqual([{ id: 'new' }]);
-    expect(page.eventsTotal).toBe(1);
-    expect(page.stats).toEqual({ open: 1 });
+    expect(page.eventsTotal).toBe(total);
+    expect(page.stats).toEqual(stats);
     expect(page.mttr).toEqual({ value: 'new' });
     expect(page.retryLoading).toBe(false);
     expect(write).toHaveBeenCalledTimes(kind === 'action' ? 1 : 0);
@@ -291,6 +293,58 @@ describe('latest event list query', () => {
     finish[3](response({ items: [], total: 0 })); finish[4](response({})); finish[5](response({}));
     await current;
     expect(page.retryLoading).toBe(false);
+  });
+  it('clears aggregate rows, counts, pagination and scroll on MTTR 403 while the other reads are pending', async () => {
+    const page = new EventManagementPage() as any;
+    const row = { id: 'previous' };
+    const stats = { total: 120, open: 0, investigating: 0, handled: 0, resolved: 0, closed: 0 };
+    page.activeListTab = 'other';
+    page.events = [row];
+    page.eventsPage = 1;
+    page.eventsTotal = 120;
+    page.stats = stats;
+    page.mttr = { avg_mttr_minutes: 20 };
+    page.listPosition = { key: page.listPositionKey, mainTop: 960, listTop: 0 };
+    let finishList!: (value: Response) => void;
+    let finishStats!: (value: Response) => void;
+    vi.mocked(authFetch)
+      .mockImplementationOnce(() => new Promise(resolve => { finishList = resolve; }))
+      .mockImplementationOnce(() => new Promise(resolve => { finishStats = resolve; }))
+      .mockResolvedValueOnce({ ...response({}, false), status: 403 });
+
+    const pending = page._loadEvents();
+    await vi.waitFor(() => expect(page.loadError).toBe('无权访问事件'));
+    expect(page.events).toEqual([]);
+    expect(page.eventsTotal).toBeNull();
+    expect(page.eventsPage).toBe(0);
+    expect(page.stats).toBeNull();
+    expect(page.mttr).toBeNull();
+    expect(page.listPosition).toBeUndefined();
+    expect(page.retryLoading).toBe(false);
+
+    vi.mocked(authFetch).mockResolvedValueOnce(response({ items: [{ id: 'restored' }], total: 120 }))
+      .mockResolvedValueOnce(response(stats)).mockResolvedValueOnce(response(null));
+    await page._loadEvents();
+    expect(vi.mocked(authFetch).mock.calls[3][0]).toContain('offset=0&status=other');
+    finishList(response({ items: [row], total: 120 }));
+    finishStats(response(stats));
+    await pending;
+    expect(page.events).toEqual([{ id: 'restored' }]);
+    expect(page.loadError).toBeNull();
+    expect(page.listPosition).toBeUndefined();
+  });
+  it('keeps the successful aggregate list and statistics when only MTTR returns 503', async () => {
+    const page = new EventManagementPage() as any;
+    const rows = [{ id: 'valid' }];
+    const stats = { total: 1, open: 0, investigating: 0, handled: 0, resolved: 1, closed: 0, avg_resolution_time: 12 };
+    vi.mocked(authFetch).mockResolvedValueOnce(response({ items: rows, total: 1 }))
+      .mockResolvedValueOnce(response(stats)).mockResolvedValueOnce(response({}, false));
+    await page._loadEvents();
+    expect(page.events).toEqual(rows);
+    expect(page.stats).toEqual(stats);
+    expect(page.mttr).toBeNull();
+    expect(page.loadError).toBeNull();
+    expect(page.statsError).toBe(false);
   });
   it.each([{ items: [] }, { items: [{ id: '1', title: 'recovered', severity: 'warning', status: 'open' }] }])('renders the actual list result after successful retry %j', async ({ items }) => {
     vi.mocked(authFetch).mockResolvedValue(response({}, false));
@@ -331,7 +385,7 @@ describe('current-page event filter counts', () => {
     const page = new EventManagementPage();
     document.body.append(page);
     const root = page.shadowRoot!;
-    const summary = () => root.querySelector('[role="status"]')?.textContent?.replace(/\s+/g, ' ').trim();
+    const summary = () => root.querySelector('.event-list-info[role="status"]')?.textContent?.replace(/\s+/g, ' ').trim();
     await vi.waitFor(() => expect(summary()).toBe('本页命中 50 条 · 当前状态可见事件共 51 条'));
 
     const search = root.querySelector<HTMLInputElement>('[aria-label="搜索本页事件"]')!;

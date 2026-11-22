@@ -91,6 +91,20 @@ export const metricPublicSchemas = {
   TemplateTriggerPublish: TemplateTriggerPublishSchema,
   TemplateTriggerPublication: z.strictObject({template_id:z.string(),version:z.number().int().positive(),content_hash:z.string(),rule:TriggerRuleVersionSchema}),
   ResourceEventList: z.strictObject({items:z.array(z.looseObject({id:z.number().int().positive(),title:z.string(),status:z.string()})),total:z.number().int().nonnegative()}),
+  AlertEventStats: z.strictObject({
+    total: z.number().int().nonnegative(), open: z.number().int().nonnegative(),
+    investigating: z.number().int().nonnegative(), handled: z.number().int().nonnegative(),
+    resolved: z.number().int().nonnegative(), closed: z.number().int().nonnegative(),
+  }),
+  AuthorizedAlertList: z.strictObject({
+    items: z.array(z.looseObject({
+      id: z.number().int().positive(),
+      template_event_id: z.number().int().positive().optional(),
+    })),
+    total: z.number().int().nonnegative(), unread: z.number().int().nonnegative(),
+    critical: z.number().int().nonnegative(), warning: z.number().int().nonnegative(),
+    resolved: z.number().int().nonnegative(), level_counts: z.record(z.string(), z.number().int().nonnegative()),
+  }),
   ResourceEffectiveTriggers: z.strictObject({resource:RefSchema,revision:z.number().int().positive().nullable(),state:z.enum(['available','unavailable']),snapshot:TriggerResourceSnapshotSchema.nullable()}),
   TemplateTriggerRules: z.strictObject({rules:z.array(TriggerRuleVersionSchema.nullable())}),
   ConfigurationAt: ConfigurationAtSchema,
@@ -134,7 +148,35 @@ const triggerTemplateParameters = [{name:'templateId',in:'path',required:true,sc
 export const metricPublicPaths = {
  ...studyPaths,
  ...discoveryPaths,
-  '/api/alerts/events':{get:{operationId:'listAuthorizedResourceEvents',security:[{bearerAuth:[]}],description:'Existing event list. Optional resource type:id requires absolute from/to endpoints within 31 days and live alert:view plus resource read authority; filters legacy resource columns and template episode identities with the same window overlap for items and total. Scoped failures are unavailable, never empty success. Omit resource to retain the existing globally authorized list.',parameters:[{name:'resource',in:'query',schema:{type:'string',pattern:'^(instance|server|network_device):[1-9][0-9]*$'}},...['from','to','status'].map(name=>({name,in:'query',schema:{type:'string'}})),...['limit','offset'].map(name=>({name,in:'query',schema:{type:'integer',minimum:0}}))],responses:{'200':response('ResourceEventList'),...errors}}},
+  '/api/alerts': {get: {
+    operationId: 'listAuthorizedAlerts', security: [{bearerAuth: []}],
+    description: 'Lists alerts within live resource authority. A row may include template_event_id from its exact alert_id association when the episode resource exists and the caller may read it. Missing or inaccessible associations omit the field. Fetch /api/metrics/template-events/{eventId} with current authority and verify alert_id against the selected row. Private/no-store.',
+    parameters: [
+      ...['status', 'level'].map(name => ({name, in: 'query', schema: {type: 'string'}})),
+      ...['limit', 'offset'].map(name => ({name, in: 'query', schema: {type: 'integer', minimum: 0}})),
+      {name: 'instance_id', in: 'query', schema: {type: 'integer', minimum: 1}},
+    ],
+    responses: {
+      '200': response('AuthorizedAlertList'), '400': errors['400'], '401': errors['401'],
+      '403': errors['403'], '500': {description: 'Alert list read failed'}, '503': errors['503'],
+    },
+  }},
+  '/api/alerts/events': {get: {
+    operationId: 'listAuthorizedResourceEvents', security: [{bearerAuth: []}],
+    description: 'Lists events within live resource authority. Optional resource type:id requires absolute from/to endpoints within 31 days and filters legacy resource columns and template episode identities with the same overlap for items and total. Omitting resource uses the globally authorized list.',
+    parameters: [
+      {name: 'resource', in: 'query', schema: {type: 'string', pattern: '^(instance|server|network_device):[1-9][0-9]*$'}},
+      ...['from', 'to'].map(name => ({name, in: 'query', schema: {type: 'string'}})),
+      {name: 'status', in: 'query', schema: {type: 'string'}, description: 'Comma-separated status groups. other matches historical values outside open, investigating, handled, resolved and closed, including reviewed and empty status.'},
+      ...['limit', 'offset'].map(name => ({name, in: 'query', schema: {type: 'integer', minimum: 0}})),
+    ],
+    responses: {'200': response('ResourceEventList'), ...errors, '503': {description: 'Event list read unavailable'}},
+  }},
+  '/api/alerts/events/stats': {get: {
+    operationId: 'getAuthorizedEventStats', security: [{bearerAuth: []}],
+    description: 'All-time counts within live resource authority. Total includes every status. Subtract the five named status counts from total to get the historical other group.',
+    responses: {'200': response('AlertEventStats'), ...errors, '503': {description: 'Event statistics read unavailable'}},
+  }},
   '/api/metrics/template-bindings/{type}/{id}/effective-triggers': {get:{operationId:'getResourceEffectiveTriggers',security:[{bearerAuth:[]}],parameters,description:'Read only the actually applied immutable resource rule snapshot. Live metric:view and resource read access before and after query. Unavailable snapshot is explicit; drafts and failed target revisions are never presented as effective.',responses:{'200':response('ResourceEffectiveTriggers'),...errors}}},
  ...templateAuthoringPaths,
  ...templateGovernancePaths,

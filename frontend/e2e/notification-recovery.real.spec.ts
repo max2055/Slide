@@ -29,16 +29,16 @@ test('real SQL/JWT/API queue read, empty result, permission revocation and retry
     await expect(view.locator('tbody tr')).toHaveCount(1); await expect(view).toContainText('max162-real-delivery');
     await page.screenshot({ path: info.outputPath('real-sql-rows.png'), fullPage: true });
     await db.execute("DELETE FROM workflow_jobs WHERE id = 'max162-real-delivery'");
-    await view.getByRole('button', { name: '刷新通知投递记录' }).click();
+    await view.getByRole('button', { name: '刷新通知死信' }).click();
     await expect(view.getByText('没有待重放的通知', { exact: true })).toBeVisible();
     await page.screenshot({ path: info.outputPath('real-sql-empty.png'), fullPage: true });
     await db.execute("DELETE rp FROM role_permissions rp JOIN roles r ON r.id=rp.role_id JOIN permissions p ON p.id=rp.permission_id WHERE r.name='max162-reader' AND p.code='notification:view'");
     const forbidden = page.waitForResponse(r => r.url().includes('/api/notification/dead-letters') && r.status() === 403);
-    await view.getByRole('button', { name: '刷新通知投递记录' }).click(); await forbidden;
-    await expect(view.getByRole('alert')).toContainText('无权查看通知投递记录');
+    await view.getByRole('button', { name: '刷新通知死信' }).click(); await forbidden;
+    await expect(view.getByRole('alert')).toContainText('无权查看通知死信');
     await page.screenshot({ path: info.outputPath('real-live-403.png'), fullPage: true });
     await db.execute("INSERT INTO role_permissions (role_id,permission_id) SELECT r.id,p.id FROM roles r JOIN permissions p ON p.code='notification:view' WHERE r.name='max162-reader'");
-    await view.getByRole('button', { name: '重试', exact: true }).focus(); await page.keyboard.press('Enter');
+    await view.getByRole('button', { name: '重试读取死信', exact: true }).focus(); await page.keyboard.press('Enter');
     await expect(view.getByText('没有待重放的通知', { exact: true })).toBeVisible();
     await expect(view.getByRole('alert')).toHaveCount(0);
   } finally { await db.end(); }

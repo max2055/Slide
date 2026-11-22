@@ -1307,6 +1307,52 @@
         ],
         "type": "object"
       },
+      "AlertEventStats": {
+        "$id": "AlertEventStats",
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "closed": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "handled": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "investigating": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "open": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "resolved": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "total": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "total",
+          "open",
+          "investigating",
+          "handled",
+          "resolved",
+          "closed"
+        ],
+        "type": "object"
+      },
       "AlertInvestigationResponse": {
         "$id": "AlertInvestigationResponse",
         "additionalProperties": false,
@@ -1436,6 +1482,81 @@
           "authorizationVersion",
           "data",
           "gaps"
+        ],
+        "type": "object"
+      },
+      "AuthorizedAlertList": {
+        "$id": "AuthorizedAlertList",
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "critical": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "items": {
+            "items": {
+              "additionalProperties": {},
+              "properties": {
+                "id": {
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                },
+                "template_event_id": {
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "id"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "level_counts": {
+            "additionalProperties": {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "propertyNames": {
+              "type": "string"
+            },
+            "type": "object"
+          },
+          "resolved": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "total": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "unread": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "warning": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total",
+          "unread",
+          "critical",
+          "warning",
+          "resolved",
+          "level_counts"
         ],
         "type": "object"
       },
@@ -52805,6 +52926,84 @@
         ]
       }
     },
+    "/api/alerts": {
+      "get": {
+        "description": "Lists alerts within live resource authority. A row may include template_event_id from its exact alert_id association when the episode resource exists and the caller may read it. Missing or inaccessible associations omit the field. Fetch /api/metrics/template-events/{eventId} with current authority and verify alert_id against the selected row. Private/no-store.",
+        "operationId": "listAuthorizedAlerts",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "status",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "level",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "schema": {
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "instance_id",
+            "schema": {
+              "minimum": 1,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthorizedAlertList"
+                }
+              }
+            },
+            "description": "Authorized live configuration facts"
+          },
+          "400": {
+            "description": "Invalid input"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Live resource permission denied"
+          },
+          "500": {
+            "description": "Alert list read failed"
+          },
+          "503": {
+            "description": "Configuration facts unavailable"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
     "/api/alerts/{id}/investigation": {
       "post": {
         "description": "Database pilot: source-scoped single execution owner, live ai:manage and resource authority. Empty body only. A new investigation survives flag rollback; existing legacy pending/running/unknown is not adopted. Server alerts retain legacy RCA. Source linking grants viewer only when the caller has the complete live scope. Private/no-store.",
@@ -52989,7 +53188,7 @@
     },
     "/api/alerts/events": {
       "get": {
-        "description": "Existing event list. Optional resource type:id requires absolute from/to endpoints within 31 days and live alert:view plus resource read authority; filters legacy resource columns and template episode identities with the same window overlap for items and total. Scoped failures are unavailable, never empty success. Omit resource to retain the existing globally authorized list.",
+        "description": "Lists events within live resource authority. Optional resource type:id requires absolute from/to endpoints within 31 days and filters legacy resource columns and template episode identities with the same overlap for items and total. Omitting resource uses the globally authorized list.",
         "operationId": "listAuthorizedResourceEvents",
         "parameters": [
           {
@@ -53015,6 +53214,7 @@
             }
           },
           {
+            "description": "Comma-separated status groups. other matches historical values outside open, investigating, handled, resolved and closed, including reviewed and empty status.",
             "in": "query",
             "name": "status",
             "schema": {
@@ -53062,7 +53262,7 @@
             "description": "Resource not found"
           },
           "503": {
-            "description": "Configuration facts unavailable"
+            "description": "Event list read unavailable"
           }
         },
         "security": [
@@ -53411,6 +53611,44 @@
           },
           "503": {
             "description": "Projection unavailable"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/alerts/events/stats": {
+      "get": {
+        "description": "All-time counts within live resource authority. Total includes every status. Subtract the five named status counts from total to get the historical other group.",
+        "operationId": "getAuthorizedEventStats",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AlertEventStats"
+                }
+              }
+            },
+            "description": "Authorized live configuration facts"
+          },
+          "400": {
+            "description": "Invalid input"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Live resource permission denied"
+          },
+          "404": {
+            "description": "Resource not found"
+          },
+          "503": {
+            "description": "Event statistics read unavailable"
           }
         },
         "security": [

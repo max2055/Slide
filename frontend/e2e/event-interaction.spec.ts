@@ -116,9 +116,9 @@ test('#1036 page filters preserve query scope and pagination', async ({ page }, 
     await expect(list.getByText('本页命中 50 条')).toBeVisible();
     await expect(visibleTotal).toBeVisible();
     const stats = list.locator('stat-card');
-    await expect(stats).toHaveCount(6);
+    await expect(stats).toHaveCount(7);
     await expect(stats.filter({ has: page.getByText('开放', { exact: true }) }).locator('[part="value"]')).toHaveText('51');
-    await expect(stats.filter({ has: page.getByText('平均 MTTR (分钟)', { exact: true }) }).locator('[part="value"]')).toHaveText('—');
+    await expect(stats.filter({ has: page.getByText('平均 MTTR（分钟）', { exact: true }) }).locator('[part="value"]')).toHaveText('—');
     await expect(page.locator('html')).toHaveCSS('--accent', '#265f99');
     await search.fill('无匹配标题');
     await expect(noMatch).toBeVisible();
@@ -164,6 +164,159 @@ test('#1036 forbidden event reads show permission feedback', async ({ page }, in
   await expect(list.getByRole('alert')).toContainText('无权访问事件');
   await expect(list.getByText(resultMessages)).toHaveCount(0);
   await page.screenshot({ path: info.outputPath('permission-denied.png') });
+});
+
+test('statistics failure leaves the successful current event group readable', async ({ page }) => {
+  await setupAggregate(page, route => route.fulfill({ json: { items: [sampleEvent], total: 1 } }), 1);
+  let unavailable = true;
+  await page.route('**/api/alerts/events/stats', route => unavailable ? route.fulfill({ status: 503, json: {} }) : route.fallback());
+  await page.goto(aggregateUrl);
+  const list = page.locator('event-management-page');
+  await expect(list.getByText('全局统计暂不可读', { exact: false })).toBeVisible();
+  await expect(list.locator('stat-card[label="可见事件总计"] [part="value"]')).toHaveText('未知');
+  await expect(list.getByRole('button', { name: /^历史未归类/ })).toHaveText(/未知/);
+  await expect(list.getByText('本页命中 1 条', { exact: false })).toBeVisible();
+  unavailable = false;
+  await list.getByRole('button', { name: '刷新事件' }).click();
+  await expect(list.locator('stat-card[label="可见事件总计"] [part="value"]')).toHaveText('1');
+});
+
+test('MAX-722 keeps the visible aggregate row through refresh and same-page retry', async ({ page }, info) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  const rows = Array.from({ length: 50 }, (_, index) => ({
+    ...sampleEvent, id: String(index + 101), title: `历史验收事件 ${index + 1}`, status: 'reviewed',
+  }));
+  const reads: string[] = [];
+  let listStatus = 200;
+  let statsStatus = 200;
+  let holdStats: Promise<void> | undefined;
+  await setupAggregate(page, async (route, query) => {
+    reads.push(`${query.get('status')}:${query.get('offset')}`);
+    if (query.get('status') !== 'other') return route.fulfill({ json: emptyList });
+    if (listStatus !== 200) return route.fulfill({ status: listStatus, json: {} });
+    return route.fulfill({ json: {
+      total: 103, items: query.get('offset') === '50' ? rows : rows.map(row => ({ ...row, id: String(Number(row.id) + 100) })),
+    } });
+  });
+  await page.route('**/api/alerts/events/stats', async route => {
+    await holdStats;
+    return route.fulfill({ status: statsStatus, json: statsStatus === 200
+      ? { total: 103, open: 0, investigating: 0, handled: 0, resolved: 0, closed: 0 } : {} });
+  });
+  await page.goto(aggregateUrl);
+  const list = page.locator('event-management-page');
+  const group = list.getByRole('button', { name: /^历史未归类/ });
+  const refresh = list.getByRole('button', { name: '刷新事件' });
+  const card = list.locator('stat-card[label="可见事件总计"] [part="value"]');
+  const filter = list.getByRole('textbox', { name: '搜索本页事件' });
+  const severity = list.getByRole('combobox', { name: '本页严重度' });
+  const rowButtons = list.getByRole('button', { name: /查看事件 #\d+ 详情/ });
+  const main = page.locator('main.content');
+  await group.press('Enter');
+  await list.getByRole('button', { name: /下一页/ }).press('Enter');
+  await expect(list.getByText('第 2/3 页', { exact: true })).toBeVisible();
+  await filter.fill('历史验收');
+  await severity.selectOption('warning');
+  await expect(rowButtons).toHaveCount(50);
+
+  const position = () => list.evaluate(element => {
+    const host = (element.getRootNode() as ShadowRoot).host;
+    const scroller = host.closest('main.content')!;
+    const viewport = scroller.getBoundingClientRect();
+    const rows = [...element.shadowRoot!.querySelectorAll<HTMLButtonElement>('button[data-event-id]')];
+    const first = rows.find(row => row.getBoundingClientRect().bottom > viewport.top && row.getBoundingClientRect().top < viewport.bottom);
+    return { scrollTop: scroller.scrollTop, id: first?.dataset.eventId,
+      top: first ? Math.round(first.getBoundingClientRect().top - viewport.top) : null };
+  });
+  await refresh.focus();
+  await main.evaluate(element => { element.scrollTop = 960; });
+  const before = await position();
+  expect(before.scrollTop).toBe(960);
+  expect(before.id).toBeTruthy();
+  const assertPosition = async () => {
+    await expect.poll(async () => (await position()).id).toBe(before.id);
+    await expect.poll(async () => Math.abs((await position()).top! - before.top!)).toBeLessThanOrEqual(3);
+    expect((await position()).scrollTop).toBeGreaterThan(800);
+    await expect(group).toHaveAttribute('aria-pressed', 'true');
+    await expect(list.getByText('第 2/3 页', { exact: true })).toBeVisible();
+    await expect(filter).toHaveValue('历史验收');
+    await expect(severity).toHaveValue('warning');
+  };
+  const snapshots = [before];
+  const pending = Promise.withResolvers<void>();
+  holdStats = pending.promise;
+  statsStatus = 503;
+  try {
+    await page.keyboard.press('Enter');
+    await expect(refresh).toBeDisabled();
+    await expect(rowButtons).toHaveCount(50);
+    expect((await position()).scrollTop).toBe(before.scrollTop);
+    await assertPosition();
+  } finally {
+    holdStats = undefined;
+    pending.resolve();
+  }
+  await expect(card).toHaveText('未知');
+  await assertPosition();
+  snapshots.push(await position());
+  statsStatus = 200;
+  await refresh.evaluate((button: HTMLButtonElement) => button.focus({ preventScroll: true }));
+  await page.keyboard.press('Enter');
+  await expect(card).toHaveText('103');
+  await assertPosition();
+  snapshots.push(await position());
+  await page.screenshot({ path: info.outputPath('aggregate-stats-restored.png') });
+
+  listStatus = 503;
+  await refresh.evaluate((button: HTMLButtonElement) => button.focus({ preventScroll: true }));
+  await page.keyboard.press('Enter');
+  await expect(list.getByRole('alert')).toContainText('503');
+  await expect(rowButtons).toHaveCount(0);
+  await expect(list.getByText('暂无历史未归类事件')).toHaveCount(0);
+  listStatus = 200;
+  await list.getByRole('button', { name: '重试加载' }).press('Enter');
+  await expect(rowButtons).toHaveCount(50);
+  await assertPosition();
+  snapshots.push(await position());
+  expect(reads.slice(-4)).toEqual(Array(4).fill('other:50'));
+  await page.screenshot({ path: info.outputPath('aggregate-list-restored.png') });
+
+  listStatus = 403;
+  const deniedPending = Promise.withResolvers<void>();
+  holdStats = deniedPending.promise;
+  await refresh.evaluate((button: HTMLButtonElement) => button.focus({ preventScroll: true }));
+  try {
+    await page.keyboard.press('Enter');
+    await expect(list.getByRole('alert')).toContainText('无权访问事件');
+    await expect(rowButtons).toHaveCount(0);
+    await expect(card).toHaveText('未知');
+  } finally {
+    holdStats = undefined;
+    deniedPending.resolve();
+  }
+  await expect(refresh).toBeEnabled();
+  await expect(card).toHaveText('未知');
+  await expect(list.getByText('第 2/3 页', { exact: true })).toHaveCount(0);
+  await info.attach('aggregate-scroll-positions', { body: JSON.stringify(snapshots), contentType: 'application/json' });
+});
+
+test('platform collection state and successful empty records are independent', async ({ page }) => {
+  await setupAggregate(page, route => route.fulfill({ json: emptyList }));
+  let active = false;
+  let unavailable = false;
+  await page.route('**/api/platform/observations', route => route.fulfill({ json: { system: { collection: { effective: active } } } }));
+  await page.route('**/api/platform/system-events', route => route.fulfill(unavailable
+    ? { status: 503, json: {} } : { json: { items: [], truncated: false } }));
+  await page.goto('/events?view=system');
+  const system = page.locator('system-events-page');
+  await expect(system.getByText('已关闭', { exact: true })).toBeVisible();
+  await expect(system.getByText('暂无可见的异常记录')).toBeVisible();
+  active = true;
+  unavailable = true;
+  await system.getByRole('button', { name: '刷新异常' }).click();
+  await expect(system.getByText('已启用', { exact: true })).toBeVisible();
+  await expect(system.getByRole('alert')).toContainText('异常记录暂不可读');
+  await expect(system.getByText('暂无可见的异常记录')).toHaveCount(0);
 });
 
 for (const withData of [false, true]) {
@@ -240,7 +393,7 @@ test('failed saves keep visible drafts; successful retry sends postmortem; filte
   await expect(page.getByRole('button', { name: '提交复盘' })).toHaveCount(0);
   expect(payload).toEqual({ postmortem: '完整复盘内容' });
   await page.getByRole('button', { name: '返回事件列表', exact: true }).click();
-  await expect(page.getByText('搜索和严重度仅筛选本页；分页总数为当前状态的全部事件数。')).toBeVisible();
+  await expect(page.getByText('搜索和严重度仅筛选本页；分页总数为当前分组的可见记录数。')).toBeVisible();
 });
 
 test('browser back restores missing-view default', async ({ page }) => {
