@@ -85,6 +85,7 @@ import { databaseService } from './src/database-service.js';
 import { llmService } from './src/llm-service.js';
 import { dbConnection } from './src/db-connection.js';
 import { bindApiListener } from './src/config/api-listen.js';
+import { resolveApiProxyTrust } from './src/config/api-proxy.js';
 import { loadSecurityConfig } from './src/config/security-config.js';
 import { publicInstanceDto, publicNotificationDto, publicServerDto } from './src/security/public-dto.js';
 import { isNotificationChannelType, validateNotificationChannelConfig } from './src/notification-channel-config.js';
@@ -224,6 +225,7 @@ import { registerSourceRoutes } from './src/platform/source-routes.js';
 const fastify = Fastify({
   logger: false,
   bodyLimit: API_BODY_LIMIT,
+  trustProxy: resolveApiProxyTrust(),
 });
 
 // JWT 密钥
