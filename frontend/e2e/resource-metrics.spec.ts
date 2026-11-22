@@ -1,4 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
+import type { TemplateBindingRequest, TemplateBindingStatus, TemplatePreview, TemplateTrial } from '../src/app/ui/components/metric-api.js';
 import { collectionStatus } from '../src/app/ui/components/metric-test-fixtures.js';
 const fixture = async (page: Page, tag: string, file: string) => {
   await page.route('**/resource-fixture', route => route.fulfill({ contentType: 'text/html', body: `<!doctype html><html lang="zh-CN"><head><meta name="viewport" content="width=device-width, initial-scale=1"></head><body>${tag}<script type="module">import '/src/app/styles.css'; import '/src/app/ui/${file}.ts';</script></body></html>` }));
@@ -18,16 +19,20 @@ const fixtureEntries = Array.from({ length: 25 }, (_, i) => ({
   status: 'online', health_status: 'healthy', hasCredential: true, username: 'readonly', snmp_port: 161, ssh_port: 22, vendor: 'cisco', site: '测试站点',
 }));
 async function listResponses(page: Page, restricted = false) {
-  await page.addInitScript(restricted => { localStorage.setItem('permissions', JSON.stringify(restricted ? ['instance:view', 'servers:view', 'network_devices:view'] : ['*'])); }, restricted);
+  await page.addInitScript(restricted => {
+    localStorage.setItem('token', 'fixture.' + btoa(JSON.stringify({ userId: 1, sessionVersion: 1 })) + '.fixture');
+    localStorage.setItem('permissions', JSON.stringify(restricted ? ['instance:view', 'servers:view', 'network_devices:view'] : ['*']));
+  }, restricted);
   await page.route('**/api/**', route => {
     const p = new URL(route.request().url()).pathname;
     if (!p.startsWith('/api/')) return route.fallback();
     if (lists.some(list => list[2] === p)) return route.fulfill({ json: fixtureEntries });
+    if (p === '/api/metrics/templates') return route.fulfill({ json: { templates: [], next_cursor: null } });
+    if (p === '/api/metrics/template-governance/resources') return route.fulfill({ json: [] });
     if (p === '/api/resources/overview') return route.fulfill({ json: { items: lists.flatMap(list => fixtureEntries.map((entry, i) => ({
       resource: { type: list[3], id: entry.id }, status: 'healthy', gaps: [], unresolvedAlerts: 0, quality: 'good',
       freshness: i === 0 ? 'fresh' : i === 1 ? 'missing' : 'stale', observedAt: i === 1 ? null : new Date(Date.now() - (i === 0 ? 1000 : 600000)).toISOString(),
     }))) } });
-    if (p === '/api/metrics/config/bulk') return route.fulfill({ json: { jobs: [] } });
     if (p.endsWith('/status')) {
       const status = collectionStatus();
       const id = Number(p.split('/').at(-2));
@@ -221,8 +226,11 @@ for (const width of [375, 768, 1440]) for (const theme of ['light', 'dark']) tes
     await grid.locator('tbody tr').first().getByRole('checkbox').check();
     await expect(table.locator('.bulk-tools')).toContainText('已选 1 个对象');
     await table.getByRole('button', { name: '批量绑定采集模板', exact: true }).click();
-    await expect(table.getByRole('dialog', { name: '批量绑定采集模板', exact: true })).toBeVisible();
+    const binding = table.getByRole('dialog', { name: '批量绑定监控模板', exact: true });
+    await expect(binding).toBeVisible();
+    await expect(table.locator('template-governance').getByRole('combobox', { name: '治理模板' })).toBeEnabled();
     await page.keyboard.press('Escape');
+    await expect(binding).toHaveCount(0);
     await table.getByRole('button', { name: '下一页', exact: true }).click();
     await expect(grid.locator('tbody tr').first().locator('td').nth(1)).toHaveText('21');
     await expect(table.locator('.bulk-tools')).toContainText('已选 1 个对象');
@@ -266,7 +274,7 @@ for (const [tag, file, , type] of lists) test(`${type} four direct actions and p
   await dialog.getByRole('button', { name: '取消', exact: true }).click();
   await expect(dialog).toHaveCount(0);
   await expect(actions().getByRole('button', { name: '删除', exact: true })).toBeFocused();
-  const probe = type === 'instance' ? '/api/database/instances/1001/test-connection' : type === 'server' ? '/api/servers/1001/collect' : '/api/network-devices/1001/probe';
+  const probe = type === 'instance' ? '/api/database/instances/1001/test-connection' : type === 'server' ? '/api/servers/1001/collect-diagnostics' : '/api/network-devices/1001/probe';
   await page.route(`**${probe}`, route => route.fulfill({ status: 503, json: { success: false, error: '隔离测试：目标暂不可达' } }));
   await actions().getByRole('button', { name: '测试', exact: true }).click();
   if (type === 'instance') {
@@ -286,53 +294,166 @@ for (const [tag, file, , type] of lists) test(`${type} four direct actions and p
   await page.screenshot({ path: info.outputPath(`${file}-restricted-isolated.png`), fullPage: true });
 });
 test('preview, failed and empty trials, invalidation, publish and application', async ({ page }) => {
-  let published = false, applied = false, succeed = false, hasSamples = false; const writes: string[] = []; const pack = { id: 'mysql-basic', version: '1.0.0', digest: 'pin', resource_type: 'instance' }; const resolved = { settings: {}, sources: {}, metric_templates: [], metric_sources: {} };
+  const at = '2026-11-21T00:00:00.000Z';
+  const expires = '2026-11-21T00:10:00.000Z';
+  const hash = (digit: string) => 'sha256:' + digit.repeat(64);
+  const templateName = 'MySQL 基础监控';
+  const pin = { template_id: 'tpl-mysql', version: 1, content_hash: hash('b') };
+  const resource = { type: 'instance', id: 1 };
+  const release = { id: 'mysql-basic', version: '1.0.0', digest: hash('c') };
+  const releaseRef = release.id + '@' + release.version + '#' + release.digest;
+  const itemRef = { template_id: pin.template_id, item_id: 'uptime', item_version: 1 };
+  const metric = { id: 'db.uptime_seconds', semantic_version: '1.0.0' };
+  const settings = { enabled: true, interval_ms: 60000, timeout_ms: 5000, stale_after_ms: 120000,
+    max_counter_gap_ms: 300000, max_rows: 100, max_concurrency: 1, max_series_per_resource: 100 };
+  const unbound: TemplateBindingStatus = { source: 'unbound', revision: null, application: null, template_pins: [],
+    pending: null, configuration: null, effective: null, published_at: null };
+  const preview: TemplatePreview = {
+    template: true, resource, revision: 0, resolution_identity: hash('a'), executable: true, settings,
+    parameters: [], releases: [{ release, release_ref: releaseRef, interval_ms: 60000, timeout_ms: 5000,
+      collector_ids: ['mysql-status'], metric_keys: ['db.uptime_seconds@1.0.0'], requests_per_hour_estimate: 60, applicability: [] }],
+    items: [{ ...itemRef, canonical_metric: metric, unit: 's', dimensions: {}, release, release_ref: releaseRef,
+      collector_id: 'mysql-status', implementation_id: 'builtin:mysql.status', enabled: true, decision: 'collect', capability: 'supported' }],
+    excluded: [], budget: { estimated_series_upper_bound: 1, max_series_per_resource: 100, requests_per_hour_estimate: 60 }, plan: {},
+  };
+  let outcome: 'failed' | 'empty' | 'sampled' = 'failed';
+  let applied = false;
+  let hasFormalSample = false;
+  type ApplyRequest = TemplateBindingRequest & { receipt_id: string; caller_key: string };
+  const checks: Array<{ action: string; body: TemplateBindingRequest }> = [];
+  const receipts: string[] = [];
+  const writes: ApplyRequest[] = [];
+  const bindingPath = '/api/metrics/template-bindings/instance/1';
+
+  await page.addInitScript(() => {
+    localStorage.setItem('token', 'fixture.' + btoa(JSON.stringify({ userId: 1, sessionVersion: 1 })) + '.fixture');
+  });
   await page.route('**/api/**', route => {
-    const p = new URL(route.request().url()).pathname; if (!p.startsWith('/api/')) return route.fallback();
-    if (p.endsWith('/catalog')) return route.fulfill({ json: { packages: [{ package: pack, recommendations: {}, documentation: [] }], metrics: [] } });
-    if (p.endsWith('/recommendations')) return route.fulfill({ json: { packages: [{ release: { package: pack }, compatibility: 'compatible', recommended: true, checks: [], coverage: [], missing_core_metrics: [] }] } });
-    if (p.endsWith('/groups')) return route.fulfill({ json: { groups: [] } });
-    // The entry component reads the stored binding source before choosing its
-    // editor. This scenario drives the legacy single-package editor, so the
-    // resource keeps a package binding while the legacy editor's own status
-    // stays unbound until the simulated activation publishes it.
-    if (/\/api\/metrics\/template-bindings\/instance\/\d+$/.test(p)) return route.fulfill({ json: {
-      source: 'package', revision: 1, application: null, template_pins: [], pending: null,
-      configuration: { overrides: {}, group_id: null }, effective: null, published_at: null } });
-    if (p === '/api/metrics/config/bulk') return route.fulfill({ json: { jobs: [] } });
-    if (p.endsWith('/status')) {
-      const status = collectionStatus(published ? 'bound' : 'unbound');
-      status.binding.application = applied ? 'applied' : 'pending'; status.binding.applied_revision = applied ? 1 : null;
-      status.formal_visibility.state = applied ? 'available' : 'pending';
+    const request = route.request();
+    const path = new URL(request.url()).pathname;
+    if (!path.startsWith('/api/')) return route.fallback();
+    if (path.endsWith('/groups')) return route.fulfill({ json: { groups: [] } });
+    if (path.endsWith('/recommendations')) return route.fulfill({ json: { resource, evaluated_at: at, packages: [] } });
+    if (path === '/api/metrics/templates') return route.fulfill({ json: { next_cursor: null, templates: [{
+      template_id: pin.template_id, name: templateName, status: 'active', current_published_version: pin.version,
+      versions: [{ version: pin.version, content_hash: pin.content_hash, status: 'published' }],
+    }] } });
+    if (path === '/api/metrics/templates/' + pin.template_id + '/versions/' + pin.version) return route.fulfill({ json: {
+      ...pin, status: 'published', published_at: at, parameters: { schema: {}, defaults: {} }, source_chain: {},
+      items: [{ item_id: itemRef.item_id, version: 1, display_name: '运行时长', canonical_metric: metric, unit: 's', dimensions: {},
+        collector_ref: { package_release: releaseRef, implementation_id: 'builtin:mysql.status' } }],
+    } });
+    if (path === bindingPath) {
+      const committed = writes.at(-1);
+      if (!committed) return route.fulfill({ json: unbound });
+      const binding: TemplateBindingStatus = {
+        source: 'template', revision: 1, template_pins: [pin], published_at: at,
+        configuration: { group_id: null, overrides: committed.overrides ?? {} },
+        application: { status: applied ? 'applied' : 'pending', applied_revision: applied ? 1 : null,
+          reported_at: applied ? at : null, error_code: null },
+        pending: { base_revision: 0, target_revision: 1, resolution_identity: hash('a'), decided_at: at,
+          operation_key: committed.caller_key, plan: { settings, parameters: [], releases: [], excluded: [] } },
+        effective: applied ? { revision: 1, resolution_identity: hash('a') } : null,
+      };
+      return route.fulfill({ json: binding });
+    }
+    if (path.endsWith('/status')) {
+      const status = collectionStatus(writes.length ? 'bound' : 'unbound');
+      if (writes.length) {
+        status.binding = { ...status.binding, package: null, application: applied ? 'applied' : 'pending', applied_revision: applied ? 1 : null };
+        status.formal_visibility = { state: hasFormalSample ? 'available' : applied ? 'waiting_sample' : 'pending',
+          source: hasFormalSample ? 'semantic' : 'none', last_observed_at: hasFormalSample ? at : null, generation: hasFormalSample ? 1 : null };
+      }
       return route.fulfill({ json: status });
     }
-    if (p.endsWith('/access')) return route.fulfill({ json: { can_manage: true } });
-    if (p.endsWith('/attempts')) return route.fulfill({ json: [] });
-    if (p.endsWith('/effective')) return route.fulfill({ json: { resolved } });
-    if (p.endsWith('/preview')) return route.fulfill({ json: { affected_resources: 1, resources: [{ resolved }] } });
-    if (p.endsWith('/trial')) return route.fulfill({ json: { decision: 'attempted', attempts: [{ status: succeed ? 'succeeded' : 'failed' }], samples: hasSamples ? [{ metric: { id: 'db.uptime_seconds', semantic_version: '1.0.0' }, unit: 's', value: { encoding: 'float64', value: 60 }, quality: { status: 'good' } }] : [] } });
-    if (p.endsWith('/activate')) { writes.push(p); published = true; return route.fulfill({ json: {} }); }
-    return route.fulfill({ status: published ? 200 : 404, json: published ? { binding: { package: pack, revision: 1, group_id: null, overrides: {} }, application: { status: applied ? 'applied' : 'pending', applied_revision: applied ? 1 : null } } : { error: 'POLICY_NOT_FOUND' } });
+    if (path === bindingPath + '/probe' || path === bindingPath + '/preview') {
+      const action = path.endsWith('/probe') ? 'probe' : 'preview';
+      checks.push({ action, body: request.postDataJSON() });
+      return route.fulfill({ json: action === 'preview' ? preview : { template: true, resource, revision: 0,
+        probed_at: at, expires_at: expires, capabilities: [{ resource_id: '1', metric, status: 'supported', method: 'sql',
+          basis: [{ kind: 'method', evidence: 'mysql-status' }], evaluated_at: at, valid_until: expires }] } });
+    }
+    if (path === bindingPath + '/trial') {
+      const { receipt_id } = request.postDataJSON() as { receipt_id: string };
+      receipts.push(receipt_id);
+      const passed = outcome !== 'failed';
+      const trial: TemplateTrial = {
+        trial: true, persisted: false, decision: 'attempted', receipt_id, expires_at: expires, resolution_identity: hash('a'),
+        items: [{ ...itemRef, phases: { read: passed, transform: passed, unit: passed } }], optional_exclusions: [],
+        samples: outcome === 'sampled' ? [{ ...itemRef, metric, value: 60, unit: 's', observed_at: at, quality: { status: 'good' },
+          read: { collector_id: 'mysql-status', attempt_ids: ['trial-attempt'], status: 'succeeded' }, transform: { version: '1' },
+          unit_check: { input_unit: 's', output_unit: 's' } }] : [],
+        attempts: [{ collector_id: 'mysql-status', status: passed ? 'succeeded' : 'failed', ...(!passed && { error: '目标采集失败' }) }],
+        releases: [{ release_ref: releaseRef, decision: 'attempted' }],
+      };
+      return route.fulfill({ json: trial });
+    }
+    if (path === bindingPath + '/apply') {
+      const body = request.postDataJSON() as ApplyRequest;
+      writes.push(body);
+      return route.fulfill({ json: { kind: 'committed', revision: 1, resolution_identity: hash('a'),
+        operation: { key: 'apply-operation', caller_key: body.caller_key, receipt_id: body.receipt_id, status: 'committed' } } });
+    }
+    return route.fulfill({ status: 404, json: { error: 'NOT_FOUND' } });
   });
-  await page.setViewportSize({ width: 375, height: 900 }); await fixture(page, '<metric-configuration resourceid="1"></metric-configuration>', 'components/metric-configuration');
-  await page.getByRole('button', { name: '检查并启用', exact: true }).click();
-  const preview = page.getByRole('button', { name: '预检与影响预览' }), trial = page.getByRole('button', { name: '试采', exact: true }), publish = page.getByRole('button', { name: '发布', exact: true });
-  await preview.click(); await trial.click(); await expect(publish).toBeDisabled();
-  succeed = true;
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await fixture(page, '<metric-configuration resourceid="1"></metric-configuration>', 'components/metric-configuration');
+  const check = page.getByRole('button', { name: '检查配置', exact: true });
+  const trial = page.getByRole('button', { name: '试采', exact: true });
+  const publish = page.getByRole('button', { name: '首次绑定并启用', exact: true });
+  const stateFacts = page.locator('.state-card dl.facts');
+
+  await page.getByRole('checkbox', { name: '选择模板 ' + templateName }).check();
+  await expect(page.getByRole('combobox', { name: '模板版本 ' + templateName })).toHaveValue('1');
+  await check.click();
+  await expect(trial).toBeEnabled();
+  const candidate = { expected_revision: 0, template_pins: [pin], overrides: {}, group_id: null };
+  expect(checks).toEqual([{ action: 'probe', body: candidate }, { action: 'preview', body: candidate }]);
   await trial.click();
-  await expect(page.getByText('试采未返回样本，不能发布。请检查指标是否启用并重新试采。', { exact: true })).toBeVisible();
+  await expect(page.getByRole('alert').filter({ hasText: '采集尝试错误' })).toContainText('目标采集失败');
+  await expect(publish).toBeDisabled();
+
+  outcome = 'empty';
+  await trial.click();
+  await expect(page.getByText('采集尝试错误', { exact: true })).toHaveCount(0);
+  await expect(page.getByText('试采未满足启用门禁', { exact: false })).toBeVisible();
+  await expect(page.getByText('本次返回 0 个样本', { exact: false })).toBeVisible();
   await expect(publish).toBeDisabled();
   expect(writes).toHaveLength(0);
-  hasSamples = true;
-  await trial.click(); await expect(publish).toBeEnabled();
-  await page.keyboard.press('Escape');
-  await page.getByRole('switch', { name: '启用此对象采集' }).check();
-  await page.getByRole('button', { name: '检查并启用', exact: true }).click();
-  await expect(trial).toBeDisabled(); await expect(publish).toBeDisabled();
-  await page.keyboard.press('Escape');
-  await page.getByRole('switch', { name: '启用此对象采集' }).uncheck();
-  await page.getByRole('button', { name: '检查并启用', exact: true }).click();
-  await preview.click(); await trial.click(); await publish.click(); await expect(page.locator('.state-card .collection-facts')).toContainText('发布 1'); await expect(page.locator('.state-card .collection-facts')).toContainText('等待应用'); expect(writes).toHaveLength(1); applied = true; await page.keyboard.press('Escape'); await page.getByText('最近正式采集尝试与技术证据', { exact: true }).click(); await page.getByRole('button', { name: '重新加载', exact: true }).click(); await expect(page.locator('.state-card .collection-facts')).toContainText('应用 1'); await expect(page.locator('.state-card .collection-facts')).toContainText('已应用'); expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+
+  outcome = 'sampled';
+  await trial.click();
+  await expect(page.getByText('试采通过', { exact: true })).toBeVisible();
+  await expect(publish).toBeEnabled();
+  const enabled = page.getByRole('switch', { name: '启用此对象采集' });
+  await enabled.uncheck();
+  await expect(trial).toBeDisabled();
+  await expect(publish).toBeDisabled();
+  await enabled.check();
+  await expect(trial).toBeDisabled();
+  await expect(publish).toBeDisabled();
+  expect(writes).toHaveLength(0);
+  await check.click();
+  await trial.click();
+  await publish.click();
+  await expect(page.getByText('配置已提交，目标版本 1', { exact: false })).toBeVisible();
+  await expect(stateFacts.getByText('目标版本 1', { exact: false })).toBeVisible();
+  await expect(stateFacts.getByText('尚未收到正式首样本', { exact: true })).toBeVisible();
+  expect(writes).toHaveLength(1);
+  expect(new Set(receipts).size).toBe(4);
+  expect(writes[0]).toMatchObject({ ...candidate, overrides: { enabled: 'enable' }, receipt_id: receipts.at(-1), caller_key: expect.any(String) });
+
+  applied = true;
+  await page.getByRole('button', { name: '重新加载配置', exact: true }).click();
+  await expect(stateFacts.getByText('无待应用版本', { exact: true })).toBeVisible();
+  await expect(stateFacts.getByText('已应用 · 已应用 1', { exact: true })).toBeVisible();
+  await expect(stateFacts.getByText('尚未收到正式首样本', { exact: true })).toBeVisible();
+  await expect(stateFacts.getByText('待样本', { exact: true })).toBeVisible();
+  hasFormalSample = true;
+  await page.getByRole('button', { name: '刷新状态', exact: true }).click();
+  await expect(stateFacts.getByText('正式可用 · 第 1 代', { exact: true })).toBeVisible();
+  await expect(stateFacts.getByText('尚未收到正式首样本', { exact: true })).toHaveCount(0);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
 });
 test('shows an empty network device list', async ({ page }) => {
   await page.route('**/api/**', route => { const p = new URL(route.request().url()).pathname; if (!p.startsWith('/api/')) return route.fallback(); return route.fulfill({ json: p.endsWith('/catalog') ? { packages: [], metrics: [] } : p === '/api/resources' ? { items: [{ resource: { type: 'instance', id: 1 }, label: '订单数据库' }] } : [] }); });

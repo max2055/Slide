@@ -10,11 +10,18 @@ for (const width of [390, 1280]) for (const canBackup of [true, false]) {
     }, canBackup);
     let schedule = { enabled: true, dailyTime: '00:00', timeZone: 'Asia/Shanghai', lastRun: null };
     const writes: unknown[] = [];
-    await page.route('**/api/metrics/query', route => route.fulfill({ json: {
-      profile: { columns: [] },
-      window: { from: '2026-09-18T00:00:00Z', to: '2026-09-18T00:01:00Z' },
-      metrics: [],
-    } }));
+    await page.route('**/api/metrics/latest', route => {
+      const resource = { type: 'network_device', id: 7 };
+      const at = '2026-09-18T00:00:00Z';
+      expect(route.request().postDataJSON()).toEqual(resource);
+      return route.fulfill({ json: { resource, evaluated_at: at, metrics: [{
+        definition: { id: 'network_device.cpu.utilization_percent', semantic_version: '1.0.0',
+          kind: 'gauge', value_type: 'float64', unit: '%', meaning: '设备 CPU 使用率' },
+        state: 'available',
+        series: [{ dimensions: {}, observed_at: at, value: { encoding: 'float64', value: 25 },
+          unit: '%', quality: { status: 'good' }, freshness: 'fresh', accuracy: 'exact' }],
+      }] } });
+    });
     await page.route('**/api/network-devices/7**', route => {
       const url = new URL(route.request().url()).pathname;
       if (url.endsWith('/backup-schedule')) {
@@ -36,10 +43,12 @@ for (const width of [390, 1280]) for (const canBackup of [true, false]) {
     await page.goto('/network-schedule-fixture');
     await expect(page.getByRole('heading', { name: '测试交换机' })).toBeVisible();
     await expect(page.getByRole('heading', { name: '当前需要关注' })).toBeVisible();
-    await expect(page.locator('semantic-metrics')).toHaveCount(0);
+    await expect(page.locator('resource-metric-browser')).toHaveCount(0);
     await page.getByRole('tab', { name: '指标与趋势', exact: true }).click();
-    await expect(page.getByText('标准指标与能力', { exact: true })).toBeVisible();
-    await expect(page.getByText('模板扩展指标', { exact: true })).toBeVisible();
+    const metrics = page.locator('resource-metric-browser');
+    await expect(metrics.getByRole('heading', { name: '最新采集数据' })).toBeVisible();
+    await expect(metrics.getByText('25 %', { exact: true })).toBeVisible();
+    await expect(metrics.locator('time')).toHaveAttribute('datetime', '2026-09-18T00:00:00Z');
     await page.getByRole('tab', { name: '配置备份', exact: true }).click();
     await expect(page.getByLabel('每日执行时间', { exact: true })).toHaveValue('00:00');
     await expect(page.getByLabel('启用每日定时备份')).toBeChecked();
@@ -66,7 +75,7 @@ for (const width of [390, 1280]) for (const canBackup of [true, false]) {
     await interfacesTab.click();
     await expect(interfacesTab).toHaveClass(/active/);
     await expect(interfacesTab).toHaveAttribute('aria-selected', 'true');
-    await expect(page.locator('semantic-metrics')).toHaveCount(0);
+    await expect(page.locator('resource-metric-browser')).toHaveCount(0);
     await expect(page.getByText('尚未取得接口记录', { exact: true })).toBeVisible();
     await expect(page.getByLabel('接口名称或别名', { exact: true })).toBeVisible();
     await page.getByRole('tab', { name: '关联资源', exact: true }).click();

@@ -53,9 +53,12 @@ for (const [width,height] of [[1366,768],[1440,900],[1920,1080]]) {
     await expect(templates.getByRole('heading',{name:'Linux 服务器'})).toBeVisible();
     await expect(templates.getByRole('tab',{name:'自动发现 1'})).toHaveAttribute('aria-selected','true');
     await expect(templates.getByText('挂载点发现',{exact:true})).toBeVisible();
-    await expect(templates.getByText('20 秒',{exact:true})).toBeVisible();
-    await expect(templates.getByText('30 天',{exact:true})).toBeVisible();
-    await expect(templates.getByText('365 天',{exact:true})).toBeVisible();
+    await expect(templates.getByText('模板默认采集周期 · 20 秒',{exact:true})).toBeVisible();
+    await templates.getByRole('tab',{name:'监控项 1',exact:true}).click();
+    const itemRow = templates.getByRole('row').filter({hasText:'系统运行时长'});
+    await expect(itemRow.getByText('使用默认周期',{exact:true})).toBeVisible();
+    await expect(itemRow.getByText('平台默认 · 30 天',{exact:true})).toBeVisible();
+    await expect(itemRow.getByText('平台默认 · 365 天',{exact:true})).toBeVisible();
     await expect(templates.getByRole('button',{name:'克隆',exact:true})).toBeInViewport();
     await expect(templates.getByLabel('模板名称',{exact:true})).toHaveCount(0);
 
