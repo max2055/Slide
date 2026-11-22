@@ -493,6 +493,11 @@ const serveWithRaw = (data: unknown, raw: unknown | (() => unknown)) => authFetc
 });
 const rawCalls = () => authFetch.mock.calls.filter(call => call[0] === '/api/metrics/observations');
 const rawBody = (index: number) => JSON.parse(rawCalls()[index][1].body);
+const deferredRawResponse = () => {
+  let resolve!: (response: unknown) => void;
+  const promise = new Promise(resolveResponse => { resolve = resolveResponse; });
+  return { promise, resolve };
+};
 const rawHistory = (dimensions: Record<string, string> = { device: 'sda' }) => {
   const data = withBuckets([bucketAt(0), bucketAt(1)]);
   const metric = data.metrics[0];
@@ -507,8 +512,8 @@ it.each([200, 400, 401, 403])('ignores a late raw response (%s) after switching 
   second.definition.id = 'mysql.key_cache.used_percent';
   second.series[0].dimensions = { device: 'sdb' };
   data.metrics.push(second);
-  const oldRequest = Promise.withResolvers<unknown>();
-  const newRequest = Promise.withResolvers<unknown>();
+  const oldRequest = deferredRawResponse();
+  const newRequest = deferredRawResponse();
   const requests = [oldRequest.promise, newRequest.promise];
   serveWithRaw(data, () => requests.shift());
   const el = await mount();
@@ -543,8 +548,8 @@ it('refreshes open observations with the new window and uses only its cursor for
   const initial = rawHistory();
   const refreshed = rawHistory();
   refreshed.window = { from: bucketAt(1).window.from, to: bucketAt(2).window.to };
-  const oldNext = Promise.withResolvers<unknown>();
-  const newFirst = Promise.withResolvers<unknown>();
+  const oldNext = deferredRawResponse();
+  const newFirst = deferredRawResponse();
   const responses = [
     ok(rawPage({ total: 99, has_more: true, next_cursor: 'old-cursor' })),
     oldNext.promise,
@@ -612,7 +617,7 @@ it('keeps the cursor on an unchanged scope and reloads on a semantic version cha
 });
 
 it('clears displayed observations and ignores pending pages when permissions change', async () => {
-  const page = Promise.withResolvers<unknown>();
+  const page = deferredRawResponse();
   const responses = [ok(rawPage({ has_more: true, next_cursor: 'cursor-2' })), page.promise];
   serveWithRaw(rawHistory(), () => responses.shift());
   const el = await mount();
