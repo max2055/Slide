@@ -504,6 +504,7 @@ function fakeStore(behavior: {
 }) {
   const executed: string[] = [];
   const connection = {
+    reset: vi.fn(async () => {}),
     beginTransaction: vi.fn(async () => { if (behavior.begin === 'throw') throw new Error('begin failed'); }),
     execute: vi.fn(async (sql: string) => {
       executed.push(sql);
@@ -513,10 +514,7 @@ function fakeStore(behavior: {
     }),
     commit: vi.fn(async () => { if (behavior.commit === 'throw') throw new Error('commit receipt lost'); }),
     rollback: vi.fn(async () => { if (behavior.rollback === 'throw') throw new Error('rollback failed'); }),
-    query: vi.fn(async (sql: string) => {
-      if (String(sql).includes('tx_state')) return [[{ innodb_pending: 0, tx_state: 'COMMITTED' }]];
-      return connection.execute(sql);
-    }),
+    query: vi.fn(async (_sql: string) => {}),
     release: vi.fn(),
     destroy: vi.fn(),
   };
@@ -555,29 +553,34 @@ describe('removal intent classification', () => {
     expect(lost.connection.release).not.toHaveBeenCalled();
     expect(lost.connection.destroy).toHaveBeenCalledOnce();
   });
-  it('reads a clean connection and destroys one that still has a transaction', async () => {
-    const dirty = {
-      query: vi.fn(async () => [[{ innodb_pending: 1, tx_state: 'ACTIVE' }]]),
-      execute: vi.fn(async () => [[{ lifecycle_state: 'deleting' }]]),
-      release: vi.fn(),
-      destroy: vi.fn(),
-    };
-    const clean = {
-      query: vi.fn(async (sql: string) => String(sql).includes('tx_state') ? [[{ innodb_pending: 0, tx_state: 'COMMITTED' }]] : [[{ lifecycle_state: 'available' }]]),
-      execute: vi.fn(async () => [[{ lifecycle_state: 'available' }]]),
-      release: vi.fn(),
-      destroy: vi.fn(),
-    };
-    const queued = [dirty, clean];
-    const pool = { getConnection: vi.fn(async () => queued.shift()), execute: vi.fn() };
-    const store = new MysqlInstanceRemovalStore(() => pool as any);
+  it('resets the session before confirming committed state in a read-only transaction', async () => {
+    const { store, connection } = fakeStore({});
     await expect(store.observe(4)).resolves.toBe('available');
-    expect(dirty.execute).not.toHaveBeenCalled();
-    expect(dirty.release).not.toHaveBeenCalled();
-    expect(dirty.destroy).toHaveBeenCalledOnce();
-    expect(clean.execute).toHaveBeenCalledOnce();
-    expect(clean.release).toHaveBeenCalledOnce();
-    expect(pool.execute).not.toHaveBeenCalled();
+    expect(connection.reset).toHaveBeenCalledBefore(connection.query);
+    expect(connection.query).toHaveBeenCalledExactlyOnceWith('SET TRANSACTION ISOLATION LEVEL READ COMMITTED, READ ONLY');
+    expect(connection.query).toHaveBeenCalledBefore(connection.beginTransaction);
+    expect(connection.beginTransaction).toHaveBeenCalledBefore(connection.execute);
+    expect(connection.execute).toHaveBeenCalledExactlyOnceWith('SELECT lifecycle_state FROM database_instances WHERE id = ?', [4]);
+    expect(connection.commit).not.toHaveBeenCalled();
+    expect(connection.release).not.toHaveBeenCalled();
+    expect(connection.destroy).toHaveBeenCalledOnce();
+  });
+
+  it('discards the connection when session reset or the lifecycle read fails', async () => {
+    const resetFailure = fakeStore({});
+    resetFailure.connection.reset.mockRejectedValueOnce(new Error('reset failed'));
+    await expect(resetFailure.store.observe(4)).rejects.toThrow('reset failed');
+    expect(resetFailure.connection.beginTransaction).not.toHaveBeenCalled();
+    expect(resetFailure.connection.execute).not.toHaveBeenCalled();
+    expect(resetFailure.connection.release).not.toHaveBeenCalled();
+    expect(resetFailure.connection.destroy).toHaveBeenCalledOnce();
+
+    const readFailure = fakeStore({});
+    readFailure.connection.execute.mockRejectedValueOnce(new Error('read failed'));
+    await expect(readFailure.store.observe(4)).rejects.toThrow('read failed');
+    expect(readFailure.connection.commit).not.toHaveBeenCalled();
+    expect(readFailure.connection.release).not.toHaveBeenCalled();
+    expect(readFailure.connection.destroy).toHaveBeenCalledOnce();
   });
   it('returns deleted without rewriting a tombstone and records reasons only while deleting', async () => {
     const deleted = fakeStore({ rows: [{ lifecycle_state: 'deleted' }] });

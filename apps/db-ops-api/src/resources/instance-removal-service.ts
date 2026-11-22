@@ -209,36 +209,22 @@ export class MysqlInstanceRemovalStore implements RemovalStore {
   private isolate(connection: PoolConnection): void {
     try { connection.destroy(); } catch { /* the slot is already detached or the socket is gone */ }
   }
-  private async cleanConnection(): Promise<PoolConnection> {
-    const pool = this.pool();
-    for (let attempt = 0; attempt < 8; attempt++) {
-      const connection = await pool.getConnection();
-      try {
-        const [rows] = await connection.query<any[]>(`SELECT
-          (SELECT COUNT(*) FROM information_schema.innodb_trx WHERE trx_mysql_thread_id = CONNECTION_ID()) AS innodb_pending,
-          (SELECT c.state FROM performance_schema.events_transactions_current c
-             JOIN performance_schema.threads t ON t.thread_id = c.thread_id
-             WHERE t.processlist_id = CONNECTION_ID() LIMIT 1) AS tx_state`);
-        const open = Number(rows?.[0]?.innodb_pending) > 0 || rows?.[0]?.tx_state === 'ACTIVE';
-        if (!open) return connection;
-      } catch (error) {
-        this.isolate(connection);
-        throw error;
-      }
-      this.isolate(connection);
-    }
-    throw new Error('INSTANCE_REMOVAL_OBSERVE_DIRTY');
-  }
   async observe(id: number): Promise<RemovalLifecycle | null> {
-    const connection = await this.cleanConnection();
+    const connection = await this.pool().getConnection();
     try {
+      // Reset rolls back any inherited transaction before START TRANSACTION
+      // can commit it. It also clears session state without diagnostic grants.
+      await connection.reset();
+      await connection.query('SET TRANSACTION ISOLATION LEVEL READ COMMITTED, READ ONLY');
+      await connection.beginTransaction();
       const [rows] = await connection.execute<any[]>('SELECT lifecycle_state FROM database_instances WHERE id = ?', [id]);
       if (!rows.length) return null;
       const state = rows[0].lifecycle_state;
       if (state === 'available' || state === 'deleting' || state === 'deleted') return state;
       throw new Error('INSTANCE_REMOVAL_STATE_UNKNOWN');
     } finally {
-      try { connection.release(); } catch { this.isolate(connection); }
+      // Disconnect to end the read transaction and discard reset session settings.
+      this.isolate(connection);
     }
   }
   async detach(id: number): Promise<void> {
