@@ -644,18 +644,24 @@ export class EventManagementPage extends LitElement {
     return stats;
   }
 
+  private async _readEventMttr(): Promise<MTTREntry | null> {
+    const res = await authFetch(`${API_BASE}/alerts/events/mttr`, { cache: 'no-store' });
+    if (res.status === 401 || res.status === 403) throw new EventListAccessError('无权访问事件');
+    return res.ok ? res.json() : null;
+  }
+
   private async _loadEvents() {
     const request = ++this.listRequest;
     const scope = this.listScope;
     if (this.listPosition?.key !== this.listPositionKey) this.listPosition = undefined;
     this.retryLoading = true;
-    let denied = false;
     const read = <T>(operation: Promise<T>) => operation.catch(error => {
-      if (request === this.listRequest && !denied && error instanceof EventListAccessError) {
-        denied = true;
+      if (request === this.listRequest && error instanceof EventListAccessError) {
+        this.listRequest++;
         this.listPosition = undefined;
         this.loadedListScope = '';
         this.events = [];
+        this.eventsPage = 0;
         this.eventsTotal = null;
         this.stats = null;
         this.statsError = false;
@@ -663,27 +669,28 @@ export class EventManagementPage extends LitElement {
         this.closeDetail();
         this.loadError = error.message;
         this.loading = false;
+        this.retryLoading = false;
       }
       throw error;
     });
     const [list, stats, mttr] = await Promise.allSettled([
       read(this._readEventList()),
       read(this._readEventStats()),
-      authFetch(`${API_BASE}/alerts/events/mttr`, { cache: 'no-store' }).then(res => res.ok ? res.json() : null),
+      read(this._readEventMttr()),
     ]);
     if (request !== this.listRequest) return;
     const key = this.listPositionKey;
-    if (!denied && this.loadedListScope === scope) this._rememberListPosition(key);
-    const readable = !denied && list.status === 'fulfilled';
-    this.loadError = denied ? '无权访问事件' : list.status === 'fulfilled' ? null
+    if (this.loadedListScope === scope) this._rememberListPosition(key);
+    const readable = list.status === 'fulfilled';
+    this.loadError = readable ? null
       : list.reason instanceof Error ? list.reason.message : '事件暂不可读';
-    if (this.loadError && !denied) this.closeDetail();
+    if (this.loadError) this.closeDetail();
     this.events = readable ? list.value.items : [];
     this.eventsTotal = readable ? list.value.total : null;
     this.loadedListScope = readable ? scope : '';
-    this.stats = !denied && stats.status === 'fulfilled' ? stats.value : null;
-    this.statsError = !denied && stats.status === 'rejected';
-    this.mttr = !denied && mttr.status === 'fulfilled' ? mttr.value : null;
+    this.stats = stats.status === 'fulfilled' ? stats.value : null;
+    this.statsError = stats.status === 'rejected';
+    this.mttr = mttr.status === 'fulfilled' ? mttr.value : null;
     if (this.eventsTotal !== null) {
       const lastPage = Math.max(0, Math.ceil(this.eventsTotal / this.eventsPageSize) - 1);
       if (this.eventsPage > lastPage) {

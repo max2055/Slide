@@ -294,6 +294,58 @@ describe('latest event list query', () => {
     await current;
     expect(page.retryLoading).toBe(false);
   });
+  it('clears aggregate rows, counts, pagination and scroll on MTTR 403 while the other reads are pending', async () => {
+    const page = new EventManagementPage() as any;
+    const row = { id: 'previous' };
+    const stats = { total: 120, open: 0, investigating: 0, handled: 0, resolved: 0, closed: 0 };
+    page.activeListTab = 'other';
+    page.events = [row];
+    page.eventsPage = 1;
+    page.eventsTotal = 120;
+    page.stats = stats;
+    page.mttr = { avg_mttr_minutes: 20 };
+    page.listPosition = { key: page.listPositionKey, mainTop: 960, listTop: 0 };
+    let finishList!: (value: Response) => void;
+    let finishStats!: (value: Response) => void;
+    vi.mocked(authFetch)
+      .mockImplementationOnce(() => new Promise(resolve => { finishList = resolve; }))
+      .mockImplementationOnce(() => new Promise(resolve => { finishStats = resolve; }))
+      .mockResolvedValueOnce({ ...response({}, false), status: 403 });
+
+    const pending = page._loadEvents();
+    await vi.waitFor(() => expect(page.loadError).toBe('无权访问事件'));
+    expect(page.events).toEqual([]);
+    expect(page.eventsTotal).toBeNull();
+    expect(page.eventsPage).toBe(0);
+    expect(page.stats).toBeNull();
+    expect(page.mttr).toBeNull();
+    expect(page.listPosition).toBeUndefined();
+    expect(page.retryLoading).toBe(false);
+
+    vi.mocked(authFetch).mockResolvedValueOnce(response({ items: [{ id: 'restored' }], total: 120 }))
+      .mockResolvedValueOnce(response(stats)).mockResolvedValueOnce(response(null));
+    await page._loadEvents();
+    expect(vi.mocked(authFetch).mock.calls[3][0]).toContain('offset=0&status=other');
+    finishList(response({ items: [row], total: 120 }));
+    finishStats(response(stats));
+    await pending;
+    expect(page.events).toEqual([{ id: 'restored' }]);
+    expect(page.loadError).toBeNull();
+    expect(page.listPosition).toBeUndefined();
+  });
+  it('keeps the successful aggregate list and statistics when only MTTR returns 503', async () => {
+    const page = new EventManagementPage() as any;
+    const rows = [{ id: 'valid' }];
+    const stats = { total: 1, open: 0, investigating: 0, handled: 0, resolved: 1, closed: 0, avg_resolution_time: 12 };
+    vi.mocked(authFetch).mockResolvedValueOnce(response({ items: rows, total: 1 }))
+      .mockResolvedValueOnce(response(stats)).mockResolvedValueOnce(response({}, false));
+    await page._loadEvents();
+    expect(page.events).toEqual(rows);
+    expect(page.stats).toEqual(stats);
+    expect(page.mttr).toBeNull();
+    expect(page.loadError).toBeNull();
+    expect(page.statsError).toBe(false);
+  });
   it.each([{ items: [] }, { items: [{ id: '1', title: 'recovered', severity: 'warning', status: 'open' }] }])('renders the actual list result after successful retry %j', async ({ items }) => {
     vi.mocked(authFetch).mockResolvedValue(response({}, false));
     const page = new EventManagementPage() as any;
