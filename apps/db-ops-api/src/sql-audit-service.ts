@@ -113,9 +113,37 @@ function postgresEscapeCharacter(value: string): string {
   if (/^[0-7]+$/.test(code)) return String.fromCharCode(Number.parseInt(code, 8) & 0xff);
   if (/^[xuU][0-9a-f]+$/i.test(code)) {
     const number = Number.parseInt(code.slice(1), 16);
-    return number <= 0x7f ? String.fromCharCode(number) : '';
+    return number <= 0x7f ? String.fromCharCode(number) : '\ufffd';
   }
   return ({ b: '\b', f: '\f', n: '\n', r: '\r', t: '\t' } as Record<string, string>)[code] ?? code;
+}
+
+function readPostgresAuditEscape(sql: string, start: number): { value: string; end: number } | undefined {
+  const dollar = /(?<tag>\$(?:[A-Za-z_]\w*)?\$)(?<value>.*?)\k<tag>/sy;
+  dollar.lastIndex = start;
+  const dollarString = dollar.exec(sql);
+  if (dollarString) return { value: dollarString.groups!.value, end: dollar.lastIndex };
+
+  // Only the first segment carries E. Escape sequences end at the segment
+  // boundary even when more string content follows on the next line.
+  const escaped = /^[eE]'/.test(sql.slice(start, start + 2));
+  const quoted = escaped ? /'(?:''|\\[\s\S]|[^'\\])*'/y : /'(?:''|[^'])*'/y;
+  const backslash = /''|\\(?:[0-7]{1,3}|x[\da-fA-F]{1,2}|u[\da-fA-F]{4}|U[\da-fA-F]{8}|[\s\S])/g;
+  // CR and LF both permit continuation. Line comments are allowed in the
+  // gap, while a block comment terminates the quoted string token.
+  const continuation = /[ \t\f]*(?:--[^\r\n]*)?[\r\n](?:[ \t\r\n\f]|--[^\r\n]*[\r\n])*'/y;
+  let value = '';
+  quoted.lastIndex = start + (escaped ? 1 : 0);
+  for (let segment = quoted.exec(sql); segment; segment = quoted.exec(sql)) {
+    const content = segment[0].slice(1, -1);
+    value += escaped
+      ? content.replace(backslash, match => match === "''" ? "'" : postgresEscapeCharacter(match))
+      : content.replaceAll("''", "'");
+    continuation.lastIndex = quoted.lastIndex;
+    if (!continuation.test(sql)) return { value, end: quoted.lastIndex };
+    quoted.lastIndex = continuation.lastIndex - 1;
+  }
+  return undefined;
 }
 
 // Lightweight lexical context for advisory rules, not an execution validator.
@@ -126,7 +154,6 @@ function auditTokens(sql: string, dialect?: string): AuditToken[] {
   const parts = dialect === 'mysql' ? mysqlAuditParts : dialect === 'postgresql' ? postgresAuditParts : auditParts;
   const scanner = new RegExp(parts);
   const escapeClause = /UESCAPE(?![\p{L}\p{N}_$])/iuy;
-  const escapeValue = /'(?<single>[^'])'|[eE]'(?<eString>\\(?:[0-7]{1,3}|x[\da-fA-F]{1,2}|u[\da-fA-F]{4}|U[\da-fA-F]{8}|[^'])|[^'\\])'|(?<tag>\$(?:[A-Za-z_]\w*)?\$)(?<dollar>.)\k<tag>/suy;
   let depth = 0;
   for (let match = scanner.exec(sql); match; match = scanner.exec(sql)) {
     const text = match[0];
@@ -139,11 +166,9 @@ function auditTokens(sql: string, dialect?: string): AuditToken[] {
       escapeClause.lastIndex = skipPostgresAuditTrivia(sql, scanner.lastIndex);
       let escape: string | undefined;
       if (escapeClause.test(sql)) {
-        escapeValue.lastIndex = skipPostgresAuditTrivia(sql, escapeClause.lastIndex);
-        const value = escapeValue.exec(sql);
-        const escaped = value?.groups?.eString;
-        escape = escaped === undefined ? value?.groups?.single ?? value?.groups?.dollar ?? '' : postgresEscapeCharacter(escaped);
-        if (value) scanner.lastIndex = escapeValue.lastIndex;
+        const argument = readPostgresAuditEscape(sql, skipPostgresAuditTrivia(sql, escapeClause.lastIndex));
+        escape = argument?.value ?? '';
+        if (argument) scanner.lastIndex = argument.end;
       }
       const identifier = decodePostgresIdentifier(match.groups.unicodeName, escape);
       // regclass accepts ordinary quoted names as input, without U& or UESCAPE.

@@ -81,6 +81,14 @@ describe('MAX-545 / #594: audit context table names', () => {
     [String.raw`WITH u&"e!+000076ents" /* nested /* note */ comment */ UESCAPE '!' AS (SELECT 1 id) TABLE events`, []],
     [String.raw`WITH U&"e!0076ents" UESCAPE $$!$$ AS (SELECT 1 id) TABLE events`, []],
     [String.raw`WITH U&"e!0076ents" UESCAPE E'\x21' AS (SELECT 1 id) TABLE events`, []],
+    [`WITH U&"e!0076ents" UESCAPE '!'
+'' AS (SELECT 1 id) TABLE events`, []],
+    [`SELECT id FROM U&"e!0076ents" UESCAPE ''\r'!'`, ['"events"']],
+    [String.raw`WITH U&"e!0076ents" UESCAPE E'' -- first segment is empty
+'\x21' -- the only decoded character
+'' AS (SELECT 1 id) TABLE events`, []],
+    [String.raw`SELECT id FROM U&"e!0076ents" UESCAPE E'\x2'
+'1'`, []],
     [String.raw`WITH U&"e!!vents" UESCAPE '!' AS (SELECT 1 id) TABLE "e!vents"`, []],
     [String.raw`WITH U&"a\D83D\DE00""b" AS (SELECT 1 id) TABLE "a😀""b"`, []],
     [String.raw`TABLE U&"Some\002eSchema".U&"\0045v""ents"`, ['"Some.Schema"."Ev""ents"']],
@@ -217,6 +225,8 @@ it.skipIf(process.env.SQL_AUDIT_PG_TEST !== '1')('resolves PostgreSQL catalog ev
     for (const quoted of [
       'WITH events AS (SELECT 999 AS id) SELECT id FROM "Events"',
       String.raw`WITH events AS (SELECT 999 AS id) SELECT id FROM U&"!0045vents" UESCAPE '!'`,
+      `WITH events AS (SELECT 999 AS id) SELECT id FROM U&"!0045vents" UESCAPE ''
+'!'`,
     ]) {
       expect((await pgClient.query(quoted)).rows).toEqual([{ id: 3 }]);
       await sqlAuditService.submitAudit(quoted, 1, actor);
