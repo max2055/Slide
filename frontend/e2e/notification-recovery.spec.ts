@@ -34,12 +34,12 @@ test('503 persists and keyboard retry restores rows then confirmed empty state',
   await expect(view.getByRole('alert')).toContainText('HTTP 503');
   await expect(view.getByText('没有待重放的通知', { exact: true })).toHaveCount(0);
   await expect(page.locator('app-toast-container').getByText(/加载通知死信失败/)).toHaveCount(0);
-  state = 'rows'; const retry = view.getByRole('button', { name: '重试', exact: true });
+  state = 'rows'; const retry = view.getByRole('button', { name: '重试读取死信', exact: true });
   await retry.focus(); await page.keyboard.press('Enter');
   await expect(view.locator('tbody tr')).toHaveCount(1); await expect(view).toContainText(job.id);
   await expect(view.getByRole('alert')).toHaveCount(0);
   await page.screenshot({ path: info.outputPath('rows-page.png'), fullPage: true });
-  state = 'empty'; await view.getByRole('button', { name: '刷新通知投递记录' }).click();
+  state = 'empty'; await view.getByRole('button', { name: '刷新通知死信' }).click();
   await expect(view.getByText('没有待重放的通知', { exact: true })).toBeVisible();
   await expect(view.locator('tbody tr')).toHaveCount(0);
 });
@@ -54,13 +54,13 @@ for (const width of [1280, 390]) for (const theme of ['light', 'dark']) {
       await route.fulfill({ status: state === 'forbidden' ? 403 : 200, json: state === 'invalid' ? {} : [] });
     });
     await page.goto('/events?view=notifications'); const view = page.locator('alerts-page');
-    await expect(view.getByRole('alert')).toContainText('无权查看通知投递记录');
+    await expect(view.getByRole('alert')).toContainText('无权查看通知死信');
     await page.screenshot({ path: info.outputPath('403-page.png'), fullPage: true });
-    state = 'invalid'; await view.getByRole('button', { name: '重试', exact: true }).click();
-    await expect(view.getByRole('alert')).toContainText('通知投递记录格式异常');
-    state = 'loading'; await view.getByRole('button', { name: '重试', exact: true }).click();
-    await expect(view.getByRole('status')).toContainText('加载通知投递记录');
-    await expect(view.getByRole('button', { name: '刷新通知投递记录' })).toBeDisabled();
+    state = 'invalid'; await view.getByRole('button', { name: '重试读取死信', exact: true }).click();
+    await expect(view.getByRole('alert')).toContainText('通知死信格式异常');
+    state = 'loading'; await view.getByRole('button', { name: '重试读取死信', exact: true }).click();
+    await expect(view.getByRole('status')).toContainText('加载通知死信');
+    await expect(view.getByRole('button', { name: '刷新通知死信' })).toBeDisabled();
     await page.screenshot({ path: info.outputPath('loading-page.png'), fullPage: true });
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     release(); await expect(view.getByText('没有待重放的通知', { exact: true })).toBeVisible();
@@ -72,9 +72,34 @@ test('timeout offers retry without reporting an empty queue', async ({ page }, i
   await fixture(page); await page.clock.install();
   await page.route('**/api/notification/dead-letters?*', () => {});
   await page.goto('/events?view=notifications'); const view = page.locator('alerts-page');
-  await expect(view.getByRole('status')).toContainText('加载通知投递记录');
+  await expect(view.getByRole('status')).toContainText('加载通知死信');
   await page.clock.fastForward(15_001);
-  await expect(view.getByRole('alert')).toContainText('加载通知投递记录超时');
+  await expect(view.getByRole('alert')).toContainText('加载通知死信超时');
   await page.screenshot({ path: info.outputPath('timeout-page.png'), fullPage: true });
   await expect(view.getByText('没有待重放的通知', { exact: true })).toHaveCount(0);
+});
+
+test('receipt and dead-letter refreshes retry only their own read', async ({ page }) => {
+  await fixture(page);
+  let receiptReads = 0;
+  let deadLetterReads = 0;
+  await page.route('**/api/notification/deliveries', route => {
+    receiptReads++;
+    return route.fulfill(receiptReads === 1 ? { status: 503, json: {} } : { json: [] });
+  });
+  await page.route('**/api/notification/dead-letters?*', route => {
+    deadLetterReads++;
+    return route.fulfill(deadLetterReads === 1 ? { status: 503, json: {} } : { json: [job] });
+  });
+  await page.goto('/events?view=notifications');
+  const receipts = page.locator('notification-deliveries');
+  const deadLetters = page.locator('app-card').filter({ hasText: '通知死信队列' });
+  await expect(receipts.getByRole('alert')).toBeVisible();
+  await expect(deadLetters.getByRole('alert')).toBeVisible();
+  await receipts.getByRole('button', { name: '刷新投递回执' }).click();
+  await expect(receipts.getByText('暂无可查看的投递回执')).toBeVisible();
+  expect(deadLetterReads).toBe(1);
+  await deadLetters.getByRole('button', { name: '重试读取死信' }).press('Enter');
+  await expect(deadLetters.getByText(job.id)).toBeVisible();
+  expect(receiptReads).toBe(2);
 });

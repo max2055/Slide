@@ -20,6 +20,7 @@ import "./../components/app-form-field.js";
 
 interface Alert {
   id: number;
+  template_event_id?: number | null;
   instance_id: number;
   instance_name?: string;
   alert_type: string;
@@ -570,8 +571,6 @@ export class AlertsPage extends LitElement {
   @state() private baselineFilterMetric = '';
 
   override firstUpdated() {
-    this.loadAlerts();
-    this._applyMode();
     // Check URL params for auto-filtering from server-detail navigation
     const params = new URLSearchParams(window.location.search);
     const tabParam = params.get("tab");
@@ -630,6 +629,9 @@ export class AlertsPage extends LitElement {
 
   private _onTabSwitch(tab: string) {
     switch (tab) {
+      case 'alerts':
+        void this.loadAlerts();
+        break;
       case 'rules':
         if (this.rules.length === 0 && !this.rulesLoading) this.loadRules();
         break;
@@ -743,8 +745,12 @@ export class AlertsPage extends LitElement {
       if (!res.ok) throw new Error(res.status === 403 ? '无权查看告警' : `加载告警失败（HTTP ${res.status}）`);
       const data = await res.json();
       if (sequence !== this.alertReadSequence) return;
+      if (!Array.isArray(data?.items ?? data)) throw new Error('告警列表返回格式异常');
       this.alerts = data.items ?? data;
-      this._levelCounts = data.level_counts ?? null;
+      const levelCounts = data.level_counts;
+      this._levelCounts = levelCounts && typeof levelCounts === 'object' && !Array.isArray(levelCounts)
+        && Object.values(levelCounts).every(count => typeof count === 'number' && Number.isSafeInteger(count) && count >= 0)
+        ? levelCounts : null;
       this.total = data.total ?? 0;
       // Map server_name from servers list if available
       if (this.servers.length > 0) {
@@ -756,10 +762,11 @@ export class AlertsPage extends LitElement {
       }
       // 只在活跃 tab 时更新统计（已恢复 tab 的 unread/critical/warning 无意义）
       if (this.activeListTab === 'active') {
+        this._statsP0 = this._levelCounts === null ? undefined : this._levelCounts.p0 ?? 0;
         this._statsUnread = data.unread ?? 0;
         this._statsCritical = data.critical ?? 0;
         this._statsWarning = data.warning ?? 0;
-        this._statsActiveTotal = data.level_counts ? Object.values(data.level_counts as Record<string, number>).reduce((sum, count) => sum + count, 0) : data.total ?? 0;
+        this._statsActiveTotal = this._levelCounts ? Object.values(this._levelCounts).reduce((sum, count) => sum + count, 0) : data.total ?? 0;
       }
       this._statsResolved = data.resolved ?? 0; // 总是跨 tab 的
       this.loading = false;
@@ -826,6 +833,7 @@ export class AlertsPage extends LitElement {
   }
 
   @state() private _levelCounts: Record<string, number> | null = null;
+  @state() private _statsP0: number | undefined;
   @state() private _statsUnread = 0;
   @state() private _statsCritical = 0;
   @state() private _statsWarning = 0;
@@ -835,6 +843,7 @@ export class AlertsPage extends LitElement {
   private get stats() {
     return {
       total: this._statsActiveTotal + this._statsResolved,
+      p0: this._statsP0,
       unread: this._statsUnread,
       critical: this._statsCritical,
       warning: this._statsWarning,
@@ -896,24 +905,24 @@ export class AlertsPage extends LitElement {
       const response = await authFetch('/api/notification/dead-letters?limit=100', {
         signal: controller.signal, cache: 'no-store',
       });
-      if (response.status === 403) throw new Error('无权查看通知投递记录（HTTP 403），请联系管理员确认权限后重试。');
+      if (response.status === 403) throw new Error('无权查看通知死信（HTTP 403），请联系管理员确认权限后重试。');
       if (response.status === 401) throw new Error('登录已失效（HTTP 401），请重新登录后重试。');
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const jobs: unknown = await response.json();
-      if (timedOut) throw new Error('通知投递读取超时');
+      if (timedOut) throw new Error('通知死信读取超时');
       if (!Array.isArray(jobs) || !jobs.every(job => job && typeof job.id === 'string' && job.id.length > 0
         && typeof job.type === 'string' && job.payload && typeof job.payload === 'object' && !Array.isArray(job.payload)
         && Number.isFinite(job.attempts) && (job.lastError === null || typeof job.lastError === 'string')
         && typeof job.createdAt === 'string' && Number.isFinite(Date.parse(job.createdAt)))) {
-        throw new Error('通知投递记录格式异常，请稍后重试。');
+        throw new Error('通知死信格式异常，请稍后重试。');
       }
       if (this.notificationReadController === controller && this.isConnected && !controller.signal.aborted) {
         this.notificationDeadLetters = jobs;
       }
     } catch (error: unknown) {
       if (this.notificationReadController === controller && this.isConnected) {
-        this.notificationDeadLettersError = timedOut ? '加载通知投递记录超时，请重试。'
-          : error instanceof SyntaxError ? '通知投递记录格式异常，请稍后重试。'
+        this.notificationDeadLettersError = timedOut ? '加载通知死信超时，请重试。'
+          : error instanceof SyntaxError ? '通知死信格式异常，请稍后重试。'
           : error instanceof TypeError ? '网络异常，请检查连接后重试。'
           : error instanceof Error ? error.message : '网络异常，请检查连接后重试。';
       }
@@ -957,14 +966,14 @@ export class AlertsPage extends LitElement {
       <app-card variant="default">
         <div slot="header">通知死信队列</div>
         <button slot="header" class="btn btn-refresh" .disabled=${this.notificationDeadLettersLoading || this.notificationReplaySaving}
-          @click=${this.loadNotificationDeadLetters}>刷新通知投递记录</button>
-        ${this.notificationDeadLettersLoading ? html`<div class="loading" role="status">加载通知投递记录...</div>`
+          @click=${this.loadNotificationDeadLetters}>刷新通知死信</button>
+        ${this.notificationDeadLettersLoading ? html`<div class="loading" role="status">加载通知死信…</div>`
         : this.notificationDeadLettersError ? html`
           <div role="alert" class="notification-read-error">
-            <app-empty-state title="无法加载通知投递记录" .description=${this.notificationDeadLettersError}></app-empty-state>
-            <button class="btn-primary" @click=${this.loadNotificationDeadLetters}>重试</button>
+            <app-empty-state title="无法加载通知死信" .description=${this.notificationDeadLettersError}></app-empty-state>
+            <button class="btn btn-refresh" @click=${this.loadNotificationDeadLetters}>重试读取死信</button>
           </div>
-        ` : this.notificationDeadLetters === null ? html`<div role="status">尚未加载通知投递记录</div>`
+        ` : this.notificationDeadLetters === null ? html`<div role="status">尚未加载通知死信</div>`
         : this.notificationDeadLetters.length ? html`
           <div class="table-wrap">
             <table class="table">

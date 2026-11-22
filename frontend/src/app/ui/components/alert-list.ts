@@ -14,7 +14,7 @@ import { sharedFieldStyles } from "../../styles/shared-field-styles.ts";
  *   alert-navigate-instance, alert-navigate-network-device, alert-navigate-chat, alert-refresh,
  *   alert-filter-severity, alert-search, alert-page-change, alert-list-tab-change
  */
-import { LitElement, html, css } from "lit";
+import { LitElement, html, css, nothing } from "lit";
 import { customElement, property } from "lit/decorators.js";
 import { sharedBtnStyles } from "../../styles/shared-btn-styles.ts";
 import { icons } from "../../../icons.js";
@@ -98,7 +98,7 @@ export class AlertList extends LitElement {
   @property({ type: Array }) servers: any[] = [];
   @property() searchText = '';
   @property({ type: Object }) levelCounts: Record<string, number> | null = null;
-  @property({ type: Object }) stats: Record<string, number> = {};
+  @property({ type: Object }) stats: Record<string, number | undefined> = {};
   @property({ type: Number }) statsActiveTotal = 0;
   @property({ type: Number }) statsResolved = 0;
   @property({ type: Object }) analyzedStatuses = new Map<number, any>();
@@ -133,11 +133,12 @@ export class AlertList extends LitElement {
     const totalPages = Math.max(1, Math.ceil(this.total / this.pageSize));
 
     return html`
-      <div style="display:grid;gap:var(--space-md);grid-template-columns:repeat(5,1fr);margin-bottom:var(--space-xl)">
+      <div style="display:grid;gap:var(--space-md);grid-template-columns:repeat(auto-fit,minmax(128px,1fr));margin-bottom:var(--space-xl)">
+        <stat-card label="活跃紧急告警（P0）" .value=${String(this.stats.p0 ?? '未知')} variant="danger" hint="最高优先级"></stat-card>
+        <stat-card label="活跃严重告警" .value=${String(this.stats.critical ?? '未知')} variant="danger"></stat-card>
         <stat-card label="总告警数" .value="${this.stats.total ?? 0}" hint="活跃 + 已结束"></stat-card>
         <stat-card label="未处理" .value="${this.stats.unread ?? 0}" variant="warn" .hint=${html`<span class="dot warn"></span>待确认`}></stat-card>
         <stat-card label="已结束" .value="${this.stats.resolved ?? 0}" variant="ok" .hint=${html`<span class="dot ok"></span>已恢复或关闭`}></stat-card>
-        <stat-card label="严重告警" .value="${this.stats.critical ?? 0}" variant="danger" .hint=${html`<span class="dot danger"></span>需立即处理`}></stat-card>
         <stat-card label="警告告警" .value="${this.stats.warning ?? 0}" variant="warn" .hint=${html`<span class="dot warn"></span>需关注`}></stat-card>
       </div>
 
@@ -198,7 +199,7 @@ export class AlertList extends LitElement {
             <div class="empty__content">
               <div class="empty__icon">${this.activeListTab === 'recovered' ? icons['check-circle'] : icons['party-popper']}</div>
               <div class="empty__title">${this.filterSeverity ? '没有匹配等级的告警' : this.activeListTab === 'recovered' ? '暂无已结束的告警' : '暂无活跃告警'}</div>
-              <div class="empty__desc">${this.filterSeverity ? '请选择其他等级或查看全部告警' : this.activeListTab === 'recovered' ? '显示已恢复或关闭的告警' : '系统运行正常'}</div>
+              <div class="empty__desc">${this.filterSeverity ? '请选择其他等级或查看全部告警' : this.activeListTab === 'recovered' ? '显示已恢复或关闭的告警' : '当前范围没有活跃告警记录'}</div>
             </div>
           </div>
         `}
@@ -216,8 +217,8 @@ export class AlertList extends LitElement {
         </td>
         <td style="overflow:hidden;" title="${this._cleanTitle(alert.title)} — ${alert.message}">
           <div style="display:flex;align-items:center;gap:var(--space-sm);overflow:hidden;">
-            <span class="alert-title" style="white-space:nowrap;flex-shrink:0;">${this._cleanTitle(alert.title)}</span>
-            <span class="alert-message" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--muted);font-size:var(--text-sm);">${alert.message}</span>
+            <span class="alert-title" style="min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${this._cleanTitle(alert.title)}</span>
+            <span class="alert-message" style="max-width:40%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--muted);font-size:var(--text-sm);">${alert.message}</span>
           </div>
         </td>
         <td style="text-align:center;">
@@ -243,10 +244,10 @@ export class AlertList extends LitElement {
         <td style="text-align:center;"><span class="time-ago" style="font-size:var(--text-xs);">${this._formatTime(alert.created_at)}</span></td>
         <td style="text-align:center;">
           <div class="actions" style="flex-wrap:wrap;gap:3px;">
+            <button class="btn-sm action-btn" @click=${() => this._emit('alert-select', { id: alert.id })}>详情</button>
             ${alert.status === 'unread' || alert.status === 'read'
               ? html`<button class="btn-primary btn-sm action-btn primary" @click=${() => this._emit('alert-acknowledge', { id: alert.id })}>确认</button>`
-              : html`<button class="btn-sm action-btn" @click=${() => this._emit('alert-select', { id: alert.id })}>详情</button>`
-            }
+              : nothing}
             ${isActive && alert.severity !== 'info' ? html`<button class="btn-sm action-btn" @click=${() => this._emit('alert-rca', { id: alert.id })}>AI</button>` : ''}
           </div>
         </td>

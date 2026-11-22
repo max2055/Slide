@@ -116,9 +116,9 @@ test('#1036 page filters preserve query scope and pagination', async ({ page }, 
     await expect(list.getByText('本页命中 50 条')).toBeVisible();
     await expect(visibleTotal).toBeVisible();
     const stats = list.locator('stat-card');
-    await expect(stats).toHaveCount(6);
+    await expect(stats).toHaveCount(7);
     await expect(stats.filter({ has: page.getByText('开放', { exact: true }) }).locator('[part="value"]')).toHaveText('51');
-    await expect(stats.filter({ has: page.getByText('平均 MTTR (分钟)', { exact: true }) }).locator('[part="value"]')).toHaveText('—');
+    await expect(stats.filter({ has: page.getByText('平均 MTTR（分钟）', { exact: true }) }).locator('[part="value"]')).toHaveText('—');
     await expect(page.locator('html')).toHaveCSS('--accent', '#265f99');
     await search.fill('无匹配标题');
     await expect(noMatch).toBeVisible();
@@ -240,7 +240,7 @@ test('failed saves keep visible drafts; successful retry sends postmortem; filte
   await expect(page.getByRole('button', { name: '提交复盘' })).toHaveCount(0);
   expect(payload).toEqual({ postmortem: '完整复盘内容' });
   await page.getByRole('button', { name: '返回事件列表', exact: true }).click();
-  await expect(page.getByText('搜索和严重度仅筛选本页；分页总数为当前状态的全部事件数。')).toBeVisible();
+  await expect(page.getByText('搜索和严重度仅筛选本页；分页总数为当前分组的可见记录数。')).toBeVisible();
 });
 
 test('browser back restores missing-view default', async ({ page }) => {

@@ -15,9 +15,11 @@ import { customElement, property } from "lit/decorators.js";
 import { icons } from "../../../icons.js";
 import "./app-dialog.js";
 import "./app-badge.js";
+import "./template-event-evidence.js";
 
 interface Alert {
   id: number;
+  template_event_id?: number | null;
   instance_id: number;
   instance_name?: string;
   server_id?: number;
@@ -71,7 +73,7 @@ export class AlertDetailModal extends LitElement {
             <app-badge variant=${alertLevelVariant(a.severity)}>${alertLevelLabel(a.severity)}</app-badge>
             <span class="type-badge" style="display:inline-flex;align-items:center;padding:var(--space-xs) var(--space-sm);background:rgba(59,130,246,0.12);color:var(--info);border-radius:var(--radius-sm);font-size:var(--text-xs);font-weight:600;text-transform:uppercase;letter-spacing:0.05em;">${this._typeLabel(a.alert_type)}</span>
           </div>
-          <div style="font-size:var(--text-lg);font-weight:600;margin-top:var(--space-xs);">${this._cleanTitle(a.title)}</div>
+          <div style="font-size:var(--text-lg);font-weight:600;margin-top:var(--space-xs);overflow-wrap:anywhere;">${this._cleanTitle(a.title)}</div>
         </div>
 
         <!-- Metadata grid -->
@@ -79,6 +81,8 @@ export class AlertDetailModal extends LitElement {
           <span style="color:var(--muted);">目标</span><span>${a.target_type === 'network_device' ? (a.network_device_name || `网络设备 #${a.network_device_id ?? '—'}`) : a.target_type === 'server' ? (a.server_name || `服务器 #${a.server_id ?? '—'}`) : (a.instance_name || '—')}</span>
           <span style="color:var(--muted);">时间</span><span>${new Date(a.created_at).toLocaleString('zh-CN')}</span>
           <span style="color:var(--muted);">状态</span><span><app-badge variant="${this._statusVariant(a.status)}">${this._statusLabel(a)}</app-badge></span>
+          ${a.template_event_id ? html`<span style="color:var(--muted);">规则来源</span>
+            <template-event-evidence .eventId=${a.template_event_id} .alertId=${a.id}></template-event-evidence>` : nothing}
           <span style="color:var(--muted);">描述</span><span style="line-height:1.5;">${a.message || '—'}</span>
         </div>
 
