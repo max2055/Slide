@@ -2,12 +2,14 @@ import { approvalPlanBinding } from './operations-actions.ts';
 import { sharedFieldStyles } from "../../styles/shared-field-styles.ts";
 import { LitElement, html, css, nothing } from "lit";
 import { sharedBtnStyles } from "../../styles/shared-btn-styles.ts";
+import { sharedSkeletonStyles } from "../../styles/shared-skeleton-styles.js";
 import { customElement, state } from "lit/decorators.js";
 import "../components/app-dialog.js";
 import "../components/app-card.js";
 import "../components/app-data-table.js";
 import "../components/app-badge.js";
 import "../components/app-empty-state.js";
+import "../components/app-notice.js";
 import { EditorView, lineNumbers } from "@codemirror/view";
 import { EditorState } from "@codemirror/state";
 import { sql, MySQL, PostgreSQL } from "@codemirror/lang-sql";
@@ -102,7 +104,7 @@ interface OperationEvent { toState: string; reasonCode: string; metadata?: Recor
 
 @customElement("approval-dashboard")
 export class ApprovalDashboard extends LitElement {
-  static styles = [sharedFieldStyles, sharedBtnStyles, css`
+  static styles = [sharedFieldStyles, sharedBtnStyles, sharedSkeletonStyles, css`
     :host { display: block; padding: var(--space-xl); min-width: 0; color: var(--text); }
     * { box-sizing: border-box; }
     .page-head { display: flex; justify-content: space-between; align-items: start; gap: var(--space-md); margin-bottom: var(--space-xl); }
@@ -167,7 +169,7 @@ export class ApprovalDashboard extends LitElement {
     .exec-result { margin-top: 8px; font-size: var(--text-sm); padding: var(--space-xs) var(--space-sm); border-radius: var(--radius-sm); }
     .exec-result.success { color: var(--ok, #22c55e); background: var(--ok-subtle, #ecfdf5); }
     .exec-result.fail { color: var(--danger, #ef4444); background: var(--danger-subtle, #fef2f2); }
-    .empty { padding: 40px; text-align: center; color: var(--muted, #6b7280); }
+    .skeleton-block { min-height: 8rem; }
     .ai-badge { font-size: var(--text-xs); padding: var(--space-xs) var(--space-sm); background: var(--bg-elevated, #f9fafb); border-radius: var(--radius-sm); color: var(--muted, #6b7280); }
     .loading { padding: 40px; text-align: center; color: var(--muted, #6b7280); }
     .detail-header { display: flex; align-items: center; gap: var(--space-md); margin-bottom: 20px; }
@@ -210,6 +212,7 @@ export class ApprovalDashboard extends LitElement {
   @state() private view: "list" | "detail" = "list";
   @state() private requests: ApprovalRequest[] = [];
   @state() private agentApprovals: AgentApproval[] = [];
+  @state() private listError: string | null = null;
   @state() private agentApprovalsError: string | null = null;
   @state() private reviewingAgentTools: Set<string> = new Set();
   @state() private filter: "pending" | "processed" = "pending";
@@ -274,6 +277,7 @@ export class ApprovalDashboard extends LitElement {
   private async loadRequests() {
     const generation = ++this.listGeneration;
     this.loading = true;
+    this.listError = null;
     this.agentApprovalsError = null;
     try {
       const endpoint = `/api/approval/unified?status=${this.filter}`;
@@ -282,26 +286,28 @@ export class ApprovalDashboard extends LitElement {
       if (res.ok) {
         const payload = await res.json() as { items?: Array<ApprovalRequest & { kind?: 'sql' | 'agent' }> };
         if (generation !== this.listGeneration) return;
-        const items = Array.isArray(payload?.items) ? payload.items : [];
+        if (!Array.isArray(payload?.items)) throw new Error('审批列表响应无效');
+        const items = payload.items;
         this.requests = items.filter((item) => item.kind !== 'agent') as ApprovalRequest[];
         this.agentApprovals = items.filter((item) => item.kind === 'agent') as unknown as AgentApproval[];
-        this.agentApprovalsError = null;
         if (this.filter === 'pending') {
           this.executeAfterApprove = Object.fromEntries(this.requests.map(r => [r.id, true]));
         }
       } else {
         this.requests = [];
         this.agentApprovals = [];
-        this.agentApprovalsError = agentApprovalsLoadError(res.status);
+        this.listError = agentApprovalsLoadError(res.status);
       }
     } catch {
       if (generation !== this.listGeneration) return;
       this.requests = [];
       this.agentApprovals = [];
-      this.agentApprovalsError = '审批列表加载失败，请检查数据库迁移和当前用户权限';
+      this.listError = '审批列表加载失败，请重试';
     }
     this.loading = false;
-    this.historyPage = Math.min(this.historyPage, Math.max(0, Math.ceil(this.historyItems().length / 6) - 1));
+    if (!this.listError) {
+      this.historyPage = Math.min(this.historyPage, Math.max(0, Math.ceil(this.historyItems().length / 6) - 1));
+    }
     this.saveHistoryContext();
   }
 
@@ -629,8 +635,14 @@ export class ApprovalDashboard extends LitElement {
         <button class="tab ${this.filter === 'pending' ? 'active' : ''}" aria-pressed=${this.filter === 'pending'} @click=${() => this.switchFilter('pending')}>待审批</button>
         <button class="tab ${this.filter === 'processed' ? 'active' : ''}" aria-pressed=${this.filter === 'processed'} @click=${() => this.switchFilter('processed')}>审批历史</button>
       </div>
-      ${this.agentApprovalsError ? html`<div class="error-box" role="alert">${this.agentApprovalsError}</div>` : nothing}
-      ${this.filter === 'processed' ? this.renderHistory() : this.loading ? html`<div class="loading" role="status">加载中...</div>` : this.agentApprovalsError ? nothing : html`
+      ${this.listError ? html`<app-notice severity="error">
+        <div role="alert">${this.listError}</div>
+        <button type="button" class="btn btn-refresh" @click=${this.loadRequests}>重试</button>
+      </app-notice>` : nothing}
+      ${this.agentApprovalsError ? html`<app-notice severity="error" role="alert">${this.agentApprovalsError}</app-notice>` : nothing}
+      ${this.filter === 'processed' ? this.renderHistory()
+        : this.loading ? html`<div class="skeleton skeleton-block" role="status" aria-label="正在加载待审批请求"></div>`
+        : this.listError || this.agentApprovalsError ? nothing : html`
         ${agentItems.map((approval) => html`
           <div class="card">
             <div class="card-header"><div><app-badge variant="info">Agent</app-badge> <strong>${approval.tool_name}</strong>${this.actionLink(approval)}</div><span class="ai-badge">#${approval.id}</span></div>
@@ -715,7 +727,7 @@ export class ApprovalDashboard extends LitElement {
           ` : ''}
         </div>
       `)}
-      ${agentItems.length === 0 && sqlItems.length === 0 ? html`<div class="empty">${this.filter === 'pending' ? '暂无待审批请求' : '暂无已审批记录'}</div>` : nothing}
+      ${agentItems.length === 0 && sqlItems.length === 0 ? html`<app-empty-state title="暂无待审批请求"></app-empty-state>` : nothing}
 
       ${this._renderBatchDialog()}
       `}
@@ -795,11 +807,12 @@ export class ApprovalDashboard extends LitElement {
         </select></label>
       </div>
       <div class="history-notice"><strong>审批结果与执行结果分开核对</strong>批准不表示已经执行。待审批页面仍直接展示 SQL、目标资源、风险与关键证据。<br>仅筛选本次已读取记录：SQL 与 Agent 各最多 100 条，不代表全部历史。Agent 授权已使用也不代表工具执行成功。</div>
-      ${this.agentApprovalsError ? nothing : html`<app-card class="history-card" .compact=${true}>
+      ${this.listError ? nothing : html`<app-card class="history-card" .compact=${true}>
         <div class="table-scroll" role="region" aria-label="审批历史，可横向滚动" tabindex="0"><app-data-table .columns=${[
           { key: 'summary', label: '建议摘要' }, { key: 'target', label: '目标资源' }, { key: 'risk', label: '风险' },
           { key: 'decision', label: '审批' }, { key: 'execution', label: '执行' }, { key: 'detail', label: '详情' },
-        ]} .rows=${rows} .loading=${this.loading} .dense=${true} .striped=${false} emptyMessage="没有符合条件的审批记录"></app-data-table></div>
+        ]} .rows=${rows} .loading=${this.loading} .dense=${true} .striped=${false}
+          emptyMessage=${this.requests.length || this.agentApprovals.length ? "没有符合条件的审批记录" : "暂无已审批记录"}></app-data-table></div>
         <div class="pagination" aria-live="polite"><span>${this.loading ? '正在读取历史…' : `已读取 ${this.requests.length + this.agentApprovals.length} 条 · 筛选后 ${items.length} 条 · 每页 6 条`}</span><div>
           <button class="btn" ?disabled=${this.loading || this.historyPage === 0} @click=${() => { this.historyPage--; this.saveHistoryContext(); }}>上一页</button>
           <span>第 ${this.historyPage + 1} / ${pages} 页</span><button class="btn" ?disabled=${this.loading || this.historyPage + 1 >= pages} @click=${() => { this.historyPage++; this.saveHistoryContext(); }}>下一页</button>

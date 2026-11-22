@@ -184,6 +184,6 @@ test('controlled loading, empty, failure, permission and partial evidence are di
   await view.getByRole('button', { name: /^查看证据/ }).click(); await expect(view.locator('app-dialog')).toContainText('证据不完整');
   await capture(page, 'controlled-partial'); await page.keyboard.press('Escape');
   await page.route('**/api/approval/unified?*', route => route.fulfill({ json: { items: [] } }));
-  await view.getByRole('button', { name: '刷新', exact: true }).click(); await expect(view).toContainText('没有符合条件的审批记录');
+  await view.getByRole('button', { name: '刷新', exact: true }).click(); await expect(view).toContainText('暂无已审批记录');
   await capture(page, 'controlled-empty');
 });

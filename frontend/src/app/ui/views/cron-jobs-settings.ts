@@ -1,5 +1,6 @@
 import { CronRunTracker } from "../controllers/cron-run-tracker.js";
 import { sharedFieldStyles } from "../../styles/shared-field-styles.ts";
+import { sharedSkeletonStyles } from "../../styles/shared-skeleton-styles.js";
 /**
  * Cron 任务管理页面
  * 管理定时采集和分析任务的启用/停用、表达式编辑、手动触发和运行日志查看
@@ -14,6 +15,7 @@ import "../components/app-card.js";
 import "../components/app-badge.js";
 import "../components/app-toggle.js";
 import "../components/app-empty-state.js";
+import "../components/app-notice.js";
 import { authFetch } from "../../../api/index.js";
 import { showToast } from "../components/app-toast-container.js";
 import "../components/script-editor.js";
@@ -172,6 +174,7 @@ export class CronJobsSettings extends LitElement {
 
   private runTracker = new CronRunTracker(() => this.requestUpdate());
   private _refreshInterval: ReturnType<typeof setInterval> | null = null;
+  private jobsGeneration = 0;
 
   @state() private formTaskType: "agent" | "script" = "agent";
   @state() private formScriptId: number | null = null;
@@ -203,15 +206,13 @@ export class CronJobsSettings extends LitElement {
     return this.jobs.filter(j => (j.task_type === "script" ? "script" : "agent") === this.filterMode);
   }
 
-  static styles = [sharedFieldStyles, sharedBtnStyles, css`
+  static styles = [sharedFieldStyles, sharedBtnStyles, sharedSkeletonStyles, css`
     :host { display: block; }
     .page-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 24px; }
     .page-header h1 { font-size: 22px; font-weight: 700; margin: 0 0 4px; color: var(--text-strong); }
     .page-header p { font-size: 13px; color: var(--muted); margin: 0; }
-    .loading { padding: 40px; text-align: center; color: var(--muted); font-size: 13px; }
-    .error-state { padding: 40px; text-align: center; }
-    .error-state h3 { margin: 0 0 8px; font-size: 14px; font-weight: 600; color: var(--text); }
-    .error-state p { font-size: 12px; color: var(--muted); margin: 0 0 16px; }
+    .skeleton-block { min-height: 8rem; }
+    .filter-empty { text-align: center; padding-bottom: var(--space-xl); }
 
     .table-head { display: flex; width: 100%; border-bottom: 1px solid var(--border); background: var(--bg-elevated); }
     .table-head-cell { padding: 8px 10px; font-weight: 600; color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em; text-align: center; }
@@ -315,6 +316,7 @@ export class CronJobsSettings extends LitElement {
     super.disconnectedCallback();
     window.removeEventListener("slide-permissions-loaded", this.permissionsChanged);
     window.removeEventListener("slide-session-expired", this.sessionExpired);
+    this.jobsGeneration++;
     this.formGeneration++;
     this.runTracker.stop();
     if (this._refreshInterval) {
@@ -324,24 +326,36 @@ export class CronJobsSettings extends LitElement {
   }
 
   private async loadCronJobs() {
+    const generation = ++this.jobsGeneration;
     this.loading = true;
     this.error = null;
     try {
-      const res = await authFetch("/api/cron/jobs");
-      if (!res.ok) throw new Error(`加载失败 (${res.status})`);
-      this.jobs = await res.json();
-    } catch (e: any) {
-      this.error = e.message || "加载定时任务失败";
+      const jobs = await this.fetchCronJobs();
+      if (generation === this.jobsGeneration) this.jobs = jobs;
+    } catch (error) {
+      if (generation === this.jobsGeneration) {
+        this.error = error instanceof Error ? error.message : "请稍后重试";
+      }
     } finally {
-      this.loading = false;
+      if (generation === this.jobsGeneration) this.loading = false;
     }
+  }
+
+  private async fetchCronJobs(): Promise<CronJobConfig[]> {
+    const res = await authFetch("/api/cron/jobs");
+    if (!res.ok) throw new Error(res.status === 403 ? "当前用户没有定时任务查看权限" : `HTTP ${res.status}`);
+    const jobs = await res.json().catch(() => undefined);
+    if (!Array.isArray(jobs)) throw new Error("定时任务列表响应无效");
+    return jobs;
   }
 
   /** 静默刷新，不触发 loading 闪屏 */
   private async refreshCronJobs() {
+    if (this.loading || this.error) return;
+    const generation = ++this.jobsGeneration;
     try {
-      const res = await authFetch("/api/cron/jobs");
-      if (res.ok) this.jobs = await res.json();
+      const jobs = await this.fetchCronJobs();
+      if (generation === this.jobsGeneration) this.jobs = jobs;
     } catch {
       // 静默失败，下次刷新重试
     }
@@ -782,27 +796,45 @@ export class CronJobsSettings extends LitElement {
   // ── Render ──
 
   override render() {
-    if (this.loading) return html`<div class="loading">加载中...</div>`;
-    if (this.error) return html`<div class="error-state"><h3>加载定时任务失败</h3><p>${this.error}</p><button class="btn" @click=${this.loadCronJobs}>重试</button></div>`;
-
     return html`
       <div class="page-header">
         <div>
           <h1>定时任务</h1>
           <p>管理定时采集和分析任务的调度与监控</p>
         </div>
-        <button class="btn-primary" @click=${this.openCreateDialog} ?disabled=${!this.canManage}>+ 新建任务</button>
+        ${!this.loading && !this.error ? html`<button class="btn-primary" @click=${this.openCreateDialog} ?disabled=${!this.canManage}>+ 新建任务</button>` : nothing}
       </div>
+      ${this.loading ? html`<div class="skeleton skeleton-block" role="status" aria-label="正在加载定时任务"></div>`
+        : this.error ? html`<app-notice severity="error">
+            <div role="alert">加载定时任务失败。 ${this.error}</div>
+            <button type="button" class="btn btn-refresh" @click=${this.loadCronJobs}>重试</button>
+          </app-notice>`
+        : this.renderJobs()}
+    `;
+  }
+
+  private renderJobs() {
+    const filteredJobs = this.filteredJobs;
+    return html`
       <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px;">
-        <label style="font-size:12px;color:var(--muted);">筛选模式：</label>
-        <select class="form-input" style="width:auto;min-width:140px;" .value=${this.filterMode} @change=${(e: Event) => { this.filterMode = (e.target as HTMLSelectElement).value as "all" | "script" | "agent"; }}>
+        <label for="cron-filter-mode" style="font-size:12px;color:var(--muted);">筛选模式<span aria-hidden="true">：</span></label>
+        <select id="cron-filter-mode" class="form-input" style="width:auto;min-width:140px;" .value=${this.filterMode} @change=${(e: Event) => { this.filterMode = (e.target as HTMLSelectElement).value as "all" | "script" | "agent"; }}>
           <option value="all">全部</option>
           <option value="script">Script</option>
           <option value="agent">Agent</option>
         </select>
-        <span style="font-size:12px;color:var(--muted);">共 ${this.filteredJobs.length} 个任务</span>
+        <span style="font-size:12px;color:var(--muted);">共 ${filteredJobs.length} 个任务</span>
       </div>
-      ${this.jobs.length === 0 ? html`<app-empty-state title="暂无定时任务"></app-empty-state>` : html`
+      ${this.jobs.length === 0 ? html`<app-empty-state title="暂无定时任务"></app-empty-state>`
+        : filteredJobs.length === 0 ? html`
+          <div class="filter-empty">
+            <app-empty-state title="当前模式下没有匹配的定时任务"></app-empty-state>
+            <button type="button" class="btn" @click=${() => {
+              this.filterMode = "all";
+              this.renderRoot.querySelector<HTMLSelectElement>("#cron-filter-mode")?.focus();
+            }}>查看全部任务</button>
+          </div>
+        ` : html`
       <app-card variant="default" style="overflow-x:auto;">
         <div class="table-head">
           <div class="table-head-cell cell-index">#</div>
@@ -815,7 +847,7 @@ export class CronJobsSettings extends LitElement {
           <div class="table-head-cell cell-result">结果</div>
           <div class="table-head-cell cell-actions"></div>
         </div>
-        ${this.filteredJobs.map((job, idx) => html`
+        ${filteredJobs.map((job, idx) => html`
           <div class="table-row">
             <div class="table-cell cell-index">${idx + 1}</div>
             <div class="table-cell cell-name">
