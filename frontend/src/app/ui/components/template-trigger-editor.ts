@@ -28,6 +28,7 @@ const fresh = () => ({
   problem: leaf(">", "problem_threshold") as Expression,
   recovery_mode: 'recovery_expression' as TriggerRecoveryMode,
   allow_manual_close: false,
+  dependencies: [] as string[],
   recovery: leaf("<", "recovery_threshold") as Expression,
   quality: { accepted_quality: ["good", "partial"], min_coverage: 1, allow_estimated: false },
   clock: {
@@ -39,6 +40,14 @@ type Severity = 'warning' | 'critical';
 const severityName = (severity: Severity | undefined) => severity === 'critical' ? '严重' : '预警';
 const itemName = (item: TemplateVersionDetail['items'][number]) => item.display_name === item.canonical_metric?.id
   ? metricDisplayName(item.canonical_metric.id) : item.display_name;
+const publicationErrors = new Map([
+  ['TRIGGER_COMPOSITE_SCALAR_REQUIRED', '组合条件只能引用当前模板中无维度的数值监控项。'],
+  ['TRIGGER_DEPENDENCY_DUPLICATE', '同一个触发器只能选择一次。'],
+  ['TRIGGER_DEPENDENCY_UNKNOWN', '依赖的触发器在当前模板版本中不可用，请重新选择。'],
+  ['TRIGGER_DEPENDENCY_SELF', '触发器不能依赖自身。'],
+  ['TRIGGER_DEPENDENCY_CYCLE', '所选依赖会形成循环，请调整依赖后再发布。'],
+  ['TRIGGER_DEPENDENCY_AMBIGUOUS', '依赖的触发器在当前模板版本中无法唯一确定，请重新选择。'],
+]);
 
 function defaultsFor(metricId: string | undefined, severity: Severity) {
   const defaults = fresh();
@@ -106,6 +115,19 @@ export class TemplateTriggerEditor extends LitElement {
       p {
         color: var(--muted);
       }
+      .dependency-hint { margin: 0 0 var(--space-sm); font-size: var(--text-sm); }
+      .dependency-options {
+        display: grid;
+        gap: var(--space-xs);
+        max-block-size: 12rem;
+        overflow: auto;
+        padding: var(--space-xs);
+      }
+      .dependency-options label {
+        grid-template-columns: auto minmax(0, 1fr);
+        align-items: start;
+        overflow-wrap: anywhere;
+      }
       .error {
         color: var(--danger);
       }
@@ -172,6 +194,7 @@ export class TemplateTriggerEditor extends LitElement {
           problem: rule.problem,
           recovery_mode: rule.recovery_mode ?? 'recovery_expression',
           allow_manual_close: rule.allow_manual_close === true,
+          dependencies: [...(rule.dependencies ?? [])].sort(),
           recovery: rule.recovery ?? recovery,
           quality: rule.quality,
           clock: rule.clock,
@@ -315,7 +338,7 @@ export class TemplateTriggerEditor extends LitElement {
     this.busy = true;
     this.error = "";
     try {
-      const { recovery, allow_manual_close, ...body } = this.value;
+      const { recovery, allow_manual_close, dependencies, ...body } = this.value;
       const result = await metricRequest<any>(`templates/${t.template_id}/triggers`, {
         expected_version: t.version,
         expected_content_hash: t.content_hash,
@@ -323,6 +346,7 @@ export class TemplateTriggerEditor extends LitElement {
         ...(this.severity === 'critical' ? { severity: this.severity } : {}),
         ...body,
         ...(allow_manual_close ? { allow_manual_close } : {}),
+        ...(dependencies.length ? { dependencies } : {}),
         ...(body.recovery_mode === 'recovery_expression' ? { recovery } : {}),
       });
       if (!this.isConnected || g !== this.generation) return;
@@ -340,8 +364,7 @@ export class TemplateTriggerEditor extends LitElement {
         }),
       );
     } catch (e) {
-      this.error = e instanceof MetricRequestError && e.code === 'TRIGGER_COMPOSITE_SCALAR_REQUIRED'
-        ? '组合条件只能引用当前模板中无维度的数值监控项。' : metricError(e);
+      this.error = (e instanceof MetricRequestError && e.code ? publicationErrors.get(e.code) : undefined) ?? metricError(e);
     } finally {
       this.busy = false;
     }
@@ -359,21 +382,60 @@ export class TemplateTriggerEditor extends LitElement {
     return `${label}${operators[node.select.aggregation] ?? node.select.aggregation}${window} ${node.operator} ${threshold}`;
   }
 
+  private ruleItemName(rule: { scope: string; metric?: { id: string } }): string {
+    const item = this.template?.items.find(item => rule.scope === `item:${item.item_id}`);
+    return item ? itemName(item) : rule.metric?.id ? metricDisplayName(rule.metric.id) : rule.scope;
+  }
+
+  private renderDependencies() {
+    const options = new Map<string, string>();
+    for (const rule of this.rules) {
+      if (rule.rule_id && (rule.scope !== `item:${this.item}` || (rule.severity ?? 'warning') !== this.severity)) {
+        options.set(rule.rule_id, `${this.ruleItemName(rule)} · ${severityName(rule.severity)}`);
+      }
+    }
+    // An unavailable reference stays visible and can be removed from the draft.
+    for (const id of this.value.dependencies) {
+      if (!options.has(id)) options.set(id, `不可用的触发器（${id}）`);
+    }
+    return html`<fieldset aria-describedby="trigger-dependencies-hint">
+      <legend>依赖触发器（可选）</legend>
+      <p class="dependency-hint" id="trigger-dependencies-hint">
+        同一资源上任一依赖触发器存在未关闭事件时，当前触发器暂停自动状态转换。依赖事件全部关闭后，收到下一条相关有效样本时重新评估。
+      </p>
+      ${options.size ? html`<div class="dependency-options">
+        ${[...options].map(([id, label]) => html`<label>
+          <input type="checkbox" .value=${id} .checked=${this.value.dependencies.includes(id)}
+            ?disabled=${this.disabled || this.busy}
+            @change=${(event: Event) => {
+              const checked = (event.target as HTMLInputElement).checked;
+              const dependencies = checked
+                ? [...this.value.dependencies, id].sort()
+                : this.value.dependencies.filter(dependency => dependency !== id);
+              this.value = { ...this.value, dependencies };
+            }}>
+          <span>${label}</span>
+        </label>`)}
+      </div>` : html`<small>当前模板没有其他已发布的触发器。</small>`}
+    </fieldset>`;
+  }
+
   render() {
     if (!this.template) return nothing;
     if (this.readOnly) {
+      const dependencyNames = new Map(this.rules.map(rule => [rule.rule_id, `${this.ruleItemName(rule)} · ${severityName(rule.severity)}`]));
       return html`${this.error ? html`<p class="error" role="alert">${this.error}
         <button class="btn btn-refresh" @click=${this.load}>重新读取</button></p>`
         : html`<div class="surface"><app-data-table .loading=${this.busy} .striped=${false}
-          .columns=${[{key:'item',label:'监控项'}, {key:'severity',label:'级别'}, {key:'problem',label:'触发条件'}, {key:'recovery',label:'恢复条件'}, {key:'manual',label:'允许手动关闭'}]}
+          .columns=${[{key:'item',label:'监控项'}, {key:'severity',label:'级别'}, {key:'problem',label:'触发条件'}, {key:'recovery',label:'恢复条件'}, {key:'dependencies',label:'依赖触发器'}, {key:'manual',label:'允许手动关闭'}]}
           emptyMessage="还没有触发器" .rows=${this.rules.map(rule => ({
-            item: this.template?.items.find(item => rule.scope === `item:${item.item_id}` && item.display_name !== rule.metric?.id)?.display_name
-              ?? metricDisplayName(rule.metric?.id ?? ''),
+            item: this.ruleItemName(rule),
             severity: severityName(rule.severity),
             problem: this.describeExpression(rule.problem, rule.parameters?.defaults ?? {}),
             recovery: rule.recovery_mode === 'problem_expression' || rule.recovery_mode === 'none'
               ? triggerRecoveryModes[rule.recovery_mode as TriggerRecoveryMode]
               : this.describeExpression(rule.recovery, rule.parameters?.defaults ?? {}),
+            dependencies: (rule.dependencies ?? []).map((id: string) => dependencyNames.get(id) ?? id).join('、') || '—',
             manual: rule.allow_manual_close === true ? '是' : '否',
           }))}></app-data-table>`}`;
     }
@@ -418,6 +480,7 @@ export class TemplateTriggerEditor extends LitElement {
       ${this.expression("problem", this.value.problem)}
       ${this.value.recovery_mode === 'recovery_expression' ? this.expression("recovery", this.value.recovery) : nothing}
       ${this.value.recovery_mode === 'none' ? html`<p>问题条件转假后，事件仍保持打开。${this.value.allow_manual_close ? '有权限的人员可以在事件详情手动关闭。' : ''}</p>` : nothing}
+      ${this.ready ? this.renderDependencies() : nothing}
       <div class="row">
         <label
           >过期时间（秒）<input

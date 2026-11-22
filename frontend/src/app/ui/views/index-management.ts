@@ -94,15 +94,6 @@ export class IndexManagementPage extends LitElement {
       flex-wrap: wrap;
     }
 
-    .btn:hover:not(:disabled) {
-      background: var(--bg-hover);
-      border-color: var(--border-strong);
-    }
-
-    .btn.primary:hover:not(:disabled) {
-      background: var(--accent-solid-hover);
-    }
-
     .select {
       padding: var(--space-sm) var(--space-md);
       border-radius: var(--radius-sm);
@@ -222,14 +213,10 @@ export class IndexManagementPage extends LitElement {
     }
 
     .expand-icon {
-      display: inline-block;
-      width: 16px;
-      text-align: center;
-      transition: transform 0.2s ease;
-      cursor: pointer;
+      transition: transform var(--duration-normal) var(--ease-out);
     }
 
-    .expand-icon.expanded {
+    [aria-expanded="true"] > .expand-icon {
       transform: rotate(90deg);
     }
 
@@ -576,11 +563,12 @@ export class IndexManagementPage extends LitElement {
                 : ""}
               <button
                 class="btn-primary"
+                aria-busy=${this.collecting}
                 ?disabled="${this.collecting || !this.selectedInstanceId}"
                 @click="${this.collectIndexes}"
               >
                 ${this.collecting
-                  ? html`<span class="spinner">&#8987;</span> 采集中...`
+                  ? html`<span class="spinner" aria-hidden="true">&#8987;</span> 采集中...`
                   : "采集索引"}
               </button>
             </div>
@@ -764,9 +752,9 @@ export class IndexManagementPage extends LitElement {
                               <tr>
                                 <td style="text-align:center;">
                                   <button aria-label=${`展开索引 ${rows[0].table_name}.${indexName}`} aria-expanded=${isExpanded}
-                                    class="btn expand-icon ${isExpanded ? "expanded" : ""}"
+                                    class="btn-icon"
                                     @click="${() => this.toggleExpand(indexKey)}"
-                                  >&#9654;</button>
+                                  ><span class="expand-icon" aria-hidden="true">&#9654;</span></button>
                                 </td>
                                 <td>${rows[0].table_name}</td>
                                 <td>

@@ -75,6 +75,7 @@ describe('daily configuration backups', () => {
     await Promise.all([scheduler.tick(), scheduler.tick(), f.create().tick()]);
     await f.create().tick();
     expect(f.collect).toHaveBeenCalledTimes(1);
+    expect(f.collect).toHaveBeenCalledWith(7, '2026-09-15');
     expect(f.store.finish).toHaveBeenCalledWith(7, '2026-09-15', null);
     f.setTime('2026-09-15T16:00:00Z');
     await scheduler.tick();

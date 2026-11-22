@@ -1,3 +1,4 @@
+import '../../../components/stat-card.js';
 import '../components/template-event-evidence.js';
 import '../components/event-investigation-record.ts';
 import type { EventInvestigationRecord } from '../components/event-investigation-record.ts';
@@ -126,32 +127,7 @@ export class EventManagementPage extends LitElement {
       margin-bottom: var(--space-lg);
     }
 
-    .stat-card {
-      background: var(--card);
-      border: 1px solid var(--border);
-      border-radius: var(--radius-lg);
-      padding: var(--space-md) var(--space-lg);
-      text-align: center;
-    }
-
-    .stat-card .stat-value {
-      font-size: var(--text-2xl);
-      font-weight: 700;
-      color: var(--text-strong);
-    }
-
-    .stat-card .stat-label {
-      font-size: var(--text-xs);
-      color: var(--muted);
-      text-transform: uppercase;
-      letter-spacing: 0.03em;
-      margin-top: var(--space-xs);
-    }
-
-    .stat-card.stat-open { border-left: 3px solid var(--danger, #ef4444); }
-    .stat-card.stat-investigating { border-left: 3px solid var(--warn, #f59e0b); }
-    .stat-card.stat-resolved { border-left: 3px solid var(--success, #22c55e); }
-    .stat-card.stat-closed { border-left: 3px solid var(--muted); }
+    .stats-row stat-card::part(hint) { display: none; }
 
     .filter-bar {
       display: flex;
@@ -420,7 +396,7 @@ export class EventManagementPage extends LitElement {
       border-top: 1px solid var(--border);
       flex-shrink: 0;
     }
-    .pagination-info {
+    .event-list-info {
       font-size: var(--text-sm);
       color: var(--muted);
     }
@@ -870,7 +846,7 @@ export class EventManagementPage extends LitElement {
     return html`
       <div class="pagination">
         <button class="btn" ?disabled=${this.eventsPage === 0} @click=${() => { this.eventsPage--; this._loadEvents(); }}>← 上一页</button>
-        <span class="pagination-info">第 ${this.eventsPage + 1}/${totalPages} 页，共 ${this.eventsTotal} 条</span>
+        <span class="event-list-info">第 ${this.eventsPage + 1}/${totalPages} 页</span>
         <button class="btn" ?disabled=${this.eventsPage >= totalPages - 1} @click=${() => { this.eventsPage++; this._loadEvents(); }}>下一页 →</button>
       </div>`;
   }
@@ -953,6 +929,11 @@ export class EventManagementPage extends LitElement {
             <option value="warning" ?selected=${this.filterSeverity === 'warning'}>警告</option>
             <option value="info" ?selected=${this.filterSeverity === 'info'}>提示</option>
           </select>
+          <span class="event-list-info" role="status">
+            ${this.retryLoading ? '正在加载事件…' : this.loadError ? nothing : html`
+              本页命中 ${filtered.length} 条 · 当前状态可见事件共 ${this.eventsTotal} 条
+            `}
+          </span>
         </div>
         </div>
 
@@ -1045,30 +1026,12 @@ export class EventManagementPage extends LitElement {
     const avgMttr = this.mttr?.avg_mttr_minutes ?? s.avg_resolution_time ?? null;
     return html`
       <div class="stats-row">
-        <div class="stat-card">
-          <div class="stat-value">${s.total}</div>
-          <div class="stat-label">总计</div>
-        </div>
-        <div class="stat-card stat-open">
-          <div class="stat-value">${s.open}</div>
-          <div class="stat-label">开放</div>
-        </div>
-        <div class="stat-card stat-investigating">
-          <div class="stat-value">${s.investigating}</div>
-          <div class="stat-label">调查中</div>
-        </div>
-        <div class="stat-card stat-resolved">
-          <div class="stat-value">${s.resolved}</div>
-          <div class="stat-label">已解决</div>
-        </div>
-        <div class="stat-card stat-closed">
-          <div class="stat-value">${s.closed}</div>
-          <div class="stat-label">已关闭</div>
-        </div>
-        <div class="stat-card">
-          <div class="stat-value">${avgMttr !== null ? `${Math.round(avgMttr)}` : "—"}</div>
-          <div class="stat-label">平均 MTTR (分钟)</div>
-        </div>
+        <stat-card label="总计" .value=${String(s.total)}></stat-card>
+        <stat-card label="开放" .value=${String(s.open)} variant="danger"></stat-card>
+        <stat-card label="调查中" .value=${String(s.investigating)} variant="warn"></stat-card>
+        <stat-card label="已解决" .value=${String(s.resolved)} variant="ok"></stat-card>
+        <stat-card label="已关闭" .value=${String(s.closed)} variant="muted"></stat-card>
+        <stat-card label="平均 MTTR (分钟)" .value=${avgMttr === null ? "—" : String(Math.round(avgMttr))}></stat-card>
       </div>
     `;
   }

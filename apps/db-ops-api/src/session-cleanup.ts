@@ -1,4 +1,4 @@
-import { ChatRetentionDeniedError, ChatSessionNotFoundError, chatDatabaseService } from './chat-database-service.js';
+import { ChatMaintenanceCapDeadlockError, ChatRetentionDeniedError, ChatSessionNotFoundError, chatDatabaseService } from './chat-database-service.js';
 import { parseSessionRetentionDays } from './session-retention.js';
 
 const DEFAULT_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24 hours
@@ -73,14 +73,14 @@ export async function runCleanup(retentionDays: number, maxMessages: number, opt
   store?: MaintenanceStore;
   batchSize?: number;
   signal?: AbortSignal;
-} = {}): Promise<{ processed: number; skipped: number; deletedMessages: number }> {
+} = {}): Promise<{ processed: number; skipped: number; failed: number; deletedMessages: number }> {
   const { store = chatDatabaseService, batchSize = 1000, signal } = options;
   if (!Number.isSafeInteger(batchSize) || batchSize < 1) throw new TypeError('Maintenance batch size must be a positive integer');
   signal?.throwIfAborted();
   const deleted = await store.deleteOldSessionsForMaintenance(retentionDays);
   if (deleted > 0) console.log(`[SessionCleanup] Deleted ${deleted} expired sessions`);
 
-  const result = { processed: 0, skipped: 0, deletedMessages: 0 };
+  const result = { processed: 0, skipped: 0, failed: 0, deletedMessages: 0 };
   let beforeId: number | undefined;
   while (true) {
     signal?.throwIfAborted();
@@ -94,14 +94,20 @@ export async function runCleanup(retentionDays: number, maxMessages: number, opt
         result.processed++;
       } catch (error) {
         signal?.throwIfAborted();
-        if (!(error instanceof ChatRetentionDeniedError) && !(error instanceof ChatSessionNotFoundError)) throw error;
-        result.skipped++;
+        if (error instanceof ChatRetentionDeniedError || error instanceof ChatSessionNotFoundError) {
+          result.skipped++;
+        } else if (error instanceof ChatMaintenanceCapDeadlockError) {
+          result.failed++;
+          console.warn('[SessionCleanup] Message cap failed for session', { sessionId: session.session_id, code: error.code });
+        } else {
+          throw error;
+        }
       }
     }
     if (sessions.length < batchSize) break;
     beforeId = sessions[sessions.length - 1].id;
   }
   signal?.throwIfAborted();
-  console.log(`[SessionCleanup] Message cap complete: processed=${result.processed}, skipped=${result.skipped}, deletedMessages=${result.deletedMessages}`);
+  console.log(`[SessionCleanup] Message cap complete: processed=${result.processed}, skipped=${result.skipped}, failed=${result.failed}, deletedMessages=${result.deletedMessages}`);
   return result;
 }

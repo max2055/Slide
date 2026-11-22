@@ -17,6 +17,7 @@ import './template-trigger-editor.js';
 const resourceLabels: Record<string, string> = { instance: '数据库', server: '服务器', network_device: '网络设备' };
 const messages: Record<string, string> = {
   TEMPLATE_TRIGGER_ITEM_REFERENCED: '组合触发器仍引用已移除的监控项。请恢复该监控项，或先修改引用它的触发器。',
+  TRIGGER_DEPENDENCY_UNKNOWN: '要移除的监控项仍有触发器被依赖。请取消未保存的移除，先在已发布模板中解除触发器依赖，再移除监控项。',
   TEMPLATE_NAME_EMPTY: '请输入模板名称',
   TEMPLATE_INVALID_PERIOD: '请输入 1 到 86400 之间的整数秒',
   TEMPLATE_METRIC_DUPLICATE: '该指标已在模板中',
