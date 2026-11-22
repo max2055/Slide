@@ -6,6 +6,7 @@ import type { DirectGatewayClient } from '../direct-gateway.ts';
 import { sharedBtnStyles } from '../../styles/shared-btn-styles.ts';
 import './investigations.ts';
 import '../components/investigation-attention.ts';
+import '../components/workbench-event-queue.ts';
 import './operations-actions.ts';
 
 @customElement('workbench-page')
@@ -16,6 +17,7 @@ export class WorkbenchPage extends LitElement {
   @state() private home = (!new URL(location.href).search || new URL(location.href).searchParams.get('workspaceTab') === 'home');
   @state() private epoch = 0;
   @state() private expired = false;
+  @state() private followUpExpanded = false;
   private selectedTab = false;
   createRenderRoot() { return this; }
   private pop = () => {
@@ -67,25 +69,35 @@ export class WorkbenchPage extends LitElement {
     const allowed = can(this.actions ? 'operations:actions:view' : 'chat:view');
     return html`<style>${sharedBtnStyles.cssText}
       workbench-page { display:block; min-width:0; max-width:1660px; margin:auto; }
-      workbench-page > nav { display:flex; gap:var(--space-sm); border-bottom:1px solid var(--border); margin-bottom:var(--space-lg); }
-      workbench-page > nav button { border-radius:0; border:0; border-bottom:3px solid transparent; padding:var(--space-md); background:transparent; }
-      workbench-page > nav button[aria-pressed=true] { color:var(--accent); border-bottom-color:var(--accent); background:var(--accent-subtle); }
+      workbench-page > nav { display:flex; gap:var(--space-xs); border-bottom:1px solid var(--border); margin-bottom:var(--space-lg); }
+      workbench-page > nav button { border-radius:0; border:0; border-bottom:2px solid transparent; padding:var(--space-sm) var(--space-lg); background:transparent; color:var(--muted); font:inherit; cursor:pointer; }
+      workbench-page > nav button:hover:not(:disabled) { color:var(--text); }
+      workbench-page > nav button:focus-visible { outline:2px solid var(--ring); outline-offset:-2px; }
+      workbench-page > nav button[aria-pressed=true] { color:var(--accent-text); border-bottom-color:var(--accent); font-weight:600; }
+      workbench-page > nav button:disabled { opacity:.5; cursor:default; }
       workbench-page investigations-page .workspace-header h2, workbench-page investigations-page .workspace-header p { display:none; }
       workbench-page investigations-page .workspace-header { justify-content:flex-end; }
       workbench-page > header { margin-bottom:var(--space-lg); }
-      workbench-page > header h1 { font-size:31px; line-height:1.32; margin:var(--space-xs) 0; color:var(--text-strong); letter-spacing:-1px; }
+      workbench-page > header h1 { font-size:var(--text-2xl); font-weight:700; line-height:1.35; margin:var(--space-xs) 0; color:var(--text-strong); }
       workbench-page > header p { color:var(--muted); margin:0; }
-      workbench-page .workbench-kicker { font-size:11px; letter-spacing:1.8px; color:var(--accent); }
+      workbench-page > .workbench-followup { margin-top:var(--space-lg); }
+      workbench-page > .workbench-followup > summary { cursor:pointer; color:var(--accent-text); }
+      workbench-page:has(investigations-page .workspace-detail) > header { display:none; }
     </style>
       <nav aria-label="工作台页签">
-        <button class="btn" aria-pressed=${String(this.home)} ?disabled=${!can('chat:view')} @click=${() => this.choose(false, false, true)}>工作台</button>
-        <button class="btn" aria-pressed=${String(!this.actions && !this.home)} ?disabled=${!can('chat:view')} @click=${() => this.choose(false)}>调查列表</button>
-        <button class="btn" aria-pressed=${String(this.actions)} ?disabled=${!can('operations:actions:view')} @click=${() => this.choose(true)}>行动列表</button>
+        <button type="button" aria-pressed=${String(this.home)} ?disabled=${!can('chat:view')} @click=${() => this.choose(false, false, true)}>工作台</button>
+        <button type="button" aria-pressed=${String(!this.actions && !this.home)} ?disabled=${!can('chat:view')} @click=${() => this.choose(false)}>调查列表</button>
+        <button type="button" aria-pressed=${String(this.actions)} ?disabled=${!can('operations:actions:view')} @click=${() => this.choose(true)}>行动列表</button>
       </nav>
-      <header><span class="workbench-kicker">OPERATIONS / WORKBENCH</span><h1>${this.home ? '运维工作台' : this.actions ? '行动计划' : '调查列表'}</h1>
-        <p>${this.home ? '仅展示开放或等待中的授权调查，每个调查最多一个当前下一步。' : this.actions ? '独立审阅、显式执行，分别核对执行结果与业务恢复。' : '查找进行中与已关闭的调查，核对原始依据与下一步。'}</p></header>
+      <header><h1>${this.home ? '运维工作台' : this.actions ? '行动计划' : '调查列表'}</h1></header>
       ${!allowed ? html`<app-empty-state title="无访问权限" description="当前页签需要独立授权，请选择可访问页签或联系管理员。"></app-empty-state>` : keyed(`${this.home}:${this.actions}:${this.epoch}`, this.home
-        ? html`<investigation-attention .canViewActions=${can('operations:actions:view')}></investigation-attention>`
+        ? can('alert:view') && !new URLSearchParams(location.search).has('attentionCursor') ? html`
+          <workbench-event-queue></workbench-event-queue>
+          <details class="workbench-followup" ?open=${this.followUpExpanded}
+            @toggle=${(e:Event) => {this.followUpExpanded = (e.target as HTMLDetailsElement).open;}}>
+            <summary>调查与处置待办</summary>
+            ${this.followUpExpanded ? html`<investigation-attention .canViewActions=${can('operations:actions:view')}></investigation-attention>` : nothing}
+          </details>` : html`<investigation-attention .canViewActions=${can('operations:actions:view')}></investigation-attention>`
         : this.actions ? html`<operations-actions .permissions=${this.permissions}></operations-actions>`
         : html`<investigations-page .client=${this.client} .permissions=${this.permissions}></investigations-page>`)}${nothing}`;
   }

@@ -10,7 +10,7 @@ import { configurationInventory } from './inventory.js';
 import { createConfigurationRegistry } from './registry.js';
 import { createTrialStore } from './routes.js';
 import { MetricConfigurationService } from './service.js';
-import { configurationReader } from './status-store.js';
+import { legacyConfigurationReader } from './legacy-configuration-test-support.js';
 import { PolicyService } from '../policy/service.js';
 import { MysqlPolicyStore } from '../policy/store.js';
 import { admin } from '../policy/test-support.js';
@@ -98,7 +98,7 @@ describe.skipIf(!port)('MAX-238 a failed application keeps the previously applie
     store = new MysqlPolicyStore(() => pool);
     policies = new PolicyService(store, packages, { exists: async () => true, inventory: configurationInventory });
     service = new MetricConfigurationService(policies, packages, createTrialStore(() => pool, packages),
-      { resolve: async () => { throw new Error('status must not collect'); } }, configurationReader(() => pool));
+      { resolve: async () => { throw new Error('status must not collect'); } }, legacyConfigurationReader(() => pool));
   }, 180000);
 
   afterAll(async () => {

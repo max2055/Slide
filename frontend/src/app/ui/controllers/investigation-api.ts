@@ -13,6 +13,7 @@ export interface InvestigationRecord {
   latestOutcome?: {resultId:string;resultVersion:number;summary:string;gaps:string[]}|null;
   derivedRunState?: InvestigationExecutionState | null; createdAt: string; updatedAt: string;
   context?: {from?:string;to?:string;entry?:{sourceEventIds:number[];returnTo:string}};
+  sourceEventIds?: number[];
   legacyAnalysis?: { analysisId: number; status: string; legacy: true; readOnly: true;
     view: { kind: string; summary: string; rootCauseVerification: { status: 'unverified' }; value: unknown } } | null;
 }

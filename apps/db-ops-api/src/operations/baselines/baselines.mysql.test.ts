@@ -325,7 +325,7 @@ describe.skipIf(!port)('P04 B06 real MySQL/HTTP with explicitly separated synthe
       overrides: { interval_ms: { mode: 'set', value: 1000 }, timeout_ms: { mode: 'set', value: 1000 } } }, true);
     let reads = 0;
     const schedule = new MysqlScheduleStore(f.pool, registry, 'production');
-    const scheduler = new MetricScheduler(schedule, registry, { resolve: async () => ({ resource: inventory(),
+    const scheduler = MetricScheduler.forLegacyPackages(schedule, registry, { resolve: async () => ({ resource: inventory(),
       credential_ref: 'credential:p04-isolated-sql', evidence: {}, resolve: async () => ({ method: 'sql', pool: {
         query: async options => { expect(options.sql).toBe(MYSQL_STATUS_SQL); reads++; return f.pool.query(options); },
       } }) }) }, () => now, undefined, new MetricFormalization(f.pool, registry, () => new Date(now)));

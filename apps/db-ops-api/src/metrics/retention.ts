@@ -1,4 +1,7 @@
 import type { PoolConnection, RowDataPacket } from 'mysql2/promise';
+import type { TemplateItemRetention } from '../contracts/metrics/templates.js';
+import { metricKey } from './policy/model.js';
+import type { MetricRef } from './templates/model.js';
 
 export const DEFAULT_RETENTION = { rawMs: 7 * 86400000, historyMs: 30 * 86400000, attemptMs: 7 * 86400000 };
 export const DEFAULT_TREND_RETENTION_MS = 365 * 86400000;
@@ -27,14 +30,82 @@ export function configuredRetention(env: NodeJS.ProcessEnv = process.env): Reten
   return validateRetention({ rawMs: Number(env.METRICS_RETENTION_RAW_MS), historyMs: Number(env.METRICS_RETENTION_HISTORY_MS), attemptMs: Number(env.METRICS_RETENTION_ATTEMPT_MS),...(env.METRICS_RETENTION_TREND_MS?{trendMs:Number(env.METRICS_RETENTION_TREND_MS)}:{}),...(valueTypeMs?{valueTypeMs}:{}),...(trendValueTypeMs?{trendValueTypeMs}:{}) });
 }
 export type RetentionSelection = { table: string; key: string; time: string; where: string; params: unknown[] };
+
+/** Under the binding writer's policy lock, activate overrides only for the applied items.
+ * Removed metrics keep their last applied policy for any samples still on disk. */
+export async function applyItemRetention(c: PoolConnection, resourceKey: string, selected: MetricRef[],
+  overrides: Array<{ metric: MetricRef } & TemplateItemRetention>): Promise<void> {
+  const keys = [...new Set(selected.map(metricKey))];
+  if (!keys.length) return;
+  const selection = `resource_key = ? AND metric_key IN (${keys.map(() => '?').join(',')})`;
+  const [existing] = await c.execute<RowDataPacket[]>(
+    `SELECT metric_key, history_ms, trends_ms FROM metric_item_retention WHERE ${selection}`, [resourceKey, ...keys]);
+  const byKey = new Map(existing.map(row => [row.metric_key, row]));
+  if (existing.length === overrides.length && overrides.every(({ metric, history_ms, trends_ms }) => {
+    const current = byKey.get(metricKey(metric));
+    return current && (current.history_ms == null ? undefined : Number(current.history_ms)) === history_ms
+      && (current.trends_ms == null ? undefined : Number(current.trends_ms)) === trends_ms;
+  })) return;
+
+  await c.execute(`DELETE FROM metric_item_retention WHERE ${selection}`, [resourceKey, ...keys]);
+  const values = overrides.map(({ metric, history_ms, trends_ms }) =>
+    [resourceKey, metricKey(metric), history_ms ?? null, trends_ms ?? null]);
+  if (values.length) {
+    await c.execute(`INSERT INTO metric_item_retention (resource_key, metric_key, history_ms, trends_ms)
+      VALUES ${values.map(() => '(?,?,?,?)').join(',')}`, values.flat());
+  }
+  await c.execute('UPDATE metric_retention_state SET item_policy_revision = item_policy_revision + 1 WHERE id = 1');
+}
+
+function itemRetentionLookup(json: 'o.payload' | 't.metadata', expression: string): string {
+  const extract = (path: string) => `JSON_UNQUOTE(JSON_EXTRACT(${json}, '$.${path}'))`;
+  const resource = json === 't.metadata' ? 't.resource_key' : `CONCAT(${extract('resource_type')}, ':', ${extract('resource_id')})`;
+  const metric = `CONCAT(${extract('metric.id')}, '@', ${extract('metric.semantic_version')})`;
+  const ascii = (input: string) => `CONVERT(${input} USING ascii) COLLATE ascii_bin`;
+  return `(SELECT ${expression} FROM metric_item_retention ip
+    WHERE ip.resource_key = ${ascii(resource)} AND ip.metric_key = ${ascii(metric)})`;
+}
+
+export function itemRetentionSql(field: keyof TemplateItemRetention, json: 'o.payload' | 't.metadata'): string {
+  return itemRetentionLookup(json, `ip.${field}`);
+}
+
+const trendBucketMs = 300000;
+const itemHistoryExpired = itemRetentionLookup('o.payload', `ip.history_ms = 0 OR
+  o.observed_at < TIMESTAMPADD(MICROSECOND, -1000 * CAST(ip.history_ms AS SIGNED), CAST(? AS DATETIME(3)))`);
+
+/** Historical reads exclude expired items while live alerts and lineage keep their evidence. */
+export function itemHistoryVisible(now: Date): { sql: string; params: string[] } {
+  return { sql: `NOT COALESCE(${itemHistoryExpired}, FALSE)`, params: [retentionSqlTime(now)] };
+}
+
+/** Live trend calculation uses the same bucket end as persisted trends. */
+export function itemTrendVisible(now: Date, policy?: RetentionPolicy): { sql: string; params: (string | number)[] } {
+  const offset = "TIMESTAMPDIFF(MICROSECOND, '1970-01-01', p.observed_at)";
+  if (policy) {
+    const cutoff = trendCutoff(now, policy, 'o.payload');
+    return { sql: `FLOOR(${offset} / ${trendBucketMs * 1000}) * ${trendBucketMs} > ${cutoff.sql}`, params: cutoff.params };
+  }
+  const visible = itemRetentionLookup('o.payload', `ip.trends_ms <> 0 AND
+    (FLOOR(${offset} / ${trendBucketMs * 1000}) + 1) * ${trendBucketMs} > ? - CAST(ip.trends_ms AS SIGNED)`);
+  return { sql: `COALESCE(${visible}, TRUE)`, params: [now.getTime()] };
+}
+
 export function trendSelection(now:Date,policy:RetentionPolicy):RetentionSelection {
   const cutoff=trendCutoff(now,policy);
-  return {table:'metric_retained_trends t',key:'series_hash',time:'bucket_ms',where:`t.bucket_ms <= ${cutoff.sql}`,params:cutoff.params};
+  return {table:'metric_retained_trends t',key:'series_hash',time:'bucket_ms',
+    where:`(t.statistics->>'$.statistics_complete' = 'false' OR t.bucket_ms <= ${cutoff.sql})`,params:cutoff.params};
 }
-export function trendCutoff(now:Date,policy:Pick<RetentionPolicy,'trendMs'|'trendValueTypeMs'>){
+export function trendCutoff(now:Date,policy:Pick<RetentionPolicy,'trendMs'|'trendValueTypeMs'>, json: 'o.payload' | 't.metadata' = 't.metadata'){
   const types=Object.entries(policy.trendValueTypeMs??{});
-  return {sql:types.length?`CASE t.value_class ${types.map(()=> 'WHEN ? THEN ?').join(' ')} ELSE ? END`:'?',
-    params:[...types.flatMap(([type,ms])=>[type,now.getTime()-ms!-300000]),now.getTime()-(policy.trendMs??DEFAULT_TREND_RETENTION_MS)-300000]};
+  const valueClass = json === 't.metadata' ? 't.value_class' : "JSON_UNQUOTE(JSON_EXTRACT(o.payload, '$.value.encoding'))";
+  const fallback = types.length ? `CASE ${valueClass} ${types.map(() => 'WHEN ? THEN ?').join(' ')} ELSE ? END` : '?';
+  const custom = itemRetentionLookup(json, `IF(ip.trends_ms = 0, 8640000000000000,
+    ? - CAST(ip.trends_ms AS SIGNED) - ${trendBucketMs})`);
+  const time = now.getTime();
+  return { sql: `COALESCE(${custom}, ${fallback})`,
+    params: [time, ...types.flatMap(([type, ms]) => [type, time - ms! - trendBucketMs]),
+      time - (policy.trendMs ?? DEFAULT_TREND_RETENTION_MS) - trendBucketMs] };
 }
 // References protect identity rows, never raw payloads. JSON lineage is the legacy on-disk contract,
 // so this also protects pre-migration observations without inventing a new reference format.
@@ -52,7 +123,9 @@ export function observationSelections(now: Date, policy: RetentionPolicy): Recor
   const params=typed.flatMap(([type,ms])=>[type,retentionSqlTime(new Date(now.getTime()-ms!))]);
   return {
     rawPayload: { table: 'metric_observations o', key: 'id', time: 'stored_at', where: "o.stage = 'raw' AND o.payload IS NOT NULL AND (o.evidence_expires_at <= ? OR o.stored_at <= ?)", params: [retentionSqlTime(now), retentionSqlTime(new Date(now.getTime() - policy.rawMs))] },
-    normalized: { table: 'metric_observations o', key: 'id', time: 'stored_at', where: `o.stage = 'normalized' AND o.stored_at < ${cutoff} AND ${observationUnreferenced}`, params: [...params,history] },
+    normalized: { table: 'metric_observations o', key: 'id', time: 'stored_at',
+      where: `o.stage = 'normalized' AND COALESCE(${itemHistoryExpired}, o.stored_at < ${cutoff}) AND ${observationUnreferenced}`,
+      params: [retentionSqlTime(now), ...params,history] },
     rawIdentity: { table: 'metric_observations o', key: 'id', time: 'stored_at', where: `o.stage = 'raw' AND o.payload IS NULL AND o.stored_at < ? AND ${observationUnreferenced}`, params: [history] },
     attempts: { table: 'metric_attempts a', key: 'id', time: 'stored_at', where: "a.stored_at < ? AND JSON_UNQUOTE(JSON_EXTRACT(a.payload, '$.status')) <> 'running'", params: [retentionSqlTime(new Date(now.getTime() - policy.attemptMs))] },
   };

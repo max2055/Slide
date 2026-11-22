@@ -14,8 +14,17 @@ import { MySqlTemplateRepository } from '../templates/mysql-repository.js';
 import { TriggerPublicationService } from './publication.js';
 import { mysqlTriggerCatalog } from './persistence.js';
 import { connectionTemplatePool, templateBindingErrorStatus } from '../templates/binding-service.js';
+import { alertEventService } from '../../alert-event-service.js';
+import { canManageResource, canReadResource } from '../../resources/resource-service.js';
+import { verifyTriggerSnapshot } from './compile.js';
+import type { TriggerResourceSnapshot } from '../../contracts/metrics/triggers.js';
+import type { TriggerEpisodeRecord } from './episode.js';
 
 const parsed = (v: unknown): any => (typeof v === 'string' ? JSON.parse(v) : v);
+const episodeResource = (episode: TriggerEpisodeRecord) =>
+  RefSchema.parse({ type: episode.resource.type, id: Number(episode.resource.id) });
+const alertPermission = (actor: ActorContext, permission: 'alert:view' | 'alert:manage') =>
+  hasPermission(new Set(actor.permissions), permission);
 export async function registerTemplateTriggerRoutes(
   app: FastifyInstance,
   verifyToken: preHandlerHookHandler,
@@ -87,38 +96,66 @@ export async function registerTemplateTriggerRoutes(
     }),
   );
 
-  for (const acknowledge of [false, true])
+  for (const action of ['read', 'acknowledge', 'close'] as const)
     app.route({
-      method: acknowledge ? 'POST' : 'GET',
-      url: `/api/metrics/template-events/:eventId${acknowledge ? '/acknowledge' : ''}`,
+      method: action === 'read' ? 'GET' : 'POST',
+      url: `/api/metrics/template-events/:eventId${action === 'read' ? '' : `/${action}`}`,
       preHandler: [verifyToken],
       handler: handle(async (req, pool, actor) => {
         const eventId = z.coerce.number().int().positive().safe().parse(req.params.eventId);
+        if (action === 'close') z.strictObject({}).parse(req.body === undefined ? {} : req.body);
         const c = await pool.getConnection();
         let reusable = false;
         try {
           await c.execute('SET TRANSACTION ISOLATION LEVEL READ COMMITTED');
           await c.beginTransaction();
+          if (action === 'close') {
+            const before = await reload(actor, c, false);
+            rule(alertPermission(before, 'alert:view') && alertPermission(before, 'alert:manage'), 'TRIGGER_FORBIDDEN', 403);
+            const [identity] = await c.execute<RowDataPacket[]>(
+              'SELECT identity_hash,payload FROM metric_trigger_episodes WHERE event_id=?', [eventId],
+            );
+            rule(identity.length === 1, 'TRIGGER_EVENT_NOT_FOUND', 404);
+            const ref = episodeResource(parsed(identity[0].payload));
+            rule(canReadResource(before, ref), 'TRIGGER_EVENT_NOT_FOUND', 404);
+            await templateBindingService.assertAccess(before, ref, true, c);
+            // The formal writer locks the head before the episode. Same order for manual closure.
+            await c.execute('SELECT identity_hash FROM metric_trigger_heads WHERE identity_hash=? FOR UPDATE',
+              [identity[0].identity_hash]);
+          }
           const [rows] = await c.execute<RowDataPacket[]>(
             'SELECT * FROM metric_trigger_episodes WHERE event_id=? FOR UPDATE',
             [eventId],
           );
           rule(rows.length === 1, 'TRIGGER_EVENT_NOT_FOUND', 404);
-          const episode = parsed(rows[0].payload);
-          const ref = RefSchema.parse({ type: episode.resource.type, id: Number(episode.resource.id) });
+          let episode: TriggerEpisodeRecord = parsed(rows[0].payload);
+          const ref = episodeResource(episode);
           const check = async () => {
             const live = await reload(actor, c);
-            rule(hasPermission(new Set(live.permissions), 'alert:view'), 'TRIGGER_FORBIDDEN', 403);
-            if (acknowledge)
-              rule(hasPermission(new Set(live.permissions), 'alert:manage'), 'TRIGGER_FORBIDDEN', 403);
-            await templateBindingService.assertAccess(live, ref, acknowledge, c);
+            rule(alertPermission(live, 'alert:view'), 'TRIGGER_FORBIDDEN', 403);
+            if (action !== 'read')
+              rule(alertPermission(live, 'alert:manage'), 'TRIGGER_FORBIDDEN', 403);
+            await templateBindingService.assertAccess(live, ref, action !== 'read', c);
+            return live;
           };
-          await check();
+          const live = await check();
+          const evidence: { configuration: TriggerResourceSnapshot; opening: unknown } = parsed(rows[0].snapshot);
+          const findOpeningRule = (configuration: TriggerResourceSnapshot) =>
+            configuration.rules.find(rule =>
+              rule.rule_id === episode.rule_id && rule.version === episode.version && rule.scope === episode.scope
+                && rule.body_hash === episode.body_hash);
+          const ruleAtOpening = findOpeningRule(evidence.configuration);
+          if (action === 'close') {
+            const verified = verifyTriggerSnapshot(evidence.configuration);
+            const frozen = findOpeningRule(verified);
+            rule(frozen?.allow_manual_close === true, 'TRIGGER_MANUAL_CLOSE_DISABLED', 403);
+            episode = await alertEventService.closeTemplateEpisode(c, episode, live);
+          }
           const [processing] = await c.execute<RowDataPacket[]>(
             'SELECT status,acknowledged_at FROM alerts WHERE id=? FOR UPDATE',
             [rows[0].alert_id],
           );
-          if (acknowledge && !processing[0]?.acknowledged_at) {
+          if (action === 'acknowledge' && !processing[0]?.acknowledged_at) {
             // No episode/event state mutation and no job admission.
             await c.execute(
               "UPDATE alerts SET status=IF(status IN ('unread','read'),'acknowledged',status), acknowledged_by=?,acknowledged_at=COALESCE(acknowledged_at,NOW()) WHERE id=?",
@@ -139,8 +176,9 @@ export async function registerTemplateTriggerRoutes(
           );
           const decoded = binding[0] ? decodeBindingPayload(binding[0].payload) : null;
           const current = decoded?.binding ?? null;
-          const evaluation = triggerProviderState(decoded?.kind === 'template_pending' ? decoded : null,
-            episode.opened.metric, episode.last.dimensions ?? {});
+          const states = [episode.opened.metric, ...(ruleAtOpening?.inputs ?? []).map((input: { metric: typeof episode.opened.metric }) => input.metric)]
+            .map(metric => triggerProviderState(decoded?.kind === 'template_pending' ? decoded : null, metric, episode.last.dimensions ?? {}));
+          const evaluation = states.find(state => state.state === 'active') ?? states.find(state => state.state === 'pending') ?? states[0];
           const [deliveries] = await c.execute<RowDataPacket[]>(
             `SELECT j.id AS job_id,j.state AS job_state,
           JSON_UNQUOTE(JSON_EXTRACT(j.payload,'$.channelId')) AS channel_id,
@@ -157,17 +195,19 @@ export async function registerTemplateTriggerRoutes(
             'SELECT status,acknowledged_at FROM alerts WHERE id=?',
             [rows[0].alert_id],
           );
-          await check();
+          const final = await check();
           await c.commit();
           reusable = true;
           return {
             event_id: eventId,
             alert_id: Number(rows[0].alert_id),
             episode,
-            snapshot: parsed(rows[0].snapshot),
+            snapshot: evidence,
             current,
             evaluation,
             processing: alerts[0],
+            can_manual_close: episode.state === 'open' && ruleAtOpening?.allow_manual_close === true
+              && alertPermission(final, 'alert:manage') && canManageResource(final, ref),
             deliveries,
             receipts,
           };

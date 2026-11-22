@@ -32,6 +32,7 @@ import {
 import type { MetricRef } from '../templates/model.js';
 import { add, compare, decode, divide, encode, numberValue, rational, type Rational } from '../arithmetic.js';
 import { checkTriggerSnapshotFence } from './compile.js';
+import { metricKey } from '../policy/model.js';
 
 export const TriggerEvaluationInputSchema = z.strictObject({
   now: TimestampSchema,
@@ -114,10 +115,13 @@ interface EvaluationContext {
   clock: TriggerClockPolicy;
   series: TriggerSample[];
   cache: Map<string, Selected>;
+  anchor: string;
+  inputs?: Map<string, EvaluationContext>;
+  fault?: TriggerEvaluationReason;
 }
 
 /** Mirror the accepted consumer gate: quality, accuracy and coverage must all be acceptable. */
-function gate(sample: TriggerSample, quality: TriggerQualityPolicy): TriggerEvaluationReason | null {
+export function triggerSampleQualityFault(sample: TriggerSample, quality: TriggerQualityPolicy): TriggerEvaluationReason | null {
   if (!quality.accepted_quality.includes(sample.quality.status as 'good' | 'partial')) return 'insufficient_evidence';
   if (sample.accuracy === 'unknown') return 'insufficient_evidence';
   if (sample.accuracy === 'estimated' && !quality.allow_estimated) return 'insufficient_evidence';
@@ -134,6 +138,7 @@ const numericOf = (sample: TriggerSample): Rational => decode(sample.value);
  * an old sample never recovers an open problem.
  */
 function selectValue(selector: TriggerSelector, context: EvaluationContext): Selected {
+  if (context.fault) return { kind: 'reason', reason: context.fault };
   const cacheKey = selector.aggregation === 'last' ? 'last' : `${selector.aggregation}:${selector.window_ms}`;
   const cached = context.cache.get(cacheKey);
   if (cached !== undefined) return cached;
@@ -152,7 +157,7 @@ function selectValueUncached(selector: TriggerSelector, context: EvaluationConte
     if (context.now - Date.parse(newest.observed_at) >= context.clock.stale_after_ms) {
       return { kind: 'reason', reason: 'stale' };
     }
-    const problem = gate(newest, context.quality);
+    const problem = triggerSampleQualityFault(newest, context.quality);
     if (problem !== null) return { kind: 'reason', reason: problem };
     return { kind: 'value', value: numericOf(newest) };
   }
@@ -184,7 +189,7 @@ function selectValueUncached(selector: TriggerSelector, context: EvaluationConte
   if (context.now - last > context.clock.stale_after_ms) return { kind: 'reason', reason: 'stale' };
 
   for (const sample of inWindow) {
-    const problem = gate(sample, context.quality);
+    const problem = triggerSampleQualityFault(sample, context.quality);
     if (problem !== null) return { kind: 'reason', reason: problem };
   }
 
@@ -205,7 +210,10 @@ type Verdict = { kind: 'value'; value: boolean } | { kind: 'reason'; reason: Tri
 /** Kleene AND/OR: a definitive child decides even if a sibling is unknown. */
 function matches(expression: ResolvedTriggerExpression, context: EvaluationContext): Verdict {
   if (expression.node === 'compare') {
-    const selected = selectValue(expression.select, context);
+    const item = expression.select.item_id;
+    const operand = item && item !== context.anchor ? context.inputs?.get(item) : context;
+    if (!operand) return { kind: 'reason', reason: 'missing_input' };
+    const selected = selectValue(expression.select, operand);
     if (selected.kind === 'reason') return selected;
     const order = compare(selected.value, thresholdRational(expression.threshold));
     switch (expression.operator) {
@@ -266,7 +274,7 @@ function describe(rule: TriggerRuleSnapshot, at: string, outcome: Outcome): Trig
  */
 export function evaluateTriggerRule(
   snapshot: TriggerResourceSnapshot,
-  key: { rule_id: string; scope: string },
+  key: { rule_id: string; scope: string; template_id?: string },
   request: TriggerEvaluationRequest,
 ): TriggerEvaluationResult {
   const at = evaluatedAt(request.input);
@@ -277,7 +285,8 @@ export function evaluateTriggerRule(
   const carryProblem = parsedInput.success
     ? parsedInput.data.previous === 'problem'
     : rawPrevious === 'problem';
-  const rule = snapshot.rules.find(entry => entry.rule_id === key.rule_id && entry.scope === key.scope);
+  const rule = snapshot.rules.find(entry => entry.rule_id === key.rule_id && entry.scope === key.scope
+    && (key.template_id === undefined || entry.item.template_id === key.template_id));
 
   if (rule === undefined) {
     // A missing rule has no identity to report; the stable reason is the answer.
@@ -297,32 +306,54 @@ export function evaluateTriggerRule(
   const input = parsedInput.data;
 
   const now = Date.parse(input.now);
-  const nodataClock = rule.clock.nodata.enabled
+  const nodataClock = rule.clock.nodata.enabled && (!rule.inputs || ['collect', 'derive'].includes(rule.decision))
     && (input.last_seen_at === null || now - Date.parse(input.last_seen_at) >= rule.clock.nodata.after_ms);
   if (nodataClock) {
     // Explicit nodata is clock-driven: it fires without any new sample, and it
     // never closes an open problem.
     return describe(rule, at, { ...unresolved('nodata', carryProblem), nodata: true });
   }
-  if (input.last_seen_at === null) return describe(rule, at, unresolved('missing_input', carryProblem));
-  if (now - Date.parse(input.last_seen_at) >= rule.clock.stale_after_ms) {
+  if (!rule.inputs && input.last_seen_at === null) return describe(rule, at, unresolved('missing_input', carryProblem));
+  if (!rule.inputs && input.last_seen_at !== null && now - Date.parse(input.last_seen_at) >= rule.clock.stale_after_ms) {
     return describe(rule, at, unresolved('stale', carryProblem));
   }
-  if (input.samples.some(sample => Date.parse(sample.observed_at) > now)) {
+  if (!rule.inputs && input.samples.some(sample => Date.parse(sample.observed_at) > now)) {
     return describe(rule, at, unresolved('clock_skew', carryProblem));
   }
-  if (input.samples.some(sample => sample.metric.id !== rule.metric.id)) {
+  const sources = [rule, ...(rule.inputs ?? [])];
+  const operands = new Map(sources.map(source => [metricKey(source.metric), source]));
+  const knownIds = new Set(sources.map(source => source.metric.id));
+  if (input.samples.some(sample => !knownIds.has(sample.metric.id))) {
     return describe(rule, at, unresolved('metric_mismatch', carryProblem));
   }
-  if (input.samples.some(sample => sample.metric.semantic_version !== rule.metric.semantic_version)) {
+  if (!rule.inputs && input.samples.some(sample => !operands.has(metricKey(sample.metric)))) {
     return describe(rule, at, unresolved('semantic_version_mismatch', carryProblem));
   }
-  if (input.samples.some(sample => sample.unit !== rule.unit)) {
+  if (!rule.inputs && input.samples.some(sample => sample.unit !== operands.get(metricKey(sample.metric))!.unit)) {
     return describe(rule, at, unresolved('unit_mismatch', carryProblem));
   }
 
+  const faults = new Map<string, TriggerEvaluationReason>();
   const groups = new Map<string, TriggerSample[]>();
+  if (rule.inputs) groups.set(seriesKey({}), []);
   for (const sample of input.samples) {
+    if (rule.inputs) {
+      const key = metricKey(sample.metric), source = operands.get(key);
+      if (!source) {
+        for (const candidate of sources.filter(candidate => candidate.metric.id === sample.metric.id)) {
+          faults.set(metricKey(candidate.metric), 'semantic_version_mismatch');
+        }
+        continue;
+      }
+      if (!['collect', 'derive'].includes(source.decision)) continue;
+      const fault = sample.unit !== source.unit ? 'unit_mismatch'
+        : Date.parse(sample.observed_at) > now ? 'clock_skew'
+        : Object.keys(sample.dimensions).length ? 'invalid_input' : null;
+      if (fault) {
+        faults.set(key, fault);
+        continue;
+      }
+    }
     const keyOfSeries = seriesKey(sample.dimensions);
     const group = groups.get(keyOfSeries);
     if (group === undefined) groups.set(keyOfSeries, [sample]);
@@ -338,46 +369,47 @@ export function evaluateTriggerRule(
   const series = [...groups.entries()]
     .sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0)
     .map(([, samples]) => samples);
-  const problems: Verdict[] = [];
-  const recoveries: Verdict[] = [];
-  const qualities: TriggerEvidenceQuality[] = [];
-  for (const samples of series) {
-    const context: EvaluationContext = {
-      now, quality: rule.quality, clock: rule.clock, series: samples, cache: new Map(),
+  const contextFor = (samples: TriggerSample[], fault?: TriggerEvaluationReason): EvaluationContext => ({
+    now, quality: rule.quality, clock: rule.clock, series: samples, cache: new Map(), anchor: rule.item.item_id,
+    fault,
+  });
+  const contexts = series.map(samples => {
+    if (!rule.inputs) return contextFor(samples);
+    const forMetric = (metric: MetricRef) => {
+      const key = metricKey(metric);
+      return contextFor(samples.filter(sample => metricKey(sample.metric) === key), faults.get(key));
     };
-    problems.push(matches(rule.problem, context));
-    recoveries.push(matches(rule.recovery, context));
-    qualities.push(samples.some(sample => sample.quality.status !== 'good') ? 'partial' : 'good');
-  }
+    return { ...forMetric(rule.metric), inputs: new Map(rule.inputs.map(source => [source.item.item_id, forMetric(source.metric)])) };
+  });
+  const problems = contexts.map(context => matches(rule.problem, context));
+  const problem = problems.some(verdict => verdict.kind === 'value' && verdict.value);
+  const problemUnknown = problems.find(verdict => verdict.kind === 'reason');
 
-  // An unusable evidence gate on any series makes the whole rule unknown; it
-  // can never be read as a recovery.
-  const blocking = problems.find(verdict => verdict.kind === 'reason')
-    ?? recoveries.find(verdict => verdict.kind === 'reason');
+  // Zabbix 7.0 triggerfunc.c evaluates recovery only for an open problem after
+  // the problem expression is known false. A cold recovery window cannot gate opening.
+  const canRecover = carryProblem && !problem && !problemUnknown;
+  const recovery = rule.recovery;
+  const recoveries = canRecover && recovery ? contexts.map(context => matches(recovery, context)) : [];
+  const blocking = problemUnknown ?? recoveries.find(verdict => verdict.kind === 'reason');
   if (blocking !== undefined && blocking.kind === 'reason') {
     return describe(rule, at, { ...unresolved(blocking.reason, carryProblem), series_count: groups.size });
   }
 
-  const problem = problems.some(verdict => verdict.kind === 'value' && verdict.value);
-  // Recovery needs both its own evidence and the absence of the problem
-  // condition: two expressions that happen to overlap must never close a live
-  // problem.
-  const recoveryEvidence = recoveries.every(verdict => verdict.kind === 'value' && verdict.value) && !problem;
-  const evidenceQuality: TriggerEvidenceQuality = qualities.every(entry => entry === 'good') ? 'good' : 'partial';
+  const recoveryEvidence = canRecover && (rule.recovery_mode === 'problem_expression'
+    || recoveries.length > 0 && recoveries.every(verdict => verdict.kind === 'value' && verdict.value));
+  const evidenceQuality: TriggerEvidenceQuality = !faults.size && input.samples.every(sample => sample.quality.status === 'good') ? 'good' : 'partial';
   // Report the first series in sorted dimension-key order that actually makes the
   // problem condition true; an earlier healthy sibling must not supply the value.
   // When no series fires, the first series is the deterministic fallback.
   const reportedIndex = problem
     ? problems.findIndex(verdict => verdict.kind === 'value' && verdict.value)
     : 0;
-  const reportedSeries = series[Math.max(reportedIndex, 0)];
-  const reported = selectValue({ aggregation: 'last' }, {
-    now, quality: rule.quality, clock: rule.clock, series: reportedSeries, cache: new Map(),
-  });
+  const reportedContext = contexts[reportedIndex];
+  const reported = selectValue({ aggregation: 'last' }, reportedContext);
   const shared = {
     quality: evidenceQuality,
     value: reported.kind === 'value' ? toNumber(reported.value) : null,
-    dimensions: reportedSeries[0].dimensions,
+    dimensions: series[reportedIndex][0]?.dimensions ?? {},
     series_count: groups.size,
   };
 

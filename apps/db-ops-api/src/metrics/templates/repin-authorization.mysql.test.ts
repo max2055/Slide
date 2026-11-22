@@ -47,7 +47,7 @@ const digest = (version: string) => registry.list()
   .find(entry => entry.package.id === 'mysql-basic' && entry.package.version === version)!.package.digest;
 
 const TABLES = ['metric_template_item_versions', 'metric_template_items', 'metric_template_versions',
-  'metric_template_drafts', 'metric_templates_v2', 'metric_policy_operations', 'metric_policy_trial_receipts'] as const;
+  'metric_template_drafts', 'monitoring_templates', 'metric_policy_operations', 'metric_policy_trial_receipts'] as const;
 
 describe.skipIf(!port)('re-pin publication authorization on isolated MySQL', () => {
   let root: Pool, pool: Pool;

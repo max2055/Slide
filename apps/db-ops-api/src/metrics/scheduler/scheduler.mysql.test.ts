@@ -59,7 +59,7 @@ describe.skipIf(!port)('scheduler isolated MySQL + existing Worker', () => {
       max_counter_gap_ms: { mode: 'set', value: Math.max(interval, 300000) } } }, true)).resources[0];
   };
   const setup = (collect = vi.fn(async () => batch()), customAccess = access) => {
-    const scheduler = new MetricScheduler(store, packages, customAccess, () => now, collect);
+    const scheduler = MetricScheduler.forLegacyPackages(store, packages, customAccess, () => now, collect);
     const registry = new JobRegistry(); scheduler.register(registry);
     const worker = (id: string, lease = 30) => new WorkerRuntime(queue, id, lease);
     const run = (w: WorkerRuntime) => w.runOnce((j, ctx) => registry.execute(j, ctx), now);
@@ -87,7 +87,7 @@ describe.skipIf(!port)('scheduler isolated MySQL + existing Worker', () => {
         return { resource: value, credential_ref: 'credential:clock-fixture', evidence: {},
           resolve: async () => ({ method: 'sql', pool: { query: async options => { sqlReads++; return root.query(options); } } }) };
       } };
-      const scheduler = new MetricScheduler(store, packages, delayed, () => now);
+      const scheduler = MetricScheduler.forLegacyPackages(store, packages, delayed, () => now);
       const registry = new JobRegistry(); scheduler.register(registry);
       await enqueue(scheduler);
       const worker = new WorkerRuntime(queue, 'clock-fixture', 30);

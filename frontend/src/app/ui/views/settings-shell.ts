@@ -186,9 +186,8 @@ export class SettingsShell extends LitElement {
     }
 
     /* Models own a single document flow; avoid a full-height nested scroller. */
-    .settings-main--models { padding: var(--space-lg); }
     .settings-main--models llm-config-page { height: auto; }
-    .settings-main--models .content-tabs { margin-bottom: var(--space-lg); }
+    .settings-main--models .content-tabs { margin-bottom: 0; }
 
     .mobile-heading { display: none; }
 
@@ -331,7 +330,7 @@ export class SettingsShell extends LitElement {
       ? requestedView
       : (views[0]?.id ?? "");
 
-    if (route.legacy || (views.length > 0 && requestedView !== this.activeView)) {
+    if (route.legacy || (route.item.id === "metrics" && requestedView) || (views.length > 0 && requestedView !== this.activeView)) {
       this.navigateTo(route.item, true, this.activeView);
     }
   }
@@ -414,7 +413,7 @@ export class SettingsShell extends LitElement {
     const views = visibleSettingsViews(item, this.permissions);
     if (views.length < 2) return nothing;
     return html`
-      <div class="content-tabs" role="tablist" aria-label=${item.label}>
+      <div class="content-tabs" role="tablist" aria-label=${item.label} slot=${item.id === 'models' ? 'page-tabs' : nothing}>
         ${views.map((view) => html`
           <button
             type="button"
@@ -441,7 +440,7 @@ export class SettingsShell extends LitElement {
               <button class="btn" type="button" ?disabled=${this.permissionsLoading} @click=${() => void this.reloadPermissions()}>重试加载权限</button>`
           : this.accessDenied
           ? html`<app-empty-state icon="lock" title="无权访问" description="当前账号无权访问此设置页面。"></app-empty-state>`
-          : html`${this.renderContentTabs(item)}${this.renderPage()}`}
+          : html`${item?.id === 'models' ? nothing : this.renderContentTabs(item)}${this.renderPage()}`}
       </main>
     `;
   }
@@ -452,11 +451,13 @@ export class SettingsShell extends LitElement {
       case "branding": return html`<branding-settings></branding-settings>`;
       case "appearance": return html`<appearance-settings></appearance-settings>`;
       case "notifications": return html`<feishu-notification-settings></feishu-notification-settings>`;
-      case "metrics": return html`<metric-settings .view=${this.activeView || "catalog"}></metric-settings>`;
+      case "metrics": return html`<metric-settings></metric-settings>`;
       case "analysis": return this.activeView === "scoring"
         ? html`<scoring-settings-page></scoring-settings-page>`
         : html`<ai-settings-page></ai-settings-page>`;
-      case "models": return html`<llm-config-page .activeTab=${this.activeView}></llm-config-page>`;
+      case "models": return html`<llm-config-page .activeTab=${this.activeView}>
+        ${this.renderContentTabs(settingsItemById("models"))}
+      </llm-config-page>`;
       case "prompts": return html`<prompt-settings-page></prompt-settings-page>`;
       case "profiles": return html`<investigation-profiles-page></investigation-profiles-page>`;
       case "policies":

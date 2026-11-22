@@ -56,7 +56,7 @@ export const SETTINGS_GROUPS: readonly SettingsGroup[] = [
     id: "monitoring",
     label: "监控与分析",
     items: [
-      { id: "metrics", label: "指标与采集", path: "/settings/monitoring/metrics", icon: "puzzle", requiredPermission: "metric:view", views: [{ id: "catalog", label: "指标目录" }, { id: "packages", label: "采集包" }, { id: "policies", label: "采集策略" }, { id: "audit", label: "变更审计" }] },
+      { id: "metrics", label: "指标与采集", path: "/settings/monitoring/metrics", icon: "puzzle", requiredPermission: "metric:view" },
       {
         id: "analysis",
         label: "分析策略",

@@ -5,6 +5,7 @@ import { MySqlTemplateRepository } from './mysql-repository.js';
 import { connectionTemplatePool } from './binding-service.js';
 import type { DecodedTemplateBindingPayload } from '../bindings/persistence-codec.js';
 import type { PackageResult } from '../packages/runner.js';
+import type { TemplateReleasePlan } from '../bindings/plan.js';
 import { stable } from '../packages/model.js';
 import { reconcileDiscovery } from './discovery.js';
 // Publication fixes these parameter bounds to the rule budget; resource overrides cannot widen them.
@@ -24,7 +25,8 @@ export const decodeDiscovery = (value: any): DiscoveryState => typeof value === 
 
 /** Same transaction/lock as the formal writer. No independent sampler, observations or events. */
 export async function updateFormalDiscovery(c: PoolConnection, binding: DecodedTemplateBindingPayload,
-  results: Array<{ release: { id: string; version: string; digest: string }; result: PackageResult }>, now: number) {
+  results: Array<{ release: { id: string; version: string; digest: string }; result: PackageResult }>, now: number,
+  releases: TemplateReleasePlan[]) {
   const repository = new MySqlTemplateRepository(connectionTemplatePool(c));
   const ref = binding.binding.resource, key = `${ref.type}:${ref.id}`;
   const allowed = new Map<string, Set<string>>();
@@ -34,8 +36,9 @@ export async function updateFormalDiscovery(c: PoolConnection, binding: DecodedT
     for (const rule of version.aggregate.discovery_rules ?? []) {
       const items = version.items.filter(item => rule.item_ids.includes(item.item_id));
       // Successful empty enumerations have no raw samples; identify their collector from the pinned package plan.
-      const steps = binding.pending.plan.releases.flatMap(r => r.steps).filter(s => s.items.some(i =>
+      const steps = releases.flatMap(r => r.steps).filter(s => s.items.some(i =>
         i.template_id === pin.template_id && rule.item_ids.includes(i.item_id)));
+      if (!steps.length) continue;
       const selected = results.filter(v => steps.some(s => stable(s.release) === stable(v.release)));
       const ids = new Set(steps.map(s => s.collector_id));
       const attempts = selected.flatMap(v => v.result.attempts).filter(a => ids.has(a.collector_id));

@@ -1,7 +1,7 @@
-import { NormalizedObservationSchema } from '../../contracts/metrics/index.js';
+import { CapabilitySchema, NormalizedObservationSchema } from '../../contracts/metrics/index.js';
 import { legacyConfigurationMigration } from './migration.js';
 import type { Pool, RowDataPacket } from 'mysql2/promise';
-import { refKey } from '../policy/model.js';
+import { metricKey, PolicyError, refKey } from '../policy/model.js';
 import { assetCollectionEnabled } from './effective-state.js';
 import { configurationInventory } from './inventory.js';
 import { metricCollectionEnabled } from '../scheduler/lifecycle.js';
@@ -11,21 +11,41 @@ import type { ConfigurationReader } from './status.js';
 export function configurationReader(pool: () => Pool): ConfigurationReader {
   return { migration: (ref, currentPackage) => legacyConfigurationMigration(pool(),ref,currentPackage), inventory: configurationInventory,
     async template(ref) {
-      const [rows] = await pool().execute<RowDataPacket[]>('SELECT payload FROM metric_policy_bindings WHERE resource_key = ?', [refKey(ref)]);
+      const [rows] = await pool().execute<RowDataPacket[]>('SELECT payload, capabilities FROM metric_policy_bindings WHERE resource_key = ?', [refKey(ref)]);
       if (!rows[0]) return null;
       const decoded = decodeBindingPayload(rows[0].payload);
-      if (decoded.kind !== 'template_pending') return null;
+      if (decoded.kind !== 'template_pending') throw new PolicyError('POLICY_BINDING_INVALID', 409);
       const plan = decoded.pending.plan;
       const metrics: Array<{ metric: { id: string; semantic_version: string }; enabled: boolean;
         decision: 'collect' | 'derive' | 'disabled' | 'unsupported' | 'capability_unknown';
         capability: 'supported' | 'unsupported' | 'unknown' }> = [];
-      for (const release of plan.releases) for (const step of release.steps) for (const item of step.items) {
-        metrics.push({ metric: item.canonical_metric, enabled: true,
-          decision: item.capability.status === 'unsupported' ? 'unsupported'
-            : item.capability.status === 'unknown' ? 'capability_unknown' : 'collect',
-          capability: item.capability.status });
+      const stored = typeof rows[0].capabilities === 'string' ? JSON.parse(rows[0].capabilities) : rows[0].capabilities;
+      const now = Date.now();
+      const capabilities = (Array.isArray(stored) ? stored : []).flatMap(value => {
+        const capability = CapabilitySchema.safeParse(value);
+        return capability.success && Date.parse(capability.data.evaluated_at) <= now
+          && Date.parse(capability.data.valid_until) > now ? [capability.data] : [];
+      });
+      const admitted = new Set<string>();
+      for (const release of plan.releases) {
+        for (const step of release.steps) for (const item of step.items) {
+          const key = metricKey(item.canonical_metric);
+          admitted.add(key);
+          const status = capabilities.find(fact => fact.method === step.method && metricKey(fact.metric) === key)?.status
+            ?? item.capability.status;
+          metrics.push({ metric: item.canonical_metric, enabled: true,
+            decision: status === 'unsupported' ? 'unsupported' : status === 'unknown' ? 'capability_unknown' : 'collect',
+            capability: status });
+        }
+        for (const fact of capabilities) {
+          const key = metricKey(fact.metric);
+          if (fact.method !== 'derived' || !release.metric_keys.includes(key) || admitted.has(key)) continue;
+          admitted.add(key);
+          metrics.push({ metric: fact.metric, enabled: true, decision: 'derive', capability: fact.status });
+        }
       }
       for (const excluded of plan.excluded) {
+        if (admitted.has(metricKey(excluded.metric))) continue;
         metrics.push({ metric: excluded.metric, enabled: false, decision: excluded.decision,
           capability: excluded.decision === 'unsupported' ? 'unsupported'
             : excluded.decision === 'capability_unknown' ? 'unknown' : 'supported' });

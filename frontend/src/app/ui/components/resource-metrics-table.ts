@@ -13,9 +13,8 @@ import './app-data-table.js';
 import './app-dialog.js';
 import './app-empty-state.js';
 import './app-badge.js';
-import './metric-bulk-dialog.js';
+import './template-governance.js';
 import { bulkSelection, type BulkResource } from './metric-bulk-selection.js';
-import type { MetricBulkDialog } from './metric-bulk-dialog.js';
 export interface ResourceEntry { id: number; type?: string | null; version?: string | null; model?: string | null; searchValues?: unknown[]; [key: string]: unknown }
 const unknown = (value: unknown) => value == null || value === '' ? '未知' : String(value);
 @customElement('resource-metrics-table')
@@ -39,6 +38,7 @@ export class ResourceMetricsTable extends LitElement {
   private reportedResultCount: number | undefined;
   @state() private page = 1;
   @state() private rows = new Map<number, MetricRow>();
+  @state() private bulkResources: BulkResource[] | null = null;
   @state() private pending = false;
   private generation = 0;
   private identity = '';
@@ -301,6 +301,8 @@ export class ResourceMetricsTable extends LitElement {
       app-data-table .data-table th, app-data-table .data-table td { white-space:nowrap; vertical-align:middle; }
       .actions { display:flex; gap:var(--space-xs); flex-wrap:nowrap; align-items:center; }
       .actions > button { white-space:nowrap; flex-shrink:0; }
+      .instance-actions { gap:var(--space-sm); }
+      .instance-actions > .danger { margin-inline-start:var(--space-xs); }
       .cell-value, .resource-name { display:block; position:relative; min-width:0; max-width:100%; }
       .truncated, .resource-name > button { display:block; max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; box-sizing:border-box; }
       .resource-name > button { font-weight:600; }
@@ -333,9 +335,11 @@ export class ResourceMetricsTable extends LitElement {
       <button class="btn" @click=${() => { const refs = this.visible.map(entry => this.bulkResource(entry)); const all = refs.every(ref => bulkSelection.has(ref)); refs.filter(ref => all || !bulkSelection.has(ref)).forEach(ref => bulkSelection.toggle(ref)); }}>${this.visible.length && this.visible.every(entry => bulkSelection.has(this.bulkResource(entry))) ? '取消当前页' : '选择当前页'}</button>
       ${selected ? html`
       <button class="btn" .disabled=${!bulkSelection.values().length} @click=${() => { bulkSelection.clear(); void this.updateComplete.then(() => this.renderRoot.querySelector<HTMLButtonElement>('.bulk-tools button')?.focus()); }}>清空选择</button>
-      <button class="btn-primary" .disabled=${!bulkSelection.values().length} @click=${() => this.renderRoot.querySelector<MetricBulkDialog>('metric-bulk-dialog')?.show(bulkSelection.values())}>批量绑定采集模板</button>` : nothing}
-      <button class="btn-ghost" @click=${() => this.renderRoot.querySelector<MetricBulkDialog>('metric-bulk-dialog')?.show([])}>查看批量任务</button></div>
-    <metric-bulk-dialog></metric-bulk-dialog>
+      <button class="btn-primary" .disabled=${!bulkSelection.values().length} @click=${() => this.bulkResources = bulkSelection.values()}>批量绑定采集模板</button>` : nothing}
+      </div>
+    ${this.bulkResources ? html`<app-dialog open size="lg" title="批量绑定监控模板" @app-dialog-close=${() => { this.bulkResources = null; }}>
+      <template-governance .initialResources=${this.bulkResources}></template-governance>
+    </app-dialog>` : nothing}
     <div class="desktop-resources"><p class="scroll-hint" id="resource-scroll-help">左右滚动查看全部列；也可聚焦表格后按左右方向键。聚焦截断内容可查看全文。</p><div class="scroll" @scroll=${this.positionFullValue} @focusin=${this.showFullValue} @focusout=${this.leaveFullValue} @mouseover=${this.showFullValue} @mouseout=${this.leaveFullValue} role="region" tabindex="0" aria-label="资源表格，可横向滚动" aria-describedby="resource-scroll-help"><app-data-table style=${`min-width:${(this.resourceType === 'instance' ? 72 : 68) + extraColumns.length * 12}rem`} @app-table-column-help=${() => { this.sizeHelpOpen = true; }} .striped=${false} .dense=${true} .columns=${columns} .rows=${rows} emptyMessage="没有符合条件的资源"></app-data-table></div></div>
     <div class="pages"><span>筛选结果 ${this.filtered.length} / ${this.entries.length}</span><button class="btn" .disabled=${this.page <= 1} @click=${() => { this.page--; void this.load(); }}>上一页</button><span>第 ${Math.min(this.page, Math.max(1, Math.ceil(this.filtered.length / this.pageSize)))} 页</span><button class="btn" .disabled=${this.page * this.pageSize >= this.filtered.length} @click=${() => { this.page++; void this.load(); }}>下一页</button></div>`;
   }

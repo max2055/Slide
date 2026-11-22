@@ -256,7 +256,7 @@ describe('internal multi-template resolution', () => {
       effective: 50, source: 'override' }]);
     expect(result.templates[1].parameters).toEqual([{ name: 'batch_size', type: 'integer', default: 20, override: null,
       effective: 20, source: 'default' }]);
-    // Parameters never become cadence: the release recommendation still decides the interval.
+    // Custom parameters do not alter the default cadence.
     expect(result.settings.interval_ms).toBe(60000);
     expect(result.settings.max_series_per_resource).toBe(103);
     expect(result.sources.interval_ms).toEqual({ layer: 'package',
@@ -406,6 +406,23 @@ describe('internal multi-template resolution', () => {
     });
     expect((await failure(resolveTemplateBinding(binding({ template_pins: [pin(missing)] }), context(),
       portOf([missing]).port, registry))).code).toBe('RESOLVE_PARAMETER_MISSING');
+  });
+
+  it('schedules the declared template interval and honors a resource override', async () => {
+    const template = templateVersion({ template_id: 'tpl-frequency', items: [
+      item({ template_id: 'tpl-frequency', item_id: 'alpha', metric: alpha, release: refOf(releaseA1) })],
+      parameters: parameters({ interval_ms: { type: 'integer' } }, { interval_ms: 2000 }),
+    });
+    const pinned = binding({ template_pins: [pin(template)] });
+    const port = portOf([template]).port;
+    const ctx = context({ capabilities: supported(alpha) });
+    const registry = fixtureRegistry();
+    const result = resolution(await resolveTemplateBinding(pinned, ctx, port, registry));
+    expect(result.settings).toMatchObject({ interval_ms: 2000, timeout_ms: 2000 });
+    const overridden = resolution(await resolveTemplateBinding({
+      ...pinned, overrides: { interval_ms: { mode: 'set', value: 30000 } },
+    }, ctx, port, registry));
+    expect(overridden.settings.interval_ms).toBe(30000);
   });
 
   it('rejects conflicting release defaults and resolves them only through an explicit layer', async () => {

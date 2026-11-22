@@ -40,6 +40,25 @@ it('distinguishes result, plan and investigation clocks without inventing chart 
  const text=view.shadowRoot!.textContent!;
  expect(text).toContain('暂无可靠建议');expect(text).toContain('结果 V1');
  expect(text).toContain(displayTime('2026-11-01T01:00:00Z'));expect(text).toContain(displayTime('2026-11-03T03:00:00Z'));
- expect(text).toContain(displayTime(item.updatedAt));expect(text).toContain('暂无可信时序证据');
+ expect(text).toContain(displayTime(item.updatedAt));expect(text).toContain('结论引用的证据可在原记录核对');
  expect(view.shadowRoot!.querySelector('svg,canvas')).toBeNull();
+});
+
+it('gives the status and next action their own space with the complete long result collapsed', async () => {
+ const conclusion = '事件 #22899 的触发与恢复均可用本次正式历史观测复核：' + '观测与冻结快照核对记录。'.repeat(40);
+ const api = vi.mocked(authFetch);
+ api.mockResolvedValue(reply({items:[{...item,
+  context:{entry:{sourceEventIds:[22899],metric:{id:'linux.filesystem.discovered_used_bytes'}}},
+  decisionSummary:{conclusion, recommendation:'补采最新样本', sourceRef:null}}], nextCursor:null}));
+ const view = new InvestigationAttention();
+ document.body.append(view);
+ await vi.waitFor(() => expect(view.shadowRoot!.querySelector('.decision h2')?.textContent).toBe('事件 #22899 · 文件系统已用空间'));
+ const card = view.shadowRoot!.querySelector('.decision')!;
+ expect(card.querySelector('.meta')?.textContent).toContain('已保存结果 V2');
+ expect(card.querySelector('.next')?.textContent).toContain('补采最新样本');
+ expect(card.querySelector('a.btn-primary')?.textContent).toBe('查看原记录');
+ const full = card.querySelector('details')!;
+ expect(full.open).toBe(false);
+ expect(full.textContent).toContain(conclusion);
+ expect(full.previousElementSibling?.matches('a.btn-primary')).toBe(true);
 });

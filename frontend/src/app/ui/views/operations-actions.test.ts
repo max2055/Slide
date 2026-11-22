@@ -115,3 +115,54 @@ it('MAX-683: action-only detail presents missing conclusions and separate outcom
   [...root.querySelectorAll('button')].find(b=>b.textContent==='审阅行动条件')!.click();
   expect(root.activeElement).toBe(conditions);
 });
+
+it('shows the submitted impact, approval role and current-version verification in the action list', async () => {
+  history.replaceState({}, '', '/workbench?workspaceTab=actions');
+  const approval = { ...plan(), targetName: '演练服务器' };
+  const verified = { ...plan(), id: 'verified', state: 'approved', verificationState: 'inconclusive',
+    executions: [{ id: 'prior', planVersion: 2, state: 'outcome_unknown' }, { id: 'current', planVersion: 3, state: 'succeeded' }] };
+  const historyOnly = { ...plan(), id: 'historical', state: 'approved', verificationState: 'failed',
+    executions: [{ id: 'prior', planVersion: 2, state: 'failed' }] };
+  const items = [approval, verified, historyOnly];
+  api.mockResolvedValue(json({ items, authorizedCounts: { total: items.length }, nextCursor: null }));
+  view = document.createElement('operations-actions') as OperationsActions;
+  view.permissions = new Set(['operations:actions:view']);
+  document.body.append(view);
+  await flush();
+  const root = view.shadowRoot!;
+  const row = (id: string) => root.querySelector(`[data-plan="${id}"]`)!.closest('tr')!;
+  expect(row('p').cells[0].textContent).toContain('重启专用演练服务');
+  expect(row('p').cells[0].textContent).toContain('演练服务器');
+  expect(row('p').cells[1].textContent).toContain('独立审批人');
+  expect(row('p').cells[1].textContent).toContain('提交者 用户 #11');
+  expect(row('p').cells[3].textContent).toContain('Synthetic');
+  expect(row('p').cells[4].textContent).toContain('查看审批条件');
+  expect(row('verified').cells[2].textContent).toContain('执行成功');
+  expect(row('verified').cells[2].textContent).toContain('证据不足，无法确认恢复');
+  expect(row('verified').cells[3].textContent).toContain('恢复观察 300 秒');
+  expect(row('historical').cells[2].textContent).toContain('当前版本暂无执行记录');
+  expect(row('historical').cells[2].textContent).not.toContain('验证未通过');
+  expect(root.querySelector('a[href*="investigation="]')).toBeNull();
+  expect(api.mock.calls.map(([url]) => String(url))).toEqual(['/api/operations/actions/plans?limit=20']);
+});
+
+it('restores the action state filter after returning from the plan', async () => {
+  const fixture = plan();
+  api.mockImplementation(url => Promise.resolve(json(String(url).includes('/plans?')
+    ? { items: [fixture], authorizedCounts: { total: 1 }, nextCursor: null }
+    : { plan: fixture })));
+  history.replaceState({}, '', '/workbench?workspaceTab=actions&actionState=pending_approval');
+  view = document.createElement('operations-actions') as OperationsActions;
+  view.permissions = new Set(['operations:actions:view']);
+  document.body.append(view);
+  await flush();
+  const root = view.shadowRoot!;
+  root.querySelector<HTMLButtonElement>('[data-plan="p"]')!.click();
+  await flush();
+  expect(root.querySelector('.plan-title')).not.toBeNull();
+
+  history.back();
+  await vi.waitFor(() => expect(root.querySelector<HTMLSelectElement>('[aria-label="计划状态筛选"]')?.value).toBe('pending_approval'));
+  expect(new URL(location.href).searchParams.get('actionState')).toBe('pending_approval');
+  expect(api.mock.calls.filter(([url]) => String(url).includes('state=pending_approval'))).toHaveLength(2);
+});

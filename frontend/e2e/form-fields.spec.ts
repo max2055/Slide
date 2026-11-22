@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect, type Locator, type Page } from '@playwright/test';
 import { writeFile } from 'node:fs/promises';
 
 async function harness(page: import('@playwright/test').Page, body: string, modules = 'components/app-form-field') {
@@ -213,3 +213,227 @@ for (const mode of [{ theme: 'light', width: 1280 }, { theme: 'dark', width: 390
     await page.screenshot({ path: info.outputPath('field-theme-viewport.png'), fullPage: true });
   });
 }
+
+test.describe('MAX-710: accessible names on application routes (controlled HTTP)', () => {
+  test.use({ viewport: { width: 1440, height: 900 } });
+
+  async function openPage(page: Page, path: string, responses: Record<string, unknown> = {}) {
+    await page.addInitScript(() => {
+      localStorage.setItem('token', 'controlled-form-fields');
+      localStorage.setItem('slide.control.session_token.v1', 'controlled-form-fields');
+      localStorage.setItem('slide.i18n.locale', 'zh-CN');
+      localStorage.setItem('slide.control.settings.v1:default', JSON.stringify({
+        locale: 'zh-CN', themeMode: 'light', accentColor: '#409eff', autoRefreshEnabled: false,
+      }));
+    });
+    await page.routeWebSocket('**/agent-ws', socket => socket.onMessage(message => {
+      if (JSON.parse(String(message)).type === 'auth') socket.send(JSON.stringify({ type: 'auth_ok' }));
+    }));
+    await page.route('**/__slide/control-ui-config.json', route => route.fulfill({ json: {} }));
+    await page.route('**/api/**', route => {
+      const pathname = new URL(route.request().url()).pathname;
+      if (!pathname.startsWith('/api/')) return route.fallback();
+      return route.fulfill({ json: responses[pathname] ?? {} });
+    });
+    await page.route('**/api/auth/permissions', route => route.fulfill({ json: ['*'] }));
+    await page.route('**/api/user/preferences', route => route.fulfill({ json: { preferences: {} } }));
+    await page.goto(path);
+  }
+
+  async function expectTabFocus(page: Page, control: Locator) {
+    await page.keyboard.press('Tab');
+    await expect(control).toBeFocused();
+    await expect(control).toBeInViewport();
+    await expect.poll(() => control.evaluate(el => el.matches(':focus-visible'))).toBe(true);
+  }
+
+  function appDialog(page: Page, name: string) {
+    // The shared dialog projects form fields through a slot.
+    return page.locator('app-dialog').filter({ has: page.getByRole('dialog', { name, exact: true }) });
+  }
+
+  async function closeWithEscape(page: Page, dialog: Locator, trigger: Locator) {
+    await page.keyboard.press('Escape');
+    await expect(dialog).toBeHidden();
+    await expect(trigger).toBeFocused();
+  }
+
+  test('appearance names stay stable as values change and refresh becomes available', async ({ page }, info) => {
+    await openPage(page, '/settings/platform/appearance');
+    const appearance = page.locator('appearance-settings');
+    await expect(appearance.getByRole('combobox', { name: '语言', exact: true })).toHaveValue('zh-CN');
+    const landing = appearance.getByRole('combobox', { name: '默认首页', exact: true });
+    await landing.focus();
+    await landing.selectOption('servers');
+    await expect(landing).toHaveValue('servers');
+    const width = appearance.getByRole('slider', { name: '侧边栏宽度', exact: true });
+    await expectTabFocus(page, width);
+    await page.keyboard.press('End');
+    await expect(width).toHaveValue('400');
+
+    await expect(appearance.getByRole('button', { name: '减少动画', exact: true })).toBeVisible();
+    await expect(appearance.getByRole('button', { name: '数据库', exact: true })).toBeVisible();
+    await expect(appearance.getByRole('combobox', { name: '默认每页条数', exact: true })).toBeVisible();
+    await expect(appearance.getByRole('combobox', { name: '日期格式', exact: true })).toBeVisible();
+    await expect(appearance.getByRole('combobox', { name: '时区', exact: true })).toBeVisible();
+    await expect(appearance.getByRole('button', { name: '启用通知', exact: true })).toBeVisible();
+
+    const refresh = appearance.getByRole('combobox', { name: '刷新间隔', exact: true });
+    await expect(refresh).toHaveCount(0);
+    const toggle = appearance.getByRole('button', { name: '启用自动刷新', exact: true, pressed: false });
+    await toggle.focus();
+    await page.keyboard.press('Space');
+    await expectTabFocus(page, refresh);
+    await refresh.selectOption('10');
+    await expect(refresh).toHaveValue('10');
+    await expect(refresh).toHaveAccessibleName('刷新间隔');
+    await page.screenshot({ path: info.outputPath('appearance-refresh-focus.png') });
+
+    const model = appearance.getByRole('textbox', { name: '默认聊天模型', exact: true });
+    await model.fill('sample-model');
+    await expect(model).toHaveValue('sample-model');
+    await expect(model).toHaveAccessibleName('默认聊天模型');
+  });
+
+  test('active and aggregate alert filters retain names across selection and input', async ({ page }, info) => {
+    await openPage(page, '/events', {
+      '/api/alerts': { items: [], total: 0, level_counts: {} },
+      '/api/ai/analysis': [],
+      '/api/servers': [{ id: 7, host: 'server-test' }],
+      '/api/alerts/events': { items: [], total: 0 },
+    });
+    const list = page.locator('alert-list');
+    const severity = list.getByRole('combobox', { name: '告警等级', exact: true });
+    const target = list.getByRole('combobox', { name: '目标类型', exact: true });
+    const server = list.getByRole('combobox', { name: '服务器', exact: true });
+    const search = list.getByRole('textbox', { name: '搜索告警', exact: true });
+    await expect(server).toHaveCount(0);
+    await severity.focus();
+    await expectTabFocus(page, target);
+    await target.selectOption('server');
+    await expectTabFocus(page, server);
+    await server.selectOption('7');
+    await expect(server).toHaveValue('7');
+    await expectTabFocus(page, search);
+    await page.keyboard.type('CPU');
+    await expect(search).toHaveValue('CPU');
+    await expect(search).toHaveAccessibleName('搜索告警');
+    await page.screenshot({ path: info.outputPath('alert-filters-focus.png') });
+
+    await page.getByRole('tab', { name: '聚合事件', exact: true }).click();
+    await expect(page.getByRole('textbox', { name: '搜索本页事件', exact: true })).toBeVisible();
+    await expect(page.getByRole('combobox', { name: '本页严重度', exact: true })).toBeVisible();
+  });
+
+  for (const [width, height] of [[1440, 900], [1366, 768], [1920, 1080]]) {
+    test(`cron task switches and MySQL script fields are keyboard accessible at ${width}×${height}`, async ({ page }, info) => {
+      await page.setViewportSize({ width, height });
+      await openPage(page, '/cron-jobs', {
+        '/api/cron/jobs': [
+          { id: 1, name: '巡检', enabled: true, task_type: 'agent', cron_expr: '0 * * * *' },
+          { id: 2, name: '汇总', enabled: false, task_type: 'script', cron_expr: '0 * * * *' },
+        ],
+        '/api/cron/jobs/1/toggle': { success: true },
+        '/api/cron/scripts': [],
+        '/api/database/instances': [{ id: 7, name: '测试实例', db_type: 'mysql' }],
+      });
+      const cron = page.locator('cron-jobs-settings');
+      const create = cron.getByRole('button', { name: '+ 新建任务', exact: true });
+      const filter = cron.getByRole('combobox', { name: '筛选模式', exact: true });
+      const first = cron.getByRole('button', { name: '启用任务：巡检', exact: true });
+      const second = cron.getByRole('button', { name: '启用任务：汇总', exact: true });
+      const table = cron.getByRole('region', { name: '定时任务表格，可横向滚动' });
+      await create.focus();
+      await expectTabFocus(page, filter);
+      await filter.selectOption('script');
+      await expect(first).toHaveCount(0);
+      await expectTabFocus(page, table);
+      await expectTabFocus(page, cron.getByRole('button', { name: '查看执行记录：汇总', exact: true }));
+      await expectTabFocus(page, second);
+      await expect(second).toHaveAttribute('aria-pressed', 'false');
+      await filter.focus();
+      await filter.selectOption('all');
+      await expectTabFocus(page, table);
+      await expectTabFocus(page, cron.getByRole('button', { name: '查看执行记录：巡检', exact: true }));
+      await expectTabFocus(page, first);
+      await page.keyboard.press('Space');
+      await expect(first).toHaveAttribute('aria-pressed', 'false');
+
+      await create.focus();
+      await page.keyboard.press('Enter');
+      const dialog = appDialog(page, '新建任务');
+      await expect(dialog.getByRole('textbox', { name: '任务名称', exact: true })).toBeVisible();
+      await expect(dialog.getByRole('textbox', { name: '任务内容（自然语言）', exact: true })).toBeVisible();
+      const mode = dialog.getByRole('combobox', { name: '执行模式', exact: true });
+      await mode.focus();
+      await mode.selectOption('script');
+      const editor = dialog.getByRole('textbox', { name: 'SQL 脚本', exact: true });
+      await expectTabFocus(page, editor);
+      await page.keyboard.type('select 1');
+      await expect(editor).toHaveText('select 1');
+      await expect(editor).toHaveAttribute('contenteditable', 'true');
+      await expect(editor).toHaveAccessibleName('SQL 脚本');
+      await expect(dialog.locator('script-editor .editor-wrapper')).toHaveCSS('outline-style', 'solid');
+      const cdp = await page.context().newCDPSession(page);
+      const { nodes } = await cdp.send('Accessibility.getFullAXTree');
+      const axEditor = nodes.find(node => node.role?.value === 'textbox' && node.name?.value === 'SQL 脚本');
+      expect(axEditor?.properties).toContainEqual(expect.objectContaining({
+        name: 'focused', value: expect.objectContaining({ value: true }),
+      }));
+      await cdp.detach();
+      await page.screenshot({ path: info.outputPath('cron-editor-focus.png') });
+
+      const instance = dialog.getByRole('combobox', { name: '目标实例', exact: true });
+      await expectTabFocus(page, instance);
+      const database = dialog.getByRole('textbox', { name: '目标数据库', exact: true });
+      await expect(database).toHaveCount(0);
+      await instance.selectOption('7');
+      await expectTabFocus(page, dialog.getByRole('button', { name: '测试执行', exact: true }));
+      await expectTabFocus(page, database);
+      await expect(database).toHaveAccessibleDescription('（MySQL 需要指定库名）');
+      await page.keyboard.type('information_schema');
+      await expect(database).toHaveValue('information_schema');
+      await expect(database).toHaveAccessibleName('目标数据库');
+      await expect(dialog.getByRole('textbox', { name: 'Cron 表达式', exact: true })).toBeVisible();
+      await page.screenshot({ path: info.outputPath('cron-database-focus.png') });
+      await closeWithEscape(page, dialog, create);
+    });
+  }
+
+  test('role creation and user editing keep field names and restore trigger focus', async ({ page }, info) => {
+    await openPage(page, '/settings/access/users?view=roles', {
+      '/api/v1/rbac/roles': [{ id: 1, name: 'viewer', description: null }],
+      '/api/users': [{ id: 7, username: 'fixture-user', email: 'user@example.test', status: 'inactive', created_at: '2026-11-01T00:00:00Z' }],
+    });
+    const create = page.getByRole('button', { name: '+ 新建角色', exact: true });
+    await create.focus();
+    await page.keyboard.press('Enter');
+    const role = appDialog(page, '新建角色');
+    const name = role.getByRole('textbox', { name: '角色名称', exact: true });
+    const description = role.getByRole('textbox', { name: '描述', exact: true });
+    await expectTabFocus(page, name);
+    await page.keyboard.type('DBA');
+    await expect(name).toHaveValue('DBA');
+    await expectTabFocus(page, description);
+    await page.keyboard.type('Role details');
+    await expect(description).toHaveValue('Role details');
+    await page.screenshot({ path: info.outputPath('role-form-focus.png') });
+    await closeWithEscape(page, role, create);
+
+    await page.goto('/settings/access/users');
+    const edit = page.getByRole('row', { name: /fixture-user/ }).getByRole('button', { name: '编辑', exact: true });
+    await edit.focus();
+    await page.keyboard.press('Enter');
+    const user = appDialog(page, '编辑用户');
+    await expect(user.getByRole('textbox', { name: '用户名', exact: true })).toBeDisabled();
+    await expectTabFocus(page, user.getByRole('textbox', { name: '邮箱', exact: true }));
+    await expectTabFocus(page, user.getByRole('checkbox', { name: '观察者', exact: true }));
+    const status = user.getByRole('combobox', { name: '状态', exact: true });
+    await expectTabFocus(page, status);
+    await expect(status).toHaveValue('inactive');
+    await status.selectOption('locked');
+    await expect(status).toHaveValue('locked');
+    await page.screenshot({ path: info.outputPath('user-status-focus.png') });
+    await closeWithEscape(page, user, edit);
+  });
+});

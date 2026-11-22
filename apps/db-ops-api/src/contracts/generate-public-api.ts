@@ -14,6 +14,7 @@ import { InvestigationGovernanceSchemas } from '../investigations/governance-con
 import { InvestigationBridgeSchemas } from '../investigations/bridge-contracts.js';
 import { SystemHttpSchemas } from '../investigations/system-http-contracts.js';
 import { metricJsonSchemas, metricPublicPaths } from './metrics/public-api.js';
+import { EventInvestigationResponse, EventInvestigationsResponse, MAX_EVENT_INVESTIGATION_IDS } from './event-investigation.js';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../../../..');
 const openApiPath = resolve(root, 'docs/slide/openapi.json');
@@ -118,7 +119,7 @@ export function buildOpenApiDocument() {
       },
       '/api/investigations/{id}': {
         get: { operationId: 'getInvestigation', security: [{ bearerAuth: [] }], parameters: [investigationId()],
-          description: 'Live all-scope metadata/context, persisted Run-derived state (queued/unknown distinct), latest V2 result and durable observation watermark. Admission is not a completed Run.',
+          description: 'Live all-scope metadata/context, persisted Run-derived state (queued/unknown distinct), latest V2 result and durable observation watermark. Automatic investigations can return optional sourceEventIds for currently authorized linked events. Admission is not a completed Run.',
           responses: { '200': { description: 'Authorized metadata' }, '404': { description: 'Absent or inaccessible' }, '401': { description: 'JWT required' }, '503': { description: 'Store unavailable' } } },
         patch: { operationId: 'patchInvestigation', security: [{ bearerAuth: [] }], parameters: [investigationId()],
           description: 'Operator, live all-scope authority and expectedVersion required. Active request prevents goal/lifecycle change. Immutable scopes/Profile/context; human recovery/verification fields belong to the feedback module.',
@@ -257,6 +258,25 @@ export function buildOpenApiDocument() {
         },
       },
       '/api/health': { get: { operationId: 'getHealth', responses: { '200': { description: 'Service health', content: { 'application/json': { schema: refSchema(PublicApiSchemas.HealthResponse) } } } } } },
+      '/api/alerts/events/{id}/investigation': { get: {
+        operationId: 'getEventInvestigation', security: [{ bearerAuth: [] }], parameters: [pathId('id')],
+        description: 'Exact event lookup. Requires live alert:view and event scope. A linked investigation is included only with current chat, investigation, and result-evidence access. Private/no-store.',
+        responses: { '200': { description: 'Newest readable linked investigation, or null', content: { 'application/json': { schema: refSchema(EventInvestigationResponse) } } },
+          '400': { description: 'Invalid event ID' }, '401': { description: 'Authentication required' },
+          '403': { description: 'Permission denied or withdrawn' }, '404': { description: 'Event absent or inaccessible' },
+          '503': { description: 'Projection unavailable' } },
+      } },
+      '/api/alerts/events/investigations': { get: {
+        operationId: 'listEventInvestigations', security: [{ bearerAuth: [] }], parameters: [{
+          name: 'ids', in: 'query', required: true, style: 'form', explode: false,
+          schema: { type: 'array', minItems: 1, maxItems: MAX_EVENT_INVESTIGATION_IDS, uniqueItems: true,
+            items: { type: 'integer', minimum: 1, maximum: Number.MAX_SAFE_INTEGER } },
+        }],
+        description: 'Comma-separated exact event IDs. Returns accessible events in request order, with the same per-event investigation projection as the single read. Private/no-store.',
+        responses: { '200': { description: 'Authorized event projections', content: { 'application/json': { schema: refSchema(EventInvestigationsResponse) } } },
+          '400': { description: 'Invalid event ID list' }, '401': { description: 'Authentication required' },
+          '403': { description: 'Permission denied or withdrawn' }, '503': { description: 'Projection unavailable' } },
+      } },
       ...Object.fromEntries([
         ['investigate', 'startEventInvestigation', undefined, 'Only open events can enter investigation.'],
         ['resolve', 'resolveEvent', PublicApiSchemas.EventResolveRequest, 'Only open/investigating/handled events can resolve. Event, log and currently associated active alerts commit together.'],
@@ -481,7 +501,7 @@ export function buildOpenApiDocument() {
     },
     components: {
       securitySchemes: { bearerAuth: { type: 'http', scheme: 'bearer', bearerFormat: 'JWT' } },
-      schemas: { ...PublicApiSchemas, ...metricJsonSchemas, ...operationsJsonSchemas },
+      schemas: { ...PublicApiSchemas, ...metricJsonSchemas, ...operationsJsonSchemas, EventInvestigationResponse, EventInvestigationsResponse },
     },
   });
 }
@@ -575,7 +595,7 @@ function schemaType(schema: TSchema, refs: Record<string,string> = {}): string {
     if (!target) throw new Error('Unsupported client schema reference');
     return target;
   }
-  if (schema[Kind] === 'Never') return 'never';
+  if (schema[Kind] === 'Never' || (schema.not && Object.keys(schema.not).length === 0)) return 'never';
   if (schema['x-typescript-type'] === 'ProjectionFrame') return 'ProjectionFrame';
   if (schema[Kind] === 'Unknown') return 'unknown';
   if ('const' in schema) return JSON.stringify(schema.const);
@@ -611,7 +631,7 @@ function buildInvestigationClientTypes(): string {
 }
 
 export function buildClientTypes(): string {
-  return Object.entries({ ...metricJsonSchemas, ...operationsJsonSchemas }).map(([name, schema]) => {
+  return Object.entries({ ...metricJsonSchemas, ...operationsJsonSchemas, EventInvestigationResponse, EventInvestigationsResponse }).map(([name, schema]) => {
     const definitions = Object.entries((schema as any).$defs ?? {}) as [string,TSchema][];
     const refs = Object.fromEntries(definitions.map(([key]) => [`#/$defs/${key}`, `${name}_${key}`]));
     return definitions.map(([key, value]) => `export type ${refs[`#/$defs/${key}`]} = ${schemaType(value, refs)};\n`).join('')

@@ -22,7 +22,7 @@ describe("network-device-detail", () => {
     document.body.append(element);
     await settle(element);
 
-    expect(element.querySelector('semantic-metrics')).toBeNull();
+    expect(element.querySelector('resource-metric-browser')).toBeNull();
     expect(authFetch.mock.calls.some(([url]) => String(url).endsWith('/metrics'))).toBe(false);
     expect(authFetch.mock.calls.some(([url]) => String(url).endsWith('/interfaces'))).toBe(false);
     expect(element.textContent).not.toContain('兼容采集');
@@ -104,7 +104,7 @@ describe("network-device-detail", () => {
     const tab = (label: string) => buttons().find((button) => button.textContent?.trim() === label);
     tab("接口")?.click();
     await settle(element);
-    expect(element.querySelector('semantic-metrics')).toBeNull();
+    expect(element.querySelector('resource-metric-browser')).toBeNull();
     expect(authFetch.mock.calls.some(([url]) => String(url).endsWith('/interfaces'))).toBe(true);
 
     tab("配置备份")?.click();
@@ -169,7 +169,7 @@ describe("network-device-detail", () => {
     buttons().find((button) => button.textContent?.trim() === "接口")?.click();
     await settle(element);
 
-    expect(element.querySelector('semantic-metrics')).toBeNull();
+    expect(element.querySelector('resource-metric-browser')).toBeNull();
     expect(element.textContent).toContain('GigabitEthernet0/0/1');
     expect(authFetch.mock.calls.some(([url]) => String(url).endsWith('/metrics'))).toBe(false);
     expect(authFetch.mock.calls.some(([url]) => String(url).endsWith('/interfaces'))).toBe(true);

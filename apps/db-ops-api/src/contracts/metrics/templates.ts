@@ -99,7 +99,7 @@ export const SourceBaseRefSchema = z.discriminatedUnion('kind', [
   }),
 ]);
 export const SourceChainSchema = z.strictObject({
-  /** `metric_templates_v2.created_by`/`updated_by` are nullable; migrations may have no actor. */
+  /** `monitoring_templates.created_by`/`updated_by` are nullable; migrations may have no actor. */
   actor_id: z.number().int().nonnegative().nullable(),
   request_id: IdSchema,
   base: SourceBaseRefSchema.nullable(),
@@ -120,10 +120,24 @@ export const TemplateBaseRefSchema = z.strictObject({
   template_id: TemplateIdSchema,
   version: VersionNumberSchema,
 });
+const itemRetentionDuration = (minimum: number) => z.union([
+  z.literal(0), z.number().int().min(minimum).max(3650 * 86400000),
+]);
+/** Each omitted field follows the platform default. Zero expires that data tier. */
+export const TemplateItemRetentionSchema = z.strictObject({
+  history_ms: itemRetentionDuration(3600000).optional(),
+  trends_ms: itemRetentionDuration(86400000).optional(),
+});
+export type TemplateItemRetention = z.infer<typeof TemplateItemRetentionSchema>;
+export const TemplateItemIntervalSchema = z.number().int().min(1000).max(86400000).multipleOf(1000);
+
 export const TemplateItemRefSchema = z.strictObject({
   item_id: ItemIdSchema,
   version: VersionNumberSchema,
+  interval_ms: TemplateItemIntervalSchema.optional(),
+  retention: TemplateItemRetentionSchema.optional(),
 });
+export type TemplateItemRef = z.infer<typeof TemplateItemRefSchema>;
 /** `scope` is a template-local item reference, not a metric identity (08 §1.1). */
 export const TemplateTriggerScopeSchema = z.string().regex(/^item:[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/);
 export const TemplateTriggerRefSchema = z.strictObject({
@@ -173,6 +187,8 @@ const aggregateFields = {
   items: z.array(TemplateItemRefSchema),
   triggers: z.array(TemplateTriggerRefSchema),
   discovery_rules: z.array(DiscoveryRuleSchema).max(16).optional(),
+  /** Produce registered derived metrics when their required items are selected. */
+  derive_from_inputs: z.boolean().optional(),
   parameters: TemplateParametersSchema,
   capabilities: TemplateCapabilitiesSchema,
 };

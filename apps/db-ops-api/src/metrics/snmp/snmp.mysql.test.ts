@@ -72,7 +72,7 @@ describe.skipIf(!port)('SNMP UDP → Worker → isolated MySQL → semantic quer
     const client = new SnmpClient(), discovery = new SnmpDiscovery(() => now);
     const transport = bindSnmp(client, { version: 2, host: '127.0.0.1', port: endpoint, community, retries: 0 });
     const collectorWallMs: number[] = [];
-    const scheduler = new MetricScheduler(new MysqlScheduleStore(pool, packages), packages, { resolve: async () => ({
+    const scheduler = MetricScheduler.forLegacyPackages(new MysqlScheduleStore(pool, packages), packages, { resolve: async () => ({
       resource, credential_ref: 'credential:isolated-snmp', evidence: { snmp: discovery }, resolve: async () => transport,
     }) }, () => now, async (...args) => {
       const started = performance.now(); try { return await collectFixed(...args); } finally { collectorWallMs.push(performance.now() - started); }

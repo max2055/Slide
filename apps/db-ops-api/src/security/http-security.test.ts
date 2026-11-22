@@ -1,6 +1,7 @@
 import Fastify from 'fastify';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { API_BODY_LIMIT, createLoginIpRateLimit, loginRateLimitConfig, registerHttpSecurity, resolveCorsOrigins } from './http-security.js';
+import { resolveApiProxyTrust } from '../config/api-proxy.js';
 import { securityEventService } from './security-event-service.js';
 
 async function app() {
@@ -133,21 +134,23 @@ describe('HTTP security boundary', () => {
     } finally { await fastify.close(); }
   });
 
-  it('uses forwarded IPs only behind an explicitly trusted proxy', async () => {
+  it('resolves client budgets through the ordered proxy configuration (#1020)', async () => {
     vi.spyOn(securityEventService, 'record').mockResolvedValue();
-    const fastify = Fastify({ trustProxy: ['127.0.0.1'] });
+    const frontendProxy = '192.0.2.2';
+    const tlsEdge = '192.0.2.3';
+    const fastify = Fastify({ trustProxy: resolveApiProxyTrust({ API_TRUSTED_PROXY_IPS: `${frontendProxy},${tlsEdge}` }) });
     await registerHttpSecurity(fastify, { NODE_ENV: 'test' });
     fastify.post('/login', { onRequest: createLoginIpRateLimit(fastify), config: { rateLimit: loginRateLimitConfig } }, async request => ({ ip: request.ip }));
     try {
       for (let i = 0; i < 6; i++) {
-        const response = await fastify.inject({ method: 'POST', url: '/login', remoteAddress: '127.0.0.1',
-          headers: { 'x-forwarded-for': `192.0.2.${i + 1}` }, payload: { username: 'same' } });
+        const response = await fastify.inject({ method: 'POST', url: '/login', remoteAddress: frontendProxy,
+          headers: { 'x-forwarded-for': `198.51.100.${i + 1}, ${tlsEdge}` }, payload: { username: 'same' } });
         expect(response.statusCode).toBe(i < 5 ? 200 : 429);
-        if (i === 0) expect(response.json().ip).toBe('192.0.2.1');
+        if (i === 0) expect(response.json().ip).toBe('198.51.100.1');
       }
-      const untrusted = await fastify.inject({ method: 'POST', url: '/login', remoteAddress: '198.51.100.1',
-        headers: { 'x-forwarded-for': '192.0.2.55' }, payload: { username: 'other' } });
-      expect(untrusted.json().ip).toBe('198.51.100.1');
+      const diagnostic = await fastify.inject({ method: 'POST', url: '/login', remoteAddress: frontendProxy,
+        headers: { 'x-forwarded-for': '192.0.2.20' }, payload: { username: 'diagnostic' } });
+      expect(diagnostic.json().ip).toBe('192.0.2.20');
     } finally { await fastify.close(); }
   });
 

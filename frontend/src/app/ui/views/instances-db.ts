@@ -297,11 +297,6 @@ export class InstancesPage extends LitElement {
       text-align: right;
     }
 
-    .actions {
-      display: flex;
-      gap: var(--space-sm);
-    }
-
     /* 加载和空状态 */
     .loading, .empty {
       display: flex;
@@ -484,6 +479,7 @@ export class InstancesPage extends LitElement {
     .confirm-text {
       font-size: var(--text-md);
       color: var(--muted);
+      overflow-wrap: anywhere;
     }
   `];
 
@@ -565,6 +561,7 @@ export class InstancesPage extends LitElement {
   @state() private editorTab = 'basic';
   private editorReturnId: number | null = null;
   @state() private connectionPending = false;
+  private readonly monitoringReconnectPending = new Set<number>();
   @state() private metricRefreshVersion = 0;
   @state() private metricsLoading = false;
   private openColumnSettings() {
@@ -759,12 +756,17 @@ export class InstancesPage extends LitElement {
           </div>
 
           <resource-metrics-table resourceType="instance" @resource-results-changed=${(e: CustomEvent<number>) => { this.searchResultCount = e.detail; }} .refreshVersion=${this.metricRefreshVersion} @resource-metrics-loading=${(e: CustomEvent<boolean>) => { this.metricsLoading = e.detail; }} .search=${this.searchQuery}
-            .columns=${[{ key: 'name', label: '实例' }, { key: 'address', label: '地址' }, { key: 'version', label: '版本' }, { key: 'health', label: '观测健康' }, { key: 'actions', label: '操作', width: '14rem' }]}
+            .columns=${[{ key: 'name', label: '实例' }, { key: 'address', label: '地址' }, { key: 'version', label: '版本' }, { key: 'health', label: '观测健康' }, { key: 'actions', label: '操作', width: '15rem' }]}
             .entries=${filtered.map(inst => ({ id: inst.id, type: inst.db_type, version: inst.db_version,
               searchValues: [inst.name, inst.host, this.currentStatus(inst), ({ healthy: "健康", warning: "警告", critical: "异常", error: "异常" } as Record<string, string>)[this.currentStatus(inst)] ?? "未知"],
               name: html`<span class="resource-name"><button class="btn-ghost" title=${inst.name} @click=${() => this._viewDetail(inst)}>${inst.name}</button><span class="full-value" aria-hidden="true">${inst.name}</span></span>`,
               address: `${inst.host}:${inst.port}`, health: this.renderHealthEvidence(inst),
-              actions: html`<div class="actions"><button class="btn-sm" data-resource-detail-id=${inst.id} @click=${() => this._viewDetail(inst)}>详情</button><button class="btn-sm" title=${hasListPermission("instance:update") ? "编辑实例" : "需要实例修改权限"} .disabled=${!hasListPermission("instance:update")} data-resource-edit-id=${inst.id} @click=${() => this._editInstance(inst)}>编辑</button><button class="btn-sm" @click=${() => this._testConnection(inst)} .disabled=${!hasListPermission("instance:manage") || this.listTestStatus === "testing"} title=${hasListPermission("instance:manage") ? "输入密码进行连接测试" : "需要实例管理权限"}>测试</button><button class="btn-sm danger" title=${hasListPermission("instance:delete") ? "删除实例" : "需要实例删除权限"} .disabled=${!hasListPermission("instance:delete")} @click=${() => this._deleteInstance(inst)}>删除</button></div>`
+              actions: html`<div class="actions instance-actions">
+                <button type="button" class="btn-ghost" data-resource-detail-id=${inst.id} @click=${() => this._viewDetail(inst)}>详情</button>
+                <button type="button" class="btn-sm" title=${hasListPermission("instance:update") ? "编辑实例" : "需要实例修改权限"} .disabled=${!hasListPermission("instance:update")} data-resource-edit-id=${inst.id} @click=${() => this._editInstance(inst)}>编辑</button>
+                <button type="button" class="btn-sm" @click=${() => this._testConnection(inst)} .disabled=${!hasListPermission("instance:manage") || this.listTestStatus === "testing"} title=${hasListPermission("instance:manage") ? "输入密码进行连接测试" : "需要实例管理权限"}>测试</button>
+                <button type="button" class="btn-sm danger" title=${hasListPermission("instance:delete") ? "删除实例" : "需要实例删除权限"} .disabled=${!hasListPermission("instance:delete")} @click=${() => this._deleteInstance(inst)}>删除</button>
+              </div>`
             }))}
             @resource-metric-open=${(e: CustomEvent<{ id: number }>) => { const inst = this.instances.find(i => i.id === e.detail.id); if (inst) this._viewDetail(inst); }}
           ></resource-metrics-table>
@@ -1044,6 +1046,10 @@ export class InstancesPage extends LitElement {
     }
 
     const formData = { ...this.formData };
+    const original = this.editingInstance;
+    const needsConnection = !original?.db_version || !!formData.password.trim()
+      || original.host !== formData.host || original.port !== formData.port || original.username !== formData.username
+      || original.db_type !== formData.db_type || (original.database_name || '') !== formData.database_name;
     const instanceHosts = (this.instanceHosts ?? []).map((host) => ({ ...host }));
     const editingInstanceId = this.editingInstance?.id ?? null;
     const pendingCreatedInstanceId = this.pendingCreatedInstanceId;
@@ -1096,14 +1102,36 @@ export class InstancesPage extends LitElement {
         await relationResponse.json() as ReplaceInstanceHostsResponse;
       }
 
-      this.pendingCreatedInstanceId = null;
-      if (!configureCollection || !isEdit) this._resetDialogs();
+      let connectionIssue = '';
+      if (configureCollection && (needsConnection || this.monitoringReconnectPending.has(instanceId))) {
+        this.monitoringReconnectPending.add(instanceId);
+        const status = hasListPermission('instance:manage')
+          ? await authFetch(`/api/database/instances/${instanceId}/reload`, { method: 'POST' })
+            .then(response => response.ok ? 200 : response.status, () => 0)
+          : 403;
+        if (status === 200) this.monitoringReconnectPending.delete(instanceId);
+        else connectionIssue = status === 401 || status === 403
+          ? '连接信息已保存，当前权限无法建立监控连接'
+          : '连接信息已保存，但监控连接未确认，请核对连接信息后重试';
+      }
+      if (!configureCollection) this._resetDialogs();
       await this.loadInstances();
       showToast('连接信息已保存；采集配置需单独检查并发布', 'success');
       if (configureCollection) {
-        const saved = this.instances.find(i => i.id === instanceId);
-        if (!saved) { showToast('连接已保存，但资源列表未能读取，请刷新后配置采集', 'warning'); return; }
-        this._editInstance(saved); this.editorTab = 'collection'; await this.updateComplete;
+        const saved = this.error ? undefined : this.instances.find(i => i.id === instanceId);
+        if (!saved) {
+          if (!isEdit) this.pendingCreatedInstanceId = instanceId;
+          this.editorTab = 'basic';
+          this.saveError = '连接信息已保存，但未能读取更新后的实例，请重试';
+          return;
+        }
+        if (!isEdit) this._resetDialogs();
+        this._editInstance(saved);
+        if (connectionIssue) {
+          this.saveError = connectionIssue;
+          return;
+        }
+        this.editorTab = 'collection'; await this.updateComplete;
         this.renderRoot.querySelector<import('../components/resource-collection-section.js').ResourceCollectionSection>('resource-collection-section')?.openEditor();
       }
     } catch (err: any) {

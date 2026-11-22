@@ -1,5 +1,5 @@
 /**
- * Task 2 tests: CustomSQLProvider + collectorRegistry + UnifiedCollector + MonitorCollector wiring
+ * Task 2 tests: CustomSQLProvider + collectorRegistry
  *
  * Plan 106-02 Task 2 TDD — RED phase (tests fail until implementation exists)
  */
@@ -35,40 +35,5 @@ describe('collectorRegistry singleton', () => {
     expect(collectorRegistry).toBeDefined();
     expect(typeof collectorRegistry.register).toBe('function');
     expect(typeof collectorRegistry.getProvidersByDbType).toBe('function');
-  });
-});
-
-describe('UnifiedCollector', () => {
-  it('should export unifiedCollector singleton', async () => {
-    // collector.ts may fail to load if module deps not met; just check the module path
-    let mod;
-    try {
-      mod = await import('../../collector.js');
-    } catch {
-      // Module might have import dep issues — this is expected for now
-      return;
-    }
-    expect(mod.unifiedCollector).toBeDefined();
-    expect(typeof mod.unifiedCollector.collectInstance).toBe('function');
-  });
-});
-
-describe('MonitorCollector delegation', () => {
-  it('should import unifiedCollector from collector.js', async () => {
-    const monMod = await import('../../monitor-collector.js');
-    expect(monMod.monitorCollector).toBeDefined();
-    // Check that monitor-collector.ts imports from collector.js
-    // We verify by reading the source — but the module load itself is the test
-  });
-
-  it('should call unifiedCollector.collectInstance (source verification)', async () => {
-    // Read the monitor-collector source's import of unifiedCollector
-    const fs = await import('fs');
-    const source = fs.readFileSync(
-      new URL('../../monitor-collector.ts', import.meta.url),
-      'utf-8'
-    );
-    expect(source).toContain('metricConfigurationService.trialCurrent');
-    expect(source).not.toContain('unifiedCollector.collectInstance');
   });
 });

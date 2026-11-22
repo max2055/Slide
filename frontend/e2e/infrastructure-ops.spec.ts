@@ -311,7 +311,15 @@ async function installApiFixtures(page: Page, state: FixtureState, calls: Call[]
       });
     }
     if (path === `/api/servers/${IDS.server}` && method === 'GET') return fulfill(route, serverFixture(state));
-    if (path === `/api/servers/${IDS.server}/collect` && method === 'POST') return fulfill(route, { success: true, metrics_count: 8 });
+    if (path === `/api/servers/${IDS.server}/collect-diagnostics` && method === 'POST') {
+      const expiry = { collectedAt: FIXTURE_TIME, expiresAt: '2026-08-26T00:01:00.000Z', validForMs: 60_000 };
+      const section = { ...expiry, quality: 'good', truncated: false, source: [], items: [] };
+      return fulfill(route, { success: true, diagnostics: {
+        ...expiry, schemaVersion: 1, serverId: IDS.server, osType: 'rhel', quality: 'good', truncated: false, gaps: [],
+        sections: { services: section, listeningPorts: section, topProcesses: section, systemLogs: section, interfaceErrors: section },
+        serviceStatus: section, listeningPorts: section, topProcesses: section, recentSystemLogs: section, interfaceErrors: section,
+      } });
+    }
     if (path === '/api/servers' && method === 'POST') {
       state.serverCreated = true;
       return fulfill(route, { ...serverFixture(state), ...(body ?? {}) });
@@ -549,7 +557,8 @@ for (const viewport of VIEWPORTS) {
     const serverActions = page.locator('servers-page app-data-table .actions');
     await expect(serverActions.locator('button')).toHaveText(['详情', '编辑', '测试', '删除']);
     await serverActions.getByRole('button', { name: '测试', exact: true }).click();
-    await waitForCall(calls, (call) => call.method === 'POST' && call.path === `/api/servers/${IDS.server}/collect`);
+    await waitForCall(calls, (call) => call.method === 'POST' && call.path === `/api/servers/${IDS.server}/collect-diagnostics`);
+    await expect(page.locator('app-toast-container')).toContainText('服务器诊断采集完成');
 
     // Huawei network-device onboarding through the default SNMPv2c flow.
     await page.goto('/network-devices');

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import * as metricsContracts from './index.js';
 import {
   ResolvedTriggerExpressionSchema, TRIGGER_LIMITS, TriggerAppliedEvidenceSchema, TriggerClockPolicySchema,
-  TriggerExpressionSchema, TriggerResourceSnapshotSchema, TriggerRuleVersionSchema, TriggerSampleSchema,
+  TemplateTriggerPublishSchema, TriggerExpressionSchema, TriggerResourceSnapshotSchema, TriggerRuleVersionSchema, TriggerSampleSchema,
   type TriggerExpression, type TriggerRuleVersion,
 } from './triggers.js';
 
@@ -60,6 +60,30 @@ describe('internal trigger contract', () => {
       },
     });
     expect(TriggerRuleVersionSchema.safeParse(grouped).success).toBe(true);
+  });
+
+  it('validates recovery mode and expression together when publishing or reading a version', () => {
+    // Follows the recovery-mode cases in Zabbix testTriggerValidation.php.
+    const { rule_id, version, scope, metric, unit, content_hash, recovery, ...fields } = rule();
+    const publish = { ...fields, expected_version: version, expected_content_hash: content_hash, item_id: 'alpha' };
+    const stored = { ...fields, rule_id, version, scope, metric, unit, content_hash };
+    const cases = [
+      [{ recovery }, true],
+      [{ recovery_mode: 'recovery_expression', recovery }, true],
+      [{ recovery_mode: 'problem_expression' }, true],
+      [{ recovery_mode: 'none' }, true],
+      [{}, false],
+      [{ recovery_mode: 'recovery_expression' }, false],
+      [{ recovery_mode: 'problem_expression', recovery }, false],
+      [{ recovery_mode: 'none', recovery }, false],
+      [{ recovery_mode: 'unknown', recovery }, false],
+    ] as const;
+    for (const [fields, valid] of cases) {
+      expect(TemplateTriggerPublishSchema.safeParse({ ...publish, ...fields }).success).toBe(valid);
+      expect(TriggerRuleVersionSchema.safeParse({ ...stored, ...fields }).success).toBe(valid);
+    }
+    expect(TemplateTriggerPublishSchema.safeParse({ ...publish, recovery_mode: 'none', allow_manual_close: true }).success).toBe(true);
+    expect(TemplateTriggerPublishSchema.safeParse({ ...publish, recovery_mode: 'none', allow_manual_close: 'true' }).success).toBe(false);
   });
 
   it('rejects windows, thresholds, groups and keys outside the declared bounds', () => {

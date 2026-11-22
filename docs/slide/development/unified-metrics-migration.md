@@ -7,7 +7,7 @@
 | 历史名称 | 当前名称/处理 | 退出条件 |
 |---|---|---|
 | `src/metrics-v2`、`src/contracts/metrics-v2` | `src/metrics`、`src/contracts/metrics`；单一实现 | 不保留历史源码目录 |
-| `/api/metrics-v2/{config,policy,rollout,query,discover,inventory,evaluate}` | 同 handler、认证与权限钩子转发 `/api/metrics/...`；Deprecation 与 Sunset 响应头 | MAX-190及外部调用方迁完，最晚2026-11-15移除兼容注册 |
+| `/api/metrics-v2/{config,policy,rollout,query,discover,inventory,evaluate}` | 兼容注册于 2026-11-20 清理；调用方使用 `/api/metrics/...` | 原 Sunset 日期为 2026-11-15。升级前核对仓库外调用方已使用当前路径 |
 | `METRICS_V2_COLLECTION_ENABLED` | `METRICS_COLLECTION_ENABLED`，严格 true/false，默认关闭 | 旧变量不隐式启用；部署配置需显式改名 |
 | `METRICS_V2_TEST_*` | `METRICS_TEST_*`；实际fixture变量见对应测试 | 仓库qualification脚本使用中性名称 |
 | `metric_v2_*` 16张运行表 | migration121原子改名为 `metric_*`，同步相关FK/索引 | 旧表名只用于历史SQL、升级与恢复证明；不双写 |
@@ -47,7 +47,7 @@ Compose和生产env示例现使用中性collection/retention变量；升级时�
 2. 按资源引擎、版本、OS、协议和实际能力推荐包；调用activate执行试采与CAS发布。应用pending/applied和formal visibility分开呈现，不能以发布HTTP200宣称正式可见。
 3. 新资源以真实样本初始化；有历史源时保留来源记录，使用同一次固定远端响应的原解析重放进行等价项比较，并记录非等价项的具体口径。没有额外远端请求，也不声称独立双源周期。来源checks必须绑定当前resource/revision/sample IDs；失败/缺capture/错revision不能用全零gate蒙混通过。
 4. scheduler持久raw/attempt/normalized和source checks，formalization验证实际样本、quality、lineage和CAS/fencing后发布。来源检查失败时不能继续新增正式publication。计数器epoch不可信时累计/速率保持unknown，不能伪造启动时间。
-5. 验证至少三次正式周期及唯一查询API真正出值，再暂停资产确认无新attempt，恢复并重启scheduler确认续采；验证旧入口同一权限与结果、无历史fallback。检查告警/Agent/报告/评分读取来源、真实观测时间与coverage。
+5. 验证至少三次正式周期及当前查询 API 真正出值，再暂停资产确认无新 attempt，恢复并重启 scheduler 确认续采。验证旧版本路径返回 404，检查告警、Agent、报告和评分的读取来源、真实观测时间与 coverage。
 
 ## 回退
 
