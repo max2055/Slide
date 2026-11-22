@@ -390,14 +390,15 @@ export function renderApp(state: AppViewState) {
           </div>
           <div class="topnav-shell__actions">
             <button
+              type="button"
               class="topbar-search"
               @click=${() => {
                 state.paletteOpen = !state.paletteOpen;
               }}
-              title="Search or jump to… (⌘K)"
-              aria-label="Open command palette"
+              title=${`${t("overview.palette.label")} (⌘K)`}
+              aria-label=${t("overview.palette.label")}
             >
-              <span class="topbar-search__label">${t("common.search")}</span>
+              <span class="topbar-search__label">${t("overview.palette.label")}</span>
               <kbd class="topbar-search__kbd">⌘K</kbd>
             </button>
             <div class="topbar-status">
