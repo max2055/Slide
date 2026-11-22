@@ -3,6 +3,7 @@ import { validateObservation, type NormalizedObservation, type RawObservation } 
 import { type PackageRegistry, stable } from '../packages/model.js';
 import { type Ref, refKey, rule } from '../policy/model.js';
 import { seriesHash } from '../storage.js';
+import { RolloutControl } from './control.js';
 import { rolloutAlertLockName } from './alert-publication-fence.js';
 import { assetCollectionEnabled } from '../config/effective-state.js';
 import { sourceHistory } from './source-history.js';
@@ -114,6 +115,8 @@ export class MetricFormalization {
       if (samples.has(hash)) continue;
       const release = releases.get(`${o.versions.package_id}@${o.versions.package_version}`);
       rule(release, 'SOURCE_UNKNOWN_METRIC');
+      const selected = plan.releases.find(entry => entry.release.id === release!.pin.id && entry.release.version === release!.pin.version);
+      rule(selected?.metric_keys.includes(`${o.metric.id}@${o.metric.semantic_version}`), 'SOURCE_UNKNOWN_METRIC');
       const definition = release!.catalog.find(d => d.id === o.metric.id && d.semantic_version === o.metric.semantic_version);
       rule(definition, 'SOURCE_UNKNOWN_METRIC');
       validateObservation(o, definition!);
@@ -132,7 +135,7 @@ export class MetricFormalization {
         rule(attempt && attempt.config_revision === revision && ['succeeded', 'partial'].includes(attempt.status)
           && attempt.observation_ids.includes(o.id), 'SOURCE_ATTEMPT_REQUIRED');
       } else {
-        rule(false, 'SOURCE_LINEAGE');
+        await this.assertDerivedLineage(c, o, release!.pin);
       }
       samples.set(hash, o);
       sampleRelease.set(hash, release!.pin);
@@ -146,7 +149,8 @@ export class MetricFormalization {
       await c.execute(`UPDATE metric_rollout SET source = 'retired', read_mode = 'pending', generation = ?, applied_revision = NULL
         WHERE resource_type = ? AND resource_id = ?`, [generation, ref.type, String(ref.id)]);
     }
-    for (const [hash] of samples) {
+    const publisher = new RolloutControl(this.pool, c, this.clock);
+    for (const [hash, sample] of samples) {
       const old = existing.find(r => r.series_hash === hash);
       if (accepted.length && old?.published_revision === revision) continue;
       const pin = sampleRelease.get(hash)!;
@@ -154,6 +158,9 @@ export class MetricFormalization {
         VALUES (?, 'semantic', ?, 'semantic', ?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE source = 'semantic', generation = VALUES(generation),
         read_mode = 'semantic', package_pin = VALUES(package_pin), published_revision = VALUES(published_revision), applied_revision = VALUES(applied_revision), latest_payload = NULL`,
       [hash, generation, JSON.stringify(pin), revision, revision, ref.type, String(ref.id)]);
+      const definition = releases.get(`${pin.id}@${pin.version}`)!.catalog.find(d =>
+        d.id === sample.metric.id && d.semantic_version === sample.metric.semantic_version)!;
+      await publisher.publish(sample, definition, { source: 'semantic', generation, revision });
     }
     if (!accepted.length) {
       const evidence = {
@@ -173,6 +180,24 @@ export class MetricFormalization {
       [refKey(ref), ref.type, String(ref.id), revision, generation, `measurement:${refKey(ref)}:${revision}`]);
     }
     return 'formalized';
+  }
+
+  private async assertDerivedLineage(c: PoolConnection, o: NormalizedObservation, pin: PackagePin) {
+    const formula=this.registry.get(pin).derived.find(d=>stable(d.output)===stable(o.metric));
+    rule(formula && o.source.collector_id===`derived:${formula.id}` && o.lineage.length>0,'SOURCE_LINEAGE');
+    const foundInputs = new Set<string>();
+    for (const item of o.lineage) {
+      const [inputs] = await c.execute<RowDataPacket[]>('SELECT payload FROM metric_observations WHERE id = ? AND payload IS NOT NULL', [item.id]);
+      rule(inputs[0], 'SOURCE_LINEAGE');
+      const input = decode<NormalizedObservation>(inputs[0].payload);
+      rule(item.stage==='normalized' && input.stage==='normalized' && input.resource_type === o.resource_type && input.resource_id === o.resource_id
+        && input.versions.config_revision === o.versions.config_revision && input.versions.package_id===o.versions.package_id && input.versions.package_version===o.versions.package_version
+        && stable(input.dimensions)===stable(o.dimensions), 'SOURCE_LINEAGE');
+      const dependency = formula.inputs.some(i=>stable(i)===stable(input.metric));
+      rule(dependency || o.value===null && o.quality.status==='unknown' && o.quality.reason==='missing_input', 'SOURCE_LINEAGE');
+      if (dependency) foundInputs.add(stable(input.metric));
+    }
+    rule(o.value===null || formula.inputs.every(i=>foundInputs.has(stable(i))), 'SOURCE_LINEAGE');
   }
 
   private async accept(c: PoolConnection, ref: Ref, revision: number, fenced: string[]): Promise<Acceptance> {
@@ -232,21 +257,7 @@ export class MetricFormalization {
         rule(attempt && attempt.config_revision === revision && ['succeeded','partial'].includes(attempt.status)
           && attempt.observation_ids.includes(o.id), 'SOURCE_ATTEMPT_REQUIRED');
       } else {
-        const formula=this.registry.get(policy.binding.package).derived.find(d=>stable(d.output)===stable(o.metric));
-        rule(formula && o.source.collector_id===`derived:${formula.id}` && o.lineage.length>0,'SOURCE_LINEAGE');
-        const foundInputs = new Set<string>();
-        for (const item of o.lineage) {
-          const [inputs] = await c.execute<RowDataPacket[]>('SELECT payload FROM metric_observations WHERE id = ? AND payload IS NOT NULL', [item.id]);
-          rule(inputs[0], 'SOURCE_LINEAGE');
-          const input = decode<NormalizedObservation>(inputs[0].payload);
-          rule(item.stage==='normalized' && input.stage==='normalized' && input.resource_type === o.resource_type && input.resource_id === o.resource_id
-            && input.versions.config_revision === revision && input.versions.package_id===o.versions.package_id && input.versions.package_version===o.versions.package_version
-            && stable(input.dimensions)===stable(o.dimensions), 'SOURCE_LINEAGE');
-          const dependency = formula.inputs.some(i=>stable(i)===stable(input.metric));
-          rule(dependency || o.value===null && o.quality.status==='unknown' && o.quality.reason==='missing_input', 'SOURCE_LINEAGE');
-          if (dependency) foundInputs.add(stable(input.metric));
-        }
-        rule(o.value===null || formula.inputs.every(i=>foundInputs.has(stable(i))), 'SOURCE_LINEAGE');
+        await this.assertDerivedLineage(c, o, policy.binding.package);
       }
       samples.set(hash,o);
     }

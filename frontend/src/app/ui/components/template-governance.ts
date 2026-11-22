@@ -1,5 +1,5 @@
 import { LitElement, html, css, nothing } from "lit";
-import { customElement, state } from "lit/decorators.js";
+import { customElement, property, state } from "lit/decorators.js";
 import { authFetch } from "../../../api/index.js";
 import { sharedBtnStyles } from "../../styles/shared-btn-styles.js";
 import "./app-dialog.js";
@@ -62,6 +62,7 @@ export class TemplateGovernanceView extends LitElement {
       }
     `,
   ];
+  @property({ attribute: false }) initialResources: ReadonlyArray<{ type: string; id: number }> = [];
   @state() private catalog: any[] = [];
   @state() private inventory: any[] = [];
   @state() private template = "";
@@ -172,6 +173,8 @@ export class TemplateGovernanceView extends LitElement {
       if (!this.current(g, t)) return;
       this.catalog = catalog.templates;
       this.inventory = inventory;
+      const manageable = new Set<string>(this.inventory.map(r => `${r.type}:${r.id}`));
+      this.selected = new Set(this.initialResources.map(ref => `${ref.type}:${ref.id}`).filter(key => manageable.has(key)));
       if (pending) {
         try {
           this.pending = JSON.parse(pending);

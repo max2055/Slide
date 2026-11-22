@@ -57,6 +57,7 @@ export const TRIGGER_LIMITS = Object.freeze({
 
 export const TriggerOperatorSchema = z.enum(['>', '>=', '<', '<=', '=', '!=']);
 export const TriggerAggregationSchema = z.enum(['last', 'avg', 'min', 'max']);
+const TriggerSeveritySchema = z.enum(['warning', 'critical']);
 
 /**
  * A leaf selector. `last` reads the newest acceptable sample; the windowed
@@ -64,9 +65,10 @@ export const TriggerAggregationSchema = z.enum(['last', 'avg', 'min', 'max']);
  * sample windows. No free window expression exists.
  */
 export const TriggerSelectorSchema = z.discriminatedUnion('aggregation', [
-  z.strictObject({ aggregation: z.literal('last') }),
+  z.strictObject({ aggregation: z.literal('last'), item_id: ItemIdSchema.optional() }),
   z.strictObject({
     aggregation: z.enum(['avg', 'min', 'max']),
+    item_id: ItemIdSchema.optional(),
     window_ms: z.number().int().positive().max(TRIGGER_LIMITS.max_window_ms),
   }),
 ]);
@@ -92,8 +94,7 @@ const groupNode = {
 
 /**
  * The restricted expression. `all` is AND, `any` is OR; a group needs at least
- * two children, so there is no single-child wrapper and no implicit `not`
- * (recovery is written as its own expression, never as the negation of problem).
+ * two children, so there is no single-child wrapper and no implicit `not`.
  */
 export type TriggerExpression =
   | { node: 'compare'; select: TriggerSelector; operator: z.infer<typeof TriggerOperatorSchema>; threshold: TriggerThreshold }
@@ -147,27 +148,36 @@ export const TriggerClockPolicySchema = z.strictObject({
 });
 export type TriggerClockPolicy = z.infer<typeof TriggerClockPolicySchema>;
 
+function withRecoveryMode<Shape extends z.ZodRawShape, Expression extends z.ZodType>(shape: Shape, expression: Expression) {
+  const fields = { ...shape, allow_manual_close: z.boolean().optional() };
+  return z.union([
+    // Legacy Slide rules require independent recovery and have no serialized mode.
+    z.strictObject({ ...fields, recovery_mode: z.literal('recovery_expression').optional(), recovery: expression }),
+    z.strictObject({ ...fields, recovery_mode: z.enum(['problem_expression', 'none']), recovery: z.never().optional() }),
+  ]);
+}
+
 /**
  * One immutable rule version as a trusted catalog must return it for an exact
  * `(rule_id, version)`. `content_hash` covers every other member and is
  * recomputed by the resolver; a catalog that returns another body for the same
  * identity is rejected, never first-wins.
  */
-export const TriggerRuleVersionSchema = z.strictObject({
+export const TriggerRuleVersionSchema = withRecoveryMode({
   rule_id: RuleIdSchema,
   version: VersionNumberSchema,
   /** Template-local item reference, exactly the accepted `TemplateTriggerScopeSchema`. */
   scope: TemplateTriggerScopeSchema,
   metric: MetricRefSchema,
   unit: UnitSchema,
+  severity: TriggerSeveritySchema.optional(),
   /** Declaration and defaults of the thresholds/parameters this body may reference. */
   parameters: TemplateParametersSchema,
   problem: TriggerExpressionSchema,
-  recovery: TriggerExpressionSchema,
   quality: TriggerQualityPolicySchema,
   clock: TriggerClockPolicySchema,
   content_hash: HashIdSchema,
-}).superRefine((rule, ctx) => {
+}, TriggerExpressionSchema).superRefine((rule, ctx) => {
   if (Object.keys(rule.parameters.schema).length > TRIGGER_LIMITS.max_parameters) {
     ctx.addIssue({ code: 'custom', path: ['parameters', 'schema'], message: 'TRIGGER_RULE_PARAMETER_BUDGET' });
   }
@@ -175,16 +185,16 @@ export const TriggerRuleVersionSchema = z.strictObject({
 export type TriggerRuleVersion = z.infer<typeof TriggerRuleVersionSchema>;
 
 /** Resource UI publishes a new immutable template version; identities are server-derived. */
-export const TemplateTriggerPublishSchema = z.strictObject({
+export const TemplateTriggerPublishSchema = withRecoveryMode({
   expected_version: VersionNumberSchema,
   expected_content_hash: HashIdSchema,
   item_id: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/),
+  severity: TriggerSeveritySchema.optional(),
   parameters: TemplateParametersSchema,
   problem: TriggerExpressionSchema,
-  recovery: TriggerExpressionSchema,
   quality: TriggerQualityPolicySchema,
   clock: TriggerClockPolicySchema,
-});
+}, TriggerExpressionSchema);
 
 /** One parameter after resolution; `source` says which input decided it. */
 export const ResolvedTriggerParameterSchema = z.strictObject({
@@ -212,12 +222,16 @@ const candidateRuleFields = {
   item: TriggerItemIdentitySchema,
   metric: MetricRefSchema,
   unit: UnitSchema,
+  inputs: z.array(z.strictObject({
+    item: TriggerItemIdentitySchema, metric: MetricRefSchema, unit: UnitSchema,
+    decision: z.enum(['collect', 'derive', 'disabled', 'unsupported', 'capability_unknown']),
+  })).min(1).max(TRIGGER_LIMITS.max_nodes).optional(),
+  severity: TriggerSeveritySchema.optional(),
   dimensions: z.record(z.string(), z.string().min(1)),
   /** The B2C selection decision for the item, carried — never re-derived from a name. */
   decision: z.enum(['collect', 'derive', 'disabled', 'unsupported', 'capability_unknown']),
   parameters: z.array(ResolvedTriggerParameterSchema),
   problem: ResolvedTriggerExpressionSchema,
-  recovery: ResolvedTriggerExpressionSchema,
   quality: TriggerQualityPolicySchema,
   clock: TriggerClockPolicySchema,
 };
@@ -227,14 +241,14 @@ const candidateRuleFields = {
  * and no aggregate hash yet. It is what a later compile step turns into a
  * snapshot; it is never evidence that a rule is in effect.
  */
-export const TriggerRuleCandidateSchema = z.strictObject(candidateRuleFields);
+export const TriggerRuleCandidateSchema = withRecoveryMode(candidateRuleFields, ResolvedTriggerExpressionSchema);
 export type TriggerRuleCandidate = z.infer<typeof TriggerRuleCandidateSchema>;
 
 /** A frozen rule snapshot: the candidate plus its own canonical hash. */
-export const TriggerRuleSnapshotSchema = z.strictObject({
+export const TriggerRuleSnapshotSchema = withRecoveryMode({
   ...candidateRuleFields,
   snapshot_hash: HashIdSchema,
-});
+}, ResolvedTriggerExpressionSchema);
 export type TriggerRuleSnapshot = z.infer<typeof TriggerRuleSnapshotSchema>;
 
 /** A fixed template pin plus the content hash it was resolved at. */
@@ -331,6 +345,7 @@ export const TemplateTriggerEpisodeSchema = z.strictObject({
   rule_id:RuleIdSchema,version:VersionNumberSchema,body_hash:HashIdSchema,scope:TemplateTriggerScopeSchema,
   state:z.enum(['open','closed']),occurrence:z.number().int().nonnegative(),opened_at:TimestampSchema,
   closed_at:TimestampSchema.nullable(),recovery_count:z.union([z.literal(0),z.literal(1)]),
+  manual_close:z.strictObject({actor_id:z.number().int().positive()}).optional(),
   last:EpisodeEvidenceSchema,
   opened:z.strictObject({item:TriggerItemIdentitySchema,metric:MetricRefSchema,value:z.number().nullable(),reason:z.string(),at:TimestampSchema}),
   unknown_segments:z.array(z.strictObject({from:TimestampSchema,to:TimestampSchema.nullable(),reason:z.string()})),

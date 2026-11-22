@@ -23,6 +23,7 @@ import { decodeBindingPayload } from '../bindings/persistence-codec.js';
 import { createHash, randomBytes } from 'node:crypto';
 import { join } from 'node:path';
 import Fastify from 'fastify';
+import { readFileSync } from 'node:fs';
 import mysql, { type Pool, type RowDataPacket } from 'mysql2/promise';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { ActorContext } from '../../auth/actor-context.js';
@@ -71,7 +72,8 @@ describe.skipIf(!enabled)('immediate collection on a real platform, queue and re
   let pool: Pool;
   let app: ReturnType<typeof Fastify>;
   let platform: OwnedDatabase;
-  let target: OwnedDatabase;
+  const targets: OwnedDatabase[] = [];
+  const targetConnections: number[] = [];
   let instanceId = 0;
   let unboundId = 0;
   let insertInstance: (name:string)=>Promise<number>;
@@ -82,6 +84,8 @@ describe.skipIf(!enabled)('immediate collection on a real platform, queue and re
   let jobs: JobRegistry;
   let scheduleStore: MysqlScheduleStore;
   let controlledValue: number|null = 95;
+  let controlledCapacity: number|null = 50;
+  const sourceTimes = new Map<string, string>();
   let clock = Date.now();
   let accessCheckHook: (() => Promise<void>) | undefined;
   const registry = createConfigurationRegistry();
@@ -147,15 +151,7 @@ describe.skipIf(!enabled)('immediate collection on a real platform, queue and re
     });
     try {
       platform = await createOwnedDatabase(root, { nonce: NONCE, purpose: 'collect', handleDir: HANDLE_DIR });
-      target = await createOwnedDatabase(root, {
-        nonce: NONCE,
-        purpose: 'collecttarget',
-        handleDir: HANDLE_DIR,
-      });
-      await root.query(`CREATE TABLE \`${target.database}\`.probe (id INT PRIMARY KEY)`);
-      await root.query(`INSERT INTO \`${target.database}\`.probe VALUES (1)`);
       await root.query(`CREATE USER '${TARGET_USER}'@'%' IDENTIFIED BY ?`, [TARGET_PASSWORD]);
-      await root.query(`GRANT SELECT ON \`${target.database}\`.* TO '${TARGET_USER}'@'%'`);
       await root.query(`GRANT PROCESS ON *.* TO '${TARGET_USER}'@'%'`);
     } catch (error) {
       await root.end();
@@ -188,6 +184,12 @@ describe.skipIf(!enabled)('immediate collection on a real platform, queue and re
 
     const now = new Date().toISOString();
     insertInstance = async (name: string): Promise<number> => {
+      // Each available instance must occupy its own physical database address.
+      const target = await createOwnedDatabase(pool, { nonce: NONCE, purpose: `collecttarget${targets.length}`, handleDir: HANDLE_DIR });
+      targets.push(target);
+      await pool.query(`CREATE TABLE \`${target.database}\`.probe (id INT PRIMARY KEY)`);
+      await pool.query(`INSERT INTO \`${target.database}\`.probe VALUES (1)`);
+      await pool.query(`GRANT SELECT ON \`${target.database}\`.* TO '${TARGET_USER}'@'%'`);
       await pool.execute(
         `INSERT INTO database_instances
         (name, environment, db_type, db_version, host, port, username, password_encrypted, database_name, status,
@@ -203,23 +205,18 @@ describe.skipIf(!enabled)('immediate collection on a real platform, queue and re
           now.replace('T', ' ').replace('Z', ''),
         ],
       );
-      return Number(
+      const id = Number(
         (await pool.query<RowDataPacket[]>('SELECT id FROM database_instances WHERE name = ?', [name]))[0][0]
           .id,
       );
+      targetConnections.push(id);
+      expect(await databaseService.addConnection(id, name, {
+        host: '127.0.0.1', port: PORT, user: TARGET_USER, password: TARGET_PASSWORD, database: target.database, db_type: 'mysql',
+      })).toBe(true);
+      return id;
     };
     instanceId = await insertInstance('max238-collect-bound');
     unboundId = await insertInstance('max238-collect-unbound');
-    const targetConfig = {
-      host: '127.0.0.1',
-      port: PORT,
-      user: TARGET_USER,
-      password: TARGET_PASSWORD,
-      database: target.database,
-      db_type: 'mysql' as const,
-    };
-    expect(await databaseService.addConnection(instanceId, 'max238-collect-bound', targetConfig)).toBe(true);
-    expect(await databaseService.addConnection(unboundId, 'max238-collect-unbound', targetConfig)).toBe(true);
     await pool.execute(
       "INSERT IGNORE INTO instance_permissions (user_id, instance_id, access_level) VALUES (1, ?, 'admin')",
       [instanceId],
@@ -358,32 +355,40 @@ describe.skipIf(!enabled)('immediate collection on a real platform, queue and re
         },
       },
       () => clock,
-      async () => [
-        { dimensions: {}, fields: { connections: controlledValue === null ? null : { encoding: 'uint64', value: String(controlledValue) } } },
+      async (implementation) => [
+        { dimensions: {}, observed_at: sourceTimes.get(implementation), fields: {
+          connections: controlledValue === null ? null : { encoding: 'uint64', value: String(controlledValue) },
+          capacity: controlledCapacity === null ? null : { encoding: 'uint64', value: String(controlledCapacity) },
+        } },
       ],
       undefined,
       authorizer,
     );
     jobs = new JobRegistry();
     scheduler.register(jobs);
+    // Record real outbox jobs without making test deliveries.
+    jobs.register('notification.deliver', async () => {});
     worker = new WorkerRuntime(new MysqlWorkflowStore(() => pool as never), `collect-now-${process.pid}`, 30);
   }, 180_000);
 
   afterAll(async () => {
     await app?.close();
-    await pool?.end();
+    const errors: unknown[] = [];
+    for (const id of targetConnections) await databaseService.removeConnection(id).catch(error => errors.push(error));
+    await pool?.end().catch(error => errors.push(error));
     const root = await mysql.createConnection({
       host: '127.0.0.1',
       port: PORT,
       user: 'root',
       password: PASSWORD,
     });
-    const errors: unknown[] = [];
     try {
       await root.query(`DROP USER IF EXISTS '${TARGET_USER}'@'%'`).catch((error) => errors.push(error));
-      await dropOwnedDatabase(root, { nonce: NONCE, purpose: 'collecttarget', handleDir: HANDLE_DIR }).catch(
-        (error) => errors.push(error),
-      );
+      for (const target of targets) {
+        await dropOwnedDatabase(root, { nonce: NONCE, purpose: target.purpose, handleDir: HANDLE_DIR }).catch(
+          (error) => errors.push(error),
+        );
+      }
       await dropOwnedDatabase(root, { nonce: NONCE, purpose: 'collect', handleDir: HANDLE_DIR }).catch(
         (error) => errors.push(error),
       );
@@ -471,6 +476,10 @@ describe.skipIf(!enabled)('immediate collection on a real platform, queue and re
     expect(event.status, JSON.stringify(event.data)).toBe(200);
     expect(event.data.episode).toMatchObject({ state: 'open', opened: { value: 95 }, recovery_count: 0 });
     expect(metricPublicSchemas.TemplateEventEvidence.safeParse(event.data).success).toBe(true);
+    expect(event.data.can_manual_close).toBe(false);
+    expect(await call('POST', `/api/metrics/template-events/${id}/close`, {})).toMatchObject({
+      status: 403, data: { error: 'TRIGGER_MANUAL_CLOSE_DISABLED' },
+    });
     expect((event.data.snapshot as any).opening.sample_ids).toEqual(
       (first.samples as any[]).map((s) => s.id),
     );
@@ -671,17 +680,23 @@ describe.skipIf(!enabled)('immediate collection on a real platform, queue and re
       expect((await rows())[0]).toMatchObject({state:'open',recovery_count:0});
     }
   }, 120000);
-  it.each(['last','short'])('preserves %s when a longer window has a formal null',async(mode)=>{
+  it.each(['last','short','recovery-window'])('preserves the %s trigger with an incomplete window',async(mode)=>{
     const mixedId=await insertInstance('max239-mixed-'+mode);
-    expect(await databaseService.addConnection(mixedId,'max239-mixed',{host:'127.0.0.1',port:PORT,user:TARGET_USER,password:TARGET_PASSWORD,database:target.database,db_type:'mysql'})).toBe(true);
     await pool.execute("INSERT INTO instance_permissions(user_id,instance_id,access_level) VALUES(1,?,'admin')",[mixedId]);
     const current=await new MySqlTemplateRepository(pool as never).getVersion(templateId,templateVersion);
     const r=(await call('GET',`/api/metrics/templates/${templateId}/versions/${templateVersion}/triggers`)).data.rules[0];
     const compare=(aggregation:string,window_ms?:number)=>({node:'compare',select:{aggregation,...(window_ms?{window_ms}:{})},operator:'>',threshold:{kind:'constant',value:90}});
+    const independentWindow = mode === 'recovery-window';
     const publication=await call('POST',`/api/metrics/templates/${templateId}/triggers`,{
       expected_version:templateVersion,expected_content_hash:contentHash,item_id:current!.items[0].item_id,
-      parameters:r.parameters,problem:{node:'any',children:[...(mode==='last'?[compare('last')]:[]),compare('avg',30000),compare('avg',60000)]},
-      recovery:{node:'compare',select:{aggregation:'last'},operator:'<',threshold:{kind:'constant',value:70}},
+      parameters:r.parameters,
+      problem: independentWindow
+        ? {...compare('last'),threshold:{kind:'constant',value:100}}
+        : {node:'any',children:[...(mode==='last'?[compare('last')]:[]),compare('avg',30000),compare('avg',60000)]},
+      recovery: independentWindow
+        ? {...compare('avg',60000),operator:'<',threshold:{kind:'constant',value:10}}
+        : {node:'compare',select:{aggregation:'last'},operator:'<',threshold:{kind:'constant',value:70}},
+      ...(independentWindow ? { recovery_mode: 'recovery_expression' } : {}),
       quality:r.quality,clock:{stale_after_ms:120000,nodata:{enabled:false}},
     });
     expect(publication.status,JSON.stringify(publication.data)).toBe(200);
@@ -700,12 +715,32 @@ describe.skipIf(!enabled)('immediate collection on a real platform, queue and re
       expect((await call('GET',`/api/metrics/template-bindings/instance/${mixedId}/collect/${key}`)).data.state).toBe('completed');
     };
     const events=async()=> (await pool.query<RowDataPacket[]>('SELECT event_id,payload FROM metric_trigger_episodes WHERE resource_key=? AND config_revision=1',[`instance:${mixedId}`]))[0];
+    const parse=(v:any)=>typeof v==='string'?JSON.parse(v):v;
+    if (independentWindow) {
+      await tick(101,0);
+      const [opening] = await events();
+      expect(parse(opening?.payload)).toMatchObject({state:'open',opened:{value:101},recovery_count:0});
+      await tick(101,30000);
+      expect(parse((await events())[0].payload)).toMatchObject({state:'open',last:{quality:'good',reason:'problem_retained'}});
+      await tick(51,90000);
+      expect(parse((await events())[0].payload)).toMatchObject({state:'open',last:{quality:'unknown',reason:'gap'},recovery_count:0});
+      await tick(3,120000);
+      await tick(3,150000);
+      await tick(3,180000);
+      const closing = await events();
+      expect(closing).toHaveLength(1);
+      expect(closing[0].event_id).toBe(opening.event_id);
+      const history = await call('GET',`/api/metrics/template-events/${opening.event_id}`);
+      expect(history.status).toBe(200);
+      expect(history.data.episode).toMatchObject({state:'closed',opened:{value:101},last:{value:3},recovery_count:1});
+      expect(history.data.snapshot).toMatchObject({ configuration: { rules: [{ recovery_mode: 'recovery_expression' }] } });
+      return;
+    }
     await tick(60,0);
     if(mode==='last'){await tick(60,30000);await tick(null,45000);}
     else {await tick(null,15000);await tick(95,30000);}
     await tick(95,60000);
     let rows=await events();expect(rows).toHaveLength(1);
-    const parse=(v:any)=>typeof v==='string'?JSON.parse(v):v;
     expect(parse(rows[0].payload)).toMatchObject({state:'open',opened:{value:95},recovery_count:0});
     await tick(85,90000);expect(parse((await events())[0].payload)).toMatchObject({state:'open'});
     await tick(60,120000);rows=await events();expect(rows).toHaveLength(1);
@@ -714,4 +749,320 @@ describe.skipIf(!enabled)('immediate collection on a real platform, queue and re
     expect(history.status).toBe(200);expect((history.data.episode as any).opened.value).toBe(95);
   },120000);
 
+  it.each([
+    { mode: 'problem_expression', manual: false },
+    { mode: 'none', manual: false },
+    { mode: 'none', manual: true },
+  ])('applies $mode recovery to the formal event and log with manual close $manual', async ({ mode, manual }) => {
+    const fixture = `${mode}-${manual}`;
+    const resource = await insertInstance(`max239-recovery-${fixture}`);
+    await pool.execute("INSERT INTO instance_permissions(user_id,instance_id,access_level) VALUES(1,?,'admin')", [resource]);
+    const current = (await new MySqlTemplateRepository(pool as never).getVersion(templateId, templateVersion))!;
+    const itemId = current.items[0].item_id;
+    const publication = await call('POST', `/api/metrics/templates/${templateId}/triggers`, {
+      expected_version: templateVersion, expected_content_hash: contentHash, item_id: itemId,
+      parameters: { schema: {}, defaults: {} }, recovery_mode: mode,
+      ...(manual ? { allow_manual_close: true } : {}),
+      problem: { node: 'compare', select: { aggregation: 'last' }, operator: '>', threshold: { kind: 'constant', value: 90 } },
+      quality: { accepted_quality: ['good'], min_coverage: 1, allow_estimated: false },
+      clock: { stale_after_ms: 120000, nodata: manual ? { enabled: true, after_ms: 180000 } : { enabled: false } },
+    });
+    expect(publication.status, JSON.stringify(publication.data)).toBe(200);
+    templateVersion = Number(publication.data.version);
+    contentHash = String(publication.data.content_hash);
+    const stored = await call('GET', `/api/metrics/templates/${templateId}/versions/${templateVersion}/triggers`);
+    expect(stored.data.rules).toMatchObject([{ recovery_mode: mode }]);
+    expect((stored.data.rules as Array<object>)[0]).not.toHaveProperty('recovery');
+
+    const binding = `/api/metrics/template-bindings/instance/${resource}`;
+    for (const action of ['probe', 'trial', 'apply']) {
+      const response = await call('POST', `${binding}/${action}`, {
+        ...body(), ...(action === 'probe' ? {} : { receipt_id: `recovery-trial-${fixture}` }),
+        ...(action === 'apply' ? { caller_key: `recovery-apply-${fixture}` } : {}),
+      });
+      expect(response.status, JSON.stringify(response.data)).toBe(200);
+    }
+    const start = Math.max(Date.now() + 1000, clock + 1000);
+    const collect = async (value: number | null, offset: number) => {
+      clock = start + offset;
+      controlledValue = value;
+      const caller_key = `recovery-${fixture}-${offset}`;
+      expect((await call('POST', `${binding}/collect`, { caller_key, expected_revision: 1 })).status).toBe(200);
+      await drain();
+      expect((await call('GET', `${binding}/collect/${caller_key}`)).data.state).toBe('completed');
+    };
+    const events = async () => (await pool.query<RowDataPacket[]>(
+      'SELECT event_id FROM metric_trigger_episodes WHERE resource_key=?', [`instance:${resource}`],
+    ))[0];
+    const channelName = `Recovery fixture ${fixture}`;
+    await pool.execute(
+      "INSERT INTO notification_channels(name,type,config,enabled,delivery_start_at) VALUES(?,'webhook',?,1,NOW())",
+      [channelName, JSON.stringify({ webhook_url: 'http://127.0.0.1:1/never-deliver', severity: 'warning' })],
+    );
+    await collect(95, 0);
+    const [opened] = await events();
+    const detail = async () => {
+      const response = await call('GET', `/api/metrics/template-events/${opened.event_id}`);
+      expect(response.status).toBe(200);
+      return metricPublicSchemas.TemplateEventEvidence.parse(response.data);
+    };
+    const opening = await detail();
+    expect(opening.can_manual_close).toBe(manual);
+    expect(opening.snapshot.configuration.rules[0].allow_manual_close).toBe(manual || undefined);
+    expect(opening.episode).toMatchObject({ state: 'open', opened: { value: 95 }, recovery_count: 0 });
+    expect(opening.snapshot!.configuration.rules[0]).toMatchObject({ recovery_mode: mode });
+    expect(opening.snapshot!.configuration.rules[0]).not.toHaveProperty('recovery');
+    await collect(null, 30000);
+    expect((await detail()).episode).toMatchObject({ state: 'open', last: { quality: 'unknown' }, recovery_count: 0 });
+
+    const closes = mode === 'problem_expression';
+    const expected = { state: closes ? 'closed' : 'open', recovery_count: closes ? 1 : 0 };
+    await collect(85, 60000);
+    expect((await detail()).episode).toMatchObject(expected);
+    await collect(60, 90000);
+    expect((await detail()).episode).toMatchObject(expected);
+    expect(await events()).toEqual([opened]);
+    const eventPath = `/api/metrics/template-events/${opened.event_id}`;
+    const lateChannelName = `${channelName} late`;
+    if (manual) {
+      const [savedUser] = await pool.query<RowDataPacket[]>('SELECT username FROM users WHERE id=1');
+      const [savedRoles] = await pool.query<RowDataPacket[]>('SELECT role_id FROM user_roles WHERE user_id=1');
+      const [roleResult] = await pool.execute<mysql.ResultSetHeader>("INSERT INTO roles(name) VALUES('trigger-close-restricted')");
+      const roleId = roleResult.insertId;
+      await pool.execute("INSERT INTO role_permissions(role_id,permission_id) SELECT ?,id FROM permissions WHERE code IN ('alert:view','instance:manage')", [roleId]);
+      await pool.execute("UPDATE users SET username='trigger_close_restricted' WHERE id=1");
+      await pool.execute('DELETE FROM user_roles WHERE user_id=1');
+      await pool.execute('INSERT INTO user_roles(user_id,role_id) VALUES(1,?)', [roleId]);
+      try {
+        expect((await detail()).can_manual_close).toBe(false);
+        expect((await call('POST', `${eventPath}/close`, {})).status).toBe(403);
+        await pool.execute("INSERT INTO role_permissions(role_id,permission_id) SELECT ?,id FROM permissions WHERE code='alert:manage'", [roleId]);
+        await pool.execute("UPDATE instance_permissions SET access_level='read-only' WHERE user_id=1 AND instance_id=?", [resource]);
+        expect((await detail()).can_manual_close).toBe(false);
+        expect((await call('POST', `${eventPath}/close`, {})).status).toBe(403);
+      } finally {
+        await pool.execute('UPDATE users SET username=? WHERE id=1', [savedUser[0].username]);
+        await pool.execute("UPDATE instance_permissions SET access_level='admin' WHERE user_id=1 AND instance_id=?", [resource]);
+        await pool.execute('DELETE FROM user_roles WHERE user_id=1');
+        for (const role of savedRoles) await pool.execute('INSERT INTO user_roles(user_id,role_id) VALUES(1,?)', [role.role_id]);
+      }
+      await collect(null, 100000);
+      const open = await detail();
+      expect(open.episode.state).toBe('open');
+      expect(open.episode.last.quality).toBe('unknown');
+      expect((await call('POST', `${eventPath}/close`, { actor_id: 999 })).status).toBe(400);
+      const locker = await pool.getConnection();
+      await locker.beginTransaction();
+      await locker.execute('SELECT identity_hash FROM metric_trigger_heads WHERE identity_hash=? FOR UPDATE',
+        [open.episode.identity_hash]);
+      const waiting = call('POST', `${eventPath}/close`, {});
+      let blocked = false;
+      let revoked = false;
+      try {
+        for (let i = 0; i < 100 && !blocked; i++) {
+          const [waits] = await pool.query<RowDataPacket[]>(
+            `SELECT COUNT(*) n FROM performance_schema.data_lock_waits w
+             JOIN performance_schema.data_locks l ON l.ENGINE_LOCK_ID=w.REQUESTING_ENGINE_LOCK_ID
+             WHERE l.OBJECT_SCHEMA=? AND l.OBJECT_NAME='metric_trigger_heads'`, [platform.database],
+          );
+          blocked = Number(waits[0].n) > 0;
+          if (!blocked) await new Promise(resolve => setTimeout(resolve, 10));
+        }
+        expect(blocked).toBe(true);
+        await pool.execute('UPDATE users SET session_version=2 WHERE id=1');
+        revoked = true;
+      } finally {
+        await locker.rollback();
+        locker.release();
+        try {
+          if (revoked) expect((await waiting).status).toBe(401);
+        } finally {
+          if (revoked) await pool.execute('UPDATE users SET session_version=1 WHERE id=1');
+        }
+      }
+      expect((await detail()).episode.state).toBe('open');
+      await pool.execute(
+        "INSERT INTO notification_channels(name,type,config,enabled,delivery_start_at) VALUES(?,'webhook',?,1,NOW())",
+        [lateChannelName, JSON.stringify({ webhook_url: 'http://127.0.0.1:1/never-deliver', severity: 'warning' })],
+      );
+      const results = await Promise.all([call('POST', `${eventPath}/close`, {}), call('POST', `${eventPath}/close`, {})]);
+      for (const result of results) {
+        expect(result.status, JSON.stringify(result.data)).toBe(200);
+        expect(result.data).toMatchObject({ can_manual_close: false, processing: { status: 'closed', acknowledged_at: null },
+          episode: { state: 'closed', recovery_count: 0, manual_close: { actor_id: 1 }, last: open.episode.last } });
+        expect(result.data.snapshot).toEqual(open.snapshot);
+      }
+      expect(results[0].data.episode).toEqual(results[1].data.episode);
+      const closed = metricPublicSchemas.TemplateEventEvidence.parse(results[0].data).episode;
+      expect(closed.unknown_segments.at(-1)?.to).toBe(closed.closed_at);
+      const [audit] = await pool.query<RowDataPacket[]>(
+        "SELECT actor_id, details->>'$.to' AS status FROM alert_event_logs WHERE event_id=? AND details->>'$.action'='trigger_manually_closed'",
+        [opened.event_id],
+      );
+      expect(audit).toEqual([{ actor_id: 1, status: 'closed' }]);
+      const auditSql = readFileSync(new URL('../../../sql/audits/max118-alert-events-dry-run.sql', import.meta.url), 'utf8');
+      const [findings] = await pool.query<RowDataPacket[]>(auditSql);
+      expect(findings.filter(finding => Number(finding.event_id) === Number(opened.event_id))).toEqual([]);
+      const alerts = await alertDatabaseService.getAlerts({ instance_id: resource, status: 'closed', strict: true });
+      expect(alerts.items).toMatchObject([{ id: opening.alert_id, status: 'closed', acknowledged: false }]);
+      await collect(95, 120000);
+      const occurrences = await events();
+      expect(occurrences).toHaveLength(2);
+      const second = occurrences.find(row => row.event_id !== opened.event_id)!;
+      expect((await call('POST', `/api/metrics/template-events/${second.event_id}/close`, {})).status).toBe(200);
+      await evaluateTemplateClock(pool, clock + 1000);
+      expect(await events()).toHaveLength(2);
+      expect((await detail()).episode).toEqual(results[0].data.episode);
+      await evaluateTemplateClock(pool, clock + 180000);
+      const withNodata = await events();
+      expect(withNodata).toHaveLength(3);
+      const latest = withNodata.find(row => !occurrences.some(known => known.event_id === row.event_id))!;
+      const nodataPath = `/api/metrics/template-events/${latest.event_id}`;
+      expect((await call('GET', nodataPath)).data.episode).toMatchObject({ state: 'open', opened: { reason: 'nodata' } });
+      expect((await call('POST', `${nodataPath}/close`, {})).status).toBe(200);
+      await evaluateTemplateClock(pool, clock + 181000);
+      expect(await events()).toHaveLength(3);
+    } else {
+      expect((await call('POST', `${eventPath}/close`, {})).status).toBe(403);
+    }
+    await pool.execute('UPDATE notification_channels SET enabled=0 WHERE name IN (?,?)', [channelName, lateChannelName]);
+    const [eventRows] = await pool.query<RowDataPacket[]>('SELECT status FROM alert_events WHERE id=?', [opened.event_id]);
+    expect(eventRows[0].status).toBe(manual ? 'closed' : closes ? 'resolved' : 'open');
+    const [logs] = await pool.query<RowDataPacket[]>(
+      "SELECT action FROM alert_event_logs WHERE event_id=? AND action='resolved'", [opened.event_id],
+    );
+    expect(logs).toHaveLength(closes ? 1 : 0);
+    const [jobs] = await pool.query<RowDataPacket[]>(
+      `SELECT COALESCE(payload->>'$.transition.phase', 'problem') AS phase, payload->>'$.transition.cause' AS cause
+       FROM workflow_jobs WHERE job_type='notification.deliver' AND payload->>'$.alertId'=?`,
+      [String(opening.alert_id)],
+    );
+    expect(jobs.map(job => job.phase).sort()).toEqual(closes || manual ? ['problem', 'recovery'] : ['problem']);
+    expect(jobs.find(job => job.phase === 'recovery')?.cause).toBe(manual ? 'manual' : closes ? null : undefined);
+  }, 120000);
+
+  it('uses both formal items in one event and recovers only when both are known low', async () => {
+    const resource = await insertInstance('max239-cross-item');
+    await pool.execute("INSERT INTO instance_permissions(user_id,instance_id,access_level) VALUES(1,?,'admin')", [resource]);
+    const repository = new MySqlTemplateRepository(pool as never);
+    const templates = new MetricTemplateService(repository, registry);
+    const template = await templates.create(actor, { name: 'Combination trigger fixture' });
+    const release = registry.list().map(r => r.package).find(pkg => pkg.id === 'mysql-representative' && pkg.version === '1.0.0')!;
+    const packagePin = { id: release.id, version: release.version, digest: release.digest };
+    const metricIds = ['mysql.processlist.count', 'mysql.connections.limit'];
+    const items = await Promise.all(metricIds.map(id => templates.selectMetric(actor, template.template_id,
+      { package: packagePin, metric: { id, semantic_version: '1.0.0' } })));
+    const draft = (await repository.getDraft(template.template_id))!;
+    await repository.updateDraft(template.template_id, draft.revision, {
+      aggregate: { ...draft.aggregate, items: items.map(({ item }, index) => ({
+        item_id: item.item_id, version: item.version, interval_ms: index === 0 ? 60000 : 30000,
+      }))
+        .sort((a, b) => a.item_id.localeCompare(b.item_id)) },
+      updated_by: 1, updated_at: new Date().toISOString(),
+    });
+    const latest = (await repository.getDraft(template.template_id))!;
+    const version = await templates.publish(actor, template.template_id, { expected_draft_revision: latest.revision, expected_revision: template.revision });
+    const record = (await repository.getTemplate(template.template_id))!;
+    await repository.updateTemplate(template.template_id, record.revision, { status: 'active', updated_at: new Date().toISOString() });
+    const detail = (await repository.getVersion(template.template_id, version.version))!;
+    const [primary, secondary] = items.map(({ item }) => item.item_id);
+    const leaf = (operator: '>' | '<', value: number, item_id?: string) => ({
+      node: 'compare', select: { aggregation: 'last', ...(item_id ? { item_id } : {}) }, operator, threshold: { kind: 'constant', value },
+    });
+    const request = {
+      expected_version: detail.version, expected_content_hash: detail.content_hash, item_id: primary,
+      parameters: { schema: {}, defaults: {} },
+      problem: { node: 'all', children: [leaf('>', 50), leaf('>', 49, secondary)] },
+      recovery: { node: 'all', children: [{ ...leaf('<', 10), select: { aggregation: 'avg', window_ms: 30000 } }, leaf('<', 10, secondary)] },
+      quality: { accepted_quality: ['good'], min_coverage: 1, allow_estimated: false },
+      clock: { stale_after_ms: 120000, nodata: { enabled: false } },
+    };
+    const triggerRoute = `/api/metrics/templates/${template.template_id}/triggers`;
+    const wrong = await call('POST', triggerRoute, { ...request, problem: leaf('>', 49, 'outside-template') });
+    expect(wrong).toMatchObject({ status: 422, data: { error: 'TRIGGER_ITEM_UNKNOWN' } });
+    const published = await call('POST', triggerRoute, request);
+    expect(published.status, JSON.stringify(published.data)).toBe(200);
+    const binding = { ...body(), template_pins: [{ template_id: template.template_id, version: published.data.version, content_hash: published.data.content_hash }] };
+    for (const action of ['probe', 'trial', 'apply']) {
+      const response = await call('POST', `/api/metrics/template-bindings/instance/${resource}/${action}`, {
+        ...binding, ...(action === 'probe' ? {} : { receipt_id: 'combo-trial' }), ...(action === 'apply' ? { caller_key: 'combo-apply' } : {}),
+      });
+      expect(response.status, JSON.stringify(response.data)).toBe(200);
+    }
+    const implementations = metricIds.map(id => release.collectors.find(c => c.mappings.some(mapping => mapping.metric.id === id))!.implementation_ref);
+    const start = Date.now() + 1000;
+    const tick = async (offset: number, left: number, right: number|null, leftAt = offset, rightAt = offset, scheduled = false) => {
+      clock = start + offset;
+      controlledValue = left;
+      controlledCapacity = right;
+      sourceTimes.set(implementations[0], new Date(start + leftAt).toISOString());
+      sourceTimes.set(implementations[1], new Date(start + rightAt).toISOString());
+      if (scheduled) {
+        const entry = (await scheduleStore.scan()).templates.find(item => item.resource_key === `instance:${resource}`)!;
+        expect(await scheduleStore.enqueueTemplate(entry, clock)).toBe(true);
+        await drain();
+        return;
+      }
+      const caller_key = `combo-${offset}`;
+      expect((await call('POST', `/api/metrics/template-bindings/instance/${resource}/collect`, { caller_key, expected_revision: 1 })).status).toBe(200);
+      await drain();
+      const result = await call('GET', `/api/metrics/template-bindings/instance/${resource}/collect/${caller_key}`);
+      expect(result.data.state, JSON.stringify(result.data)).toBe('completed');
+    };
+    const events = async () => (await pool.query<RowDataPacket[]>(
+      'SELECT event_id,payload FROM metric_trigger_episodes WHERE resource_key=?', [`instance:${resource}`]))[0];
+    const parse = (value: any) => typeof value === 'string' ? JSON.parse(value) : value;
+    try {
+      // Start with staggered deadlines to exercise a real pending-to-applied handover across jobs.
+      await pool.execute(
+        `INSERT INTO metric_schedule(resource_key,revision,next_due_ms,states,cadence)
+         VALUES(?,1,?,'{}',?) ON DUPLICATE KEY UPDATE next_due_ms=VALUES(next_due_ms),cadence=VALUES(cadence)`,
+        [`instance:${resource}`, start, JSON.stringify({ next: { 60000: start, 30000: start + 40000 }, through: null })],
+      );
+      await tick(0, 51, null, 0, -1000, true);
+      expect(await events()).toHaveLength(0);
+      await tick(40000, 0, 50, 40000, -500, true);
+      const [opened] = await events();
+      expect(parse(opened?.payload)).toMatchObject({ state: 'open', opened: { value: 51 }, recovery_count: 0 });
+      const openedDetail = await call('GET', `/api/metrics/template-events/${opened.event_id}`);
+      expect(openedDetail.status).toBe(200);
+      expect(metricPublicSchemas.TemplateEventEvidence.safeParse(openedDetail.data).success).toBe(true);
+      expect((openedDetail.data.snapshot as any).opening.samples.map((sample: any) => sample.metric.id).sort()).toEqual([...metricIds].sort());
+      await tick(70000, 1, null);
+      expect(parse((await events())[0].payload)).toMatchObject({ state: 'open', last: { quality: 'unknown' }, recovery_count: 0 });
+      await tick(100000, 1, 2, 70000);
+      expect(parse((await events())[0].payload)).toMatchObject({ state: 'open', recovery_count: 0 });
+      await tick(130000, 1, 2);
+      await tick(160000, 1, 2);
+      await tick(190000, 1, 2);
+      const closed = await events();
+      expect(closed).toHaveLength(1);
+      expect(closed[0].event_id).toBe(opened.event_id);
+      expect(parse(closed[0].payload)).toMatchObject({ state: 'closed', recovery_count: 1 });
+      const [cache] = await pool.query<RowDataPacket[]>(
+        `SELECT i.payload->>'$.metric.id' AS metric, COUNT(*) AS entries FROM metric_trigger_inputs i
+         JOIN metric_trigger_heads h USING(identity_hash) WHERE h.resource_key=? GROUP BY metric`, [`instance:${resource}`]);
+      expect(Number(cache.find(row => row.metric === metricIds[1])?.entries)).toBe(1);
+      expect(Number(cache.find(row => row.metric === metricIds[0])?.entries)).toBeGreaterThan(1);
+      await evaluateTemplateClock(pool, start + 350000);
+      const watermarks = async () => parse((await pool.query<RowDataPacket[]>(
+        'SELECT source_watermarks FROM metric_trigger_heads WHERE resource_key=?', [`instance:${resource}`]))[0][0].source_watermarks);
+      const expectedWatermarks = Object.fromEntries(metricIds.map(id => [`${id}@1.0.0`, new Date(start + 190000).toISOString()]));
+      expect(await watermarks()).toEqual(expectedWatermarks);
+      await tick(360000, 51, 50, 130000, 130000);
+      expect(await watermarks()).toEqual(expectedWatermarks);
+      expect(await events()).toHaveLength(1);
+
+      const previousDraft = (await repository.getDraft(template.template_id))!;
+      const edited = await repository.updateDraft(template.template_id, previousDraft.revision, {
+        aggregate: { ...previousDraft.aggregate, items: previousDraft.aggregate.items.filter(item => item.item_id !== secondary) },
+        updated_by: 1, updated_at: new Date().toISOString(),
+      });
+      const previousVersion = (await repository.getTemplate(template.template_id))!;
+      await expect(templates.publish(actor, template.template_id, { expected_draft_revision: edited.revision, expected_revision: previousVersion.revision }))
+        .rejects.toMatchObject({ code: 'TEMPLATE_TRIGGER_ITEM_REFERENCED' });
+    } finally {
+      sourceTimes.clear();
+    }
+  }, 120000);
 });

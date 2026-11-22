@@ -17,7 +17,7 @@ import { discoveryBudget } from './discovery-store.js';
  *   v2 receipt and writes the receipt — it never writes formal observations;
  * - `apply` hands the raw candidate plus the receipt to the accepted host, which
  *   takes the policy lock, re-derives all three identities and stages one
- *   `templates-v1` payload with its audit.
+ *   `template-pending` payload with its audit.
  *
  * The service never resolves a credential itself, never writes a binding outside
  * the host transaction, and never turns a storage/driver message into a
@@ -52,7 +52,7 @@ import type { TemplateVersionReadPort } from '../bindings/preflight.js';
 import {
   resolveTemplateBinding, type ResolvedTemplateBinding, type ResolvedTemplateItem,
 } from '../bindings/resolve.js';
-import { buildTemplateCollectionPlan, type TemplateCollectionPlan } from '../bindings/plan.js';
+import { buildTemplateCollectionPlan, itemIntervals, type TemplateCollectionPlan } from '../bindings/plan.js';
 import { issueTrialReceipt, type TrialReceiptItem } from '../bindings/trial-receipt-issuer.js';
 import { writeTrialReceipt } from '../bindings/trial-receipt-writer.js';
 import { decodeBindingPayload, type DecodedTemplateBindingPayload } from '../bindings/persistence-codec.js';
@@ -95,6 +95,7 @@ export const TRIAL_RECEIPT_TTL_MS = 600_000;
 const fail = (code: TemplateBindingErrorCode, status = 400): never => { throw new TemplateBindingError(code, status); };
 
 export interface TemplateBindingItemView {
+  interval_ms?: number;
   template_id: string;
   item_id: string;
   item_version: number;
@@ -191,7 +192,7 @@ export interface TemplateOperationState {
 }
 
 export interface TemplateBindingStatus {
-  source: 'template' | 'package' | 'unbound';
+  source: 'template' | 'unbound';
   revision: number | null;
   application: { status: string; applied_revision: number | null; reported_at: string | null; error_code: string | null } | null;
   template_pins: TemplatePin[];
@@ -505,6 +506,7 @@ export class TemplateBindingService {
       .map(item => ({
         template_id: item.template_id, item_id: item.item_id, item_version: item.item_version,
         canonical_metric: item.canonical_metric, unit: item.unit, dimensions: item.dimensions,
+        ...(item.interval_ms === undefined ? {} : { interval_ms: item.interval_ms }),
         release: item.release, release_ref: item.release_ref, collector_id: item.collector_id,
         implementation_id: item.implementation_id, enabled: item.enabled, decision: item.decision,
         capability: item.capability.status,
@@ -845,6 +847,7 @@ export class TemplateBindingService {
         // ever recorded at revision 0: the trial belongs to target revision 1.
         config_revision: Math.max(revision, 1), observed_at: this.now().toISOString(),
         clock: () => this.now().toISOString(), collector_ids: release.collector_ids, metric_keys: release.metric_keys,
+        item_intervals_ms: itemIntervals([release]),
         // Every actual read (including an adapter's additional reads and retries)
         // runs on a freshly re-read grant, never on the one that started the trial.
         before_request: async () => { await authorize(); await access.assertCurrent?.(); },
@@ -1135,17 +1138,7 @@ export class TemplateBindingService {
     }
     const decoded = decodeBindingPayload(rows[0].payload);
     const configuration = { overrides: decoded.binding.overrides, group_id: decoded.binding.group_id };
-    if (decoded.kind === 'legacy_published') {
-      return {
-        source: 'package', revision: decoded.binding.revision, application: decoded.application,
-        template_pins: decoded.binding.template_pins, pending: null, configuration,
-        effective: decoded.effective
-          ? { revision: decoded.effective.revision, resolution_identity: String(decoded.effective.resolution_identity ?? '') }
-          : null,
-        published_at: typeof (decoded.payload as { published_at?: unknown }).published_at === 'string'
-          ? (decoded.payload as { published_at: string }).published_at : null,
-      };
-    }
+    if (decoded.kind !== 'template_pending') throw new PolicyError('POLICY_BINDING_INVALID', 409);
     return {
       source: 'template', revision: decoded.pending.target_revision, application: decoded.application,
       template_pins: decoded.binding.template_pins, pending: decoded.pending, configuration,

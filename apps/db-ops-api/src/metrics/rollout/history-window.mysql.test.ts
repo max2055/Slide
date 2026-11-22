@@ -1,3 +1,6 @@
+import { copyFile, mkdtemp, readdir, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import mysql, { type Pool } from 'mysql2/promise';
 import Fastify from 'fastify';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -5,7 +8,7 @@ import { MigrationRunner } from '../../migrations/runner.js';
 import type { MigrationPool } from '../../migrations/types.js';
 import { identify, sample } from '../../contracts/metrics/fixtures.js';
 import type { MetricDefinition, NormalizedObservation } from '../../contracts/metrics/index.js';
-import { seriesHash } from '../storage.js';
+import { MysqlMetricStorage, seriesHash } from '../storage.js';
 import { createConfigurationRegistry } from '../config/registry.js';
 import { PolicyService } from '../policy/service.js';
 import { MysqlPolicyStore } from '../policy/store.js';
@@ -70,6 +73,8 @@ describe.skipIf(!port)('formal 24h history window over MySQL and the real HTTP e
       overrides: { interval_ms: { mode: 'set', value: 60_000 }, timeout_ms: { mode: 'set', value: 5000 } } }, true);
     const store: ConsumerStore = {
       readHistoryWindow: (...args) => formal.readHistoryWindow(...args),
+      readHistoryChart: (...args) => formal.readHistoryChart(...args),
+      latestObservations: (...args) => formal.latestObservations(...args),
       historyDimensions: (...args) => formal.historyDimensions(...args),
       readObservationPage: (...args) => formal.readObservationPage(...args),
       readWindow: (...args) => formal.readWindow(...args),
@@ -223,5 +228,188 @@ describe.skipIf(!port)('formal 24h history window over MySQL and the real HTTP e
       expect(denied.body).toEqual({ error: 'POLICY_FORBIDDEN' });
     } finally { actor = admin; }
     expect((await request(query())).status).toBe(200);
+  }, 120_000);
+
+  it('joins pruned trends and recent details through the chart route without filling gaps or raw tables', async () => {
+    const hour = 60 * MINUTE, old = Math.floor((to - 70 * DAY) / hour) * hour;
+    const earlier = [observation(old, 5, 'retained-1'), observation(old + MINUTE, 17, 'retained-2')];
+    const late = observation(old + 8 * MINUTE, 29, 'detail-in-same-hour', { stored_at: iso(from) });
+    await seed([...earlier, late]);
+    expect(await new MysqlMetricStorage(pool).prune()).toMatchObject({ normalized: 2 });
+
+    const wide = { resource: ref, series: { metric: series.metric, dimensions: {} }, history: true,
+      include_retained_trends: true, from: iso(old), to: iso(to), bucket_ms: hour };
+    const chart = await request(wide);
+    expect(chart.status, JSON.stringify(chart.body)).toBe(200);
+    const buckets = chart.body.metrics[0].series[0].buckets;
+    expect(buckets[0]).toMatchObject({ value: { value: 17 }, retained_sample_count: 2, sample_count: 3,
+      stats: { min: { value: 5 }, max: { value: 29 }, count: 3 } });
+    expect(buckets[0].sources.map((source: { id: string }) => source.id)).toEqual([late.id]);
+    expect(buckets[1]).toMatchObject({ value: null, sample_count: 0 });
+    expect(buckets.at(-1).value).not.toBeNull();
+    expect(buckets.at(-1)).not.toHaveProperty('retained_sample_count');
+
+    // An idempotent replay can restore a normalized row while its receipt and publication still exist.
+    await seed([earlier[1]], { publication: 'none' });
+    try {
+      expect((await request(wide)).body.metrics[0].series[0].buckets[0]).toMatchObject({
+        retained_sample_count: 2, sample_count: 3, stats: { count: 3 },
+      });
+      const clipped = await request({ ...wide, from: iso(old + 30_000) });
+      expect(clipped.body.metrics[0].series[0].buckets[0]).toMatchObject({
+        sample_count: 2, stats: { count: 2, min: { value: 17 }, max: { value: 29 } },
+      });
+    } finally {
+      await pool.execute('DELETE FROM metric_observations WHERE id=?', [earlier[1].id]);
+    }
+
+    const rawBody = { resource: ref, metric: series.metric, dimensions: {}, from: iso(old), to: iso(old + hour) };
+    const raw = await app.inject({ method: 'POST', url: '/api/metrics/observations', payload: rawBody });
+    expect(raw.statusCode).toBe(200);
+    expect(raw.json()).toMatchObject({ total: 1, observations: [{ value: { value: 29 } }] });
+    const assessment = await app.inject({ method: 'POST', url: '/api/metrics/evaluate', payload: { query: wide, policies: [] } });
+    expect(assessment.statusCode).toBe(400);
+
+    const partial = observation(old + 2 * MINUTE, 41, 'partial-replay', { quality: { status: 'partial', reason: 'partial_input' } });
+    await seed([partial]);
+    expect(await new MysqlMetricStorage(pool).prune(1)).toMatchObject({ normalized: 1 });
+    const changed = { ...earlier[0], value: { encoding: 'float64' as const, value: 80 }, quality: partial.quality };
+    await seed([changed], { publication: 'none' });
+    try {
+      const replayed = (await request(wide)).body.metrics[0].series[0].buckets[0];
+      expect(replayed.stats).toMatchObject({ count: 3, max: { value: 29 }, avg: { value: 17 } });
+      expect(replayed.sources).not.toContainEqual(expect.objectContaining({ id: changed.id }));
+    } finally {
+      await pool.execute('DELETE FROM metric_observations WHERE id=?', [changed.id]);
+    }
+    await seed([partial], { publication: 'none' });
+    try {
+      const replayed = (await request(wide)).body.metrics[0].series[0].buckets[0];
+      expect(replayed).toMatchObject({ retained_sample_count: 2, sample_count: 4,
+        stats: { count: 4, min: { value: 5 }, max: { value: 41 }, avg: { value: 23 } } });
+      expect(replayed.sources).toEqual(expect.arrayContaining([expect.objectContaining({ id: partial.id })]));
+    } finally {
+      await pool.execute('DELETE FROM metric_observations WHERE id=?', [partial.id]);
+    }
+
+    const failed = observation(old + 10 * MINUTE, 0, 'failed-replay',
+      { value: null, accuracy: 'unknown', quality: { status: 'unknown', reason: 'source_error' } });
+    await seed([failed]);
+    expect(await new MysqlMetricStorage(pool).prune(1)).toMatchObject({ normalized: 1 });
+    await seed([failed], { publication: 'none' });
+    try {
+      const replayed = (await request(wide)).body.metrics[0].series[0].buckets[0];
+      expect(replayed).toMatchObject({ value: null, quality: { reason: 'source_error' }, stats: { count: 3, avg: { value: 17 } },
+        sources: [expect.objectContaining({ id: failed.id })] });
+    } finally {
+      await pool.execute('DELETE FROM metric_observations WHERE id=?', [failed.id]);
+    }
+
+    await pool.execute('INSERT INTO metric_item_retention(resource_key,metric_key,history_ms,trends_ms) VALUES(?,?,NULL,0)',
+      ['instance:1', `${series.metric.id}@${series.metric.semantic_version}`]);
+    try {
+      const disabled = await request(wide);
+      expect(disabled.status).toBe(200);
+      expect(disabled.body.metrics[0].series[0].buckets[0]).toMatchObject({ sample_count: 1, value: { value: 29 } });
+      expect(disabled.body.metrics[0].series[0].buckets[0]).not.toHaveProperty('retained_sample_count');
+    } finally {
+      await pool.execute('DELETE FROM metric_item_retention WHERE resource_key=?', ['instance:1']);
+    }
+    actor = { ...admin, permissions: ['instance:view'], instanceScopes: {} };
+    try { expect((await request(wide)).status).toBe(403); } finally { actor = admin; }
+  }, 120_000);
+
+  it('independent review: uses still-present trend inputs across the item cutoff and the pruning commit', async () => {
+    const hour = 60 * MINUTE, old = Math.floor((to - 71 * DAY) / hour) * hour;
+    const rows = [observation(old + MINUTE, 8, 'cutoff-1'), observation(old + 2 * MINUTE, 16, 'cutoff-2')];
+    await seed(rows);
+    const key = `${series.metric.id}@${series.metric.semantic_version}`;
+    await pool.execute('INSERT INTO metric_item_retention(resource_key,metric_key,history_ms,trends_ms) VALUES(?,?,?,?)',
+      ['instance:1', key, 30 * DAY, 90 * DAY]);
+    const chart = { resource: ref, series: { metric: series.metric, dimensions: {} }, history: true,
+      include_retained_trends: true, from: iso(old + 30_000), to: iso(old + hour), bucket_ms: hour };
+    const read = async () => {
+      const result = await request(chart);
+      expect(result.status, JSON.stringify(result.body)).toBe(200);
+      return result.body.metrics[0].series[0].buckets[0];
+    };
+    const expected = { value: { value: 12 }, sample_count: 2, retained_sample_count: 2, sources: [],
+      stats: { count: 2, min: { value: 8 }, max: { value: 16 } } };
+    try {
+      expect(await read()).toMatchObject(expected);
+      const raw = await app.inject({ method: 'POST', url: '/api/metrics/observations', payload: {
+        resource: ref, metric: series.metric, dimensions: {}, from: chart.from, to: chart.to,
+      } });
+      expect(raw.json()).toMatchObject({ total: 0, observations: [] });
+      let enterPrune!: () => void, releasePrune!: () => void;
+      const entered = new Promise<void>(resolve => { enterPrune = resolve; });
+      const release = new Promise<void>(resolve => { releasePrune = resolve; });
+      const prune = new MysqlMetricStorage(pool).prune(2, async (_connection, phase) => {
+        if (phase === 'commit') { enterPrune(); await release; }
+      });
+      try {
+        await Promise.race([entered, prune.then(() => { throw new Error('Expected a paused pruning transaction'); })]);
+        // The HTTP catalog takes the policy lock. Exercise the reader directly while pruning's writes are uncommitted.
+        const snapshot = await formal.readHistoryChart(series, chart.from, chart.to, new Date());
+        expect(snapshot).toMatchObject({ points: [], retained: [], trendOnly: rows.map(row => ({ id: row.id })) });
+      } finally { releasePrune(); }
+      expect(await prune).toMatchObject({ normalized: 2 });
+      expect(await read()).toMatchObject(expected);
+      const [receipts] = await pool.query<any[]>('SELECT COUNT(*) AS total FROM metric_trend_receipts WHERE observation_id IN (?,?)',
+        rows.map(row => row.id));
+      expect(Number(receipts[0].total)).toBe(2);
+
+      // Reproduce a bucket written by the old bounded cleanup, before it marked incomplete statistics.
+      await pool.execute('DELETE FROM metric_trend_receipts WHERE observation_id=?', [rows[0].id]);
+      await seed([rows[0]], { publication: 'none' });
+      expect(await read()).toMatchObject({ sample_count: 1, value: { value: 8 }, stats: { count: 1 } });
+      await pool.execute('DELETE FROM metric_observations WHERE id=?', [rows[0].id]);
+      await pool.execute('INSERT INTO metric_trend_receipts(observation_id,series_hash,bucket_ms,value_class) VALUES(?,?,?,?)',
+        [rows[0].id, seriesHash(series), old, 'float64']);
+
+      // The first bounded batch hides the bucket. Subsequent batches finish cleanup even after re-enabling trends.
+      await pool.execute('UPDATE metric_item_retention SET trends_ms=0 WHERE resource_key=? AND metric_key=?', ['instance:1', key]);
+      expect(await new MysqlMetricStorage(pool).prune(1)).toMatchObject({ retainedTrends: 0, trendReceipts: 1 });
+      await pool.execute('UPDATE metric_item_retention SET history_ms=NULL, trends_ms=? WHERE resource_key=? AND metric_key=?',
+        [90 * DAY, 'instance:1', key]);
+      await seed([rows[0]], { publication: 'none' });
+      const replayed = await read();
+      expect(replayed).toMatchObject({ sample_count: 1, value: { value: 8 }, stats: { count: 1 } });
+      expect(replayed).not.toHaveProperty('retained_sample_count');
+      expect(await new MysqlMetricStorage(pool).prune(1)).toMatchObject({ normalized: 0, retainedTrends: 1, trendReceipts: 1 });
+      expect(await new MysqlMetricStorage(pool).prune(1)).toMatchObject({ normalized: 1 });
+      expect(await read()).toMatchObject({ sample_count: 1, retained_sample_count: 1, value: { value: 8 }, stats: { count: 1 } });
+    } finally {
+      await pool.execute('DELETE FROM metric_item_retention WHERE resource_key=? AND metric_key=?', ['instance:1', key]);
+    }
+  }, 120_000);
+
+  it('upgrades existing trend receipts without rewriting them and can rerun migration safely', async () => {
+    const schema = `${database}_upgrade`;
+    const legacyMigrations = await mkdtemp(join(tmpdir(), 'slide-trend-receipts-'));
+    const directory = new URL('../../../sql/migrations/', import.meta.url);
+    let legacy: Pool | undefined;
+    try {
+      for (const name of await readdir(directory)) {
+        if (name.endsWith('.sql') && name < '164_') await copyFile(new URL(name, directory), join(legacyMigrations, name));
+      }
+      await root.query(`CREATE DATABASE ${schema}`);
+      legacy = mysql.createPool({ host: '127.0.0.1', port, user: 'root', password: '', database: schema });
+      await new MigrationRunner(legacy as unknown as MigrationPool, legacyMigrations).run();
+      const existing = ['fixture-before-164', seriesHash(series), 300_000, 'float64'];
+      await legacy.execute('INSERT INTO metric_trend_receipts VALUES(?,?,?,?)', existing);
+      const current = new MigrationRunner(legacy as unknown as MigrationPool);
+      await current.run();
+      await current.run();
+      expect((await current.inspect()).find(migration => migration.migration_id === '164_metric_trend_receipt_quality.sql'))
+        .toMatchObject({ status: 'completed' });
+      const [rows] = await legacy.query<any[]>('SELECT * FROM metric_trend_receipts');
+      expect(rows).toEqual([{ observation_id: existing[0], series_hash: existing[1], bucket_ms: existing[2], value_class: existing[3],
+        archive_invalid: null, archive_estimated: null }]);
+    } finally {
+      await legacy?.end();
+      await root.query(`DROP DATABASE IF EXISTS ${schema}`);
+      await rm(legacyMigrations, { recursive: true, force: true });
+    }
   }, 120_000);
 });

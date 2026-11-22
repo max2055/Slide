@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import type { TriggerResourceSnapshot } from '../../contracts/metrics/triggers.js';
-import { baseline, portOf } from './test-support.js';
+import { baseline, portOf, thresholdRule } from './test-support.js';
 import { resolveTriggerRules } from './resolve.js';
+import { hashOf, triggerRuleContentHash } from './model.js';
 import {
   checkTriggerSnapshotFence, compileTriggerSnapshot, verifyTriggerSnapshot, TriggerCompileError,
 } from './compile.js';
@@ -63,6 +64,51 @@ describe('immutable trigger snapshot', () => {
     const roundTripped = JSON.parse(JSON.stringify(first.snapshot));
     expect(roundTripped).not.toBe(first.snapshot);
     expect(verifyTriggerSnapshot(roundTripped)).toEqual(first.snapshot);
+  });
+
+  it('freezes severity in the per-rule and resource snapshots while accepting older rules', async () => {
+    const { candidate, snapshot } = await compiled();
+    expect(verifyTriggerSnapshot(snapshot).rules[0].severity).toBeUndefined();
+    const changed = structuredClone(candidate);
+    changed.rules[0].severity = 'critical';
+    const critical = compileTriggerSnapshot(changed);
+    expect(verifyTriggerSnapshot(critical).rules[0].severity).toBe('critical');
+    expect(critical.rules[0].snapshot_hash).not.toBe(snapshot.rules[0].snapshot_hash);
+    expect(critical.snapshot_hash).not.toBe(snapshot.snapshot_hash);
+  });
+
+  it('pins explicit manual close permission while leaving old rule versions default-off', async () => {
+    const { content_hash, ...body } = thresholdRule();
+    expect(body).not.toHaveProperty('allow_manual_close');
+    expect(triggerRuleContentHash({ ...body, allow_manual_close: true })).not.toBe(content_hash);
+    const { candidate, snapshot } = await compiled();
+    const [rule, ...remaining] = candidate.rules;
+    expect(verifyTriggerSnapshot(snapshot).rules[0].allow_manual_close).toBeUndefined();
+    const allowed = compileTriggerSnapshot({ ...candidate, rules: [{ ...rule, allow_manual_close: true }, ...remaining] });
+    expect(verifyTriggerSnapshot(JSON.parse(JSON.stringify(allowed))).rules[0].allow_manual_close).toBe(true);
+    expect(allowed.rules[0].snapshot_hash).not.toBe(snapshot.rules[0].snapshot_hash);
+  });
+
+  it('preserves legacy hashes and includes explicit recovery modes in both rule identities', async () => {
+    const { content_hash, recovery, ...legacyBody } = thresholdRule();
+    expect(content_hash).toBe(hashOf({ ...legacyBody, recovery }));
+    const { candidate, snapshot } = await compiled();
+    const { snapshot_hash, ...legacySnapshot } = snapshot.rules[0];
+    expect(legacySnapshot).not.toHaveProperty('recovery_mode');
+    expect(snapshot_hash).toBe(hashOf(legacySnapshot));
+
+    const hashes = (['problem_expression', 'none'] as const).map((recovery_mode) => {
+      const { recovery: _omit, ...firstRule } = candidate.rules[0];
+      const bodyHash = triggerRuleContentHash({ ...legacyBody, recovery_mode });
+      const compiled = compileTriggerSnapshot({
+        ...candidate, rules: [{ ...firstRule, recovery_mode }, ...candidate.rules.slice(1)],
+      });
+      const verified = verifyTriggerSnapshot(JSON.parse(JSON.stringify(compiled)));
+      expect(verified.rules[0]).toMatchObject({ recovery_mode });
+      expect(verified.rules[0]).not.toHaveProperty('recovery');
+      return [bodyHash, verified.rules[0].snapshot_hash, verified.snapshot_hash];
+    });
+    expect(hashes[0].every((hash, index) => hash !== hashes[1][index])).toBe(true);
   });
 
   it('rejects a tampered rule hash, a tampered aggregate hash and a tampered body', async () => {

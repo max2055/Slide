@@ -46,6 +46,7 @@ export type Resolved = {
   applicability: import('../packages/applicability.js').ApplicabilityCheck[];
   plan: CollectionPlan;
   metric_templates: Array<{ metric: CollectionPlan['entries'][number]['binding']['metric']; source: CollectionPlan['entries'][number]['binding']['source'];
+    interval_ms?: number;
     enabled: boolean; required_dimensions: string[]; capability: CollectionPlan['entries'][number]['capability']; decision: CollectionPlan['entries'][number]['decision'] }>;
   settings: Settings;
   platform_limits: Record<string, number>;

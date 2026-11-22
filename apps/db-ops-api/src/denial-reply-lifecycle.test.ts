@@ -447,3 +447,26 @@ it.each([
     expect(dto).not.toHaveBeenCalled();
   } finally { await fastify.close(); }
 });
+
+it.each([
+  {status:200,result:{success:true},body:{message:'更新成功'}},
+  {status:400,result:{success:false,error:'Fixture update rejected'},body:{error:'Fixture update rejected'}},
+])('sends server collection update response before Fastify finalizes it (HTTP $status)', async ({status,result,body}) => {
+  const {fastify,send} = await setup();
+  const authorized = async (request: FastifyRequest) => {
+    Object.assign(request,{user:{...actor,permissions:['servers:manage']}});
+  };
+  const update = vi.spyOn(serverDatabaseService,'updateServer').mockResolvedValue(result);
+  registerInline({fastify,verifyToken:authorized,requirePermission,warnUnknown,serverDatabaseService,recordSshTrustRequest:vi.fn()},
+    "  fastify.put('/api/servers/:id'");
+  await fastify.listen({host:'127.0.0.1',port:0});
+  await withBoundedHttp(fastify,async signal => {
+    const response = await fetch(fastify.listeningOrigin + '/api/servers/25',{
+      method:'PUT',headers:{'content-type':'application/json'},body:JSON.stringify({collection_enabled:false}),signal,
+    });
+    expect(response.status).toBe(status);
+    expect(await response.json()).toEqual(body);
+    expect(update).toHaveBeenCalledWith(25,{collection_enabled:false});
+    expect(send.mock.calls).toEqual([[body]]);
+  });
+});

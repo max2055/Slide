@@ -271,12 +271,15 @@ class DatabaseLogService {
           }
         }
 
-        // I/O 延迟升高
-        if (blkReadTime > 1000 || blkWriteTime > 1000) {
-          const lastBlkRead = previous.blk_read_time;
-          const deltaRead = blkReadTime - Number(lastBlkRead);
-          if (deltaRead > 500) {
-            const msg = `[${row.datname}] I/O 延迟升高：读 ${blkReadTime}ms`;
+        // 读写分别按同一统计周期内的累计耗时及增量判定。
+        for (const [direction, label, counter] of [
+          ['read', '读', 'blk_read_time'],
+          ['write', '写', 'blk_write_time'],
+        ] as const) {
+          const total = currentStats[counter];
+          const delta = total - previous[counter];
+          if (total > 1000 && delta > 500) {
+            const msg = `[${row.datname}] I/O 延迟升高：${label} +${delta.toFixed(2)} ms（累计 ${total} ms）`;
             const patterns = this.detectPatterns(msg);
             newLogs.push({
               id: 0,
@@ -284,7 +287,7 @@ class DatabaseLogService {
               log_level: 'warning',
               source: 'pg_log',
               message: msg,
-              raw_content: JSON.stringify({ datname: row.datname, blk_read_time: blkReadTime, delta: deltaRead }),
+              raw_content: JSON.stringify({ datname: row.datname, direction, [counter]: total, delta }),
               detected_patterns: patterns.length > 0 ? patterns : [{ pattern: 'IO_LATENCY', severity: 'warning', message: 'I/O 延迟升高' }],
               collected_at: new Date(),
               created_at: new Date(),

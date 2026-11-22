@@ -196,7 +196,7 @@ describe('T2B adapter error branches', () => {
 
   it('maps a duplicate parent insert to TEMPLATE_EXISTS and rolls back', async () => {
     const connection = new FakeConnection(sql => {
-      if (sql.startsWith('INSERT INTO metric_templates_v2')) {
+      if (sql.startsWith('INSERT INTO monitoring_templates')) {
         throw Object.assign(new Error('Duplicate entry'), { code: 'ER_DUP_ENTRY' });
       }
     });

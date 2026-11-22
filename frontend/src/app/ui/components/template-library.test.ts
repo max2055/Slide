@@ -2,6 +2,8 @@ import {afterEach,expect,it,vi} from 'vitest';
 const {authFetch}=vi.hoisted(()=>({authFetch:vi.fn()}));
 vi.mock('../../../api/index.js',()=>({authFetch}));
 import './template-library.js';
+import type { TemplateLibraryPage } from './template-library.js';
+import type { AppDialog } from './app-dialog.js';
 const settle=()=>new Promise(resolve=>setTimeout(resolve,20));
 afterEach(()=>{document.body.replaceChildren();authFetch.mockReset();});
 it('discards a late library response after session revocation',async()=>{
@@ -15,8 +17,8 @@ it('discards a late library response after session revocation',async()=>{
 it('explains read failure and offers refresh instead of claiming an empty library',async()=>{
  authFetch.mockImplementation(()=>Promise.resolve(new Response(JSON.stringify({error:'TEMPLATE_STORE_UNAVAILABLE'}),{status:503})));
  const element=document.createElement('template-library');document.body.append(element);await settle();
- expect(element.shadowRoot!.querySelector('[role="alert"]')?.textContent).toContain('TEMPLATE_STORE_UNAVAILABLE');
- expect(element.shadowRoot!.textContent).not.toContain('没有匹配的原生模板');
+ expect(element.shadowRoot!.querySelector('[role="alert"]')?.textContent).toContain('暂时无法完成操作');
+ expect(element.shadowRoot!.textContent).not.toContain('没有匹配的模板');
  expect([...element.shadowRoot!.querySelectorAll('button')].some(button=>button.textContent?.includes('刷新模板库'))).toBe(true);
 });
 
@@ -46,15 +48,21 @@ it('R1 disables writes on permission rejection but preserves built-in business d
  element.editor={...fixture(),builtin:true};await element.mutate('name',{},()=>{});expect(element.editor.can_manage).toBe(true);expect(element.error).toContain('内置模板');
  await element.mutate('copy',{},()=>{});expect(element.editor.can_manage).toBe(false);
 });
-for(const field of ['模板名称','监控项名称 item'])it(`R2 protects unsaved ${field} across close, draft save, publish and discard`,async()=>{
- const element=await mounted();const input=element.shadowRoot.querySelector(`input[aria-label="${field}"]`);input.value='未保存名称';input.dispatchEvent(new Event('input',{bubbles:true}));await settle();
- expect(element.unsaved).toBe(true);element.close();expect(element.editor).not.toBeNull();
- expect([...element.shadowRoot.querySelectorAll('button')].find((b:any)=>b.textContent==='发布不可变版本').disabled).toBe(true);
- authFetch.mockResolvedValueOnce(new Response(JSON.stringify({draft:fixture().draft})));await element.save();await settle();expect(element.unsaved).toBe(true);
- expect(element.shadowRoot.querySelector(`input[aria-label="${field}"]`).value).toBe('未保存名称');
- const discard=[...element.shadowRoot.querySelectorAll('button')].find((b:any)=>b.textContent==='放弃未保存修改') as HTMLButtonElement;discard.click();await settle();expect(element.unsaved).toBe(false);
- element.close();expect(element.editor).toBeNull();
+it('keeps edit fields out of the published view and confirms leaving an unsaved edit', async () => {
+  const element = await mounted();
+  const root = element.shadowRoot!;
+  expect(root.querySelector('input[aria-label="模板名称"]')).toBeNull();
+  await element.open('custom', true);
+  const input = root.querySelector('input[aria-label="模板名称"]') as HTMLInputElement;
+  input.value = '未保存名称'; input.dispatchEvent(new Event('input'));
+  await settle();
+  await element.leave();
+  expect(element.discard).toBe(true);
+  expect(element.editor).not.toBeNull();
+  await element.back();
+  expect(element.editor).toBeNull();
 });
+
 it('R1 session rejection clears facts even on a built-in write',async()=>{
  const element=await mounted();element.editor={...fixture(),builtin:true};
  authFetch.mockResolvedValueOnce(new Response('{}',{status:401}));await element.mutate('name',{},()=>{});
@@ -64,4 +72,85 @@ it('R1 control: unknown write retries retain the original operation key',async()
  const element=await mounted();let attempt=0;const keys:string[]=[];
  authFetch.mockImplementation((_path:string,init:RequestInit)=>{keys.push(JSON.parse(String(init.body)).operation_key);return Promise.resolve(++attempt===1?new Response('{}',{status:503}):new Response('{}'));});
  await element.mutate('name',{name:'同键恢复'},()=>{});expect(element.retry).toBeTruthy();await element.retry();expect(keys[0]).toBe(keys[1]);expect(element.retry).toBeNull();
+});
+
+it('creates and opens a draft from an empty library and safely retries an uncertain response', async () => {
+  const writes: Array<{ name: string; operation_key: string }> = [];
+  authFetch.mockImplementation((path: string, init?: RequestInit) => {
+    if (path.endsWith('/templates') && init?.method === 'POST') {
+      writes.push(JSON.parse(String(init.body)));
+      return Promise.resolve(writes.length === 1 ? new Response('{}', { status: 503 })
+        : Response.json({ template: fixture().template }));
+    }
+    if (path.endsWith('/library')) return Promise.resolve(Response.json({ can_manage: true, templates: [] }));
+    if (path.endsWith('/capabilities')) return Promise.resolve(Response.json({ candidates: [], unavailable: [] }));
+    return Promise.resolve(Response.json(fixture()));
+  });
+  const element = document.createElement('template-library') as TemplateLibraryPage;
+  document.body.append(element);
+  await settle();
+  const root = element.shadowRoot!;
+  [...root.querySelectorAll('button')].find(button => button.textContent === '新建模板')!.click();
+  await element.updateComplete;
+  const field = root.querySelector<HTMLInputElement>('input[aria-label="新模板名称"]')!;
+  field.value = '原名称';
+  field.dispatchEvent(new Event('input'));
+  await element.updateComplete;
+  root.querySelector<HTMLButtonElement>('button[type="submit"]')!.click();
+  await settle();
+  expect(field.disabled).toBe(true);
+  [...root.querySelectorAll('button')].find(button => button.textContent === '重试同一操作')!.click();
+  await settle();
+  expect(writes).toEqual([{ name: '原名称', operation_key: expect.any(String) }, writes[0]]);
+  expect(root.querySelector<AppDialog>('app-dialog')?.open).toBe(false);
+  expect(root.querySelector<HTMLInputElement>('input[aria-label="模板名称"]')?.value).toBe('原名称');
+});
+
+it('disables opening another template until the pending create result is known', async () => {
+  const template = fixture().template;
+  authFetch.mockImplementation((path: string) => {
+    if (path.endsWith('/library')) return Promise.resolve(Response.json({
+      can_manage: true, templates: [{ template, builtin: false, resource_types: ['instance'], item_count: 1 }],
+    }));
+    if (path.endsWith('/capabilities')) return Promise.resolve(Response.json({ candidates: [], unavailable: [] }));
+    return Promise.resolve(new Response('{}', { status: 503 }));
+  });
+  const element = document.createElement('template-library') as TemplateLibraryPage;
+  document.body.append(element);
+  await settle();
+  const root = element.shadowRoot!;
+  [...root.querySelectorAll('button')].find(button => button.textContent === '新建模板')!.click();
+  await element.updateComplete;
+  const field = root.querySelector<HTMLInputElement>('input[aria-label="新模板名称"]')!;
+  field.value = '另一个模板';
+  field.dispatchEvent(new Event('input'));
+  await element.updateComplete;
+  root.querySelector<HTMLButtonElement>('button[type="submit"]')!.click();
+  await settle();
+  expect(root.querySelector<HTMLButtonElement>('button[data-template-id]')?.disabled).toBe(true);
+});
+
+it('keeps an acknowledged draft in the list when the first editor read fails', async () => {
+  authFetch.mockImplementation((path: string) => {
+    if (path.endsWith('/templates')) return Promise.resolve(Response.json({ template: fixture().template }));
+    if (path.endsWith('/library')) return Promise.resolve(Response.json({ can_manage: true, templates: [] }));
+    if (path.endsWith('/capabilities')) return Promise.resolve(Response.json({ candidates: [], unavailable: [] }));
+    return Promise.resolve(new Response('{}', { status: 503 }));
+  });
+  const element = document.createElement('template-library') as TemplateLibraryPage;
+  document.body.append(element);
+  await settle();
+  const root = element.shadowRoot!;
+  [...root.querySelectorAll('button')].find(button => button.textContent === '新建模板')!.click();
+  await element.updateComplete;
+  const field = root.querySelector<HTMLInputElement>('input[aria-label="新模板名称"]')!;
+  field.value = '原名称';
+  field.dispatchEvent(new Event('input'));
+  await element.updateComplete;
+  root.querySelector<HTMLButtonElement>('button[type="submit"]')!.click();
+  await settle();
+  expect(root.querySelector('[role="status"]')?.textContent).toContain('草稿已创建');
+  expect(root.querySelector('button[data-template-id="custom"]')).not.toBeNull();
+  expect(root.querySelector('[role="alert"]')).not.toBeNull();
+  expect(authFetch.mock.calls.filter(([path]) => path.endsWith('/library'))).toHaveLength(1);
 });

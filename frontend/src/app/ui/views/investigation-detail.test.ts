@@ -3,7 +3,7 @@ import { render } from 'lit';
 import { renderInvestigationDetail } from './investigation-detail.ts';
 vi.mock('../components/investigation-feedback.ts', () => ({}));
 vi.mock('../components/investigation-operation-context.ts', () => ({}));
-afterEach(() => document.body.replaceChildren());
+afterEach(() => { document.body.replaceChildren(); history.replaceState({}, '', '/'); });
 const container = () => document.body.appendChild(document.createElement('div'));
 it('shows the latest outcome before process/feedback, with Chinese status and collapsed technical details', () => {
  const c:any={ detail:{id:'one',title:'调查',goal:'很长的原始调查目标'.repeat(200),profileId:'ops',lifecycle:'waiting',problemStatus:'unconfirmed',resources:[],sessionId:'technical-session',derivedRunState:'partial'},
@@ -39,4 +39,38 @@ it('starts a saved draft with its existing goal and no required prompt, only on 
  expect(submit).not.toHaveBeenCalled();
  const button=[...document.querySelectorAll('button')].find(b=>b.textContent==='开始只读调查');expect(button).toBeDefined();button!.click();
  expect(submit).toHaveBeenCalledWith('核对原窗口');
+});
+
+it('links only to the event bound to this investigation, and keeps the full long conclusion available', () => {
+ history.replaceState({}, '', '/workbench?investigation=one&returnTo=%2Fworkbench');
+ const summary = '事件 #22899 的触发及恢复有历史观测。' + '本次窗口的原始观测字段与限制。'.repeat(40);
+ const c:any={ detail:{id:'one',title:'事件调查',goal:'核对',profileId:'ops',lifecycle:'open',problemStatus:'unconfirmed',
+   resources:[],sessionId:'s',sourceEventIds:[22900],context:{entry:{sourceEventIds:[22899,22899,-1]}}}, history:[], snapshot:null,
+   results:{items:[{id:'result',version:1,result:{summary,facts:[],recommendations:[{priority:'high',action:'核对原事件'}],unresolvedQuestions:[],provenance:{}}}]} };
+ const root=container();
+ const options={draft:'',onDraft:()=>{},onContinue:()=>{},onEvidence:()=>{}};
+ render(renderInvestigationDetail(c,{...options,permissions:new Set(['alert:view'])}),root);
+ const links=[...root.querySelectorAll<HTMLAnchorElement>('.investigation-next-actions a')];
+ expect(links).toHaveLength(1);
+ expect(new URL(links[0].href).searchParams.get('eventId')).toBe('22899');
+ expect(new URL(links[0].href).searchParams.get('returnTo')).toContain('/workbench?investigation=one');
+ expect(root.querySelector<HTMLDetailsElement>('.investigation-full-result')?.open).toBe(false);
+ expect(root.querySelector('.investigation-full-result')?.textContent).toContain(summary);
+ render(renderInvestigationDetail(c,options),root);
+ expect(root.querySelector('.investigation-next-actions a')).toBeNull();
+});
+
+it('shows authorized automatic source links before a result exists and removes them on permission loss', () => {
+ history.replaceState({}, '', '/workbench?investigation=auto');
+ const c:any={detail:{id:'auto',title:'自动调查',goal:'核对',profileId:'ops',lifecycle:'open',problemStatus:'unconfirmed',
+   resources:[],sessionId:'s',activeRequestId:'run',sourceEventIds:[52,51,52,-1]},results:{items:[]},history:[],snapshot:null};
+ const root=container();
+ const options={draft:'',onDraft:()=>{},onContinue:()=>{},onEvidence:()=>{}};
+ const links=()=>Array.from(root.querySelectorAll<HTMLAnchorElement>('a[data-workbench-key]'));
+ render(renderInvestigationDetail(c,{...options,permissions:new Set(['alert:view'])}),root);
+ expect(links().map(link=>new URL(link.href).searchParams.get('eventId'))).toEqual(['52','51']);
+ expect(new URL(links()[0].href).searchParams.get('returnTo')).toBe('/workbench?investigation=auto');
+ render(renderInvestigationDetail(c,{...options,permissions:new Set(['chat:view'])}),root);
+ expect(links()).toHaveLength(0);
+ expect(root.textContent).not.toContain('事件 #52');
 });

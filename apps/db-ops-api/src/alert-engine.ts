@@ -7,8 +7,7 @@ import { assertWorkflowActive } from './workflows/execution-context.js';
 import { CronJob } from 'cron';
 import { alertDatabaseService } from './alert-database-service';
 import { instanceDatabaseService } from './instance-database-service';
-import { metricsDatabaseService } from './metrics-database-service';
-import { evaluateRule, evaluateRuleWithLevels, checkDuration, checkRecoveryDuration, evaluateAllRules, getMetricValue, isValueHealthy, resolveMacrosForRule } from './alert-evaluator';
+import { checkRecoveryDuration, evaluateAllRules, resolveMacrosForRule } from './alert-evaluator';
 import { maintenanceWindowService } from './maintenance-window-service';
 import { alertSilenceService } from './alert-silence-service';
 import { eventAggregator } from './event-aggregator';
@@ -101,7 +100,14 @@ class AlertEngine {
     this.evaluatedCount++;
     assertWorkflowActive();
     const pool = dbConnection.getPool();
-    if (pool) await evaluateTemplateClock(pool);
+    if (pool) {
+      try {
+        await evaluateTemplateClock(pool);
+      } catch {
+        console.error('[TemplateTriggers] Clock could not read applied template bindings');
+      }
+    }
+    assertWorkflowActive();
     const triggeredAlerts = await evaluateAllRules();
 
     // 更新统计

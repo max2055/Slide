@@ -271,6 +271,7 @@ export class ScriptEditor extends LitElement {
   static styles = css`
     :host { display: block; }
     .editor-wrapper { border: 1px solid var(--border); border-radius: var(--radius-sm); overflow: hidden; }
+    .editor-wrapper:focus-within { outline: 2px solid var(--ring, var(--accent-text)); outline-offset: 2px; }
     .editor-wrapper .cm-editor { height: 200px; }
     .editor-wrapper .cm-scroller { overflow: auto; }
   `;
@@ -316,6 +317,7 @@ export class ScriptEditor extends LitElement {
           sql({ dialect, upperCaseKeywords: uc }),
           oneDark,
           EditorView.editable.of(!readOnly),
+          EditorView.contentAttributes.of({ "aria-label": "SQL 脚本" }),
           EditorView.updateListener.of((update) => {
             if (update.docChanged) {
               this._editorContent = update.state.doc.toString();

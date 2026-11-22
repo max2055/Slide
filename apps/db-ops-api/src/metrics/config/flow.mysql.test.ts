@@ -14,9 +14,7 @@ import { MysqlPolicyStore } from '../policy/store.js';
 import { PolicyService } from '../policy/service.js';
 import { registerMetricPolicyRoutes } from '../policy/routes.js';
 import { MysqlMetricStorage } from '../storage.js';
-import { admin, pin, resource } from '../policy/test-support.js';
-import { sealRelease } from '../packages/model.js';
-import { installHistoricalMetricRoutes } from '../legacy-routes.js';
+import { admin, pin } from '../policy/test-support.js';
 import { createConfigurationRegistry } from './registry.js';
 import { MetricConfigurationService } from './service.js';
 import { createTrialStore, registerMetricConfigurationRoutes } from './routes.js';
@@ -24,7 +22,10 @@ import { configurationReader } from './status-store.js';
 import { configurationInventory } from './inventory.js';
 import { TemplateBindingService } from '../templates/binding-service.js';
 import { registerMetricTemplateRoutes } from '../templates/routes.js';
-import { createAssetCollectorAccess } from './access.js';
+import { MySqlTemplateRepository } from '../templates/mysql-repository.js';
+import { MetricTemplateService } from '../templates/service.js';
+import type { TemplatePin } from '../../contracts/metrics/templates.js';
+import type { CollectorAccess } from '../scheduler/service.js';
 
 const port = Number(process.env.METRICS_TEST_MYSQL_PORT);
 describe.skipIf(!port)('configuration real HTTP / MySQL / browser', () => {
@@ -34,12 +35,36 @@ describe.skipIf(!port)('configuration real HTTP / MySQL / browser', () => {
   let remoteHasRows = true;
   let poolSpy: ReturnType<typeof vi.spyOn>;
   const registry = createConfigurationRegistry();
-  // Same MySQL 8 transport and applicability, without the first-sample rate.
-  // This test-only immutable package exercises the all-good UI branch.
-  const baseline = registry.get(pin);
-  const scalarsOnly = sealRelease({ ...baseline, package: { ...baseline.package, version: '1.0.1' },
-    derived: [], extensions: baseline.extensions.filter(d => d.id !== 'mysql.queries.per_second') });
-  registry.install(scalarsOnly);
+  const templateName = 'MySQL 指标配置验收';
+  let templatePin: TemplatePin;
+  const bindingPath = 'template-bindings/instance/1';
+  const configurationPath = 'config/resources/instance/1';
+  const targetRows = [{ Variable_name: 'Uptime', Value: '1000' }, { Variable_name: 'Queries', Value: '9007199254740993' }];
+  const candidate = () => ({ expected_revision: 0, template_pins: [templatePin], group_id: 'fixture', overrides: {} });
+
+  async function publishFixtureTemplate() {
+    const repository = new MySqlTemplateRepository(pool);
+    const templates = new MetricTemplateService(repository, registry);
+    const template = await templates.create(admin, { name: templateName });
+    const items = [];
+    for (const id of ['db.uptime_seconds', 'mysql.queries.total']) {
+      const { item } = await templates.selectMetric(admin, template.template_id,
+        { package: pin, metric: { id, semantic_version: '1.0.0' } });
+      items.push({ item_id: item.item_id, version: item.version });
+    }
+    const draft = (await repository.getDraft(template.template_id))!;
+    const updated = await templates.updateDraft(admin, template.template_id, {
+      expected_draft_revision: draft.revision,
+      aggregate: { ...draft.aggregate, items: items.sort((a, b) => a.item_id.localeCompare(b.item_id)) },
+    });
+    const version = await templates.publish(admin, template.template_id, {
+      expected_draft_revision: updated.revision, expected_revision: template.revision,
+    });
+    const current = (await repository.getTemplate(template.template_id))!;
+    await templates.setCurrent(admin, template.template_id, { version: version.version, expected_revision: current.revision });
+    return { template_id: template.template_id, version: version.version, content_hash: version.content_hash };
+  }
+
   const auth = async (request: any) => { request.user = request.headers.authorization === 'Bearer readonly'
     ? { ...admin, permissions: ['metric:view', 'instance:view'], instanceScopes: { 1: 'read-only' } } : admin; };
   beforeAll(async () => {
@@ -54,19 +79,21 @@ describe.skipIf(!port)('configuration real HTTP / MySQL / browser', () => {
     await pool.execute(`INSERT INTO database_instances(id,name,host,port,username,password_encrypted,db_type,db_version,status)
       VALUES(1,'isolated flow target','127.0.0.1',3306,'fixture','','mysql','8.0.46','active')`);
     const policy = new PolicyService(new MysqlPolicyStore(() => pool), registry, { exists: async ref => ref.id === 1, inventory: configurationInventory });
-    const service = new MetricConfigurationService(policy, registry, createTrialStore(() => pool, registry), { resolve: async ref => ({ resource: resource(ref.id), credential_ref: 'credential:isolated-target',
-      evidence: { counter: { bits: '64', start_at: '2026-09-01T00:00:00.000Z' } },
-      // Fixed simulated remote target; HTTP, policy persistence, CAS and reservation are real.
-      resolve: async () => ({ method: 'sql', pool: { query: async () => [remoteHasRows ? [{ Variable_name: 'Uptime', Value: '1000' }, { Variable_name: 'Queries', Value: '9007199254740993' }] : [], []] } }),
-    }) }, configurationReader(() => pool));
-    app = Fastify(); installHistoricalMetricRoutes(app); await registerMetricPolicyRoutes(app, auth, policy, async seed => seed); await registerMetricConfigurationRoutes(app, auth, service);
-    // The ordinary configuration entry reads the stored binding source before it
-    // picks the legacy editor or the fixed-version template flow. That read is
-    // part of the product contract, so this isolated app serves the real route
-    // against the same disposable schema instead of leaving it 404.
+    const access: CollectorAccess = { resolve: async ref => ({
+      resource: await configurationInventory(ref), credential_ref: 'credential:isolated-target',
+      evidence: { counter: { bits: '64', start_at: new Date(Date.now() - 1000_000).toISOString() } },
+      // Only the target transport is controlled. The template and policy routes
+      // perform real checks, persistence, CAS and collector decoding.
+      resolve: async () => ({ method: 'sql', pool: { query: async () => [remoteHasRows ? targetRows : [], []] } }),
+    }) };
+    const service = new MetricConfigurationService(policy, registry, createTrialStore(() => pool, registry), access,
+      configurationReader(() => pool));
+    templatePin = await publishFixtureTemplate();
+    app = Fastify();
+    await registerMetricPolicyRoutes(app, auth, policy, async actor => actor);
+    await registerMetricConfigurationRoutes(app, auth, service);
     await registerMetricTemplateRoutes(app, auth, new TemplateBindingService({
-      pool: () => pool, registry, access: createAssetCollectorAccess(),
-      reload: async () => admin as never,
+      pool: () => pool, registry, access, reload: async actor => actor,
     }));
     base = await app.listen({ host: '127.0.0.1', port: 0 });
     vite = await createServer({ configFile: false, root: fileURLToPath(new URL('../../../../../frontend', import.meta.url)),
@@ -98,14 +125,18 @@ describe.skipIf(!port)('configuration real HTTP / MySQL / browser', () => {
     const catalog = await (await fetch(`${base}/api/metrics/config/catalog`)).json() as any;
     expect(catalog.packages.length).toBeGreaterThan(4);
     expect((await post('policy/groups/fixture/publish', { expected_revision: 0, overrides: { interval_ms: { mode: 'set', value: 30000 } } })).status).toBe(200);
-    const candidate = { package: pin, expected_revision: 0, group_id: 'fixture' };
-    const preview = await (await post('policy/resources/instance/1/preview', candidate)).json() as any;
-    expect(preview.resources[0].resolved.sources.interval_ms.layer).toBe('group');
-    expect((await post('config/resources/instance/1/trial', candidate)).status).toBe(200);
-    const results = await Promise.all([post('policy/resources/instance/1/publish', candidate), post('policy/resources/instance/1/publish', candidate)]);
+    const intent = candidate();
+    const probe = await post(`${bindingPath}/probe`, intent);
+    expect(probe.status, await probe.text()).toBe(200);
+    const preview = await (await post(`${bindingPath}/preview`, intent)).json() as any;
+    expect(preview).toMatchObject({ executable: true, settings: { interval_ms: 30000 } });
+    const receipt_id = 'api-config-trial';
+    expect((await post(`${bindingPath}/trial`, { ...intent, receipt_id })).status).toBe(200);
+    const results = await Promise.all(['api-config-first', 'api-config-second'].map(caller_key =>
+      post(`${bindingPath}/apply`, { ...intent, receipt_id, caller_key })));
     expect(results.map(r => r.status).sort()).toEqual([200, 409]);
-    const binding = await (await fetch(`${base}/api/metrics/policy/resources/instance/1`)).json() as any;
-    expect(binding.application).toMatchObject({ status: 'pending', applied_revision: null });
+    const binding = await (await fetch(`${base}/api/metrics/${bindingPath}`)).json() as any;
+    expect(binding).toMatchObject({ template_pins: [templatePin], application: { status: 'pending', applied_revision: null } });
     const status = await (await fetch(`${base}/api/metrics/config/resources/instance/1/status`)).json() as any;
     expect(status).toMatchObject({
       binding: { state: 'bound', application: 'pending', published_revision: 1, applied_revision: null },
@@ -114,7 +145,7 @@ describe.skipIf(!port)('configuration real HTTP / MySQL / browser', () => {
       formal_visibility: { state: 'pending', source: 'none', last_observed_at: null, generation: null, freshness: 'unknown' },
     });
     expect(status.coverage).toEqual(expect.arrayContaining([
-      expect.objectContaining({ metric: { id: 'db.uptime_seconds', semantic_version: '1.0.0' }, state: 'unknown', reason: 'CAPABILITY_UNKNOWN' }),
+      expect.objectContaining({ metric: { id: 'db.uptime_seconds', semantic_version: '1.0.0' }, state: 'covered' }),
     ]));
     expect(status.blockers).toEqual(expect.arrayContaining(['APPLICATION_PENDING', 'AWAITING_SAMPLE']));
     for (const table of ['metric_observations', 'metric_attempts']) {
@@ -139,164 +170,92 @@ describe.skipIf(!port)('configuration real HTTP / MySQL / browser', () => {
     for (const operation of ['status', 'recommendations']) {
       expect((await fetch(`${base}/api/metrics/config/resources/instance/2/${operation}`, { headers: { Authorization: 'Bearer readonly' } })).status).toBe(403);
     }
-    for (const operation of ['trial', 'activate']) {
-      expect((await fetch(`${base}/api/metrics/config/resources/instance/1/${operation}`, { method: 'POST',
-        headers: { Authorization: 'Bearer readonly', 'Content-Type': 'application/json' }, body: JSON.stringify({ expected_revision: 1, package: pin }) })).status).toBe(403);
-    }
+    const readonly = await fetch(`${base}/api/metrics/${bindingPath}/trial`, { method: 'POST',
+      headers: { Authorization: 'Bearer readonly', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...candidate(), expected_revision: 1, receipt_id: 'readonly-trial' }) });
+    expect(readonly.status).toBe(403);
+    expect((await post(`${configurationPath}/activate`, {})).status).toBe(404);
   });
-  it('desktop and mobile real API preview/trial/publish, readonly and settings routes', async () => {
-    const artifacts = join(process.env.METRIC_TEST_ARTIFACT_DIR??tmpdir(), 'slide-metric-config-ui-evidence');
+
+  it('checks, trials and applies a fixed template in desktop and compact viewports', async () => {
+    const artifacts = join(process.env.METRIC_TEST_ARTIFACT_DIR ?? tmpdir(), 'slide-metric-config-ui-evidence');
     await mkdir(artifacts, { recursive: true });
     for (const width of [1440, 375]) {
+      await pool.query("DELETE FROM metric_policy_bindings WHERE resource_key = 'instance:1'");
       const page = await browser.newPage({ viewport: { width, height: 1000 } });
-      await page.goto(`${web}/e2e/fixtures/metrics-config.html`);
-      await page.getByRole('button', { name: '检查并启用', exact: true }).click();
-      // Scope to the host: action buttons are light-DOM children slotted into its dialog.
-      const flow = page.locator('app-dialog[title="检查并启用采集"]');
-      await browserExpect(flow.getByRole('dialog')).toBeVisible();
-      await flow.getByRole('button', { name: '预检与影响预览' }).click();
-      await browserExpect(flow.getByText('每小时逻辑读取估算', { exact: false })).toBeVisible();
-      const trialResponse = page.waitForResponse(r => r.url().endsWith('/config/resources/instance/1/trial') && r.request().method() === 'POST');
-      await flow.getByRole('button', { name: '试采', exact: true }).click();
-      const response = await trialResponse;
-      expect(response.status()).toBe(200);
-      const trial = await response.json() as Awaited<ReturnType<MetricConfigurationService['trial']>>;
-      expect(trial).toMatchObject({ trial: true, persisted: false, decision: 'attempted' });
-      expect(trial.samples.some(s => s.value !== null && s.quality.status === 'good')).toBe(true);
-      expect(trial.attempts.some(a => ['succeeded', 'partial'].includes(a.status))).toBe(true);
-      await writeFile(`${artifacts}/trial-${width}.json`, JSON.stringify(trial, null, 2));
-      await browserExpect(flow.getByRole('heading', { name: '本次试采（不写正式观测）' })).toBeVisible();
-      expect(trial.samples).toEqual(expect.arrayContaining([
-        expect.objectContaining({ metric: { id: 'mysql.queries.total', semantic_version: '1.0.0' },
-          value: { encoding: 'uint64', value: '9007199254740993' }, quality: { status: 'good', reason: 'none' } }),
-        expect.objectContaining({ metric: { id: 'mysql.queries.per_second', semantic_version: '1.0.0' },
-          value: null, quality: { status: 'unknown', reason: 'counter_baseline' } }),
-      ]));
-      await browserExpect(flow.getByText('可发布有效指标，部分指标仍失败/待验证。请逐项核对下方采集结果；发布不代表全部指标可用。', { exact: true })).toBeVisible();
-      await browserExpect(flow.getByText('试采成功，可以发布', { exact: true })).toHaveCount(0);
-      const resultItems = flow.getByRole('list', { name: '逐项采集结果' });
-      await browserExpect(resultItems).toContainText('mysql-status：成功');
-      await browserExpect(resultItems).toContainText('待验证 · counter_baseline');
-      await browserExpect(flow.getByRole('button', { name: '发布', exact: true })).toBeEnabled();
-      const activation = page.waitForResponse(r => r.url().endsWith('/config/resources/instance/1/activate') && r.request().method() === 'POST');
-      await flow.getByRole('button', { name: '发布', exact: true }).click();
-      expect((await activation).status()).toBe(200);
-      await browserExpect(flow.getByText('等待正式观测', { exact: true })).toBeVisible();
-      await flow.getByRole('button', { name: '关闭', exact: true }).click();
-      await browserExpect(flow.getByRole('dialog')).toHaveCount(0);
-      await page.getByText('最近正式采集尝试与技术证据', { exact: true }).click();
-      await browserExpect(page.getByRole('button', { name: '重新加载', exact: true })).toBeEnabled();
-      await browserExpect(page.getByLabel('策略组', { exact: true })).toHaveValue('fixture');
-      await browserExpect(page.getByRole('heading', { name: '指标覆盖', exact: true })).toBeVisible();
-      const facts = page.locator('.state-card .collection-facts');
-      for (const [label, value] of [['模板绑定', '已绑定'], ['有效采集开关', '启用'], ['调度应用', '等待应用'],
-        ['采集执行', '等待采集'], ['正式数据', '等待正式观测'], ['最近成功', '未知'], ['最近观测', '未知']]) {
-        await browserExpect(facts.locator('div').filter({ has: page.getByText(label, { exact: true }) })).toContainText(value);
-      }
-      await page.locator('.state-card').getByText(/^指标覆盖：/).click();
-      await browserExpect(page.locator('.state-card').getByText('数据库运行时长：未知', { exact: true })).toBeVisible();
-      for (const table of ['metric_observations', 'metric_publications']) {
-        const [rows] = await pool.query<any[]>(`SELECT COUNT(*) AS n FROM ${table}`); expect(Number(rows[0].n)).toBe(0);
-      }
-      expect(await page.locator('body').innerText()).not.toContain('credential:isolated-target');
-      expect(await page.evaluate('document.documentElement.scrollWidth <= innerWidth')).toBe(true);
-      await page.screenshot({ path: `${artifacts}/${width}.png`, fullPage: true });
-      await page.close();
+      try {
+        const principal = Buffer.from(JSON.stringify({ userId: admin.userId })).toString('base64url');
+        await page.addInitScript(`localStorage.setItem('token', 'fixture.${principal}.fixture')`);
+        await page.goto(`${web}/e2e/fixtures/metrics-config.html`);
+        await page.getByRole('checkbox', { name: `选择模板 ${templateName}` }).check();
+        await page.getByLabel('策略组', { exact: true }).selectOption('fixture');
+        const preview = await pageAction(page, '检查配置', 'preview');
+        expect(preview).toMatchObject({ executable: true, settings: { interval_ms: 30000 } });
+        const trial = await pageAction(page, '试采', 'trial');
+        expect(trial).toMatchObject({ trial: true, persisted: false, decision: 'attempted' });
+        expect(trial.items).toHaveLength(2);
+        expect(trial.items.every((item: any) => item.phases.read && item.phases.transform && item.phases.unit)).toBe(true);
+        expect(trial.samples).toEqual(expect.arrayContaining([
+          expect.objectContaining({ metric: { id: 'db.uptime_seconds', semantic_version: '1.0.0' } }),
+          expect.objectContaining({ metric: { id: 'mysql.queries.total', semantic_version: '1.0.0' },
+            value: { encoding: 'uint64', value: '9007199254740993' }, quality: { status: 'good', reason: 'none' } }),
+        ]));
+        await browserExpect(page.getByRole('list', { name: '逐项试采结果' })).toBeVisible();
+        await writeFile(join(artifacts, `trial-${width}.json`), JSON.stringify(trial, null, 2));
+        expect(await pageAction(page, '首次绑定并启用', 'apply')).toMatchObject({ kind: 'committed', revision: 1 });
+        await browserExpect(page.getByText('配置已提交，目标版本 1', { exact: false })).toBeVisible();
+        await browserExpect(page.getByText('尚未收到正式首样本', { exact: true })).toBeVisible();
+        expect(await page.locator('body').innerText()).not.toContain('credential:isolated-target');
+        expect(await page.evaluate('document.documentElement.scrollWidth <= innerWidth')).toBe(true);
+        await page.screenshot({ path: join(artifacts, `${width}.png`), fullPage: true });
+      } finally { await page.close(); }
     }
-    // A second real HTTP writer advances the revision after browser preflight.
-    const conflict = await browser.newPage();
-    await conflict.goto(`${web}/e2e/fixtures/metrics-config.html`);
-    await conflict.getByRole('button', { name: '检查并启用', exact: true }).click();
-    const conflictFlow = conflict.locator('app-dialog[title="检查并启用采集"]');
-    await conflictFlow.getByRole('button', { name: '预检与影响预览' }).click();
-    await conflictFlow.getByRole('button', { name: '试采', exact: true }).click();
-    await browserExpect(conflictFlow.getByRole('button', { name: '发布', exact: true })).toBeEnabled();
-    const before = await (await fetch(`${base}/api/metrics/policy/resources/instance/1`)).json() as any;
-    expect((await post('policy/resources/instance/1/publish', { expected_revision: before.binding.revision })).status).toBe(200);
-    const rejected = conflict.waitForResponse(r => r.url().endsWith('/config/resources/instance/1/activate') && r.request().method() === 'POST');
-    await conflictFlow.getByRole('button', { name: '发布', exact: true }).click();
-    expect((await rejected).status()).toBe(409);
-    await browserExpect(conflictFlow.getByRole('alert')).toContainText('重新加载');
-    await browserExpect(conflictFlow.getByRole('button', { name: '发布', exact: true })).toBeDisabled();
-    const after = await (await fetch(`${base}/api/metrics/policy/resources/instance/1`)).json() as any;
-    expect(after.binding.revision).toBe(before.binding.revision + 1);
-    await conflictFlow.getByRole('button', { name: '关闭', exact: true }).click();
-    await conflict.getByText('最近正式采集尝试与技术证据', { exact: true }).click();
-    await conflict.getByRole('button', { name: '重新加载', exact: true }).click();
-    await conflict.getByRole('button', { name: '放弃修改并继续' }).click();
-    await browserExpect(conflict.locator('.state-card .collection-facts').locator('div').filter({ has: conflict.getByText('配置版本', { exact: true }) }))
-      .toContainText(`发布 ${after.binding.revision} · 应用 —`);
-    await conflict.close();
+    for (const table of ['metric_observations', 'metric_publications']) {
+      const [rows] = await pool.query<any[]>(`SELECT COUNT(*) AS n FROM ${table}`);
+      expect(Number(rows[0].n)).toBe(0);
+    }
+
     const reader = await browser.newPage();
-    await reader.addInitScript("localStorage.setItem('token', 'readonly')");
-    await reader.goto(`${web}/e2e/fixtures/metrics-config.html`);
-    await browserExpect(reader.getByText('只读：未获得此资源的管理权限。')).toBeVisible();
-    await browserExpect(reader.getByRole('button', { name: '检查并启用', exact: true })).toBeDisabled();
-    await browserExpect(reader.getByLabel('采集包 / 模板版本', { exact: true })).toBeDisabled();
-    await browserExpect(reader.getByRole('switch', { name: '启用此对象采集' })).toBeDisabled();
-    await reader.close();
+    try {
+      await reader.addInitScript("localStorage.setItem('token', 'readonly')");
+      await reader.goto(`${web}/e2e/fixtures/metrics-config.html`);
+      await browserExpect(reader.getByText('只读：未获得此资源的管理权限。')).toBeVisible();
+      await browserExpect(reader.getByRole('checkbox', { name: `选择模板 ${templateName}` })).toBeDisabled();
+      await browserExpect(reader.getByRole('button', { name: '检查配置', exact: true })).toBeDisabled();
+    } finally { await reader.close(); }
+
     const settings = await browser.newPage();
-    await settings.goto(`${web}/e2e/fixtures/metrics-config.html?mode=settings`);
-    await browserExpect(settings.locator('metric-settings')).toBeVisible();
-    await browserExpect(settings.locator('template-library')).toHaveCount(1);
-    await browserExpect(settings.locator('template-governance')).toHaveCount(1);
-    await settings.locator('details.package-compatibility > summary').click();
-    const mysqlPackage = settings.getByRole('row')
-      .filter({ has: settings.getByText('MySQL 基础采集', { exact: true }) });
-    await browserExpect(mysqlPackage).toHaveCount(1);
-    await browserExpect(mysqlPackage).toBeVisible();
-    await browserExpect(mysqlPackage.getByRole('cell').nth(1)).toContainText('v1.0.1');
-    const historicalVersion = mysqlPackage.getByRole('button', { name: '查看 MySQL 基础采集 1.0.0', exact: true });
-    await browserExpect(historicalVersion).not.toBeVisible();
-    await mysqlPackage.locator('.version-list > summary').click();
-    await historicalVersion.click();
-    const detail = settings.locator('app-dialog[title="采集模板详情"]');
-    await browserExpect(detail.getByRole('dialog')).toBeVisible();
-    await browserExpect(detail).toContainText('v1.0.0');
-    await browserExpect(detail).toContainText('数据库实例');
-    await browserExpect(detail).toContainText('数据库运行时长');
-    await detail.getByRole('button', { name: '关闭', exact: true }).click();
-    await browserExpect(historicalVersion).toBeFocused();
-    await settings.close();
+    try {
+      await settings.goto(`${web}/e2e/fixtures/metrics-config.html?mode=settings`);
+      await browserExpect(settings.locator('metric-settings')).toBeVisible();
+      await browserExpect(settings.locator('template-library')).toHaveCount(1);
+      await browserExpect(settings.locator('template-governance')).toHaveCount(0);
+    } finally { await settings.close(); }
   }, 60000);
-  it('shows full success only for all-good trial evidence and blocks a trial without valid samples', async () => {
+
+  async function pageAction(page: import('@playwright/test').Page, name: string, action: string) {
+    const [response] = await Promise.all([
+      page.waitForResponse(r => r.url().endsWith(`/${bindingPath}/${action}`) && r.request().method() === 'POST'),
+      page.getByRole('button', { name, exact: true }).click(),
+    ]);
+    expect(response.status(), await response.text()).toBe(200);
+    return response.json();
+  }
+
+  it('keeps application disabled when template trial returns no valid samples', async () => {
     const page = await browser.newPage();
-    page.setDefaultTimeout(5000);
     try {
       await page.goto(`${web}/e2e/fixtures/metrics-config.html`);
-      await page.getByLabel('采集包 / 模板版本', { exact: true }).selectOption(scalarsOnly.package.digest);
-      await page.getByRole('button', { name: '检查并启用', exact: true }).click();
-      const flow = page.locator('app-dialog[title="检查并启用采集"]');
-      const [previewResponse] = await Promise.all([
-        page.waitForResponse(r => r.url().endsWith('/policy/resources/instance/1/preview') && r.request().method() === 'POST'),
-        flow.getByRole('button', { name: '预检与影响预览' }).click(),
-      ]);
-      expect(previewResponse.status(), await previewResponse.text()).toBe(200);
-      const trial = async () => {
-        const [response] = await Promise.all([
-          page.waitForResponse(r => r.url().endsWith('/config/resources/instance/1/trial') && r.request().method() === 'POST'),
-          flow.getByRole('button', { name: '试采', exact: true }).click(),
-        ]);
-        expect(response.status()).toBe(200);
-        return await response.json() as Awaited<ReturnType<MetricConfigurationService['trial']>>;
-      };
-      const complete = await trial();
-      expect(complete).toMatchObject({ decision: 'attempted', persisted: false });
-      expect(complete.attempts.length).toBeGreaterThan(0);
-      expect(complete.attempts.every(a => a.status === 'succeeded' && !a.error)).toBe(true);
+      await pageAction(page, '检查配置', 'preview');
+      const complete = await pageAction(page, '试采', 'trial');
       expect(complete.samples).toHaveLength(2);
-      expect(complete.samples.every(s => s.value !== null && s.quality.status === 'good')).toBe(true);
-      expect(complete.samples[0]).toMatchObject({ metric: { id: 'db.uptime_seconds' },
-        value: { encoding: 'float64', value: 1000 }, quality: { status: 'good', reason: 'none' } });
-      await browserExpect(flow.getByText('试采成功，可以发布', { exact: true })).toBeVisible();
-      await browserExpect(flow.getByRole('button', { name: '发布', exact: true })).toBeEnabled();
+      await browserExpect(page.getByText('试采通过', { exact: true })).toBeVisible();
+      await browserExpect(page.getByRole('button', { name: '应用并启用', exact: true })).toBeEnabled();
       remoteHasRows = false;
-      const invalid = await trial();
-      expect(invalid.samples.some(s => s.value !== null && s.quality.status === 'good')).toBe(false);
-      expect(invalid.attempts).toEqual(expect.arrayContaining([expect.objectContaining({ status: 'failed', error: 'parse_error' })]));
-      await browserExpect(flow.getByText('试采成功，可以发布', { exact: true })).toHaveCount(0);
-      await browserExpect(flow.getByText('数据格式或字段不符合采集包要求，请核对目标版本和采集包后重试。', { exact: true })).toBeVisible();
-      await browserExpect(flow.getByRole('button', { name: '发布', exact: true })).toBeDisabled();
+      const invalid = await pageAction(page, '试采', 'trial');
+      expect(invalid.samples.some((sample: any) => sample.value !== null && sample.quality.status === 'good')).toBe(false);
+      await browserExpect(page.getByText('试采未满足启用门禁', { exact: false })).toBeVisible();
+      await browserExpect(page.getByRole('button', { name: '应用并启用', exact: true })).toBeDisabled();
     } finally { remoteHasRows = true; await page.close(); }
   }, 30000);
 });

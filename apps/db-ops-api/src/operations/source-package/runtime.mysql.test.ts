@@ -93,6 +93,7 @@ describe.skipIf(!port)('source package production orchestration (synthetic SSH/l
     // stopping collection before unrelated setup can legitimately age it out.
     await import('../../investigations/alert-bridge.js');
     const { serverAlertEvaluator } = await import('../../server-alert-evaluator.js');
+    const { evaluateLegacyPackageRule } = await import('../../metrics/consumers/operational.js');
     // MAX-240: the scheduler's internal reader must not disable user revalidation
     // at the HTTP entry. An internal actor is never a valid HTTP principal.
     const { registerMetricConsumerRoutes } = await import('../../metrics/consumers/routes.js');
@@ -117,7 +118,7 @@ describe.skipIf(!port)('source package production orchestration (synthetic SSH/l
     try {
       await e.open();
       // An equally firing metric on a different mount cannot admit an event.
-      await serverAlertEvaluator.evaluateServerRules(new Map([[1, { ...config().alertRules[0].dimensions, mount: '/not-the-pilot' }]]));
+      await serverAlertEvaluator.evaluateServerRules(new Map([[1, { ...config().alertRules[0].dimensions, mount: '/not-the-pilot' }]]), evaluateLegacyPackageRule);
       expect(await rows('SELECT id FROM alerts')).toHaveLength(0);
       const result = await evaluateSource(e);
       expect(result.alertId).toBeGreaterThan(0);

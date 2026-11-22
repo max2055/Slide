@@ -335,6 +335,7 @@ export class AppearanceSettings extends LitElement {
         <div slot="header">${t("appearance.language")}</div>
         <p class="desc">${t("appearance.languageDesc")}</p>
         <app-select-field
+          aria-label=${t("appearance.language")}
           .value=${live(i18n.getLocale())}
           .options=${LANG_OPTIONS.map(l => ({ value: l.value, label: l.label }))}
           @change=${(e: CustomEvent) => this._setLocale(e.detail as string)}
@@ -356,6 +357,7 @@ export class AppearanceSettings extends LitElement {
         <div slot="header">${t("appearance.defaultPage")}</div>
         <p class="desc">${t("appearance.defaultPageDesc")}</p>
         <app-select-field
+          aria-label=${t("appearance.defaultPage")}
           .value=${this.defaultTab}
           .options=${defaultTabOpts}
           @change=${(e: CustomEvent) => this._setDefaultTab(e.detail as string)}
@@ -364,10 +366,11 @@ export class AppearanceSettings extends LitElement {
 
       <!-- Sidebar Width -->
       <app-card>
-        <div slot="header">${t("appearance.sidebarWidth")}</div>
+        <div slot="header" id="appearance-sidebar-width">${t("appearance.sidebarWidth")}</div>
         <p class="desc">${t("appearance.sidebarWidthDesc")} (${this.navWidth}px)</p>
         <input type="range" min="200" max="400" step="10"
           class="range-input"
+          aria-labelledby="appearance-sidebar-width"
           .value=${String(this.navWidth)}
           @input=${(e: Event) => this._setNavWidth(Number((e.target as HTMLInputElement).value))} />
       </app-card>
@@ -419,6 +422,7 @@ export class AppearanceSettings extends LitElement {
           >${t("appearance.enableAutoRefresh")}</app-toggle>
           ${this.autoRefresh ? html`
             <app-select-field
+              aria-label=${t("appearance.refreshInterval")}
               .value=${this.refreshInterval}
               .options=${refreshOpts}
               @change=${(e: CustomEvent) => this._setRefreshInterval(e.detail as number)}
@@ -500,10 +504,11 @@ export class AppearanceSettings extends LitElement {
 
       <!-- Default Model -->
       <app-card>
-        <div slot="header">${t("appearance.defaultModel")}</div>
+        <div slot="header" id="appearance-default-model">${t("appearance.defaultModel")}</div>
         <p class="desc">${t("appearance.defaultModelDesc")}</p>
         <input type="text"
           class="text-input"
+          aria-labelledby="appearance-default-model"
           .value=${this.defaultModel}
           @input=${(e: Event) => this._setDefaultModel((e.target as HTMLInputElement).value)}
           placeholder=${t("appearance.modelPlaceholder")} />

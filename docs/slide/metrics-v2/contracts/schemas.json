@@ -1075,6 +1075,27 @@
         "type": "string",
         "pattern": "^[A-Z][A-Z0-9_]{2,63}$"
       },
+      "metrics": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+$"
+            },
+            "semantic_version": {
+              "type": "string",
+              "pattern": "^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)$"
+            }
+          },
+          "required": [
+            "id",
+            "semantic_version"
+          ],
+          "additionalProperties": false
+        }
+      },
       "observation_ids": {
         "type": "array",
         "items": {

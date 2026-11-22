@@ -39,7 +39,7 @@ const replay=()=>({resource:ref,from,to,revision:snapshot.config_revision,snapsh
 it('normalizes offset windows and reads only formal evidence through the long-window port',async()=>{
   const r=await service.trend(admin,{...request(),from:'2026-10-01T08:00:00+08:00',to:'2026-10-01T08:05:00+08:00'});
   expect(r.window).toEqual({from:'2026-10-01T00:00:00.000Z',to:'2026-10-01T00:05:00.000Z'});expect(r.buckets[0].count).toBe(3);
-  expect(reads).toHaveBeenCalledWith(expect.objectContaining({resource_id:'7'}),r.window.from,r.window.to);
+  expect(reads).toHaveBeenCalledWith(expect.objectContaining({resource_id:'7'}),r.window.from,r.window.to,new Date(to));
   expect(StudyTrendResultSchema.safeParse(r).success).toBe(true);
 });
 it('rejects cross-resource access before storage',async()=>{await expect(service.trend(admin,{...request(),resource:{...ref,id:8}})).rejects.toThrow('FORBIDDEN_TEST');expect(reads).not.toHaveBeenCalled();});

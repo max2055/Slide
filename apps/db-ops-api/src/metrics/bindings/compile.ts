@@ -18,7 +18,7 @@ import {
 } from '../../contracts/metrics/index.js';
 import type {
   ResourceBindingCandidate, SourceChain, TemplateItemVersion, TemplateParameters,
-  TemplatePin, TemplateVersion, VersionNumber,
+  TemplateItemRetention, TemplatePin, TemplateVersion, VersionNumber,
 } from '../../contracts/metrics/templates.js';
 import type { PackageRelease, PackageRegistry } from '../packages/model.js';
 import {
@@ -27,6 +27,12 @@ import {
 import {
   preflightResourceBinding, type BindingPreflightLegacy, type TemplateVersionReadPort,
 } from './preflight.js';
+
+/** Template descriptions name the dimension keys before a series has label values. */
+export function declaresDimensions(dimensions: Record<string, string>, definition: MetricDefinition): boolean {
+  return Object.keys(dimensions).length === definition.dimensions.keys.length
+    && definition.dimensions.keys.every(key => dimensions[key.name] === key.meaning);
+}
 
 /**
  * Stable internal machine codes. Registry/driver messages are never propagated;
@@ -83,6 +89,8 @@ export interface BindingCandidateItem {
   item_id: string;
   item_version: VersionNumber;
   canonical_metric: MetricRef;
+  interval_ms?: number;
+  retention?: TemplateItemRetention;
   unit: TemplateItemVersion['unit'];
   dimensions: TemplateItemVersion['dimensions'];
   release: PackageReleaseRef;
@@ -121,6 +129,7 @@ export interface BindingCandidatePinSource {
     parameters: TemplateParameters;
     trigger_refs: TemplateVersion['aggregate']['triggers'];
     source_chain: SourceChain;
+    derive_from_inputs?: boolean;
   };
 }
 
@@ -290,6 +299,7 @@ export async function compileBindingCandidate(
         parameters: resolved.parameters,
         trigger_refs: resolved.triggers,
         source_chain: resolved.source_chain,
+        ...(resolved.derive_from_inputs ? { derive_from_inputs: true } : {}),
       },
     });
 
@@ -323,7 +333,7 @@ export async function compileBindingCandidate(
       }
       try {
         // Existing contract rule: no unknown key, every required key present, allowed values and length.
-        validateDimensions(item.dimensions, definition);
+        if (!declaresDimensions(item.dimensions, definition)) validateDimensions(item.dimensions, definition);
       } catch {
         throw new BindingCandidateError('CANDIDATE_DIMENSION_INVALID', location);
       }
@@ -348,12 +358,15 @@ export async function compileBindingCandidate(
       if (!group.mappings.some(entry => canonicalKey(entry.metric) === canonicalKey(candidateMapping.metric))) {
         group.mappings.push(candidateMapping);
       }
+      const configuration = resolved.item_configuration?.get(item.item_id);
       group.items.push({
         pin: copyPin(resolved.pin),
         template_id: item.template_id,
         item_id: item.item_id,
         item_version: item.version,
         canonical_metric: { ...item.canonical_metric },
+        ...(configuration?.interval_ms !== undefined ? { interval_ms: configuration.interval_ms } : {}),
+        ...(configuration?.retention ? { retention: configuration.retention } : {}),
         unit: item.unit,
         dimensions: { ...item.dimensions },
         release: copyRelease(release),

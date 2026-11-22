@@ -24,6 +24,8 @@ export class EventCenterPage extends LitElement {
     this.authorityEpoch++;
   };
   @state() private activeView: EventCenterView = "active";
+  @state() private eventId = 0;
+  @state() private eventReturnTo = '';
   private readonly popStateHandler = () => this.syncFromLocation();
 
   override connectedCallback() {
@@ -64,7 +66,11 @@ export class EventCenterPage extends LitElement {
   `;
 
   private syncFromLocation() {
-    const requested = new URL(window.location.href).searchParams.get("view");
+    const params = new URL(window.location.href).searchParams;
+    const requested = params.get('view');
+    const eventId = params.get('eventId');
+    this.eventId = requested === 'aggregate' && eventId && /^[1-9]\d*$/.test(eventId) && Number.isSafeInteger(Number(eventId)) ? Number(eventId) : 0;
+    this.eventReturnTo = this.eventId ? params.get('returnTo') ?? '' : '';
     if (requested === "rules") { this.activeView = "aggregate"; return; }
     if (EVENT_VIEWS.some((view) => view.id === requested)) {
       this.activeView = requested as EventCenterView;
@@ -75,9 +81,13 @@ export class EventCenterPage extends LitElement {
 
   private selectView(view: EventCenterView) {
     this.activeView = view;
+    this.eventId = 0;
+    this.eventReturnTo = '';
     const url = new URL(window.location.href);
     url.searchParams.set("view", view);
     url.searchParams.delete("tab");
+    url.searchParams.delete('eventId');
+    url.searchParams.delete('returnTo');
     window.history.pushState({}, "", url);
   }
 
@@ -86,7 +96,7 @@ export class EventCenterPage extends LitElement {
     if (this.activeView === 'aggregate' && this.permissions === null) return html`<p role="status">正在确认访问权限</p>`;
     if (this.activeView === 'aggregate' && !hasSlidePermission(this.permissions, 'alert:view')) return html`<app-empty-state title="无访问权限"></app-empty-state>`;
     return html`
-      <p>触发条件在资源的固定版本模板中配置。<a href="/?tab=instances-db">前往资源配置模板触发器</a></p>
+      ${this.eventId ? '' : html`<p>触发条件在资源的固定版本模板中配置。<a href="/?tab=instances-db">前往资源配置模板触发器</a></p>`}
       <div class="tabs" role="tablist" aria-label="事件中心">
         ${EVENT_VIEWS.map((view) => html`
           <button
@@ -105,7 +115,8 @@ export class EventCenterPage extends LitElement {
   private renderView() {
     switch (this.activeView) {
       case "system": return html`<system-events-page></system-events-page>`;
-      case "aggregate": return html`<event-management-page></event-management-page>`;
+      case "aggregate": return html`<event-management-page .eventId=${this.eventId} .returnTo=${this.eventReturnTo}
+        .canViewInvestigations=${hasSlidePermission(this.permissions,'chat:view')}></event-management-page>`;
       case "notifications": return html`<alerts-page mode="notifications"></alerts-page>`;
       default: return html`
         <alerts-page

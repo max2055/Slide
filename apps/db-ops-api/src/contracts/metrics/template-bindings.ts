@@ -96,6 +96,7 @@ const ItemViewSchema = z.strictObject({
   template_id: z.string(), item_id: z.string(), item_version: VersionNumberSchema,
   canonical_metric: MetricRefOutSchema, unit: z.string(), dimensions: z.record(z.string(), z.string()),
   release: ReleaseSchema, release_ref: z.string(), collector_id: z.string(), implementation_id: z.string(),
+  interval_ms: z.number().int().positive().optional(),
   enabled: z.boolean(),
   decision: z.enum(['collect', 'derive', 'disabled', 'unsupported', 'capability_unknown']),
   capability: z.enum(['supported', 'unsupported', 'unknown']),
@@ -159,7 +160,7 @@ export const TemplateBindingConfigurationSchema = z.strictObject({
   group_id: z.string().nullable(),
 });
 export const TemplateBindingStatusSchema = z.looseObject({
-  source: z.enum(['template', 'package', 'unbound']),
+  source: z.enum(['template', 'unbound']),
   revision: z.number().int().nonnegative().nullable(),
   application: z.strictObject({
     status: z.string(), applied_revision: z.number().int().nonnegative().nullable(),

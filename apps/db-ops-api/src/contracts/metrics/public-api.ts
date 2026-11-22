@@ -2,15 +2,14 @@ import {AlertDependencySchemas,alertDependencyPaths} from '../alert-dependencies
 import { studySchemas, studyPaths } from './study.js';
 import { discoverySchemas, discoveryPaths } from './discovery.js';
 import {TemplateGovernanceSchemas,templateGovernancePaths} from './template-governance.js';
-import { TemplateAuthoringSchemas, templateAuthoringPaths } from './template-authoring.js';
+import { TemplateAuthoringSchemas, templateAuthoringPaths, templateCreateOperation } from './template-authoring.js';
 import { MetricConsumerQuerySchema, MetricHistoryContextSchema } from './history.js';
 import {ResourceBindingCandidateSchema} from './templates.js';
 import {TemplateTriggerPublishSchema,TriggerRuleVersionSchema,TemplateTriggerEpisodeSchema,TemplateTriggerOpeningSchema,TriggerResourceSnapshotSchema} from './triggers.js';
 import { ConfigurationAtSchema } from './configuration-history.js';
 import { z } from 'zod';
-import { CONTRACT_VERSION, DimensionsSchema, IdSchema, MetricRefSchema, TimestampSchema, UnitSchema } from './definitions.js';
-import { AccuracySchema, MetricValueSchema, ObservationSourceRecord, ObservationVersionsRecord, QualitySchema } from './observations.js';
-import { metricBulkSchemas, metricBulkPaths } from './bulk.js';
+import { CONTRACT_VERSION, DimensionsSchema, IdSchema, MetricDefinitionSchema, MetricRefSchema, TimestampSchema, UnitSchema } from './definitions.js';
+import { AccuracySchema, FreshnessSchema, MetricValueSchema, ObservationSourceRecord, ObservationVersionsRecord, QualitySchema } from './observations.js';
 import { MetricConfigurationStatusSchema } from './configuration-status.js';
 import { PackageReleaseSchema } from '../../metrics/packages/model.js';
 import { BindingChangeSchema, OverridesSchema, RefSchema } from '../../metrics/policy/model.js';
@@ -58,6 +57,16 @@ export const MetricObservationPageSchema = z.strictObject({
     sources: z.array(z.strictObject({ id: IdSchema, source: ObservationSourceRecord, versions: ObservationVersionsRecord })).min(1),
   })),
 });
+export const LatestMetricObservationsSchema = z.strictObject({
+  resource: RefSchema, evaluated_at: TimestampSchema,
+  metrics: z.array(z.strictObject({
+    definition: MetricDefinitionSchema, state: z.string(),
+    series: z.array(z.strictObject({
+      dimensions: DimensionsSchema, observed_at: TimestampSchema, value: MetricValueSchema.nullable(),
+      unit: UnitSchema, quality: QualitySchema, accuracy: AccuracySchema, freshness: FreshnessSchema,
+    })),
+  })),
+});
 export const MetricOperationStateSchema = z.strictObject({
   state: z.enum(['committed', 'pending', 'absent']),
   operation: z.strictObject({ resource: RefSchema, target_revision: z.number().int().positive(),
@@ -72,6 +81,7 @@ export const metricPublicSchemas = {
   MetricConsumerQuery: MetricConsumerQuerySchema,
   MetricHistoryContext: MetricHistoryContextSchema,
   TemplateEventEvidence:z.strictObject({event_id:z.number().int().positive(),alert_id:z.number().int().positive(),
+    can_manual_close:z.boolean().optional(),
     episode:TemplateTriggerEpisodeSchema,snapshot:z.strictObject({configuration:TriggerResourceSnapshotSchema,opening:TemplateTriggerOpeningSchema}),
     evaluation:z.strictObject({state:z.enum(['active','pending','stopped','unknown']),reason:z.string()}),
     current:ResourceBindingCandidateSchema.nullable(),processing:z.strictObject({status:z.string(),acknowledged_at:z.iso.datetime().nullable()}),
@@ -82,7 +92,6 @@ export const metricPublicSchemas = {
   ResourceEventList: z.strictObject({items:z.array(z.looseObject({id:z.number().int().positive(),title:z.string(),status:z.string()})),total:z.number().int().nonnegative()}),
   ResourceEffectiveTriggers: z.strictObject({resource:RefSchema,revision:z.number().int().positive().nullable(),state:z.enum(['available','unavailable']),snapshot:TriggerResourceSnapshotSchema.nullable()}),
   TemplateTriggerRules: z.strictObject({rules:z.array(TriggerRuleVersionSchema.nullable())}),
-  ...metricBulkSchemas,
   ConfigurationAt: ConfigurationAtSchema,
   MetricConfigurationStatus: MetricConfigurationStatusSchema,
   MetricConfigurationMigration: z.strictObject({resource:RefSchema,items:MetricConfigurationStatusSchema.shape.legacy_configuration.unwrap()}),
@@ -91,7 +100,8 @@ export const metricPublicSchemas = {
   MetricPolicyGroups: MetricPolicyGroupsSchema,
   MetricObservationPageRequest: MetricObservationPageRequestSchema,
   MetricObservationPage: MetricObservationPageSchema,
-  MetricOperationState: MetricOperationStateSchema,
+  LatestMetricResource: RefSchema,
+  LatestMetricObservations: LatestMetricObservationsSchema,
   TemplateCatalog: TemplateCatalogSchema,
   TemplateVersionDetail: TemplateVersionDetailSchema,
   TemplateRepinResponse: TemplateRepinResponseSchema,
@@ -134,7 +144,11 @@ export const metricPublicPaths = {
   '/api/metrics/templates/{templateId}/versions/{version}/triggers': {get:{operationId:'getTemplateTriggerVersion',security:[{bearerAuth:[]}],parameters:[...triggerTemplateParameters,{name:'version',in:'path',required:true,schema:{type:'integer',minimum:1}}],
     description:'Read exact immutable rule versions referenced by this published template; live metric:view before and after the query, private/no-store.',responses:{'200':response('TemplateTriggerRules'),...errors}}},
   ...Object.fromEntries([false,true].map(ack=>[`/api/metrics/template-events/{eventId}${ack?'/acknowledge':''}`,{[ack?'post':'get']:{operationId:ack?'acknowledgeTemplateEvent':'getTemplateEventEvidence',security:[{bearerAuth:[]}],parameters:[{name:'eventId',in:'path',required:true,schema:{type:'integer',minimum:1}}],description:'Live alert:view and resource read authority before and after the query. Returns existing event/alert ids, episode opening/latest evidence, immutable configuration/rule/template/sample/attempt snapshot, separate current binding revision, processing status and existing workflow delivery/receipt facts. No channel credentials. Acknowledgement additionally requires alert:manage and resource management; only processing status changes, never recovery, execution or notification admission. Private/no-store.',responses:{'200':response('TemplateEventEvidence'),...errors}}} ])),
-  ...metricBulkPaths,
+  '/api/metrics/template-events/{eventId}/close': {post:{operationId:'closeTemplateEvent',security:[{bearerAuth:[]}],
+    parameters:[{name:'eventId',in:'path',required:true,schema:{type:'integer',minimum:1}}],
+    requestBody:{content:{'application/json':{schema:{type:'object',additionalProperties:false}}}},
+    description:'Requires live alert:view, alert:manage and resource management, and the opening rule snapshot must allow manual closing. Idempotently closes only the selected occurrence, preserves metric evidence and queues recovery delivery through the original problem delivery channels. Returns the current event evidence. Private/no-store.',
+    responses:{'200':response('TemplateEventEvidence'),...errors}}},
   '/api/metrics/config/resources/{type}/{id}/migration': { get: { operationId: 'getMetricConfigurationMigration', security: [{ bearerAuth: [] }], parameters,
     description: 'Requires live resource management permission. Returns pending custom-SQL/retained-template migration codes and actionable steps, without SQL or secrets. Reviewed means awaiting activation, not formal visibility.',
     responses: { '200': response('MetricConfigurationMigration'), ...errors } } },
@@ -144,16 +158,10 @@ export const metricPublicPaths = {
   '/api/metrics/config/resources/{type}/{id}/recommendations': { get: { operationId: 'getMetricRecommendations', security: [{ bearerAuth: [] }], parameters,
     description: 'Same resource type only; actual engine/version/protocol applicability. Unknown is never a compatible recommendation.',
     responses: { '200': response('MetricRecommendations'), ...errors } } },
-  '/api/metrics/config/resources/{type}/{id}/activate': { post: { operationId: 'activateMetricConfiguration', security: [{ bearerAuth: [] }], parameters,
-    description: 'Bounded trial followed by live permission, candidate and revision CAS. Success publishes configuration; formal source acceptance continues asynchronously and is reported in status. 409 must not be retried blindly. An optional operation_key binds one client intent to this resource, target revision and canonical request: a committed replay returns the recorded publication without a second trial, revision, publication or audit, a duplicate while the same intent is pending is rejected without a second trial, and reuse for another intent is rejected.',
-    requestBody: { required: true, content: { 'application/json': { schema: schema('MetricBindingChange') } } },
-    responses: { '200': { description: 'Published policy preview and independently evaluated status', content: { 'application/json': { schema: { type: 'object', required: ['published', 'status'],
-      properties: { published: { const: true }, status: schema('MetricConfigurationStatus') } } } } }, ...errors,
-      '409': { description: 'Revision conflict, operation-key collision or trial busy; no implicit retry' }, '422': { description: 'Incompatible package or trial failed; not published' } } } },
-  '/api/metrics/config/resources/{type}/{id}/operations/{key}': { get: { operationId: 'getMetricConfigurationOperation', security: [{ bearerAuth: [] }],
-    parameters: [...parameters, { name: 'key', in: 'path', required: true, schema: { type: 'string', pattern: '^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$' } }],
-    description: 'Authoritative read of one client operation key under the same serialization as publication: committed returns the recorded publication, pending means the intent was reserved and its outcome is in flight or unknown after a restart (not safely retryable), and absent means no intent with that key was ever recorded, so a same-key retry cannot duplicate a publication. A key recorded for another resource is reported absent, never disclosed.',
-    responses: { '200': response('MetricOperationState'), ...errors } } },
+  '/api/metrics/latest': { post: { operationId: 'listLatestMetricObservations', security: [{ bearerAuth: [] }],
+    description: 'Configured metrics and the latest accepted observation of each retained series. Samples retain their original units, exact values and quality, independent of chart windows. Current authorization is checked before and after storage reads.',
+    requestBody: { required: true, content: { 'application/json': { schema: schema('LatestMetricResource') } } },
+    responses: { '200': response('LatestMetricObservations'), ...errors } } },
   '/api/metrics/observations': { post: { operationId: 'listMetricObservations', security: [{ bearerAuth: [] }],
     description: 'Read-only formal raw observations, page by page. Current authorization is re-evaluated from each request, so a cursor cannot move to another resource, metric, version, dimensions or window. Same formal fence as the aggregate query: shadow, rolled-back and unaccepted revisions never appear. Half-open [from, to), ascending (observed_at, observation_id) keyset pages without duplicates or gaps at a same-timestamp boundary; no zero fill and no aggregate predecessor/successor. total and has_more come from the same snapshot. A window above the 50,000-row bound returns 400 instead of a truncated total.',
     requestBody: { required: true, content: { 'application/json': { schema: schema('MetricObservationPageRequest') } } },
@@ -170,7 +178,7 @@ export const metricPublicPaths = {
       { name: 'limit', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 50 } },
     ],
     description: 'Persisted native template identities and their immutable versions, filtered by a name search and template status. `next_cursor` is the opaque forward cursor; a page never silently truncates the catalog. Requires metric:view; read-only, private/no-store.',
-    responses: { '200': response('TemplateCatalog'), ...errors } } },
+    responses: { '200': response('TemplateCatalog'), ...errors } }, post: templateCreateOperation },
   '/api/metrics/templates/{templateId}/versions/{version}': { get: { operationId: 'getMetricTemplateVersion',
     security: [{ bearerAuth: [] }],
     parameters: [{ name: 'templateId', in: 'path', required: true, schema: { type: 'string', pattern: '^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$' } },

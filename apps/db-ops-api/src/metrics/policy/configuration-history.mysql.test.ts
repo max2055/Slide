@@ -93,7 +93,7 @@ describe.skipIf(!port)('configuration history on owned MySQL', () => {
     await policies.changeBinding(admin, disabled, { expected_revision: 0, package: pin, overrides: { enabled: 'disable' } }, true);
     const schedule = new MysqlScheduleStore(pool, registry);
     let now = Date.now();
-    const scheduler = new MetricScheduler(schedule, registry, { resolve: async () => { throw new Error('no remote IO'); } }, () => now);
+    const scheduler = MetricScheduler.forLegacyPackages(schedule, registry, { resolve: async () => { throw new Error('no remote IO'); } }, () => now);
     const jobs = new JobRegistry(); scheduler.register(jobs);
     const queue = new MysqlWorkflowStore(() => pool as never);
     const worker = new WorkerRuntime(queue, 'history-fixture', 30);

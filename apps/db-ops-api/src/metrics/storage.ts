@@ -174,8 +174,8 @@ export class MysqlMetricStorage {
             WHERE id IN (${ids.map(() => '?').join(',')})`, [this.retention.rawMs * 1000, ...ids]);
           result[name] = Number(updated.affectedRows);
         } else {
-          if(name==='normalized')await preserveBeforePrune(c,ids,this.clock(),this.retention);
-          result[name] = await deleteRetentionIds(c, selection, ids);
+          const deletable = name === 'normalized' ? await preserveBeforePrune(c, ids, this.clock(), this.retention) : ids;
+          result[name] = await deleteRetentionIds(c, selection, deletable);
         }
         // Do not delete identity/history while any full batch of raw payload expiry remains.
         if (name === 'rawPayload' && ids.length === limit) break;

@@ -17,7 +17,7 @@
 import {
   ResourceBindingCandidateInputSchema, TemplateVersionSchema,
   type HashId, type PackageCompositionEntry, type PackagePin, type ResourceBindingCandidate,
-  type SourceChain, type TemplateItemVersion, type TemplateParameters, type TemplatePin,
+  type SourceChain, type TemplateItemRef, type TemplateItemVersion, type TemplateParameters, type TemplatePin,
   type TemplateVersion, type VersionNumber,
 } from '../../contracts/metrics/templates.js';
 import { canonicalKey, templateContentHash } from '../templates/model.js';
@@ -61,12 +61,14 @@ export interface BindingPreflightPin {
   content_hash: HashId;
   /** Stored item snapshots; each carries its own `template_id` ownership. */
   items: TemplateItemVersion[];
+  item_configuration?: Map<string, Pick<TemplateItemRef, 'interval_ms' | 'retention'>>;
   /** Exact immutable releases for this pin, in canonical order. */
   package_composition: PackageCompositionEntry[];
   /** Per-pin parameter schema/defaults — never flattened or merged across pins. */
   parameters: TemplateParameters;
   /** Per-pin trigger references — unresolved; no effective trigger is produced. */
   triggers: TemplateVersion['aggregate']['triggers'];
+  derive_from_inputs?: boolean;
   /** Per-pin provenance metadata; deliberately outside the content hash. */
   source_chain: SourceChain;
 }
@@ -188,14 +190,20 @@ async function readPinnedVersion(
     throw new BindingPreflightError('PREFLIGHT_CONTENT_HASH_MISMATCH');
   }
 
+  const configuration = new Map(version.aggregate.items.flatMap(({ item_id, interval_ms, retention }) => {
+    const policy = retention?.history_ms !== undefined || retention?.trends_ms !== undefined ? retention : undefined;
+    return interval_ms !== undefined || policy ? [[item_id, { interval_ms, retention: policy }] as const] : [];
+  }));
   return {
     pin: { template_id: pin.template_id, version: pin.version, content_hash: pin.content_hash },
     version: pin.version,
     content_hash: version.content_hash,
     items: version.items,
+    ...(configuration.size ? { item_configuration: configuration } : {}),
     package_composition: version.package_composition,
     parameters: version.aggregate.parameters,
     triggers: version.aggregate.triggers,
+    ...(version.aggregate.derive_from_inputs ? { derive_from_inputs: true } : {}),
     source_chain: version.source_chain,
   };
 }

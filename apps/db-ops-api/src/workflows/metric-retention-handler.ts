@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import type { Pool, RowDataPacket } from 'mysql2/promise';
+import type { Pool, ResultSetHeader, RowDataPacket } from 'mysql2/promise';
 import { MysqlMetricStorage } from '../metrics/storage.js';
 import { RolloutControl } from '../metrics/rollout/control.js';
 import { configuredRetention, DEFAULT_TREND_RETENTION_MS, type RetentionPolicy } from '../metrics/retention.js';
@@ -84,17 +84,25 @@ export async function startMetricRetention(pool: Pool, registry: JobRegistry,
       // Commit the periodic successor before any work. Failure/shutdown leaves durable recovery.
       const nextTick = Math.floor(clock().getTime() / config.intervalMs) + 1;
       await enqueue(createMetricRetentionJob(new Date(nextTick * config.intervalMs), `periodic:${config.intervalMs}:${nextTick}`));
-      const [states] = await owner.query<RowDataPacket[]>('SELECT preview_policy_hash, preview_at FROM metric_retention_state WHERE id = 1');
+      const [states] = await owner.query<RowDataPacket[]>(`SELECT preview_policy_hash, item_policy_revision, preview_item_policy_revision
+        FROM metric_retention_state WHERE id = 1`);
       if (states.length !== 1) throw new Error('RETENTION_STATE_REQUIRED');
       if (config.mode === 'apply' && states[0].preview_policy_hash !== policyHash) throw new Error('RETENTION_DRY_RUN_REQUIRED');
+      const itemRevision = String(states[0].item_policy_revision);
+      // Platform approval still requires an explicit dry run. Applied item edits
+      // get one preview-only run automatically before any cleanup uses them.
+      const itemPreview = config.mode === 'apply' && itemRevision !== String(states[0].preview_item_policy_revision);
+      const mode = itemPreview ? 'dry-run' : config.mode;
       const counts: Record<string, number> = {}; let batches = 0; let pending = false;
       const preview = { ...await storage.preview(), ...await rollout.previewRetention(config.historyMs) };
-      pending = config.mode === 'apply' && Object.values(preview).some(v => v.count > 0);
-      if (config.mode === 'apply') {
+      pending = itemPreview || (mode === 'apply' && Object.values(preview).some(v => v.count > 0));
+      if (mode === 'apply') {
         for (; batches < config.maxBatches && Date.now() - started < config.maxRunMs;) {
           context.signal.throwIfAborted();
           const mutationGuard: RetentionGuard = async (c, phase) => {
             await guard(c, phase);
+            const [live] = await c.execute<RowDataPacket[]>('SELECT item_policy_revision FROM metric_retention_state WHERE id = 1');
+            if (String(live[0]?.item_policy_revision) !== itemRevision) throw new Error('RETENTION_POLICY_CHANGED');
             if (Date.now() - started >= config.maxRunMs) throw new Error('RETENTION_RUN_BUDGET');
           };
           const addCounts = (batch: Record<string, number>) => {
@@ -115,16 +123,19 @@ export async function startMetricRetention(pool: Pool, registry: JobRegistry,
         }
       }
       context.signal.throwIfAborted();
-      const data = { reason: 'configured_metric_retention', mode: config.mode, policyHash,
+      const data = { reason: 'configured_metric_retention', mode, policyHash, itemPolicyRevision: itemRevision,
         policy: { rawMs: config.rawMs, historyMs: config.historyMs, attemptMs: config.attemptMs,trendMs:config.trendMs??DEFAULT_TREND_RETENTION_MS,valueTypeMs:config.valueTypeMs,trendValueTypeMs:config.trendValueTypeMs },
         batches, counts, preview, elapsedMs: Date.now() - started, pending, jobId: job.id, at: clock().toISOString() };
       await guard(owner, 'check');
       await owner.beginTransaction();
       try {
-        await owner.execute(`UPDATE metric_retention_state SET last_report = ?,
+        const [saved] = await owner.execute<ResultSetHeader>(`UPDATE metric_retention_state SET last_report = ?,
           preview_policy_hash = IF(? = 'dry-run', ?, preview_policy_hash),
-          preview_at = IF(? = 'dry-run', UTC_TIMESTAMP(3), preview_at) WHERE id = 1`,
-        [JSON.stringify(data), config.mode, policyHash, config.mode]);
+          preview_at = IF(? = 'dry-run', UTC_TIMESTAMP(3), preview_at),
+          preview_item_policy_revision = IF(? = 'dry-run', item_policy_revision, preview_item_policy_revision)
+          WHERE id = 1 AND item_policy_revision = ?`,
+        [JSON.stringify(data), mode, policyHash, mode, mode, itemRevision]);
+        if (saved.affectedRows !== 1) throw new Error('RETENTION_POLICY_CHANGED');
         await guard(owner, 'commit'); await owner.commit();
       } catch (error) { await owner.rollback(); throw error; }
       if (pending) await enqueue(createMetricRetentionJob(new Date(clock().getTime() + 1000), `${job.id}:continuation`));
@@ -141,7 +152,7 @@ export async function startMetricRetention(pool: Pool, registry: JobRegistry,
   });
   if (readMetricRetentionConfig(env)) {
     await pool.query('SELECT tombstone FROM metric_observations LIMIT 0');
-    await pool.query('SELECT preview_policy_hash, last_report FROM metric_retention_state LIMIT 0');
+    await pool.query('SELECT preview_policy_hash, last_report, item_policy_revision, preview_item_policy_revision FROM metric_retention_state LIMIT 0');
     await enqueue(createMetricRetentionJob(clock()));
   }
 }

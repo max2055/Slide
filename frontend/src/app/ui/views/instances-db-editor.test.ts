@@ -83,15 +83,9 @@ it('retains a failed edit, locks fields during saving, prevents duplicate writes
 it.each([false, true])('protects a real collection draft before save (configure=%s), and continues only after discard', async configure => {
   const page = await mount(true);
   const section = page.shadowRoot.querySelector('resource-collection-section'); await settle(section);
-  const dispatcher = section.shadowRoot.querySelector('metric-configuration') as any; await settle(dispatcher);
-  const editor = await (async () => {
-    for (let i = 0; i < 30; i++) {
-      const child = dispatcher.shadowRoot.querySelector('native-template-configuration, legacy-metric-configuration') as any;
-      if (child) return child;
-      await new Promise(resolve => setTimeout(resolve, 5));
-    }
-    throw new Error('configuration editor did not mount');
-  })();
+  const editor = section.shadowRoot.querySelector('metric-configuration') as any;
+  expect(editor).toBeTruthy();
+  await settle(editor);
   editor.dirty = true;
   authFetch.mockClear();
   await page._handleSubmit(true, configure); await settle(page); await settle(editor);
@@ -113,4 +107,58 @@ it('returns directly and restores the add button focus when collection is clean'
   const page = await mount(); page._closeDialogs(); await settle(page);
   expect(page.showAddDialog).toBe(false);
   expect(page.shadowRoot.activeElement.classList.contains('resource-action--add')).toBe(true);
+});
+
+it('retains the saved instance for retry when establishing the monitoring connection fails', async () => {
+  const page = await mount();
+  page.formData = { ...page.formData, name: instance.name, host: instance.host, username: instance.username };
+  authFetch.mockImplementation(async (url, options) => {
+    if (url.endsWith('/reload')) return response({}, false);
+    if (url === '/api/database/instances' && options?.method === 'POST') return response({ id: instance.id });
+    return response([instance]);
+  });
+  await page._handleSubmit(false, true); await settle(page);
+  expect(page.editorTab).toBe('basic');
+  expect(page.editingInstance.id).toBe(instance.id);
+  expect(page.saveError).toContain('连接信息已保存，但监控连接未确认');
+  expect(authFetch.mock.calls.filter(([url, options]) => url === '/api/database/instances' && options?.method === 'POST')).toHaveLength(1);
+});
+
+it('retries a new instance whose saved record was initially unreadable without creating it again', async () => {
+  const page = await mount();
+  page.formData = { ...page.formData, name: instance.name, host: instance.host, username: instance.username };
+  let listReady = false;
+  authFetch.mockImplementation(async (url, options) => {
+    if (url.endsWith('/reload')) return response({ success: true });
+    if (url === '/api/database/instances' && options?.method === 'POST') return response({ id: instance.id });
+    return listReady ? response([instance]) : response({}, false);
+  });
+  await page._handleSubmit(false, true);
+  expect(page.pendingCreatedInstanceId).toBe(instance.id);
+  expect(page.saveError).toContain('未能读取更新后的实例');
+  listReady = true;
+  await page._handleSubmit(false, true);
+  expect(page.editorTab).toBe('collection');
+  expect(page.editingInstance.id).toBe(instance.id);
+  expect(authFetch.mock.calls.filter(([url, options]) => url === '/api/database/instances' && options?.method === 'POST')).toHaveLength(1);
+});
+
+it('retries an unconfirmed reconnect after the updated instance has been read back', async () => {
+  const page = await mount(true);
+  const previous = { ...instance, db_version: '8.4.13' };
+  const saved = { ...previous, username: 'monitor' };
+  page._editInstance(previous);
+  page.formData = { ...page.formData, username: saved.username };
+  let reloads = 0;
+  authFetch.mockImplementation(async (url, options) => {
+    if (url.endsWith('/reload')) return ++reloads === 1 ? response({}, false) : response({ success: true });
+    if (options?.method === 'PUT') return response({});
+    return response([saved]);
+  });
+  await page._handleSubmit(true, true);
+  expect(page.editorTab).toBe('basic');
+  expect(page.editingInstance.username).toBe(saved.username);
+  await page._handleSubmit(true, true);
+  expect(reloads).toBe(2);
+  expect(page.editorTab).toBe('collection');
 });

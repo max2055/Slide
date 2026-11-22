@@ -7,10 +7,10 @@
 |路径|读写形态|迁移边界|
 |---|---|---|
 |`apps/db-ops-api/src/metric-registry.ts`、`metric-database-service.ts`、`metric-template-service.ts`|定义以 target_type+id 识别；DB定义优先，预定义补缺；单位/aggregation/SQL/compute_expr/启停/interval|保留旧 target_type 身份；定义和观测类型分开。存储 SQL 覆盖不能自动得到 C 资格|
-|`apps/db-ops-api/src/monitor-collector.ts`、`collector.ts`、`collection-scheduler.ts`、`collectors/registry.ts`|due metric → engine provider →固定列或 metrics_data JSON → metrics_history；失败隔离按实例/provider|保持 MAX-11/19 调度与部分成功；注册 db_types 不等于 provider 真支持。例如 dm 扩展有 provider 分支但不在 fallback registry|
+|`apps/db-ops-api/src/metrics/scheduler/store.ts`、`apps/db-ops-api/src/metrics/packages/adapters.ts`|数据库模板按到期批次调用已注册 provider，进入正式观测写入。旧固定列和 metrics_data JSON 用于历史兼容读取|保留失败隔离与部分成功。实际采集能力以注册的 provider 为准|
 |`apps/db-ops-api/src/database-service.ts`|GET实时查询是另一套按引擎执行的 SQL，非历史快照；字段比 registry 多|不能拿实时值替换同名历史值而忽略算法/首次baseline/过滤差异；Oracle 需保留超时/兼容|
 |`apps/db-ops-api/src/metrics-database-service.ts`|latest历史行；固定列+JSON；按 registry aggregation 聚合历史|迁移旧列/JSON/空值/范围/排序/精度；旧 counter sum 只兼容读，不冒充正确 V2 rate|
-|`apps/db-ops-api/src/server-collector.ts`、`server-metric-provider.ts`|SSH 按固定命令批次；filesystem+维度行 → server_metrics；另有进程证据|保留 mount/device/fs_type/interface/direction；旧 disk_usage_<mount> 不与新行双计|
+|`apps/db-ops-api/src/metrics/packages/adapters.ts`、`apps/db-ops-api/src/server-metric-provider.ts`|服务器模板通过 SSH 采集并写入正式观测。旧 server_metrics 用于历史兼容读取|保留 mount/device/fs_type/interface/direction。旧 disk_usage_<mount> 按迁移边界与新行去重|
 |`apps/db-ops-api/src/network-devices/network-device-collector.ts`、`huawei-adapter.ts`、`huawei-mib-catalog.ts`|SNMP probe→状态；system GET/interface table→network_device_observations；接口 inventory|GET成本为1个逻辑批次（协议可能分包），table随接口数增长；64位counter精度/来源/方向/quality/reason必须保留；默认无厂商 OID|
 |`apps/db-ops-api/src/collectors/custom-sql.provider.ts`|实际读取 singular `collection_sql`；registry 描述/存储是 plural `collection_sqls`，接口不一致|列为现状缺口，不宣称用户SQL通路已完整；后续包契约接入时处理，不在本项修复|
 

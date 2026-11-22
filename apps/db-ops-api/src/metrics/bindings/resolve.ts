@@ -15,6 +15,7 @@
  * resolve it, and never fabricates a multi-template plan for it.
  */
 import { createHash } from 'node:crypto';
+import { metricTiming } from '../timing.js';
 import { z } from 'zod';
 import {
   CapabilitySchema, ResourceSchema, TimestampSchema, resolveDecision, validateBindings,
@@ -37,7 +38,7 @@ import {
 import {
   type MetricRef, type ParameterValue, type PackageReleaseRef,
 } from '../templates/model.js';
-import { compileBindingCandidate, type BindingCandidateItem } from './compile.js';
+import { compileBindingCandidate, declaresDimensions, type BindingCandidateItem } from './compile.js';
 import type { TemplateVersionReadPort } from './preflight.js';
 
 export type TemplateResolutionErrorCode =
@@ -99,6 +100,7 @@ export class TemplateResolutionError extends Error {
 export type TemplateSettingSource =
   | { layer: 'platform'; id: string }
   | { layer: 'package'; releases: PackageReleaseRef[] }
+  | { layer: 'template'; pins: TemplatePin[] }
   | { layer: 'group'; id: string; revision: number }
   | { layer: 'resource'; id: string; revision: number };
 
@@ -131,6 +133,8 @@ export interface ResolvedTemplateItem {
   item_id: string;
   item_version: VersionNumber;
   canonical_metric: MetricRef;
+  interval_ms?: number;
+  retention?: BindingCandidateItem['retention'];
   unit: BindingCandidateItem['unit'];
   dimensions: BindingCandidateItem['dimensions'];
   release: PackageReleaseRef;
@@ -164,6 +168,7 @@ export interface ResolvedTemplateRelease {
   release_ref: string;
   applicability: ApplicabilityCheck[];
   collectors: ResolvedTemplateCollector[];
+  derived: PackageRelease['derived'];
 }
 
 export type ResolvedTemplateExclusionReason =
@@ -505,25 +510,57 @@ export async function resolveTemplateBinding(
     ownMetricSources.set(metricKey(item.canonical_metric), { layer: 'package', release: copyRelease(collector.release) });
   }
 
+  // Use the fastest template default for the shared settings. Each item's
+  // configured interval can override its own template's inherited default.
+  const cadences = resolvedTemplates.flatMap(entry => entry.parameters
+    .filter(parameter => parameter.name === 'interval_ms' && typeof parameter.effective === 'number')
+    .map(parameter => ({ pin: entry.pin, value: Number(parameter.effective) })));
+  const cadence = cadences.length ? Math.min(...cadences.map(entry => entry.value)) : null;
+  const cadenceByTemplate = new Map(cadences.map(entry => [entry.pin.template_id, entry.value]));
   const states = new Map<string, ReleaseState>();
-  let lastLayers: PolicyLayerState | null = null;
   for (const collector of candidate.collectors) {
     if (states.has(collector.release_ref)) continue;
     const { release, definitions } = readRelease(registry, collector.release);
     if (resource.type !== release.package.resource_type) {
       throw new TemplateResolutionError('RESOLVE_RELEASE_RESOURCE', location({ releases: [copyRelease(collector.release)] }));
     }
-    const applied = applyLayers({
-      settings: defaultSettings(release, definitions),
-      sources: defaultSettingSources(release),
-      toggles: initialToggles,
-      metricSources: {},
-    }, layers);
-    lastLayers = applied;
+    const defaults = defaultSettings(release, definitions);
+    if (cadence !== null) {
+      defaults.interval_ms = cadence;
+      defaults.timeout_ms = Math.min(defaults.timeout_ms, cadence);
+      defaults.stale_after_ms = Math.max(defaults.stale_after_ms, cadence);
+      defaults.max_counter_gap_ms = Math.max(defaults.max_counter_gap_ms, cadence);
+    }
     states.set(collector.release_ref, {
       ref: copyRelease(collector.release), ref_text: collector.release_ref, release, definitions,
-      settings: applied.settings, sources: applied.sources,
+      settings: defaults, sources: defaultSettingSources(release),
     });
+  }
+  const derivingTemplates = new Set(candidate.pins.filter(pin => pin.unresolved.derive_from_inputs)
+    .map(pin => pin.pin.template_id));
+  for (const [releaseRef, state] of states) {
+    const selected = new Set(candidate.collectors.filter(collector => collector.release_ref === releaseRef)
+      .flatMap(collector => collector.items.filter(item => derivingTemplates.has(item.template_id))
+        .map(item => metricKey(item.canonical_metric))));
+    // Apply defaults before group and resource layers, including multi-step DAGs.
+    for (let previous = -1; previous !== selected.size;) {
+      previous = selected.size;
+      for (const node of state.release.derived) {
+        if (node.inputs.every(input => selected.has(metricKey(input)))) selected.add(metricKey(node.output));
+      }
+    }
+    for (const node of state.release.derived) {
+      const key = metricKey(node.output);
+      initialToggles.set(key, (initialToggles.get(key) ?? false) || selected.has(key));
+    }
+  }
+
+  let lastLayers: PolicyLayerState | null = null;
+  for (const state of states.values()) {
+    lastLayers = applyLayers({ settings: state.settings, sources: state.sources,
+      toggles: initialToggles, metricSources: {} }, layers);
+    state.settings = lastLayers.settings;
+    state.sources = lastLayers.sources;
   }
 
   const refs = [...states.keys()].sort(compare);
@@ -536,7 +573,10 @@ export async function resolveTemplateBinding(
     if (new Set(values.map(entry => `${entry.value}`)).size > 1) { conflicts.push({ field: key, values }); continue; }
     (settings as unknown as Record<SettingsKey, number | boolean>)[key] = values[0].value;
     // Agreeing defaults name every release; an explicit layer names the group/resource.
-    sources[key] = settingSource(states.get(refs[0])!.sources[key], orderedReleases);
+    const origin = states.get(refs[0])!.sources[key];
+    sources[key] = key === 'interval_ms' && cadence !== null && origin.layer === 'package'
+      ? { layer: 'template', pins: cadences.filter(entry => entry.value === cadence).map(entry => copyPin(entry.pin)) }
+      : settingSource(origin, orderedReleases);
   }
   if (conflicts.length > 0) {
     throw new TemplateResolutionError('RESOLVE_SETTING_CONFLICT',
@@ -582,14 +622,20 @@ export async function resolveTemplateBinding(
         const capped = definition.timeout_ms < settings.timeout_ms;
         const items = entry.items.map(item => {
           const enabled = toggles.get(metricKey(item.canonical_metric)) ?? false;
+          const templateInterval = sources.interval_ms.layer === 'template' ? cadenceByTemplate.get(item.template_id) : undefined;
+          const interval = item.interval_ms ?? templateInterval;
+          const ownInterval = interval !== undefined && interval !== settings.interval_ms ? interval : undefined;
           const capability = resolveItemCapability({ resource, metric: item.canonical_metric, method: item.method,
-            capabilities, applicability, at, stale_after_ms: settings.stale_after_ms });
+            capabilities, applicability, at, stale_after_ms: metricTiming(settings, ownInterval).stale_after_ms });
           const metricBinding: MetricBinding = {
             id: `${refKey(candidate.binding.resource)}:${entry.release_ref}:${item.template_id}/${item.item_id}@${item.item_version}`,
             collection_binding_id: collection.id, resource_id: resource.id, metric: item.canonical_metric,
             dimensions: item.dimensions, enabled, source: { kind: 'collector', collector_id: entry.collector_id, raw_field: item.mapping.raw_field },
           };
-          metricBindings.push(metricBinding);
+          const definition = state.definitions.find(metric => metricKey(metric) === metricKey(item.canonical_metric));
+          if (!definition?.dimensions.keys.length || !declaresDimensions(item.dimensions, definition)) {
+            metricBindings.push(metricBinding);
+          }
           const decision = resolveDecision(collection, policy, metricBinding, capability, at);
           // Template items always name a collector provider; a derived decision would be inconsistent.
           if (decision === 'derive') {
@@ -598,6 +644,8 @@ export async function resolveTemplateBinding(
           const resolvedItem: ResolvedTemplateItem = {
             pin: copyPin(item.pin), template_id: item.template_id, item_id: item.item_id, item_version: item.item_version,
             canonical_metric: { ...item.canonical_metric }, unit: item.unit, dimensions: { ...item.dimensions },
+            ...(ownInterval === undefined ? {} : { interval_ms: ownInterval }),
+            ...(item.retention ? { retention: item.retention } : {}),
             release: copyRelease(item.release), release_ref: item.release_ref, collector_id: item.collector_id,
             implementation_id: item.implementation_id, method: item.method, mapping: item.mapping, enabled, decision, capability,
           };
@@ -633,7 +681,8 @@ export async function resolveTemplateBinding(
     } catch {
       throw new TemplateResolutionError('RESOLVE_VALIDATION', location({ releases: [state.ref] }));
     }
-    resolvedReleases.push({ release: copyRelease(state.ref), release_ref: releaseRef, applicability, collectors });
+    resolvedReleases.push({ release: copyRelease(state.ref), release_ref: releaseRef, applicability, collectors,
+      derived: state.release.derived.filter(node => toggles.get(metricKey(node.output))) });
   }
   excluded.sort((left, right) => compare(left.release.id, right.release.id) || compare(left.release.version, right.release.version)
     || compare(left.template_id, right.template_id) || compare(left.item_id, right.item_id) || left.item_version - right.item_version);
@@ -701,6 +750,7 @@ export function templateResolutionIdentity(resolution: ResolvedTemplateBinding):
     releases: resolution.releases.map(entry => ({
       release: entry.release,
       applicability: entry.applicability,
+      ...(entry.derived.length ? { derived: entry.derived } : {}),
       collectors: entry.collectors.map(collector => ({
         collector_id: collector.collector_id, implementation_id: collector.implementation_id, method: collector.method,
         estimated_cost: collector.estimated_cost, collector_timeout_ms: collector.collector_timeout_ms,
@@ -708,6 +758,7 @@ export function templateResolutionIdentity(resolution: ResolvedTemplateBinding):
         items: collector.items.map(item => inert({
           pin: item.pin, template_id: item.template_id, item_id: item.item_id, item_version: item.item_version,
           canonical_metric: item.canonical_metric, unit: item.unit, dimensions: item.dimensions,
+          ...(item.interval_ms === undefined ? {} : { interval_ms: item.interval_ms }),
           mapping: item.mapping, enabled: item.enabled, decision: item.decision, capability: item.capability,
         })),
       })),
