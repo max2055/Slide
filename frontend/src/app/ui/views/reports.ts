@@ -151,7 +151,8 @@ export class ReportsPage extends LitElement {
       border-radius: var(--radius-sm);
     }
 
-    /* The sandboxed document owns focus while the reader is inside the frame. */
+    /* Focus can be reported on the iframe or inside its sandboxed document. */
+    .report-preview-frame:focus-within,
     app-dialog:not(:focus-within) .report-preview-frame {
       outline: 2px solid var(--accent);
       outline-offset: 2px;
@@ -912,7 +913,7 @@ export class ReportsPage extends LitElement {
     // The stored export format can be PDF or JSON even when the saved preview is HTML.
     const looksLikeHtml = /^\s*<(?:!doctype html\b|!--|[a-z][\w-]*(?:\s|\/?>))/i.test(content);
     const body = looksLikeHtml
-      ? html`<iframe class="report-preview-frame" title="报表正文" sandbox="" tabindex="0" .srcdoc=${previewHtml(content)}></iframe>`
+      ? html`<iframe class="report-preview-frame" title="报表正文" sandbox="" tabindex="0" data-dialog-focus-frame .srcdoc=${previewHtml(content)}></iframe>`
       : /^(?:%PDF-|JVBERi0)/.test(content.trimStart())
         ? html`<p>此报表可下载后查看。</p>`
         : html`<pre class="report-preview-text">${content}</pre>`;
