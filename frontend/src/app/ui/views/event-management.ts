@@ -1072,7 +1072,7 @@ export class EventManagementPage extends LitElement {
         <stat-card label="已处理" .value=${String(this.stats?.handled ?? '未知')}></stat-card>
         <stat-card label="已解决" .value=${String(this.stats?.resolved ?? '未知')} variant="ok"></stat-card>
         <stat-card label="已关闭" .value=${String(this.stats?.closed ?? '未知')} variant="muted"></stat-card>
-        <stat-card label="平均 MTTR（分钟）" .value=${avgMttr === null ? '—' : String(Math.round(avgMttr))} hint="已解决 / 已关闭"></stat-card>
+        <stat-card label="平均 MTTR（分钟）" .value=${avgMttr === null ? '—' : String(Math.round(avgMttr))} hint="有解决时间的已结束事件"></stat-card>
       </div>
     `;
   }

@@ -10,12 +10,14 @@ test('event center reconciles authorized records and opens the exact historical 
   const mysql = require('mysql2/promise');
   const db = await mysql.createConnection({ host: DB_HOST, database: DB_NAME, port: Number(DB_PORT), user: DB_USER, password: DB_PASSWORD });
   try {
+    await db.beginTransaction();
     const [resource] = await db.execute(
       "INSERT INTO database_instances(name,host,port,username,password_encrypted,status) VALUES('验收实例','fixture.invalid',3306,'fixture','synthetic','inactive')",
     );
     const resourceId = resource.insertId;
-    const title = '同名阈值事件'.repeat(13);
-    const timestamp = '2026-11-10 00:00:00';
+    const title = '同名阈值事件'.repeat(22);
+    const sampleAt = new Date().toISOString();
+    const timestamp = sampleAt.slice(0, 19).replace('T', ' ');
     const insertEvent = async (key: string, severity: string, status: string, source = 'legacy', name = title) => {
       const [record] = await db.execute('INSERT INTO alert_events(event_id, title, instance_id, source_type, severity, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
         [key, name, resourceId, source, severity, status, timestamp]);
@@ -29,7 +31,8 @@ test('event center reconciles authorized records and opens the exact historical 
       return record.insertId;
     };
     const alert = await insertAlert('p0', 'template-trigger');
-    for (let index = 1; index <= 5; index++) await insertAlert('p0', 'manual', `紧急记录 ${index}`);
+    const p0Alerts = [alert];
+    for (let index = 1; index <= 5; index++) p0Alerts.push(await insertAlert('p0', 'manual', `紧急记录 ${index}`));
     const first = await insertEvent('max722-first', 'p0', 'open', 'template-trigger');
     const second = await insertEvent('max722-second', 'critical', 'open');
     const historical = await insertEvent('max722-historical', 'warning', 'reviewed');
@@ -39,7 +42,6 @@ test('event center reconciles authorized records and opens the exact historical 
       item: { template_id: 'max722.template', item_id: 'uptime', item_version: 1 },
       metric: { id: 'db.uptime_seconds', semantic_version: '1.0.0' }, unit: 's', recovery_mode: 'none',
       problem: { node: 'compare', select: { aggregation: 'last' }, operator: '<', threshold: { value: 10 } } };
-    const sampleAt = '2026-11-10T00:00:00Z';
     const episode = { rule_id: rule.rule_id, version: rule.version, scope: rule.scope, body_hash: rule.body_hash,
       resource: { type: 'instance', id: String(resourceId) }, opened: { metric: rule.metric, at: sampleAt, value: 5 },
       last: { dimensions: {}, at: sampleAt, value: 5, quality: 'good' }, state: 'open' };
@@ -47,19 +49,21 @@ test('event center reconciles authorized records and opens the exact historical 
       opening: { sample_ids: ['max722-synthetic-sample'], attempt_ids: [] } };
     await db.execute('INSERT INTO metric_trigger_episodes (episode_id, identity_hash, resource_key, config_revision, event_id, alert_id, payload, snapshot) VALUES (?, ?, ?, 4, ?, ?, ?, ?)',
       ['max722-episode-id', 'max722-head-id', `instance:${resourceId}`, first, alert, JSON.stringify(episode), JSON.stringify(snapshot)]);
+    const linkAlert = (eventId: number, alertId: number) =>
+      db.execute("INSERT INTO alert_event_members (event_id, alert_id, role) VALUES (?, ?, 'related')", [eventId, alertId]);
+    for (const id of p0Alerts) await linkAlert(first, id);
+    await db.commit();
 
-    const login = await page.request.post('/api/auth/login', { data: { username: 'admin', password: INITIAL_ADMIN_PASSWORD } });
-    expect(login.status()).toBe(200);
-    const session = await login.json();
-    await page.addInitScript(({ token, refreshToken, user }) => {
-      localStorage.setItem('token', token);
-      localStorage.setItem('slide.control.session_token.v1', token);
-      if (refreshToken) localStorage.setItem('refreshToken', refreshToken);
-      localStorage.setItem('user', JSON.stringify(user));
+    await page.addInitScript(() => {
       localStorage.setItem('slide.control.settings.v1:default', JSON.stringify({ locale: 'zh-CN' }));
-    }, session);
+    });
     await page.goto('/');
-    await page.locator('.shell-nav a[href="/events"]').click();
+    await page.getByRole('textbox', { name: '用户名' }).fill('admin');
+    await page.getByPlaceholder('请输入密码（必填）').fill(INITIAL_ADMIN_PASSWORD!);
+    const login = page.waitForResponse(response => response.url().endsWith('/api/auth/login') && response.request().method() === 'POST');
+    await page.getByRole('button', { name: '登录', exact: true }).click();
+    expect((await login).status()).toBe(200);
+    await page.getByRole('link', { name: '事件中心', exact: true }).click({ timeout: 10_000 });
     const center = page.locator('event-center-page');
     const cardValue = (label: string) => center.locator(`stat-card[label="${label}"] [part="value"]`);
     for (const [width, height] of [[1366, 768], [1440, 900], [1920, 1080]]) {
@@ -79,8 +83,10 @@ test('event center reconciles authorized records and opens the exact historical 
     await page.screenshot({ path: info.outputPath('max722-alert-trigger.png'), animations: 'disabled' });
     await page.keyboard.press('Escape');
 
-    await insertAlert('critical', 'manual', '严重记录');
-    await insertAlert('warning', 'manual', '警告记录');
+    await db.beginTransaction();
+    await linkAlert(second, await insertAlert('critical', 'manual', '严重记录'));
+    await linkAlert(second, await insertAlert('warning', 'manual', '警告记录'));
+    await db.commit();
     await center.locator('alert-list').getByRole('button', { name: '刷新', exact: true }).click();
     await expect(cardValue('活跃严重告警')).toHaveText('1');
     await expect(cardValue('活跃紧急告警（P0）')).toHaveText('6');
@@ -100,6 +106,9 @@ test('event center reconciles authorized records and opens the exact historical 
       await expect(eventRow(first).getByText(`#${first}`, { exact: true })).toBeInViewport();
       await expect(eventRow(second).getByText(`#${second}`, { exact: true })).toBeInViewport();
       await expect(eventRow(first).locator('.event-name')).toHaveAttribute('title', title);
+      if (width !== 1920) {
+        expect(await eventRow(first).locator('.event-name').evaluate(el => el.scrollWidth > el.clientWidth)).toBe(true);
+      }
       await expect(eventRow(first)).toContainText('验收实例');
       await page.screenshot({ path: info.outputPath(`max722-aggregate-${width}.png`), animations: 'disabled' });
     }

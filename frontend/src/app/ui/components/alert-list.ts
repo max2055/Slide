@@ -59,8 +59,10 @@ export class AlertList extends LitElement {
     .table tbody tr:last-child td { border-bottom: none; }
     .table tbody tr.critical { background: var(--danger-subtle); }
     .table tbody tr.critical:hover { background: rgba(239,68,68,0.12); }
+    .alert-copy { display: grid; gap: var(--space-xs); min-width: 0; }
+    .alert-title, .alert-message { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
     .alert-title { font-weight: 600; color: var(--text-strong); font-size: var(--text-md); }
-    .alert-message { font-size: var(--text-sm); color: var(--muted); line-height: 1.5; max-width: 500px; }
+    .alert-message { font-size: var(--text-sm); color: var(--muted); line-height: 1.5; }
     .instance-badge { display: inline-block; box-sizing: border-box; max-width:100%; vertical-align:middle; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; padding: var(--space-xs) var(--space-md); background: var(--secondary); border: 1px solid var(--border); border-radius: var(--radius-sm); font-size: var(--text-xs); color: var(--text); text-decoration: none; cursor: pointer; }
     .type-badge { display: inline-flex; align-items: center; padding: var(--space-xs) var(--space-sm); background: rgba(59,130,246,0.12); color: var(--info); border-radius: var(--radius-sm); font-size: var(--text-xs); font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; }
     .time-ago { font-size: var(--text-sm); color: var(--muted); }
@@ -216,9 +218,9 @@ export class AlertList extends LitElement {
           <app-badge variant=${alertLevelVariant(alert.severity)}>${alertLevelLabel(alert.severity)}</app-badge>
         </td>
         <td style="overflow:hidden;" title="${this._cleanTitle(alert.title)} — ${alert.message}">
-          <div style="display:flex;align-items:center;gap:var(--space-sm);overflow:hidden;">
-            <span class="alert-title" style="min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${this._cleanTitle(alert.title)}</span>
-            <span class="alert-message" style="max-width:40%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--muted);font-size:var(--text-sm);">${alert.message}</span>
+          <div class="alert-copy">
+            <span class="alert-title">${this._cleanTitle(alert.title)}</span>
+            <span class="alert-message">${alert.message}</span>
           </div>
         </td>
         <td style="text-align:center;">
