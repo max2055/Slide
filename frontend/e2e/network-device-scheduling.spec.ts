@@ -76,7 +76,8 @@ for (const width of [390, 1280]) for (const canBackup of [true, false]) {
     await expect(interfacesTab).toHaveClass(/active/);
     await expect(interfacesTab).toHaveAttribute('aria-selected', 'true');
     await expect(page.locator('resource-metric-browser')).toHaveCount(0);
-    await expect(page.getByText('尚未取得接口记录', { exact: true })).toBeVisible();
+    await expect(page.getByText('设备没有已保存的接口记录', { exact: true })).toBeVisible();
+    await expect(page.getByText(/显示 0 \/ 0 个已保存接口/)).toBeVisible();
     await expect(page.getByLabel('接口名称或别名', { exact: true })).toBeVisible();
     await page.getByRole('tab', { name: '关联资源', exact: true }).click();
     await expect(page.getByText('暂无关联资源', { exact: true })).toBeVisible();
