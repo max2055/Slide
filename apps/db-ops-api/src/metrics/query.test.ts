@@ -62,6 +62,24 @@ describe('semantic V2 reducer', () => {
     expect(aggregate(q, [withoutEvidence])[0]).toMatchObject({ value: null, quality: { reason: 'gap' } });
   });
 
+  it('plots explicit counter snapshots without changing their original unit or filling gaps', () => {
+    const points = [point(counter, 0, { encoding: 'uint64', value: '320' }, { counter: { bits: '64', start_at: stamp(0) } }),
+      point(counter, 20, { encoding: 'uint64', value: '0' }, { counter: { bits: '64', start_at: stamp(20) } })];
+    const buckets = aggregate({ ...query(counter, 'last', 0, 30), bucket_ms: 10_000 }, [points]);
+    expect(buckets.map(scalar)).toEqual([320, null, 0]);
+    expect(buckets.every(bucket => bucket.unit === counter.unit)).toBe(true);
+  });
+
+  it('keeps the last sample failure visible in a chart bucket without changing regular last-value aggregation', () => {
+    const good = (at: number) => point(gauge, at, { encoding: 'float64', value: 7 });
+    const failed = (at: number) => point(gauge, at, null, { quality: { status: 'unknown', reason: 'source_error' }, accuracy: 'unknown' });
+    const request = { ...query(gauge, 'last', 0, 10), bucket_ms: 10_000 };
+    expect(aggregate({ ...request, sample_last: true }, [[good(0), failed(1)]])[0])
+      .toMatchObject({ value: null, quality: { reason: 'source_error' }, sources: [{ id: failed(1).id }] });
+    expect(scalar(aggregate({ ...request, sample_last: true }, [[failed(0), good(1)]])[0])).toBe(7);
+    expect(scalar(aggregate(request, [[good(0), failed(1)]])[0])).toBe(7);
+  });
+
   it('keeps gaps null below coverage threshold and preserves source freshness', () => {
     const rows = [point(gauge, 0, { encoding: 'float64', value: 2 }), point(gauge, 30, { encoding: 'float64', value: 8 })];
     const buckets = aggregate({ ...query(gauge, 'mean'), bucket_ms: 10000 }, [rows]);

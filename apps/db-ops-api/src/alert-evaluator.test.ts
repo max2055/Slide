@@ -1,97 +1,36 @@
-/**
- * 测试 alert-evaluator 的宏变量解析功能
- */
-import { describe, it, expect } from 'vitest';
-import { resolveThresholdTemplate, loadMetricDefaultMacros } from './alert-evaluator';
+import { describe, expect, it } from 'vitest';
+import { compileAlertRule, evaluateCompiledRule, type AlertOperator } from './alerts/compiled-rule.js';
 
-describe('resolveThresholdTemplate', () => {
-  it('resolves numeric thresholds directly', () => {
-    const result = resolveThresholdTemplate({ warning: 80, error: 90, critical: 95 });
-    expect(result).toEqual({ warning: 80, error: 90, critical: 95 });
+const rule = { metric_name: 'cpu_usage', threshold: 50, severity: 'warning' as const };
+
+describe('compiled alert rules', () => {
+  const comparisons: Array<[AlertOperator, number, number]> = [
+    ['>', 51, 50],
+    ['<', 49, 50],
+    ['>=', 50, 49],
+    ['<=', 50, 51],
+    ['=', 50, 51],
+    ['!=', 51, 50],
+  ];
+  it.each(comparisons)('applies %s at the threshold', (operator, firing, clear) => {
+    const compiled = compileAlertRule({ ...rule, operator }, 'instance');
+    expect(evaluateCompiledRule(compiled, firing)).toBe('warning');
+    expect(evaluateCompiledRule(compiled, clear)).toBeNull();
   });
 
-  it('resolves string-number thresholds', () => {
-    const result = resolveThresholdTemplate({ warning: "80" as any, error: "90" as any, critical: "95" as any });
-    expect(result).toEqual({ warning: 80, error: 90, critical: 95 });
+  it('compares a SQL DECIMAL threshold numerically', () => {
+    const compiled = compileAlertRule({ ...rule, operator: '>', threshold: '5000.00' as unknown as number }, 'instance');
+    expect(evaluateCompiledRule(compiled, 997)).toBeNull();
+    expect(evaluateCompiledRule(compiled, 5001)).toBe('warning');
   });
 
-  it('resolves ${var} placeholders from macros', () => {
-    const result = resolveThresholdTemplate(
-      { warning: '${tps_warning}', error: 2000, critical: '${tps_critical}' } as any,
-      { tps_warning: 500, tps_critical: 5000 }
-    );
-    expect(result).toEqual({ warning: 500, error: 2000, critical: 5000 });
-  });
-
-  it('returns NaN for unresolvable macros (skipped level)', () => {
-    const result = resolveThresholdTemplate(
-      { warning: '${unknown_macro}', error: 2000 } as any,
-      {}
-    );
-    expect(result).toEqual({ warning: NaN, error: 2000, critical: NaN });
-  });
-
-  it('returns null for null/undefined template', () => {
-    expect(resolveThresholdTemplate(null)).toBeNull();
-    expect(resolveThresholdTemplate(undefined)).toBeNull();
-  });
-
-  it('returns null when all values are NaN', () => {
-    const result = resolveThresholdTemplate(
-      { warning: '${bad}' as any, error: '${bad2}' as any, critical: '${bad3}' as any },
-      {}
-    );
-    expect(result).toBeNull();
-  });
-
-  it('handles mixed numeric and macro values', () => {
-    const result = resolveThresholdTemplate(
-      { warning: 100, error: '${err_threshold}', critical: '${crit_threshold}' } as any,
-      { err_threshold: 500, crit_threshold: 1000 }
-    );
-    expect(result).toEqual({ warning: 100, error: 500, critical: 1000 });
-  });
-
-  it('handles partial template (only warning defined)', () => {
-    const result = resolveThresholdTemplate({ warning: '${w}' } as any, { w: 50 });
-    expect(result).toEqual({ warning: 50, error: NaN, critical: NaN });
-  });
-
-  it('overrides macro values — later macros win on name collision', () => {
-    // Simulates: template macros first, then instance overrides overwrite
-    const result = resolveThresholdTemplate(
-      { warning: '${threshold}', error: '${threshold}', critical: 10000 } as any,
-      { threshold: 500 }  // template default
-    );
-    expect(result).toEqual({ warning: 500, error: 500, critical: 10000 });
-
-    // Instance overrides
-    const result2 = resolveThresholdTemplate(
-      { warning: '${threshold}', error: '${threshold}', critical: 10000 } as any,
-      { threshold: 2000 }  // instance overrides
-    );
-    expect(result2).toEqual({ warning: 2000, error: 2000, critical: 10000 });
-  });
-
-  it('handles null values within template', () => {
-    const result = resolveThresholdTemplate({ warning: null, error: 50, critical: null } as any);
-    expect(result).toEqual({ warning: NaN, error: 50, critical: NaN });
-  });
-});
-
-describe('loadMetricDefaultMacros', () => {
-  it('extracts macros from metric threshold_template', () => {
-    const macros = loadMetricDefaultMacros({ warning: 500, error: 2000, critical: 5000 });
-    expect(macros).toEqual({ warning: 500, error: 2000, critical: 5000 });
-  });
-
-  it('returns empty for null template', () => {
-    const macros = loadMetricDefaultMacros(null);
-    expect(macros).toEqual({});
-  });
-
-  it('handles partial template', () => {
-    const macros = loadMetricDefaultMacros({ warning: 100 });
-    expect(macros).toEqual({ warning: 100 });
+  it('uses available threshold macros and omits unset levels', () => {
+    const compiled = compileAlertRule({
+      ...rule, operator: '>=',
+      threshold_template: { warning: '${warn}', error: '${missing}', critical: '95' },
+    }, 'instance', { warn: 80 });
+    expect(compiled.thresholds).toEqual({ warning: 80, critical: 95 });
+    expect(evaluateCompiledRule(compiled, 90)).toBe('warning');
+    expect(evaluateCompiledRule(compiled, 95)).toBe('critical');
   });
 });

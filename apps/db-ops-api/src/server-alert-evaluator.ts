@@ -42,7 +42,8 @@ class ServerAlertEvaluator {
    * checks latest metrics against rule thresholds and creates alerts
    * when thresholds are breached.
    */
-  async evaluateServerRules(qualificationDimensions?: ReadonlyMap<number, Readonly<Record<string, string>>>): Promise<void> {
+  async evaluateServerRules(qualificationDimensions?: ReadonlyMap<number, Readonly<Record<string, string>>>,
+    evaluate = evaluateOperationalRule): Promise<void> {
     if (!dbConnection.isConnected()) {
       console.warn('[ServerAlertEvaluator] database not connected, skipping server rule evaluation');
       return;
@@ -102,14 +103,14 @@ class ServerAlertEvaluator {
             for (const existing of active) {
               const dimensions = existing.tags?.dimensions ?? {};
               if (rule.dimensions && !Object.entries(rule.dimensions).every(([key, value]) => dimensions[key] === value)) continue;
-              const recovery = await evaluateOperationalRule({ type: 'server', id: serverId }, { ...rule, dimensions } as any,
+              const recovery = await evaluate({ type: 'server', id: serverId }, { ...rule, dimensions } as any,
                 rule.recovery_seconds ?? rule.duration_seconds);
               if (recovery.recovery) {
                 assertWorkflowActive();
                 await alertDatabaseService.resolveAlert(existing.id);
               }
             }
-            const semantic = await evaluateOperationalRule({ type: 'server', id: serverId }, rule as any, rule.duration_seconds);
+            const semantic = await evaluate({ type: 'server', id: serverId }, rule as any, rule.duration_seconds);
             if (!semantic.handled) continue;
             if (!semantic.level || semantic.value === null) continue;
             const currentValue = semantic.value!;

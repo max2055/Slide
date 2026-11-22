@@ -80,11 +80,11 @@ import { metricConsumerService } from './src/metrics/consumers/runtime.js';
 import { resourceMetricRead } from './src/metrics/consumers/resource-api.js';
 import { PolicyError } from './src/metrics/policy/model.js';
 import { metricConfigurationService } from './src/metrics/config/routes.js';
-import { installHistoricalMetricRoutes } from './src/metrics/legacy-routes.js';
 import { databaseService } from './src/database-service.js';
 import { llmService } from './src/llm-service.js';
 import { dbConnection } from './src/db-connection.js';
 import { bindApiListener } from './src/config/api-listen.js';
+import { resolveApiProxyTrust } from './src/config/api-proxy.js';
 import { loadSecurityConfig } from './src/config/security-config.js';
 import { publicInstanceDto, publicNotificationDto, publicServerDto } from './src/security/public-dto.js';
 import { isNotificationChannelType, validateNotificationChannelConfig } from './src/notification-channel-config.js';
@@ -197,7 +197,6 @@ import { promptManager } from './src/prompts/prompt-manager.js';
 import { optimizePromptContent } from './src/prompts/optimize.js';
 import { SERVER_HAS_HISTORICAL_REPORTS, SERVER_HISTORICAL_REPORT_DELETE_ERROR, serverDatabaseService } from './src/server-database-service.js';
 import { serverReportService } from './src/server-report-service.js';
-import serverCollector from './src/server-collector.js';
 import { serverDiagnosticService } from './src/server-diagnostic-service.js';
 import sshSessionPool from './src/ssh-session-pool.js';
 import { registerAgentToolApprovalRoutes } from './src/security/agent-tool-approval-routes.js';
@@ -211,9 +210,8 @@ import { configBackupScheduler } from './src/network-devices/config-backup-sched
 import { registerResourceRoutes } from './src/resources/resource-routes.js';
 import { registerMetricConsumerRoutes } from './src/metrics/consumers/routes.js';
 import { registerMetricConfigurationRoutes } from './src/metrics/config/routes.js';
-import { registerMetricBulkRoutes } from './src/metrics/bulk/routes.js';
 import { registerMetricPolicyRoutes } from './src/metrics/policy/routes.js';
-import { registerMetricRolloutRoutes } from './src/metrics/rollout/routes.js';
+import { upgradeMonitoringBindings } from './src/metrics/templates/upgrade-bindings.js';
 import { registerMetricTemplateRoutes } from './src/metrics/templates/routes.js';
 import { registerTemplateTriggerRoutes } from './src/metrics/triggers/routes.js';
 import { registerEvidenceRoutes } from './src/evidence/evidence-api.js';
@@ -224,6 +222,7 @@ import { registerSourceRoutes } from './src/platform/source-routes.js';
 const fastify = Fastify({
   logger: false,
   bodyLimit: API_BODY_LIMIT,
+  trustProxy: resolveApiProxyTrust(),
 });
 
 // JWT 密钥
@@ -287,6 +286,8 @@ async function start() {
   await new MigrationRunner(pool as any).run();
   console.log('✅ Schema migration ledger is current');
   await migrateNotificationCredentials(pool);
+  const upgradedBindings = await upgradeMonitoringBindings(pool);
+  if (upgradedBindings > 0) console.info(`[Metrics] Migrated ${upgradedBindings} monitoring bindings`);
   instanceAccessLifecycle.configure(id => instanceRemovalStore.available(id));
 
   if (pool) {
@@ -502,11 +503,8 @@ async function start() {
   await registerNetworkDeviceRoutes(fastify, verifyToken);
   await registerResourceRoutes(fastify, verifyToken);
   await fastify.register(async app => {
-    installHistoricalMetricRoutes(app);
     await registerMetricPolicyRoutes(app, verifyToken);
-    await registerMetricRolloutRoutes(app, verifyToken);
     await registerMetricConfigurationRoutes(app, verifyToken);
-    await registerMetricBulkRoutes(app, verifyToken);
     await registerMetricConsumerRoutes(app, verifyToken);
     await registerMetricTemplateRoutes(app, verifyToken);
     await registerTemplateAuthoringRoutes(app, verifyToken);
@@ -1608,9 +1606,9 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
       }
       const result = await serverDatabaseService.updateServer(Number(id), data);
       if (result.success) {
-        reply.send({ message: '更新成功' });
+        return reply.send({ message: '更新成功' });
       } else {
-        reply.code(400).send({ error: result.error });
+        return reply.code(400).send({ error: result.error });
       }
     } catch (error: any) {
       reply.code(500).send({ error: '更新服务器失败：' + error.message });
@@ -1726,24 +1724,6 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
         from, to, bucket_ms: Math.max(60000, Math.ceil(hours[range] * 3600000 / 1000)), ...(ids?.length ? { metric_ids: ids } : {}),
       }) });
     } catch (error) { return metricReadFailure(reply, error); }
-  });
-
-  // 手动触发单次采集
-  fastify.post('/api/servers/:id/collect', { preHandler: [verifyToken, requirePermission('servers:manage')] }, async (request, reply) => {
-    try {
-      const { id } = request.params as any;
-
-      // Verify server exists
-      const server = await serverDatabaseService.getServerById(Number(id));
-      if (!server) {
-        return reply.code(404).send({ error: '服务器不存在' });
-      }
-
-      const result = await metricConfigurationService.trialCurrent((request as any).user, { type: 'server', id: Number(id) });
-      return reply.send({ success: result.attempts.length > 0 && result.attempts.every(a => a.status === 'succeeded'), ...result });
-    } catch (error: any) {
-      reply.code(500).send({ error: '采集失败：' + error.message });
-    }
   });
 
   // Read-only fixed-profile diagnostics. The collection endpoint only

@@ -1,5 +1,5 @@
 import { publicationAuditCount } from './audit-test-support.js';
-import Fastify from 'fastify';
+import Fastify, { type preHandlerHookHandler } from 'fastify';
 import mysql, { type Pool, type RowDataPacket } from 'mysql2/promise';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { ActorContext } from '../../auth/actor-context.js';
@@ -8,13 +8,12 @@ import { MigrationRunner } from '../../migrations/runner.js';
 import type { MigrationPool } from '../../migrations/types.js';
 import { configurationInventory } from './inventory.js';
 import { createConfigurationRegistry } from './registry.js';
-import { createTrialStore, registerMetricConfigurationRoutes } from './routes.js';
+import { createTrialStore } from './routes.js';
+import { legacyConfigurationReader, registerPackageConfigurationTestRoutes, registerPackagePolicyTestRoutes } from './legacy-configuration-test-support.js';
 import { MetricConfigurationService } from './service.js';
-import { configurationReader } from './status-store.js';
 import { PolicyService } from '../policy/service.js';
 import { MysqlPolicyStore, type PolicyStore } from '../policy/store.js';
 import { refKey, type Ref } from '../policy/model.js';
-import { registerMetricPolicyRoutes } from '../policy/routes.js';
 import { admin } from '../policy/test-support.js';
 
 /**
@@ -67,7 +66,7 @@ describe.skipIf(!port)('MAX-238 R3 public-entry authorization on a disposable My
       { exists: async () => true, inventory: configurationInventory });
     const recommendations = await new MetricConfigurationService(policy, packages,
       createTrialStore(() => pool, packages), { resolve: async () => { throw new Error('status must not collect'); } },
-      configurationReader(() => pool)).recommendations(admin, replayRef);
+      legacyConfigurationReader(() => pool)).recommendations(admin, replayRef);
     const release = recommendations.packages.find(entry => entry.compatibility === 'compatible')?.release.package;
     expect(release, 'the fixture resource must have a compatible release').toBeDefined();
     pin = { id: release!.id, version: release!.version, digest: release!.digest };
@@ -101,12 +100,13 @@ describe.skipIf(!port)('MAX-238 R3 public-entry authorization on a disposable My
     const gatedStore = gated(new MysqlPolicyStore(() => pool));
     const policy = new PolicyService(gatedStore.store, packages, { exists: async () => true, inventory: configurationInventory });
     const service = new MetricConfigurationService(policy, packages, createTrialStore(() => pool, packages), {} as never,
-      configurationReader(() => pool), async () => reload());
+      legacyConfigurationReader(() => pool), async () => reload());
     let trials = 0;
     service.trial = async () => { trials++; return trial as never; };
     const app = Fastify();
-    await registerMetricPolicyRoutes(app, async request => { (request as unknown as { user?: ActorContext }).user = admin; }, policy, async () => reload());
-    await registerMetricConfigurationRoutes(app, async request => { (request as unknown as { user?: ActorContext }).user = admin; }, service);
+    const verify: preHandlerHookHandler = async request => { (request as unknown as { user?: ActorContext }).user = admin; };
+    registerPackagePolicyTestRoutes(app, verify, policy, reload);
+    registerPackageConfigurationTestRoutes(app, verify, service);
     await app.listen({ host: '127.0.0.1', port: 0 });
     const base = `http://127.0.0.1:${(app.server.address() as { port: number }).port}/api/metrics`;
     return { app, base, gated: gatedStore, trials: () => trials };

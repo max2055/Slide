@@ -1,4 +1,4 @@
-import { aggregateHistory } from './history-query.js';
+import { aggregateHistory, aggregateHistoryChart, type HistoryChartWindow } from './history-query.js';
 import type { ConfigurationAt } from '../../contracts/metrics/configuration-history.js';
 import { MetricConsumerQuerySchema } from '../../contracts/metrics/history.js';
 import { hasPermission } from '../../auth/require-permission.js';
@@ -11,11 +11,12 @@ import type { PolicyService } from '../policy/service.js';
 import { PolicyError, RefSchema, metricKey, rule, refKey, type Ref, type Resolved } from '../policy/model.js';
 import type { PackageRegistry } from '../packages/model.js';
 import { canonicalDefinitions } from '../packages/builtins.js';
-import { aggregate, SemanticQueryService, type QueryStore, type SemanticBucket } from '../query.js';
+import { aggregate, MAX_BUCKETS, MAX_HISTORY_CHART_DAYS, SemanticQueryService, type QueryStore, type SemanticBucket } from '../query.js';
 import { capacityDefinition } from '../database/catalog.js';
 import { OBSERVATION_PAGE_DEFAULT_LIMIT, OBSERVATION_PAGE_MAX_LIMIT, OBSERVATION_PAGE_ORDER,
   decodeObservationCursor, encodeObservationCursor, observationCursorBinding, type ObservationPageResult } from '../observations/page.js';
 import type { Series } from '../storage.js';
+import { metricTiming } from '../timing.js';
 
 // Product-owned order. Package versions can supply values, never mutate these columns.
 export const coreProfiles = {
@@ -23,7 +24,10 @@ export const coreProfiles = {
   server: [{ id: 'host.filesystem.used_bytes', label: '文件系统已用' }, { id: 'host.filesystem.size_bytes', label: '文件系统容量' }, { id: 'host.network.bytes_total', label: '接口字节速率' }],
   network_device: [{ id: 'network.interface.oper_up', label: '接口运行状态' }],
 } as const;
-export const ConsumerQuerySchema = MetricConsumerQuerySchema.refine(q => Boolean(q.from) === Boolean(q.to), 'Both window endpoints are required');
+export const ConsumerQuerySchema = MetricConsumerQuerySchema
+  .refine(q => Boolean(q.from) === Boolean(q.to), 'Both window endpoints are required')
+  .refine(q => !q.series || q.history && !q.metric_ids && !q.latest_capacity, 'A single series requires a history query')
+  .refine(q => !q.include_retained_trends || (q.series && q.from && q.to), 'Retained trends require a chart series and window');
 export type ConsumerQuery = z.input<typeof ConsumerQuerySchema>;
 /** One page of formal raw observations; the cursor never carries an offset. */
 export const ObservationPageQuerySchema = z.strictObject({
@@ -35,10 +39,12 @@ export const ObservationPageQuerySchema = z.strictObject({
 export interface ConsumerStore extends QueryStore {
   historyMetrics?(ref: Ref, from: string, to: string): Promise<Array<{ id: string; semantic_version: string }>>;
   readHistoryWindow?(series: Series, from: string, to: string): Promise<NormalizedObservation[]>;
+  readHistoryChart?(series: Series, from: string, to: string, now: Date): Promise<HistoryChartWindow>;
   historyDimensions?(ref: Ref, definition: MetricDefinition, from: string, to: string): Promise<Record<string, string>[]>;
   historyContext?(ref: Ref, from: string, to: string, revisions: number[], eventsReadable: boolean): Promise<HistoryContext>;
   dimensions(ref: Ref, definition: MetricDefinition, from: string, to: string): Promise<Record<string, string>[]>;
   attempts(ref: Ref): Promise<CollectionAttempt[]>;
+  latestObservations?(ref: Ref, to: string): Promise<NormalizedObservation[]>;
   latestCapacity?(ref: Ref, definition: MetricDefinition, to: string, revision: number): Promise<NormalizedObservation | null>;
   readObservationPage?(series: Series, from: string, to: string,
     options: { limit: number; after: { at: string; id: string } | null }): Promise<ObservationPageResult>;
@@ -54,8 +60,9 @@ export interface TemplateQueryView {
   releases: Array<{ id: string; version: string; digest: string }>;
   items: Array<{
     metric: { id: string; semantic_version: string };
-    source: { kind: 'collector'; collector_id: string };
+    source: { kind: 'collector'; collector_id: string } | { kind: 'derived'; derived_id: string };
     enabled: boolean;
+    interval_ms?: number;
     capability: { status: string } & Record<string, unknown>;
     release: { id: string; version: string; digest: string };
   }>;
@@ -71,6 +78,14 @@ export interface ConsumerMetric {
   series: Array<{ dimensions: Record<string, string>; buckets: SemanticBucket[] }>;
 }
 const failedAttempt = (a: CollectionAttempt) => Boolean(a.error) || ['failed', 'partial', 'cancelled'].includes(a.status);
+function collectionState(template: Resolved['metric_templates'][number] | undefined, enabled: boolean | undefined, attempt: CollectionAttempt | null) {
+  if (!template) return 'not_covered';
+  if (!template.enabled || !enabled) return 'disabled';
+  if (attempt?.error === 'permission_denied') return 'permission_denied';
+  if (template.capability.status === 'unsupported') return 'unsupported';
+  if (attempt && failedAttempt(attempt)) return 'temporary_failure';
+  return template.capability.status === 'unknown' ? 'capability_unknown' : 'available';
+}
 /** Keep each dependency's latest result before selecting the evidence for state. */
 function metricAttempt(definition: MetricDefinition, resolved: Resolved | undefined, revision: number | undefined,
   ref: Ref, attempts: CollectionAttempt[]): CollectionAttempt | null {
@@ -88,7 +103,8 @@ function metricAttempt(definition: MetricDefinition, resolved: Resolved | undefi
   visit(metricKey(definition));
   const latest = new Map<string, CollectionAttempt>();
   const ordered = attempts.filter(a => a.config_revision === revision && a.resource_id === String(ref.id)
-    && a.binding_id === refKey(ref) && collectors.has(a.collector_id))
+    && a.binding_id === refKey(ref) && collectors.has(a.collector_id)
+    && (!a.metrics || a.metrics.some(metric => visited.has(metricKey(metric)))))
     .sort((a, b) => b.started_at.localeCompare(a.started_at) || (b.ended_at ?? '').localeCompare(a.ended_at ?? '') || b.id.localeCompare(a.id));
   for (const attempt of ordered) if (!latest.has(attempt.collector_id)) latest.set(attempt.collector_id, attempt);
   const evidence = [...latest.values()];
@@ -111,13 +127,11 @@ export class MetricConsumerService {
     actor = await this.authorize(actor, ref);
     let effective: Awaited<ReturnType<PolicyService['effective']>> | null = null;
     let template: TemplateQueryView | null = null;
-    try { effective = await this.policy.effective(actor, ref); }
-    catch (e) {
-      if (e instanceof PolicyError && e.code === 'POLICY_NOT_FOUND') effective = null;
-      else if (e instanceof PolicyError && e.code === 'TEMPLATE_BINDING_UNSUPPORTED' && this.templateBindings) {
-        template = await this.templateBindings.read(ref);
-        if (!template) throw e;
-      } else throw e;
+    if (this.templateBindings) {
+      template = await this.templateBindings.read(ref);
+    } else {
+      try { effective = await this.policy.effective(actor, ref); }
+      catch (e) { if (!(e instanceof PolicyError && e.code === 'POLICY_NOT_FOUND')) throw e; }
     }
     const canonical = canonicalDefinitions.filter(d => d.resource_type === ref.type);
     const pin = effective?.resolved.plan.binding.package;
@@ -158,6 +172,42 @@ export class MetricConsumerService {
     await this.authorize(actor, ref);
     return result;
   }
+  async latest(actor: ActorContext, ref: Ref) {
+    actor = await this.authorize(actor, ref);
+    const now = this.clock(), catalog = await this.discover(actor, ref);
+    rule(this.store.latestObservations, 'LATEST_OBSERVATIONS_UNAVAILABLE', 503);
+    const [observations, attempts] = await Promise.all([this.store.latestObservations(ref, now), this.store.attempts(ref)]);
+    const effective = catalog.effective;
+    const active = new Map(effective?.resolved.metric_templates.map(template => [metricKey(template.metric), template]));
+    const byMetric = new Map<string, NormalizedObservation[]>();
+    for (const observation of observations) {
+      const key = metricKey(observation.metric);
+      const points = byMetric.get(key) ?? [];
+      points.push(observation);
+      byMetric.set(key, points);
+    }
+    const definitions = new Map([...catalog.definitions, ...this.registry.list().flatMap(release => release.extensions)]
+      .filter(definition => definition.resource_type === ref.type).map(definition => [metricKey(definition), definition]));
+    const settings = effective?.resolved.settings;
+    const metrics = [...new Set([...active.keys(), ...byMetric.keys()])].flatMap(key => {
+      const definition = definitions.get(key);
+      if (!definition) return [];
+      const timing = settings && metricTiming(settings, active.get(key)?.interval_ms);
+      const state = collectionState(active.get(key), settings?.enabled,
+        metricAttempt(definition, effective?.resolved, effective?.published_revision, ref, attempts));
+      const series = (byMetric.get(key) ?? []).map(point => ({
+        dimensions: point.dimensions, observed_at: point.observed_at, value: point.value, unit: point.unit,
+        quality: point.quality, accuracy: point.accuracy,
+        freshness: point.versions.config_revision === effective?.published_revision && timing
+          ? Date.parse(now) - Date.parse(point.observed_at) <= timing.stale_after_ms ? 'fresh' as const : 'stale' as const
+          : 'unknown' as const,
+      }));
+      return [{ definition, state, series }];
+    });
+    await this.authorize(actor, ref);
+    return { resource: ref, evaluated_at: now, metrics };
+  }
+
   async query(actor: ActorContext, input: unknown) {
     const q = ConsumerQuerySchema.parse(input), now = this.clock();
     actor = await this.authorize(actor, q.resource);
@@ -167,14 +217,19 @@ export class MetricConsumerService {
         .filter(d => d.resource_type === q.resource.type).map(d => [metricKey(d), d])).values()]
       : catalog.definitions;
     const settings = catalog.effective?.resolved.settings;
-    const interval = settings?.interval_ms ?? 60000;
-    const to = q.to ?? now, from = q.from ?? new Date(Date.parse(to) - interval).toISOString();
+    const to = q.to ?? now;
+    const maxWindowMs = (q.include_retained_trends ? MAX_HISTORY_CHART_DAYS : 31) * 86400000;
+    const windowMs = q.history ? settings?.interval_ms ?? 60000 : Math.min(maxWindowMs, Math.max(settings?.interval_ms ?? 60000,
+      ...(catalog.effective?.resolved.metric_templates.map(item => item.interval_ms ?? 0) ?? [])));
+    const from = q.from ?? new Date(Date.parse(to) - windowMs).toISOString();
     rule(Date.parse(from) < Date.parse(to) && Date.parse(to) <= Date.parse(now)
-      && Date.parse(to) - Date.parse(from) <= 31 * 86400000, 'QUERY_WINDOW');
-    const retained = q.history && this.store.historyMetrics ? await this.store.historyMetrics(q.resource, from, to) : null;
+      && Date.parse(to) - Date.parse(from) <= maxWindowMs, 'QUERY_WINDOW');
+    const bucketMs = q.bucket_ms ?? (q.history ? historySampling.interval_ms : windowMs);
+    rule(Math.ceil((Date.parse(to) - Date.parse(from)) / bucketMs) <= MAX_BUCKETS, 'QUERY_LIMIT_EXCEEDED');
+    const retained = q.history && !q.series && this.store.historyMetrics ? await this.store.historyMetrics(q.resource, from, to) : null;
     const visible = definitions.filter(d => !q.history || retained === null
       || catalog.definitions.some(c => metricKey(c) === metricKey(d)) || retained.some(r => metricKey(r) === metricKey(d)));
-    const ids = [...new Set(q.metric_ids ?? (q.view === 'core' ? catalog.profile.columns.map(c => c.metric.id)
+    const ids = [...new Set((q.series ? [q.series.metric.id] : q.metric_ids) ?? (q.view === 'core' ? catalog.profile.columns.map(c => c.metric.id)
       : visible.filter(d => q.view === 'all' || d.category === q.view).map(d => d.id)))];
     rule(ids.every(id => definitions.some(d => d.id === id)), 'UNKNOWN_METRIC');
     const attempts = await this.store.attempts(q.resource);
@@ -192,17 +247,22 @@ export class MetricConsumerService {
       return configurations.get(revision)!;
     };
     const metrics: ConsumerMetric[] = [];
-    for (const definition of ids.flatMap(id => visible.filter(d => d.id === id))) {
+    const selectedDefinitions = ids.flatMap(id => visible.filter(d => d.id === id
+      && (!q.series || d.semantic_version === q.series.metric.semantic_version)));
+    if (q.series) rule(selectedDefinitions.length === 1, 'UNKNOWN_METRIC');
+    for (const definition of selectedDefinitions) {
       const id = definition.id;
       const template = catalog.effective?.resolved.metric_templates.find(t => metricKey(t.metric) === metricKey(definition));
+      const timing = settings && metricTiming(settings, template?.interval_ms);
+      const metricWindowMs = Math.min(maxWindowMs, timing?.interval_ms ?? windowMs);
+      const metricFrom = !q.history && !q.from && timing ? new Date(Date.parse(to) - metricWindowMs).toISOString() : from;
+      const metricBucketMs = !q.history && !q.from && !q.bucket_ms ? metricWindowMs : bucketMs;
       const attempt = metricAttempt(definition, catalog.effective?.resolved, catalog.effective?.published_revision, q.resource, attempts);
       // The rate query supports byte/count units. Retain other cumulative evidence
       // (e.g. block I/O milliseconds) without making one unavailable operation fail
       // the whole resource or relabelling its value as a byte/count rate.
-      const state = definition.kind === 'counter' && (!definition.aggregation.time.includes('rate') || !['By','count'].includes(definition.unit)) ? 'query_operation_unavailable' : !template ? 'not_covered' : !template.enabled || !settings?.enabled ? 'disabled'
-        : attempt?.error === 'permission_denied' ? 'permission_denied'
-        : template.capability.status === 'unsupported' ? 'unsupported'
-        : attempt && failedAttempt(attempt) ? 'temporary_failure' : template.capability.status === 'unknown' ? 'capability_unknown' : 'available';
+      const state = !q.series && definition.kind === 'counter' && (!definition.aggregation.time.includes('rate') || !['By','count'].includes(definition.unit))
+        ? 'query_operation_unavailable' : collectionState(template, settings?.enabled, attempt);
       const metric: ConsumerMetric = { definition, capability: template?.capability ?? null,
         enabled: Boolean(template?.enabled && settings?.enabled), state, attempt, series: [] };
       if (q.latest_capacity && catalog.profile.columns.some(c => c.key === 'database_size' && c.metric.id === id)) {
@@ -215,22 +275,40 @@ export class MetricConsumerService {
             metric.observed_at = point.observed_at;
             metric.series = [{ dimensions: point.dimensions, buckets: aggregate({ definition, series: [series], from: point.observed_at,
               to: new Date(Date.parse(point.observed_at) + 1).toISOString(), now, interval_ms: 1, bucket_ms: 1,
-              max_gap_ms: settings!.max_counter_gap_ms, stale_after_ms: settings!.stale_after_ms, mode: 'last', space: 'none' }, [[point]]) }];
+              max_gap_ms: timing!.max_counter_gap_ms, stale_after_ms: timing!.stale_after_ms, mode: 'last', space: 'none' }, [[point]]) }];
           }
         }
         metrics.push(metric);
         continue;
       }
       if (state !== 'query_operation_unavailable' && (q.history && (retained === null || retained.some(r => metricKey(r) === metricKey(definition))) || template && !['unsupported', 'permission_denied', 'disabled'].includes(state))) {
-        const dimensions = definition.dimensions.keys.some(k => k.required)
-          ? await (q.history && this.store.historyDimensions ? this.store.historyDimensions.bind(this.store) : this.store.dimensions.bind(this.store))(q.resource, definition, from, to) : [{}];
+        if (q.series) {
+          try { validateDimensions(q.series.dimensions, definition); } catch { throw new PolicyError('QUERY_INPUT_INVALID', 400); }
+          rule(['gauge', 'counter'].includes(definition.kind) && definition.aggregation.time.includes('last'), 'QUERY_INPUT_INVALID');
+        }
+        const dimensions = q.series ? [q.series.dimensions] : definition.dimensions.keys.some(k => k.required)
+          ? await (q.history && this.store.historyDimensions ? this.store.historyDimensions.bind(this.store) : this.store.dimensions.bind(this.store))(q.resource, definition, metricFrom, to) : [{}];
         rule(dimensions.length <= 100, 'QUERY_SERIES_LIMIT');
         for (const dimension of dimensions) {
           const series: Series = { resource_type: q.resource.type, resource_id: String(q.resource.id),
             metric: { id, semantic_version: definition.semantic_version }, dimensions: dimension };
-          const request = { definition, series: [series], from, to, now,
-            interval_ms: q.history ? historySampling.interval_ms : interval, max_gap_ms: q.history ? historySampling.max_gap_ms : settings!.max_counter_gap_ms, stale_after_ms: q.history ? historySampling.max_gap_ms : settings!.stale_after_ms,
-            bucket_ms: q.bucket_ms ?? (q.history ? historySampling.interval_ms : interval), mode: definition.kind === 'counter' ? 'rate' as const : 'last' as const, space: 'none' as const };
+          // An explicit chart displays samples, including sparse buckets. Keep
+          // coverage and partial quality in the response for those buckets.
+          const plotDefinition = q.series ? { ...definition, aggregation: { ...definition.aggregation, min_coverage: 0 } } : definition;
+          const request = { definition: plotDefinition, series: [series], from: metricFrom, to, now,
+            interval_ms: q.history ? historySampling.interval_ms : timing!.interval_ms,
+            max_gap_ms: q.history ? historySampling.max_gap_ms : timing!.max_counter_gap_ms,
+            stale_after_ms: q.history ? historySampling.max_gap_ms : timing!.stale_after_ms,
+            bucket_ms: metricBucketMs, sample_last: Boolean(q.series),
+            mode: !q.series && definition.kind === 'counter' ? 'rate' as const : 'last' as const, space: 'none' as const };
+          if (q.include_retained_trends) {
+            rule(['float64', 'uint64', 'int64'].includes(definition.value_type), 'QUERY_INPUT_INVALID');
+            rule(this.store.readHistoryChart, 'METRIC_STORE_UNAVAILABLE', 503);
+            const chart = await this.store.readHistoryChart(series, metricFrom, to, new Date(now));
+            metric.series.push({ dimensions: dimension, buckets: await aggregateHistoryChart(request, chart,
+              this.configurationAt ? configurationAt : undefined) });
+            continue;
+          }
           const buckets = q.history && this.configurationAt
             ? await aggregateHistory(request, await (queryStore.readWindow ? queryStore.readWindow(series, from, to) : queryStore.queryWindow(series, from, to)), configurationAt)
             : await service.query(request);
@@ -240,7 +318,7 @@ export class MetricConsumerService {
       metrics.push(metric);
     }
     const revisions = [...new Set(metrics.flatMap(m => m.series.flatMap(s => s.buckets.flatMap(b => b.sources.map(s => s.versions.config_revision)))))];
-    const context = q.history && this.store.historyContext
+    const context = q.history && !q.series && this.store.historyContext
       ? await this.store.historyContext(q.resource, from, to, revisions, hasPermission(new Set(actor.permissions), 'alert:view')) : undefined;
     if (context) context.configurations = await Promise.all(configurations.values());
     // Recheck access after all storage waits, including the last page/context read.

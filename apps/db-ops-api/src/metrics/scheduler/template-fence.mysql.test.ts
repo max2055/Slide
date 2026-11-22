@@ -48,7 +48,7 @@ const plan = (revision: number) => ({
     estimated_series_upper_bound: 1, max_series_per_resource: 100, requests_per_hour_estimate: 60 },
 });
 
-/** A stored `templates-v1` row the real codec accepts; nothing about it is mocked. */
+/** A stored `template-pending` row the real codec accepts; nothing about it is mocked. */
 function templatePayload(version = 1): string {
   const binding: ResourceBindingCandidate = {
     resource: { ...RESOURCE }, package: null, group_id: null, overrides: {},
@@ -106,9 +106,10 @@ describe.skipIf(!port)('template execution fence on isolated MySQL', () => {
   };
 
   beforeAll(async () => {
-    root = mysql.createPool({ host: '127.0.0.1', timezone: 'Z', port, user: 'root', password: '' });
+    const password = process.env.METRICS_TEST_MYSQL_PASSWORD ?? '';
+    root = mysql.createPool({ host: '127.0.0.1', timezone: 'Z', port, user: 'root', password });
     await root.query(`CREATE DATABASE ${database}`);
-    pool = mysql.createPool({ host: '127.0.0.1', timezone: 'Z', port, user: 'root', password: '', database, connectionLimit: 8 });
+    pool = mysql.createPool({ host: '127.0.0.1', timezone: 'Z', port, user: 'root', password, database, connectionLimit: 8 });
     await new MigrationRunner(pool as unknown as MigrationPool).run();
     // MAX-245's formal discovery writer resolves every immutable pin. Seed the
     // real metadata-only version behind this deliberately empty cadence plan.

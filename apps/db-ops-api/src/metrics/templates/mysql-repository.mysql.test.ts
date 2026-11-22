@@ -169,7 +169,7 @@ describe.skipIf(!enabled)('MAX-237 T2B MySQL template repository', () => {
   beforeEach(async () => {
     for (const table of [
       'metric_template_item_versions', 'metric_template_items', 'metric_template_versions',
-      'metric_template_drafts', 'metric_templates_v2',
+      'metric_template_drafts', 'monitoring_templates',
     ]) {
       await poolA.query(`DELETE FROM ${table}`);
     }
@@ -184,7 +184,7 @@ describe.skipIf(!enabled)('MAX-237 T2B MySQL template repository', () => {
     for (const table of tables) expect(table.TABLE_COLLATION).toBe('utf8mb4_bin');
     const [columns] = await poolA.query<any[]>(
       `SELECT COLUMN_NAME, COLLATION_NAME FROM information_schema.COLUMNS
-        WHERE TABLE_SCHEMA = ? AND TABLE_NAME = 'metric_templates_v2'
+        WHERE TABLE_SCHEMA = ? AND TABLE_NAME = 'monitoring_templates'
           AND COLUMN_NAME IN ('template_id', 'name') ORDER BY COLUMN_NAME`,
       [database],
     );
@@ -196,7 +196,7 @@ describe.skipIf(!enabled)('MAX-237 T2B MySQL template repository', () => {
       `SELECT TABLE_NAME, COLUMN_NAME, COLUMN_TYPE, CHARACTER_SET_NAME, COLLATION_NAME
          FROM information_schema.COLUMNS
         WHERE TABLE_SCHEMA = ? AND (
-          (TABLE_NAME = 'metric_templates_v2' AND COLUMN_NAME IN ('created_by', 'created_at', 'updated_at'))
+          (TABLE_NAME = 'monitoring_templates' AND COLUMN_NAME IN ('created_by', 'created_at', 'updated_at'))
           OR (TABLE_NAME = 'metric_template_drafts' AND COLUMN_NAME IN ('updated_by', 'updated_at'))
           OR (TABLE_NAME = 'metric_template_versions' AND COLUMN_NAME IN ('published_at', 'retired_at'))
           OR (TABLE_NAME = 'metric_template_items' AND COLUMN_NAME = 'created_at')
@@ -206,7 +206,7 @@ describe.skipIf(!enabled)('MAX-237 T2B MySQL template repository', () => {
       [database],
     );
     const byColumn = new Map(candidate.map(column => [`${column.TABLE_NAME}.${column.COLUMN_NAME}`, column]));
-    expect(byColumn.get('metric_templates_v2.created_by')).toMatchObject({ COLUMN_TYPE: 'bigint unsigned', COLLATION_NAME: null });
+    expect(byColumn.get('monitoring_templates.created_by')).toMatchObject({ COLUMN_TYPE: 'bigint unsigned', COLLATION_NAME: null });
     expect(byColumn.get('metric_template_drafts.updated_by')).toMatchObject({ COLUMN_TYPE: 'bigint unsigned', COLLATION_NAME: null });
     expect(byColumn.get('metric_template_item_versions.canonical_metric_id')).toMatchObject({
       COLUMN_TYPE: 'longtext', CHARACTER_SET_NAME: 'ascii', COLLATION_NAME: 'ascii_bin',
@@ -215,7 +215,7 @@ describe.skipIf(!enabled)('MAX-237 T2B MySQL template repository', () => {
       COLUMN_TYPE: 'longtext', CHARACTER_SET_NAME: 'ascii', COLLATION_NAME: 'ascii_bin',
     });
     for (const key of [
-      'metric_templates_v2.created_at', 'metric_templates_v2.updated_at', 'metric_template_drafts.updated_at',
+      'monitoring_templates.created_at', 'monitoring_templates.updated_at', 'metric_template_drafts.updated_at',
       'metric_template_versions.published_at', 'metric_template_versions.retired_at', 'metric_template_items.created_at',
     ]) {
       expect(byColumn.get(key)).toMatchObject({
@@ -469,7 +469,7 @@ describe.skipIf(!enabled)('MAX-237 T2B MySQL template repository', () => {
     const inner = newPool();
     try {
       const faulty = new MySqlTemplateRepository(new FaultyPool(inner, {
-        execute: sql => (sql.startsWith('UPDATE metric_templates_v2') ? 'throw' : undefined),
+        execute: sql => (sql.startsWith('UPDATE monitoring_templates') ? 'throw' : undefined),
       }));
       await expect(faulty.publish(command())).rejects.toThrow(/injected failure/);
       expect(await repositoryA.listVersions('tpl-a')).toEqual([]);
@@ -530,7 +530,7 @@ describe.skipIf(!enabled)('MAX-237 T2B MySQL template repository', () => {
 
       const counts = async () => {
         const [rows] = await observer.query<any[]>(
-          'SELECT (SELECT COUNT(*) FROM metric_templates_v2 WHERE template_id = ?) AS parents,'
+          'SELECT (SELECT COUNT(*) FROM monitoring_templates WHERE template_id = ?) AS parents,'
           + ' (SELECT COUNT(*) FROM metric_template_drafts WHERE template_id = ?) AS drafts',
           ['tpl-tx-rollback', 'tpl-tx-rollback'],
         );
@@ -573,7 +573,7 @@ describe.skipIf(!enabled)('MAX-237 T2B MySQL template repository', () => {
       await reread.create(template('tpl-tx-unknown-next'), draft('tpl-tx-unknown-next'));
       expect(await reread.getTemplate('tpl-tx-unknown')).toBeNull();
       const [rows] = await observer.query<any[]>(
-        'SELECT (SELECT COUNT(*) FROM metric_templates_v2 WHERE template_id = ?) AS parents,'
+        'SELECT (SELECT COUNT(*) FROM monitoring_templates WHERE template_id = ?) AS parents,'
         + ' (SELECT COUNT(*) FROM metric_template_drafts WHERE template_id = ?) AS drafts',
         ['tpl-tx-unknown', 'tpl-tx-unknown'],
       );
@@ -660,7 +660,7 @@ describe.skipIf(!enabled)('MAX-237 T2B MySQL template repository', () => {
     expect(stored).toMatchObject({ published_version: null, updated_by: null });
     expect(stored!.updated_at).toBe('2026-10-27T00:00:00.120Z');
     const [raw] = await poolA.query<any[]>(
-      'SELECT created_by, current_published_version, created_at FROM metric_templates_v2 WHERE template_id = ?',
+      'SELECT created_by, current_published_version, created_at FROM monitoring_templates WHERE template_id = ?',
       ['tpl-null'],
     );
     expect(raw[0].created_by).toBeNull();
@@ -692,7 +692,7 @@ describe.skipIf(!enabled)('MAX-237 T2B MySQL template repository', () => {
 
     // The bigNumberStrings pool renders BIGINT as a string; the adapter maps it.
     const [raw] = await poolA.query<any[]>(
-      'SELECT created_by FROM metric_templates_v2 WHERE template_id = ?', ['tpl-actor-big'],
+      'SELECT created_by FROM monitoring_templates WHERE template_id = ?', ['tpl-actor-big'],
     );
     expect(raw[0].created_by).toBe('2147483648');
 
@@ -703,7 +703,7 @@ describe.skipIf(!enabled)('MAX-237 T2B MySQL template repository', () => {
 
     // A row written outside the adapter beyond the safe range is refused on read.
     await poolA.query(
-      `INSERT INTO metric_templates_v2
+      `INSERT INTO monitoring_templates
         (template_id, name, status, current_published_version, revision, created_by, created_at, updated_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
       ['tpl-actor-unsafe', 'Unsafe', 'draft', null, 0, '9007199254740992', AT, AT],
@@ -782,7 +782,7 @@ describe.skipIf(!enabled)('MAX-237 T2B MySQL template repository', () => {
       expect(record!.created_at).toBe(canonical);
       expect(record!.updated_at).toBe(canonical);
       const [raw] = await poolA.query<any[]>(
-        'SELECT created_at, updated_at FROM metric_templates_v2 WHERE template_id = ?', [id],
+        'SELECT created_at, updated_at FROM monitoring_templates WHERE template_id = ?', [id],
       );
       expect(raw[0]).toMatchObject({ created_at: canonical, updated_at: canonical });
     }
@@ -821,7 +821,7 @@ describe.skipIf(!enabled)('MAX-237 T2B MySQL template repository', () => {
 
   it('still refuses version and revision increments at the INT ceiling', async () => {
     await poolA.query(
-      `INSERT INTO metric_templates_v2
+      `INSERT INTO monitoring_templates
         (template_id, name, status, current_published_version, revision, created_by, created_at, updated_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
       ['tpl-max', 'Max', 'draft', null, 2147483647, 1, AT, AT],

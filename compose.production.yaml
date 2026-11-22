@@ -21,7 +21,9 @@ services:
       - ./deploy/nginx-tls.conf:/etc/nginx/conf.d/default.conf:ro
       - ${SLIDE_TLS_CERT:?SLIDE_TLS_CERT is required}:/etc/nginx/tls/tls.crt:ro
       - ${SLIDE_TLS_KEY:?SLIDE_TLS_KEY is required}:/etc/nginx/tls/tls.key:ro
-    networks: [edge]
+    networks:
+      edge:
+        ipv4_address: ${SLIDE_TLS_EDGE_IPV4:-172.30.254.2}
 
   prompt-storage-init:
     build:
@@ -62,7 +64,9 @@ services:
       - /tmp:rw,noexec,nosuid,nodev,size=16m
       - /var/cache/nginx:rw,noexec,nosuid,nodev,size=16m
       - /var/run:rw,noexec,nosuid,nodev,size=1m
-    networks: [edge]
+    networks:
+      edge:
+        ipv4_address: ${SLIDE_FRONTEND_PROXY_IPV4:-172.30.254.3}
 
   api:
     build:
@@ -79,6 +83,7 @@ services:
     environment:
       NODE_ENV: production
       FRONTEND_URL: ${FRONTEND_URL:-http://frontend:8080}
+      API_TRUSTED_PROXY_IPS: ${SLIDE_FRONTEND_PROXY_IPV4:-172.30.254.3},${SLIDE_TLS_EDGE_IPV4:-172.30.254.2}
       PORT: "3000"
       WORKFLOW_CONCURRENCY: ${WORKFLOW_CONCURRENCY:-3}
       ANALYSIS_DISPATCH_ENABLED: ${ANALYSIS_DISPATCH_ENABLED:-true}
@@ -202,7 +207,11 @@ services:
       start_period: 30s
 
 networks:
-  edge: {}
+  edge:
+    ipam:
+      config:
+        - subnet: ${SLIDE_EDGE_SUBNET:-172.30.254.0/24}
+          ip_range: ${SLIDE_EDGE_DYNAMIC_RANGE:-172.30.254.128/25}
   control:
     internal: true
   data:

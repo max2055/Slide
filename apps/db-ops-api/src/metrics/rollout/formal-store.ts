@@ -1,8 +1,11 @@
-import type { Pool, RowDataPacket } from 'mysql2/promise';
+import type { Pool, PoolConnection, RowDataPacket } from 'mysql2/promise';
 import type { MetricDefinition, NormalizedObservation } from '../../contracts/metrics/index.js';
 import { RefSchema, type Ref } from '../policy/model.js';
 import { OBSERVATION_PAGE_MAX_LIMIT, type ObservationPageOptions, type ObservationPageResult } from '../observations/page.js';
 import { MysqlMetricStorage, seriesHash, type Series } from '../storage.js';
+import { configuredRetention, itemHistoryVisible, itemTrendVisible } from '../retention.js';
+import { RetainedTrendStore } from '../consumers/retained-trends.js';
+import { MAX_HISTORY_CHART_DAYS } from '../query.js';
 
 const decode = <T>(v: T | string): T => typeof v === 'string' ? JSON.parse(v) : v;
 const sqlTime = (at: string) => new Date(at).toISOString().slice(0, 23).replace('T', ' ');
@@ -34,7 +37,10 @@ export const historySelection = `${historical}
         AND JSON_EXTRACT(b.payload, '$.binding.revision') <> r.published_revision))
     OR EXISTS (SELECT 1 FROM metric_source_acceptance a
       WHERE a.resource_key = CONCAT(r.resource_type, ':', r.resource_id)
-        AND a.revision = JSON_EXTRACT(o.payload, '$.versions.config_revision') AND a.generation = p.generation))`;
+        AND a.revision = JSON_EXTRACT(o.payload, '$.versions.config_revision')
+        AND IF(JSON_EXTRACT(a.evidence, '$.publications') IS NULL, a.generation = p.generation,
+          JSON_EXTRACT(a.evidence, '$.accepted_generation') = p.generation
+          OR JSON_CONTAINS(JSON_EXTRACT(a.evidence, CONCAT('$.publications."', p.generation, '"')), JSON_QUOTE(p.series_hash)))))`;
 const history = historySelection;
 
 /** Bounded reads: `page_rows` caps one statement, `max_rows` caps the whole series window. */
@@ -62,6 +68,20 @@ export class MysqlFormalMetricStore {
   }
 
   inventory(type: Series['resource_type'], id: string) { return new MysqlMetricStorage(this.pool).inventory(type, id); }
+
+  /** One accepted observation per known series, independent of any chart window. */
+  async latestObservations(ref: Ref, to: string): Promise<NormalizedObservation[]> {
+    const [rows] = await this.pool.execute<RowDataPacket[]>(`SELECT /*+ MAX_EXECUTION_TIME(10000) */ latest.payload
+      FROM metric_rollout candidate
+      JOIN LATERAL (
+        SELECT o.payload ${history} AND p.series_hash = candidate.series_hash AND p.observed_at <= ?
+        ORDER BY p.observed_at DESC, p.observation_id DESC LIMIT 1
+      ) latest ON TRUE
+      WHERE candidate.resource_type = ? AND candidate.resource_id = ? LIMIT 10001`,
+    [sqlTime(to), ref.type, String(ref.id)]);
+    if (rows.length > 10000) throw new Error('QUERY_LIMIT_EXCEEDED');
+    return rows.map(row => decode<NormalizedObservation>(row.payload));
+  }
 
   async baselineSamples(ref: Ref, definition: MetricDefinition, revision: number, from: string, to: string): Promise<NormalizedObservation[]> {
     const [rows] = await this.pool.execute<RowDataPacket[]>(`SELECT o.payload ${formal}
@@ -119,8 +139,27 @@ export class MysqlFormalMetricStore {
    * returning a silently truncated window.
    */
   readHistoryWindow(series: Series, from: string, to: string) { return this.readWindow(series, from, to, true); }
-  readStudyWindow(series: Series, from: string, to: string) { return this.readWindow(series, from, to, true, 366); }
-  async readWindow(series: Series, from: string, to: string, historicalRead = false, maxDays = 31): Promise<NormalizedObservation[]> {
+  readStudyWindow(series: Series, from: string, to: string, trendAt?: Date) {
+    return this.readWindow(series, from, to, true, 366, trendAt);
+  }
+  readHistoryChart(series: Series, from: string, to: string, now: Date) {
+    return this.withWindow(series, from, to, MAX_HISTORY_CHART_DAYS, async (connection, key) => {
+      // Both reads use the same snapshot as pruning can move a point to trends at any time.
+      const policy = configuredRetention();
+      const { points, trendOnly } = await this.readWindowRows(connection, key, from, to, true, MAX_HISTORY_CHART_DAYS,
+        itemHistoryVisible(now), itemTrendVisible(now, policy));
+      const archive = new RetainedTrendStore(connection, () => now.getTime());
+      return archive.readChart(series, from, to, policy, points, trendOnly);
+    });
+  }
+  async readWindow(series: Series, from: string, to: string, historicalRead = false, maxDays = 31,
+    trendAt?: Date): Promise<NormalizedObservation[]> {
+    const visibility = trendAt ? itemTrendVisible(trendAt) : historicalRead ? itemHistoryVisible(new Date()) : null;
+    return this.withWindow(series, from, to, maxDays, async (connection, key) =>
+      (await this.readWindowRows(connection, key, from, to, historicalRead, maxDays, visibility)).points);
+  }
+  private async withWindow<T>(series: Series, from: string, to: string, maxDays: number,
+    read: (connection: PoolConnection, key: string) => Promise<T>): Promise<T> {
     const { page_rows: pageRows, max_rows: maxRows } = this.limits;
     if (!Number.isInteger(pageRows) || pageRows < 1 || !Number.isInteger(maxRows) || maxRows < pageRows
       || !Number.isFinite(Date.parse(from)) || !Number.isFinite(Date.parse(to)) || Date.parse(to) <= Date.parse(from)
@@ -129,36 +168,53 @@ export class MysqlFormalMetricStore {
     // Same consistent snapshot as queryWindow, held across every page.
     const c = await this.pool.getConnection();
     try {
+      await c.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ');
       await c.beginTransaction();
       await c.execute<RowDataPacket[]>('SELECT read_mode, published_revision, applied_revision FROM metric_rollout WHERE series_hash = ? FOR UPDATE', [key]);
-      const base = `SELECT ${maxDays>31?'/*+ MAX_EXECUTION_TIME(10000) */ ':''}o.payload, p.observation_id AS publication_id ${historicalRead ? history : formal} AND p.series_hash = ?`;
-      const [prior] = await c.execute<RowDataPacket[]>(`${base} AND p.observed_at < ?
-        ORDER BY p.observed_at DESC, p.observation_id DESC LIMIT 1`, [key, sqlTime(from)]);
-      const rows: NormalizedObservation[] = [];
-      const deadline = maxDays>31 ? Date.now()+30000 : Infinity;
-      let cursor: { at: string; id: string } | null = null;
-      for (;;) {
-        if(Date.now()>deadline)throw new Error('QUERY_LIMIT_EXCEEDED');
-        const page = cursor
-          ? (await c.execute<RowDataPacket[]>(`${base} AND p.observed_at >= ? AND p.observed_at < ?
-              AND (p.observed_at > ? OR (p.observed_at = ? AND p.observation_id > ?))
-              ORDER BY p.observed_at, p.observation_id LIMIT ${pageRows}`,
-            [key, sqlTime(from), sqlTime(to), cursor.at, cursor.at, cursor.id]))[0]
-          : (await c.execute<RowDataPacket[]>(`${base} AND p.observed_at >= ? AND p.observed_at < ?
-              ORDER BY p.observed_at, p.observation_id LIMIT ${pageRows}`,
-            [key, sqlTime(from), sqlTime(to)]))[0];
-        const decoded = page.map(r => decode<NormalizedObservation>(r.payload));
-        rows.push(...decoded);
-        if (rows.length > maxRows) throw new Error('QUERY_LIMIT_EXCEEDED');
-        if (page.length < pageRows) break;
-        const last = decoded[decoded.length - 1];
-        cursor = { at: sqlTime(last.observed_at), id: String(page[page.length - 1].publication_id) };
-      }
-      const [next] = await c.execute<RowDataPacket[]>(`${base} AND p.observed_at >= ?
-        ORDER BY p.observed_at, p.observation_id DESC LIMIT 1`, [key, sqlTime(to)]);
+      const result = await read(c, key);
       await c.commit();
-      return [...prior.map(r => decode<NormalizedObservation>(r.payload)), ...rows, ...next.map(r => decode<NormalizedObservation>(r.payload))];
+      return result;
     } catch (error) { await c.rollback(); throw error; } finally { c.release(); }
+  }
+  private async readWindowRows(c: PoolConnection, key: string, from: string, to: string, historicalRead: boolean,
+    maxDays: number, visibility: { sql: string; params: (string | number)[] } | null,
+    trendVisibility?: { sql: string; params: (string | number)[] }) {
+    const { page_rows: pageRows, max_rows: maxRows } = this.limits;
+    const chart = visibility && trendVisibility;
+    const detail = visibility ? ` AND ${visibility.sql}` : '';
+    const predicate = chart ? ` AND ((${visibility.sql}) OR (${chart.sql}))` : detail;
+    const projection = chart ? `, (${visibility.sql}) AS history_visible` : '';
+    const params = [...(chart ? visibility.params : []), key, ...(visibility?.params ?? []), ...(chart?.params ?? [])];
+    const base = `SELECT ${maxDays>31?'/*+ MAX_EXECUTION_TIME(10000) */ ':''}o.payload, p.observation_id AS publication_id${projection}
+      ${historicalRead ? history : formal} AND p.series_hash = ?${predicate}`;
+    const [prior] = chart ? [[]] : await c.execute<RowDataPacket[]>(`${base} AND p.observed_at < ?
+      ORDER BY p.observed_at DESC, p.observation_id DESC LIMIT 1`, [...params, sqlTime(from)]);
+    const points: NormalizedObservation[] = prior.map(r => decode<NormalizedObservation>(r.payload));
+    const trendOnly: NormalizedObservation[] = [];
+    const deadline = maxDays>31 ? Date.now()+30000 : Infinity;
+    let cursor: { at: string; id: string } | null = null;
+    for (;;) {
+      if(Date.now()>deadline)throw new Error('QUERY_LIMIT_EXCEEDED');
+      const page = cursor
+        ? (await c.execute<RowDataPacket[]>(`${base} AND p.observed_at >= ? AND p.observed_at < ?
+            AND (p.observed_at > ? OR (p.observed_at = ? AND p.observation_id > ?))
+            ORDER BY p.observed_at, p.observation_id LIMIT ${pageRows}`,
+          [...params, sqlTime(from), sqlTime(to), cursor.at, cursor.at, cursor.id]))[0]
+        : (await c.execute<RowDataPacket[]>(`${base} AND p.observed_at >= ? AND p.observed_at < ?
+            ORDER BY p.observed_at, p.observation_id LIMIT ${pageRows}`,
+          [...params, sqlTime(from), sqlTime(to)]))[0];
+      for (const row of page) {
+        (row.history_visible === 0 ? trendOnly : points).push(decode<NormalizedObservation>(row.payload));
+      }
+      if (points.length - prior.length + trendOnly.length > maxRows) throw new Error('QUERY_LIMIT_EXCEEDED');
+      if (page.length < pageRows) break;
+      const last = page[page.length - 1];
+      cursor = { at: sqlTime(decode<NormalizedObservation>(last.payload).observed_at), id: String(last.publication_id) };
+    }
+    const [next] = chart ? [[]] : await c.execute<RowDataPacket[]>(`${base} AND p.observed_at >= ?
+      ORDER BY p.observed_at, p.observation_id DESC LIMIT 1`, [...params, sqlTime(to)]);
+    points.push(...next.map(r => decode<NormalizedObservation>(r.payload)));
+    return { points, trendOnly };
   }
 
   /**
@@ -180,20 +236,22 @@ export class MysqlFormalMetricStore {
     try {
       await c.beginTransaction();
       await c.execute<RowDataPacket[]>('SELECT read_mode, published_revision, applied_revision FROM metric_rollout WHERE series_hash = ? FOR UPDATE', [key]);
+      const visibility = itemHistoryVisible(new Date());
+      const params = [key, sqlTime(from), sqlTime(to), ...visibility.params];
       const [counted] = await c.execute<RowDataPacket[]>(`SELECT COUNT(*) AS total ${history}
-        AND p.series_hash = ? AND p.observed_at >= ? AND p.observed_at < ?`, [key, sqlTime(from), sqlTime(to)]);
+        AND p.series_hash = ? AND p.observed_at >= ? AND p.observed_at < ? AND ${visibility.sql}`, params);
       const total = Number(counted[0]?.total);
       if (!Number.isSafeInteger(total) || total < 0) throw new Error('ROLLOUT_QUERY_COUNT');
       if (total > maxRows) throw new Error('QUERY_LIMIT_EXCEEDED');
       const base = `SELECT o.payload, p.observation_id AS publication_id ${history} AND p.series_hash = ?
-        AND p.observed_at >= ? AND p.observed_at < ?`;
+        AND p.observed_at >= ? AND p.observed_at < ? AND ${visibility.sql}`;
       const [page] = after
         ? await c.execute<RowDataPacket[]>(`${base}
             AND (p.observed_at > ? OR (p.observed_at = ? AND p.observation_id > ?))
             ORDER BY p.observed_at, p.observation_id LIMIT ${limit + 1}`,
-          [key, sqlTime(from), sqlTime(to), after.at, after.at, after.id])
+          [...params, after.at, after.at, after.id])
         : await c.execute<RowDataPacket[]>(`${base}
-            ORDER BY p.observed_at, p.observation_id LIMIT ${limit + 1}`, [key, sqlTime(from), sqlTime(to)]);
+            ORDER BY p.observed_at, p.observation_id LIMIT ${limit + 1}`, params);
       const rows = page.slice(0, limit), hasMore = page.length > limit;
       const observations = rows.map(r => decode<NormalizedObservation>(r.payload));
       const last = observations.at(-1);

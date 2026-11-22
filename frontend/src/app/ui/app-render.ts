@@ -863,7 +863,7 @@ export function renderApp(state: AppViewState) {
           ? html`<reports-page></reports-page>`
           : nothing}
         ${state.tab === "metric-registry"
-          ? html`<metric-settings view="catalog"></metric-settings>`
+          ? html`<metric-settings></metric-settings>`
           : nothing}
         ${state.tab === "events"
           ? html`<event-center-page .permissions=${state.userPermissions ?? loadPermissionsFromStorage()}></event-center-page>`

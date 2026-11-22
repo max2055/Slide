@@ -3,6 +3,11 @@ import type { TemplateDraftAggregate, TemplateItemVersion } from './model.js';
 import { TemplateError } from './errors.js';
 import { stable } from '../packages/model.js';
 
+export function mergeTemplateTriggers(parent: TemplateDraftAggregate['triggers'], local: TemplateDraftAggregate['triggers']) {
+  const byKey = new Map([...parent, ...local].map(ref => [`${ref.rule_id}\u0000${ref.scope}`, ref]));
+  return [...byKey.keys()].sort().map(key => byKey.get(key)!);
+}
+
 /** Immutable single-parent snapshots, at most three inheritance edges. No runtime engine. */
 export async function inheritTemplate(
   repository: TemplateRepository,
@@ -85,11 +90,7 @@ export async function inheritTemplate(
         discovery_rules: merge(base?.aggregate.discovery_rules ?? [], draft.discovery_rules ?? [], v => v.rule_id),
       } : {}),
       items: merge(base?.aggregate.items ?? [], draft.items, (v) => v.item_id),
-      triggers: merge(
-        base?.aggregate.triggers ?? [],
-        draft.triggers,
-        (v) => `${v.rule_id}\u0000${v.scope}`,
-      ),
+      triggers: mergeTemplateTriggers(base?.aggregate.triggers ?? [], draft.triggers),
       parameters: {
         schema: { ...parent.schema, ...draft.parameters.schema },
         defaults: { ...parent.defaults, ...draft.parameters.defaults },

@@ -219,6 +219,7 @@ test('failed saves keep visible drafts; successful retry sends postmortem; filte
   await page.getByRole('button', { name: '提交复盘' }).click();
   await expect(page.getByRole('button', { name: '提交复盘' })).toHaveCount(0);
   expect(payload).toEqual({ postmortem: '完整复盘内容' });
+  await page.getByRole('button', { name: '返回事件列表', exact: true }).click();
   await expect(page.getByText('搜索和严重度仅筛选本页；分页总数为当前状态的全部事件数。')).toBeVisible();
 });
 

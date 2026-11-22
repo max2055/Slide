@@ -1,4 +1,5 @@
 import { inheritTemplate } from './inheritance.js';
+import { discoveryPublication } from './discovery.js';
 /**
  * MAX-237 / T1 — internal template domain service (drafts, immutable versions,
  * registered-metric selection and the explicit mapping that joins them).
@@ -312,7 +313,7 @@ export class MetricTemplateService {
     copiedAggregate.base = null;
     // Every copied item starts at version 1 under the new template, so the draft
     // must reference the new numbering instead of the source's version numbers.
-    copiedAggregate.items = sourceAggregate.items.map(ref => ({ item_id: ref.item_id, version: 1 }));
+    copiedAggregate.items = sourceAggregate.items.map(ref => ({ ...ref, version: 1 }));
     const template = {
       template_id: newId,
       name,
@@ -379,13 +380,14 @@ export class MetricTemplateService {
       if (!first || prototypes.some(item => !item || item.collector_ref.implementation_id !== first.collector_ref.implementation_id
         || item.collector_ref.package_release !== first.collector_ref.package_release)) throw new TemplateError('TEMPLATE_MAPPING_MISSING');
       const identity = first.collector_ref.implementation_id === 'builtin:linux.interface-discovery.v1' ? 'interface_epoch'
-        : first.collector_ref.implementation_id === 'builtin:linux.filesystem-discovery.v1' ? 'filesystem_epoch'
+        : ['builtin:linux.filesystem-discovery.v1', 'builtin:linux.filesystem-discovery.v2'].includes(first.collector_ref.implementation_id) ? 'filesystem_epoch'
         : first.collector_ref.implementation_id === 'builtin:mysql.innodb-discovery.v1' ? 'table_epoch' : null;
       if (identity && (discovery.identity_dimensions.length !== 1 || discovery.identity_dimensions[0] !== identity)) throw new TemplateError('TEMPLATE_MAPPING_MISSING');
       for (const item of prototypes) {
         const candidate = this.catalog.autofill({ package: parsePackageReleaseRef(item!.collector_ref.package_release), metric: item!.canonical_metric });
-        if (!candidate.dimensions.length || discovery.identity_dimensions.some(key => !candidate.dimensions.some(d => d.name === key))
-          || !aggregate.triggers.some(trigger => trigger.scope === `item:${item!.item_id}`)) throw new TemplateError('TEMPLATE_MAPPING_MISSING');
+        if (!candidate.dimensions.length || discovery.identity_dimensions.some(key => !candidate.dimensions.some(d => d.name === key))) {
+          throw new TemplateError('TEMPLATE_MAPPING_MISSING');
+        }
       }
     }
     if (new Set((aggregate.discovery_rules ?? []).map(r => r.rule_id)).size !== (aggregate.discovery_rules ?? []).length
@@ -394,16 +396,7 @@ export class MetricTemplateService {
     }
     const published: TemplatePublishedAggregate = TemplatePublishedAggregateSchema.parse({
       ...aggregate,
-      ...(aggregate.discovery_rules?.length ? {parameters:(()=>{
-        const parameters=structuredClone(aggregate.parameters),rules=aggregate.discovery_rules!;
-        const budgets={discovery_timeout_ms:Math.min(...rules.map(r=>r.timeout_ms)),discovery_max_rows:Math.min(...rules.map(r=>r.max_instances)),
-          discovery_series_upper_bound:rules.reduce((sum,r)=>sum+r.max_instances*r.item_ids.length,0)};
-        for(const [name,value] of Object.entries(budgets)){parameters.schema[name]={type:'integer',min:value,max:value};parameters.defaults[name]=value;}
-        return parameters;
-      })()}:{}),
-      capabilities: {...aggregate.capabilities, discovery: aggregate.discovery_rules?.length
-        ? {contract_version:'1.0.0',ref:'builtin:template-discovery.v1',executable:true}
-        : {contract_version:'1.0.0',ref:null,executable:false}},
+      ...discoveryPublication(aggregate),
       ...(aggregate.base?{inheritance:inheritance.origins}:{}),
       package_composition: packageComposition,
     });
@@ -603,12 +596,12 @@ export class MetricTemplateService {
     invalid(`expected ${spec.type}`);
   }
 
-  /** Per-item defaults must be declared template parameters, and cadence stays template-level. */
+  /** Collector parameters and the monitoring item's interval have separate fields. */
   private validateItemParameters(item: TemplateItemVersion, aggregate: TemplateDraftAggregate): void {
     for (const [name, value] of Object.entries(item.params_default)) {
       if (name === 'interval_ms') {
         throw new TemplateError('TEMPLATE_ITEM_CADENCE',
-          `item ${item.item_id} sets its own interval_ms; the existing plan compiler uses one cadence per resource`);
+          `item ${item.item_id} must set its interval on the template item reference`);
       }
       const spec = aggregate.parameters.schema[name];
       if (!spec) {

@@ -140,7 +140,7 @@ describe.skipIf(!port)('instance removal / isolated MySQL', () => {
     expect(manager.getStatus().scheduledJobs).toBe(scheduledBefore - 1);
     expect(databaseService.getConnection(instanceId)).toBeNull();
     await expect(retainedPool.query('SELECT 8')).rejects.toThrow('INSTANCE_REMOVED');
-    await expect(monitorCollector.collectInstanceNow(instanceId)).rejects.toThrow('INSTANCE_REMOVED');
+    await expect(instanceAccessLifecycle.assertAvailable(instanceId)).rejects.toThrow('INSTANCE_REMOVED');
     expect(await databaseService.reconnect(instanceId, conn.name, conn.config)).toBe(false);
     expect(await instanceDatabaseService.listActiveInstanceIds()).not.toContain(instanceId);
     const [relations] = await pool.execute<any[]>('SELECT valid_until FROM resource_relations WHERE source_id = ?', [instanceId]);

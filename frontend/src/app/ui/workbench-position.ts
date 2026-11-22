@@ -29,6 +29,8 @@ export async function restoreWorkbenchPosition(root: ParentNode) {
   const position = history.state?.workbenchPosition;
   if (!position || typeof position.key !== 'string' || !Number.isFinite(position.y)) return;
   const match = [...root.querySelectorAll<HTMLElement>('[data-workbench-key]')].find(el=>el.dataset.workbenchKey===position.key);
+  const disclosure = match?.closest<HTMLDetailsElement>('details[data-restore-open]');
+  if (disclosure) disclosure.open = true;
   const visible = (el:HTMLElement) => {
     // Chromium can return layout rectangles for content inside closed details.
     for (let parent = el.parentElement; parent; parent = parent.parentElement) {
