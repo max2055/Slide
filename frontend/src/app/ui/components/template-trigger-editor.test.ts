@@ -49,8 +49,53 @@ it("loads fixed versions and publishes an actual structured body to the metric A
   });
   expect(b.method).toBeUndefined();
   expect(b).not.toHaveProperty('allow_manual_close');
+  expect(b).not.toHaveProperty('dependencies');
+  expect(e.shadowRoot.textContent).toContain('当前模板没有其他已发布的触发器');
   expect(published.mock.calls[0][0].detail.pin.version).toBe(2);
 });
+
+it('reopens, adds and clears dependencies using stable rule IDs', async () => {
+  const fields = {
+    parameters: { schema: {}, defaults: {} },
+    problem: { node: 'compare', select: { aggregation: 'last' }, operator: '>', threshold: { kind: 'constant', value: 50 } },
+    recovery_mode: 'problem_expression',
+    quality: { accepted_quality: ['good'], min_coverage: 1, allow_estimated: false },
+    clock: { stale_after_ms: 120000, nodata: { enabled: false } },
+  };
+  authFetch.mockResolvedValueOnce({ ok: true, json: async () => ({ rules: [
+    { ...fields, rule_id: 'r-warning', scope: 'item:a', dependencies: ['r-other'] },
+    { ...fields, rule_id: 'r-critical', scope: 'item:a', severity: 'critical' },
+    { ...fields, rule_id: 'r-other', scope: 'item:b' },
+  ] }) }).mockResolvedValueOnce({ ok: false, status: 422, json: async () => ({ error: 'TRIGGER_DEPENDENCY_CYCLE' }) })
+    .mockResolvedValue({ ok: true, json: async () => ({ template_id: 'tpl', version: 2 }) });
+  const editor = document.createElement('template-trigger-editor') as any;
+  editor.template = { template_id: 'tpl', version: 1, items: [
+    { item_id: 'a', display_name: '当前连接', unit: 'count' },
+    { item_id: 'b', display_name: '连接上限', unit: 'count' },
+  ] };
+  editor.readOnly = true;
+  document.body.append(editor);
+  await vi.waitFor(() => expect(editor.shadowRoot.querySelector('app-data-table').textContent).toContain('连接上限 · 预警'));
+  editor.readOnly = false;
+  await editor.updateComplete;
+  const root: ShadowRoot = editor.shadowRoot;
+  const checks = root.querySelectorAll<HTMLInputElement>('.dependency-options input[type=checkbox]');
+  expect([...checks].map(check => [check.value, check.checked])).toEqual([['r-critical', false], ['r-other', true]]);
+  const publish = root.querySelector<HTMLButtonElement>('.btn-primary')!;
+  checks[0].click();
+  await editor.updateComplete;
+  publish.click();
+  await vi.waitFor(() => expect(root.querySelector('[role=alert]')?.textContent).toContain('形成循环'));
+  expect(JSON.parse(authFetch.mock.calls[1][1].body).dependencies).toEqual(['r-critical', 'r-other']);
+  expect([...checks].every(check => check.checked)).toBe(true);
+
+  checks[0].click();
+  checks[1].click();
+  await editor.updateComplete;
+  publish.click();
+  expect(JSON.parse(authFetch.mock.calls[2][1].body)).not.toHaveProperty('dependencies');
+});
+
 it.each(['problem_expression', 'none'])('publishes %s with no recovery expression', async (mode) => {
   authFetch.mockResolvedValueOnce({ ok: true, json: async () => ({ rules: [] }) })
     .mockResolvedValueOnce({ ok: true, json: async () => ({ template_id: 'tpl', version: 2 }) });
