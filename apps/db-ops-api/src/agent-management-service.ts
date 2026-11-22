@@ -84,6 +84,25 @@ function extensionDefinition(kind: AgentExtensionKind, definition: Record<string
   }
 }
 
+function normalizeExtensionText(value: unknown, limit: number): string {
+  // Match the UTF-8 conversion on write when slicing leaves an unpaired surrogate.
+  return String(value).slice(0, limit).replace(/\p{Surrogate}/gu, '\uFFFD');
+}
+
+type ExtensionDigestContent = Pick<AgentExtensionRecord, 'kind' | 'name' | 'description' | 'definition' | 'sourceText'>;
+
+function extensionDigest({ kind, name, description, definition, sourceText }: ExtensionDigestContent): string {
+  const content = { kind, name, description, definition, sourceText };
+  // Keep the envelope order. Within definition, use UTF-16 key order with
+  // ECMAScript's numeric ordering for array-index keys. Arrays retain their order.
+  const json = JSON.stringify(content, (_key, value: unknown) => {
+    if (value === content || !value || typeof value !== 'object' || Array.isArray(value)) return value;
+    const object = value as Record<string, unknown>;
+    return Object.fromEntries(Object.keys(object).sort().map(key => [key, object[key]]));
+  });
+  return createHash('sha256').update(json, 'utf8').digest('hex');
+}
+
 function mapExtension(row: any): AgentExtensionRecord {
   const parse = (value: unknown): Record<string, unknown> => {
     if (typeof value === 'string') { try { return JSON.parse(value) as Record<string, unknown>; } catch { return {}; } }
@@ -170,9 +189,9 @@ export class AgentManagementService {
     if (!['tool', 'skill'].includes(input.kind) || !extensionName(input.name)) throw new Error('AGENT_EXTENSION_INPUT_INVALID');
     const definition = input.definition && typeof input.definition === 'object' && !Array.isArray(input.definition) ? input.definition : {};
     extensionDefinition(input.kind, definition);
-    const description = String(input.description ?? '').slice(0, 2000);
-    const sourceText = input.sourceText == null ? null : String(input.sourceText).slice(0, 256 * 1024);
-    const digest = createHash('sha256').update(JSON.stringify({ kind: input.kind, name: input.name, description, definition, sourceText })).digest('hex');
+    const description = normalizeExtensionText(input.description ?? '', 2000);
+    const sourceText = input.sourceText == null ? null : normalizeExtensionText(input.sourceText, 256 * 1024);
+    const digest = extensionDigest({ kind: input.kind, name: input.name, description, definition, sourceText });
     const pool = dbConnection.getPool();
     if (!pool) throw new Error('AGENT_EXTENSION_STORE_UNAVAILABLE');
     const [result] = await pool.execute(
@@ -196,9 +215,9 @@ export class AgentManagementService {
     if (!extensionName(next.name)) throw new Error('AGENT_EXTENSION_INPUT_INVALID');
     extensionDefinition(next.kind, next.definition ?? {});
     const definition = next.definition ?? {};
-    const sourceText = next.sourceText == null ? null : String(next.sourceText).slice(0, 256 * 1024);
-    const description = String(next.description ?? '').slice(0, 2000);
-    const digest = createHash('sha256').update(JSON.stringify({ kind: next.kind, name: next.name, description, definition, sourceText })).digest('hex');
+    const sourceText = next.sourceText == null ? null : normalizeExtensionText(next.sourceText, 256 * 1024);
+    const description = normalizeExtensionText(next.description ?? '', 2000);
+    const digest = extensionDigest({ kind: next.kind, name: next.name, description, definition, sourceText });
     await pool.execute('UPDATE agent_extensions SET name = ?, description = ?, definition_json = ?, source_text = ?, digest = ?, updated_by = ? WHERE id = ? AND status = \'draft\'', [next.name, description, JSON.stringify(definition), sourceText, digest, actorId, id]);
     const [rows] = await pool.execute('SELECT * FROM agent_extensions WHERE id = ?', [id]);
     return mapExtension((rows as any[])[0]);
