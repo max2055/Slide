@@ -4325,9 +4325,9 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
           limit: limit ? Number(limit) : 50,
           offset: offset ? Number(offset) : 0,
         });
-        reply.send(result);
+        return reply.send(result);
       } catch (error: any) {
-        reply.code(500).send({ error: error.message });
+        return reply.code(500).send({ error: error.message });
       }
     }
   });
@@ -4353,9 +4353,9 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
         if (!stats) {
           return reply.code(500).send({ error: '获取日志统计失败' });
         }
-        reply.send(stats);
+        return reply.send(stats);
       } catch (error: any) {
-        reply.code(500).send({ error: error.message });
+        return reply.code(500).send({ error: error.message });
       }
     }
   });
