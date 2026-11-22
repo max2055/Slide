@@ -403,7 +403,7 @@ export class EventManagementPage extends LitElement {
       border-top: 1px solid var(--border);
       flex-shrink: 0;
     }
-    .pagination-info {
+    .event-list-info {
       font-size: var(--text-sm);
       color: var(--muted);
     }
@@ -776,7 +776,7 @@ export class EventManagementPage extends LitElement {
     return html`
       <div class="pagination">
         <button class="btn" ?disabled=${this.eventsPage === 0} @click=${() => { this.eventsPage--; this._loadEvents(); }}>← 上一页</button>
-        <span class="pagination-info">第 ${this.eventsPage + 1}/${totalPages} 页，共 ${this.eventsTotal} 条</span>
+        <span class="event-list-info">第 ${this.eventsPage + 1}/${totalPages} 页</span>
         <button class="btn" ?disabled=${this.eventsPage >= totalPages - 1} @click=${() => { this.eventsPage++; this._loadEvents(); }}>下一页 →</button>
       </div>`;
   }
@@ -857,6 +857,11 @@ export class EventManagementPage extends LitElement {
             <option value="warning" ?selected=${this.filterSeverity === 'warning'}>警告</option>
             <option value="info" ?selected=${this.filterSeverity === 'info'}>提示</option>
           </select>
+          <span class="event-list-info" role="status">
+            ${this.retryLoading ? '正在加载事件…' : this.loadError ? nothing : html`
+              本页命中 ${filtered.length} 条 · 当前状态可见事件共 ${this.eventsTotal} 条
+            `}
+          </span>
         </div>
         </div>
 
