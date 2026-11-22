@@ -3,6 +3,7 @@
  */
 import mysql from 'mysql2/promise';
 import { dbConnection } from './db-connection';
+import { reportAccessSql, type ReportAccessScope } from './report-access.js';
 import { scheduledReportPersistence } from './workflows/scheduled-report-context.js';
 
 export type ReportType = 'health' | 'performance' | 'slow_query' | 'capacity' | 'server_health';
@@ -31,6 +32,7 @@ export interface CreateReportData {
   format?: ReportFormat;
   instance_id?: number;
   server_id?: number;
+  server_target_ids?: readonly number[];
   content?: string;
   data?: any;
   generated_by?: number;
@@ -78,8 +80,8 @@ class ReportDatabaseService {
     try {
       const [result] = await pool.execute(
         `INSERT INTO reports
-         (name, type, format, instance_id, server_id, content, data, generated_by, status)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         (name, type, format, instance_id, server_id, content, data, generated_by, status, server_target_ids)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           data.name,
           data.type,
@@ -90,6 +92,7 @@ class ReportDatabaseService {
           data.data ? JSON.stringify(data.data) : null,
           data.generated_by || null,
           data.status || 'pending',
+          data.server_target_ids === undefined ? null : JSON.stringify(data.server_target_ids),
         ]
       ) as any;
 
@@ -103,13 +106,14 @@ class ReportDatabaseService {
   /**
    * 根据 ID 查询报表
    */
-  async getReportById(id: number): Promise<Report | null> {
+  async getReportById(id: number, scope?: ReportAccessScope): Promise<Report | null> {
     const pool = this.getPool();
     if (!pool) {
       return null;
     }
 
     try {
+      const access = reportAccessSql(scope, 'reports', 'r.');
       const [rows] = await pool.execute(
         `SELECT r.id, r.name, r.type, r.format, r.instance_id, r.server_id,
                 r.content, r.data, r.generated_by, r.status, r.created_at,
@@ -118,8 +122,8 @@ class ReportDatabaseService {
          FROM reports r
          LEFT JOIN database_instances i ON r.instance_id = i.id
          LEFT JOIN servers s ON r.server_id = s.id
-         WHERE r.id = ?`,
-        [id]
+         WHERE r.id = ? AND ${access.sql}`,
+        [id, ...access.params]
       ) as any;
 
       if (Array.isArray(rows) && rows.length > 0) {
@@ -139,15 +143,16 @@ class ReportDatabaseService {
   /**
    * 根据条件查询报表列表
    */
-  async getReportsByFilters(filters: ReportFilters = {}): Promise<Report[]> {
+  async getReportsByFilters(filters: ReportFilters = {}, scope?: ReportAccessScope): Promise<Report[]> {
     const pool = this.getPool();
     if (!pool) {
       return [];
     }
 
     try {
-      const conditions: string[] = ['1=1'];
-      const params: any[] = [];
+      const access = reportAccessSql(scope, 'reports', 'r.');
+      const conditions = [access.sql];
+      const params: (string | number)[] = access.params;
 
       if (filters.type) {
         conditions.push('r.type = ?');
@@ -165,9 +170,9 @@ class ReportDatabaseService {
       }
 
       if (filters.target_type === 'server') {
-        conditions.push('r.server_id IS NOT NULL');
+        conditions.push('(r.server_id IS NOT NULL OR r.server_target_ids IS NOT NULL)');
       } else if (filters.target_type === 'instance') {
-        conditions.push('r.server_id IS NULL');
+        conditions.push('r.server_id IS NULL AND r.server_target_ids IS NULL');
       }
 
       if (filters.status) {
@@ -259,17 +264,19 @@ class ReportDatabaseService {
   /**
    * 删除报表
    */
-  async deleteReport(id: number): Promise<void> {
+  async deleteReport(id: number, scope: ReportAccessScope): Promise<boolean> {
     const pool = this.getPool();
     if (!pool) {
       throw new Error('数据库未连接');
     }
 
     try {
-      const [result] = await pool.execute('DELETE FROM reports WHERE id = ?', [id]) as any;
-      if (result.affectedRows === 0) {
-        throw new Error('报表不存在');
-      }
+      const access = reportAccessSql(scope, 'reports');
+      const [result] = await pool.execute<mysql.ResultSetHeader>(
+        `DELETE FROM reports WHERE id = ? AND ${access.sql}`,
+        [id, ...access.params],
+      );
+      return result.affectedRows > 0;
     } catch (error: any) {
       console.error('删除报表失败:', error);
       throw error;
@@ -325,20 +332,7 @@ class ReportDatabaseService {
     }
 
     try {
-      const params: number[] = [];
-      const scope = (column: string, ids: readonly number[] | null) => {
-        if (ids === null) return `${column} IS NOT NULL`;
-        if (!ids.length) return 'FALSE';
-        params.push(...ids);
-        return `${column} IN (${ids.map(() => '?').join(', ')})`;
-      };
-      const instanceScope = scope('instance_id', allowedInstanceIds);
-      const serverScope = scope('server_id', allowedServerIds);
-      // Malformed rows with two targets require authority over both. Untargeted
-      // historical aggregate reports are visible only to unrestricted readers.
-      const scopeSql = allowedInstanceIds === null && allowedServerIds === null ? ''
-        : `WHERE (instance_id IS NOT NULL OR server_id IS NOT NULL)
-           AND (instance_id IS NULL OR ${instanceScope}) AND (server_id IS NULL OR ${serverScope})`;
+      const access = reportAccessSql({ instanceIds: allowedInstanceIds, serverIds: allowedServerIds }, 'reports');
       const [rows] = await pool.execute(`
         SELECT
           COUNT(*) as total,
@@ -346,8 +340,8 @@ class ReportDatabaseService {
           SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) as running,
           SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) as failed
         FROM reports
-        ${scopeSql}
-      `, params) as any;
+        WHERE ${access.sql}
+      `, access.params) as any;
 
       return {
         total: rows[0]?.total || 0,
