@@ -43,6 +43,14 @@ interface RedundancyReportRow {
   created_at: string;
 }
 
+const indexSections = {
+  indexes: { suffix: '', label: '索引列表' },
+  redundancy: { suffix: '/redundancy', label: '冗余索引' },
+  unused: { suffix: '/unused', label: '未使用索引' },
+} as const;
+type IndexSection = keyof typeof indexSections;
+type IndexRead = { state: 'loading' | 'ready' } | { state: 'error'; message: string };
+
 @customElement("index-management-page")
 export class IndexManagementPage extends LitElement {
   static styles = [listBrowserStyles, sharedBtnStyles, css`
@@ -340,8 +348,11 @@ export class IndexManagementPage extends LitElement {
   private redundancyBrowser = new ListBrowser();
   private indexRequest = 0;
   @state() private readAt: string | null = null;
-  @state() private indexError: string | null = null;
-  @state() private loading = false;
+  @state() private indexReads: Partial<Record<IndexSection, IndexRead>> = {};
+  @state() private instancesError = '';
+  @state() private accessError = '';
+  private instancesRequest = 0;
+  private operationVersion = 0;
   @state() private collecting = false;
   @state() private message = "";
   @state() private msgType: "success" | "error" = "success";
@@ -357,80 +368,142 @@ export class IndexManagementPage extends LitElement {
   private ageTimer?: ReturnType<typeof setInterval>;
   override connectedCallback() {
     super.connectedCallback();
+    window.addEventListener('slide-permissions-loaded', this.accessChanged);
+    window.addEventListener('slide-session-expired', this.accessChanged);
     this.ageTimer = setInterval(() => this.requestUpdate(), 30_000);
   }
   override disconnectedCallback() {
+    this.indexRequest++;
+    this.instancesRequest++;
+    this.operationVersion++;
+    window.removeEventListener('slide-permissions-loaded', this.accessChanged);
+    window.removeEventListener('slide-session-expired', this.accessChanged);
     clearInterval(this.ageTimer);
     super.disconnectedCallback();
   }
 
-  override firstUpdated() {
-    if (this.instanceId) {
-      this.selectedInstanceId = this.instanceId;
-      this.loadIndexes();
-    } else {
-      this.loadInstances();
+  override willUpdate(changed: Map<string, unknown>) {
+    if (!changed.has('instanceId')) return;
+    this.instancesRequest++;
+    this.selectInstance(this.instanceId);
+    if (!this.instanceId) void this.loadInstances();
+  }
+
+  private selectInstance(id: number | null) {
+    this.operationVersion++;
+    this.collecting = false;
+    this.message = '';
+    this.accessError = '';
+    this.selectedInstanceId = id;
+    this.selectedTable = '';
+    this.indexBrowser.page = this.unusedBrowser.page = this.redundancyBrowser.page = 1;
+    void this.loadIndexes();
+  }
+
+  private readonly accessChanged = () => {
+    this.instancesRequest++;
+    this.operationVersion++;
+    this.collecting = false;
+    this.message = '';
+    this.instances = [];
+    this.resetIndexReads();
+    this.accessError = '索引访问权限或登录状态已变更，请重新读取';
+  };
+
+  private async loadInstances() {
+    const request = ++this.instancesRequest;
+    this.instancesError = '';
+    try {
+      const res = await authFetch("/api/database/instances", {
+        headers: this.authHeaders(), signal: AbortSignal.timeout(15000),
+      });
+      if (!res.ok) throw new Error();
+      const instances = await res.json();
+      if (!Array.isArray(instances)) throw new Error();
+      if (request !== this.instancesRequest) return;
+      this.instances = instances;
+      this.selectInstance(instances.find(instance => instance.id === this.selectedInstanceId)?.id ?? instances[0]?.id ?? null);
+    } catch {
+      if (request === this.instancesRequest) this.instancesError = '数据库实例清单读取失败，请确认登录和查看权限';
     }
   }
 
-  private async loadInstances() {
-    try {
-      const res = await authFetch("/api/database/instances", {
-        headers: this.authHeaders(),
-      });
-      if (!res.ok) throw new Error(`实例列表加载失败 (HTTP ${res.status})`);
-      if (res.ok) {
-        this.instances = await res.json();
-        if (this.instances.length > 0) {
-          this.selectedInstanceId = this.instances[0].id;
-          this.loadIndexes();
-        }
-      }
-    } catch (e) {
-      this.indexError = '实例列表加载失败或无权限';
-    }
+  private resetIndexReads() {
+    this.indexRequest++;
+    this.indexes = []; this.unusedIndexes = []; this.redundancyReport = [];
+    this.tables = []; this.expandedIndex = null; this.readAt = null;
+    this.indexReads = {};
   }
 
   private async loadIndexes() {
+    this.resetIndexReads();
+    this.accessError = '';
+    if (!this.selectedInstanceId) return;
+    await Promise.all((Object.keys(indexSections) as IndexSection[]).map(section => this.loadIndexSection(section)));
+  }
+
+  private async loadIndexSection(section: IndexSection) {
     const id = this.selectedInstanceId;
-    const request = ++this.indexRequest;
-    this.indexes = []; this.unusedIndexes = []; this.redundancyReport = []; this.tables = [];
-    this.expandedIndex = null; this.indexError = null; this.readAt = null;
-    if (!id) return;
-    this.loading = true;
+    const instanceId = this.instanceId;
+    const request = this.indexRequest;
+    if (!id || this.indexReads[section]?.state === 'loading') return;
+    const current = () => request === this.indexRequest && id === this.selectedInstanceId && instanceId === this.instanceId;
+    const { suffix, label } = indexSections[section];
+    this.indexReads = { ...this.indexReads, [section]: { state: 'loading' } };
     try {
-      const results = await Promise.all(['', '/redundancy', '/unused'].map(async suffix => {
-        const res = await authFetch(`/api/indexes/${id}${suffix}`, { headers: this.authHeaders() });
-        if (!res.ok) throw new Error(res.status === 403 ? '无权限查看索引' : `索引加载失败 (HTTP ${res.status})`);
-        const data = await res.json();
-        if (!Array.isArray(data)) throw new Error('索引响应无效');
-        return data;
-      }));
-      if (request !== this.indexRequest) return;
-      [this.indexes, this.redundancyReport, this.unusedIndexes] = results;
-      this.readAt = new Date().toISOString();
-      this.tables = [...new Set(this.indexes.map(i => i.table_name))].sort();
-      if (this.selectedTable && !this.tables.includes(this.selectedTable)) this.selectedTable = '';
-    } catch (error: any) {
-      if (request === this.indexRequest) this.indexError = error.message;
-    } finally {
-      if (request === this.indexRequest) this.loading = false;
+      const res = await authFetch(`/api/indexes/${id}${suffix}`, { headers: this.authHeaders(), signal: AbortSignal.timeout(15000) });
+      if (!current()) return;
+      // All three routes use the same instance access and index view permission.
+      if ([401, 403, 404].includes(res.status)) {
+        this.accessChanged();
+        this.accessError = '索引不可访问，请确认登录和查看权限';
+        return;
+      }
+      if (!res.ok) throw new Error();
+      const rows = await res.json();
+      if (!Array.isArray(rows)) throw new Error();
+      if (!current()) return;
+      if (section === 'indexes') {
+        this.indexes = rows;
+        this.readAt = new Date().toISOString();
+        this.tables = [...new Set(this.indexes.map(row => row.table_name))].sort();
+      } else if (section === 'redundancy') {
+        this.redundancyReport = rows;
+      } else {
+        this.unusedIndexes = rows;
+      }
+      this.indexReads = { ...this.indexReads, [section]: { state: 'ready' } };
+    } catch {
+      if (current()) this.indexReads = { ...this.indexReads, [section]: { state: 'error', message: `${label}读取失败` } };
     }
   }
 
+  private renderReadStatus(section: IndexSection) {
+    const read = this.indexReads[section];
+    if (read?.state === 'error') {
+      return html`<p role="alert">${read.message} <button class="btn btn-refresh" @click=${() => this.loadIndexSection(section)}>重试${indexSections[section].label}</button></p>`;
+    }
+    if (read?.state === 'loading') return html`<p class="loading" role="status">正在读取${indexSections[section].label}…</p>`;
+    return '';
+  }
+
   private async collectIndexes() {
-    if (!this.selectedInstanceId) return;
+    const id = this.selectedInstanceId;
+    if (!id || this.collecting || this.accessError) return;
+    const version = ++this.operationVersion;
+    const current = () => version === this.operationVersion && id === this.selectedInstanceId && (!this.instanceId || this.instanceId === id);
     this.collecting = true;
     this.message = "";
     this.requestUpdate();
 
     try {
-      const res = await authFetch(`/api/index/collect/${this.selectedInstanceId}`, {
+      const res = await authFetch(`/api/index/collect/${id}`, {
         method: "POST",
         headers: { ...this.authHeaders(), "Content-Type": "application/json" },
         body: "{}",
       });
       const data = await res.json();
+      if (!current()) return;
       if (res.ok && data.success) {
         this.msgType = "success";
         this.message = `采集完成：${data.data.collected} 条记录，${data.data.indexes} 个索引，${data.data.tables} 张表`;
@@ -440,26 +513,32 @@ export class IndexManagementPage extends LitElement {
         this.message = data.error || "采集失败";
       }
     } catch (e: any) {
+      if (!current()) return;
       this.msgType = "error";
       this.message = e.message || "采集请求失败";
     }
 
+    if (!current()) return;
     this.collecting = false;
     this.requestUpdate();
   }
 
   private async detectRedundancy() {
-    if (!this.selectedInstanceId) return;
+    const id = this.selectedInstanceId;
+    if (!id || this.collecting || this.accessError) return;
+    const version = ++this.operationVersion;
+    const current = () => version === this.operationVersion && id === this.selectedInstanceId && (!this.instanceId || this.instanceId === id);
     this.collecting = true;
     this.message = "";
     this.requestUpdate();
 
     try {
-      const res = await authFetch(`/api/index/detect/${this.selectedInstanceId}`, {
+      const res = await authFetch(`/api/index/detect/${id}`, {
         method: "POST",
         headers: { ...this.authHeaders(), "Content-Type": "application/json" },
       });
       const data = await res.json();
+      if (!current()) return;
       if (!res.ok || data.error) {
         this.msgType = "error";
         this.message = data.error || `检测失败 (HTTP ${res.status})`;
@@ -469,10 +548,12 @@ export class IndexManagementPage extends LitElement {
         await this.loadIndexes();
       }
     } catch (e: any) {
+      if (!current()) return;
       this.msgType = "error";
       this.message = e.message || "检测请求失败";
     }
 
+    if (!current()) return;
     this.collecting = false;
     this.requestUpdate();
   }
@@ -518,6 +599,9 @@ export class IndexManagementPage extends LitElement {
   }
 
   override render() {
+    const ready = (section: IndexSection) => this.indexReads[section]?.state === 'ready';
+    const count = (section: IndexSection, value: number) =>
+      ready(section) ? value : this.indexReads[section]?.state === 'loading' ? '读取中' : '未知';
     const selectedInstance = this.instances.find(
       (i) => i.id === this.selectedInstanceId,
     );
@@ -541,13 +625,7 @@ export class IndexManagementPage extends LitElement {
                 class="select"
                 .value="${this.selectedInstanceId?.toString() || ""}"
                 @change="${(e: Event) => {
-                  this.selectedInstanceId = Number((e.target as HTMLSelectElement).value);
-                  this.selectedTable = "";
-                  this.indexBrowser.page = this.unusedBrowser.page = this.redundancyBrowser.page = 1;
-                  this.indexes = [];
-                  this.redundancyReport = [];
-                  this.unusedIndexes = [];
-                  this.loadIndexes();
+                  this.selectInstance(Number((e.target as HTMLSelectElement).value));
                 }}"
               >
                 ${this.instances.map(
@@ -564,7 +642,7 @@ export class IndexManagementPage extends LitElement {
               <button
                 class="btn-primary"
                 aria-busy=${this.collecting}
-                ?disabled="${this.collecting || !this.selectedInstanceId}"
+                ?disabled="${this.collecting || !this.selectedInstanceId || !!this.accessError}"
                 @click="${this.collectIndexes}"
               >
                 ${this.collecting
@@ -574,6 +652,8 @@ export class IndexManagementPage extends LitElement {
             </div>
           </div>
 
+          ${this.instancesError ? html`<p role="alert">${this.instancesError} <button class="btn btn-refresh" @click=${this.loadInstances}>重试读取实例清单</button></p>` : ''}
+          ${this.accessError ? html`<p role="alert">${this.accessError} <button class="btn btn-refresh" @click=${() => this.instanceId ? this.loadIndexes() : this.loadInstances()}>重试读取索引</button></p>` : ''}
           ${this.message
             ? html`<div class="msg ${this.msgType}">${this.message}</div>`
             : ""}
@@ -584,18 +664,20 @@ export class IndexManagementPage extends LitElement {
           </p>
           <div class="stats-row">
             <div class="stat-item">
-              <span>${this.loading || this.indexError ? '未知' : indexCount}</span> 索引
+              <span>${count('indexes', indexCount)}</span> 索引
             </div>
             <div class="stat-item">
-              <span>${this.loading || this.indexError ? '未知' : this.tables.length}</span> 有索引的表
+              <span>${count('indexes', this.tables.length)}</span> 有索引的表
             </div>
             <div class="stat-item">
-              <span style="color: var(--warn);">${this.redundancyReport.length}</span> 冗余
+              <span style="color: var(--warn);">${count('redundancy', this.redundancyReport.length)}</span> 冗余
             </div>
             <div class="stat-item">
-              <span style="color: var(--muted);">${this.unusedIndexes.length}</span> 未使用
+              <span style="color: var(--muted);">${count('unused', this.unusedIndexes.length)}</span> 未使用
             </div>
           </div>
+          ${this.renderReadStatus('redundancy')}
+          ${this.renderReadStatus('unused')}
         </div>
 
         <!-- 冗余索引警告 -->
@@ -669,7 +751,7 @@ export class IndexManagementPage extends LitElement {
           : ""}
 
         <!-- 表选择器 -->
-        ${this.tables.length > 0
+        ${ready('indexes') && (this.tables.length > 0 || this.selectedTable)
           ? html`
               <div class="card">
                 <div class="toolbar">
@@ -685,7 +767,7 @@ export class IndexManagementPage extends LitElement {
                     }}"
                   >
                     <option value="">全部表</option>
-                    ${this.tables.map(
+                    ${[...new Set([...this.tables, this.selectedTable].filter(Boolean))].map(
                       (t) => html`<option value="${t}">${t}</option>`,
                     )}
                   </select>
@@ -707,22 +789,15 @@ export class IndexManagementPage extends LitElement {
             </span>
           </div>
 
-          ${!this.loading && !this.indexError ? renderListBrowser(this.indexBrowser, indexPage.total, indexCount, "索引", () => this.requestUpdate()) : ''}
-          ${this.indexError ? html`<div role="alert">${this.indexError}<button class="btn" @click=${() => this.loadIndexes()}>重试</button></div>` : this.loading
-            ? html`<div role="status" class="loading" style="flex-direction:column;gap:12px;padding:var(--space-xl);">加载中...
-                <div class="skeleton-line skeleton-line--long"></div>
-                <div class="skeleton-line skeleton-line--long"></div>
-                <div class="skeleton-line skeleton-line--long"></div>
-                <div class="skeleton-line skeleton-line--long"></div>
-                <div class="skeleton-line skeleton-line--long"></div>
-              </div>`
+          ${ready('indexes') ? renderListBrowser(this.indexBrowser, indexPage.total, indexCount, "索引", () => this.requestUpdate()) : ''}
+          ${!ready('indexes') ? this.renderReadStatus('indexes')
             : groupedIndexes.size === 0
               ? html`
                   <div class="empty">
                     <div class="empty__content">
                       <div class="empty__icon">&#128270;</div>
-                      <div class="empty__title">暂无索引数据</div>
-                      <div class="empty__desc">请先选择实例并点击「采集索引」</div>
+                      <div class="empty__title">${indexCount ? "没有匹配的索引" : "暂无索引数据"}</div>
+                      ${!indexCount ? html`<div class="empty__desc">当前实例没有已保存的索引记录</div>` : ""}
                     </div>
                   </div>
                 `

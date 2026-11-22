@@ -292,7 +292,7 @@ export class DatabaseLogTab extends LitElement {
 
   // Pagination
   @state() private offset = 0;
-  @state() private total = 0;
+  @state() private total: number | null = null;
   private readonly limit = 50;
 
   // AI analysis state
@@ -341,7 +341,7 @@ export class DatabaseLogTab extends LitElement {
   }
   private resetContext() {
     ++this.contextVersion; ++this.logRequest; ++this.statsRequest;
-    this.offset = 0; this.logs = []; this.total = 0; this.stats = null; this.statsError = '';
+    this.offset = 0; this.logs = []; this.total = null; this.stats = null; this.statsError = '';
     this.queryWindow = null; this.selectedIds = new Set(); this.expandedId = null;
     this._closeAnalysisResult();
   }
@@ -353,20 +353,21 @@ export class DatabaseLogTab extends LitElement {
     if (!this.instanceId || this.accessInvalidated) return;
     const request = ++this.logRequest, instanceId = this.instanceId, context = this.contextVersion;
     const current = () => request === this.logRequest && instanceId === this.instanceId && context === this.contextVersion;
-    this.loading = true; this.error = null; this.logs = []; this.selectedIds = new Set(); this.expandedId = null;
+    this.loading = true; this.error = null; this.logs = []; this.total = null; this.selectedIds = new Set(); this.expandedId = null;
     this.queryWindow ??= this._getTimeRange(this.filterTimeRange);
     try {
       const params = new URLSearchParams({ instanceId: String(instanceId), limit: String(this.limit), offset: String(this.offset), ...this.queryWindow });
       if (this.filterLevel !== 'all') params.set('level', this.filterLevel);
-      const res = await authFetch(`${API_BASE}/api/logs?${params}`, { headers: this._authHeaders() });
+      const res = await authFetch(`${API_BASE}/api/logs?${params}`, { headers: this._authHeaders(), signal: AbortSignal.timeout(15000) });
       if (!current()) return;
       if ([401, 403].includes(res.status)) { this.onAccessChanged(); return; }
-      if (!res.ok) throw new Error(`日志读取失败（HTTP ${res.status}）`);
+      if (!res.ok) throw new Error();
       const data = await res.json();
       if (!current()) return;
-      this.logs = data.logs || []; this.total = data.total || 0;
-    } catch (e: unknown) {
-      if (current()) { this.total = 0; this.error = e instanceof Error ? e.message : '日志读取失败'; }
+      if (!Array.isArray(data?.logs) || !Number.isInteger(data.total) || data.total < 0) throw new Error();
+      this.logs = data.logs; this.total = data.total;
+    } catch {
+      if (current()) this.error = '日志列表读取失败';
     } finally { if (current()) this.loading = false; }
   }
   async loadStats() {
@@ -376,12 +377,24 @@ export class DatabaseLogTab extends LitElement {
     this.stats = null; this.statsError = '';
     try {
       const hours = this._getTimeRangeHours(this.filterTimeRange);
-      const res = await authFetch(`${API_BASE}/api/logs/stats?instanceId=${instanceId}&hours=${hours}`, { headers: this._authHeaders() });
+      const res = await authFetch(`${API_BASE}/api/logs/stats?instanceId=${instanceId}&hours=${hours}`, { headers: this._authHeaders(), signal: AbortSignal.timeout(15000) });
       if (!current()) return;
       if ([401, 403].includes(res.status)) { this.onAccessChanged(); return; }
-      if (!res.ok) throw new Error('统计暂不可用');
+      if (!res.ok) throw new Error();
       const data = await res.json();
-      if (current()) this.stats = data;
+      const count = (value: unknown) => {
+        const number = typeof value === 'string' && /^\d+$/.test(value) ? Number(value) : value;
+        if (typeof number !== 'number' || !Number.isSafeInteger(number) || number < 0) throw new Error();
+        return number;
+      };
+      const byLevel = data?.by_level;
+      const stats: LogStats = {
+        total: count(data?.total),
+        by_level: { info: count(byLevel?.info), warning: count(byLevel?.warning), error: count(byLevel?.error), critical: count(byLevel?.critical) },
+        by_pattern: data.by_pattern,
+        trend: data.trend,
+      };
+      if (current()) this.stats = stats;
     } catch { if (current()) this.statsError = '统计暂不可用，不能据此判断日志数量或健康'; }
   }
 
@@ -643,13 +656,14 @@ export class DatabaseLogTab extends LitElement {
 
   private _renderStats() {
     if (this.accessInvalidated) return nothing;
-    if (!this.stats) return html`<p class="scope-note">${this.statsError || '正在读取范围统计…'}</p>`;
+    if (this.statsError) return html`<p class="scope-note" role="alert">${this.statsError} <button class="btn btn-refresh" @click=${this.loadStats}>重试范围统计</button></p>`;
+    if (!this.stats) return html`<p class="scope-note" role="status">正在读取范围统计…</p>`;
     const s = this.stats;
     return html`<div class="stats-row" aria-label="范围日志统计">
       <span>范围统计（全部级别）</span><span>总计 <strong>${s.total}</strong></span>
-      <span>ERROR <strong>${s.by_level?.error ?? 0}</strong></span>
-      <span>WARNING <strong>${s.by_level?.warning ?? 0}</strong></span>
-      <span>CRITICAL <strong>${s.by_level?.critical ?? 0}</strong></span>
+      <span>ERROR <strong>${s.by_level.error}</strong></span>
+      <span>WARNING <strong>${s.by_level.warning}</strong></span>
+      <span>CRITICAL <strong>${s.by_level.critical}</strong></span>
     </div>`;
   }
 
@@ -761,7 +775,7 @@ export class DatabaseLogTab extends LitElement {
         <div class="header">
           <h2>数据库日志</h2>
           <div class="header-actions">
-            <button aria-busy=${String(this.loading)} class="btn btn-refresh" ?disabled=${this.loading || this.accessInvalidated} @click=${this._handleFilterChange}>刷新</button>
+            <button aria-busy=${String(this.loading)} class="btn btn-refresh" ?disabled=${this.loading || this.accessInvalidated} @click=${() => { this.queryWindow = null; void this.loadLogs(); void this.loadStats(); }}>刷新</button>
             <button
               class="btn-primary"
               aria-busy=${this.analysisLoading}
@@ -802,12 +816,12 @@ export class DatabaseLogTab extends LitElement {
           <button class="btn" @click=${this._handleSearch}>搜索</button>
         </div>
 
-        <p class="scope-note">关键字仅过滤本批 ${this.logs.length} 条，范围内共 ${this.total} 条。${this.queryWindow ? `查询范围：${this._formatTime(this.queryWindow.startTime)} — ${this._formatTime(this.queryWindow.endTime)}` : ''}</p>
-        ${this.error ? html`<p class="error" role="alert">${this.error}</p>` : this.loading ? html`<div class="loading" role="status">加载日志数据...</div>` : this.logs.length === 0
+        ${this.total !== null ? html`<p class="scope-note">关键字仅过滤本批 ${this.logs.length} 条，范围内共 ${this.total} 条${this.filterLevel === "all" ? "" : "（所选级别）"}。${this.queryWindow ? `查询范围：${this._formatTime(this.queryWindow.startTime)} — ${this._formatTime(this.queryWindow.endTime)}` : ''}</p>` : nothing}
+        ${this.error ? html`<p class="error" role="alert">${this.error} ${this.accessInvalidated ? nothing : html`<button class="btn btn-refresh" @click=${this.loadLogs}>重试日志列表</button>`}</p>` : this.loading ? html`<div class="loading" role="status">加载日志数据...</div>` : this.logs.length === 0
           ? html`
               <div class="empty-state">
                 <div class="empty-icon">&#x1F4C4;</div>
-                <div>当前范围没有日志记录；不代表资源健康</div>
+                <div>${this.total ? "当前页没有日志记录" : "当前范围没有日志记录"}</div>
               </div>
             `
           : filteredLogs.length === 0
@@ -891,10 +905,10 @@ export class DatabaseLogTab extends LitElement {
               </div>
 
             `}
-        ${!this.loading && !this.error && this.total > this.limit ? html`
+        ${this.total !== null && (this.offset > 0 || this.total > this.limit) ? html`
           <div class="pagination">
             <button class="btn" ?disabled=${this.offset === 0} @click=${() => { this.offset = Math.max(0, this.offset - this.limit); void this.loadLogs(); }}>上一页</button>
-            <span class="pagination-info">${this.offset + 1} - ${Math.min(this.offset + this.limit, this.total)} / ${this.total}</span>
+            <span class="pagination-info">${this.logs.length ? this.offset + 1 : 0} - ${this.logs.length ? this.offset + this.logs.length : 0} / ${this.total}</span>
             <button class="btn" ?disabled=${this.offset + this.limit >= this.total} @click=${() => { this.offset += this.limit; void this.loadLogs(); }}>下一页</button>
           </div>` : nothing}
 

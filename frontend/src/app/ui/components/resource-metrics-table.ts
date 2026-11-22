@@ -4,7 +4,7 @@ import { customElement, property, state } from 'lit/decorators.js';
 import { authFetch } from '../../../api/index.js';
 import { sharedBtnStyles } from '../../styles/shared-btn-styles.js';
 import { collectionLabels, collectionState, metricSummary, diskSummary, databaseSizeMetric, databaseSizeSummary, type MetricRow } from './resource-metric-summary.js';
-import { readCollectionStatus, statusLabel } from './metric-api.js';
+import { MetricRequestError, readCollectionStatus, statusLabel } from './metric-api.js';
 import type { SemanticResult } from './semantic-metrics.js';
 import type { Column } from './app-data-table.js';
 import { freshness, runState, type OverviewItem } from '../views/dashboard-model.js';
@@ -41,6 +41,7 @@ export class ResourceMetricsTable extends LitElement {
   @state() private bulkResources: BulkResource[] | null = null;
   @state() private pending = false;
   private generation = 0;
+  @state() private collectionPending = new Set<number>();
   private identity = '';
   private pageSize = 20;
   private readonly selectionChanged = () => this.requestUpdate();
@@ -62,6 +63,7 @@ export class ResourceMetricsTable extends LitElement {
   private readonly accessChanged = () => {
     this.generation++; this.observationGeneration++; this.observations = new Map();
     this.rows = new Map(this.entries.map(entry => [entry.id, { state: 'forbidden' as const }]));
+    this.collectionPending = new Set();
     this.setPending(false);
   };
   override connectedCallback() {
@@ -220,7 +222,12 @@ export class ResourceMetricsTable extends LitElement {
     const type = this.resourceType;
     const targets = this.searchesCollection ? this.candidates : this.visible;
     this.page = Math.min(this.page, Math.max(1, Math.ceil(this.filtered.length / this.pageSize)));
-    const queue = targets.filter(e => force || !this.rows.has(e.id));
+    const queue = targets.filter(entry => {
+      const row = this.rows.get(entry.id);
+      return force || !row || this.collectionPending.has(entry.id)
+        || (!row.collection && !row.timeUnavailable && !['forbidden', 'unavailable'].includes(row.state));
+    });
+    this.collectionPending = new Set(queue.map(entry => entry.id));
     this.setPending(queue.length > 0);
 
     let cursor = 0;
@@ -237,22 +244,64 @@ export class ResourceMetricsTable extends LitElement {
             row = { result, state: collectionState(result) };
           }
         } catch { row = { state: 'query_failed' }; }
-        if (generation !== this.generation) return;
-        if (!['forbidden', 'unavailable'].includes(row.state)) {
-          try {
-            const collection = await readCollectionStatus(type, entry.id);
-            row.collection = collection; row.lastSuccess = collection.collection.last_success_at ?? undefined;
-          } catch (e) {
-            if (e instanceof Error && ['401', '403', '404'].includes(e.message)) row = { state: e.message === '404' ? 'unavailable' : 'forbidden' };
-            else { row.bindingError = '绑定状态暂不可用'; row.timeUnavailable = true; }
-          }
-        }
-        if (generation !== this.generation) return;
+        if (generation !== this.generation || type !== this.resourceType) return;
         this.rows = new Map(this.rows).set(entry.id, row);
+        if (['forbidden', 'unavailable'].includes(row.state)) {
+          this.finishCollectionRead(entry.id);
+        } else {
+          await this.loadCollection(type, entry.id, generation, row);
+        }
       }
     };
     await Promise.all(Array.from({ length: Math.min(4, queue.length) }, worker));
     if (generation === this.generation) this.setPending(false);
+  }
+  private finishCollectionRead(id: number) {
+    const pending = new Set(this.collectionPending);
+    pending.delete(id);
+    this.collectionPending = pending;
+  }
+  private async loadCollection(type: string, id: number, generation: number, metrics: MetricRow) {
+    const current = () => generation === this.generation && type === this.resourceType && this.entries.some(entry => entry.id === id);
+    let row: MetricRow;
+    try {
+      row = { result: metrics.result, state: metrics.state, collection: await readCollectionStatus(type, id) };
+    } catch (error) {
+      if (error instanceof MetricRequestError && [401, 403, 404].includes(error.status)) {
+        row = { state: error.status === 404 ? 'unavailable' : 'forbidden' };
+      } else {
+        row = { result: metrics.result, state: metrics.state, bindingError: '绑定状态暂不可用', timeUnavailable: true };
+      }
+    }
+    if (!current()) return;
+    this.rows = new Map(this.rows).set(id, row);
+    this.finishCollectionRead(id);
+  }
+  private retryCollection(id: number) {
+    const row = this.rows.get(id);
+    if (!row?.timeUnavailable || this.collectionPending.has(id)) return;
+    this.collectionPending = new Set(this.collectionPending).add(id);
+    void this.loadCollection(this.resourceType, id, this.generation, row);
+  }
+  private collectionCells(entry: ResourceEntry, row?: MetricRow) {
+    const loading = !row || this.collectionPending.has(entry.id);
+    const status = loading ? undefined : row.collection;
+    const blocked = row && ['forbidden', 'unavailable'].includes(row.state) ? collectionLabels[row.state] : '';
+    const fallback = loading ? '正在读取' : blocked || '采集状态读取失败';
+    const state = !status ? fallback :
+      status.binding.application === 'failed' ? '应用失败' :
+      status.effective_enabled.enabled === false ? '已停用' :
+      status.collection.in_flight ? '采集中' :
+      status.formal_visibility.state === 'pending' ? '等待首样本' : statusLabel(status.collection.state);
+    const lastSuccess = status?.collection.last_success_at;
+    const lastRead = !status ? fallback : lastSuccess === null ? '无成功采集记录' : '采集时间未知';
+    return {
+      binding: html`<span>${status ? statusLabel(status.binding.state) : loading ? fallback : row?.bindingError || fallback}</span>`,
+      collection: this.value(state, status?.blockers.map(statusLabel).join('；') || state),
+      last_collection: lastSuccess && Number.isFinite(Date.parse(lastSuccess))
+        ? html`<time datetime=${lastSuccess}>${this.value(new Date(lastSuccess).toLocaleString('zh-CN'))}</time>`
+        : html`${this.value(lastRead)}${!loading && row?.timeUnavailable ? html`<button class="btn-ghost" aria-label=${`重试读取 ${this.bulkResource(entry).label} 的采集状态`} @click=${() => this.retryCollection(entry.id)}>重试</button>` : nothing}`,
+    };
   }
   private setPending(value: boolean) {
     this.pending = value;
@@ -289,9 +338,7 @@ export class ResourceMetricsTable extends LitElement {
       return { ...entry, bulk_select: html`<input type="checkbox" aria-label=${`选择${ref.label}用于批量绑定`} .checked=${bulkSelection.has(ref)} .disabled=${!bulkSelection.has(ref) && bulkSelection.values().length >= 100} @change=${() => bulkSelection.toggle(ref)}>`, row_number: offset + index + 1, ...(['forbidden', 'unavailable'].includes(row?.state ?? '') ? { cpu: '无可用权限或资源', memory: '无可用权限或资源', capacity: '无可用权限或资源' } : {}), type: unknown(entry.type), version: this.value(entry.version), model: this.value(entry.model), address: this.value(entry.address), ...(this.resourceType !== 'instance' ? { health: this.health(entry) } : {}),
         database_size: this.databaseSize(entry), uptime: this.metric(entry, 'db.uptime_seconds'), disk: this.metric(entry, 'host.filesystem.used_bytes'),
         network: this.metric(entry, 'host.network.bytes_total'), interfaces: this.metric(entry, 'network.interface.oper_up'),
-        binding: html`<span>${row?.collection ? statusLabel(row.collection.binding.state) : row?.bindingError || (row ? ['forbidden', 'unavailable'].includes(row.state) ? collectionLabels[row.state] : '绑定状态未知' : '正在读取')}</span>`,
-        collection: this.value(row?.bindingError ? '当前状态暂不可用' : row?.collection?.binding.application === 'failed' ? '应用失败' : row?.collection?.effective_enabled.enabled === false ? '已停用' : row?.collection?.collection.in_flight ? '采集中' : row?.collection?.formal_visibility.state === 'pending' ? '等待首样本' : row?.collection ? statusLabel(row.collection.collection.state) : collectionLabels[row?.state ?? 'loading'] ?? '未知', row?.collection?.blockers.map(b=>statusLabel(b)).join('；') || '以最近成功采集证据为准'),
-        last_collection: row?.lastSuccess && Number.isFinite(Date.parse(row.lastSuccess)) ? html`<time datetime=${row.lastSuccess}>${this.value(new Date(row.lastSuccess).toLocaleString('zh-CN'))}</time>` : this.value(row?.timeUnavailable ? '时间暂不可用' : '无成功采集记录') };
+        ...this.collectionCells(entry, row) };
     });
     const selected = bulkSelection.values().length;
     return html`<style>${sharedBtnStyles}
