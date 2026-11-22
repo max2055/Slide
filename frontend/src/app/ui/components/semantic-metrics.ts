@@ -132,15 +132,16 @@ export class SemanticMetrics extends LitElement {
   @state() private collection: CollectionStatus | null = null;
   @state() private attempts: CollectionAttempt[] = [];
   @state() private statusError = '';
+  @state() private rawOpen = false;
   @state() private rawKey = '';
   @state() private raw: RawObservationPage | null = null;
   @state() private rawError = '';
   @state() private rawBusy = false;
-  private rawGeneration = 0;
+  private rawRequest?: AbortController;
   private onAccessChanged = () => {
-    ++this.generation; this.maintenance = null; this.maintenanceError = ''; this.result = null; this.chartKeys = new Set(); this.bucketKeys = new Set(); this.baselineKey = ''; this.busy = false;
-    this.collection = null; this.attempts = []; this.statusError = '';
-    this.rawKey = ''; this.raw = null; this.rawError = ''; this.rawBusy = false;
+    ++this.generation;
+    this.resetResult();
+    this.rawOpen = false; this.rawKey = ''; this.busy = false;
     this.accessInvalidated = true; this.error = '权限或登录状态已变更，请重新打开资源后读取指标';
   };
   override connectedCallback() {
@@ -152,13 +153,14 @@ export class SemanticMetrics extends LitElement {
     this.maintenance = null; this.maintenanceError = '';
     this.result = null; this.chartKeys = new Set(); this.bucketKeys = new Set(); this.baselineKey = '';
     this.collection = null; this.attempts = []; this.statusError = '';
-    this.rawKey = ''; this.raw = null; this.rawError = ''; this.rawBusy = false;
+    this.resetRaw();
   }
   override willUpdate(changes: Map<string, unknown>) {
     if (['resourceId', 'resourceType', 'from', 'to'].some(k => changes.has(k))) {
       this.resetResult();
       if (changes.has('resourceId') || changes.has('resourceType')) {
         this.accessInvalidated = false;
+        this.rawOpen = false; this.rawKey = '';
         if ((changes.get('resourceId') !== undefined || changes.get('resourceType') !== undefined) && !changes.has('from') && !changes.has('to')) {
           this.from = ''; this.to = ''; this.range = null; this.custom = false; this.customFrom = ''; this.customTo = ''; this.hours = 1;
         }
@@ -178,6 +180,8 @@ export class SemanticMetrics extends LitElement {
   }
   override disconnectedCallback() {
     this.generation++;
+    this.rawOpen = false;
+    this.resetRaw();
     window.removeEventListener('slide-permissions-loaded', this.onAccessChanged);
     window.removeEventListener('slide-session-expired', this.onAccessChanged);
     super.disconnectedCallback();
@@ -210,8 +214,17 @@ export class SemanticMetrics extends LitElement {
         if ([401, 403, 404].includes(response.status)) { this.onAccessChanged(); this.error = statusErrors(response.status); return; }
         throw new Error(errors(response.status));
       }
-      const result = await response.json();
-      if (current()) this.result = result;
+      const result: SemanticResult = await response.json();
+      if (!current()) return;
+      const previousWindow = this.result?.window;
+      const previousRawKey = this.rawChoice()?.key;
+      this.result = result;
+      // Refreshing a fixed range can keep its page and pending request.
+      if (previousWindow?.from !== result.window.from || previousWindow?.to !== result.window.to
+        || previousRawKey !== this.rawChoice()?.key) {
+        this.resetRaw();
+        if (this.rawOpen) void this.loadRaw();
+      }
       const maintenanceResponse = await authFetch(`/api/maintenance-windows/intervals/${resourceType}/${resourceId}?${new URLSearchParams({from,to})}`);
       if (!current()) return;
       if (!maintenanceResponse.ok) {
@@ -452,40 +465,62 @@ export class SemanticMetrics extends LitElement {
       </div>`;
   }
   /** Raw observations are a separate paginated read; they never replace or reshape the curve. */
-  private rawSeries(metrics: MetricResult[]) {
+  private rawSeries(metrics = this.result?.metrics.filter(m => !this.selectedMetric || m.definition.id === this.selectedMetric) ?? []) {
     return metrics.flatMap(metric => metric.series.map(series => ({
-      key: `${metric.definition.id}|${metric.definition.semantic_version ?? ''}|${JSON.stringify(series.dimensions)}`,
+      key: JSON.stringify([metric.definition.id, metric.definition.semantic_version, Object.entries(series.dimensions).sort()]),
       metric, series })));
   }
-  private async loadRaw(key: string, metrics: MetricResult[], cursor?: string) {
-    const choice = this.rawSeries(metrics).find(c => c.key === key);
-    if (!choice || !this.result) return;
-    const version = choice.metric.definition.semantic_version;
+  private rawChoice(choices = this.rawSeries()) {
+    return choices.find(c => c.key === this.rawKey) ?? choices[0];
+  }
+  private resetRaw() {
+    this.rawRequest?.abort();
+    this.rawRequest = undefined;
+    this.raw = null; this.rawError = ''; this.rawBusy = false;
+  }
+  private selectRaw(key: string) {
     this.rawKey = key;
-    if (!version) { this.raw = null; this.rawError = '指标语义版本未知，无法读取原始观测。'; return; }
-    const generation = this.generation, rawGeneration = ++this.rawGeneration;
-    const current = () => generation === this.generation && rawGeneration === this.rawGeneration;
+    this.resetRaw();
+    if (this.rawOpen) void this.loadRaw();
+  }
+  private async loadRaw(cursor?: string) {
+    if (this.rawBusy || this.accessInvalidated || !this.result) return;
+    const choice = this.rawChoice();
+    if (!choice) return;
+    const version = choice.metric.definition.semantic_version;
+    this.rawKey = choice.key;
+    if (!version) { this.rawError = '指标语义版本未知，无法读取原始观测。'; return; }
+    const { resourceId, resourceType, from, to } = this;
+    const window = this.result.window;
+    const request = this.rawRequest = new AbortController();
+    const current = () => request === this.rawRequest && resourceId === this.resourceId
+      && resourceType === this.resourceType && from === this.from && to === this.to;
     this.rawBusy = true; this.rawError = '';
     try {
       const page = await metricRequest<RawObservationPage>('observations', {
-        resource: { type: this.resourceType, id: this.resourceId },
+        resource: { type: resourceType, id: resourceId },
         metric: { id: choice.metric.definition.id, semantic_version: version },
         dimensions: choice.series.dimensions,
-        from: this.result.window.from, to: this.result.window.to, limit: 100,
+        from: window.from, to: window.to, limit: 100,
         ...(cursor ? { cursor } : {}),
-      });
+      }, request.signal);
       if (current()) this.raw = page;
     } catch (e) {
       if (!current()) return;
       if (e instanceof MetricRequestError && [401, 403, 404].includes(e.status)) {
         // Same protected clear as the status strip: a revoked or missing resource must not keep showing data.
         this.onAccessChanged(); this.error = statusErrors(e.status);
-      } else if (e instanceof MetricRequestError && e.status === 400) {
-        this.rawError = '这一页原始观测读取失败：请求、游标或窗口无效；曲线与上一页原始观测保留。';
       } else {
-        this.rawError = '这一页原始观测读取失败；曲线与上一页原始观测保留。';
+        const reason = e instanceof MetricRequestError && e.status === 400 ? '：请求、游标或窗口无效' : '';
+        const retained = this.raw ? '曲线与上一页原始观测保留' : '曲线保留，可收起后重新展开重试';
+        this.rawError = `这一页原始观测读取失败${reason}；${retained}。`;
       }
-    } finally { if (current()) this.rawBusy = false; }
+    } finally {
+      if (current()) {
+        this.rawRequest = undefined;
+        this.rawBusy = false;
+      }
+    }
   }
   private renderHistoryContext() {
     const context = this.result?.history_context;
@@ -513,23 +548,25 @@ export class SemanticMetrics extends LitElement {
   private renderRaw(metrics: MetricResult[]) {
     if (!this.result) return nothing;
     const choices = this.rawSeries(metrics);
-    if (!choices.length) return nothing;
-    const key = choices.some(c => c.key === this.rawKey) ? this.rawKey : choices[0].key;
+    const choice = this.rawChoice(choices);
+    if (!choice) return nothing;
     const page = this.raw;
-    return html`<details class="raw-observations" @toggle=${(e: Event) => {
-      if ((e.target as HTMLDetailsElement).open && !this.raw && !this.rawBusy) void this.loadRaw(key, metrics);
+    return html`<details class="raw-observations" .open=${this.rawOpen} @toggle=${(e: Event) => {
+      const open = (e.currentTarget as HTMLDetailsElement).open;
+      if (open === this.rawOpen) return;
+      this.rawOpen = open;
+      if (open && !this.raw) void this.loadRaw();
     }}><summary>原始观测（正式来源分页）</summary>
       <label>指标与维度 <select aria-label="原始观测指标与维度" ?disabled=${this.rawBusy || this.accessInvalidated} @change=${(e: Event) => {
-        this.raw = null; this.rawError = '';
-        void this.loadRaw((e.target as HTMLSelectElement).value, metrics);
-      }}>${choices.map(c => html`<option value=${c.key} .selected=${c.key === key}>${metricName(c.metric.definition.id)} · ${Object.entries(c.series.dimensions).map(([k, v]) => `${k}=${v}`).join(' / ') || '整体'}</option>`)}</select></label>
+        this.selectRaw((e.target as HTMLSelectElement).value);
+      }}>${choices.map(c => html`<option value=${c.key} .selected=${c.key === choice.key}>${metricName(c.metric.definition.id)} · ${Object.entries(c.series.dimensions).map(([k, v]) => `${k}=${v}`).join(' / ') || '整体'}</option>`)}</select></label>
       ${this.rawError ? html`<p class="error" role="alert">${this.rawError}</p>` : nothing}
       ${page ? (page.observations.length ? html`<p class="hint">本页 ${page.observations.length} 条 · 正式窗口内共 ${page.total} 条 · ${page.has_more ? '还有更多页' : '已到最后一页'} · 按观测时间升序</p>
         <app-data-table .dense=${true} .columns=${[{ key: 'time', label: '观测时间' }, { key: 'value', label: '值' }, { key: 'quality', label: '质量与来源' }]}
           .rows=${page.observations.map(o => ({ time: html`<time datetime=${o.observed_at}>${localTime(o.observed_at)}</time>`,
             value: html`<strong>${o.value && 'value' in o.value ? o.value.value : o.value ? `${o.value.encoding} 记录` : '空值'}</strong> ${o.unit}`,
             quality: html`<app-badge variant=${o.quality.status === 'good' ? 'muted' : 'warn'}>${qualityLabels[o.quality.status] ?? o.quality.status}</app-badge> ${qualityLabels[o.accuracy] ?? o.accuracy}` }))}></app-data-table>
-        <button class="btn" ?disabled=${this.rawBusy || !page.has_more} @click=${() => { if (page.next_cursor) void this.loadRaw(key, metrics, page.next_cursor); }}>下一页原始观测</button>`
+        <button class="btn" ?disabled=${this.rawBusy || !page.has_more} @click=${() => { if (this.raw === page && page.next_cursor) void this.loadRaw(page.next_cursor); }}>下一页原始观测</button>`
         : html`<p>暂无原始观测</p>`) : this.rawBusy ? html`<div class="skeleton" aria-label="正在读取原始观测"></div>` : nothing}
     </details>`;
   }
@@ -581,7 +618,7 @@ export class SemanticMetrics extends LitElement {
       ${this.custom ? html`<label>开始时间（本地时区 ${timezone()}）<input type="datetime-local" aria-label="自定义开始时间" .value=${this.customFrom} @input=${(e: Event) => this.customFrom = (e.target as HTMLInputElement).value}></label>
         <label>结束时间<input type="datetime-local" aria-label="自定义结束时间" .value=${this.customTo} @input=${(e: Event) => this.customTo = (e.target as HTMLInputElement).value}></label>
         <button class="btn" @click=${this.applyCustom} ?disabled=${this.accessInvalidated}>应用自定义窗口</button>` : nothing}
-      <label>指标 <select aria-label="指标" ?disabled=${this.accessInvalidated} @change=${(e: Event) => { this.selectedMetric = (e.target as HTMLSelectElement).value; this.baselineKey = ''; this.rawKey = ''; this.raw = null; this.rawError = ''; }}><option value="" .selected=${!this.selectedMetric}>全部指标</option>${this.selectedMetric && !this.result?.metrics.some(m => m.definition.id === this.selectedMetric) ? html`<option value=${this.selectedMetric} .selected=${true}>${metricName(this.selectedMetric)} · ${this.selectedMetric}</option>` : nothing}${this.result?.metrics.map(m => html`<option value=${m.definition.id} .selected=${m.definition.id === this.selectedMetric}>${metricName(m.definition.id)} · ${m.definition.id}</option>`)}</select></label>
+      <label>指标 <select aria-label="指标" ?disabled=${this.accessInvalidated} @change=${(e: Event) => { this.selectedMetric = (e.target as HTMLSelectElement).value; this.baselineKey = ''; this.selectRaw(''); }}><option value="" .selected=${!this.selectedMetric}>全部指标</option>${this.selectedMetric && !this.result?.metrics.some(m => m.definition.id === this.selectedMetric) ? html`<option value=${this.selectedMetric} .selected=${true}>${metricName(this.selectedMetric)} · ${this.selectedMetric}</option>` : nothing}${this.result?.metrics.map(m => html`<option value=${m.definition.id} .selected=${m.definition.id === this.selectedMetric}>${metricName(m.definition.id)} · ${m.definition.id}</option>`)}</select></label>
       <button aria-busy=${String(this.busy)} class="btn btn-refresh" .disabled=${this.busy || this.accessInvalidated} @click=${this.load}>刷新标准指标</button>
       ${this.customError ? html`<p class="error" role="alert">${this.customError}</p>` : nothing}
       ${this.result ? html`<p class="window">查询窗口：${localTime(this.result.window.from)} — ${localTime(this.result.window.to)} · ${this.windowNote()}</p>` : nothing}
