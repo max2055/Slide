@@ -347,7 +347,7 @@ describe.skipIf(process.env.SQL_AUDIT_MYSQL_TEST !== '1')('MAX-533 real MySQL au
     const [{ case_mode: caseMode }] = await rows('SELECT @@lower_case_table_names AS case_mode');
     const sql = 'WITH `Audit_Subject` AS (SELECT 999 AS id) SELECT id FROM audit_subject';
     expect(await rows(sql)).toEqual([{ id: caseMode === 0 ? 1 : 999 }]);
-    const { analysisId } = await submit(sql);
+    const { analysisId } = await submit(sql, await actorContextService.loadActiveActor(53302));
     const [dispatch] = await rows('SELECT request_snapshot FROM analysis_dispatches WHERE analysis_id=?', [analysisId]);
     const evidence = dispatch.request_snapshot.evidence.data;
     if (caseMode === 0) {
