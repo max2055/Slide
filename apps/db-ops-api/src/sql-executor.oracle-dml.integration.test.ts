@@ -1,14 +1,12 @@
 /**
- * Real Oracle visibility for MAX-361 / GitHub #284.
- * Opt in with SLIDE_ORACLE_DML_INTEGRATION=1. Credentials stay in the local
- * profile and are never written to assertions or logs.
+ * Real Oracle transaction receipts for GitHub #284 and #1018.
+ * Opt in with SLIDE_ORACLE_DML_INTEGRATION=1 and the private test resource manifest.
  */
-import fs from 'node:fs';
+import { randomBytes } from 'node:crypto';
 import { afterAll, describe, expect, it, vi } from 'vitest';
+import { loadTestResource } from '../../../scripts/qualification/test-resource-manifest.mjs';
 
 const enabled = process.env.SLIDE_ORACLE_DML_INTEGRATION === '1';
-const profilePath = process.env.SLIDE_ORACLE_PROFILE
-  ?? '/Users/max/.config/slide-test-access/connection-profiles.json';
 
 const mocks = vi.hoisted(() => ({
   ensureConnectionAlive: vi.fn(async () => true),
@@ -46,13 +44,16 @@ function redact(password: string, error: unknown): string {
 }
 
 describe.skipIf(!enabled)('MAX-361 real Oracle DML visibility', () => {
+  const suffix = randomBytes(6).toString('hex').toUpperCase();
+  const dmlTable = `SLIDE_1018_DML_${suffix}`;
+  const ddlTable = `SLIDE_1018_DDL_${suffix}`;
   let password = '';
   let pool: oracledb.Pool;
   let witness: oracledb.Connection;
 
   async function witnessNote(id: number): Promise<string | null> {
     const result = await witness.execute(
-      'SELECT NOTE FROM SLIDE_MAX361_DML WHERE ID = :id',
+      `SELECT NOTE FROM ${dmlTable} WHERE ID = :id`,
       { id },
       { outFormat: oracledb.OUT_FORMAT_OBJECT },
     );
@@ -108,7 +109,7 @@ describe.skipIf(!enabled)('MAX-361 real Oracle DML visibility', () => {
     let attempts = 0;
     while (true) {
       attempts += 1;
-      const readTable = await sqlExecutor.executeSql(361, 'SELECT NOTE FROM SLIDE_MAX361_DML WHERE ID = 1');
+      const readTable = await sqlExecutor.executeSql(361, `SELECT NOTE FROM ${dmlTable} WHERE ID = 1`);
       expect(pool.connectionsInUse).toBe(0);
       if (readTable.success) {
         if (attempts > 1) console.log(`ORA-01466 settled after ${attempts} read-only attempts`);
@@ -121,10 +122,9 @@ describe.skipIf(!enabled)('MAX-361 real Oracle DML visibility', () => {
     }
   }
 
-  it('commits an approved UPDATE that another Oracle session can read', async () => {
-    const profile = JSON.parse(fs.readFileSync(profilePath, 'utf8'))['oracle-test'] as {
-      host: string; port: number; user: string; password: string; service: string;
-    };
+  it('checks Oracle DML receipts against visibility from a second session', async () => {
+    const profile = loadTestResource({ enabled: true, resource: 'oracle-test' }).connection;
+    if (typeof profile.service !== 'string' || !profile.service) throw new Error('ORACLE_TEST_SERVICE_REQUIRED');
     password = profile.password;
     const connectString = `(DESCRIPTION=(ADDRESS=(PROTOCOL=TCP)(HOST=${profile.host})(PORT=${profile.port}))(CONNECT_DATA=(SERVICE_NAME=${profile.service})))`;
     try {
@@ -138,24 +138,11 @@ describe.skipIf(!enabled)('MAX-361 real Oracle DML visibility', () => {
       witness = await oracledb.getConnection({ user: profile.user, password: profile.password, connectString });
       const setup = await pool.getConnection();
       try {
-        await setup.execute(`
-          BEGIN
-            EXECUTE IMMEDIATE 'DROP TABLE SLIDE_MAX361_DML PURGE';
-          EXCEPTION WHEN OTHERS THEN
-            IF SQLCODE != -942 THEN RAISE; END IF;
-          END;`);
-        await setup.execute(`
-          BEGIN
-            EXECUTE IMMEDIATE 'DROP TABLE SLIDE_MAX361_DDL PURGE';
-          EXCEPTION WHEN OTHERS THEN
-            IF SQLCODE != -942 THEN RAISE; END IF;
-          END;`);
-        await setup.execute(`CREATE TABLE SLIDE_MAX361_DML (
+        await setup.execute(`CREATE TABLE ${dmlTable} (
           ID NUMBER PRIMARY KEY,
-          NOTE VARCHAR2(64),
-          CONSTRAINT SLIDE_MAX361_NOTE_CK CHECK (NOTE <> 'reject')
+          NOTE VARCHAR2(64) CHECK (NOTE <> 'reject')
         )`);
-        await setup.execute(`INSERT INTO SLIDE_MAX361_DML (ID, NOTE) VALUES (1, 'before')`);
+        await setup.execute(`INSERT INTO ${dmlTable} (ID, NOTE) VALUES (1, 'before')`);
         await setup.commit();
       } finally {
         await setup.close();
@@ -165,7 +152,7 @@ describe.skipIf(!enabled)('MAX-361 real Oracle DML visibility', () => {
     }
 
     usePool();
-    const updated = await sqlExecutor.executeSql(361, `UPDATE SLIDE_MAX361_DML SET NOTE = 'after' WHERE ID = 1`, {
+    const updated = await sqlExecutor.executeSql(361, `UPDATE ${dmlTable} SET NOTE = 'after' WHERE ID = 1`, {
       approvalGrant: { ...grant, operationId: 'max361-update' },
     });
     expect(updated).toMatchObject({ success: true, executionState: 'succeeded', retryable: false });
@@ -173,7 +160,7 @@ describe.skipIf(!enabled)('MAX-361 real Oracle DML visibility', () => {
     expect(pool.connectionsInUse).toBe(0);
 
     usePool('commit-fails');
-    const commitFailed = await sqlExecutor.executeSql(361, `UPDATE SLIDE_MAX361_DML SET NOTE = 'invisible' WHERE ID = 1`, {
+    const commitFailed = await sqlExecutor.executeSql(361, `UPDATE ${dmlTable} SET NOTE = 'invisible' WHERE ID = 1`, {
       approvalGrant: { ...grant, operationId: 'max361-commit-fail' },
     });
     expect(commitFailed).toMatchObject({ success: false, executionState: 'unknown', retryable: false });
@@ -181,14 +168,14 @@ describe.skipIf(!enabled)('MAX-361 real Oracle DML visibility', () => {
     expect(pool.connectionsInUse).toBe(0);
 
     usePool('connection-break');
-    const broken = await sqlExecutor.executeSql(361, `UPDATE SLIDE_MAX361_DML SET NOTE = 'broken' WHERE ID = 1`, {
+    const broken = await sqlExecutor.executeSql(361, `UPDATE ${dmlTable} SET NOTE = 'broken' WHERE ID = 1`, {
       approvalGrant: { ...grant, operationId: 'max361-break' },
     });
     expect(broken).toMatchObject({ success: false, executionState: 'unknown', retryable: false });
     expect(await witnessNote(1)).toBe('after');
     expect(pool.connectionsInUse).toBe(0);
 
-    const ackSql = `UPDATE SLIDE_MAX361_DML SET NOTE = 'ack-lost-visible' WHERE ID = 1`;
+    const ackSql = `UPDATE ${dmlTable} SET NOTE = 'ack-lost-visible' WHERE ID = 1`;
     const ackMark = executedSql.length;
     const auditCallsBeforeLostAck = mocks.auditSql.mock.calls.length;
     usePool('commit-ack-lost');
@@ -207,41 +194,24 @@ describe.skipIf(!enabled)('MAX-361 real Oracle DML visibility', () => {
     expect(pool.connectionsInUse).toBe(0);
 
     usePool();
-    const restored = await sqlExecutor.executeSql(361, `UPDATE SLIDE_MAX361_DML SET NOTE = 'after' WHERE ID = 1`, {
+    const restored = await sqlExecutor.executeSql(361, `UPDATE ${dmlTable} SET NOTE = 'after' WHERE ID = 1`, {
       approvalGrant: { ...grant, operationId: 'max361-restore' },
     });
     expect(restored).toMatchObject({ success: true, executionState: 'succeeded', retryable: false });
     expect(await witnessNote(1)).toBe('after');
     expect(pool.connectionsInUse).toBe(0);
 
-    let statementError = '';
-    mocks.getConnection.mockReturnValue({
-      id: 361,
-      name: 'oracle19c',
-      db_type: 'oracle',
-      oracleConnection: {},
-      oraclePool: {
-        getConnection: async () => {
-          const connection = await pool.getConnection();
-          const execute = connection.execute.bind(connection);
-          connection.execute = (async (...args: Parameters<oracledb.Connection['execute']>) => {
-            try {
-              return await execute(...args);
-            } catch (error) {
-              statementError = redact(password, error);
-              throw error;
-            }
-          }) as oracledb.Connection['execute'];
-          return connection;
-        },
-      },
-    });
-    const rejected = await sqlExecutor.executeSql(361, `UPDATE SLIDE_MAX361_DML SET NOTE = 'reject' WHERE ID = 1`, {
+    const rejected = await sqlExecutor.executeSql(361, `UPDATE ${dmlTable} SET NOTE = 'reject' WHERE ID = 1`, {
       approvalGrant: { ...grant, operationId: 'max361-reject' },
     });
-    expect(statementError).toContain('ORA-02290');
-    expect(rejected).toMatchObject({ success: false, executionState: 'unknown', retryable: false });
+    expect(rejected).toMatchObject({
+      success: false, executionState: 'rolled_back', retryable: true, error: expect.stringContaining('ORA-02290'),
+    });
+    expect(mocks.finishIntent).toHaveBeenCalledWith('max361-reject', 'rolled_back', {
+      targetAcknowledged: false, receipt: 'rolled_back',
+    });
     expect(await witnessNote(1)).toBe('after');
+    expect(pool.connectionsInUse).toBe(0);
     usePool();
 
     // DUAL has a stable definition, so it checks the read-only transaction and
@@ -255,13 +225,13 @@ describe.skipIf(!enabled)('MAX-361 real Oracle DML visibility', () => {
     // transaction inside the executor. Any other error fails immediately.
     expect(await readCommittedNote()).toEqual([{ NOTE: 'after' }]);
 
-    const created = await sqlExecutor.executeSql(361, 'CREATE TABLE SLIDE_MAX361_DDL (ID INT)', {
+    const created = await sqlExecutor.executeSql(361, `CREATE TABLE ${ddlTable} (ID INT)`, {
       approvalGrant: { ...grant, operationId: 'max361-ddl' },
     });
     expect(created).toMatchObject({ success: true, executionState: 'succeeded' });
     const ddl = await witness.execute(
-      `SELECT COUNT(*) AS N FROM USER_TABLES WHERE TABLE_NAME = 'SLIDE_MAX361_DDL'`,
-      [],
+      'SELECT COUNT(*) AS N FROM USER_TABLES WHERE TABLE_NAME = :name',
+      { name: ddlTable },
       { outFormat: oracledb.OUT_FORMAT_OBJECT },
     );
     expect((ddl.rows?.[0] as { N?: string | number } | undefined)?.N).toEqual(expect.anything());
@@ -271,19 +241,25 @@ describe.skipIf(!enabled)('MAX-361 real Oracle DML visibility', () => {
 
   afterAll(async () => {
     if (!enabled || !pool) return;
-    const cleanup = await pool.getConnection().catch(() => null);
-    if (cleanup) {
-      for (const table of ['SLIDE_MAX361_DML', 'SLIDE_MAX361_DDL']) {
-        await cleanup.execute(`
-          BEGIN
-            EXECUTE IMMEDIATE 'DROP TABLE ${table} PURGE';
-          EXCEPTION WHEN OTHERS THEN
-            IF SQLCODE != -942 THEN RAISE; END IF;
-          END;`).catch(() => undefined);
+    try {
+      const cleanup = await pool.getConnection();
+      try {
+        for (const table of [dmlTable, ddlTable]) {
+          try {
+            await cleanup.execute(`DROP TABLE ${table} PURGE`);
+          } catch (error) {
+            if ((error as { errorNum?: number }).errorNum !== 942) throw error;
+          }
+        }
+      } finally {
+        await cleanup.close();
       }
-      await cleanup.close().catch(() => undefined);
+    } finally {
+      try {
+        await witness?.close();
+      } finally {
+        await pool.close(0);
+      }
     }
-    await witness?.close().catch(() => undefined);
-    await pool.close(0).catch(() => undefined);
   });
 });
