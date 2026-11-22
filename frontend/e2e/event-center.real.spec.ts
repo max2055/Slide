@@ -91,6 +91,17 @@ test('event center reconciles authorized records and opens the exact historical 
     await expect(cardValue('活跃严重告警')).toHaveText('1');
     await expect(cardValue('活跃紧急告警（P0）')).toHaveText('6');
     await expect(center.locator('alert-list tbody')).toContainText('警告记录');
+    const alerts = center.locator('alert-list');
+    await db.query('RENAME TABLE alerts TO max722_unavailable_alerts');
+    try {
+      await alerts.getByRole('button', { name: '刷新', exact: true }).click();
+      await expect(alerts.getByRole('alert')).toContainText('加载告警失败');
+      await expect(cardValue('活跃紧急告警（P0）')).toHaveCount(0);
+    } finally {
+      await db.query('RENAME TABLE max722_unavailable_alerts TO alerts');
+    }
+    await alerts.getByRole('button', { name: '重试', exact: true }).press('Enter');
+    await expect(cardValue('活跃紧急告警（P0）')).toHaveText('6');
 
     const selectView = (name: string) => center.getByRole('tab', { name, exact: true }).click();
     await selectView('聚合事件');
@@ -158,8 +169,24 @@ test('event center reconciles authorized records and opens the exact historical 
     await expect(cardValue('可见事件总计')).toHaveText('55');
 
     await selectView('通知投递');
-    await expect(center.getByRole('button', { name: '刷新投递回执' })).toBeVisible();
-    await expect(center.getByRole('button', { name: '刷新通知死信' })).toBeVisible();
+    const receiptRefresh = center.getByRole('button', { name: '刷新投递回执' });
+    const deadLetterRefresh = center.getByRole('button', { name: '刷新通知死信' });
+    await expect(receiptRefresh).toBeEnabled();
+    await expect(deadLetterRefresh).toBeEnabled();
+    const reads: string[] = [];
+    page.on('request', request => {
+      const path = new URL(request.url()).pathname;
+      if (path.startsWith('/api/notification/')) reads.push(path);
+    });
+    for (const [button, path] of [
+      [receiptRefresh, '/api/notification/deliveries'],
+      [deadLetterRefresh, '/api/notification/dead-letters'],
+    ] as const) {
+      const response = page.waitForResponse(item => new URL(item.url()).pathname === path);
+      await button.click();
+      expect((await response).status()).toBe(200);
+    }
+    expect(reads).toEqual(['/api/notification/deliveries', '/api/notification/dead-letters']);
 
     await selectView('平台异常');
     const system = center.locator('system-events-page');
