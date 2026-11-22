@@ -136,6 +136,29 @@ describe('feedback-page', () => {
     expect(root.querySelector<HTMLSelectElement>('select[aria-label="更新 连接页报错 的状态"]')?.value).toBe('accepted');
   });
 
+  it('marks the saved status during a list failure until it is confirmed by a new list read', async () => {
+    const root = (await renderPage()).shadowRoot!;
+    const refresh = () => root.querySelector<HTMLButtonElement>('.header-actions .btn-refresh')!.click();
+    const status = root.querySelector<HTMLSelectElement>('select.status-select')!;
+    status.value = 'accepted';
+    status.dispatchEvent(new Event('change'));
+    await vi.waitFor(() => expect(root.querySelector('select.status-select--accepted')).not.toBeNull());
+
+    mocks.read.mockResolvedValueOnce(Response.json({}, { status: 503 }));
+    refresh();
+    await vi.waitFor(() => expect(root.querySelector('.status-provenance')?.textContent).toBe('读取后已保存'));
+    expect(root.querySelector('.status-provenance')?.closest('td')?.textContent).toContain('已接收');
+
+    mocks.read.mockResolvedValueOnce(Response.json({ feedback: [{ ...feedback, status: 'accepted' }] }));
+    root.querySelector<HTMLButtonElement>('[data-read-retry]')!.click();
+    await vi.waitFor(() => expect(root.querySelector('select.status-select--accepted')).not.toBeNull());
+    mocks.read.mockResolvedValueOnce(Response.json({}, { status: 503 }));
+    refresh();
+    await vi.waitFor(() => expect(root.querySelector('[role="alert"]')?.textContent).toContain('显示上次读取成功的记录'));
+    expect(root.querySelector('.status-provenance')).toBeNull();
+    expect(mocks.put).toHaveBeenCalledTimes(1);
+  });
+
   it.each(['HTTP拒绝', '网络失败'])('MAX-430: restores confirmed status after %s and blocks duplicate writes', async () => {
     let reject!: (error: Error) => void;
     mocks.put.mockImplementationOnce(() => new Promise((_resolve, fail) => { reject = fail; }));

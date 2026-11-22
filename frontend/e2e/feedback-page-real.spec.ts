@@ -23,7 +23,7 @@ test.beforeAll(async () => {
   if (!config.host || !config.port || !config.user || typeof config.password !== 'string') {
     throw new Error('FEEDBACK_MYSQL_CONNECTION must supply host, port, user and password');
   }
-  db = await mysql.createConnection({ host: config.host, port: config.port, user: config.user, password: config.password });
+  db = await mysql.createConnection({ host: config.host, port: config.port, user: config.user, password: config.password, timezone: 'Z' });
   await db.query(`CREATE DATABASE \`${schema}\``);
   await db.query(`USE \`${schema}\``);
   await db.query('CREATE TABLE users (id INT UNSIGNED PRIMARY KEY, username VARCHAR(50)) ENGINE=InnoDB');
@@ -31,7 +31,7 @@ test.beforeAll(async () => {
   for (const migration of ['084_problem_feedback.sql', '085_problem_feedback_status.sql']) {
     await db.query(await readFile(resolve('../apps/db-ops-api/sql/migrations', migration), 'utf8'));
   }
-  pool = mysql.createPool({ host: config.host, port: config.port, user: config.user, password: config.password, database: schema });
+  pool = mysql.createPool({ host: config.host, port: config.port, user: config.user, password: config.password, database: schema, timezone: 'Z' });
   app = require('fastify')();
   // Isolated JWT actor harness; production feedback routes/service and MySQL are real.
   await registerFeedbackRoutes(app, async (request: any, reply: any) => {
@@ -69,17 +69,22 @@ test('MAX-724/MAX-430: real feedback reads, permission downgrade, status rollbac
   await createFeedback(7, '自己的反馈');
   const sqlStatus = async () => (await db.execute('SELECT status FROM problem_feedback WHERE id=?', [feedback.id]))[0][0].status;
   let failNextRead = true;
-  let writes = 0;
+  const writes: string[] = [];
+  const readStatuses: number[] = [];
+  const listReadAt = new Date(Date.now() - 30_000);
+  await page.clock.setFixedTime(listReadAt);
 
   // Forward requests to the task-owned Fastify listener instead of a shared API.
   await page.route('**/api/feedback**', async route => {
     const request = route.request();
     if (request.method() === 'GET' && failNextRead) {
       failNextRead = false;
+      readStatuses.push(503);
       return route.fulfill({ status: 503, json: { error: 'SERVICE_UNAVAILABLE' } });
     }
-    if (request.method() === 'PUT') writes++;
     const response = await route.fetch({ url: api + new URL(request.url()).pathname });
+    if (request.method() === 'GET') readStatuses.push(response.status());
+    else writes.push(request.method());
     await route.fulfill({ response });
   });
   const view = await openFeedbackFromSidebar(page, token(7), ['view_dashboard']);
@@ -92,7 +97,8 @@ test('MAX-724/MAX-430: real feedback reads, permission downgrade, status rollbac
   await restored;
   const select = view.getByRole('combobox', { name: '更新 真实反馈验收 的状态' });
   await expect(select).toHaveValue('pending');
-  expect(writes).toBe(0);
+  expect(writes).toEqual([]);
+  await page.clock.setFixedTime(new Date());
   const toggle = view.getByRole('button', { name: '展开 真实反馈验收 的问题描述' });
   await toggle.press('Enter');
   // The toggle name changes when the row is expanded.
@@ -108,13 +114,58 @@ test('MAX-724/MAX-430: real feedback reads, permission downgrade, status rollbac
   ownerCanAccessAll = true;
   const success = page.waitForResponse(r => r.request().method() === 'PUT');
   await select.selectOption('resolved');
-  expect((await success).status()).toBe(200);
+  const saved = await success;
+  expect(saved.status()).toBe(200);
+  const savedAt = (await saved.json()).feedback.updatedAt;
+  expect(Date.parse(savedAt)).toBeGreaterThan(listReadAt.getTime());
   await expect(select).toHaveValue('resolved');
   expect(await sqlStatus()).toBe('resolved');
+
+  const feedbackUrl = page.url();
+  const readStart = readStatuses.length;
+  const writesBeforeRetry = [...writes];
+  failNextRead = true;
+  await view.getByRole('button', { name: '刷新', exact: true }).press('Enter');
+  await expect(failure).toContainText('HTTP 503');
+  await expect(failure).toContainText('上次成功读取列表');
+  await expect(failure).toContainText('随后保存的结果');
+  await expect(failure.locator('time')).toHaveAttribute('datetime', listReadAt.toISOString());
+  const savedRow = results.getByRole('row').filter({ hasText: '真实反馈验收' });
+  const fromLastRead = results.getByRole('row').filter({ hasText: '自己的反馈' });
+  const savedLabel = '读取后已保存';
+  await expect(savedRow.getByText('已解决', { exact: true })).toBeVisible();
+  await expect(savedRow.getByText(savedLabel, { exact: true })).toBeVisible();
+  const savedTimeLabel = await page.evaluate(value => new Date(value).toLocaleString('zh-CN'), savedAt);
+  await expect(savedRow.getByRole('cell').nth(7)).toHaveText(savedTimeLabel);
+  await expect(fromLastRead.getByText('未接收', { exact: true })).toBeVisible();
+  await expect(fromLastRead.getByText(savedLabel, { exact: true })).toHaveCount(0);
+  await expect(results.getByRole('combobox')).toHaveCount(0);
+  await page.screenshot({ path: info.outputPath('saved-status-after-list-503.png') });
+
+  await retry.press('Enter');
+  await expect(select).toHaveValue('resolved');
+  await expect(results).toBeFocused();
+  await expect(failure).toHaveCount(0);
+  await expect(results.getByText(savedLabel, { exact: true })).toHaveCount(0);
+  await expect(page).toHaveURL(feedbackUrl);
+  expect(readStatuses.slice(readStart)).toEqual([503, 200]);
+  expect(writes).toEqual(writesBeforeRetry);
+  expect(await sqlStatus()).toBe('resolved');
+
+  failNextRead = true;
+  await view.getByRole('button', { name: '刷新', exact: true }).press('Enter');
+  await expect(failure).toContainText('HTTP 503');
+  await expect(failure).toContainText('显示上次读取成功的记录');
+  const nextReadAt = await failure.locator('time').getAttribute('datetime');
+  expect(Date.parse(nextReadAt!)).toBeGreaterThan(listReadAt.getTime());
+  await expect(savedRow.getByText('已解决', { exact: true })).toBeVisible();
+  await expect(results.getByText(savedLabel, { exact: true })).toHaveCount(0);
+  expect(writes).toEqual(writesBeforeRetry);
+
   await page.reload();
   await expect(select).toHaveValue('resolved');
   await page.screenshot({ path: info.outputPath('real-feedback.png'), fullPage: true });
-  expect(writes).toBe(2);
+  expect(writes).toEqual(['PUT', 'PUT']);
   ownerCanAccessAll = false;
   failNextRead = true;
   await page.evaluate(() => {
@@ -128,13 +179,16 @@ test('MAX-724/MAX-430: real feedback reads, permission downgrade, status rollbac
   await retry.click();
   await expect(results.getByRole('cell', { name: '自己的反馈', exact: true })).toBeVisible();
   await expect(results.getByRole('cell', { name: '真实反馈验收', exact: true })).toHaveCount(0);
-  expect(writes).toBe(2);
+  expect(writes).toEqual(['PUT', 'PUT']);
   await page.screenshot({ path: info.outputPath('real-feedback-scoped.png'), fullPage: true });
   const evidence = info.outputPath('real-evidence.json');
   await writeFile(evidence, JSON.stringify({
+    browser: page.context().browser()?.version(), viewport: page.viewportSize(),
     databaseVersion: (await db.query('SELECT VERSION() AS version'))[0][0].version,
     create: 201, denied: 404, statusAfterDenial: 'pending', retry: 200, statusAfterReload: await sqlStatus(),
     listRecovery: [503, 200], scopedReadRecovery: [503, 200], writes,
+    statusWriteRecovery: { lastSuccessfulReadAt: listReadAt.toISOString(), savedAt, listStatuses: [503, 200],
+      savedStatus: 'resolved', savedLabel, unchangedRow: 'pending', nextReadAt, retryWrites: 0, focusRestored: true },
     auth: 'isolated JWT actor harness', storage: 'real MySQL, production feedback migrations/routes/service', modelCalls: 0,
   }, null, 2));
   await info.attach('real-evidence', { contentType: 'application/json', path: evidence });

@@ -59,6 +59,7 @@ export class FeedbackPage extends LitElement {
   @state() private overflowingIds = new Set<number>();
   private descriptionObserver: ResizeObserver | undefined;
   private copyResetTimer: number | undefined;
+  private readonly statusSavedSinceRead = new Set<number>();
   private readController: AbortController | undefined;
   private accessGeneration = 0;
   private sessionContext = 0;
@@ -85,6 +86,12 @@ export class FeedbackPage extends LitElement {
     .table-wrap { overflow-x: auto; }
     [data-read-results]:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
     .read-error p { margin: var(--space-xs) 0; }
+    .status-provenance {
+      display: block;
+      color: var(--muted);
+      font-size: var(--text-xs);
+      margin-top: var(--space-xs);
+    }
     .header-actions { display: flex; align-items: center; gap: var(--space-sm); }
     .feedback-description {
       display: block;
@@ -281,6 +288,7 @@ export class FeedbackPage extends LitElement {
     this.readController = undefined;
     this.items = [];
     this.lastReadAt = null;
+    this.statusSavedSinceRead.clear();
     this.expandedIds = new Set();
     this.statusSavingIds = new Set();
     this.copiedId = null;
@@ -348,6 +356,7 @@ export class FeedbackPage extends LitElement {
         this.readState = { status: 'error', message: '反馈列表响应格式无效。' };
         return;
       }
+      this.statusSavedSinceRead.clear();
       this.items = responseBody.feedback;
       this.lastReadAt = new Date().toISOString();
       this.readState = { status: 'ready' };
@@ -470,6 +479,7 @@ export class FeedbackPage extends LitElement {
         status,
       });
       if (!this.ownsAccess(generation)) return;
+      this.statusSavedSinceRead.add(item.id);
       this.items = this.items.map((current) => current.id === item.id ? response.feedback : current);
       showToast('问题状态已更新', 'success');
     } catch {
@@ -514,7 +524,10 @@ export class FeedbackPage extends LitElement {
             ` : nothing}
           </div>
         `,
-        status: readOnly ? FEEDBACK_STATUSES.find(option => option.value === item.status)?.label : html`
+        status: readOnly ? html`
+          <span>${FEEDBACK_STATUSES.find(option => option.value === item.status)?.label}</span>
+          ${this.statusSavedSinceRead.has(item.id) ? html`<span class="status-provenance">读取后已保存</span>` : nothing}
+        ` : html`
           <select
             class="status-select status-select--${item.status}"
             aria-label="更新 ${item.title} 的状态"
@@ -554,6 +567,7 @@ export class FeedbackPage extends LitElement {
     const { readState } = this;
     const loading = readState.status === 'loading';
     const staleAt = readState.status === 'error' && this.items.length ? this.lastReadAt : null;
+    const hasSavedRows = staleAt && this.items.some(item => this.statusSavedSinceRead.has(item.id));
     const columns = [
       { key: 'serial', label: '序号', width: '3rem' },
       { key: 'title', label: '标题', width: '8rem' },
@@ -589,7 +603,12 @@ export class FeedbackPage extends LitElement {
                 <strong>加载问题反馈失败</strong>
                 <p>${readState.message}</p>
                 ${staleAt ? html`
-                  <p>显示上次读取成功的记录（<time datetime=${staleAt}>${this.formatTime(staleAt)}</time>），当前仅供查看。</p>
+                  ${hasSavedRows ? html`
+                    <p>上次成功读取列表（<time datetime=${staleAt}>${this.formatTime(staleAt)}</time>）。
+                      标记为「读取后已保存」的行包含随后保存的结果。当前仅供查看。</p>
+                  ` : html`
+                    <p>显示上次读取成功的记录（<time datetime=${staleAt}>${this.formatTime(staleAt)}</time>），当前仅供查看。</p>
+                  `}
                 ` : nothing}
               </div>
               <button class="btn btn-refresh" type="button" data-read-retry @click=${this.refresh}>重试</button>
