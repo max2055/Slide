@@ -8,11 +8,13 @@ import { actorContextService, type ActorContext } from './auth/actor-context.js'
 import { hasPermission } from './auth/require-permission.js';
 import { hasInstanceAccess } from './auth/require-instance-access.js';
 import { evidenceHash } from './analysis/analysis-evidence.js';
-import { databaseService } from './database-service.js';
+import { databaseService, type DatabaseConnection } from './database-service.js';
+import { withInstanceExecutionLock } from './instance-execution-lock.js';
 import { instanceDatabaseService } from './instance-database-service.js';
 import { aiAnalysisDatabaseService } from './ai-analysis-database-service.js';
 import { dbConnection } from './db-connection.js';
 import { withTimeout } from './promise-timeout.js';
+import type { RowDataPacket } from 'mysql2/promise';
 import crypto from 'crypto';
 
 interface AuditToken {
@@ -20,6 +22,26 @@ interface AuditToken {
   keyword: string;
   depth: number;
   identifier?: string;
+}
+
+interface AuditMetadataRow {
+  table_schema: string;
+  table_name: string;
+  table_rows: number | string | null;
+  avg_row_length?: number | string | null;
+  data_length?: number | string | null;
+  index_length?: number | string | null;
+  data_free?: number | string | null;
+  index_name: string | null;
+  column_name?: string | null;
+  non_unique?: number;
+  index_type?: string;
+  index_definition?: string;
+}
+
+interface AuditMetadataEvidence {
+  index_info: string;
+  table_stats: string;
 }
 
 // MySQL's double dash must be followed by whitespace or an ASCII control character.
@@ -168,10 +190,9 @@ class SqlAuditService {
     let explainPlan = 'EXPLAIN 获取失败';
     try { explainPlan = await databaseService.getExplainPlan(instanceId, sqlText) || explainPlan; }
     catch { /* Keep the evidence gap explicit. */ }
-    const indexInfo = await this._getIndexInfo(instanceId, sqlText);
-    const tableStats = await this._getTableStats(instanceId, sqlText);
+    const metadata = await this._getTableEvidence(instanceId, dialect, sqlText, mysqlVersion);
     const evidenceData = { sql_text: sqlText, dialect, explain: explainPlan,
-      index_info: indexInfo, table_stats: tableStats, pre_audit_results: preAuditResults };
+      ...metadata, pre_audit_results: preAuditResults };
     current = await actorContextService.revalidateActor(current);
     if (!hasPermission(new Set(current.permissions), 'sql:audit')
       || !hasInstanceAccess(current, instanceId)) throw new Error('ANALYSIS_AUTHORITY_REVOKED');
@@ -392,128 +413,229 @@ class SqlAuditService {
     return analysis;
   }
 
-  /**
-   * 从 SQL 中提取表名
-   */
-  private _extractTableNames(sql: string): string[] {
-    const tables = new Set<string>();
-    const tokens = auditTokens(sql);
+  /** Retain each identifier component, including its original quoting. */
+  private _extractTableNames(sql: string, mysql: boolean): string[][] {
+    const tokens = auditTokens(sql, mysql);
+    const tables = new Map<string, string[]>();
+    const tableLists = new Set<number>();
+    const commands = new Set<number>();
+    const ctes = new Map<number, Set<string>>();
     for (let i = 0; i < tokens.length; i++) {
-      const keyword = tokens[i].keyword;
-      if (!['FROM', 'JOIN', 'UPDATE'].includes(keyword)
-        && !(keyword === 'INTO' && tokens[i - 1]?.keyword === 'INSERT')) continue;
+      const { keyword, text, depth } = tokens[i];
+      if (text === ';') {
+        commands.clear();
+        tableLists.clear();
+        ctes.clear();
+      } else if (text === ')') {
+        commands.delete(depth + 1);
+        tableLists.delete(depth + 1);
+        ctes.delete(depth + 1);
+      }
+      if (keyword === 'WITH') {
+        const aliases = new Set<string>();
+        let cursor = i + (tokens[i + 1]?.keyword === 'RECURSIVE' ? 2 : 1);
+        while (tokens[cursor]?.identifier) {
+          const name = tokens[cursor++].identifier!;
+          if (tokens[cursor]?.text === '(') {
+            cursor++;
+            while (tokens[cursor]?.depth > depth) cursor++;
+            if (tokens[cursor++]?.text !== ')') break;
+          }
+          if (tokens[cursor++]?.keyword !== 'AS') break;
+          if (tokens[cursor]?.keyword === 'NOT') cursor++;
+          if (tokens[cursor]?.keyword === 'MATERIALIZED') cursor++;
+          if (tokens[cursor++]?.text !== '(') break;
+          aliases.add(name.toLowerCase());
+          while (tokens[cursor]?.depth > depth) cursor++;
+          if (tokens[cursor++]?.text !== ')' || tokens[cursor++]?.text !== ',') break;
+        }
+        if (aliases.size) ctes.set(depth, aliases);
+      }
+      if (['SELECT', 'DELETE', 'UPDATE'].includes(keyword)) commands.add(depth);
+      if (['WHERE', 'GROUP', 'ORDER', 'LIMIT', 'HAVING', 'SET', 'RETURNING', 'UNION', 'INTERSECT', 'EXCEPT'].includes(keyword)) {
+        tableLists.delete(depth);
+      }
+      if (keyword === 'FROM' && commands.has(depth)) tableLists.add(depth);
+
+      if (!(keyword === 'FROM' && commands.has(depth)) && keyword !== 'JOIN'
+        && !(keyword === 'UPDATE' && !['FOR', 'KEY', 'DUPLICATE'].includes(tokens[i - 1]?.keyword))
+        && !(keyword === 'INTO' && ['INSERT', 'REPLACE', 'MERGE'].includes(tokens[i - 1]?.keyword))
+        && !(text === ',' && tableLists.has(depth))) continue;
       let cursor = i + 1;
-      let name = tokens[cursor]?.identifier;
-      if (!name || ['SELECT', 'WHERE', 'JOIN', 'ON', 'GROUP', 'ORDER', 'LIMIT', 'HAVING', 'SET'].includes(tokens[cursor].keyword)) continue;
-      // Metadata stores TABLE_NAME, not the database/schema prefix.
+      if (tokens[cursor]?.keyword === 'ONLY') cursor++;
+      const first = tokens[cursor];
+      if (!first?.identifier || ['SELECT', 'WHERE', 'JOIN', 'ON', 'GROUP', 'ORDER', 'LIMIT', 'HAVING', 'SET'].includes(first.keyword)) continue;
+      const parts = [first.text];
       while (tokens[cursor + 1]?.text === '.' && tokens[cursor + 2]?.identifier) {
         cursor += 2;
-        name = tokens[cursor].identifier;
+        parts.push(tokens[cursor].text);
       }
-      if (name) tables.add(name);
+      // Do not resolve a function, database link or incomplete qualifier as a local table.
+      const following = tokens[cursor + 1]?.text;
+      if (following === '@' || following === '.' || (following === '(' && keyword !== 'INTO')) continue;
+      // A bare CTE reference has no catalog identity. Qualified references
+      // remain eligible even when their final component matches a CTE.
+      if (parts.length === 1 && [...ctes.values()].some(aliases => aliases.has(first.identifier!.toLowerCase()))) continue;
+      tables.set(parts.join('.'), parts);
     }
-    return Array.from(tables);
+    return [...tables.values()];
   }
 
-  /**
-   * 获取表索引信息
-   */
-  private async _getIndexInfo(instanceId: number, sqlText: string): Promise<string> {
-    const tables = this._extractTableNames(sqlText);
-    if (tables.length === 0) {
-      return '未识别到表名';
+  private async _getTableEvidence(
+    instanceId: number, dialect: string, sql: string, mysqlVersion: string | null,
+  ): Promise<AuditMetadataEvidence> {
+    const unavailable = (reason: string) => ({
+      index_info: `索引证据不可用（${reason}）`,
+      table_stats: `表统计证据不可用（${reason}）`,
+    });
+    if (dialect === 'mysql') {
+      const version = mysqlVersionId(mysqlVersion);
+      const expanded = expandMysqlAuditComments(sql, version);
+      if (expanded.conditional && version === undefined) return unavailable('无法确认 MySQL 版本及表引用');
+      sql = expanded.sql;
     }
+    const tables = this._extractTableNames(sql, dialect === 'mysql');
+    if (!tables.length) return unavailable('未识别到可查询的表');
+    const conn = databaseService.getConnection(instanceId);
+    if (!conn?.connected) return unavailable('数据库实例未连接');
+    if (!['mysql', 'postgresql', 'oracle', 'dameng'].includes(dialect)) return unavailable('当前数据库类型不支持表元数据查询');
 
-    const pool = dbConnection.getPool();
-    if (!pool) return '数据库未连接';
-
-    let output = '';
-    for (const table of tables) {
-      try {
-        const [rows] = await pool.execute(
-          `SELECT TABLE_NAME, INDEX_NAME, COLUMN_NAME, SEQ_IN_INDEX, NON_UNIQUE, INDEX_TYPE
-           FROM index_info
-           WHERE instance_id = ? AND TABLE_NAME = ?
-           ORDER BY INDEX_NAME, SEQ_IN_INDEX`,
-          [instanceId, table]
-        ) as any;
-
-        if (Array.isArray(rows) && rows.length > 0) {
-          output += `\n表: ${table}\n`;
-          let currentIndex: string | null = null;
-          let columns: string[] = [];
-          let indexType = '';
-          let nonUnique = false;
-
-          for (const row of rows) {
-            if (row.INDEX_NAME !== currentIndex && currentIndex !== null) {
-              output += `  ${currentIndex} (${columns.join(', ')})${nonUnique ? '' : ' [UNIQUE]'} ${indexType}\n`;
-              columns = [];
-            }
-            currentIndex = row.INDEX_NAME;
-            columns.push(row.COLUMN_NAME);
-            indexType = row.INDEX_TYPE || '';
-            nonUnique = row.NON_UNIQUE === 1;
-          }
-          if (currentIndex) {
-            output += `  ${currentIndex} (${columns.join(', ')})${nonUnique ? '' : ' [UNIQUE]'} ${indexType}\n`;
-          }
-        } else {
-          output += `表: ${table} - 无索引信息（可能未被采集）\n`;
+    const collect = async (): Promise<AuditMetadataEvidence> => {
+      const indexes: string[] = [];
+      const stats: string[] = [];
+      const resolved = new Set<string>();
+      for (const table of tables) {
+        let label = table.join('.');
+        let rows: AuditMetadataRow[];
+        try {
+          rows = await this._readTableMetadata(conn, dialect, table);
+        } catch {
+          indexes.push(`表: ${label} - 索引证据不可用（查询失败）`);
+          stats.push(`表: ${label} - 表统计证据不可用（查询失败）`);
+          continue;
         }
-      } catch {
-        output += `表: ${table} - 索引查询失败\n`;
-      }
-    }
+        const first = rows[0];
+        if (!first) {
+          indexes.push(`表: ${label} - 索引证据不可用（无法确认表或不可见）`);
+          stats.push(`表: ${label} - 表统计证据不可用（无法确认表或不可见）`);
+          continue;
+        }
 
-    return output || '无索引信息';
+        const quote = dialect === 'mysql' ? '`' : '"';
+        label = [first.table_schema, first.table_name]
+          .map(part => quote + part.replaceAll(quote, quote + quote) + quote).join('.');
+        if (resolved.has(label)) continue;
+        resolved.add(label);
+        indexes.push(`表: ${label}\n${this._formatIndexes(rows)}`);
+
+        const bytes = (value: number | string | null | undefined) => value == null
+          ? 'N/A'
+          : this._formatBytes(Number(value));
+        const counts = first.table_rows == null ? '行数不可用' : `行数: ${first.table_rows}`;
+        stats.push(`表: ${label}\n  ${counts}\n`
+          + `  平均行大小: ${bytes(first.avg_row_length)}\n  数据大小: ${bytes(first.data_length)}\n`
+          + `  索引大小: ${bytes(first.index_length)}\n  碎片: ${bytes(first.data_free)}`);
+      }
+      return { index_info: indexes.join('\n'), table_stats: stats.join('\n') };
+    };
+
+    // PostgreSQL and the Oracle-compatible drivers share sessions with the SQL executor.
+    return dialect === 'mysql' ? collect() : withInstanceExecutionLock(instanceId, collect);
   }
 
-  /**
-   * 获取表统计信息
-   */
-  private async _getTableStats(instanceId: number, sqlText: string): Promise<string> {
-    const tables = this._extractTableNames(sqlText);
-    if (tables.length === 0) {
-      return '未识别到表名';
+  private async _readTableMetadata(conn: DatabaseConnection, dialect: string, parts: string[]): Promise<AuditMetadataRow[]> {
+    const mysql = dialect === 'mysql';
+    const names = parts.map(part => {
+      if (part.startsWith('`') || part.startsWith('"')) {
+        return part.slice(1, -1).replaceAll(part[0].repeat(2), part[0]);
+      }
+      return dialect === 'oracle' || dialect === 'dameng' ? part.toUpperCase() : part;
+    });
+    const schema = names.length > 1 ? names.at(-2)! : null;
+    const name = names.at(-1)!;
+
+    // Use the target connection for both evidence fields. The platform index
+    // cache cannot prove the schema identity or current catalog visibility.
+    if (mysql && conn.pool && parts.length <= 2) {
+      const [rows] = await conn.pool.execute<(RowDataPacket & AuditMetadataRow)[]>(`
+        SELECT t.TABLE_SCHEMA AS table_schema, t.TABLE_NAME AS table_name,
+          t.TABLE_ROWS AS table_rows, t.AVG_ROW_LENGTH AS avg_row_length,
+          t.DATA_LENGTH AS data_length, t.INDEX_LENGTH AS index_length, t.DATA_FREE AS data_free,
+          s.INDEX_NAME AS index_name, s.COLUMN_NAME AS column_name,
+          s.NON_UNIQUE AS non_unique, s.INDEX_TYPE AS index_type
+        FROM information_schema.TABLES t
+        JOIN (SELECT COALESCE(?, DATABASE()) AS schema_name, ? AS table_name) ref
+          ON t.TABLE_SCHEMA = ref.schema_name AND t.TABLE_NAME = ref.table_name
+        LEFT JOIN information_schema.STATISTICS s
+          ON s.TABLE_SCHEMA = t.TABLE_SCHEMA AND s.TABLE_NAME = t.TABLE_NAME
+          AND CAST(s.TABLE_SCHEMA AS BINARY) = CAST(t.TABLE_SCHEMA AS BINARY)
+          AND CAST(s.TABLE_NAME AS BINARY) = CAST(t.TABLE_NAME AS BINARY)
+        WHERE CASE WHEN @@lower_case_table_names = 0
+          THEN CAST(t.TABLE_SCHEMA AS BINARY) = CAST(ref.schema_name AS BINARY)
+           AND CAST(t.TABLE_NAME AS BINARY) = CAST(ref.table_name AS BINARY)
+          ELSE CAST(LOWER(t.TABLE_SCHEMA) AS BINARY) = CAST(LOWER(ref.schema_name) AS BINARY)
+           AND CAST(LOWER(t.TABLE_NAME) AS BINARY) = CAST(LOWER(ref.table_name) AS BINARY)
+        END
+        ORDER BY s.INDEX_NAME, s.SEQ_IN_INDEX`, [schema, name]);
+      return rows;
     }
-
-    try {
-      const conn = databaseService.getConnection(instanceId);
-      if (!conn || !conn.connected || !conn.pool) {
-        return '数据库实例未连接';
-      }
-
-      // 获取 schema 名（如果有）
-      const schemaName = conn.config?.database || '';
-
-      const placeholders = tables.map(() => '?').join(', ');
-      const [rows] = await conn.pool.execute(
-        `SELECT TABLE_NAME, TABLE_ROWS, AVG_ROW_LENGTH, DATA_LENGTH, INDEX_LENGTH,
-                DATA_FREE, CREATE_TIME, UPDATE_TIME
-         FROM information_schema.TABLES
-         WHERE TABLE_SCHEMA = ? AND TABLE_NAME IN (${placeholders})`,
-        [schemaName, ...tables]
-      ) as any;
-
-      if (!Array.isArray(rows) || rows.length === 0) {
-        return '未找到表统计信息';
-      }
-
-      let output = '';
-      for (const row of rows) {
-        output += `\n表: ${row.TABLE_NAME}\n`;
-        output += `  行数: ${row.TABLE_ROWS ?? 'N/A'}\n`;
-        output += `  平均行大小: ${row.AVG_ROW_LENGTH ? row.AVG_ROW_LENGTH + ' bytes' : 'N/A'}\n`;
-        output += `  数据大小: ${row.DATA_LENGTH ? this._formatBytes(row.DATA_LENGTH) : 'N/A'}\n`;
-        output += `  索引大小: ${row.INDEX_LENGTH ? this._formatBytes(row.INDEX_LENGTH) : 'N/A'}\n`;
-        output += `  碎片: ${row.DATA_FREE ? this._formatBytes(row.DATA_FREE) : 'N/A'}\n`;
-      }
-
-      return output;
-    } catch {
-      return '表统计信息查询失败';
+    if (dialect === 'postgresql' && conn.pgClient && parts.length <= 3 && !parts.some(part => part.startsWith('`'))) {
+      // regclass resolves quoting, case and the active search_path before the
+      // privilege check, so an inaccessible table cannot fall through to a namesake.
+      const result = await conn.pgClient.query<AuditMetadataRow>(`
+        SELECT ns.nspname AS table_schema, t.relname AS table_name,
+          CASE WHEN t.reltuples >= 0 THEN t.reltuples END AS table_rows,
+          pg_catalog.pg_table_size(t.oid) AS data_length,
+          pg_catalog.pg_indexes_size(t.oid) AS index_length,
+          i.relname AS index_name, pg_catalog.pg_get_indexdef(i.oid) AS index_definition
+        FROM pg_catalog.pg_class t
+        JOIN pg_catalog.pg_namespace ns ON ns.oid = t.relnamespace
+        LEFT JOIN pg_catalog.pg_index ix ON ix.indrelid = t.oid
+        LEFT JOIN pg_catalog.pg_class i ON i.oid = ix.indexrelid
+        WHERE t.oid = pg_catalog.to_regclass($1) AND t.relkind IN ('r', 'p', 'm')
+          AND pg_catalog.has_schema_privilege(ns.oid, 'USAGE')
+          AND (pg_catalog.has_table_privilege(t.oid, 'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER')
+            OR pg_catalog.has_any_column_privilege(t.oid, 'SELECT,INSERT,UPDATE,REFERENCES'))
+        ORDER BY i.relname`, [parts.join('.')]);
+      return result.rows;
     }
+    const oracle = dialect === 'oracle' ? conn.oracleConnection : null;
+    const dameng = dialect === 'dameng' ? conn.dmConnection : null;
+    if ((!oracle && !dameng) || parts.length > 2 || parts.some(part => part.startsWith('`'))) return [];
+    const dictionarySql = `
+      SELECT t.OWNER, t.TABLE_NAME, t.NUM_ROWS, ${oracle ? 't.AVG_ROW_LEN' : 'NULL'},
+        i.INDEX_NAME, c.COLUMN_NAME, i.UNIQUENESS, i.INDEX_TYPE
+      FROM ALL_TABLES t
+      LEFT JOIN ALL_INDEXES i ON i.TABLE_OWNER = t.OWNER AND i.TABLE_NAME = t.TABLE_NAME
+      LEFT JOIN ALL_IND_COLUMNS c ON c.INDEX_OWNER = i.OWNER AND c.INDEX_NAME = i.INDEX_NAME
+        AND c.TABLE_NAME = i.TABLE_NAME
+      WHERE t.OWNER = COALESCE(:1, SYS_CONTEXT('USERENV', 'CURRENT_SCHEMA')) AND t.TABLE_NAME = :2
+      ORDER BY i.INDEX_NAME, c.COLUMN_POSITION`;
+    const result = oracle
+      ? await oracle.execute<unknown[]>(dictionarySql, [schema, name])
+      : await dameng!.execute(dictionarySql, [schema, name]);
+    return ((result.rows ?? []) as unknown[][]).map(row => ({
+      table_schema: String(row[0]), table_name: String(row[1]),
+      table_rows: row[2] as number | string | null, avg_row_length: row[3] as number | string | null,
+      index_name: row[4] as string | null, column_name: row[5] as string | null,
+      non_unique: row[6] === 'UNIQUE' ? 0 : 1, index_type: row[7] as string,
+    }));
+  }
+
+  private _formatIndexes(rows: AuditMetadataRow[]): string {
+    const indexes = new Map<string, { columns: string[]; type: string; unique: boolean; definition?: string }>();
+    for (const row of rows) {
+      if (!row.index_name) continue;
+      const index = indexes.get(row.index_name) ?? {
+        columns: [], type: row.index_type ?? '', unique: Number(row.non_unique) === 0,
+        definition: row.index_definition,
+      };
+      index.columns.push(row.column_name ?? '表达式');
+      indexes.set(row.index_name, index);
+    }
+    if (!indexes.size) return '  无可见索引';
+    return [...indexes].map(([name, index]) => '  ' + (index.definition
+      ?? `${name} (${index.columns.join(', ')})${index.unique ? ' [UNIQUE]' : ''} ${index.type}`)).join('\n');
   }
 
   /**
