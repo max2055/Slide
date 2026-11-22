@@ -25,7 +25,7 @@ export const packageName = (id: string) => ({ 'mysql-basic': 'MySQL 基础采集
   'mysql-custom-existing-scalars': 'MySQL 现有自定义指标', 'mysql-representative': 'MySQL 数据库采集', 'postgresql-representative': 'PostgreSQL 数据库采集', 'oracle-representative': 'Oracle 数据库采集', 'dameng-representative': '达梦数据库采集',
 }[id] ?? id);
 export const metricName = (id: string) => metricNames[id] ?? id;
-export type MetricRow = { result?: SemanticResult; state: string; collection?: CollectionStatus; bindingError?: string; lastSuccess?: string; timeUnavailable?: boolean };
+export type MetricRow = { result?: SemanticResult; state: string; collection?: CollectionStatus; bindingError?: string; timeUnavailable?: boolean };
 export function collectionState(result: SemanticResult): string {
   const metrics = result.metrics;
   if (!metrics.length) return 'unknown';

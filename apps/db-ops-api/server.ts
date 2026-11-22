@@ -2240,15 +2240,15 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
       if (!conn) return reply.send([]);
       if (conn.db_type === 'postgresql' && conn.pgClient) {
         const res = await conn.pgClient.query('SELECT datname FROM pg_database WHERE datistemplate = false ORDER BY datname');
-        reply.send((res.rows || []).map((r: any) => r.datname));
+        return reply.send((res.rows || []).map((r: any) => r.datname));
       } else if (conn.pool) {
         const [rows] = await conn.pool.query('SHOW DATABASES') as any;
-        reply.send(rows.map((r: any) => r.Database));
+        return reply.send(rows.map((r: any) => r.Database));
       } else {
-        reply.send([]);
+        return reply.send([]);
       }
     } catch (error: any) {
-      reply.code(500).send({ error: error.message });
+      return reply.code(500).send({ error: error.message });
     }
   });
 
@@ -2257,9 +2257,9 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
       const { id } = request.params as any;
       const objects = await databaseService.getSchemaObjects(Number(id));
       if (!objects) return reply.code(503).send({ error: '实例不可达或已离线，无法获取 schema 对象' });
-      reply.send(objects);
+      return reply.send(objects);
     } catch (error: any) {
-      reply.code(500).send({ error: error.message });
+      return reply.code(500).send({ error: error.message });
     }
   });
 
@@ -4291,10 +4291,11 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
           endTime: endTime || undefined,
           limit: limit ? Number(limit) : 50,
           offset: offset ? Number(offset) : 0,
+          strict: true,
         });
-        reply.send(result);
+        return reply.send(result);
       } catch (error: any) {
-        reply.code(500).send({ error: error.message });
+        return reply.code(500).send({ error: error.message });
       }
     }
   });
@@ -4320,9 +4321,9 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
         if (!stats) {
           return reply.code(500).send({ error: '获取日志统计失败' });
         }
-        reply.send(stats);
+        return reply.send(stats);
       } catch (error: any) {
-        reply.code(500).send({ error: error.message });
+        return reply.code(500).send({ error: error.message });
       }
     }
   });
@@ -4546,8 +4547,8 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
         const { instanceId } = request.params as any;
         const times = await schemaDatabaseService.getSnapshotTimes(Number(instanceId));
         return reply.send(times);
-      } catch (error: any) {
-        return reply.code(500).send({ error: error.message });
+      } catch {
+        return reply.code(500).send({ error: 'SCHEMA_READ_FAILED' });
       }
     }
   });
@@ -4560,8 +4561,8 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
         const { instanceId } = request.params as any;
         const tableList = await schemaDatabaseService.getTableList(Number(instanceId));
         return reply.send({ tables: tableList });
-      } catch (error: any) {
-        return reply.code(500).send({ error: error.message });
+      } catch {
+        return reply.code(500).send({ error: 'SCHEMA_READ_FAILED' });
       }
     }
   });
@@ -4573,12 +4574,12 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
       try {
         const { instanceId } = request.params as any;
         const result = await schemaService.detectChanges(Number(instanceId));
-        if ('error' in result) {
-          return reply.send({ changes: [] });
+        if ('hint' in result) {
+          return reply.send({ changes: [], hint: result.hint });
         }
         return reply.send({ changes: result });
-      } catch (error: any) {
-        return reply.code(500).send({ error: error.message });
+      } catch {
+        return reply.code(500).send({ error: 'SCHEMA_READ_FAILED' });
       }
     }
   });
@@ -4591,14 +4592,11 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
         const { instanceId } = request.params as any;
         const result = await schemaService.detectChanges(Number(instanceId));
         if ('hint' in result) {
-          return reply.send({ success: true, changes: [], hint: (result as any).hint });
+          return reply.send({ success: true, changes: [], hint: result.hint });
         }
-        if ('error' in result) {
-          return reply.send({ success: false, error: result.error, changes: [] });
-        }
-        reply.send({ success: true, changes: result });
-      } catch (error: any) {
-        reply.code(500).send({ error: error.message });
+        return reply.send({ success: true, changes: result });
+      } catch {
+        return reply.code(500).send({ error: 'SCHEMA_READ_FAILED' });
       }
     }
   });
@@ -4613,9 +4611,9 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
         if ('error' in detail) {
           return reply.code(404).send({ error: detail.error });
         }
-        reply.send(detail);
-      } catch (error: any) {
-        reply.code(500).send({ error: error.message });
+        return reply.send(detail);
+      } catch {
+        return reply.code(500).send({ error: 'SCHEMA_READ_FAILED' });
       }
     }
   });
@@ -5188,6 +5186,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
   registerWorkflowHandlers(workflowRegistry, {
     ...(systemComposition.enabled ? { systemEventBridge: systemComposition.bridge } : {}),
     investigationEngine: getAgentEngine,
+    databaseLogService,
     faultDiagnosisService, monitorCollector, baselineCalculator, alertEngine,
     workflowStore, capacityConsistencyMonitor, notificationScheduler, enqueueNotificationDispatch,
     reportSchedule: {
