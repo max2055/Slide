@@ -122,18 +122,19 @@ for (const kind of ['instance', 'server'] as const) for (const [width, height] o
   await view.getByRole('tab', { name: '指标与趋势', exact: true }).click();
   const metrics = view.locator('resource-metric-browser'), header = view.locator('.last-updated');
   const metricId = definitionFor(kind).id;
+  const metricName = kind === 'instance' ? '数据库运行时长' : '文件系统已用空间';
   await metrics.getByRole('searchbox', { name: '筛选指标' }).fill(metricId);
-  const metricRow = metrics.getByRole('row').filter({ hasText: metricId });
+  const metricRow = metrics.getByRole('row').filter({ has: page.getByText(metricName, { exact: true }) });
   const time = metricRow.locator('time');
   const evidence = (state: string) => capture(page, `${kind}-${state}-${width}`);
   await expect(time).toHaveAttribute('datetime', sampledAt);
-  await expect(metricRow).toContainText('已过期'); await expect(header).toContainText('非资源观测');
+  await expect(metricRow).toContainText('旧值'); await expect(header).toContainText('非资源观测');
   await evidence('stale');
   const firstRead = await header.textContent();
   await page.clock.fastForward(2000);
   const refresh = view.getByRole('button', { name: '刷新', exact: true }); await refresh.focus(); await page.keyboard.press('Enter');
   await expect(header).not.toHaveText(firstRead!); await expect(refresh).toBeEnabled();
-  await expect(time).toHaveAttribute('datetime', sampledAt); await expect(metricRow).toContainText('已过期');
+  await expect(time).toHaveAttribute('datetime', sampledAt); await expect(metricRow).toContainText('旧值');
   await evidence('refreshed-still-stale');
   const successfulRead = await header.textContent();
   const path = kind === 'instance' ? '**/api/database/instances/992' : '**/api/servers/992';
@@ -154,7 +155,7 @@ for (const kind of ['instance', 'server'] as const) for (const [width, height] o
     expect.objectContaining({ observed_at: freshAt, freshness: 'fresh' }),
   ]);
   await expect(refresh).toBeEnabled(); await expect(time).toHaveAttribute('datetime', freshAt);
-  await expect(metricRow).not.toContainText(/已过期|时效待确认/); await evidence('fresh');
+  await expect(metricRow).not.toContainText(/旧值|时效待确认/); await evidence('fresh');
   await pool.query('DELETE FROM metric_publications');
   await refresh.click(); await expect(refresh).toBeEnabled(); await expect(time).toHaveCount(0);
   await expect(metricRow).toContainText('暂无采样'); await evidence('unknown');

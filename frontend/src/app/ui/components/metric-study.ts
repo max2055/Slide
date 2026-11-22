@@ -17,6 +17,8 @@ type Exact=Bucket['min'];
 type StudyRequest = <T>(operation: string, body: unknown) => Promise<T>;
 type StudyWork = (request: StudyRequest) => Promise<void>;
 type StudyWindow = Catalog['window'];
+type CatalogMetric = Catalog['metrics'][number];
+const dimensionOperation = '长窗口维度';
 const text=(v:Exact)=>v? v.denominator==='1'?v.numerator:`${v.numerator}/${v.denominator}`:'不适用 / 未知';
 const local=(s:string)=>new Date(s).toLocaleString('zh-CN');
 const inputTime=(s:string)=>{const d=new Date(s),p=(n:number)=>String(n).padStart(2,'0');return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;};
@@ -31,6 +33,8 @@ export class MetricStudy extends LitElement {
   @state() private metricKey='';
   @state() private dimKey='{}';
   @state() private dimensions:Record<string,string>[]=[];
+  @state() private dimensionError = '';
+  private retryDimensions?: () => Promise<void>;
   @state() private ruleKey='';
   @state() private tier='1h';
   @state() private interval=60;
@@ -77,12 +81,17 @@ export class MetricStudy extends LitElement {
   }
   private clearResults() {
     this.catalog = null; this.trend = null; this.replay = null; this.capacity = null; this.raw = null;
-    this.dimensions = []; this.metricKey = ''; this.ruleKey = ''; this.offset = 0;
+    this.dimensions = []; this.dimKey = '{}'; this.metricKey = ''; this.ruleKey = ''; this.offset = 0;
+    this.clearDimensionFailure();
     this.catalogAt = ''; this.trendAt = ''; this.replayAt = '';
   }
   private clearFailure() {
     this.error = '';
     this.retry = undefined;
+  }
+  private clearDimensionFailure() {
+    this.dimensionError = '';
+    this.retryDimensions = undefined;
   }
   private window() {
     const from = Date.parse(this.from), to = Date.parse(this.to);
@@ -104,7 +113,8 @@ export class MetricStudy extends LitElement {
     };
     this.busy = true;
     this.operation = operation;
-    this.clearFailure();
+    if (operation === dimensionOperation) this.clearDimensionFailure();
+    else this.clearFailure();
     const request: StudyRequest = async <T>(op: string, body: unknown) => {
       const value = await metricRequest<T>(op, body, signal);
       if (!current()) throw new Error('STALE_STUDY');
@@ -116,6 +126,9 @@ export class MetricStudy extends LitElement {
       if (isMetricAccessError(error)) {
         this.clear();
         this.error = '无权限、登录已失效或资源不可用。';
+      } else if (operation === dimensionOperation) {
+        this.dimensionError = metricReadError(error, operation);
+        this.retryDimensions = () => this.run(operation, work);
       } else if (error instanceof MetricRequestError && error.code === 'HISTORY_RAW_EXPIRED') {
         this.error = '该窗口原始证据已过期；保全趋势可读，但不能用于回放。';
       } else if (error instanceof MetricRequestError && error.code === 'HISTORY_COMPOSITE_REPLAY_UNAVAILABLE') {
@@ -145,22 +158,14 @@ export class MetricStudy extends LitElement {
       const catalog = await request<Catalog>('study/catalog', requested);
       const previousMetric = this.metricKey;
       const metric = catalog.metrics.find(item => JSON.stringify(item.metric) === previousMetric) ?? catalog.metrics[0];
-      const key = metric ? JSON.stringify(metric.metric) : '';
-      const dimensions = metric
-        ? (await request<{ dimensions: Record<string, string>[] }>('study/dimensions', { ...requested, metric: metric.metric })).dimensions : [];
-      const dimension = dimensions.find(item => JSON.stringify(item) === this.dimKey) ?? dimensions[0];
-      const dimKey = JSON.stringify(dimension ?? {});
       this.catalog = catalog;
       this.catalogAt = new Date().toISOString();
-      this.metricKey = key;
-      this.dimensions = dimensions;
-      if (previousMetric !== key || this.dimKey !== dimKey || !dimension) this.clearTrend();
-      this.dimKey = dimKey;
       const rules = this.rules();
       if (!rules.some(item => item.key === this.ruleKey)) {
         this.ruleKey = rules[0]?.key ?? '';
         this.replay = null; this.replayAt = '';
       }
+      await this.loadDimensions(requested, metric);
     }, this.catalogAt);
   }
   private rules() {
@@ -178,14 +183,34 @@ export class MetricStudy extends LitElement {
   }
   private clearTrend() { this.trend = null; this.raw = null; this.offset = 0; this.trendAt = ''; }
   private async selectMetric(key: string) {
-    this.metricKey = key;
-    this.clearTrend();
-    this.dimensions = [];
-    const body = { ...this.window(), metric: JSON.parse(key) };
-    await this.run('长窗口维度', async request => {
+    const metric = this.catalog?.metrics.find(item => JSON.stringify(item.metric) === key);
+    if (metric) await this.loadDimensions(this.window(), metric);
+  }
+  private async loadDimensions(window: ReturnType<MetricStudy['window']>, metric?: CatalogMetric) {
+    this.clearDimensionFailure();
+    const key = metric ? JSON.stringify(metric.metric) : '';
+    if (key !== this.metricKey) {
+      this.clearTrend();
+      this.dimensions = [];
+      this.dimKey = '{}';
+      this.metricKey = key;
+    }
+    if (!metric) return;
+    if (!metric.definition) {
+      this.dimensions = [];
+      this.dimKey = '{}';
+      this.clearTrend();
+      this.dimensionError = '该指标缺少定义，无法读取维度。请选择其他指标。';
+      return;
+    }
+    const body = { ...window, metric: metric.metric };
+    await this.run(dimensionOperation, async request => {
       const result = await request<{ dimensions: Record<string, string>[] }>('study/dimensions', body);
       this.dimensions = result.dimensions;
-      this.dimKey = JSON.stringify(result.dimensions[0] ?? {});
+      const dimension = this.dimensions.find(item => JSON.stringify(item) === this.dimKey) ?? this.dimensions[0];
+      const dimensionKey = JSON.stringify(dimension ?? {});
+      if (!dimension || dimensionKey !== this.dimKey) this.clearTrend();
+      this.dimKey = dimensionKey;
     });
   }
   async queryTrend() {
@@ -236,14 +261,19 @@ export class MetricStudy extends LitElement {
         <button class="btn btn-refresh" ?disabled=${this.busy||!this.resourceId||this.invalidated} @click=${this.load}>刷新历史研究</button></div>
       ${this.appliedWindow ? html`<p class="hint">研究窗口（${timezone}）：${local(this.appliedWindow.from)} — ${local(this.appliedWindow.to)}</p>
         <details><summary>研究窗口边界</summary><p>UTC [${this.appliedWindow.from}, ${this.appliedWindow.to})。聚合保留缺口，回放从未知状态开始。</p></details>` : nothing}
-      ${this.busy ? html`<p role="status">正在读取${this.operation}</p>` : nothing}
+      ${this.busy && this.operation !== dimensionOperation ? html`<p role="status">正在读取${this.operation}</p>` : nothing}
       ${this.error ? html`<p role="alert">${this.error}</p>${this.retry ? html`<button class="btn" @click=${() => void this.retry?.()}>重试${this.operation}</button>` : nothing}` : nothing}
       ${!this.resourceId?html`<p>请先选择授权资源。</p>`:nothing}
       ${this.catalog?html`<div class="tools"><label>历史指标<select aria-label="历史研究指标" ?disabled=${this.busy} @change=${(e:Event)=>void this.selectMetric((e.target as HTMLSelectElement).value)}>${this.catalog.metrics.map(m=>html`<option value=${JSON.stringify(m.metric)} .selected=${this.metricKey===JSON.stringify(m.metric)}>${metricDisplayName(m.metric.id)}${this.catalog?.metrics.some(other => other.metric.id === m.metric.id && other.metric.semantic_version !== m.metric.semantic_version) ? ` · v${m.metric.semantic_version}` : ''}</option>`)}</select></label>
         <label>维度<select aria-label="历史研究维度" ?disabled=${this.busy} @change=${(e:Event)=>{this.dimKey=(e.target as HTMLSelectElement).value;this.clearTrend();this.clearFailure();}}>${this.dimensions.map(d=>html`<option value=${JSON.stringify(d)} .selected=${this.dimKey===JSON.stringify(d)}>${Object.entries(d).map(([k,v])=>`${k}=${v}`).join(' / ')||'整体'}</option>`)}</select></label>
         <label>聚合层级<select aria-label="历史聚合层级" ?disabled=${this.busy} .value=${this.tier} @change=${(e:Event)=>{this.tier=(e.target as HTMLSelectElement).value;this.clearTrend();this.clearFailure();}}><option value="5m">5 分钟</option><option value="1h">1 小时</option><option value="1d">1 天</option></select></label>
         <label>采样周期假设（秒）<input aria-label="研究采样周期秒" ?disabled=${this.busy} type="number" min="1" max="86400" .value=${String(this.interval)} @change=${(e:Event)=>{this.interval=Number((e.target as HTMLInputElement).value);this.clearTrend();this.capacity=null;this.clearFailure();}}></label>
-        <button class="btn" ?disabled=${this.busy||!this.metricKey||!this.dimensions.length} @click=${this.queryTrend}>对照原始与趋势</button></div>
+        <button class="btn" ?disabled=${this.busy||!this.metricKey||!this.dimensions.length||!!this.dimensionError} @click=${this.queryTrend}>对照原始与趋势</button></div>
+        ${this.metricKey ? html`<section aria-label="历史研究维度">
+          ${this.busy && this.operation === dimensionOperation ? html`<p role="status">正在读取${dimensionOperation}</p>` : nothing}
+          ${this.dimensionError ? html`<p role="alert">${this.dimensionError}</p>
+            ${this.retryDimensions ? html`<button class="btn" ?disabled=${this.busy} @click=${() => void this.retryDimensions?.()}>重试${dimensionOperation}</button>` : nothing}` : nothing}
+        </section>` : nothing}
         ${!this.catalog.metrics.length && !(this.operation === '长窗口目录' && (this.busy || this.error)) ? html`<p role="status">研究窗口没有可读取的正式历史。</p>`:nothing}
         <div class="tools"><label>固定历史规则<select aria-label="历史回放规则" ?disabled=${this.busy} @change=${(e:Event)=>{this.ruleKey=(e.target as HTMLSelectElement).value;this.replay=null;this.replayAt='';this.clearFailure();}}>${rules.map(r=>html`<option value=${r.key} .selected=${this.ruleKey===r.key}>${r.label}</option>`)}</select></label><button class="btn" ?disabled=${this.busy||!this.ruleKey} @click=${this.replayWindow}>隔离回放此窗口</button></div>
         ${!rules.length?html`<p>没有保全的历史规则快照，不能用当前规则代填。</p>`:nothing}`:nothing}

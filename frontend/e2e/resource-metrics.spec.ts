@@ -661,3 +661,62 @@ test('metric, maintenance and 30-day study reads recover independently', async (
   await expect(metrics.getByRole('region', { name: '窗口内最近可用值' })).toHaveCount(0);
   await expect(section).not.toContainText('计划维护');
 });
+
+test('MAX-719 study keeps the 30-day catalog and rule choices when dimensions cannot be read', async ({ page }) => {
+  const missing = { id: 'legacy.missing_definition', semantic_version: '1.0.0' };
+  const first = { id: 'db.uptime_seconds', semantic_version: '1.0.0' };
+  const second = { id: 'mysql.threads.connected', semantic_version: '1.0.0' };
+  const dimensionReads: Array<{ from: string; to: string; metric: typeof first }> = [];
+  let window: { from: string; to: string };
+  await page.route('**/api/metrics/study/**', route => {
+    const { from, to, metric, dimensions } = route.request().postDataJSON();
+    const path = new URL(route.request().url()).pathname;
+    if (path.endsWith('/catalog')) {
+      window = { from, to };
+      return route.fulfill({ json: {
+        metrics: [{ metric: missing, definition: null }, { metric: first, definition: { unit: 's' } },
+          { metric: second, definition: { unit: 'count' } }],
+        snapshots: [{ config_revision: 3, snapshot_hash: 'fixture', rules: [{ metric: first, version: 1, rule_id: 'uptime', scope: 'item:uptime' }] }],
+      } });
+    }
+    if (path.endsWith('/dimensions')) {
+      dimensionReads.push({ from, to, metric });
+      if (metric.id === missing.id) return route.fulfill({ status: 400, json: { error: 'UNKNOWN_METRIC' } });
+      if (metric.id === first.id) return route.fulfill({ status: 503, json: {} });
+      return route.fulfill({ json: { dimensions: [{}] } });
+    }
+    expect({ from, to }).toEqual(window);
+    expect(metric).toEqual(second);
+    expect(dimensions).toEqual({});
+    const value = { numerator: '13', denominator: '1' };
+    return route.fulfill({ json: { tier: '1h', note: '受控趋势', buckets: [{
+      from, to: new Date(Date.parse(from) + 3_600_000).toISOString(),
+      count: 1, numeric_count: 1, min: value, max: value, avg: value,
+      quality: 'good', coverage: 1, max_gap_ms: 0, invalid_count: 0, non_numeric_count: 0, estimated_count: 0,
+    }] } });
+  });
+  await fixture(page, '<metric-study resourceid="9"></metric-study>', 'components/metric-study');
+  const study = page.locator('metric-study');
+  const choices = study.getByRole('combobox', { name: '历史研究指标' });
+  const rule = study.getByRole('combobox', { name: '历史回放规则' });
+  const dimensions = study.getByRole('region', { name: '历史研究维度' });
+  await expect(choices).toHaveValue(JSON.stringify(missing));
+  await expect(rule).toBeEnabled();
+  const selectedRule = await rule.inputValue();
+  expect(selectedRule).toContain('uptime');
+  await expect(dimensions).toContainText('该指标缺少定义');
+  await choices.selectOption(JSON.stringify(first));
+  await expect(dimensions.getByRole('alert')).toContainText('长窗口维度服务暂不可用（503）');
+  await expect(rule).toHaveValue(selectedRule);
+  await dimensions.getByRole('button', { name: '重试长窗口维度' }).click();
+  await expect.poll(() => dimensionReads.length).toBe(2);
+  await choices.selectOption(JSON.stringify(second));
+  await expect(dimensions.getByRole('alert')).toHaveCount(0);
+  await study.getByRole('button', { name: '对照原始与趋势' }).click();
+  await expect(study).toContainText('趋势已完成 · 1 个桶');
+  await expect(study.getByText('13 个连接', { exact: true })).toHaveCount(3);
+  await expect(study.getByRole('combobox', { name: '历史研究窗口' })).toHaveValue('30');
+  await expect(rule).toHaveValue(selectedRule);
+  expect(Date.parse(window!.to) - Date.parse(window!.from)).toBe(30 * 86_400_000);
+  expect(dimensionReads).toEqual([first, first, second].map(metric => ({ ...window, metric })));
+});
