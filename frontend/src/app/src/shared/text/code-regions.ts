@@ -5,24 +5,48 @@ export interface CodeRegion {
   end: number;
 }
 
-export function findCodeRegions(text: string): CodeRegion[] {
-  const regions: CodeRegion[] = [];
+function appendInlineCodeRegions(text: string, start: number, end: number, regions: CodeRegion[]): void {
+  const runs = [...text.slice(start, end).matchAll(/(\\*)(`+)|\\+|(\n[ \t]*\r?\n)/g)];
+  const closingEnds = new Map<number, number>();
+  const candidates: CodeRegion[] = [];
 
-  for (const span of parseFenceSpans(text)) {
-    regions.push({ start: span.start, end: span.end });
+  // Index the nearest closing run of each length in the same paragraph.
+  for (const run of runs.reverse()) {
+    const [, backslashes, ticks, paragraphBreak] = run;
+    if (paragraphBreak) {
+      closingEnds.clear();
+    }
+    if (!ticks) {
+      continue;
+    }
+    const tickStart = start + run.index + backslashes.length;
+    const escaped = backslashes.length % 2;
+    const closeEnd = closingEnds.get(ticks.length - escaped);
+    if (closeEnd !== undefined) {
+      candidates.push({ start: tickStart + escaped, end: closeEnd });
+    }
+    closingEnds.set(ticks.length, tickStart + ticks.length);
   }
 
-  const inlineRe = /`+[^`]+`+/g;
-  for (const match of text.matchAll(inlineRe)) {
-    const start = match.index ?? 0;
-    const end = start + match[0].length;
-    const insideFenced = regions.some((r) => start >= r.start && end <= r.end);
-    if (!insideFenced) {
-      regions.push({ start, end });
+  let cursor = start;
+  for (const candidate of candidates.reverse()) {
+    if (candidate.start >= cursor) {
+      regions.push(candidate);
+      cursor = candidate.end;
     }
   }
+}
 
-  regions.sort((a, b) => a.start - b.start);
+export function findCodeRegions(text: string): CodeRegion[] {
+  const regions: CodeRegion[] = [];
+  let cursor = 0;
+
+  for (const span of parseFenceSpans(text)) {
+    appendInlineCodeRegions(text, cursor, span.start, regions);
+    regions.push({ start: span.start, end: span.end });
+    cursor = span.end;
+  }
+  appendInlineCodeRegions(text, cursor, text.length, regions);
   return regions;
 }
 
