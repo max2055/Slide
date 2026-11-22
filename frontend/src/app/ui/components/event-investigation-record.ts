@@ -83,6 +83,7 @@ export class EventInvestigationRecord extends LitElement {
   @property({type:Boolean}) full = false;
   @property({type:Boolean}) allowStart = false;
   @property() source = '';
+  @property({ attribute: false }) openFromQueue?: (event: MouseEvent, destination: string) => void;
   @state() private loadedLink?: LinkedInvestigation | null;
   @state() private linkError = '';
   @state() private linkLoading = false;
@@ -247,7 +248,11 @@ export class EventInvestigationRecord extends LitElement {
   }
   private investigationHref(link: LinkedInvestigation) {
     const query = new URLSearchParams({investigation:link.id});
-    const origin = !this.full && this.source ? this.source : eventDetailUrl(readEventId(this.event?.id ?? null));
+    const id = readEventId(this.event?.id ?? null);
+    const current = new URL(location.href);
+    const origin = this.full && current.pathname === '/events' && readEventId(current.searchParams.get('eventId')) === id
+      ? current.pathname + current.search
+      : this.source || eventDetailUrl(id);
     query.set('returnTo',origin);
     return '/workbench?' + query;
   }
@@ -271,7 +276,10 @@ export class EventInvestigationRecord extends LitElement {
   private entryLink(link: LinkedInvestigation) {
     const href = this.investigationHref(link);
     const key = `source-event-${readEventId(this.event?.id ?? null)}`;
-    return html`<a href=${href} @click=${(event:MouseEvent) => openWorkbenchRecord(event,href,key)} data-workbench-key=${key}>打开原调查</a>`;
+    return html`<a href=${href} @click=${(event:MouseEvent) => {
+      if (this.openFromQueue) this.openFromQueue(event, href);
+      else openWorkbenchRecord(event, href, key);
+    }} data-workbench-key=${key}>打开原调查</a>`;
   }
   private samples() {
     const episode = this.telemetry?.episode;
@@ -416,6 +424,7 @@ export class EventInvestigationRecord extends LitElement {
     const link = this.lookup ? this.loadedLink : this.link;
     const resource = this.telemetry?.episode.resource;
     const isTemplate = event.source_type === 'template-trigger';
+    const detailHref = eventDetailUrl(id, this.source);
     const mount = this.telemetry?.snapshot.opening.dimensions?.mount ?? this.telemetry?.episode.last.dimensions?.mount;
     const monitorStatus = this.telemetry?.episode.manual_close ? '已手动关闭' : this.recovered ? '本次告警已恢复' : this.telemetry?.episode.state === 'open' ? '尚无恢复记录'
       : isTemplate ? this.telemetryLoading ? '读取中' : '待确认' : eventStatusLabels[event.status] ?? '待确认';
@@ -428,7 +437,8 @@ export class EventInvestigationRecord extends LitElement {
       ${this.full ? html`${link ? this.entryLink(link) : nothing}
         ${this.telemetry?.can_manual_close === true ? html`<template-event-close .eventId=${id}
           @template-event-closed=${(event: CustomEvent<Telemetry>) => { this.telemetry = event.detail; this.focusHeading(); }}></template-event-close>` : nothing}`
-        : html`<a href=${eventDetailUrl(id,this.source)}>打开事件详情</a>`}
+        : html`<a href=${detailHref}
+          @click=${(event: MouseEvent) => this.openFromQueue?.(event, detailHref)}>打开事件详情</a>`}
       </div><h3 class="record-title" tabindex="-1">${eventDisplayTitle(event)}</h3>
       <p class="meta">${event.instance_name ? `${event.instance_name} · ` : resource ? html`<a href=${resourceDetailUrl(resource.type,readEventId(resource.id))}>${({instance:'数据库',server:'服务器',network_device:'网络设备'})[resource.type]} #${resource.id}</a> · ` : nothing}${mount ? `挂载点 ${mount} · ` : ''}${displayTime(event.created_at)}</p></header>
       <dl class="states">

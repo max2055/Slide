@@ -49,6 +49,10 @@ function investigationListState(row: InvestigationRecord, hasGap: boolean) {
   return { label: '执行状态未提供', variant: 'muted' };
 }
 
+function investigationTimeKey(row: InvestigationRecord) {
+  return JSON.stringify([row.title, displayTime(row.createdAt)]);
+}
+
 @customElement('investigations-page')
 export class InvestigationsPage extends LitElement {
   @property({ attribute: false }) client: DirectGatewayClient | null = null;
@@ -169,7 +173,13 @@ export class InvestigationsPage extends LitElement {
       history.replaceState(history.state,'',url);
     }
   }
-  private listRow(row: InvestigationRecord) {
+  private listRows(records: InvestigationRecord[]) {
+    const counts = new Map<string, number>();
+    const keys = records.map(investigationTimeKey);
+    for (const key of keys) counts.set(key, (counts.get(key) ?? 0) + 1);
+    return records.map((row, index) => this.listRow(row, (counts.get(keys[index]) ?? 0) > 1));
+  }
+  private listRow(row: InvestigationRecord, timeClash: boolean) {
     const events = hasSlidePermission(this.permissions, 'alert:view')
       ? [...new Set(row.context?.entry?.sourceEventIds ?? row.sourceEventIds ?? [])].filter(id => Number.isSafeInteger(id) && id > 0)
       : [];
@@ -177,6 +187,7 @@ export class InvestigationsPage extends LitElement {
     const primary = resources.find(ref => ref.role === 'primary') ?? resources[0];
     const gap = row.latestOutcome?.gaps.find(question => question.trim());
     const state = investigationListState(row, Boolean(gap));
+    const precision = timeClash ? 'milliseconds' : undefined;
     return {
       subject: html`<div class="investigation-list-cell">
         <strong>${events.length ? `事件 ${events.slice(0, 2).map(id => `#${id}`).join('、')}${events.length > 2 ? ` 等 ${events.length} 项` : ''}`
@@ -188,14 +199,16 @@ export class InvestigationsPage extends LitElement {
       state: html`<div class="investigation-list-cell"><app-badge variant=${state.variant}>${state.label}</app-badge>
         <small>${lifecycleLabels[row.lifecycle] ?? '记录状态未知'}</small></div>`,
       time: html`<div class="investigation-list-cell">
-        <span>创建 ${displayTime(row.createdAt)}</span>
-        <small>更新 ${displayTime(row.updatedAt)}</small>
+        <span>创建 ${displayTime(row.createdAt, precision)}</span>
+        <small>更新 ${displayTime(row.updatedAt, precision)}</small>
+        ${timeClash ? html`<small class="investigation-record-id">记录 ID ${row.id}</small>` : nothing}
       </div>`,
       gap: html`<div class="investigation-list-cell">
         <span>${gap ? recordExcerpt(gap, 100) : row.activeRequestId ? '本次待保存结果' : row.latestOutcome ? '未记录具体缺口' : '暂无已保存结果'}</span>
         ${gap && row.activeRequestId ? html`<small>来自上次已保存结果</small>` : nothing}
       </div>`,
       open: html`<button class="btn-ghost btn-sm" data-investigation=${row.id} data-workbench-key=${row.id}
+        aria-label=${timeClash ? `查看调查 ${row.id}` : nothing}
         @click=${() => void this.openInvestigation(row.id)}>查看调查</button>`,
     };
   }
@@ -281,6 +294,7 @@ export class InvestigationsPage extends LitElement {
       investigations-page .investigation-list-table tr:last-child td { border-bottom:0; }
       investigations-page .investigation-list-cell { display:grid; justify-items:start; gap:var(--space-xs); }
       investigations-page .investigation-list-cell small { color:var(--muted); font-size:var(--text-xs); }
+      investigations-page .investigation-record-id { overflow-wrap:anywhere; }
       investigations-page .investigation-list-cell strong { color:var(--text-strong); }
       investigations-page .investigation-list-footer { padding:var(--space-sm) var(--space-md); border-top:1px solid var(--border); }
       investigations-page app-card::part(header) { font-size:var(--text-lg); font-weight:600; }
@@ -334,7 +348,7 @@ export class InvestigationsPage extends LitElement {
             .striped=${false} .loading=${c.loading} .emptyMessage=${c.listError ? '调查列表暂不可用' : c.listLoaded ? '暂无匹配调查' : '等待读取调查'} .columns=${[
               {key:'subject',label:'事件与资源',width:'26%'}, {key:'time',label:'本地时间',width:'20%'},
               {key:'state',label:'调查阶段',width:'15%'}, {key:'gap',label:'主要证据缺口',width:'28%'}, {key:'open',label:'操作',width:'11%'}
-            ]} .rows=${c.listError ? [] : c.list.items.map(row => this.listRow(row))}></app-data-table>`}
+            ]} .rows=${c.listError ? [] : this.listRows(c.list.items)}></app-data-table>`}
           ${c.list.nextCursor && !c.listError ? html`<div class="investigation-list-footer"><button class="btn" ?disabled=${c.loading} @click=${() => void this.loadMore()}>加载更多调查</button></div>` : nothing}
         </app-card></aside>
         <section class="workspace-main" aria-label="执行协作">${renderInvestigationDetail(c, { permissions: this.permissions, draft: this.draft, onDraft: v => this.draft = v,
