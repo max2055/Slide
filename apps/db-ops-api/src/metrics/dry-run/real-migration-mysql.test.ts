@@ -155,11 +155,11 @@ beforeEach(async () => {
   await connection.query('DELETE FROM network_devices');
   await connection.query('DELETE FROM users WHERE id = 9001');
   await connection.query('DELETE FROM metric_template_versions');
-  await connection.query('DELETE FROM metric_templates_v2');
+  await connection.query('DELETE FROM monitoring_templates');
 
   await connection.query('INSERT INTO users (id, username, password_hash, status) VALUES (9001, ?, ?, ?)',
     ['max236-reala-actor', 'not-a-real-hash', 'active']);
-  await connection.query(`INSERT INTO metric_templates_v2 (template_id, name, status, current_published_version, revision, created_at, updated_at)
+  await connection.query(`INSERT INTO monitoring_templates (template_id, name, status, current_published_version, revision, created_at, updated_at)
     VALUES ('tpl-a', 'A', 'active', 1, 1, ?, ?), ('tpl-foundation', 'Foundation', 'active', 1, 1, ?, ?)`, [AT, AT, AT, AT]);
   for (const template of ['tpl-a', 'tpl-foundation']) {
     await connection.query(`INSERT INTO metric_template_versions

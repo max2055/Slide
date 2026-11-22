@@ -1,5 +1,4 @@
-import type { ActorContext } from './auth/actor-context.js';
-import { actorContextService } from './auth/actor-context.js';
+import { ActorAuthenticationError, actorContextService, type ActorContext } from './auth/actor-context.js';
 import { hasInstanceAccess, getAccessibleInstanceIds } from './auth/require-instance-access.js';
 import { hasPermission, requirePermission } from './auth/require-permission.js';
 import { dbConnection } from './db-connection.js';
@@ -7,8 +6,20 @@ import { canReadResource, canManageResource } from './resources/resource-service
 import { RefSchema } from './metrics/policy/model.js';
 import { alertEventService } from './alert-event-service.js';
 import type { RowDataPacket } from 'mysql2/promise';
-import type { FastifyInstance, preHandlerHookHandler } from 'fastify';
+import type { FastifyInstance, FastifyRequest, preHandlerHookHandler } from 'fastify';
+import { EventInvestigationAccessError, readEventInvestigations } from './alert-event-investigations.js';
+import { MAX_EVENT_INVESTIGATION_IDS } from './contracts/event-investigation.js';
 const parse = (v: any) => (typeof v === 'string' ? JSON.parse(v) : v);
+
+function hasEventResourceAccess(actor: ActorContext, event: {instance_id: number | null}, episode: unknown, write = false) {
+  if (episode !== null && episode !== undefined) {
+    const r = parse(episode).resource;
+    const ref = RefSchema.parse({ ...r, id: Number(r.id) });
+    return write ? canManageResource(actor, ref) : canReadResource(actor, ref);
+  }
+  return event.instance_id !== null && hasInstanceAccess(actor, Number(event.instance_id), write ? 'read-write' : 'read-only');
+}
+
 export async function eventResourceAccess(actor: ActorContext, event: any, write = false) {
   const pool = dbConnection.getPool();
   if (!pool) return false;
@@ -16,15 +27,7 @@ export async function eventResourceAccess(actor: ActorContext, event: any, write
     'SELECT payload FROM metric_trigger_episodes WHERE event_id=?',
     [event.id],
   );
-  if (rows.length) {
-    const r = parse(rows[0].payload).resource;
-    const ref = RefSchema.parse({ ...r, id: Number(r.id) });
-    return write ? canManageResource(actor, ref) : canReadResource(actor, ref);
-  }
-  return (
-    event.instance_id !== null &&
-    hasInstanceAccess(actor, Number(event.instance_id), write ? 'read-write' : 'read-only')
-  );
+  return hasEventResourceAccess(actor, event, rows[0]?.payload, write);
 }
 export async function requireEventAccess(request: any, reply: any, id: number, level = 'read-only') {
   const actor = await actorContextService.revalidateActor(request.user, request.id);
@@ -47,8 +50,41 @@ async function scope(actor: ActorContext) {
     .map((row) => Number(row.event_id));
   return { allowed_instance_ids: getAccessibleInstanceIds(actor), allowed_event_ids: ids };
 }
+
+function eventInvestigationIds(request: FastifyRequest, batch: boolean): number[] | null {
+  const query = request.query as Record<string, unknown>;
+  if (Object.keys(query).some(key => !batch || key !== 'ids')) return null;
+  const raw = batch ? query.ids : (request.params as { id: string }).id;
+  if (typeof raw !== 'string') return null;
+  const values = batch ? raw.split(',') : [raw];
+  if (values.length > MAX_EVENT_INVESTIGATION_IDS || values.some(value => !/^[1-9]\d*$/.test(value))) return null;
+  const ids = values.map(Number);
+  return ids.some(id => !Number.isSafeInteger(id)) || new Set(ids).size !== ids.length ? null : ids;
+}
+
 /** Same read handlers mounted by production and the isolated browser host. */
 export async function registerEventReadRoutes(app: FastifyInstance, verify: preHandlerHookHandler) {
+  for (const batch of [false, true]) {
+    app.get(batch ? '/api/alerts/events/investigations' : '/api/alerts/events/:id/investigation', {
+      onRequest: async (_request, reply) => { reply.header('Cache-Control', 'private, no-store'); },
+      preHandler: [verify, requirePermission('alert:view')],
+    }, async (request, reply) => {
+      const ids = eventInvestigationIds(request, batch);
+      if (!ids) return reply.code(400).send({ error: 'INVALID_EVENT_IDS' });
+      try {
+        const items = await readEventInvestigations((request as FastifyRequest & { user: ActorContext }).user, ids,
+          (actor, event) => hasEventResourceAccess(actor, event, event.episode));
+        if (batch) return { items };
+        if (!items.length) return reply.code(404).send({ error: '事件未找到' });
+        return { investigation: items[0].investigation };
+      } catch (error) {
+        if (error instanceof ActorAuthenticationError) return reply.code(401).send({ error: 'UNAUTHORIZED' });
+        if (error instanceof EventInvestigationAccessError) return reply.code(403).send({ error: 'FORBIDDEN' });
+        request.log.error({ code: 'EVENT_INVESTIGATION_READ_UNAVAILABLE', requestId: request.id }, 'Event investigation read failed');
+        return reply.code(503).send({ error: 'EVENT_INVESTIGATION_READ_UNAVAILABLE' });
+      }
+    });
+  }
   for (const path of ['', '/stats', '/mttr', '/search', '/:id', '/:id/logs'])
     app.get(
       '/api/alerts/events' + path,

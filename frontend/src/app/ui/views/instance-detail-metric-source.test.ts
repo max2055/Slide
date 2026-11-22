@@ -6,7 +6,7 @@ const source = readFileSync(resolve(import.meta.dirname, 'instance-detail.ts'), 
 
 describe('instance detail formal metrics source', () => {
   it('renders semantic metrics without a legacy metric fallback', () => {
-    expect(source).toContain('<semantic-metrics resourceType="instance"');
+    expect(source).toContain('<resource-metric-browser resourceType="instance"');
     expect(source).not.toContain('metricSource');
     expect(source).not.toContain('source_contract');
     expect(source).not.toContain('_renderLegacyOverview');

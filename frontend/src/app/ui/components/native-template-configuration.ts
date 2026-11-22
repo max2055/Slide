@@ -140,9 +140,9 @@ export function nativeError(error: unknown): string {
       CAPABILITY_EVIDENCE_INVALID: '已存储的采集能力证据无效，不能用于启用；请重新检查配置。',
       CAPABILITY_EVIDENCE_UNAVAILABLE: '暂时无法读取采集能力证据，请稍后重新检查。',
       TEMPLATE_BINDING_RECEIPT_INVALID: '试采凭证已失效或已被使用，请重新检查并试采。',
-      TEMPLATE_BINDING_LEGACY_CANDIDATE: '当前配置是旧版单包绑定，原生模板流程不接管；请在旧版配置中操作。',
+      TEMPLATE_BINDING_LEGACY_CANDIDATE: '此资源的监控配置尚未完成转换。',
       TEMPLATE_BINDING_RESOURCE_NOT_FOUND: '资源不存在或已被删除。',
-      TRANSACTION_BINDING_MISSING: '此资源尚无已发布的基础配置，原生模板应用需要先建立资源绑定；未写入任何变更。',
+      TRANSACTION_BINDING_MISSING: '此资源尚无已发布的基础配置，应用模板需要先建立资源绑定；未写入任何变更。',
       TRANSACTION_REVISION_CONFLICT: '配置版本已被他人更新，请重新加载后再次检查。',
       TRANSACTION_OPERATION_CONFLICT: '操作键已被另一个意图使用，请重新检查生成新的操作。',
       TRANSACTION_DEPENDENCY_CHANGED: '资源、权限或配置依赖已变化，请重新加载并检查、试采。',
@@ -474,11 +474,6 @@ export class NativeTemplateConfiguration extends LitElement {
 
   private selectedPin(templateId: string) { return this.selected.find(pin => pin.template_id === templateId) ?? null; }
   private publishedVersions(template: TemplateSummary) { return template.versions.filter(version => version.status === 'published'); }
-  private versionDisabled(template: TemplateSummary, version: TemplateSummary['versions'][number]): string | null {
-    if (template.status === 'draft' && !this.publishedVersions(template).length) return '模板为草稿，未发布';
-    if (version.status === 'retired') return '版本已退役';
-    return null;
-  }
   private toggleTemplate(template: TemplateSummary, checked: boolean) {
     if (!checked) { this.selected = this.selected.filter(pin => pin.template_id !== template.template_id); this.invalidate(false); return; }
     const versions = this.publishedVersions(template);
@@ -486,19 +481,16 @@ export class NativeTemplateConfiguration extends LitElement {
     // The template's own current pointer is the data-driven default, never the
     // first row of the list.
     const current = versions.find(version => version.version === template.current_published_version) ?? versions[versions.length - 1];
-    this.selected = [...this.selected.filter(pin => pin.template_id !== template.template_id),
-      { template_id: template.template_id, version: current.version, content_hash: current.content_hash }];
-    this.names = { ...this.names, [template.template_id]: template.name };
-    this.error = '';
-    void this.ensureDetail(this.selectedPin(template.template_id)!);
-    this.invalidate(false);
+    this.changeVersion(template, current.version);
   }
   private changeVersion(template: TemplateSummary, version: number) {
-    const chosen = template.versions.find(entry => entry.version === version);
+    const chosen = this.publishedVersions(template).find(entry => entry.version === version);
     if (!chosen) return;
-    this.selected = this.selected.map(pin => pin.template_id === template.template_id
-      ? { template_id: template.template_id, version: chosen.version, content_hash: chosen.content_hash } : pin);
-    void this.ensureDetail(this.selectedPin(template.template_id)!);
+    const pin = { template_id: template.template_id, version: chosen.version, content_hash: chosen.content_hash };
+    this.selected = [...this.selected.filter(entry => entry.template_id !== template.template_id), pin];
+    this.names = { ...this.names, [template.template_id]: template.name };
+    this.error = '';
+    void this.ensureDetail(pin);
     this.invalidate(false);
   }
   private async ensureDetail(pin: TemplatePin) {
@@ -1002,7 +994,7 @@ export class NativeTemplateConfiguration extends LitElement {
       return;
     }
     this.settleIntent(key);
-    this.error = '此资源使用旧版单包配置，原生模板流程未接管，未写入任何变更。';
+    this.error = '此资源的监控配置尚未完成转换。';
   }
   /** A response for a resource the user has already left is only restored by the next load. */
   private restorePendingLater() { this.unresolved = this.storedIntents(); }
@@ -1196,6 +1188,7 @@ export class NativeTemplateConfiguration extends LitElement {
       ${!this.catalogLoading && !this.templates.length ? html`<p class="muted" role="status">没有匹配的模板。</p>` : nothing}
       <div aria-label="模板列表">${this.templates.map(template => {
         const pin = this.selectedPin(template.template_id);
+        const bound = this.binding?.template_pins.find(entry => entry.template_id === template.template_id);
         const versions = this.publishedVersions(template);
         const draft = template.status === 'draft' && !versions.length;
         return html`<div class="template-row">
@@ -1203,12 +1196,17 @@ export class NativeTemplateConfiguration extends LitElement {
             .disabled=${!this.canWrite() || draft || !versions.length}
             @change=${(event: Event) => this.toggleTemplate(template, (event.target as HTMLInputElement).checked)}></label>
           <div class="grow"><strong>${template.name}</strong><p class="muted">${template.template_id} · ${label(template.status)} · ${versions.length} 个已发布版本</p>
+            ${bound ? html`<p class="muted">已绑定 v${bound.version}${versions.some(v => v.version === template.current_published_version && v.version > bound.version)
+              ? ` · 可更新至 v${template.current_published_version}` : ''}</p>` : nothing}
             ${draft ? html`<p class="muted">模板为草稿，未发布，不能应用。</p>` : !versions.length ? html`<p class="muted">模板没有已发布版本，不能应用。</p>` : nothing}</div>
           ${versions.length ? html`<div class="grow"><app-form-field label=${`已发布版本 · ${template.name}`}>
             <select aria-label=${`模板版本 ${template.name}`} .value=${String(pin?.version ?? '')} .disabled=${!this.canWrite() || draft}
               @change=${(event: Event) => this.changeVersion(template, Number((event.target as HTMLSelectElement).value))}>
-              <option value="">选择已发布版本</option>${versions.map(version => html`<option value=${version.version}
-                ?disabled=${version.status !== 'published'} .selected=${pin?.version === version.version}>${version.version} · ${label(version.status)} · ${version.content_hash.slice(0, 19)}…</option>`)}
+              <option value="" disabled .selected=${!pin}>选择已发布版本</option>
+              ${pin && !versions.some(version => version.version === pin.version)
+                ? html`<option value=${pin.version} disabled selected>v${pin.version}（不可重新选择）</option>` : nothing}
+              ${versions.map(version => html`<option value=${version.version}
+                .selected=${pin?.version === version.version}>v${version.version}${version.version === template.current_published_version ? '（当前发布）' : ''}</option>`)}
             </select></app-form-field></div>` : nothing}
           ${pin && this.repinOffered(template.template_id) ? html`<div class="grow"><button class="btn btn-sm" .disabled=${this.busy || this.repinBusy}
             @click=${() => this.openRepin(template)}>为当前对象生成兼容版本</button><p class="muted">只把不适用于当前对象的项目重新固定到已安装实现；旧版本保留。</p></div>` : nothing}
@@ -1291,15 +1289,17 @@ export class NativeTemplateConfiguration extends LitElement {
         <p role="status">${this.preview.executable ? '所选固定版本对当前对象可执行；试采仍会重新验证连接、权限和样本。' : '所选固定版本不可执行；请处理不兼容项后重新检查。'}
           预计每小时逻辑读取 ${this.preview.budget.requests_per_hour_estimate} 次，序列上限 ${this.preview.budget.estimated_series_upper_bound}。</p>
         <h3>监控项</h3><div class="scroll"><app-data-table .columns=${[
-          { key: 'template', label: '模板' }, { key: 'metric', label: '指标' }, { key: 'unit', label: '单位' },
+          { key: 'template', label: '模板' }, { key: 'metric', label: '指标' }, { key: 'unit', label: '单位' }, { key: 'interval', label: '采集周期' },
           { key: 'decision', label: '决策' }, { key: 'capability', label: '能力' }, { key: 'release', label: '来源链' }]}
           .rows=${this.preview.items.map(item => ({ template: `${this.names[item.template_id] ?? item.template_id} v${item.item_version}`,
-            metric: metricName(item.canonical_metric.id), unit: item.unit, decision: label(item.decision), capability: label(item.capability),
+            metric: metricName(item.canonical_metric.id), unit: item.unit,
+            interval: `${Number(item.interval_ms ?? this.preview!.settings.interval_ms) / 1000} 秒`,
+            decision: label(item.decision), capability: label(item.capability),
             release: `${item.release.id}@${item.release.version} · ${item.collector_id} · ${item.release_ref.split('#')[1]?.slice(0, 12) ?? ''}…` }))}></app-data-table></div>
         ${this.preview.excluded.length ? html`<h3>排除项（显式）</h3><ul aria-label="排除项">${this.preview.excluded.map(item => html`<li>
           ${this.names[item.template_id] ?? item.template_id} v${item.item_version} · ${metricName(item.metric.id)}：${label(item.reason)}${item.blocking ? '（阻塞应用）' : '（可选排除）'}</li>`)}</ul>` : html`<p class="muted">没有被排除的组合项。</p>`}
         <h3>版本来源</h3><ul>${this.preview.releases.map(release => html`<li>${release.release.id}@${release.release.version} ·
-          ${release.collector_ids.join('、')} · ${release.metric_keys.length} 个指标 · 每 ${release.interval_ms / 1000} 秒</li>`)}</ul>
+          ${release.collector_ids.join('、')} · ${release.metric_keys.length} 个指标</li>`)}</ul>
         ${this.preview.releases.some(release => release.applicability.some(check => check.status !== 'supported')) ? html`<div role="status"><strong>兼容性说明</strong>
           <ul>${this.preview.releases.flatMap(release => release.applicability.filter(check => check.status !== 'supported').map(check => html`<li>
             ${check.attribute}：当前 ${String(check.value ?? '未知')}，支持 ${check.supported_values.join(' / ')}（${label(check.status)}）</li>`))}</ul></div>` : nothing}
@@ -1352,7 +1352,7 @@ export class NativeTemplateConfiguration extends LitElement {
       ${state ? html`<app-badge variant=${sampled ? 'ok' : state === 'failed' || state === 'unknown' ? 'warn' : 'muted'}>
         ${collectStateLabels[state] ?? state}</app-badge>` : nothing}</div>
       <p class="muted">立即采集只执行当前已发布的固定模板配置；任务受理、任务完成与样本成功分别显示。结果里的样本只属于这一次任务，不会用其他采集的最新值代替。</p>
-      ${!isTemplate ? html`<p class="muted">尚未建立原生模板配置，不能立即采集。</p>` : nothing}
+      ${!isTemplate ? html`<p class="muted">尚未绑定监控模板，不能立即采集。</p>` : nothing}
       ${isTemplate && this.dirty ? html`<p class="notice" role="status">有未发布的修改：立即采集不会执行这些草稿，只采集当前已发布配置。请先放弃或应用修改。</p>` : nothing}
       ${this.collectStorageError ? html`<p class="notice error" role="alert">${this.collectStorageError}</p>` : nothing}
       ${this.collectError ? html`<p class="notice error" role="alert">${this.collectError}</p>` : nothing}
@@ -1396,7 +1396,7 @@ export class NativeTemplateConfiguration extends LitElement {
       ${stopped ? html`<app-badge variant="muted">采集已停用</app-badge>` : status ? html`<app-badge variant=${status.formal_visibility.state === 'available' ? 'ok' : 'muted'}>
         ${status.formal_visibility.state === 'pending' ? '等待正式数据' : statusLabel(status.formal_visibility.state)}</app-badge>` : nothing}
       <dl class="facts">
-        <div><dt>配置来源</dt><dd>${binding ? (binding.source === 'template' ? '原生固定版本模板' : binding.source === 'package' ? '旧版单包' : '未绑定') : '未知'}</dd></div>
+        <div><dt>配置来源</dt><dd>${binding ? (binding.source === 'template' ? '监控模板' : '未绑定') : '未知'}</dd></div>
         <div><dt>保存</dt><dd>${this.dirty ? '有未保存修改' : '无未保存修改'}</dd></div>
         <div><dt>发布（已提交）</dt><dd>${binding?.revision ?? '—'}${binding?.published_at ? html` · ${new Date(binding.published_at).toLocaleString('zh-CN')}` : nothing}</dd></div>
         <div><dt>等待应用</dt><dd>${pending ? `目标版本 ${pending.target_revision} · ${new Date(pending.decided_at).toLocaleString('zh-CN')}` : '无待应用版本'}</dd></div>

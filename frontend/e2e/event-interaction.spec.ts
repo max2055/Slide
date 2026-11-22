@@ -108,11 +108,13 @@ test('#1036 page filters preserve query scope and pagination', async ({ page }, 
   const noMatch = list.getByText('暂无匹配的事件', { exact: true });
   const search = list.getByRole('textbox', { name: '搜索本页事件' });
   const severity = list.getByRole('combobox', { name: '本页严重度' });
+  const visibleTotal = list.getByText('当前状态可见事件共 51 条');
 
   try {
     await page.goto(aggregateUrl);
-    await expect(list.getByText(/第 1\/2 页/)).toBeVisible();
-    await expect(list.getByText(/共 51 条/)).toBeVisible();
+    await expect(list.getByText('第 1/2 页', { exact: true })).toBeVisible();
+    await expect(list.getByText('本页命中 50 条')).toBeVisible();
+    await expect(visibleTotal).toBeVisible();
     const stats = list.locator('stat-card');
     await expect(stats).toHaveCount(6);
     await expect(stats.filter({ has: page.getByText('开放', { exact: true }) }).locator('[part="value"]')).toHaveText('51');
@@ -120,10 +122,14 @@ test('#1036 page filters preserve query scope and pagination', async ({ page }, 
     await expect(page.locator('html')).toHaveCSS('--accent', '#265f99');
     await search.fill('无匹配标题');
     await expect(noMatch).toBeVisible();
+    await expect(list.getByText('本页命中 0 条')).toBeVisible();
+    await expect(visibleTotal).toBeVisible();
     await search.fill('连接数');
     await expect(noMatch).toHaveCount(0);
+    await expect(list.getByText('本页命中 50 条')).toBeVisible();
     await severity.selectOption('critical');
     await expect(noMatch).toBeVisible();
+    await expect(list.getByText('本页命中 0 条')).toBeVisible();
     expect(new Set(offsets)).toEqual(new Set(['0']));
     await page.screenshot({ path: info.outputPath('filter-no-match.png') });
 
@@ -132,7 +138,9 @@ test('#1036 page filters preserve query scope and pagination', async ({ page }, 
     await list.getByRole('button', { name: /下一页/ }).click();
     await request;
     await expect(list.getByRole('button', { name: '刷新事件' })).toBeDisabled();
+    await expect(list.getByText('正在加载事件…', { exact: true })).toBeVisible();
     await expect(list.getByText(resultMessages)).toHaveCount(0);
+    await expect(list.getByText(/本页命中|当前状态可见事件共/)).toHaveCount(0);
   } finally {
     nextPage.resolve();
   }
@@ -140,10 +148,13 @@ test('#1036 page filters preserve query scope and pagination', async ({ page }, 
   await expect(noMatch).toBeVisible();
   await expect(search).toHaveValue('连接数');
   await expect(severity).toHaveValue('critical');
-  await expect(list.getByText(/第 2\/2 页/)).toBeVisible();
-  await expect(list.getByText(/共 51 条/)).toBeVisible();
+  await expect(list.getByText('第 2/2 页', { exact: true })).toBeVisible();
+  await expect(list.getByText('本页命中 0 条')).toBeVisible();
+  await expect(visibleTotal).toBeVisible();
   await severity.selectOption('warning');
   await expect(list.getByRole('button', { name: /查看事件 #51 详情/ })).toBeVisible();
+  await expect(list.getByText('本页命中 1 条')).toBeVisible();
+  await expect(visibleTotal).toBeVisible();
 });
 
 test('#1036 forbidden event reads show permission feedback', async ({ page }, info) => {
@@ -228,6 +239,7 @@ test('failed saves keep visible drafts; successful retry sends postmortem; filte
   await page.getByRole('button', { name: '提交复盘' }).click();
   await expect(page.getByRole('button', { name: '提交复盘' })).toHaveCount(0);
   expect(payload).toEqual({ postmortem: '完整复盘内容' });
+  await page.getByRole('button', { name: '返回事件列表', exact: true }).click();
   await expect(page.getByText('搜索和严重度仅筛选本页；分页总数为当前状态的全部事件数。')).toBeVisible();
 });
 

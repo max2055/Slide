@@ -29,7 +29,7 @@ const packagePin = { id: 'mysql-basic', version: '1.0.0', digest: hashOf('mysql-
 const PENDING = { applied_revision: null, reported_at: null, status: 'pending', error_code: null };
 
 it('refuses native compiled envelopes before the legacy migration can erase their execution plan', () => {
-  const payload = { envelope: 'templates-applied-v1', binding: { resource: { type: 'instance', id: 1 },
+  const payload = { envelope: 'template-applied', binding: { resource: { type: 'instance', id: 1 },
     revision: 1, package: null, template_pins: [pin('native')], overrides: {} }, pending: { plan: { compiled: true } } };
   expect(() => parseRealBinding(payload)).toThrow('REAL_NATIVE_BINDING_UNSUPPORTED');
   expect(() => parseRealBinding(null)).toThrow('REAL_RESOURCE_BINDING_INVALID');
@@ -700,7 +700,7 @@ describe('owned endpoint and target guards', () => {
         ];
         if (sql.includes('information_schema.STATISTICS')) return [];
         if (sql.includes('FROM app_schema_migrations')) return [{ migration_id: '001', checksum: 'x', status: 'completed' }];
-        if (sql.includes('information_schema.TABLES')) return [{ table_name: 'metric_templates_v2' }, { table_name: 'metric_template_versions' }];
+        if (sql.includes('information_schema.TABLES')) return [{ table_name: 'monitoring_templates' }, { table_name: 'metric_template_versions' }];
         if (sql.includes('information_schema.COLUMNS')) return [
           'metrics_history', 'metric_observations', 'metric_publications', 'alerts', 'server_metrics',
           'network_device_observations', 'audit_log_entries', 'instance_permissions'].flatMap(table => [
@@ -709,7 +709,7 @@ describe('owned endpoint and target guards', () => {
         if (sql.includes('FROM database_instances')) return [{ id: 9101, db_type: 'mysql' }];
         if (sql.includes('FROM metric_policy_bindings')) return [{ group_id: null, payload: JSON.stringify(payload({ revision: 0, package: packagePin, group_id: null, overrides: {} })) }];
         if (sql.includes('FROM metric_definitions')) return [{ id: 'cpu_usage', target_type: 'instance', unit: '%', is_collected: 1 }];
-        if (sql.includes('FROM metric_templates_v2')) return [{ template_id: 'tpl-a', status: 'active' }];
+        if (sql.includes('FROM monitoring_templates')) return [{ template_id: 'tpl-a', status: 'active' }];
         if (sql.includes('FROM metric_template_versions')) return [{
           template_id: 'tpl-a', version: 1, status: 'published', content_hash: pin('tpl-a').content_hash, retired_at: null,
           aggregate: JSON.stringify({ template_id: 'tpl-a', items: [], triggers: [] }), items: '[]',

@@ -12,6 +12,8 @@ export interface TrendBucket {
   coverage: number; quality: 'good' | 'partial' | 'unknown';
 }
 const numeric = (o: NormalizedObservation) => o.value !== null && ['float64','uint64','int64'].includes(o.value.encoding);
+export const usableTrendSample = (o: NormalizedObservation) =>
+  o.value !== null && o.quality.status === 'good' && o.accuracy !== 'unknown';
 function empty(from: number, to: number): TrendBucket {
   return { from:new Date(from).toISOString(),to:new Date(to).toISOString(),count:0,numeric_count:0,invalid_count:0,non_numeric_count:0,estimated_count:0,
     sum:exact(rational(0n)),min:null,max:null,avg:null,first_at:null,last_at:null,max_gap_ms:0,coverage:0,quality:'unknown' };
@@ -29,7 +31,8 @@ export function mergeTrend(a: TrendBucket, b: TrendBucket): TrendBucket {
   return out;
 }
 /** UTC epoch-aligned half-open buckets. The first/last bucket is clipped to the evidence window. */
-export function trendHierarchy(points: NormalizedObservation[], from: string, to: string, intervalMs: number, target?:keyof typeof TREND_TIERS) {
+export function trendHierarchy(points: NormalizedObservation[], from: string, to: string, intervalMs: number,
+  target?:keyof typeof TREND_TIERS, plottableDetail?: ReadonlySet<string>) {
   const start=Date.parse(from),end=Date.parse(to);
   const ordered=points.filter(p=>Date.parse(p.observed_at)>=start && Date.parse(p.observed_at)<end)
     .sort((a,b)=>Date.parse(a.observed_at)-Date.parse(b.observed_at)||a.id.localeCompare(b.id));
@@ -43,10 +46,10 @@ export function trendHierarchy(points: NormalizedObservation[], from: string, to
       const a=Math.max(epoch,start),b=Math.min(epoch+ms,end);let bucket=empty(a,b);
       if(tier==='5m') {
         while(cursor<ordered.length && Date.parse(ordered[cursor].observed_at)<b) {
-          const p=ordered[cursor++],valid=p.quality.status==='good' && p.accuracy!=='unknown' && p.value!==null;
+          const p=ordered[cursor++],valid=usableTrendSample(p) || p.value!==null && plottableDetail?.has(p.id);
           const n=valid && numeric(p) ? decode(p.value!) : null;
           const point={...empty(a,b),count:1,numeric_count:n?1:0,invalid_count:valid?0:1,
-            estimated_count:p.accuracy==='estimated'?1:0,
+            estimated_count:p.accuracy==='estimated' || (p.accuracy==='unknown' && plottableDetail?.has(p.id)) ? 1 : 0,
             non_numeric_count:valid && !numeric(p)?1:0,sum:exact(n??rational(0n)),min:n?exact(n):null,max:n?exact(n):null,
             first_at:p.observed_at,last_at:p.observed_at};
           bucket=mergeTrend(bucket,point);

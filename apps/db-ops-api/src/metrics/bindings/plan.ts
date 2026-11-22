@@ -16,6 +16,8 @@ import { metricKey, type Settings } from '../policy/model.js';
 import { groupQueries, jitterFor, requestsPerHour } from '../scheduler/compiler.js';
 import type { CollectorPlan } from '../scheduler/compiler.js';
 import type { Capability, CollectorDefinition } from '../../contracts/metrics/index.js';
+import type { TemplateItemRetention } from '../../contracts/metrics/templates.js';
+import { withDerivedIntervals } from '../timing.js';
 import type { MetricRef, PackageReleaseRef } from '../templates/model.js';
 import {
   templateResolutionIdentity,
@@ -47,6 +49,7 @@ export interface TemplatePlanItem {
   item_id: string;
   item_version: number;
   canonical_metric: MetricRef;
+  interval_ms?: number;
   unit: ResolvedTemplateItem['unit'];
   dimensions: ResolvedTemplateItem['dimensions'];
   mapping: ResolvedTemplateItem['mapping'];
@@ -79,6 +82,7 @@ export interface TemplateReleasePlan {
   applicability: ApplicabilityCheck[];
   collector_ids: string[];
   metric_keys: string[];
+  derived_intervals_ms?: Record<string, number>;
   queries: CollectorPlan['queries'];
   requests_per_hour_estimate: number;
   steps: TemplatePlanStep[];
@@ -100,6 +104,7 @@ export interface TemplateCollectionPlan {
   triggers: ResolvedTemplateBinding['triggers'];
   releases: TemplateReleasePlan[];
   excluded: ResolvedTemplateExclusion[];
+  item_retention?: Array<{ metric: MetricRef } & TemplateItemRetention>;
   budget: {
     estimate: true;
     request_unit: 'logical_reads';
@@ -120,8 +125,17 @@ function planItem(item: ResolvedTemplateItem): TemplatePlanItem {
   return {
     pin: { ...item.pin }, template_id: item.template_id, item_id: item.item_id, item_version: item.item_version,
     canonical_metric: { ...item.canonical_metric }, unit: item.unit, dimensions: { ...item.dimensions },
+    ...(item.interval_ms === undefined ? {} : { interval_ms: item.interval_ms }),
     mapping: { ...item.mapping, steps: [...item.mapping.steps] }, capability: structuredClone(item.capability),
   };
+}
+
+export function itemIntervals(releases: TemplateReleasePlan[]): Map<string, number> {
+  return new Map(releases.flatMap(release => [
+    ...Object.entries(release.derived_intervals_ms ?? {}),
+    ...release.steps.flatMap(step => step.items.flatMap(item =>
+      item.interval_ms === undefined ? [] : [[metricKey(item.canonical_metric), item.interval_ms] as const])),
+  ]));
 }
 
 /**
@@ -141,7 +155,8 @@ function planItem(item: ResolvedTemplateItem): TemplatePlanItem {
  * - A legacy delegate or any other input shape is rejected instead of being
  *   coerced into a multi-template plan.
  */
-export function buildTemplateCollectionPlan(resolution: ResolvedTemplateBinding): TemplateCollectionPlan {
+export function buildTemplateCollectionPlan(resolution: ResolvedTemplateBinding,
+  options: { discoverCapabilities?: boolean } = {}): TemplateCollectionPlan {
   if (resolution === null || typeof resolution !== 'object' || resolution.kind !== 'template_resolution') {
     throw new TemplatePlanError('PLAN_INPUT_INVALID');
   }
@@ -156,7 +171,8 @@ export function buildTemplateCollectionPlan(resolution: ResolvedTemplateBinding)
     for (const collector of release.collectors) {
       const groups = new Map<string, ResolvedTemplateItem[]>();
       for (const item of collector.items) {
-        if (item.decision !== 'collect') continue;
+        if (item.decision !== 'collect'
+          && !(options.discoverCapabilities && item.decision === 'capability_unknown')) continue;
         const signature = signatures.get(item.template_id);
         if (signature === undefined || item.release_ref !== release.release_ref
           || item.collector_id !== collector.collector_id) {
@@ -190,9 +206,31 @@ export function buildTemplateCollectionPlan(resolution: ResolvedTemplateBinding)
       // The resolved parameters are part of the merge boundary, not only the implementation.
       group_key: `${step.method}:${step.implementation_id}:${step.parameter_signature}`,
     })));
-    const releaseRequests = requestsPerHour(queries, resolution.settings.interval_ms);
+    const releaseRequests = queries.reduce((sum, query) => {
+      const intervals = new Set(steps.filter(step => query.collectors.includes(step.collector_id))
+        .flatMap(step => step.items.map(item => item.interval_ms ?? resolution.settings.interval_ms)));
+      // Treat independent deadlines as separate requests for an upper estimate.
+      // The worker merges them when the deadlines coincide.
+      return sum + [...intervals].reduce((total, interval) => total + requestsPerHour([query], interval), 0);
+    }, 0);
     requestsPerHourEstimate += releaseRequests;
-    const metricKeys = [...new Set(steps.flatMap(step => step.metrics.map(metricKey)))].sort(compare);
+    const selected = new Set(steps.flatMap(step => step.metrics.map(metricKey)));
+    const directCount = selected.size;
+    // The registered DAG is acyclic. A derived output can run only when every
+    // prerequisite is selected in this same release.
+    for (let previous = -1; previous !== selected.size;) {
+      previous = selected.size;
+      for (const node of release.derived) {
+        if (node.inputs.every(input => selected.has(metricKey(input)))) selected.add(metricKey(node.output));
+      }
+    }
+    const metricKeys = [...selected].sort(compare);
+    const directIntervals = new Map(steps.flatMap(step => step.items.flatMap(item =>
+      item.interval_ms === undefined ? [] : [[metricKey(item.canonical_metric), item.interval_ms] as const])));
+    const formulas = release.derived.filter(node => selected.has(metricKey(node.output)));
+    const derivedIntervals = [...withDerivedIntervals(directIntervals, formulas, resolution.settings.interval_ms)]
+      .filter(([key]) => !directIntervals.has(key));
+    estimatedSeries += selected.size - directCount;
     releases.push({
       release: copyRef(release.release), release_ref: release.release_ref,
       interval_ms: resolution.settings.interval_ms, timeout_ms: resolution.settings.timeout_ms,
@@ -201,6 +239,7 @@ export function buildTemplateCollectionPlan(resolution: ResolvedTemplateBinding)
       applicability: structuredClone(release.applicability),
       collector_ids: [...new Set(steps.map(step => step.collector_id))].sort(compare),
       metric_keys: metricKeys, queries, requests_per_hour_estimate: releaseRequests, steps,
+      ...(derivedIntervals.length ? { derived_intervals_ms: Object.fromEntries(derivedIntervals) } : {}),
     });
     estimatedSeries += release.collectors.reduce((count, collector) => count
       + collector.items.filter(item => item.decision !== 'disabled' && item.decision !== 'unsupported').length, 0);
@@ -209,14 +248,18 @@ export function buildTemplateCollectionPlan(resolution: ResolvedTemplateBinding)
     throw new TemplatePlanError('PLAN_SERIES_BUDGET', null);
   }
 
+  const retention = resolution.releases.flatMap(release => release.collectors.flatMap(collector =>
+    collector.items.flatMap(item => item.retention ? [{ metric: item.canonical_metric, ...item.retention }] : [])));
   const plan: TemplateCollectionPlan = {
     kind: 'template_collection_plan', internal: true, persisted: false, applied: false,
-    executable: resolution.executable && releases.some(entry => entry.steps.length > 0),
+    executable: (resolution.executable || (options.discoverCapabilities && resolution.settings.enabled) === true)
+      && releases.some(entry => entry.steps.length > 0),
     identity: templateResolutionIdentity(resolution),
     resource: { ...resolution.resource }, revision: resolution.revision,
     settings: { ...resolution.settings },
     parameters: structuredClone(resolution.templates), triggers: structuredClone(resolution.triggers),
     releases, excluded: structuredClone(resolution.excluded),
+    ...(retention.length ? { item_retention: retention } : {}),
     budget: {
       estimate: true, request_unit: 'logical_reads',
       estimated_series_upper_bound: estimatedSeries,

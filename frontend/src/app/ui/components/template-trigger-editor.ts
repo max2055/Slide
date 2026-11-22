@@ -2,12 +2,14 @@ import { LitElement, html, css, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import { sharedBtnStyles } from "../../styles/shared-btn-styles.js";
 import { sharedFieldStyles } from "../../styles/shared-field-styles.js";
-import { metricRequest, metricError, type TemplateVersionDetail } from "./metric-api.js";
+import { metricRequest, metricError, MetricRequestError, type TemplateVersionDetail } from "./metric-api.js";
 import "./app-form-field.js";
+import "./app-data-table.js";
+import { metricDisplayName, triggerRecoveryModes, type TriggerRecoveryMode } from "./metric-display.js";
 
 type Leaf = {
   node: "compare";
-  select: { aggregation: string; window_ms?: number };
+  select: { aggregation: string; window_ms?: number; item_id?: string };
   operator: string;
   threshold: { kind: "constant"; value: number } | { kind: "parameter"; name: string };
 };
@@ -24,6 +26,9 @@ const fresh = () => ({
     defaults: { problem_threshold: 90, recovery_threshold: 70 },
   },
   problem: leaf(">", "problem_threshold") as Expression,
+  recovery_mode: 'recovery_expression' as TriggerRecoveryMode,
+  allow_manual_close: false,
+  dependencies: [] as string[],
   recovery: leaf("<", "recovery_threshold") as Expression,
   quality: { accepted_quality: ["good", "partial"], min_coverage: 1, allow_estimated: false },
   clock: {
@@ -31,18 +36,47 @@ const fresh = () => ({
     nodata: { enabled: false } as { enabled: boolean; after_ms?: number },
   },
 });
+type Severity = 'warning' | 'critical';
+const severityName = (severity: Severity | undefined) => severity === 'critical' ? '严重' : '预警';
+const itemName = (item: TemplateVersionDetail['items'][number]) => item.display_name === item.canonical_metric?.id
+  ? metricDisplayName(item.canonical_metric.id) : item.display_name;
+const publicationErrors = new Map([
+  ['TRIGGER_COMPOSITE_SCALAR_REQUIRED', '组合条件只能引用当前模板中无维度的数值监控项。'],
+  ['TRIGGER_DEPENDENCY_DUPLICATE', '同一个触发器只能选择一次。'],
+  ['TRIGGER_DEPENDENCY_UNKNOWN', '依赖的触发器在当前模板版本中不可用，请重新选择。'],
+  ['TRIGGER_DEPENDENCY_SELF', '触发器不能依赖自身。'],
+  ['TRIGGER_DEPENDENCY_CYCLE', '所选依赖会形成循环，请调整依赖后再发布。'],
+  ['TRIGGER_DEPENDENCY_AMBIGUOUS', '依赖的触发器在当前模板版本中无法唯一确定，请重新选择。'],
+]);
+
+function defaultsFor(metricId: string | undefined, severity: Severity) {
+  const defaults = fresh();
+  const inode = metricId === 'linux.filesystem.discovered_inode_available_percent';
+  if (!inode && metricId !== 'linux.filesystem.discovered_used_percent') return defaults;
+  const threshold = inode ? (severity === 'critical' ? 10 : 20) : (severity === 'critical' ? 90 : 80);
+  const window = { aggregation: 'min' as const, window_ms: 300_000 };
+  return {
+    ...defaults,
+    parameters: { ...defaults.parameters, defaults: { problem_threshold: threshold, recovery_threshold: threshold } },
+    problem: { ...leaf(inode ? '<' : '>', 'problem_threshold'), select: window } as Expression,
+    recovery: { ...leaf(inode ? '>=' : '<=', 'recovery_threshold'), select: window } as Expression,
+  };
+}
 
 @customElement("template-trigger-editor")
 export class TemplateTriggerEditor extends LitElement {
   @property({ attribute: false }) template: TemplateVersionDetail | null = null;
   @property({ type: Boolean }) disabled = false;
+  @property({ type: Boolean }) readOnly = false;
   @state() private item = "";
+  @state() private severity: Severity = 'warning';
   @state() private value = fresh();
   @state() private busy = false;
   @state() private error = "";
   @state() private rules: any[] = [];
   @state() private ready = false;
   private generation = 0;
+  private baseline = JSON.stringify(this.value);
   static styles = [
     sharedBtnStyles,
     sharedFieldStyles,
@@ -52,6 +86,7 @@ export class TemplateTriggerEditor extends LitElement {
         margin-top: var(--space-lg);
         color: var(--text);
       }
+      .surface { border: 1px solid var(--border); border-radius: var(--radius-md); overflow: auto; background: var(--bg); }
       fieldset {
         border: 1px solid var(--border);
         border-radius: var(--radius-sm);
@@ -80,6 +115,19 @@ export class TemplateTriggerEditor extends LitElement {
       p {
         color: var(--muted);
       }
+      .dependency-hint { margin: 0 0 var(--space-sm); font-size: var(--text-sm); }
+      .dependency-options {
+        display: grid;
+        gap: var(--space-xs);
+        max-block-size: 12rem;
+        overflow: auto;
+        padding: var(--space-xs);
+      }
+      .dependency-options label {
+        grid-template-columns: auto minmax(0, 1fr);
+        align-items: start;
+        overflow-wrap: anywhere;
+      }
       .error {
         color: var(--danger);
       }
@@ -92,8 +140,15 @@ export class TemplateTriggerEditor extends LitElement {
   ];
   protected updated(changes: Map<string, unknown>) {
     if (changes.has("template")) {
-      this.item = this.template?.items[0]?.item_id ?? "";
+      if (!this.template?.items.some(item => item.item_id === this.item)) {
+        this.item = this.template?.items[0]?.item_id ?? "";
+        this.severity = 'warning';
+      }
       void this.load();
+    }
+    if (changes.has("readOnly") && this.readOnly && this.ready) this.selectItem(this.item);
+    if (changes.has("value") && this.ready && !this.readOnly) {
+      this.dispatchEvent(new CustomEvent('trigger-dirty', { detail: JSON.stringify(this.value) !== this.baseline }));
     }
   }
   override disconnectedCallback() {
@@ -123,18 +178,29 @@ export class TemplateTriggerEditor extends LitElement {
       if (g === this.generation) this.busy = false;
     }
   }
-  private selectItem(id: string) {
+  private selectItem(id: string, severity = this.severity) {
     this.item = id;
-    const rule = this.rules.find((r) => r.scope === `item:${id}`);
+    this.severity = severity;
+    this.error = '';
+    const rule = this.rules.find((r) => r.scope === `item:${id}` && (r.severity ?? 'warning') === severity);
+    const defaults = defaultsFor(this.template?.items.find(item => item.item_id === id)?.canonical_metric?.id, severity);
+    const recovery: Leaf = {
+      ...(defaults.recovery as Leaf),
+      threshold: { kind: 'constant', value: defaults.parameters.defaults.recovery_threshold },
+    };
     this.value = rule
       ? structuredClone({
           parameters: rule.parameters,
           problem: rule.problem,
-          recovery: rule.recovery,
+          recovery_mode: rule.recovery_mode ?? 'recovery_expression',
+          allow_manual_close: rule.allow_manual_close === true,
+          dependencies: [...(rule.dependencies ?? [])].sort(),
+          recovery: rule.recovery ?? recovery,
           quality: rule.quality,
           clock: rule.clock,
         })
-      : fresh();
+      : defaults;
+    this.baseline = JSON.stringify(this.value);
   }
   private edit(
     kind: "problem" | "recovery",
@@ -172,7 +238,10 @@ export class TemplateTriggerEditor extends LitElement {
                     : n.children[0]
                   : {
                       node: mode as "all" | "any",
-                      children: n.node === "compare" ? [n, structuredClone(n)] : n.children,
+                      children: n.node === "compare" ? [n, {
+                        ...structuredClone(n), threshold: { kind: 'constant', value: n.threshold.kind === 'constant'
+                          ? n.threshold.value : Number((this.value.parameters.defaults as Record<string, unknown>)[n.threshold.name] ?? 0) },
+                      }] : n.children,
                     },
               );
             }}
@@ -188,11 +257,31 @@ export class TemplateTriggerEditor extends LitElement {
                   >计算<select
                     .value=${node.select.aggregation}
                     ?disabled=${this.disabled || this.busy}
-                    @change=${(e: Event) => change((n) => ({ ...n, select: (e.target as HTMLSelectElement).value === "last" ? { aggregation: "last" } : { aggregation: (e.target as HTMLSelectElement).value, window_ms: 60000 } }) as Leaf)}
+                    @change=${(e: Event) => {
+                      const aggregation = (e.target as HTMLSelectElement).value;
+                      change(n => {
+                        const { item_id } = (n as Leaf).select;
+                        return { ...n, select: { aggregation, ...(item_id ? { item_id } : {}),
+                          ...(aggregation === 'last' ? {} : { window_ms: 60000 }) } } as Leaf;
+                      });
+                    }}
                   >
-                    ${["last", "avg", "min", "max"].map((v) => html`<option value=${v}>${v === "last" ? "最新值" : v === "avg" ? "平均值" : v === "min" ? "最小值" : "最大值"}</option>`)}
+                    ${["last", "avg", "min", "max"].map((v) => html`<option value=${v} .selected=${v === node.select.aggregation}>${v === "last" ? "最新值" : v === "avg" ? "平均值" : v === "min" ? "最小值" : "最大值"}</option>`)}
                   </select></label
                 >
+                ${(this.template?.items.length ?? 0) > 1 ? html`<label>条件监控项<select
+                  aria-label="条件监控项" .value=${node.select.item_id ?? ''} ?disabled=${this.disabled || this.busy}
+                  @change=${(event: Event) => {
+                    const item = (event.target as HTMLSelectElement).value;
+                    change(n => {
+                      const { item_id: _previous, ...select } = (n as Leaf).select;
+                      return { ...n, select: item ? { ...select, item_id: item } : select } as Leaf;
+                    });
+                  }}>
+                  <option value="" .selected=${!node.select.item_id}>当前触发器监控项</option>
+                  ${this.template?.items.filter(item => item.item_id !== this.item && (!item.dimensions || !Object.keys(item.dimensions).length))
+                    .map(item => html`<option value=${item.item_id} .selected=${item.item_id === node.select.item_id}>${itemName(item)}</option>`)}
+                </select></label>` : nothing}
                 ${node.select.aggregation !== "last" ? html`<label>窗口（秒）<input type="number" min="1" max="86400" .value=${String((node.select.window_ms ?? 60000) / 1000)} ?disabled=${this.disabled || this.busy} @change=${(e: Event) => change((n) => ({ ...n, select: { ...(n as Leaf).select, window_ms: Number((e.target as HTMLInputElement).value) * 1000 } }) as Leaf)} /></label>` : nothing}
                 <label
                   >比较<select
@@ -200,7 +289,7 @@ export class TemplateTriggerEditor extends LitElement {
                     ?disabled=${this.disabled || this.busy}
                     @change=${(e: Event) => change((n) => ({ ...n, operator: (e.target as HTMLSelectElement).value }) as Leaf)}
                   >
-                    ${[">", ">=", "<", "<=", "=", "!="].map((v) => html`<option value=${v}>${v}</option>`)}
+                    ${[">", ">=", "<", "<=", "=", "!="].map((v) => html`<option value=${v} .selected=${v === node.operator}>${v}</option>`)}
                   </select></label
                 >
                 <label
@@ -245,15 +334,20 @@ export class TemplateTriggerEditor extends LitElement {
   private async publish() {
     const t = this.template,
       g = this.generation;
-    if (!t || this.busy || this.disabled || !this.ready) return;
+    if (!t || this.busy || this.disabled || this.readOnly || !this.ready) return;
     this.busy = true;
     this.error = "";
     try {
+      const { recovery, allow_manual_close, dependencies, ...body } = this.value;
       const result = await metricRequest<any>(`templates/${t.template_id}/triggers`, {
         expected_version: t.version,
         expected_content_hash: t.content_hash,
         item_id: this.item,
-        ...this.value,
+        ...(this.severity === 'critical' ? { severity: this.severity } : {}),
+        ...body,
+        ...(allow_manual_close ? { allow_manual_close } : {}),
+        ...(dependencies.length ? { dependencies } : {}),
+        ...(body.recovery_mode === 'recovery_expression' ? { recovery } : {}),
       });
       if (!this.isConnected || g !== this.generation) return;
       this.dispatchEvent(
@@ -270,25 +364,123 @@ export class TemplateTriggerEditor extends LitElement {
         }),
       );
     } catch (e) {
-      this.error = metricError(e);
+      this.error = (e instanceof MetricRequestError && e.code ? publicationErrors.get(e.code) : undefined) ?? metricError(e);
     } finally {
       this.busy = false;
     }
   }
+  private describeExpression(node: Expression | undefined, defaults: Record<string, unknown>): string {
+    if (!node) return '—';
+    if (node.node !== 'compare') {
+      return `(${node.children.map(child => this.describeExpression(child, defaults)).join(node.node === 'all' ? ' 且 ' : ' 或 ')})`;
+    }
+    const operators: Record<string, string> = { last: '最新值', avg: '平均值', min: '最小值', max: '最大值' };
+    const threshold = node.threshold.kind === 'constant' ? node.threshold.value : defaults[node.threshold.name] ?? node.threshold.name;
+    const window = node.select.window_ms ? `（${node.select.window_ms / 1000} 秒内）` : '';
+    const operand = node.select.item_id && this.template?.items.find(item => item.item_id === node.select.item_id);
+    const label = operand ? `${itemName(operand)} · ` : node.select.item_id ? `${node.select.item_id} · ` : '';
+    return `${label}${operators[node.select.aggregation] ?? node.select.aggregation}${window} ${node.operator} ${threshold}`;
+  }
+
+  private ruleItemName(rule: { scope: string; metric?: { id: string } }): string {
+    const item = this.template?.items.find(item => rule.scope === `item:${item.item_id}`);
+    return item ? itemName(item) : rule.metric?.id ? metricDisplayName(rule.metric.id) : rule.scope;
+  }
+
+  private renderDependencies() {
+    const options = new Map<string, string>();
+    for (const rule of this.rules) {
+      if (rule.rule_id && (rule.scope !== `item:${this.item}` || (rule.severity ?? 'warning') !== this.severity)) {
+        options.set(rule.rule_id, `${this.ruleItemName(rule)} · ${severityName(rule.severity)}`);
+      }
+    }
+    // An unavailable reference stays visible and can be removed from the draft.
+    for (const id of this.value.dependencies) {
+      if (!options.has(id)) options.set(id, `不可用的触发器（${id}）`);
+    }
+    return html`<fieldset aria-describedby="trigger-dependencies-hint">
+      <legend>依赖触发器（可选）</legend>
+      <p class="dependency-hint" id="trigger-dependencies-hint">
+        同一资源上任一依赖触发器存在未关闭事件时，当前触发器暂停自动状态转换。依赖事件全部关闭后，收到下一条相关有效样本时重新评估。
+      </p>
+      ${options.size ? html`<div class="dependency-options">
+        ${[...options].map(([id, label]) => html`<label>
+          <input type="checkbox" .value=${id} .checked=${this.value.dependencies.includes(id)}
+            ?disabled=${this.disabled || this.busy}
+            @change=${(event: Event) => {
+              const checked = (event.target as HTMLInputElement).checked;
+              const dependencies = checked
+                ? [...this.value.dependencies, id].sort()
+                : this.value.dependencies.filter(dependency => dependency !== id);
+              this.value = { ...this.value, dependencies };
+            }}>
+          <span>${label}</span>
+        </label>`)}
+      </div>` : html`<small>当前模板没有其他已发布的触发器。</small>`}
+    </fieldset>`;
+  }
+
   render() {
     if (!this.template) return nothing;
-    return html`<h3>模板触发器</h3>
-      <p>发布新模板版本后，使用本页检查、试采和应用。已发生事件保留原规则快照。</p>
-      <label
+    if (this.readOnly) {
+      const dependencyNames = new Map(this.rules.map(rule => [rule.rule_id, `${this.ruleItemName(rule)} · ${severityName(rule.severity)}`]));
+      return html`${this.error ? html`<p class="error" role="alert">${this.error}
+        <button class="btn btn-refresh" @click=${this.load}>重新读取</button></p>`
+        : html`<div class="surface"><app-data-table .loading=${this.busy} .striped=${false}
+          .columns=${[{key:'item',label:'监控项'}, {key:'severity',label:'级别'}, {key:'problem',label:'触发条件'}, {key:'recovery',label:'恢复条件'}, {key:'dependencies',label:'依赖触发器'}, {key:'manual',label:'允许手动关闭'}]}
+          emptyMessage="还没有触发器" .rows=${this.rules.map(rule => ({
+            item: this.ruleItemName(rule),
+            severity: severityName(rule.severity),
+            problem: this.describeExpression(rule.problem, rule.parameters?.defaults ?? {}),
+            recovery: rule.recovery_mode === 'problem_expression' || rule.recovery_mode === 'none'
+              ? triggerRecoveryModes[rule.recovery_mode as TriggerRecoveryMode]
+              : this.describeExpression(rule.recovery, rule.parameters?.defaults ?? {}),
+            dependencies: (rule.dependencies ?? []).map((id: string) => dependencyNames.get(id) ?? id).join('、') || '—',
+            manual: rule.allow_manual_close === true ? '是' : '否',
+          }))}></app-data-table>`}`;
+    }
+    return html`<div class="row"><label
         >监控项<select
+          aria-label="触发器监控项"
           .value=${this.item}
           ?disabled=${this.disabled || this.busy}
-          @change=${(e: Event) => this.selectItem((e.target as HTMLSelectElement).value)}
+          @change=${(e: Event) => {
+            const select = e.target as HTMLSelectElement;
+            if (JSON.stringify(this.value) !== this.baseline) {
+              select.value = this.item;
+              this.error = '请先发布当前修改，或取消编辑后再选择其他监控项。';
+              return;
+            }
+            this.selectItem(select.value);
+          }}
         >
-          ${this.template.items.map((i) => html`<option value=${i.item_id}>${i.display_name}（${i.unit}）</option>`)}
+          ${this.template.items.map((i) => html`<option value=${i.item_id} .selected=${this.item === i.item_id}>${itemName(i)}（${i.unit}）</option>`)}
         </select></label
       >
-      ${this.expression("problem", this.value.problem)}${this.expression("recovery", this.value.recovery)}
+      <label>级别<select aria-label="触发器级别" .value=${this.severity} ?disabled=${this.disabled || this.busy} @change=${(event: Event) => {
+        const select = event.target as HTMLSelectElement;
+        if (JSON.stringify(this.value) !== this.baseline) {
+          select.value = this.severity;
+          this.error = '请先发布当前修改，或取消编辑后再切换级别。';
+          return;
+        }
+        this.selectItem(this.item, select.value as Severity);
+      }}><option value="warning">预警</option><option value="critical">严重</option></select></label>
+      <label>恢复方式<select aria-label="恢复方式" .value=${this.value.recovery_mode} ?disabled=${this.disabled || this.busy}
+        @change=${(event: Event) => {
+          const recovery_mode = (event.target as HTMLSelectElement).value as TriggerRecoveryMode;
+          this.value = { ...this.value, recovery_mode };
+        }}>
+        ${Object.entries(triggerRecoveryModes).map(([mode, label]) => html`<option value=${mode} .selected=${mode === this.value.recovery_mode}>${label}</option>`)}
+      </select></label>
+      <label><input type="checkbox" .checked=${this.value.allow_manual_close} ?disabled=${this.disabled || this.busy}
+        @change=${(event: Event) => {
+          this.value = { ...this.value, allow_manual_close: (event.target as HTMLInputElement).checked };
+        }} />允许手动关闭</label></div>
+      ${this.expression("problem", this.value.problem)}
+      ${this.value.recovery_mode === 'recovery_expression' ? this.expression("recovery", this.value.recovery) : nothing}
+      ${this.value.recovery_mode === 'none' ? html`<p>问题条件转假后，事件仍保持打开。${this.value.allow_manual_close ? '有权限的人员可以在事件详情手动关闭。' : ''}</p>` : nothing}
+      ${this.ready ? this.renderDependencies() : nothing}
       <div class="row">
         <label
           >过期时间（秒）<input
@@ -323,7 +515,7 @@ export class TemplateTriggerEditor extends LitElement {
         ?disabled=${this.disabled || this.busy || !this.item || !this.ready}
         @click=${() => this.publish()}
       >
-        ${this.busy ? "处理中…" : "发布新模板版本"}
+        ${this.busy ? "处理中…" : "发布触发器"}
       </button>`;
   }
 }

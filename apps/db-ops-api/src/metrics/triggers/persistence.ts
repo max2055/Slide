@@ -7,7 +7,7 @@ import { verifyTriggerSnapshot } from './compile.js';
 const decode = (value: unknown) => typeof value === 'string' ? JSON.parse(value) : value;
 
 /** Fixed versions only. Publication never updates the body of an existing version. */
-export function mysqlTriggerCatalog(connection: Pick<BindingSqlConnection, 'execute'>): TriggerRuleCatalogPort {
+export function mysqlTriggerCatalog(connection: Pick<BindingSqlConnection, 'execute'>) {
   return { async getVersion(ruleId, version) {
     const [result] = await connection.execute(
       'SELECT payload FROM metric_trigger_rule_versions WHERE rule_id = ? AND version = ?', [ruleId, version]);
@@ -17,7 +17,7 @@ export function mysqlTriggerCatalog(connection: Pick<BindingSqlConnection, 'exec
     const { content_hash, ...body } = parsed;
     if (content_hash !== triggerRuleContentHash(body)) throw new Error('TRIGGER_RULE_HASH_MISMATCH');
     return parsed;
-  } };
+  } } satisfies TriggerRuleCatalogPort;
 }
 
 /** The binding host owns the transaction, authorization and commit. */

@@ -43,6 +43,7 @@ it.each(['instance', 'server', 'network_device'])('%s saves a connection once an
   expect(section.resourceId).toBe(42); expect(section.resourceType).toBe(type);
   expect(section.renderRoot.querySelector('metric-configuration')).not.toBeNull();
   expect(authFetch.mock.calls.filter(([url, init]) => url === endpoint && init?.method === 'POST')).toHaveLength(1);
+  if (type === 'instance') expect(authFetch).toHaveBeenCalledWith('/api/database/instances/42/reload', { method: 'POST' });
   expect(showToast).toHaveBeenCalledWith('连接信息已保存；采集配置需单独检查并发布', 'success');
   expect(showToast.mock.calls.flat().join(' ')).not.toContain('采集已启用');
 });

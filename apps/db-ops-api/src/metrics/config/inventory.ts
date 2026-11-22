@@ -1,4 +1,4 @@
-import type { RowDataPacket } from 'mysql2/promise';
+import type { Pool, PoolConnection, RowDataPacket } from 'mysql2/promise';
 import type { Resource } from '../../contracts/metrics/index.js';
 import { normalizeServerOs } from '../../server-os-profile.js';
 import { dbConnection } from '../../db-connection.js';
@@ -6,9 +6,9 @@ import { MysqlMetricStorage } from '../storage.js';
 import { type Ref, rule } from '../policy/model.js';
 
 /** Known resource metadata only; this is not proof of remote permissions or lifecycle. */
-export async function configurationInventory(ref: Ref): Promise<Resource> {
-  const pool = dbConnection.getPool(); rule(pool, 'POLICY_STORE_UNAVAILABLE', 503);
-  const inventory = await new MysqlMetricStorage(pool).inventory(ref.type, String(ref.id));
+export async function configurationInventory(ref: Ref, executor?: Pool | PoolConnection): Promise<Resource> {
+  const pool = executor ?? dbConnection.getPool(); rule(pool, 'POLICY_STORE_UNAVAILABLE', 503);
+  const inventory = await new MysqlMetricStorage(pool as Pool).inventory(ref.type, String(ref.id));
   const resource: Resource = { type: ref.type, id: String(ref.id), attributes: {...inventory?.attributes} };
   const add = (key: string, value: unknown) => {
     if (typeof value === 'string' && value) resource.attributes[key] = { value, observed_at: new Date().toISOString(), source: 'resource_configuration' };

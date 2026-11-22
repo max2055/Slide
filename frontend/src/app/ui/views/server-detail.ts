@@ -2,7 +2,7 @@ import { detailTabKeydown, returnToResourceList } from '../components/resource-d
 import { hasListPermission } from '../components/resource-list-access.js';
 import "../components/investigation-operation-context.ts";
 import '../components/resource-investigation-links.js';
-import "../components/semantic-metrics.js";
+import "../components/resource-metric-browser.js";
 import "../components/resource-collection-section.js";
 import { freshness, runState, type Overview, type OverviewItem, returnToDashboard } from './dashboard-model.js';
 import { LitElement, html, css, nothing } from "lit";
@@ -343,7 +343,7 @@ export class ServerDetailPage extends LitElement {
       this.lastUpdated = new Date();
       // The legacy diagnostics GET collects on cache miss/expiry. A page refresh
       // must retain its original evidence/time instead of triggering collection.
-      if (current()) await this.renderRoot.querySelector<import('../components/semantic-metrics.js').SemanticMetrics>('semantic-metrics')?.load();
+      if (current()) await this.renderRoot.querySelector<import('../components/resource-metric-browser.js').ResourceMetricBrowser>('resource-metric-browser')?.load();
     } catch {
       if (current()) this.detailReadError = '服务器详情读取失败';
     }
@@ -496,7 +496,7 @@ export class ServerDetailPage extends LitElement {
     if (this.activeTab === "collection") return html`<resource-collection-section resourceType="server" .resourceId=${this.serverId}></resource-collection-section>`;
     switch (this.activeTab) {
       case "overview": return this._renderOverview();
-      case "metrics": return html`<semantic-metrics resourceType="server" .resourceId=${this.serverId}></semantic-metrics>`;
+      case "metrics": return html`<resource-metric-browser resourceType="server" .resourceId=${this.serverId}></resource-metric-browser>`;
       case "config": return this._renderConfig();
       case "diagnostics": return this._renderDiagnosticSection(null);
       case "network": return this._renderDiagnosticSection("network");

@@ -3,6 +3,8 @@ import { modelAnalysis } from './model-analysis.js';
 import { responseHash } from '@slide/agent-core';
 
 const decode = (value: any) => typeof value === 'string' ? JSON.parse(value) : value;
+export const rejectedAnalysisCode = 'INVESTIGATION_ANALYSIS_REJECTED';
+export const rejectedAnalysisPrefix = '模型最终输出未通过格式或证据引用校验；未发布判断与假设。';
 export interface InvestigationStop { stopReason: string; reasonCode: string; source: 'runtime' | 'tool_receipt' | 'checkpoint' | 'legacy'; }
 /** Runtime's fatal-tool branch can omit resolution. Only retain machine codes,
  * never arbitrary provider errors, rejected answers or reasoning. */
@@ -61,7 +63,7 @@ export function executionSummary(run: any, subject: InvestigationResult['subject
   // terminal event remains immutable; its hash makes this rejection auditable.
   const rejected = run.state === 'completed' && !analysis;
   const summary = run.state === 'completed'
-    ? analysis?.summary ?? `模型最终输出未通过格式或证据引用校验；未发布判断与假设。原始输出 SHA256：${responseHash(result.event?.finalContent ?? null)}。`
+    ? analysis?.summary ?? `${rejectedAnalysisPrefix}原始输出 SHA256：${responseHash(result.event?.finalContent ?? null)}。`
     : `${stopExplanation(reasonCode)}。`;
   return {
     schemaVersion: 2, subject,
@@ -75,7 +77,7 @@ export function executionSummary(run: any, subject: InvestigationResult['subject
       : /UNKNOWN/.test(reasonCode) ? '先核对原请求及用量，不重放结果未知的模型或工具调用。'
       : '核对证据覆盖、采集时间和检查失败项；需要时提交新的只读调查，保留原执行记录。', priority: 'medium' }],
     execution: { state: run.state, stopReason: terminal?.stopReason ?? (run.state === 'completed' ? 'completed' : 'unknown'),
-      reasonCode, source: terminal?.source ?? 'legacy' },
+      reasonCode: rejected ? rejectedAnalysisCode : reasonCode, source: terminal?.source ?? 'legacy' },
     provenance: { modelVersion: execution?.provenance?.modelVersion ?? 'unavailable',
       promptVersion: execution?.provenance?.promptVersion ?? 'unavailable', toolVersions: {}, runtimeRunId: run.id,
       ...(execution?.provenance?.providerId === undefined ? {} : { providerId: execution.provenance.providerId }),

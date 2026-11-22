@@ -4,7 +4,8 @@ it('keeps existing defaults and only applies explicitly enabled type-specific re
   expect(configuredRetention({METRICS_RETENTION_VALUE_TYPES_JSON:'invalid'})).toEqual(DEFAULT_RETENTION);
   const p=validateRetention({...DEFAULT_RETENTION,valueTypeMs:{histogram:86400000,uint64:2*86400000}});
   const s=observationSelections(new Date('2026-11-01T00:00:00Z'),p).normalized;
-  expect(s.where).toContain('CASE');expect(s.params).toEqual(['histogram','2026-10-31 00:00:00.000','uint64','2026-10-30 00:00:00.000','2026-10-02 00:00:00.000']);
+  expect(s.where).toContain('COALESCE');
+  expect(s.params).toEqual(['2026-11-01 00:00:00.000','histogram','2026-10-31 00:00:00.000','uint64','2026-10-30 00:00:00.000','2026-10-02 00:00:00.000']);
   expect(s.where).toContain('NOT EXISTS');
 });
 it.each([{other:1},{uint64:0},{summary:NaN},{histogram:31*86400000},[],null,false,0])('rejects invalid or wider-than-ceiling value retention %j',valueTypeMs=>{

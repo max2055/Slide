@@ -163,7 +163,7 @@ export interface TemplatePending {
     releases: unknown[]; excluded: unknown[] };
 }
 export interface TemplateBindingStatus {
-  source: 'template' | 'package' | 'unbound'; revision: number | null;
+  source: 'template' | 'unbound'; revision: number | null;
   application: { status: string; applied_revision: number | null; reported_at: string | null; error_code: string | null } | null;
   template_pins: TemplatePin[]; pending: TemplatePending | null;
   /** The stored per-resource choice; an editor round-trips from this, never from a plan. */
@@ -171,6 +171,7 @@ export interface TemplateBindingStatus {
   effective: { revision: number; resolution_identity: string | null } | null; published_at: string | null;
 }
 export interface TemplatePreviewItem {
+  interval_ms?: number;
   template_id: string; item_id: string; item_version: number;
   canonical_metric: { id: string; semantic_version: string }; unit: string; dimensions: Record<string, string>;
   release: { id: string; version: string; digest: string }; release_ref: string;

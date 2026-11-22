@@ -218,7 +218,10 @@ describe('template lifecycle', () => {
       expected_draft_revision: 2,
       aggregate: {
         ...emptyDraftAggregate(created.template_id),
-        items: [{ item_id: 'queries', version: 1 }, { item_id: 'uptime', version: 2 }],
+        items: [
+          { item_id: 'queries', version: 1 },
+          { item_id: 'uptime', version: 2, retention: { history_ms: 0, trends_ms: 7 * 86400000 } },
+        ],
         parameters: { schema: { interval_ms: { type: 'integer', min: 1000, max: 86400000 } }, defaults: { interval_ms: 60000 } },
       },
     });
@@ -233,7 +236,10 @@ describe('template lifecycle', () => {
     expect(copyDetail.items.every(item => item.template_id === copy.template_id)).toBe(true);
     const draft = await repository.getDraft(copy.template_id);
     expect(draft!.aggregate.base).toBeNull();
-    expect(draft!.aggregate.items).toEqual([{ item_id: 'queries', version: 1 }, { item_id: 'uptime', version: 1 }]);
+    expect(draft!.aggregate.items).toEqual([
+      { item_id: 'queries', version: 1 },
+      { item_id: 'uptime', version: 1, retention: { history_ms: 0, trends_ms: 7 * 86400000 } },
+    ]);
     const publishedCopy = await service.publish(manager(), copy.template_id, { expected_draft_revision: 0, expected_revision: 0 });
     expect(publishedCopy.version).toBe(1);
     expect(publishedCopy.content_hash).not.toBe(current.content_hash);

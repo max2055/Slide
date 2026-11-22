@@ -7,18 +7,16 @@ import { instanceAccessLifecycle } from './resources/instance-access-lifecycle.j
 import { assertWorkflowActive } from './workflows/execution-context.js';
 import { dbConnection } from './db-connection.js';
 import { assetCollectionEnabled } from './metrics/config/effective-state.js';
-import { readLegacyPublished } from './metrics/bindings/package-reader.js';
-import { metricConfigurationService } from './metrics/config/routes.js';
-const actor = (id:number) => ({userId:0,username:'diagnostic-records',roles:[],permissions:['instance:view','collector:manage'],instanceScopes:{[id]:'read-write' as const},sessionVersion:0,requestId:`diagnostic-records:${id}`});
+import { decodeBindingPayload } from './metrics/bindings/persistence-codec.js';
 async function enabled(id:number):Promise<boolean>{
   if(process.env.METRICS_COLLECTION_ENABLED!=='true')return false;
   const pool=dbConnection.getPool();if(!pool||!await assetCollectionEnabled(pool,{type:'instance',id}))return false;
   const [rows]=await pool.execute<import('mysql2/promise').RowDataPacket[]>('SELECT payload FROM metric_policy_bindings WHERE resource_key=?',[`instance:${id}`]);
-  // No binding keeps the existing diagnostic default. A template row, or any
-  // unreadable snapshot, is never dereferenced as `Published` and never falls
-  // back to "enabled": only a validated legacy row can say it is enabled.
-  if(!rows[0])return true;
-  try{return readLegacyPublished(rows[0].payload).resolved.settings.enabled;}catch{return false;}
+  if (!rows[0]) return true;
+  try {
+    const binding = decodeBindingPayload(rows[0].payload);
+    return binding.kind === 'template_pending' && binding.pending.plan.settings.enabled;
+  } catch { return false; }
 }
 class MonitorCollector {
   start(_config?:unknown):void {}
@@ -26,10 +24,6 @@ class MonitorCollector {
   async stopInstance(id:number):Promise<void>{await instanceAccessLifecycle.drain(id);}
   refreshSchedule():void {}
   getStatus(){return {running:false,heartbeatMs:10000,schedule:[],owner:'MetricScheduler'};}
-  async collectInstanceNow(id:number){
-    await instanceAccessLifecycle.assertAvailable(id);
-    return metricConfigurationService.trialCurrent(actor(id),{type:'instance',id});
-  }
   async collectSlowQueriesNow() {
     try {
       const instances = await instanceDatabaseService.getAllInstances();

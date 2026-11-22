@@ -39,6 +39,11 @@ const diagnosticNames: Record<string, string> = {
   'linux.processes.sample_max_cpu_percent': 'CPU 前 20 进程中的最高 CPU 占比',
   'linux.processes.cpu_sample_max_memory_percent': 'CPU 前 20 进程中的最高内存占比',
   'linux.filesystem.available_bytes': '文件系统非特权可用空间',
+  'linux.filesystem.discovered_used_bytes': '文件系统已用空间',
+  'linux.filesystem.discovered_total_bytes': '文件系统总空间',
+  'linux.filesystem.discovered_available_bytes': '文件系统非特权可用空间',
+  'linux.filesystem.discovered_used_percent': '文件系统非特权空间使用率',
+  'linux.filesystem.discovered_inode_available_percent': '文件系统可用 inode 比例',
   'linux.filesystem.inode_used_percent': '文件系统 inode 使用率',
   'linux.network.events_total': '接口错误与丢包累计数',
   'linux.block.read_bytes_total': '块设备累计读取字节',
@@ -47,3 +52,9 @@ const diagnosticNames: Record<string, string> = {
 };
 
 export const metricDisplayName = (id: string) => diagnosticNames[id] ?? metricName(id);
+export const triggerRecoveryModes = {
+  problem_expression: '问题条件转假即恢复',
+  recovery_expression: '问题条件转假且满足独立恢复条件',
+  none: '不生成 OK 事件',
+} as const;
+export type TriggerRecoveryMode = keyof typeof triggerRecoveryModes;

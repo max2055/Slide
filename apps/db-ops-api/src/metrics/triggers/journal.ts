@@ -90,6 +90,7 @@ const TriggerEpisodeRecordSchema = z.strictObject({
   opened_at: TimestampSchema,
   closed_at: TimestampSchema.nullable(),
   recovery_count: z.union([z.literal(0), z.literal(1)]),
+  manual_close: z.strictObject({ actor_id: z.number().int().positive() }).optional(),
   last: TriggerEpisodeEvidenceSchema,
   opened: TriggerEpisodeOpeningSchema,
   unknown_segments: z.array(TriggerEpisodeUnknownSegmentSchema),

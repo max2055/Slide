@@ -180,7 +180,7 @@ export async function registerNetworkDeviceRoutes(
     const id = routeId(request);
     if (id === null) return reply.code(400).send({ error: '资源 ID 无效' });
     try {
-      const result = await collector.collectDevice(id, []);
+      const result = await collector.collectDevice(id);
       return reply.code(result.success ? 200 : 502).send(result);
     } catch (error) {
       const failure = safeNetworkError(error);

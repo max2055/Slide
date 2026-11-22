@@ -1,4 +1,4 @@
-import { extension, fixtureRelease } from '../triggers/test-support.js';
+import { alpha, beta, extension, fixtureRegistry, fixtureRelease } from '../triggers/test-support.js';
 import { readFileSync } from 'node:fs';
 import Fastify from 'fastify';
 import { beforeEach, describe, expect, it } from 'vitest';
@@ -66,6 +66,34 @@ describe('MAX-75 deterministic consumer contract', () => {
     attempts[0].error = 'permission_denied'; result = await service.query(admin, query());
     expect(result.metrics[0]).toMatchObject({ state: 'permission_denied', series: [] });
   });
+  it('isolates the latest attempts and default read windows of two metrics sharing one collector', async () => {
+    const registry = fixtureRegistry();
+    const release = registry.list()[0].package;
+    const metrics = [alpha, beta].map(({ id, semantic_version }) => ({ id, semantic_version }));
+    const spans = new Map<string, number>();
+    const makeAttempt = (i: number, started: string, status: 'failed' | 'succeeded', error: CollectionAttempt['error']): CollectionAttempt => ({
+      id: String(i), resource_id: '1', binding_id: 'instance:1', collector_id: 'status', config_revision: 1,
+      started_at: started, ended_at: started, status, error, metrics: [metrics[i]], observation_ids: [],
+    });
+    attempts = [makeAttempt(0, fixture.window.to, 'succeeded', null), makeAttempt(1, fixture.observed_at, 'failed', 'timeout')];
+    const timing = [1000, 86400000];
+    const scoped = new MetricConsumerService(policies, registry, {
+      queryWindow: async (series, from, to) => { spans.set(series.metric.id, Date.parse(to) - Date.parse(from)); return []; },
+      dimensions: async () => [{}], attempts: async () => attempts, inventory: async () => null,
+    }, () => now, {
+      read: async () => ({
+        revision: 1, releases: [release],
+        settings: { enabled: true, interval_ms: 60000, stale_after_ms: 120000, max_counter_gap_ms: 300000 },
+        items: metrics.map((metric, i) => ({ metric, enabled: true, source: { kind: 'collector', collector_id: 'status' },
+          capability: { status: 'supported' }, interval_ms: timing[i], release })),
+      }),
+    });
+    const read = () => scoped.query(admin, { resource: fixture.resource, view: 'extension' });
+    expect((await read()).metrics.map(metric => metric.state)).toEqual(['available', 'temporary_failure']);
+    expect(Object.fromEntries(spans)).toEqual({ [alpha.id]: 1000, [beta.id]: 86400000 });
+    attempts[0] = makeAttempt(0, fixture.window.to, 'failed', 'permission_denied');
+    expect((await read()).metrics.map(metric => metric.state)).toEqual(['permission_denied', 'temporary_failure']);
+  });
   it('history ignores the current binding and interval, while live queries still respect coverage', async () => {
     const before = await service.query(admin, { ...query(), history: true, metric_ids: [fixture.metric], bucket_ms: 60000 });
     store.bindings.delete('instance:1');
@@ -73,6 +101,31 @@ describe('MAX-75 deterministic consumer contract', () => {
     expect(after.metrics[0].state).toBe('not_covered');
     expect(after.metrics[0].series).toEqual(before.metrics[0].series);
     expect((await service.query(admin, { ...query(), metric_ids: [fixture.metric] })).metrics[0].series).toEqual([]);
+  });
+  it('plots a sparse raw series without weakening the regular aggregate coverage rule', async () => {
+    const metric = { id: fixture.metric, semantic_version: '1.0.0' };
+    const sparse = { ...query(), history: true, bucket_ms: 120_000,
+      to: new Date(Date.parse(fixture.window.from) + 120_000).toISOString() };
+    now = sparse.to;
+    const graph = await service.query(admin, { ...sparse, series: { metric, dimensions: {} } });
+    const ordinary = await service.query(admin, { ...sparse, metric_ids: [fixture.metric] });
+    expect(graph.metrics[0].series[0].buckets[0]).toMatchObject({
+      value: { value: fixture.value }, quality: { status: 'partial' }, coverage: 0.5,
+    });
+    expect(ordinary.metrics[0].series[0].buckets[0].value).toBeNull();
+  });
+  it('rejects excessive chart buckets before reading a series', async () => {
+    const app = Fastify();
+    await registerMetricConsumerRoutes(app, async r => { (r as any).user = admin; }, service);
+    try {
+      const response = await app.inject({ method: 'POST', url: '/api/metrics/query', payload: {
+        ...query(), series: { metric: { id: fixture.metric, semantic_version: '1.0.0' }, dimensions: {} },
+        history: true, bucket_ms: 1,
+      } });
+      expect(response.statusCode).toBe(400);
+      expect(response.json()).toEqual({ error: 'QUERY_LIMIT_EXCEEDED' });
+      expect(reads).toBe(0);
+    } finally { await app.close(); }
   });
   it('keeps installed semantic versions separate without duplicating metrics or stitching their curves', async () => {
     store.bindings.delete('instance:1');
@@ -93,7 +146,7 @@ describe('MAX-75 deterministic consumer contract', () => {
     expect(result.metrics.map(m => m.series[0].buckets[0].value)).toEqual([
       { encoding: 'float64', value: 95 }, { encoding: 'float64', value: 96 }]);
   });
-  it('rejects a revocation committed during a window or raw-page storage wait', async () => {
+  it('rejects a revocation committed while reading a window, raw page, or latest observations', async () => {
     let live = admin;
     const revoked = { ...admin, permissions: ['instance:view'], instanceScopes: {} };
     const registry = createConfigurationRegistry();
@@ -101,11 +154,14 @@ describe('MAX-75 deterministic consumer contract', () => {
       queryWindow: async () => { live = revoked; return rows; },
       dimensions: async () => [{}], inventory: async () => null, attempts: async () => [],
       readObservationPage: async () => { live = revoked; return { observations: rows, total: 1, has_more: false, next: null }; },
+      latestObservations: async () => { live = revoked; return rows; },
     }, () => now, undefined, async () => live);
     await expect(guarded.query(admin, { ...query(), metric_ids: [fixture.metric] })).rejects.toThrow('POLICY_FORBIDDEN');
     live = admin;
     await expect(guarded.observations(admin, { resource: fixture.resource, metric: rows[0].metric,
       dimensions: {}, ...fixture.window })).rejects.toThrow('POLICY_FORBIDDEN');
+    live = admin;
+    await expect(guarded.latest(admin, fixture.resource)).rejects.toThrow('POLICY_FORBIDDEN');
   });
   it.each(['discover', 'inventory'] as const)('%s revalidates after its storage reads', async operation => {
     let live = admin;
@@ -119,6 +175,7 @@ describe('MAX-75 deterministic consumer contract', () => {
     const actor = { ...admin, permissions: ['instance:view'], instanceScopes: {} };
     await expect(service.query(actor, query())).rejects.toThrow('POLICY_FORBIDDEN');
     await expect(service.discover(actor, fixture.resource)).rejects.toThrow('POLICY_FORBIDDEN');
+    await expect(service.latest(actor, fixture.resource)).rejects.toThrow('POLICY_FORBIDDEN');
     expect(reads).toBe(0);
   });
   it('keeps the formal API available when a host counter has no supported rate unit',async()=>{

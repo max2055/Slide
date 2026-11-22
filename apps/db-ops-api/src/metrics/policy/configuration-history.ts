@@ -3,8 +3,9 @@ import { HistoricalSettingsSchema, ConfigurationAtSchema, type ConfigurationAt }
 import { createHash } from 'node:crypto';
 import type { PoolConnection, RowDataPacket } from 'mysql2/promise';
 import { z } from 'zod';
-import { decodeBindingPayload, type DecodedTemplateBindingPayload } from '../bindings/persistence-codec.js';
+import { BINDING_APPLIED_ENVELOPE, BINDING_PAYLOAD_ENVELOPE, BINDING_STOPPED_ENVELOPE, decodeBindingPayload, type DecodedTemplateBindingPayload } from '../bindings/persistence-codec.js';
 import { stable } from '../packages/model.js';
+import { itemIntervals } from '../bindings/plan.js';
 import { PolicyError, refKey, type Ref } from './model.js';
 
 const Basis = z.enum(['publication', 'application_report', 'scheduler_activation', 'formal_observation_commit', 'stop_commit']);
@@ -13,8 +14,20 @@ const RecordSchema = z.strictObject({ format: z.literal('configuration-history-v
   sample_ids: z.array(z.string().min(1)).max(100000) });
 const digestOf = (payload: unknown) => `sha256:${createHash('sha256').update(stable(payload)).digest('hex')}`;
 
+const archivedEnvelope = new Map<string, string>([
+  ['templates-v1', BINDING_PAYLOAD_ENVELOPE],
+  ['templates-applied-v1', BINDING_APPLIED_ENVELOPE],
+  ['templates-stopped-v1', BINDING_STOPPED_ENVELOPE],
+]);
+
+function decodeHistory(payload: unknown) {
+  const snapshot = typeof payload === 'string' ? JSON.parse(payload) : payload;
+  const envelope = archivedEnvelope.get(snapshot?.envelope);
+  return decodeBindingPayload(envelope ? { ...snapshot, envelope } : snapshot);
+}
+
 function samplingIdentity(payload: unknown): string {
-  const decoded = decodeBindingPayload(payload);
+  const decoded = decodeHistory(payload);
   return stable({ binding: decoded.binding,
     settings: decoded.kind === 'template_pending' ? decoded.pending.plan.settings : (decoded.payload.resolved as { settings: unknown }).settings,
     identity: decoded.kind === 'template_pending' ? decoded.pending.resolution_identity : null });
@@ -67,12 +80,12 @@ export async function readConfigurationHistory(c: Pick<PoolConnection, 'execute'
     const records = rows.map(row => {
       const outer = typeof row.payload === 'string' ? JSON.parse(row.payload) : row.payload;
       const record = RecordSchema.parse(outer.configuration_history);
-      const decoded = decodeBindingPayload(record.payload);
+      const decoded = decodeHistory(record.payload);
       if (outer.target !== refKey(ref) || outer.revision !== revision || refKey(decoded.binding.resource) !== refKey(ref)
         || decoded.binding.revision !== revision || record.digest !== digestOf(record.payload)) throw new Error();
       const publishedAt = decoded.kind === 'template_pending' ? decoded.published_at : String(decoded.payload.published_at);
       if (Date.parse(record.at) < Date.parse(publishedAt)) throw new Error();
-      if (record.basis === 'stop_commit' && (decoded.kind !== 'template_pending' || decoded.payload.envelope !== 'templates-stopped-v1' || decoded.application.applied_revision !== revision)) throw new Error();
+      if (record.basis === 'stop_commit' && (decoded.kind !== 'template_pending' || decoded.payload.envelope !== BINDING_STOPPED_ENVELOPE || decoded.application.applied_revision !== revision)) throw new Error();
       if (record.basis === 'publication' && record.at !== publishedAt) throw new Error();
       if (record.basis === 'formal_observation_commit' && (decoded.kind !== 'template_pending' || !record.sample_ids.length)) throw new Error();
       if (['application_report', 'scheduler_activation'].includes(record.basis) && decoded.kind !== 'legacy_published') throw new Error();
@@ -88,8 +101,10 @@ export async function readConfigurationHistory(c: Pick<PoolConnection, 'execute'
     if (templateIdentities.size !== 1) throw new Error();
     const effective = records.filter(entry => entry.record.basis !== 'publication');
     const chosen = effective[0] ?? records[0];
+    const intervals = chosen.decoded.kind === 'template_pending' ? itemIntervals(chosen.decoded.pending.plan.releases) : null;
     return ConfigurationAtSchema.parse({ resource: ref, revision, state: effective.length ? 'effective' as const : 'published' as const,
-      settings: chosen.settings, snapshot_digest: chosen.record.digest,
+      settings: chosen.settings, ...(intervals?.size ? { item_intervals_ms: Object.fromEntries(intervals) } : {}),
+      snapshot_digest: chosen.record.digest,
       published_at: chosen.decoded.kind === 'template_pending' ? chosen.decoded.published_at : chosen.decoded.payload.published_at,
       evidence: effective.map(({ record }) => ({ basis: record.basis, at: record.at, sample_ids: record.sample_ids })),
       resolution_identity: chosen.decoded.kind === 'template_pending' ? chosen.decoded.pending.resolution_identity : null });

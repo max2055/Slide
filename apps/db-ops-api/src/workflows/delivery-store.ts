@@ -25,6 +25,7 @@ export function deliveryIdentity(job: Pick<ClaimedJob, 'type' | 'payload'>) {
   if (!kind || !Number.isSafeInteger(sourceId) || sourceId <= 0 || !Number.isSafeInteger(channelId) || channelId <= 0) throw new Error('DELIVERY_PAYLOAD_INVALID');
   const transition = kind === 'notification' ? job.payload.transition as import('./notification-dispatch.js').NotificationTransition | undefined : undefined;
   if (transition && (!['recovery','escalation'].includes(transition.phase) || !/^[a-z0-9-]{1,48}$/.test(transition.id) || !Number.isFinite(Date.parse(transition.at)))) throw new Error('DELIVERY_PAYLOAD_INVALID');
+  if (transition?.cause !== undefined && (transition.cause !== 'manual' || transition.phase !== 'recovery')) throw new Error('DELIVERY_PAYLOAD_INVALID');
   return { key: `${kind}:${sourceId}:${channelId}${transition ? `:${transition.id}` : ''}`, kind, sourceId, channelId, transition };
 }
 

@@ -6,7 +6,7 @@ import { StudyWindowSchema, StudyTrendSchema, StudyReplaySchema, StudyCapacitySc
 import { validateDimensions, type NormalizedObservation, type MetricDefinition } from '../../contracts/metrics/index.js';
 import { type TriggerSample, TriggerSampleSchema, TRIGGER_LIMITS } from '../../contracts/metrics/triggers.js';
 import type { PolicyService } from '../policy/service.js';
-import { refKey, rule, type Ref } from '../policy/model.js';
+import { metricKey, refKey, rule, type Ref } from '../policy/model.js';
 import { hasPermission } from '../../auth/require-permission.js';
 import { canonicalDefinitions } from '../packages/builtins.js';
 import type { PackageRegistry } from '../packages/model.js';
@@ -56,10 +56,10 @@ export class MetricStudyService {
       aggregation:{mode:'durable_exact_hierarchy',tiers:['5m','1h','1d'],max_rows:STUDY_ROW_BUDGET,max_days:366,retention_ms:configuredRetention().trendMs??DEFAULT_TREND_RETENTION_MS},
       raw_max_days:31};
   }
-  private async points(ref:Ref,metric:{id:string;semantic_version:string},from:string,to:string,dimensions:Record<string,string>) {
+  private async points(ref:Ref,metric:{id:string;semantic_version:string},from:string,to:string,dimensions:Record<string,string>,trendAt?:Date) {
     const definition=this.definitions().find(d=>d.resource_type===ref.type && d.id===metric.id && d.semantic_version===metric.semantic_version);
     rule(definition,'UNKNOWN_METRIC');validateDimensions(dimensions,definition);
-    return this.formal().readStudyWindow({resource_type:ref.type,resource_id:String(ref.id),metric,dimensions},from,to);
+    return this.formal().readStudyWindow({resource_type:ref.type,resource_id:String(ref.id),metric,dimensions},from,to,trendAt);
   }
   async trend(actor:ActorContext,input:unknown) {
     const q=StudyTrendSchema.parse(input),window=this.window(q);actor=await this.access(actor,q.resource);
@@ -68,8 +68,9 @@ export class MetricStudyService {
     const c=await this.pool().getConnection();try{
       await c.beginTransaction();const [lock]=await c.query<RowDataPacket[]>('SELECT id FROM metric_policy_lock WHERE id=1 FOR UPDATE');rule(lock.length===1,'POLICY_LOCK_UNAVAILABLE',503);await this.access(actor,q.resource);
       // Serialize the two evidence stores with the atomic pruning transaction: no missing or doubled handover.
-      const archive=new RetainedTrendStore(c as unknown as Pool,()=>Date.parse(this.clock()));
-      const points=await archive.withoutPreserved(await this.points(q.resource,q.metric,window.from,window.to,q.dimensions),configuredRetention());
+      const now=new Date(this.clock());
+      const archive=new RetainedTrendStore(c as unknown as Pool,()=>now.getTime());
+      const points=await archive.withoutPreserved(await this.points(q.resource,q.metric,window.from,window.to,q.dimensions,now),configuredRetention());
       const retained=await archive.read({resource_type:q.resource.type,resource_id:String(q.resource.id),metric:q.metric,dimensions:q.dimensions},window.from,window.to,configuredRetention());
       rule(points.length+retained.length<=STUDY_ROW_BUDGET,'QUERY_LIMIT_EXCEEDED');
       const buckets=retainedHierarchy(points,retained,window.from,window.to,q.interval_ms,q.tier);
@@ -98,6 +99,7 @@ export class MetricStudyService {
     const snapshot=(await this.snapshots(q.resource)).find(s=>s.config_revision===q.revision && s.snapshot_hash===q.snapshot_hash);
     rule(snapshot,'HISTORY_SNAPSHOT_MISSING',404);
     const selected=snapshot.rules.find(r=>r.rule_id===q.rule_id && r.scope===q.scope);rule(selected,'HISTORY_RULE_MISSING',404);
+    rule(!selected.inputs,'HISTORY_COMPOSITE_REPLAY_UNAVAILABLE',409);
     const config=await this.configuration(actor,q.resource,q.revision);
     const configurations=new Map<number,ConfigurationAt>([[q.revision,config]]);
     const evidenceConfiguration=async(revision:number)=>{
@@ -130,7 +132,7 @@ export class MetricStudyService {
       };
       const windows=new Set<number>();
       const selectors=(e:typeof selected.problem):void=>{if(e.node==='compare'){if(e.select.aggregation!=='last')windows.add(e.select.window_ms);}else e.children.forEach(selectors);};
-      selectors(selected.problem);selectors(selected.recovery);
+      selectors(selected.problem);if(selected.recovery)selectors(selected.recovery);
       // Reject a provably over-budget schedule before repeatedly parsing a large
       // evidence array. The runtime counter also covers additional window edges.
       const scheduled=new Set<number>(),end=Date.parse(window.to),start=Date.parse(window.from);
@@ -156,7 +158,7 @@ export class MetricStudyService {
         const p=ordered[i],prior=ordered[i-1];
         const sampling=await evidenceConfiguration(p.versions.config_revision);
         const parsed=TriggerSampleSchema.safeParse({metric:p.metric,unit:p.unit,value:p.value,observed_at:p.observed_at,dimensions:p.dimensions,
-          quality:p.quality,accuracy:p.accuracy,coverage:1,window:prior?.value && prior.versions.config_revision===p.versions.config_revision && ['float64','uint64','int64'].includes(prior.value.encoding) && sampling.state==='effective' && Date.parse(p.observed_at)-Date.parse(prior.observed_at)<=sampling.settings.interval_ms*1.25 && Date.parse(p.observed_at)>Date.parse(prior.observed_at)?{from:prior.observed_at,to:p.observed_at}:null});
+          quality:p.quality,accuracy:p.accuracy,coverage:1,window:prior?.value && prior.versions.config_revision===p.versions.config_revision && ['float64','uint64','int64'].includes(prior.value.encoding) && sampling.state==='effective' && Date.parse(p.observed_at)-Date.parse(prior.observed_at)<=(sampling.item_intervals_ms?.[metricKey(p.metric)]??sampling.settings.interval_ms)*1.25 && Date.parse(p.observed_at)>Date.parse(prior.observed_at)?{from:prior.observed_at,to:p.observed_at}:null});
         if(Date.parse(p.observed_at)<Date.parse(window.from)){lastSeen=p.observed_at;clocks.add(Date.parse(window.from));continue;}
         advance(Date.parse(p.observed_at));
         if(parsed.success)samples.push(parsed.data);

@@ -12,7 +12,7 @@ import { createVerifyToken } from './auth-middleware.js';
 import { ActorAuthenticationError, actorContextService, type ActorContext } from './auth/actor-context.js';
 import { rbacApiRoutes } from './auth/rbac-api.js';
 import { RbacService } from './auth/rbac-service.js';
-import { filterByInstanceAccess, getAccessibleInstanceIds, hasInstanceAccess, requireInstanceAccess } from './auth/require-instance-access.js';
+import { getAccessibleInstanceIds, hasInstanceAccess, requireInstanceAccess } from './auth/require-instance-access.js';
 import { requirePermission } from './auth/require-permission.js';
 import { registerChatRoutes } from './chat-routes.js';
 import { instanceDatabaseService } from './instance-database-service.js';
@@ -20,7 +20,7 @@ import { PlatformUnavailableError } from './lifecycle/platform-unavailable.js';
 import { publicLLMProvider } from './llm/public-provider.js';
 import { instanceAccessLifecycle } from './resources/instance-access-lifecycle.js';
 import { registerResourceIdentityRoutes } from './resources/resource-identity-routes.js';
-import { canReadResource } from './resources/resource-service.js';
+import { getReportAccessScope } from './report-access.js';
 import { registerHttpSecurity, sensitiveOperationRateLimitConfig } from './security/http-security.js';
 import * as publicDto from './security/public-dto.js';
 import { serverDatabaseService, type ServerRow } from './server-database-service.js';
@@ -132,8 +132,8 @@ it.each([
       await registerAlertListRoute(fastify, verifyAdmin);
     } else {
       registerInline({
-        fastify, verifyToken: verifyAdmin, requirePermission, filterByInstanceAccess,
-        getAccessibleInstanceIds, requireInstanceAccess, canReadResource, publicLLMProvider,
+        fastify, verifyToken: verifyAdmin, requirePermission, getReportAccessScope,
+        getAccessibleInstanceIds, requireInstanceAccess, publicLLMProvider,
         publicNotificationDto: publicDto.publicNotificationDto,
         dbConnection: { getPool: () => ({ query: async () => [[{ config_key: 'slide_version', config_value: 'test-version' }]] }) },
         brandingConfigService: { getBranding: async () => ({ cli_name: 'slide' }) },
@@ -440,4 +440,27 @@ it.each([
     expect(revalidate).toHaveBeenCalledTimes(1);
     expect(dto).not.toHaveBeenCalled();
   } finally { await fastify.close(); }
+});
+
+it.each([
+  {status:200,result:{success:true},body:{message:'更新成功'}},
+  {status:400,result:{success:false,error:'Fixture update rejected'},body:{error:'Fixture update rejected'}},
+])('sends server collection update response before Fastify finalizes it (HTTP $status)', async ({status,result,body}) => {
+  const {fastify,send} = await setup();
+  const authorized = async (request: FastifyRequest) => {
+    Object.assign(request,{user:{...actor,permissions:['servers:manage']}});
+  };
+  const update = vi.spyOn(serverDatabaseService,'updateServer').mockResolvedValue(result);
+  registerInline({fastify,verifyToken:authorized,requirePermission,warnUnknown,serverDatabaseService,recordSshTrustRequest:vi.fn()},
+    "  fastify.put('/api/servers/:id'");
+  await fastify.listen({host:'127.0.0.1',port:0});
+  await withBoundedHttp(fastify,async signal => {
+    const response = await fetch(fastify.listeningOrigin + '/api/servers/25',{
+      method:'PUT',headers:{'content-type':'application/json'},body:JSON.stringify({collection_enabled:false}),signal,
+    });
+    expect(response.status).toBe(status);
+    expect(await response.json()).toEqual(body);
+    expect(update).toHaveBeenCalledWith(25,{collection_enabled:false});
+    expect(send.mock.calls).toEqual([[body]]);
+  });
 });

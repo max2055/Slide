@@ -92,7 +92,7 @@ describe.skipIf(!config)('MAX-521/522 isolated real MySQL startup and enqueue', 
     }
     let now = Date.now();
     const formalization = new MetricFormalization(pool, packages);
-    const scheduler = new MetricScheduler(store, packages, { resolve: async () => { throw new Error('NO_TARGET_IO_EXPECTED'); } },
+    const scheduler = MetricScheduler.forLegacyPackages(store, packages, { resolve: async () => { throw new Error('NO_TARGET_IO_EXPECTED'); } },
       () => now, undefined, formalization);
     for (const phase of ['formalization', 'enqueue'] as const) {
       for (const failed of [1, 2, 3]) {
