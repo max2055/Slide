@@ -80,11 +80,11 @@ for (const state of ['failed', 'forbidden', 'unknown']) {
       return route.fulfill({ json: state === 'unknown' ? null : { availability: .4, performance: .3, capacity: .2, security: .1 } });
     });
     await harness(page, '<scoring-settings-page></scoring-settings-page>', 'views/scoring-settings');
-    await expect(page.getByText('加载中...')).toBeVisible();
+    await expect(page.getByRole('status', { name: '正在加载评分权重' })).toBeVisible();
     await expect(page.getByRole('slider')).toHaveCount(0);
     finish();
     if (state === 'unknown') {
-      await expect(page.getByText('无法加载配置')).toBeVisible();
+      await expect(page.getByRole('alert')).toContainText('未读取到评分权重配置');
       await expect(page.getByRole('slider')).toHaveCount(0);
     } else {
       await expect(page.getByRole('slider', { name: '可用性', exact: true })).toBeVisible();
@@ -168,10 +168,10 @@ for (const scenario of ['empty', 'partial', 'invalid', 'forbidden', 'failed']) {
       await route.fulfill({ status, json });
     });
     await harness(page, '<scoring-settings-page></scoring-settings-page>', 'views/scoring-settings');
-    await expect(page.getByRole('status')).toHaveText('加载中...');
+    await expect(page.getByRole('status', { name: '正在加载评分权重' })).toBeVisible();
     await expect(page.getByRole('slider')).toHaveCount(0);
     finish();
-    await expect(page.getByRole('alert')).toContainText(scenario === 'empty' ? '无法加载配置'
+    await expect(page.getByRole('alert')).toContainText(scenario === 'empty' ? '未读取到评分权重配置'
       : scenario === 'forbidden' ? '无权限查看评分权重' : scenario === 'failed' ? '加载评分权重失败' : '评分权重配置不完整或无效');
     await expect(page.getByRole('slider')).toHaveCount(0);
     await expect(page.getByRole('button', { name: '保存配置' })).toHaveCount(0);
