@@ -234,7 +234,7 @@ describe('latest event list query', () => {
     await current;
     expect(page.retryLoading).toBe(false);
   });
-  it.each([{ items: [] }, { items: [{ id: '1', title: 'recovered', severity: 'warning', status: 'open' }] }])('renders healthy empty state only after successful retry %j', async ({ items }) => {
+  it.each([{ items: [] }, { items: [{ id: '1', title: 'recovered', severity: 'warning', status: 'open' }] }])('renders the actual list result after successful retry %j', async ({ items }) => {
     vi.mocked(authFetch).mockResolvedValue(response({}, false));
     const page = new EventManagementPage() as any;
     document.body.append(page);
@@ -246,7 +246,8 @@ describe('latest event list query', () => {
     vi.mocked(authFetch).mockResolvedValue(response({ items, total: items.length }));
     await page._loadEvents(); await page.updateComplete;
     expect(page.shadowRoot.textContent).not.toContain('加载失败:');
-    expect(page.shadowRoot.textContent.includes('系统运行正常')).toBe(items.length === 0);
+    expect(page.shadowRoot.textContent).not.toContain('系统运行正常');
+    expect(page.shadowRoot.textContent.includes('暂无活跃事件')).toBe(items.length === 0);
     if (items.length) expect(page.shadowRoot.textContent).toContain('recovered');
   });
 });
