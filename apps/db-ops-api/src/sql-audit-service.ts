@@ -9,8 +9,10 @@ import { hasPermission } from './auth/require-permission.js';
 import { hasInstanceAccess } from './auth/require-instance-access.js';
 import { evidenceHash } from './analysis/analysis-evidence.js';
 import { databaseService } from './database-service.js';
+import { instanceDatabaseService } from './instance-database-service.js';
 import { aiAnalysisDatabaseService } from './ai-analysis-database-service.js';
 import { dbConnection } from './db-connection.js';
+import { withTimeout } from './promise-timeout.js';
 import crypto from 'crypto';
 
 interface AuditToken {
@@ -20,12 +22,23 @@ interface AuditToken {
   identifier?: string;
 }
 
+// MySQL's double dash must be followed by whitespace or an ASCII control character.
+// Only LF ends a MySQL line comment before the end of input.
+// oxlint-disable-next-line no-control-regex
+const mysqlAuditLexemes = /--(?=[\x00-\x20\x7f])[^\n]*|#[^\n]*|'(?:''|\\[\s\S]|[^'\\])*'|"(?:""|\\[\s\S]|[^"\\])*"|`(?:``|[^`])*`/u;
+const mysqlBlockComment = /\/\*[\s\S]*?(?:\*\/|$)/u;
+const mysqlAuditParts = new RegExp(
+  [mysqlAuditLexemes.source, mysqlBlockComment.source, /[\p{L}_$][\p{L}\p{N}_$]*|[^\s]/u.source].join('|'), 'gu',
+);
+
 // Lightweight lexical context for advisory rules, not an execution validator.
 // Keep literals atomic so their keywords, commas and parentheses cannot alter
 // statement shape. Quoted identifiers remain available for metadata lookup.
-function auditTokens(sql: string): AuditToken[] {
+function auditTokens(sql: string, mysql = false): AuditToken[] {
   const tokens: AuditToken[] = [];
-  const parts = /--[^\r\n]*|#[^\r\n]*|\/\*[\s\S]*?\*\/|\$([A-Za-z_]\w*|)\$[\s\S]*?\$\1\$|'(?:''|\\[\s\S]|[^'\\])*'|"(?:""|\\[\s\S]|[^"\\])*"|`(?:``|[^`])*`|[\p{L}_][\p{L}\p{N}_$]*|[^\s]/gu;
+  const parts = mysql
+    ? mysqlAuditParts
+    : /--[^\r\n]*|#[^\r\n]*|\/\*[\s\S]*?\*\/|\$([A-Za-z_]\w*|)\$[\s\S]*?\$\1\$|'(?:''|\\[\s\S]|[^'\\])*'|"(?:""|\\[\s\S]|[^"\\])*"|`(?:``|[^`])*`|[\p{L}_][\p{L}\p{N}_$]*|[^\s]/gu;
   let depth = 0;
   for (const match of sql.matchAll(parts)) {
     const text = match[0];
@@ -42,6 +55,64 @@ function auditTokens(sql: string): AuditToken[] {
     if (text === '(') depth += 1;
   }
   return tokens;
+}
+
+function mysqlVersionId(version: string | null): number | undefined {
+  if (!version || /mariadb/i.test(version)) return undefined;
+  const match = /^(\d{1,2})\.(\d{1,2})\.(\d{1,2})(?=$|[.-])/.exec(version);
+  if (match) return Number(match[1]) * 10000 + Number(match[2]) * 100 + Number(match[3]);
+}
+
+function expandMysqlAuditComments(sql: string, version?: number): { sql: string; conditional: boolean } {
+  if (!sql.includes('/*!')) return { sql, conditional: false };
+  const parts = new RegExp(
+    [mysqlAuditLexemes.source, /\/\*!|\*\//u.source, mysqlBlockComment.source].join('|'), 'gu',
+  );
+  // Six digits followed by whitespace are recognized starting with MySQL 8.1.
+  const versionPrefix = version !== undefined && version < 80100
+    ? /\d{5}/y
+    : /(?:\d{6}(?=[\t-\r ])|\d{5})/y;
+  let conditional = false;
+  let cursor = 0;
+  let expanded = '';
+  let active: { start: number; body: number } | undefined;
+  for (let match = parts.exec(sql); match; match = parts.exec(sql)) {
+    if (match[0] === '*/' && active) {
+      expanded += sql.slice(cursor, active.start) + ' ' + sql.slice(active.body, match.index) + ' ';
+      cursor = parts.lastIndex;
+      active = undefined;
+      continue;
+    }
+    if (match[0] !== '/*!') continue;
+
+    const body = parts.lastIndex;
+    if (!active) {
+      versionPrefix.lastIndex = body;
+      const prefix = versionPrefix.exec(sql);
+      conditional ||= prefix !== null;
+      if (!prefix || version === undefined || Number(prefix[0]) <= version) {
+        parts.lastIndex = prefix ? versionPrefix.lastIndex : body;
+        active = { start: match.index, body: parts.lastIndex };
+        continue;
+      }
+    }
+
+    // A disabled conditional comment can contain one ordinary block comment.
+    let end = sql.indexOf('*/', body);
+    if (!active && end !== -1) {
+      for (let nested = sql.indexOf('/*', body); nested !== -1 && nested < end; nested = sql.indexOf('/*', end + 2)) {
+        end = sql.indexOf('*/', end + 2);
+        if (end === -1) break;
+      }
+    }
+    if (end === -1) break;
+    parts.lastIndex = end + 2;
+    if (!active) {
+      expanded += sql.slice(cursor, match.index) + ' ';
+      cursor = parts.lastIndex;
+    }
+  }
+  return { sql: expanded + sql.slice(cursor), conditional };
 }
 
 export interface SqlRiskItem {
@@ -85,14 +156,21 @@ class SqlAuditService {
     let current = await actorContextService.revalidateActor(actor);
     if (!hasPermission(new Set(current.permissions), 'sql:audit')
       || !hasInstanceAccess(current, instanceId)) throw new Error('ANALYSIS_AUTHORITY_REVOKED');
-    const preAuditResults = this.detectRisks(sqlText);
+    const connection = databaseService.getConnection(instanceId);
+    const dialect = connection?.db_type || connection?.config?.db_type
+      || (await instanceDatabaseService.getInstanceById(instanceId))?.db_type || 'unknown';
+    let mysqlVersion: string | null = null;
+    if (dialect === 'mysql' && expandMysqlAuditComments(sqlText).conditional) {
+      mysqlVersion = await withTimeout(databaseService.detectVersion(instanceId), 2000, 'MySQL version probe timed out')
+        .catch(() => null);
+    }
+    const preAuditResults = this.detectRisks(sqlText, dialect, mysqlVersion);
     const sqlHash = crypto.createHash('sha256').update(sqlText).digest('hex');
     let explainPlan = 'EXPLAIN 获取失败';
     try { explainPlan = await databaseService.getExplainPlan(instanceId, sqlText) || explainPlan; }
     catch { /* Keep the evidence gap explicit. */ }
     const indexInfo = await this._getIndexInfo(instanceId, sqlText);
     const tableStats = await this._getTableStats(instanceId, sqlText);
-    const dialect = databaseService.getConnection(instanceId)?.config?.db_type || 'mysql';
     const evidenceData = { sql_text: sqlText, dialect, explain: explainPlan,
       index_info: indexInfo, table_stats: tableStats, pre_audit_results: preAuditResults };
     current = await actorContextService.revalidateActor(current);
@@ -119,11 +197,30 @@ class SqlAuditService {
   /**
    * 预 LLM 风险检测（正则匹配常见 SQL 反模式）
    */
-  detectRisks(sqlText: string): SqlRiskItem[] {
+  detectRisks(sqlText: string, dialect?: string, mysqlVersion: string | null = null): SqlRiskItem[] {
+    if (dialect !== 'mysql') return this._detectRisks(sqlText);
+    const version = mysqlVersionId(mysqlVersion);
+    const expanded = expandMysqlAuditComments(sqlText, version);
+    const results = this._detectRisks(expanded.sql, true);
+    if (expanded.conditional && version === undefined) {
+      // A conditional clause can remove a risk finding as well as introduce one.
+      for (const risk of this._detectRisks(expandMysqlAuditComments(sqlText, 0).sql, true)) {
+        if (!results.some(item => item.pattern === risk.pattern && item.level === risk.level)) results.push(risk);
+      }
+      results.push({
+        level: 'warning',
+        pattern: 'MYSQL EXECUTABLE COMMENT VERSION UNKNOWN',
+        message: '无法确认目标 MySQL 版本，带版本条件的注释实际生效范围和风险需人工确认',
+      });
+    }
+    return results;
+  }
+
+  private _detectRisks(sqlText: string, mysql = false): SqlRiskItem[] {
     const results: SqlRiskItem[] = [];
     const normalized = sqlText.replace(/\s+/g, ' ').trim();
     const upper = normalized.toUpperCase();
-    const tokens = auditTokens(sqlText);
+    const tokens = auditTokens(sqlText, mysql);
 
     // SELECT *
     if (/SELECT\s+\*/i.test(upper)) {
