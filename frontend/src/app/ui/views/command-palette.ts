@@ -163,7 +163,7 @@ export function renderCommandPalette(props: CommandPaletteProps) {
       }}
     >
       <div
-        role="dialog" aria-modal="true" aria-label="全局搜索"
+        role="dialog" aria-modal="true" aria-label=${t("overview.palette.label")}
         class="cmd-palette"
         @click=${(e: Event) => e.stopPropagation()}
         @keydown=${(e: KeyboardEvent) => handleKeydown(e, props)}

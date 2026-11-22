@@ -21,12 +21,15 @@ export class WorkbenchPage extends LitElement {
   private selectedTab = false;
   createRenderRoot() { return this; }
   private pop = () => {
-    const previous = `${this.home}:${this.actions}`, url = new URL(location.href);
+    const url = new URL(location.href);
+    if (!/\/workbench\/?$/.test(url.pathname)) return;
+    const previous = `${this.home}:${this.actions}`;
     this.selectedTab = false;
     this.actions = url.searchParams.get('workspaceTab') === 'actions';
     this.home = !url.search || url.searchParams.get('workspaceTab') === 'home';
     this.selectDefault();
-    if(previous !== `${this.home}:${this.actions}`) this.epoch++;
+    // Home reads its event and attention context when mounted.
+    if (this.home || previous !== `${this.home}:${this.actions}`) this.epoch++;
   };
   private authority = (event: Event) => {
     this.permissions = new Set((event as CustomEvent<{permissions: string[]}>).detail.permissions);
@@ -46,7 +49,7 @@ export class WorkbenchPage extends LitElement {
   private selectDefault() {
     // Resolve the plain entry after either cached or asynchronous authority arrives.
     // Queries carry explicit context; a user's tab choice also survives later grants.
-    if (!this.expired && !this.selectedTab && (!new URL(location.href).search || new URL(location.href).searchParams.get('workspaceTab') === 'home') && this.permissions
+    if (!this.expired && !this.selectedTab && !location.search && this.permissions
       && !hasSlidePermission(this.permissions, 'chat:view')
       && hasSlidePermission(this.permissions, 'operations:actions:view')) this.choose(true, true);
   }
