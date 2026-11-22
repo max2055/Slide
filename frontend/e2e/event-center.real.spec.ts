@@ -16,9 +16,9 @@ test('event center reconciles authorized records and opens the exact historical 
     const resourceId = resource.insertId;
     const title = '同名阈值事件'.repeat(13);
     const timestamp = '2026-11-10 00:00:00';
-    const insertEvent = async (key: string, severity: string, status: string, source = 'legacy') => {
+    const insertEvent = async (key: string, severity: string, status: string, source = 'legacy', name = title) => {
       const [record] = await db.execute('INSERT INTO alert_events(event_id, title, instance_id, source_type, severity, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
-        [key, title, resourceId, source, severity, status, timestamp]);
+        [key, name, resourceId, source, severity, status, timestamp]);
       return record.insertId;
     };
     const insertAlert = async (severity: string, source = 'manual', name = title) => {
@@ -67,7 +67,7 @@ test('event center reconciles authorized records and opens the exact historical 
       await expect(cardValue('活跃紧急告警（P0）')).toHaveText('6');
       await expect(cardValue('活跃严重告警')).toHaveText('0');
       await expect(cardValue('活跃紧急告警（P0）')).toBeInViewport();
-      await page.screenshot({ path: info.outputPath(`max722-p0-${width}.png`) });
+      await page.screenshot({ path: info.outputPath(`max722-p0-${width}.png`), animations: 'disabled' });
     }
     const alertRow = center.locator('alert-list tr').filter({ hasText: title });
     await alertRow.getByRole('button', { name: '详情', exact: true }).press('Enter');
@@ -76,7 +76,7 @@ test('event center reconciles authorized records and opens the exact historical 
     await ruleDetails.press('Enter');
     await expect(center.locator('alert-detail-modal pre')).toContainText('max722-rule-hash');
     await expect(center.locator('alert-detail-modal pre')).toBeVisible();
-    await page.screenshot({ path: info.outputPath('max722-alert-trigger.png') });
+    await page.screenshot({ path: info.outputPath('max722-alert-trigger.png'), animations: 'disabled' });
     await page.keyboard.press('Escape');
 
     await insertAlert('critical', 'manual', '严重记录');
@@ -101,7 +101,7 @@ test('event center reconciles authorized records and opens the exact historical 
       await expect(eventRow(second).getByText(`#${second}`, { exact: true })).toBeInViewport();
       await expect(eventRow(first).locator('.event-name')).toHaveAttribute('title', title);
       await expect(eventRow(first)).toContainText('验收实例');
-      await page.screenshot({ path: info.outputPath(`max722-aggregate-${width}.png`) });
+      await page.screenshot({ path: info.outputPath(`max722-aggregate-${width}.png`), animations: 'disabled' });
     }
     for (const id of [first, second]) {
       await eventRow(id).press('Enter');
@@ -116,7 +116,24 @@ test('event center reconciles authorized records and opens the exact historical 
     await expect(aggregates.getByRole('button', { name: '添加备注' })).toHaveCount(0);
     await aggregates.getByRole('button', { name: '返回事件列表', exact: true }).click();
     await expect(aggregates.getByText('当前状态可见事件共 1 条', { exact: false })).toBeVisible();
-    await page.screenshot({ path: info.outputPath('max722-history.png') });
+    await page.screenshot({ path: info.outputPath('max722-history.png'), animations: 'disabled' });
+
+    for (let index = 1; index <= 50; index++) {
+      await insertEvent(`max722-page-${index}`, 'warning', 'open', 'legacy', `分页验收事件 ${index}`);
+    }
+    await group(/^活跃事件/).click();
+    await expect(group(/^活跃事件/)).toHaveText(/活跃事件\s*52/);
+    await aggregates.getByRole('textbox', { name: '搜索本页事件' }).fill('同名阈值事件');
+    await aggregates.getByRole('combobox', { name: '本页严重度' }).selectOption('p0');
+    await expect(aggregates.getByText('本页命中 0 条 · 当前状态可见事件共 52 条')).toBeVisible();
+    await aggregates.getByRole('button', { name: /下一页/ }).click();
+    await expect(aggregates.getByText('本页命中 1 条 · 当前状态可见事件共 52 条')).toBeVisible();
+    await expect(eventRow(first)).toBeVisible();
+    await expect(cardValue('可见事件总计')).toHaveText('55');
+    await aggregates.getByRole('textbox', { name: '搜索本页事件' }).fill('');
+    await aggregates.getByRole('combobox', { name: '本页严重度' }).selectOption('all');
+    await group(/^历史未归类/).click();
+    await expect(eventRow(historical)).toBeVisible();
 
     await db.query('RENAME TABLE alert_events TO max722_unavailable_events');
     try {
@@ -129,7 +146,7 @@ test('event center reconciles authorized records and opens the exact historical 
     }
     await aggregates.getByRole('button', { name: '重试加载' }).press('Enter');
     await expect(eventRow(historical)).toBeVisible();
-    await expect(cardValue('可见事件总计')).toHaveText('5');
+    await expect(cardValue('可见事件总计')).toHaveText('55');
 
     await selectView('通知投递');
     await expect(center.getByRole('button', { name: '刷新投递回执' })).toBeVisible();
@@ -140,7 +157,7 @@ test('event center reconciles authorized records and opens the exact historical 
     await expect(system.getByText('已关闭', { exact: true })).toBeVisible();
     await expect(system.getByText('暂无可见的异常记录', { exact: true })).toBeVisible();
     await expect(center.getByText('前往资源配置模板触发器')).toHaveCount(0);
-    await page.screenshot({ path: info.outputPath('max722-platform-off.png') });
+    await page.screenshot({ path: info.outputPath('max722-platform-off.png'), animations: 'disabled' });
   } finally {
     await db.end();
   }
