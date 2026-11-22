@@ -889,6 +889,7 @@ class SqlExecutor {
       }
     }
     let targetAcknowledged = false;
+    let oracleRollbackAcknowledged = false;
     try {
       let result: any;
       const isReadOnly = reclassification.commandType === 'read';
@@ -1037,13 +1038,17 @@ class SqlExecutor {
           const previousCallTimeout = oracleConnection.callTimeout;
           // DDL commits inside Oracle. DML does not: releasing a pooled connection
           // rolls the change back, so a write is succeeded only after commit().
+          const isDml = reclassification.commandType === 'write';
           let readOnlyTransaction = false;
+          let statementSent = false;
+          let commitAttempted = false;
           try {
             oracleConnection.callTimeout = timeoutMs;
             if (isReadOnly) {
               await oracleConnection.execute('SET TRANSACTION READ ONLY', [], { autoCommit: false });
               readOnlyTransaction = true;
             }
+            statementSent = true;
             const oracleResult = await oracleConnection.execute(sql, [], {
               maxRows: isReadOnly ? MAX_SQL_ROWS + 1 : 0,
               autoCommit: false,
@@ -1051,7 +1056,8 @@ class SqlExecutor {
             if (readOnlyTransaction) {
               await oracleConnection.rollback();
               readOnlyTransaction = false;
-            } else if (reclassification.commandType === 'write') {
+            } else if (isDml) {
+              commitAttempted = true;
               await oracleConnection.commit();
             }
             const fields = oracleResult.metaData?.map((m: any) => ({ name: m.name })) || [];
@@ -1064,8 +1070,12 @@ class SqlExecutor {
                 });
             return { rows, fields };
           } catch (error) {
-            if (readOnlyTransaction || reclassification.commandType === 'write') {
-              await oracleConnection.rollback().catch(() => undefined);
+            if (readOnlyTransaction || isDml) {
+              try {
+                await oracleConnection.rollback();
+                // A rollback after COMMIT was sent says nothing about that commit.
+                oracleRollbackAcknowledged = isDml && statementSent && !commitAttempted;
+              } catch { /* A missing rollback receipt stays unknown. */ }
             }
             throw error;
           } finally {
@@ -1226,12 +1236,12 @@ class SqlExecutor {
           ...(isMutation ? { executionState: 'not_started' as const, operationId, retryable: false as const } : {}),
         };
       }
-      const pgOutcome = readPgReceipt(error);
-      if (isMutation && intentStarted && (pgOutcome === 'rolled_back' || pgOutcome === 'not_executed')) {
+      const receipt = oracleRollbackAcknowledged ? 'rolled_back' : readPgReceipt(error);
+      if (isMutation && intentStarted && (receipt === 'rolled_back' || receipt === 'not_executed')) {
         const duration_ms = Date.now() - startTime;
         let recorded = false;
         try {
-          await sqlExecutionIntent.finish(operationId!, pgOutcome, { targetAcknowledged: false, receipt: pgOutcome });
+          await sqlExecutionIntent.finish(operationId!, receipt, { targetAcknowledged: false, receipt });
           recorded = true;
         } catch { recorded = false; }
         if (!recorded) {
@@ -1251,13 +1261,13 @@ class SqlExecutor {
           sqlText: sql.substring(0, 500),
           durationMs: duration_ms,
           status: 'error',
-          errorMessage: typeof error?.message === 'string' ? error.message : pgOutcome,
+          errorMessage: typeof error?.message === 'string' ? error.message : receipt,
           ipAddress: context?.ipAddress,
           approvalRequestId: context?.approvalGrant?.approvalRequestId,
         }).catch(() => undefined);
         return {
           success: false,
-          executionState: pgOutcome,
+          executionState: receipt,
           operationId,
           retryable: true,
           duration_ms,
