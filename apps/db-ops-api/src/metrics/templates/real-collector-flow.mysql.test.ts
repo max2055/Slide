@@ -238,6 +238,7 @@ describe.skipIf(!enabled)('authorized real collectors to existing events', () =>
           await events.getByRole('button', { name: /^已解决/ }).click();
           await events.getByText(`模板事件：${target.metric}`, { exact: true }).click();
           const facts = events.locator('template-event-evidence');
+          await facts.getByText('查看触发与恢复证据', { exact: true }).click();
           await browserExpect(facts.getByText(result.history.episode.episode_id, { exact: true })).toBeVisible();
           await browserExpect(facts.getByText('已恢复', { exact: false }).first()).toBeVisible();
           for (const size of [{ width:1440,height:900 },{ width:1366,height:768 },{ width:1920,height:1080 }]) {

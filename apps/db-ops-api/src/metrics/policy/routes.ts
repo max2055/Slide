@@ -1,7 +1,9 @@
 import type { FastifyInstance, preHandlerHookHandler } from 'fastify';
 import { z } from 'zod';
 import { actorContextService, ActorAuthenticationError, type ActorContext } from '../../auth/actor-context.js';
-import { PolicyError, RefSchema } from './model.js';
+import { dbConnection } from '../../db-connection.js';
+import { changeTemplateGroup } from '../templates/group-policy.js';
+import { PolicyError, RefSchema, rule } from './model.js';
 import { policyService, type PolicyService } from './service.js';
 
 /** Re-reads the live actor after admission and lock waits; production uses the session source. */
@@ -15,6 +17,8 @@ export async function registerMetricPolicyRoutes(app: FastifyInstance, verifyTok
     if (!/^[1-9]\d*$/.test(p.id)) throw new PolicyError('POLICY_RESOURCE');
     return RefSchema.parse({ type: p.type, id: Number(p.id) });
   };
+  const changeGroup: PolicyService['changeGroup'] | typeof groupChange = service === policyService
+    ? groupChange : service.changeGroup.bind(service);
   const root = '/api/metrics/policy';
   app.get(`${root}/groups`, { preHandler: [verifyToken] }, async (request, reply) => {
     const actor = (request as unknown as {user?: ActorContext}).user;
@@ -28,15 +32,11 @@ export async function registerMetricPolicyRoutes(app: FastifyInstance, verifyTok
   });
   const routes: Array<{ method: 'GET' | 'POST'; url: string; run: (actor: ActorContext, params: any, body: unknown,
     check: () => Promise<ActorContext>) => Promise<unknown> }> = [
-    { method: 'GET', url: `${root}/resources/:type/:id`, run: (a, p, _b, check) => service.binding(a, ref(p), check) },
-    { method: 'GET', url: `${root}/resources/:type/:id/effective`, run: (a, p, _b, check) => service.effective(a, ref(p), check) },
     { method: 'GET', url: `${root}/resources/:type/:id/audit`, run: (a, p, _b, check) => service.audits(a, ref(p), undefined, check) },
-    { method: 'POST', url: `${root}/resources/:type/:id/preview`, run: (a, p, b, check) => service.changeBinding(a, ref(p), b, false, undefined, false, check) },
-    { method: 'POST', url: `${root}/resources/:type/:id/publish`, run: (a, p, b, check) => service.changeBinding(a, ref(p), b, true, undefined, false, check) },
     { method: 'GET', url: `${root}/groups/:id/access`, run: (a, p, _b, check) => service.groupPermissions(a, p.id, check) },
     { method: 'GET', url: `${root}/groups/:id`, run: (a, p, _b, check) => service.group(a, p.id, check) },
-    { method: 'POST', url: `${root}/groups/:id/preview`, run: (a, p, b, check) => service.changeGroup(a, p.id, b, false, check) },
-    { method: 'POST', url: `${root}/groups/:id/publish`, run: (a, p, b, check) => service.changeGroup(a, p.id, b, true, check) },
+    { method: 'POST', url: `${root}/groups/:id/preview`, run: (a, p, b, check) => changeGroup(a, p.id, b, false, check) },
+    { method: 'POST', url: `${root}/groups/:id/publish`, run: (a, p, b, check) => changeGroup(a, p.id, b, true, check) },
   ];
   for (const route of routes) app.route({ method: route.method, url: route.url, preHandler: [verifyToken], bodyLimit: 65536,
     handler: async (request, reply) => {
@@ -53,4 +53,10 @@ export async function registerMetricPolicyRoutes(app: FastifyInstance, verifyTok
       }
     },
   });
+}
+
+function groupChange(actor: ActorContext, id: string, input: unknown, publish: boolean) {
+  const pool = dbConnection.getPool();
+  rule(pool, 'POLICY_STORE_UNAVAILABLE', 503);
+  return changeTemplateGroup(pool, actor, id, input, publish);
 }

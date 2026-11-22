@@ -8,6 +8,7 @@ import { resolveOutboundTarget, OutboundPolicyError } from '../security/outbound
 import { JobRegistry } from './job-registry.js';
 import { registerNotificationHandlers } from './notification-handlers.js';
 import type { DeliveryGate, DeliveryRequest } from './delivery-store.js';
+import type { NotificationTransition } from './notification-dispatch.js';
 import type { RolloutAlertPublicationGate } from '../metrics/rollout/alert-publication-fence.js';
 
 vi.mock('../maintenance-notification.js', () => ({ maintenanceBlocksDelivery: async () => false }));
@@ -60,8 +61,8 @@ function setup(channel = webhook as typeof email | typeof webhook, publicationGa
   }, new NotificationService(), {
     getReportById: async () => ({ id: 1, name: 'test' }) as any,
   }, gate, publicationGate ?? { run: async (_id, _fence, publish) => { await publish(); return 'published'; } });
-  return { controller, finishes, gate, run: (type = 'report.notify') => registry.execute({
-    id: 'test', type, payload: { reportId: 1, alertId: 1, channelId: 1 },
+  return { controller, finishes, gate, run: (type = 'report.notify', transition?: NotificationTransition) => registry.execute({
+    id: 'test', type, payload: { reportId: 1, alertId: 1, channelId: 1, ...(transition ? { transition } : {}) },
     attempts: 1, maxAttempts: 3, fencingToken: 1,
   }, { workerId: 'test', fencingToken: 1, signal: controller.signal }) };
 }
@@ -73,6 +74,15 @@ beforeEach(() => {
 afterEach(() => { vi.restoreAllMocks(); vi.clearAllMocks(); });
 
 describe('preparation and transport outcome boundary', () => {
+  it('tells the original channel an authorized user manually closed the problem', async () => {
+    const sendMail = vi.fn().mockResolvedValue({});
+    vi.spyOn(nodemailer, 'createTransport').mockReturnValue({ sendMail, close: vi.fn() } as any);
+    const test = setup(email);
+    await test.run('notification.deliver', { id: 'recovery', phase: 'recovery', cause: 'manual', at: new Date().toISOString() });
+    expect(sendMail).toHaveBeenCalledWith(expect.objectContaining({ subject: expect.stringContaining('手动关闭') }));
+    expect(JSON.stringify(sendMail.mock.calls[0])).toContain('模板事件已由授权人员手动关闭');
+    expect(test.finishes).toEqual([{ state: 'sent', error: undefined }]);
+  });
   it.each(['report.notify', 'notification.deliver'])('OAuth failure remains retryable for %s and the next attempt sends', async type => {
     const sendMail = vi.fn().mockResolvedValue({});
     vi.spyOn(nodemailer, 'createTransport').mockReturnValue({ sendMail, close: vi.fn() } as any);

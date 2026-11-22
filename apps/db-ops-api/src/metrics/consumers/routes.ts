@@ -6,10 +6,11 @@ import { PolicyError, RefSchema, rule } from '../policy/model.js';
 import { authenticatedMetricConsumerService } from './runtime.js';
 import { ConsumerAlertPolicySchema, scoreMetrics } from './evaluation.js';
 import { registerMetricStudyRoutes, metricStudyService } from './study-routes.js';
+import { ConsumerQuerySchema } from './service.js';
 const EvaluateSchema = z.strictObject({ query: z.unknown(), policies: z.array(ConsumerAlertPolicySchema).max(32) });
 export async function registerMetricConsumerRoutes(app: FastifyInstance, verifyToken: preHandlerHookHandler, service = authenticatedMetricConsumerService, study=metricStudyService) {
   await registerMetricStudyRoutes(app, verifyToken, study);
-  for (const op of ['query', 'discover', 'inventory', 'evaluate', 'observations'] as const) app.post(`/api/metrics/${op}`, { preHandler: [verifyToken], bodyLimit: 65536 }, async (request, reply) => {
+  for (const op of ['query', 'discover', 'inventory', 'evaluate', 'observations', 'latest'] as const) app.post(`/api/metrics/${op}`, { preHandler: [verifyToken], bodyLimit: 65536 }, async (request, reply) => {
     reply.header('Cache-Control', 'private, no-store');
     const actor = (request as unknown as { user?: ActorContext }).user;
     if (!actor) return reply.code(401).send({ error: 'AUTH_REQUIRED' });
@@ -17,8 +18,11 @@ export async function registerMetricConsumerRoutes(app: FastifyInstance, verifyT
       if (op === 'discover') return await service.discover(actor, RefSchema.parse(request.body));
       if (op === 'inventory') return await service.inventory(actor, RefSchema.parse(request.body));
       if (op === 'observations') return await service.observations(actor, request.body);
+      if (op === 'latest') return await service.latest(actor, RefSchema.parse(request.body));
       if (op === 'evaluate') {
-        const body = EvaluateSchema.parse(request.body), result = await service.query(actor, body.query);
+        const body = EvaluateSchema.parse(request.body), query = ConsumerQuerySchema.parse(body.query);
+        rule(!query.include_retained_trends, 'QUERY_INPUT_INVALID');
+        const result = await service.query(actor, query);
         rule(body.policies.every(p => result.metrics.some(m => m.definition.id === p.metric_id)), 'UNKNOWN_METRIC');
         return { ...result, assessment: scoreMetrics(result.metrics, body.policies) };
       }

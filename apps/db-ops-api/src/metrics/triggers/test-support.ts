@@ -261,11 +261,11 @@ export interface Baseline {
  * Build the real chain: sealed release → registry → fixed template version with
  * trigger references → B1/B2A/B2B/B2C resolution. Tests then resolve triggers.
  */
-export async function baseline(options: { rules?: TriggerRuleVersion[]; triggers?: TemplateVersion['aggregate']['triggers'] } = {}): Promise<Baseline> {
+export async function baseline(options: { rules?: TriggerRuleVersion[]; triggers?: TemplateVersion['aggregate']['triggers']; includeBeta?: boolean } = {}): Promise<Baseline> {
   const release = fixtureRelease();
   const version = templateVersion({
     template_id: 'tpl-monitoring',
-    items: [item('tpl-monitoring', 'alpha', alpha, release)],
+    items: [item('tpl-monitoring', 'alpha', alpha, release), ...(options.includeBeta ? [item('tpl-monitoring', 'beta', beta, release)] : [])],
     triggers: options.triggers ?? [
       { rule_id: 'alpha-threshold', scope: 'item:alpha', version: 1 },
       { rule_id: 'alpha-average', scope: 'item:alpha', version: 1 },

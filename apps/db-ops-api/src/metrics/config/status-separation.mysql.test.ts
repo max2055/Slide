@@ -14,24 +14,14 @@ import { configurationReader } from './status-store.js';
 import { PolicyService } from '../policy/service.js';
 import { MysqlPolicyStore } from '../policy/store.js';
 import { admin } from '../policy/test-support.js';
+import { decodeBindingPayload, encodeTemplateAppliedPayload } from '../bindings/persistence-codec.js';
+import { upgradeMonitoringBindings } from '../templates/upgrade-bindings.js';
 
 /**
- * MAX-238 status-separation package. On a disposable schema (METRICS_TEST_MYSQL_PORT) this publishes
- * one compatible pin per resource through the existing PolicyService.changeBinding, reports the
- * application result through the existing MysqlPolicyStore.reportApplied, and reads the existing
- * MetricConfigurationService.status. It proves that, inside one status read, the four existing
- * positions are independent:
- *
- *   - publishing is binding.published_revision (revision 1, application 'pending');
- *   - applying is binding.application/applied_revision;
- *   - waiting for the first sample is the AWAITING_SAMPLE blocker with a null last_observed_at;
- *   - a successful formal collection is collection.state === 'succeeded', which needs a succeeded
- *     attempt on the current revision and is therefore never reached here.
- *
- * Instance 1 is published (never activated) and then reports 'applied'; instance 2 is published and
- * reports 'failed'. No worker runs, no attempt or observation is inserted, and activate is never
- * called. status.ts, config/service.ts, policy/service.ts, policy/model.ts and store.ts keep their
- * current shape.
+ * Verify template publication, application, first-sample visibility and formal
+ * attempt status independently in real MySQL on disposable resources.
+ * This status-reader fixture records application states without running a
+ * collector. The formal writer and its proof are covered by the trigger flow.
  */
 const port = Number(process.env.METRICS_TEST_MYSQL_PORT);
 const database = `max238_status_separation_${process.pid}`;
@@ -124,63 +114,51 @@ describe.skipIf(!port)('MAX-238 publish, application, awaiting sample and formal
     const rowsBefore = await formalRows();
     let current = 'publish instance:1';
     try {
-      // 1. Publishing is not applying and not a successful collection.
       const firstPin = await pinFor(firstRef);
-      current = 'publish instance:1';
-      const firstPublish = await policies.changeBinding(admin, firstRef, { expected_revision: 0, package: firstPin }, true);
-      const firstRevision = firstPublish.resources[0].binding.revision;
-      expect(firstPublish.published).toBe(true);
-      expect(firstRevision).toBe(1);
-      expect(firstPublish.resources[0].resolved.settings.enabled).toBe(true);
+      const secondPin = await pinFor(secondRef);
+      await policies.changeBinding(admin, firstRef, { expected_revision: 0, package: firstPin }, true);
+      await policies.changeBinding(admin, secondRef, { expected_revision: 0, package: secondPin }, true);
+      expect(await upgradeMonitoringBindings(pool, packages)).toBe(2);
 
-      const published = await service.status(admin, firstRef);
+      const [firstRow, secondRow] = await rows('SELECT payload FROM metric_policy_bindings ORDER BY resource_key');
+      const first = decodeBindingPayload(firstRow.payload);
+      const second = decodeBindingPayload(secondRow.payload);
+      if (first.kind !== 'template_pending' || second.kind !== 'template_pending') throw new Error('Missing upgraded template binding');
+      const firstRevision = first.binding.revision;
+      const secondRevision = second.binding.revision;
+
       current = 'assert published status';
-      expect(published.binding.published_revision).toBe(firstRevision);
-      expect(published.binding.application).toBe('pending');
-      expect(published.binding.applied_revision).toBeNull();
-      expect(published.blockers).toContain('APPLICATION_PENDING');
-      expect(published.blockers).toContain('AWAITING_SAMPLE');
-      expect(published.formal_visibility.last_observed_at).toBeNull();
-      expect(published.formal_visibility.freshness).toBe('unknown');
+      const published = await service.status(admin, firstRef);
+      expect(published.binding).toEqual({ state: 'bound', package: null, published_revision: firstRevision,
+        application: 'pending', applied_revision: null });
+      expect(published.blockers).toEqual(expect.arrayContaining(['APPLICATION_PENDING', 'AWAITING_SAMPLE']));
+      expect(published.formal_visibility).toMatchObject({ last_observed_at: null, freshness: 'unknown' });
       expect(published.collection.state).not.toBe('succeeded');
 
-      // 2. The existing reportApplied marks this revision applied; the first sample is still missing
-      //    and no collection has succeeded.
-      const firstReportedAt = new Date(Date.parse(firstPublish.resources[0].published_at) + 1000).toISOString();
-      current = 'reportApplied applied instance:1';
-      await store.reportApplied(firstRef, firstRevision, firstReportedAt, 'applied');
+      current = 'read an applied revision without visible evidence';
+      const firstReportedAt = new Date(Date.parse(first.published_at) + 1000).toISOString();
+      const appliedFixture = encodeTemplateAppliedPayload(first, {
+        at: firstReportedAt, sample_ids: ['departed-sample'], attempt_ids: ['departed-attempt'],
+      });
+      await pool.execute("UPDATE metric_policy_bindings SET payload=? WHERE resource_key='instance:1'", [appliedFixture]);
       const applied = await service.status(admin, firstRef);
-      current = 'assert applied status';
-      expect(applied.binding.application).toBe('applied');
-      expect(applied.binding.applied_revision).toBe(applied.binding.published_revision);
+      expect(applied.binding).toMatchObject({ application: 'applied', applied_revision: firstRevision });
       expect(applied.blockers).toContain('AWAITING_SAMPLE');
-      expect(applied.formal_visibility.last_observed_at).toBeNull();
-      expect(applied.formal_visibility.freshness).toBe('unknown');
+      expect(applied.formal_visibility).toMatchObject({ last_observed_at: null, freshness: 'unknown' });
       expect(applied.collection.state).not.toBe('succeeded');
 
-      // 3. A failed application on another resource is neither applied nor a successful collection.
-      const secondPin = await pinFor(secondRef);
-      current = 'publish instance:2';
-      const secondPublish = await policies.changeBinding(admin, secondRef, { expected_revision: 0, package: secondPin }, true);
-      const secondRevision = secondPublish.resources[0].binding.revision;
-      expect(secondPublish.published).toBe(true);
-      expect(secondRevision).toBe(1);
-      const secondReportedAt = new Date(Date.parse(secondPublish.resources[0].published_at) + 1000).toISOString();
-      current = 'reportApplied failed instance:2';
-      await store.reportApplied(secondRef, secondRevision, secondReportedAt, 'failed');
+      current = 'read a failed application';
+      const secondReportedAt = new Date(Date.parse(second.published_at) + 1000).toISOString();
+      const failedFixture = { ...second.payload, application: { ...second.application,
+        status: 'failed', reported_at: secondReportedAt, error_code: 'apply_failed' } };
+      await pool.execute("UPDATE metric_policy_bindings SET payload=? WHERE resource_key='instance:2'", [JSON.stringify(failedFixture)]);
       const failed = await service.status(admin, secondRef);
-      current = 'assert failed status';
-      expect(failed.binding.application).toBe('failed');
-      expect(failed.binding.applied_revision).toBeNull();
-      expect(failed.blockers).toContain('APPLICATION_FAILED');
-      expect(failed.blockers).toContain('AWAITING_SAMPLE');
+      expect(failed.binding).toMatchObject({ application: 'failed', published_revision: secondRevision, applied_revision: null });
+      expect(failed.blockers).toEqual(expect.arrayContaining(['APPLICATION_FAILED', 'AWAITING_SAMPLE']));
       expect(failed.collection.state).not.toBe('succeeded');
 
-      // Each status names its own resource and its own published pin: configurations are not shared.
-      expect(published.resource).toEqual({ type: 'instance', id: 1 });
-      expect(failed.resource).toEqual({ type: 'instance', id: 2 });
-      expect(published.binding.package).toEqual(firstPin);
-      expect(failed.binding.package).toEqual(secondPin);
+      expect(published.resource).toEqual(firstRef);
+      expect(failed.resource).toEqual(secondRef);
 
       // No attempt, observation or publication was inserted to reach 'succeeded'.
       const rowsAfter = await formalRows();

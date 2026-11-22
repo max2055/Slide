@@ -2,8 +2,9 @@ import { createHash } from 'node:crypto';
 import type { RawObservation } from '../../contracts/metrics/index.js';
 import { AdapterError, type Transport } from '../packages/adapters.js';
 import { bindDatabaseDriver } from '../database/collector.js';
-import { databaseReads, type DatabaseRead } from '../database/catalog.js';
+import { databaseReads } from '../database/catalog.js';
 import { diagnosticReads } from '../database/diagnostics.js';
+import { MYSQL_STATUS_SQL } from '../../collectors/mysql-status-query.js';
 
 // One SHOW GLOBAL STATUS also returns Uptime and Uptime_since_flush_status, so
 // every counter and its lifecycle durations share one server snapshot.
@@ -12,15 +13,15 @@ const LIFECYCLE = ['Uptime', 'Uptime_since_flush_status'];
 
 /** Every fixed MySQL read whose fields include counters must obtain values and
  * identity from one server statement; ordinary status reads cannot. */
-const counterReads = new Map<string, DatabaseRead>();
+const counterReads = new Map<string, string[]>([[MYSQL_STATUS_SQL, ['Uptime', 'Queries']]]);
 for (const read of [...databaseReads, ...diagnosticReads]) {
   if (read.engine === 'mysql' && read.shape === 'status' && read.fields.some(f => f.definition.kind === 'counter') && !counterReads.has(read.sql)) {
-    counterReads.set(read.sql, read);
+    counterReads.set(read.sql, read.fields.map(field => field.name));
   }
 }
 
-function snapshotSql(read: DatabaseRead): string {
-  const names = [...new Set([...read.fields.map(f => f.name), ...LIFECYCLE])];
+function snapshotSql(fields: string[]): string {
+  const names = [...new Set([...fields, ...LIFECYCLE])];
   return `SHOW GLOBAL STATUS WHERE Variable_name IN (${names.map(name => `'${name}'`).join(', ')})`;
 }
 
@@ -33,7 +34,7 @@ function text(value: unknown, pattern: RegExp): string {
   if (typeof value !== 'string' || !pattern.test(value)) throw lifecycleFailure();
   return value;
 }
-function values(result: unknown, read: DatabaseRead): Map<string, unknown> {
+function values(result: unknown): Map<string, unknown> {
   if (!Array.isArray(result)) throw lifecycleFailure();
   const map = new Map<string, unknown>();
   for (const item of result) {
@@ -68,11 +69,11 @@ function classifySql(error: unknown): 'permission_denied' | 'timeout' | 'connect
 export class MysqlCounterDiscovery {
   private state?: Generation;
   constructor(private readonly clock = () => new Date().toISOString()) {}
-  async read(execute: (sql: string, timeout: number) => Promise<{ rows?: unknown }>, read: DatabaseRead, timeout: number) {
+  async read(execute: (sql: string, timeout: number) => Promise<{ rows?: unknown }>, fields: string[], timeout: number) {
     let result: unknown;
-    try { result = (await execute(snapshotSql(read), timeout)).rows; }
+    try { result = (await execute(snapshotSql(fields), timeout)).rows; }
     catch (error) { throw new AdapterError(classifySql(error)); }
-    const map = values(result, read);
+    const map = values(result);
     const sampledMs = Date.parse(this.clock());
     const now = snapshot(map, sampledMs);
     const previous = this.state;
@@ -95,8 +96,8 @@ export class MysqlCounterDiscovery {
     }
     this.state = generation;
     const kind = reason === 'initial' ? (now.flushUptime > 0 ? 'reset' : 'boot') : reason;
-    return { rows: read.fields.filter(f => map.has(f.name)).map(f => ({ Variable_name: f.name,
-      Value: map.get(f.name) === null ? null : String(map.get(f.name)) })),
+    return { rows: fields.filter(name => map.has(name)).map(name => ({ Variable_name: name,
+      Value: map.get(name) === null ? null : String(map.get(name)) })),
       observed_at: new Date(now.sampledMs).toISOString(),
       counter: { bits: '64', start_at: generation.startAt,
         discontinuity: { epoch: generation.epoch, observed_at: generation.observedAt, reason: kind } } as NonNullable<RawObservation['counter']> };
@@ -109,9 +110,9 @@ export function mysqlCounterTransport(execute: (sql: string, timeout: number) =>
   discovery = new MysqlCounterDiscovery()): Extract<Transport, { method: 'sql' }> {
   const ordinary = bindDatabaseDriver(execute) as Extract<Transport, { method: 'sql' }>;
   return { ...ordinary, counterQuery: async ({ sql, timeout }) => {
-    const read = counterReads.get(sql);
-    if (!read) throw new AdapterError('parse_error');
-    return discovery.read(execute, read, timeout);
+    const fields = counterReads.get(sql);
+    if (!fields) throw new AdapterError('parse_error');
+    return discovery.read(execute, fields, timeout);
   } };
 }
 

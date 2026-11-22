@@ -8,7 +8,8 @@
  */
 import { describe, expect, it } from 'vitest';
 import { TemplateError } from './errors.js';
-import { emptyDraftAggregate, TemplateItemVersionSchema, type TemplateDraft, type TemplateRecord } from './model.js';
+import { emptyDraftAggregate, templateContentHash, TemplateItemVersionSchema, type TemplateDraft, type TemplateRecord } from './model.js';
+import { averageRule, baseline, thresholdRule } from '../triggers/test-support.js';
 import {
   MySqlTemplateRepository, TemplateStorageUnknownCommitError, fromSqlActorId, fromSqlTimestamp,
   sqlActorId, sqlInt, sqlNextRevision, sqlNextVersion, toSqlTimestamp,
@@ -180,6 +181,70 @@ describe('T2B canonical CHAR(24) timestamp round-trip', () => {
 });
 
 describe('T2B adapter error branches', () => {
+  it.each(['draft', 'publish'])('rejects a %s write that removes an upstream trigger', async action => {
+    const { version } = await baseline();
+    const templateId = version.template_id;
+    const rule = averageRule({ dependencies: ['alpha-threshold'] });
+    const aggregate = { ...version.aggregate, triggers: [version.aggregate.triggers[0]] };
+    const { package_composition, ...draftAggregate } = aggregate;
+    class PublishConnection extends FakeConnection {
+      override async execute(sql: string): Promise<[unknown, unknown]> {
+        await super.execute(sql);
+        if (sql.includes('FROM monitoring_templates')) return [[template(templateId)], []];
+        if (sql.includes('FROM metric_template_drafts')) return [[{ ...draft(templateId), aggregate: draftAggregate }], []];
+        if (sql.includes('FROM metric_trigger_rule_versions')) return [[{ payload: rule }], []];
+        return [[], []];
+      }
+    }
+    const connection = new PublishConnection();
+    const repository = new MySqlTemplateRepository(poolOf(connection));
+    const operation = action === 'draft' ? repository.updateDraft(templateId, 0, {
+      aggregate: draftAggregate, updated_at: AT, updated_by: 1,
+    }) : repository.publish({
+      templateId, aggregate, items: version.items, packageComposition: package_composition,
+      sourceChain: { ...version.source_chain, published_at: AT }, publishedAt: AT, draftUpdatedAt: AT, actorId: 1,
+      expectedDraftRevision: 0, expectedTemplateRevision: 0, contentHash: templateContentHash(aggregate),
+    });
+    await expect(operation).rejects.toMatchObject({ code: 'TRIGGER_DEPENDENCY_UNKNOWN', status: 422 });
+    expect(connection.statements.some(sql => /^(INSERT|UPDATE) /.test(sql))).toBe(false);
+    expect(connection.rollbacks).toBe(1);
+    expect(connection.commits).toBe(0);
+  });
+
+  it('allows a draft dependency on an inherited rule and still accepts unlinked future refs', async () => {
+    const { version } = await baseline();
+    const templateId = 'tpl-child';
+    const upstream = thresholdRule({ rule_id: 'Upstream' });
+    const downstream = averageRule({ dependencies: [upstream.rule_id] });
+    const parentAggregate = { ...version.aggregate,
+      triggers: [{ rule_id: upstream.rule_id, version: upstream.version, scope: upstream.scope }] };
+    const parent = { ...version, aggregate: parentAggregate, content_hash: templateContentHash(parentAggregate),
+      published_at: AT, source_chain: { ...version.source_chain, published_at: AT } };
+    const aggregate = { ...draft(templateId).aggregate,
+      base: { template_id: parent.template_id, version: parent.version },
+      triggers: [version.aggregate.triggers[0], { rule_id: 'future-rule', version: 1, scope: 'item:alpha' }],
+    };
+    class InheritedConnection extends FakeConnection {
+      override async execute(sql: string, values?: unknown[]): Promise<[unknown, unknown]> {
+        const result = await super.execute(sql);
+        if (sql.includes('FROM monitoring_templates')) return [[template(templateId)], []];
+        if (sql.includes('FROM metric_template_drafts')) return [[draft(templateId)], []];
+        if (sql.includes('FROM metric_template_versions')) return [[parent], []];
+        if (sql.includes('FROM metric_trigger_rule_versions')) {
+          const rule = [upstream, downstream].find(candidate => candidate.rule_id === values?.[0]);
+          return [rule ? [{ payload: rule }] : [], []];
+        }
+        return result;
+      }
+    }
+    const connection = new InheritedConnection();
+    const repository = new MySqlTemplateRepository(poolOf(connection));
+    await expect(repository.updateDraft(templateId, 0, { aggregate, updated_at: AT, updated_by: 1 }))
+      .resolves.toMatchObject({ aggregate });
+    expect(connection.commits).toBe(1);
+    expect(connection.rollbacks).toBe(0);
+  });
+
   it('checks SQL-bound values before acquiring a connection', async () => {
     let acquired = 0;
     const repository = new MySqlTemplateRepository({
@@ -196,7 +261,7 @@ describe('T2B adapter error branches', () => {
 
   it('maps a duplicate parent insert to TEMPLATE_EXISTS and rolls back', async () => {
     const connection = new FakeConnection(sql => {
-      if (sql.startsWith('INSERT INTO metric_templates_v2')) {
+      if (sql.startsWith('INSERT INTO monitoring_templates')) {
         throw Object.assign(new Error('Duplicate entry'), { code: 'ER_DUP_ENTRY' });
       }
     });

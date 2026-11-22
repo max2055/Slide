@@ -1,6 +1,30 @@
 import type { DiscoveryInstance, DiscoveryRule } from '../../contracts/metrics/discovery.js';
 import { hashOf } from '../triggers/model.js';
 import { stable } from '../packages/model.js';
+import type { TemplateDraftAggregate } from './model.js';
+
+/** These publication fields are derived from the draft's discovery rules. */
+export function discoveryPublication(aggregate: TemplateDraftAggregate) {
+  const rules = aggregate.discovery_rules ?? [];
+  const parameters = structuredClone(aggregate.parameters);
+  if (rules.length) {
+    const budgets = {
+      discovery_timeout_ms: Math.min(...rules.map(rule => rule.timeout_ms)),
+      discovery_max_rows: Math.min(...rules.map(rule => rule.max_instances)),
+      discovery_series_upper_bound: rules.reduce((sum, rule) => sum + rule.max_instances * rule.item_ids.length, 0),
+    };
+    for (const [name, value] of Object.entries(budgets)) {
+      parameters.schema[name] = { type: 'integer', min: value, max: value };
+      parameters.defaults[name] = value;
+    }
+  }
+  return {
+    parameters,
+    capabilities: { ...aggregate.capabilities, discovery: rules.length
+      ? { contract_version: '1.0.0', ref: 'builtin:template-discovery.v1', executable: true } as const
+      : { contract_version: '1.0.0', ref: null, executable: false } as const },
+  };
+}
 
 export interface DiscoveryMember { identity: string; name: string; dimensions: Record<string, string> }
 

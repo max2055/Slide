@@ -94,12 +94,7 @@ export class NetworkDeviceCollector {
     private readonly options: NetworkDeviceCollectorOptions = {}) {}
   start():void {}
   stop():void {}
-  async collectDevice(id:number,requestedMetricIds?:readonly string[]):Promise<{success:boolean;error?:string;succeededMetricIds?:string[]}> {
-    if (requestedMetricIds?.length !== 0) {
-      const {metricConfigurationService}=await import('../metrics/config/routes.js');
-      const trial=await metricConfigurationService.trialCurrent({userId:0,username:'network-collection',roles:[],permissions:['network_devices:view','network_devices:manage','collector:manage'],instanceScopes:{},sessionVersion:0,requestId:`network-collection:${id}`},{type:'network_device',id});
-      return {success:trial.decision==='attempted'};
-    }
+  async collectDevice(id:number):Promise<{success:boolean;error?:string;succeededMetricIds?:string[]}> {
     const target=await this.store.getDevice(id);
     if(!target)return {success:false,error:'NETWORK_DEVICE_NOT_FOUND'};
     if(!target.collectionEnabled)return {success:false,error:'COLLECTION_DISABLED'};

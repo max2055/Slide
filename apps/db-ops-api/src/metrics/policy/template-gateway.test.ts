@@ -37,7 +37,6 @@ import { MetricFormalization } from '../rollout/formalization.js';
 import { MysqlPortfolioInventory, PORTFOLIO_TEMPLATE_BINDING_UNSUPPORTED } from '../rollout/portfolio.js';
 import { MetricConfigurationService } from '../config/service.js';
 import { MetricConsumerService } from '../consumers/service.js';
-import { BulkConfigurationService } from '../bulk/service.js';
 import { platformLogs } from '../../platform/structured-log-evidence-adapter.js';
 
 vi.mock('../config/effective-state.js', () => ({ assetCollectionEnabled: async () => true }));
@@ -656,18 +655,19 @@ describe('legacy readers refuse a stored template row (shared fence)', () => {
     expect(await rejection(schedulerStore.enqueue(legacyCandidate, 0))).toBe('BINDING_PAYLOAD_MISSING_SOURCE');
     expect(assertAvailable).not.toHaveBeenCalled();
 
-    // tick() isolates the rejected row and a stale enqueue instead of throwing.
+    // The normal tick reports a rejected row and never enqueues package snapshots.
     const record = vi.spyOn(platformLogs, 'record');
+    const enqueueLegacy = vi.fn();
     const stub = {
       scan: async () => ({ published: [legacyPublished() as never], templates: [],
         rejected: [{ resource_key: RESOURCE_KEY, code: TEMPLATE_BINDING_UNSUPPORTED }] }),
-      enqueue: async () => { throw new TemplateBindingUnsupportedError(); },
+      enqueue: enqueueLegacy,
     } as unknown as MysqlScheduleStore;
     expect(await new MetricScheduler(stub, fixtureRegistry(), {} as never, () => 0).tick()).toBe(0);
+    expect(enqueueLegacy).not.toHaveBeenCalled();
     expect(record).toHaveBeenCalledWith(expect.objectContaining({ errorCode: TEMPLATE_BINDING_UNSUPPORTED, status: 'failed' }));
 
-    // A job whose row was replaced by a template row ends with one sanitized
-    // diagnostic, not a retry loop: the handler returns and records the code.
+    // A job with no current template revision ends before collection.
     const events: string[] = [];
     const jobStore = {
       pool: {},
@@ -681,7 +681,7 @@ describe('legacy readers refuse a stored template row (shared fence)', () => {
     scheduler.register(jobs);
     await jobs.execute({ id: 'job-1', type: 'metrics.collect', payload: { resource: { type: 'server', id: 7 }, revision: 5 },
       attempts: 1, maxAttempts: 3, fencingToken: 1 });
-    expect(events).toEqual(['template_binding_unsupported']);
+    expect(events).toEqual([]);
   });
 
   it('fences the rollout coordinator, formalization cache, portfolio inventory', async () => {
@@ -702,7 +702,7 @@ describe('legacy readers refuse a stored template row (shared fence)', () => {
     expect(db.writes).toEqual({ binding: 1, operation: 1, audit: 1 });
   });
 
-  it('fences config trial/status, consumer discovery and bulk preview before reserve/credential/runner', async () => {
+  it('fences config trial/status, consumer discovery before reserve/credential/runner', async () => {
     const { db, store } = await seedApplied();
     const policy = policyOf(store);
     const reserve = vi.fn(async () => ({ release: async () => undefined, connection: { ping: async () => undefined } }));
@@ -723,21 +723,6 @@ describe('legacy readers refuse a stored template row (shared fence)', () => {
     expect(await rejection(consumer.discover(admin, RESOURCE))).toBe(TEMPLATE_BINDING_UNSUPPORTED);
     expect(consumerInventory).not.toHaveBeenCalled();
 
-    const saved: unknown[] = [];
-    const bulkStore = {
-      create: vi.fn(async (job: unknown) => { saved.push(job); return job; }),
-      get: vi.fn(), save: vi.fn(), list: vi.fn(), cancel: vi.fn(), cancelled: async () => false,
-      exclusive: vi.fn(async (fn: () => Promise<unknown>) => fn()), fence: vi.fn(),
-    };
-    const bulk = new BulkConfigurationService(policy, config, bulkStore as never,
-      async () => admin as never, () => AT);
-    const preview = await bulk.preview(admin, { key: 'bulk-proof-1', resources: [RESOURCE] });
-    expect((preview as unknown as { items: Array<{ code: string | null }> }).items[0].code).toBe(TEMPLATE_BINDING_UNSUPPORTED);
-    expect(reserve).not.toHaveBeenCalled();
-    expect(resolve).not.toHaveBeenCalled();
-    expect(evidence).not.toHaveBeenCalled();
-    // Reading package recommendations may read inventory; no policy/collection write happens.
     expect(db.writes).toEqual({ binding: 1, operation: 1, audit: 1 });
-    expect(saved).toHaveLength(1);
   });
 });

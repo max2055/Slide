@@ -150,12 +150,13 @@ export async function repinTemplateVersion(options: {
 
   // Read-only analysis first: nothing below the first authorize has written yet.
   const planned: Array<{ item: TemplateItemVersion; replacement: PackageRelease }> = [];
-  const items = [] as Array<{ item_id: string; version: number }>;
+  const items: TemplateVersion['aggregate']['items'] = [];
+  const refs = new Map(version.aggregate.items.map(ref => [ref.item_id, ref]));
   for (const item of version.items) {
     const originalPin = parseRelease(item.collector_ref.package_release);
     const original = registry.get(originalPin);
     const applicable = checkApplicability(original.package, resource, at).every(check => check.status === 'supported');
-    if (applicable) { items.push({ item_id: item.item_id, version: item.version }); continue; }
+    if (applicable) { items.push({ ...refs.get(item.item_id), item_id: item.item_id, version: item.version }); continue; }
 
     const replacement = chooseCompatibleRelease(registry, item, original, resource, at);
     if (!replacement) throw new RepinError('REPIN_NO_COMPATIBLE_RELEASE', item.item_id);
@@ -175,7 +176,7 @@ export async function repinTemplateVersion(options: {
       package: { id: replacement.package.id, version: replacement.package.version, digest: replacement.package.digest },
       metric: item.canonical_metric,
     });
-    items.push({ item_id: item.item_id, version: selected.item.version });
+    items.push({ ...refs.get(item.item_id), item_id: item.item_id, version: selected.item.version });
     changes.push({
       item_id: item.item_id,
       from: { version: item.version, release: item.collector_ref.package_release, implementation_id: item.collector_ref.implementation_id },

@@ -16,6 +16,28 @@ must use the HTTPS origin. Both proxy hops preserve `Host`, append
 `X-Forwarded-For`, set the real external `X-Forwarded-Proto`, and carry the
 HTTP/1.1 WebSocket upgrade for `/agent-ws`.
 
+### Client addresses for login rate limiting
+
+For a direct API deployment, leave `API_TRUSTED_PROXY_IPS` unset or empty. The
+API identifies clients by the TCP peer address. For a custom reverse proxy
+deployment, set `API_TRUSTED_PROXY_IPS` to the exact proxy IP addresses, ordered
+from the peer nearest the API toward the public edge. Each trusted proxy must
+append its actual TCP peer to `X-Forwarded-For` or set the header from a verified
+source. Reserve those addresses for the proxies and keep the API private.
+
+Production Compose sets the list to the frontend nginx address followed by the
+TLS edge address. If the default edge subnet overlaps an existing network,
+set `SLIDE_EDGE_SUBNET`, `SLIDE_EDGE_DYNAMIC_RANGE`, `SLIDE_FRONTEND_PROXY_IPV4`,
+and `SLIDE_TLS_EDGE_IPV4` together. Choose distinct proxy IPs inside the new
+subnet and outside its dynamic allocation range. For an existing stack,
+plan a maintenance window to recreate the edge network with the new IPAM
+settings and leave the persistent volumes intact.
+
+The TLS edge must receive each client's source address. Use a rootless port
+driver that preserves it and verify that the edge sees distinct addresses
+from two external clients after changing the driver or routing. See the
+[Docker rootless source IP guidance](https://docs.docker.com/engine/security/rootless/troubleshoot/#docker-run--p-does-not-propagate-source-ip-addresses).
+
 For an existing HTTP deployment, follow [HTTPS / WSS cutover and rollback](HTTPS.md)
 to configure certificate trust, switch only affected services, and verify the
 real Edge chat connection. The guide also includes a local two-proxy transport check.

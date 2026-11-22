@@ -44,8 +44,8 @@ describe('compatibility monitor fence', () => {
     delete process.env.METRICS_COLLECTION_ENABLED;
   });
 
-  it('does not execute the diagnostic source for a template row', async () => {
-    getPool.mockReturnValue(poolWith(JSON.stringify({ envelope: 'templates-v1', binding: {} })));
+  it('rejects an invalid template binding before diagnostics', async () => {
+    getPool.mockReturnValue(poolWith(JSON.stringify({ envelope: 'template-pending', binding: {} })));
     await monitorCollector.collectSlowQueriesNow();
     expect(slowQueries).not.toHaveBeenCalled();
   });
@@ -56,10 +56,10 @@ describe('compatibility monitor fence', () => {
     expect(slowQueries).not.toHaveBeenCalled();
   });
 
-  it('keeps the legacy reader working for a validated package row', async () => {
+  it('does not use package bindings to authorize diagnostics', async () => {
     getPool.mockReturnValue(poolWith(legacyRow(true)));
     await monitorCollector.collectSlowQueriesNow();
-    expect(slowQueries).toHaveBeenCalledTimes(1);
+    expect(slowQueries).not.toHaveBeenCalled();
 
     slowQueries.mockClear();
     getPool.mockReturnValue(poolWith(legacyRow(false)));

@@ -3,7 +3,7 @@
  *
  * One physical row (`metric_policy_bindings.payload`) carries either the legacy
  * single-package `Published` value (with no envelope, or the explicit
- * `package-v1` one) or the template `templates-v1` envelope. This module is the
+ * `package-v1` one) or the template `template-pending` envelope. This module is the
  * only place that decides which one a stored payload is, validates every field
  * of both forms, and builds the next pending payload while preserving the
  * previously effective snapshot. A stored snapshot is only accepted as evidence
@@ -19,23 +19,24 @@
  */
 import { z } from 'zod';
 import { stable } from '../packages/model.js';
+import { metricKey } from '../policy/model.js';
 import {
   CapabilitySchema, CollectionPlanSchema, DimensionsSchema, IdSchema, MetricRefSchema,
   ResourceTypeSchema, TimestampSchema, UnitSchema, VersionSchema,
 } from '../../contracts/metrics/index.js';
 import {
   HashIdSchema, ItemIdSchema, PackageReleaseRefSchema, ParameterNameSchema, ParameterValueSchema,
-  ResourceBindingCandidateSchema, TemplateIdSchema, TemplatePinSchema, TemplateTriggerRefSchema,
+  ResourceBindingCandidateSchema, TemplateIdSchema, TemplateItemRetentionSchema, TemplatePinSchema, TemplateTriggerRefSchema,
   VersionNumberSchema,
   type HashId, type ResourceBindingCandidate,
 } from '../../contracts/metrics/templates.js';
 import type { TemplateCollectionPlan } from './plan.js';
 
 /** The storage discriminant of the template form. It lives at the top level only. */
-export const BINDING_PAYLOAD_ENVELOPE = 'templates-v1';
+export const BINDING_PAYLOAD_ENVELOPE = 'template-pending';
 /** A successful normal formal commit, with an explicit base→target plan mapping. */
-export const BINDING_APPLIED_ENVELOPE = 'templates-applied-v1';
-export const BINDING_STOPPED_ENVELOPE = 'templates-stopped-v1';
+export const BINDING_APPLIED_ENVELOPE = 'template-applied';
+export const BINDING_STOPPED_ENVELOPE = 'template-stopped';
 const FormalCommitSchema = z.strictObject({
   sample_ids: z.array(z.string().min(1).max(255)).min(1),
   attempt_ids: z.array(z.string().min(1).max(255)).min(1),
@@ -214,6 +215,7 @@ const PlanItemSchema = z.strictObject({
   item_id: ItemIdSchema,
   item_version: VersionNumberSchema,
   canonical_metric: MetricRefSchema,
+  interval_ms: z.number().int().min(1000).max(86400000).optional(),
   unit: UnitSchema,
   dimensions: DimensionsSchema,
   mapping: PlanMappingSchema,
@@ -248,6 +250,7 @@ const ReleasePlanSchema = z.strictObject({
   applicability: z.array(ApplicabilityCheckSchema),
   collector_ids: z.array(IdSchema),
   metric_keys: z.array(z.string().min(1)),
+  derived_intervals_ms: z.record(z.string(), z.number().int().min(1000)).optional(),
   queries: z.array(PlanQuerySchema),
   requests_per_hour_estimate: z.number().nonnegative(),
   steps: z.array(PlanStepSchema),
@@ -278,6 +281,7 @@ const CollectionPlanShapeSchema = z.strictObject({
   triggers: z.array(z.strictObject({ pin: TemplatePinSchema, refs: z.array(TemplateTriggerRefSchema) })),
   releases: z.array(ReleasePlanSchema),
   excluded: z.array(ExclusionSchema),
+  item_retention: z.array(TemplateItemRetentionSchema.extend({ metric: MetricRefSchema })).optional(),
   budget: z.strictObject({
     estimate: z.literal(true),
     request_unit: z.literal('logical_reads'),
@@ -740,6 +744,15 @@ function parsePlan(
     || plan.data.resource.type !== expected.resource.type
     || plan.data.resource.id !== String(expected.resource.id)) {
     return fail(code);
+  }
+  if (plan.data.item_retention?.length) {
+    const eligible = new Set([
+      ...plan.data.releases.flatMap(release => release.steps.flatMap(step => step.items.map(item => metricKey(item.canonical_metric)))),
+      ...plan.data.excluded.map(item => metricKey(item.metric)),
+    ]);
+    for (const { metric, history_ms, trends_ms } of plan.data.item_retention) {
+      if (!eligible.delete(metricKey(metric)) || (history_ms === undefined && trends_ms === undefined)) return fail(code);
+    }
   }
   return value as unknown as TemplateCollectionPlan;
 }

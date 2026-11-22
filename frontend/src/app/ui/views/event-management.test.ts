@@ -29,6 +29,52 @@ describe('migrated attention event states', () => {
     release({ok:true,json:async()=>({items:[{id:99,title:'late private'}]})} as Response);
     await pending; expect(page.events).toEqual([]);
   });
+  it('opens the exact authorized event directly without querying the event list', async () => {
+    const api = vi.mocked(authFetch);
+    let finishLogs!: (response: Response) => void;
+    api.mockImplementation(async url => {
+      const path = String(url);
+      if (path.endsWith('/logs')) return new Promise(resolve => { finishLogs = resolve; });
+      if (path.endsWith('/events/22899')) return { ok: true, json: async () => ({
+        id: 22899, title: '磁盘阈值', severity: 'warning', status: 'resolved', alerts: [],
+      }) } as unknown as Response;
+      return { ok: false, status: 404 } as Response;
+    });
+    const page = new EventManagementPage();
+    page.eventId = 22899;
+    page.returnTo = '/workbench?investigation=original';
+    document.body.append(page);
+    try {
+      await vi.waitFor(() => expect(page.shadowRoot!.querySelector('h3')?.textContent).toContain('#22899'));
+      expect(page.shadowRoot!.querySelector('.record-meta')?.textContent).toContain('0 条关联告警');
+    } finally {
+      finishLogs({ ok: true, json: async () => [] } as unknown as Response);
+    }
+    expect(page.shadowRoot!.querySelector('.record-status')?.textContent).toContain('已解决');
+    expect(page.shadowRoot!.querySelector('a[href*="investigation=original"]')?.textContent).toBe('返回调查');
+    expect(api.mock.calls.map(([url]) => String(url)).filter(url => url.startsWith('/api/alerts/')))
+      .toEqual(['/api/alerts/events/22899', '/api/alerts/events/22899/logs']);
+    page.returnTo = '//elsewhere.test/workbench?investigation=original';
+    await page.updateComplete;
+    expect(page.shadowRoot!.querySelector('a[href*="investigation="]')).toBeNull();
+  });
+  it('clears previously rendered facts if the latest logs read denies access', async () => {
+    let finishLogs!: (response: Response) => void;
+    vi.mocked(authFetch).mockImplementation(async url => {
+      if (String(url).endsWith('/logs')) return new Promise(resolve => { finishLogs = resolve; });
+      if (String(url).endsWith('/events/42')) return new Response(JSON.stringify({
+        id: 42, title: '事件内容', severity: 'warning', status: 'resolved', alerts: [],
+      }));
+      return new Response(null, { status: 404 });
+    });
+    const page = new EventManagementPage();
+    page.eventId = 42;
+    document.body.append(page);
+    await vi.waitFor(() => expect(page.shadowRoot!.querySelector('h3')?.textContent).toContain('事件内容'));
+    finishLogs(new Response(null, { status: 403 }));
+    await vi.waitFor(() => expect(page.shadowRoot!.querySelector('[role="alert"]')?.textContent).toContain('不可访问'));
+    expect(page.shadowRoot!.querySelector('h3')).toBeNull();
+  });
 });
 
 describe('manual recovery confirmation', () => {
@@ -148,6 +194,18 @@ describe('event interaction recovery', () => {
     expect(page.eventMembers).toEqual(['fresh member']);
     expect(page.eventLogs).toEqual(['fresh log']);
   });
+  it('preserves drafts when refreshing the same event and clears them when the event changes', async () => {
+    const page = new EventManagementPage() as any;
+    vi.mocked(authFetch).mockImplementation(async url => String(url).endsWith('/logs')
+      ? response([]) : response({ id: String(url).split('/').at(-1) }));
+    await page._readDetail(1);
+    Object.assign(page, { noteText: 'note', postmortemText: 'review', recoveryVerificationReason: 'proof', showPostmortemForm: true });
+    await page._readDetail(1);
+    expect(page.noteText).toBe('note');
+    await page._readDetail(2);
+    expect([page.noteText, page.postmortemText, page.recoveryVerificationReason]).toEqual(['', '', '']);
+    expect(page.showPostmortemForm).toBe(false);
+  });
 });
 
 // MAX-572 / #430 / #659
@@ -249,5 +307,52 @@ describe('latest event list query', () => {
     expect(page.shadowRoot.textContent).not.toContain('系统运行正常');
     expect(page.shadowRoot.textContent.includes('暂无活跃事件')).toBe(items.length === 0);
     if (items.length) expect(page.shadowRoot.textContent).toContain('recovered');
+  });
+});
+
+describe('current-page event filter counts', () => {
+  afterEach(() => { document.body.replaceChildren(); vi.mocked(authFetch).mockReset(); });
+
+  it('counts only the displayed rows and retains the server total when paging from zero matches', async () => {
+    const firstPage = Array.from({ length: 50 }, (_, index) => ({
+      id: index + 2, title: `事件 ${index + 2}`, severity: 'warning', status: 'open',
+    }));
+    const secondPage = [{ id: 1, title: '磁盘告警', severity: 'critical', status: 'open' }];
+    const api = vi.mocked(authFetch);
+    const listRequests: string[] = [];
+    api.mockImplementation(async url => {
+      const path = String(url);
+      if (!path.includes('/alerts/events?')) return Response.json({});
+      listRequests.push(path);
+      const items = path.includes('offset=50') ? secondPage : firstPage;
+      return Response.json({ items, total: 51 });
+    });
+
+    const page = new EventManagementPage();
+    document.body.append(page);
+    const root = page.shadowRoot!;
+    const summary = () => root.querySelector('[role="status"]')?.textContent?.replace(/\s+/g, ' ').trim();
+    await vi.waitFor(() => expect(summary()).toBe('本页命中 50 条 · 当前状态可见事件共 51 条'));
+
+    const search = root.querySelector<HTMLInputElement>('[aria-label="搜索本页事件"]')!;
+    search.value = '磁盘';
+    search.dispatchEvent(new Event('input'));
+    await page.updateComplete;
+    expect(summary()).toBe('本页命中 0 条 · 当前状态可见事件共 51 条');
+    expect(root.textContent).toContain('暂无匹配的事件');
+
+    root.querySelector<HTMLButtonElement>('.pagination button:last-child')!.click();
+    await vi.waitFor(() => expect(summary()).toBe('本页命中 1 条 · 当前状态可见事件共 51 条'));
+    expect(root.querySelectorAll('.event-item')).toHaveLength(1);
+
+    const severity = root.querySelector<HTMLSelectElement>('[aria-label="本页严重度"]')!;
+    severity.value = 'warning';
+    severity.dispatchEvent(new Event('change'));
+    await page.updateComplete;
+    expect(summary()).toBe('本页命中 0 条 · 当前状态可见事件共 51 条');
+    expect(listRequests).toEqual([
+      '/api/alerts/events?limit=50&offset=0&status=open,investigating,handled',
+      '/api/alerts/events?limit=50&offset=50&status=open,investigating,handled',
+    ]);
   });
 });

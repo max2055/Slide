@@ -209,7 +209,26 @@ it('MAX245 a template with a working draft can still select its immutable publis
   element.templates=element.templates.map((t:any)=>t.template_id==='tpl-mysql'?{...t,status:'draft'}:t);
   await element.updateComplete;
   expect(element.shadowRoot.querySelector('[aria-label="选择模板 MySQL 基础监控"]').disabled).toBe(false);
-  expect(element.versionDisabled(element.templates[0],element.templates[0].versions[1])).toBeNull();
+  expect(element.shadowRoot.querySelector('[aria-label="模板版本 MySQL 基础监控"] option[value="2"]').disabled).toBe(false);
+});
+
+it('selecting a published version directly adds one pin and sends that exact version to preview', async () => {
+  authFetch.mockImplementation(routes({
+    '/template-bindings/instance/1': () => ({ ok: true, json: async () => binding({
+      source: 'unbound', revision: null, template_pins: [], pending: null, application: null, effective: null }) }),
+  }));
+  const element = await mount();
+  const version = element.shadowRoot.querySelector('[aria-label="模板版本 MySQL 基础监控"]') as HTMLSelectElement;
+  version.value = '1';
+  version.dispatchEvent(new Event('change'));
+  await element.updateComplete;
+  expect(element.shadowRoot.querySelector('[aria-label="选择模板 MySQL 基础监控"]').checked).toBe(true);
+  expect(element.selected).toEqual([{ template_id: 'tpl-mysql', version: 1, content_hash: hash('a') }]);
+  expect(authFetch.mock.calls.some(([url]) => url.endsWith('/templates/tpl-mysql/versions/1'))).toBe(true);
+  version.value = '2';
+  version.dispatchEvent(new Event('change'));
+  await element.previewFlow();
+  expect(jsonOf('/preview')?.template_pins).toEqual([{ template_id: 'tpl-mysql', version: 2, content_hash: hash('b') }]);
 });
 
 it('an unbound resource can check the first binding at base revision 0', async () => {

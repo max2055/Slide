@@ -91,7 +91,7 @@ export async function collectSource(control: SourceControl, options: {
       await result.assertCurrent?.();
     } };
   } };
-  const scheduler = new MetricScheduler(store, packages, bounded, Date.now, options.collect, formal);
+  const scheduler = MetricScheduler.forLegacyPackages(store, packages, bounded, Date.now, options.collect, formal);
   const registry = new JobRegistry(); scheduler.register(registry);
   let executed = 0;
   while (executed < c.maxMetricJobs) {
@@ -135,6 +135,7 @@ export async function sourcePublication(pool: Pool, resourceId: number, type: 's
 
 export async function evaluateSource(control: SourceControl) {
   const { serverAlertEvaluator } = await import('../../server-alert-evaluator.js');
+  const { evaluateLegacyPackageRule } = await import('../../metrics/consumers/operational.js');
   const { DatabaseAlertBridge } = await import('../../investigations/alert-bridge.js');
   await control.assertActive();
   await assertSourceInventory(control.pool, control);
@@ -142,7 +143,7 @@ export async function evaluateSource(control: SourceControl) {
   const actor = await sourceActor(control);
   await policyService.assertAccess(actor, { type: 'server', id: control.config.serverId }, true);
   await workflowExecution.run({ signal: control.signal, workerId: control.workerId, fencingToken: 1 },
-    () => serverAlertEvaluator.evaluateServerRules(new Map(control.config.alertRules.map(r => [r.id, r.dimensions]))));
+    () => serverAlertEvaluator.evaluateServerRules(new Map(control.config.alertRules.map(r => [r.id, r.dimensions])), evaluateLegacyPackageRule));
   const [alerts] = await control.pool.execute<RowDataPacket[]>(`SELECT * FROM alerts WHERE server_id=?
     AND status IN ('unread','read','acknowledged') ORDER BY id DESC LIMIT 2`, [control.config.serverId]);
   if (alerts.length !== 1) sourceFailure('EXACT_ALERT_REQUIRED');

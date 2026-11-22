@@ -1,10 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import type { TemplateVersion } from '../../contracts/metrics/templates.js';
 import type { TriggerResourceSnapshot, TriggerRuleVersion } from '../../contracts/metrics/triggers.js';
-import { baseline, near, portOf, thresholdRule, averageRule } from './test-support.js';
+import { baseline, beta, metricRef, near, portOf, thresholdRule, averageRule } from './test-support.js';
 import { resolveTriggerRules } from './resolve.js';
 import { compileTriggerSnapshot } from './compile.js';
 import { evaluateTriggerRule, type TriggerEvaluationInput, type TriggerEvaluationResult } from './evaluate.js';
+import { triggerRuleContentHash } from './model.js';
 
 const evidenceFor = (snapshot: TriggerResourceSnapshot, overrides: Record<string, unknown> = {}) => ({
   resource: { type: snapshot.resource.type, id: Number(snapshot.resource.id) },
@@ -22,6 +23,7 @@ const DEFAULT_TRIGGERS: TemplateVersion['aggregate']['triggers'] = [
 async function snapshotOf(options: {
   rules?: TriggerRuleVersion[];
   triggers?: TemplateVersion['aggregate']['triggers'];
+  includeBeta?: boolean;
 } = {}): Promise<TriggerResourceSnapshot> {
   const base = await baseline(options);
   const candidate = await resolveTriggerRules(base.resolution, base.catalog, portOf([base.version]).port);
@@ -99,6 +101,88 @@ describe('pure trigger evaluation', () => {
       .toMatchObject({ business: 'problem', reason: 'problem_retained' });
     expect(evaluate(snapshot, { previous: 'problem', samples: [near(69.5)] }))
       .toMatchObject({ business: 'healthy', recovery: true, reason: 'recovered' });
+  });
+
+  it.each([
+    { mode: 'problem_expression', closesAt51: true, closesAt3: true },
+    { mode: 'recovery_expression', closesAt51: false, closesAt3: true },
+    { mode: 'none', closesAt51: false, closesAt3: false },
+  ] as const)('applies the Zabbix $mode transition table to an open problem', async ({ mode, closesAt51, closesAt3 }) => {
+    const compare = (operator: '>' | '<', value: number) => ({
+      node: 'compare' as const, select: { aggregation: 'last' as const },
+      operator, threshold: { kind: 'constant' as const, value },
+    });
+    const { recovery, content_hash: _legacyHash, ...legacy } = thresholdRule({ problem: compare('>', 100), recovery: compare('<', 10) });
+    const body = mode === 'recovery_expression' ? { ...legacy, recovery_mode: mode, recovery } : { ...legacy, recovery_mode: mode };
+    const rule = { ...body, content_hash: triggerRuleContentHash(body) };
+    const snapshot = await snapshotOf({ rules: [rule], triggers: [{ rule_id: rule.rule_id, scope: rule.scope, version: 1 }] });
+    expect(evaluate(snapshot, { samples: [near(101)] })).toMatchObject({ problem_open: true, recovery: false });
+    expect(evaluate(snapshot, { previous: 'problem', samples: [] })).toMatchObject({
+      business: 'unknown', problem_open: true, recovery: false,
+    });
+    expect(evaluate(snapshot, { previous: 'problem', samples: [near(51)] })).toMatchObject({
+      problem_open: !closesAt51, recovery: closesAt51,
+    });
+    expect(evaluate(snapshot, { previous: 'problem', samples: [near(3)] })).toMatchObject({
+      problem_open: !closesAt3, recovery: closesAt3,
+    });
+    expect(evaluate(snapshot, { samples: [near(3)] })).toMatchObject({ problem_open: false, recovery: false });
+  });
+
+  it('opens from a definite problem before the recovery window has evidence', async () => {
+    // Zabbix testExpressionTriggerMacros.php opens at 51+50, holds at 1+50 and recovers at 1+2.
+    // Use those totals as one Slide metric and require a covered window for recovery.
+    const rule = thresholdRule({
+      problem: { node: 'compare', select: { aggregation: 'last' }, operator: '>', threshold: { kind: 'constant', value: 100 } },
+      recovery: { node: 'compare', select: { aggregation: 'avg', window_ms: 60000 }, operator: '<', threshold: { kind: 'constant', value: 10 } },
+    });
+    const snapshot = await snapshotOf({ rules: [rule], triggers: [{ rule_id: rule.rule_id, scope: rule.scope, version: 1 }] });
+    const covering = (value: number) => near(value, {
+      observed_at: '2026-10-29T12:00:00.000Z',
+      window: windowAt('2026-10-29T11:59:00.000Z', '2026-10-29T12:00:00.000Z'),
+    });
+    expect(evaluate(snapshot, { samples: [near(101)] })).toMatchObject({ business: 'problem', reason: 'problem', value: 101 });
+    expect(evaluate(snapshot, { samples: [near(51)] })).toMatchObject({ business: 'healthy', problem_open: false });
+    expect(evaluate(snapshot, { previous: 'problem', samples: [near(101)] }))
+      .toMatchObject({ business: 'problem', reason: 'problem_retained', recovery: false });
+    expect(evaluate(snapshot, { previous: 'problem', samples: [near(51)] }))
+      .toMatchObject({ business: 'unknown', reason: 'gap', problem_open: true, recovery: false });
+    expect(evaluate(snapshot, { previous: 'problem', samples: [covering(51)] }))
+      .toMatchObject({ business: 'problem', reason: 'problem_retained', recovery: false });
+    expect(evaluate(snapshot, { previous: 'problem', samples: [covering(3)] }))
+      .toMatchObject({ business: 'healthy', reason: 'recovered', problem_open: false, recovery: true });
+  });
+
+  it('ports Zabbix known/unknown logic across distinct item operands and keeps recovery conditional', async () => {
+    const leaf = (operator: '>' | '<', value: number, item_id?: string) => ({
+      node: 'compare' as const, select: { aggregation: 'last' as const, ...(item_id ? { item_id } : {}) },
+      operator, threshold: { kind: 'constant' as const, value },
+    });
+    const snapshot = async (node: 'all' | 'any') => {
+      const rule = thresholdRule({
+        problem: { node, children: [leaf('>', 50), leaf('>', 49, 'beta')] },
+        recovery: { node: 'all', children: [leaf('<', 10), leaf('<', 10, 'beta')] },
+        clock: { stale_after_ms: 120000, nodata: { enabled: false } },
+      });
+      return snapshotOf({ includeBeta: true, rules: [rule], triggers: [{ rule_id: rule.rule_id, scope: rule.scope, version: 1 }] });
+    };
+    const all = await snapshot('all'), any = await snapshot('any');
+    const other = (value: number) => near(value, { metric: metricRef(beta), unit: beta.unit });
+    expect(all.rules[0].inputs).toMatchObject([{ item: { item_id: 'beta', item_version: 1 }, metric: metricRef(beta), unit: 'count' }]);
+    // Upstream evaluate_unknown.yaml: 1 OR Unknown is true; the unresolved operand is not zero.
+    expect(evaluate(any, { samples: [near(51)] })).toMatchObject({ business: 'problem' });
+    expect(evaluate(any, { samples: [other(50)], last_seen_at: null })).toMatchObject({ business: 'problem' });
+    expect(evaluate(all, { samples: [near(51)] })).toMatchObject({ business: 'unknown', reason: 'missing_input' });
+    expect(evaluate(all, { samples: [near(1)] })).toMatchObject({ business: 'healthy' });
+    expect(evaluate(all, { samples: [near(51), other(50)] })).toMatchObject({ business: 'problem' });
+    expect(evaluate(all, { previous: 'problem', samples: [near(1)] }))
+      .toMatchObject({ business: 'unknown', problem_open: true, recovery: false });
+    expect(evaluate(all, { previous: 'problem', samples: [near(1), other(2)] }))
+      .toMatchObject({ business: 'healthy', problem_open: false, recovery: true });
+    expect(evaluate(all, { samples: [near(51), { ...other(50), unit: 's' }] })).toMatchObject({ reason: 'unit_mismatch' });
+    expect(evaluate(any, { samples: [near(51), { ...other(50), unit: 's' }] })).toMatchObject({ business: 'problem' });
+    expect(evaluate(all, { samples: [near(1), { ...other(50), observed_at: '2026-10-29T12:00:01.000Z' }] }))
+      .toMatchObject({ business: 'healthy' });
   });
 
   it('fires explicit nodata from the clock and never recovers an open problem', async () => {

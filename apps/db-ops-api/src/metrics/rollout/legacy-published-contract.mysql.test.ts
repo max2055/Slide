@@ -165,7 +165,7 @@ describe.skipIf(!port)('legacy published contract read by the rollout readers', 
       foreignPlan.resolved.plan.binding.resource_id = '2';
       const wrongRevision = structuredClone(real) as typeof real & { resolved: { plan: { binding: { config_revision: number } } } };
       wrongRevision.resolved.plan.binding.config_revision = 9;
-      const templateWithPackage = { envelope: 'templates-v1', binding: real.binding,
+      const templateWithPackage = { envelope: 'template-pending', binding: real.binding,
         template_resolution: { pending: {} }, application: {}, effective: null, published_at: real.published_at };
       const rejections = {
         sparse_legacy: codeOf(() => decodeBindingPayload(sparseLegacy)),

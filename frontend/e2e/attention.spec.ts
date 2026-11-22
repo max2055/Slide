@@ -60,7 +60,9 @@ test('legacy attention opens active event center with numeric identities, refres
   await page.keyboard.press('Enter'); const response = await refreshed; expect(response.status()).toBe(200);
   expect((await response.json()).items.map((event:any)=>String(event.id))).toEqual(ids); await expect(refresh).toBeEnabled();
   const row = view.getByRole('button', { name: '查看事件 #201 详情' }); await row.focus(); await page.keyboard.press('Enter');
-  await expect(view.getByRole('heading', { name: /事件 #201/ })).toBeVisible();
+  const record = view.getByRole('region', { name: '事件详情' });
+  await expect(record).toContainText('事件 #201');
+  await expect(record.getByRole('heading', { name: /同时间事项 A/ })).toBeFocused();
   await page.keyboard.press('Escape'); await expect(row).toBeFocused();
   await view.getByRole('button', {name:/^已解决/}).click();
   await expect(view.getByRole('button', {name:'查看事件 #205 详情'})).toBeVisible();

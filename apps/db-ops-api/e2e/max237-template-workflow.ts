@@ -89,7 +89,7 @@ try {
  assert.equal((await post(copyId+'/name',{name:'名称改变',expected_revision:editor.template.revision})).status,200);
  assert.deepEqual(await repository.getVersion(copyId,snapshot.version),snapshot);passed('immutable published snapshots and lost-response retry; template rename stable identity');
  editor=(await api('GET',copyId+'/editor')).body;
- const lock=await pool.getConnection();await lock.beginTransaction();await lock.query('SELECT template_id FROM metric_templates_v2 WHERE template_id=? FOR UPDATE',[copyId]);
+ const lock=await pool.getConnection();await lock.beginTransaction();await lock.query('SELECT template_id FROM monitoring_templates WHERE template_id=? FOR UPDATE',[copyId]);
  const waiting=post(copyId+'/name',{operation_key:'revoke-wait',name:'不应写入',expected_revision:editor.template.revision});
  await new Promise(r=>setTimeout(r,150));
  await pool.query("DELETE rp FROM role_permissions rp JOIN permissions p ON p.id=rp.permission_id WHERE rp.role_id=701 AND p.code='metric:manage'");await lock.commit();lock.release();

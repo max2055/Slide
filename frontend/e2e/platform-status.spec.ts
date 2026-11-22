@@ -122,10 +122,10 @@ test('#436 missing storage stays denied until permissions arrive', async ({ page
 
 test('#667 leaving status never rewrites another page view on history navigation', async ({ page }) => {
   await setup(page, ['*']);
-  await page.goto('/settings/monitoring/metrics?view=audit');
+  await page.goto('/settings/monitoring/metrics');
   await page.goto('/health?view=observations');
   await expect(page.locator('platform-observations-page')).toBeVisible();
   await page.goBack();
-  await expect(page).toHaveURL(/settings\/monitoring\/metrics\?view=audit$/);
+  await expect(page).toHaveURL(/settings\/monitoring\/metrics$/);
   await expect(page.locator('platform-status-page')).toHaveCount(0);
 });

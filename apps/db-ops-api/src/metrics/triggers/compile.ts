@@ -20,20 +20,39 @@
 import {
   TriggerAppliedEvidenceSchema, TriggerResourceSnapshotSchema, TriggerRuleCandidateSetSchema,
   TriggerRuleSnapshotSchema,
-  type TriggerAppliedEvidence, type TriggerResourceSnapshot, type TriggerRuleCandidateSet,
+  type TriggerAppliedEvidence, type TriggerResourceSnapshot, type TriggerRuleCandidate, type TriggerRuleCandidateSet,
   type TriggerRuleSnapshot,
 } from '../../contracts/metrics/triggers.js';
-import { frozenCopy, triggerRuleSnapshotHash, triggerSnapshotHash } from './model.js';
+import {
+  frozenCopy, orderTriggerDependencies, triggerDependencyFields, TriggerDependencyError,
+  triggerRuleSnapshotHash, triggerSnapshotHash, type TriggerDependencyErrorCode,
+} from './model.js';
 
 export type TriggerCompileErrorCode =
   | 'TRIGGER_CANDIDATE_INVALID'
   | 'TRIGGER_SNAPSHOT_INVALID'
-  | 'TRIGGER_SNAPSHOT_HASH_MISMATCH';
+  | 'TRIGGER_SNAPSHOT_HASH_MISMATCH'
+  | TriggerDependencyErrorCode;
 
 export class TriggerCompileError extends Error {
   constructor(public readonly code: TriggerCompileErrorCode) {
     super(code);
     this.name = 'TriggerCompileError';
+  }
+}
+
+function verifyDependencies(rules: readonly TriggerRuleCandidate[]): void {
+  const templates = new Map<string, TriggerRuleCandidate[]>();
+  for (const rule of rules) {
+    const template = templates.get(rule.item.template_id);
+    if (template) template.push(rule);
+    else templates.set(rule.item.template_id, [rule]);
+  }
+  try {
+    for (const template of templates.values()) orderTriggerDependencies(template);
+  } catch (error) {
+    if (error instanceof TriggerDependencyError) throw new TriggerCompileError(error.code);
+    throw error;
   }
 }
 
@@ -46,9 +65,10 @@ export function compileTriggerSnapshot(candidateInput: unknown): TriggerResource
   const parsed = TriggerRuleCandidateSetSchema.safeParse(candidateInput);
   if (!parsed.success) throw new TriggerCompileError('TRIGGER_CANDIDATE_INVALID');
   const candidate: TriggerRuleCandidateSet = parsed.data;
+  verifyDependencies(candidate.rules);
 
   const rules: TriggerRuleSnapshot[] = candidate.rules.map(rule => {
-    const withHash = { ...rule, snapshot_hash: triggerRuleSnapshotHash(rule) };
+    const withHash = { ...rule, ...triggerDependencyFields(rule.dependencies), snapshot_hash: triggerRuleSnapshotHash(rule) };
     if (!TriggerRuleSnapshotSchema.safeParse(withHash).success) {
       throw new TriggerCompileError('TRIGGER_SNAPSHOT_INVALID');
     }
@@ -93,6 +113,7 @@ export function verifyTriggerSnapshot(snapshotInput: unknown): TriggerResourceSn
   if (declared !== triggerSnapshotHash(rest)) {
     throw new TriggerCompileError('TRIGGER_SNAPSHOT_HASH_MISMATCH');
   }
+  verifyDependencies(snapshot.rules);
   return frozenCopy(snapshot);
 }
 
