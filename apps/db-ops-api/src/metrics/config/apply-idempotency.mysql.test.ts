@@ -12,7 +12,7 @@ import { configurationInventory } from './inventory.js';
 import { createConfigurationRegistry } from './registry.js';
 import { createTrialStore } from './routes.js';
 import { MetricConfigurationService } from './service.js';
-import { configurationReader } from './status-store.js';
+import { legacyConfigurationReader } from './legacy-configuration-test-support.js';
 import { PolicyService, candidateFingerprint, configurationDigest } from '../policy/service.js';
 import { MysqlPolicyStore } from '../policy/store.js';
 import { type Ref, refKey } from '../policy/model.js';
@@ -101,7 +101,7 @@ describe.skipIf(!port)('MAX-238 operation keys bind one intent and replay withou
     policies = new PolicyService(new MysqlPolicyStore(() => pool), packages,
       { exists: async () => true, inventory: configurationInventory });
     service = new MetricConfigurationService(policies, packages, createTrialStore(() => pool, packages),
-      { resolve: async () => { throw new Error('status must not collect'); } }, configurationReader(() => pool));
+      { resolve: async () => { throw new Error('status must not collect'); } }, legacyConfigurationReader(() => pool));
     const recommendations = await service.recommendations(admin, ref1);
     const release = recommendations.packages.find(entry => entry.compatibility === 'compatible')?.release.package;
     expect(release, 'resource 1 must have a compatible published release').toBeDefined();
@@ -189,7 +189,7 @@ describe.skipIf(!port)('MAX-238 operation keys bind one intent and replay withou
     const restarted = new PolicyService(new MysqlPolicyStore(() => pool), packages,
       { exists: async () => true, inventory: configurationInventory });
     const restartedService = new MetricConfigurationService(restarted, packages, createTrialStore(() => pool, packages),
-      { resolve: async () => { throw new Error('status must not collect'); } }, configurationReader(() => pool));
+      { resolve: async () => { throw new Error('status must not collect'); } }, legacyConfigurationReader(() => pool));
     const before = { payload: await bindingPayload(ref1), audits: await audits(ref1) };
     const replay = await restarted.changeBinding(admin, ref1, { expected_revision: 0, package: pin, operation_key: 'apply-intent-1' }, true);
     expect(replay.resources[0].binding.revision).toBe(1);

@@ -25,7 +25,7 @@ describe('resource pages use the formal formal metrics source', () => {
 
   it('uses semantic metrics exclusively on the server detail page', () => {
     const text = source('server-detail.ts');
-    expect(text).toContain('<semantic-metrics resourceType="server"');
+    expect(text).toContain('<resource-metric-browser resourceType="server"');
     expect(text).not.toContain('/metrics/history');
     expect(text).not.toMatch(/\/api\/servers\/\$\{[^}]+\}\/metrics/);
     expect(text).not.toContain('兼容采集');
@@ -34,7 +34,7 @@ describe('resource pages use the formal formal metrics source', () => {
 
   it('uses semantic metrics for trends and the interface inventory API for interfaces', () => {
     const text = source('network-device-detail.ts');
-    expect(text).toContain('<semantic-metrics resourceType="network_device"');
+    expect(text).toContain('<resource-metric-browser resourceType="network_device"');
     expect(text).not.toContain('概览来自兼容采集');
     expect(text).not.toContain('`/api/network-devices/${id}/metrics`');
     expect(text).toContain('`/api/network-devices/${id}/interfaces`');

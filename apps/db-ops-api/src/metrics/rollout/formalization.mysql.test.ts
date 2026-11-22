@@ -43,7 +43,7 @@ describe.skipIf(!port)('real MySQL measurement → source acceptance → formal 
     const p=registry.list().find(r=>r.package.id==='mysql-basic'&&r.package.version==='2.0.0')!.package;
     await policy.changeBinding(admin,ref,{expected_revision:0,package:{id:p.id,version:p.version,digest:p.digest},overrides:{interval_ms:{mode:'set',value:1000},timeout_ms:{mode:'set',value:1000}}},true);
     store=new MysqlScheduleStore(pool,registry,'production');
-    scheduler=new MetricScheduler(store,registry,{resolve:async()=>({resource:inventory(),credential_ref:'credential:local-test',evidence:{},resolve:async()=>({method:'sql',pool:{query:async options=>{reads++;expect(options.sql).toBe(MYSQL_STATUS_SQL);return root.query(options);}}})})},()=>now,undefined,new MetricFormalization(pool,registry,()=>new Date(now)));
+    scheduler=MetricScheduler.forLegacyPackages(store,registry,{resolve:async()=>({resource:inventory(),credential_ref:'credential:local-test',evidence:{},resolve:async()=>({method:'sql',pool:{query:async options=>{reads++;expect(options.sql).toBe(MYSQL_STATUS_SQL);return root.query(options);}}})})},()=>now,undefined,new MetricFormalization(pool,registry,()=>new Date(now)));
     jobs=new JobRegistry();scheduler.register(jobs);worker=new WorkerRuntime(new MysqlWorkflowStore(()=>pool as never),'max189-formal-worker',30);
   });
   const cycle=async()=>{now+=1001;await scheduler.tick();await pool.query("UPDATE workflow_jobs SET available_at=DATE_SUB(NOW(),INTERVAL 1 SECOND) WHERE state='queued'");return worker.runOnce((j,ctx)=>jobs.execute(j,ctx),now);};
@@ -56,7 +56,7 @@ describe.skipIf(!port)('real MySQL measurement → source acceptance → formal 
       await policy.changeBinding(admin,{...ref,id},{expected_revision:id===1?1:0,...(id===1?{}:{package:(await policy.binding(admin,ref)).binding.package}),overrides:{interval_ms:{mode:'set',value:60000},timeout_ms:{mode:'set',value:1000}}},true);
     }
     const LoadFormalization=(await import(process.env.METRICS_LOAD_FORMALIZATION ?? './formalization.js')).MetricFormalization as typeof MetricFormalization;
-    scheduler=new MetricScheduler(store,registry,{resolve:async r=>({resource:{...inventory(),id:String(r.id)},credential_ref:'credential:load',evidence:{},resolve:async()=>({method:'sql',pool:{query:async options=>{reads++;return root.query(options);}}})})},()=>now,undefined,new LoadFormalization(pool,registry,()=>new Date(now)));
+    scheduler=MetricScheduler.forLegacyPackages(store,registry,{resolve:async r=>({resource:{...inventory(),id:String(r.id)},credential_ref:'credential:load',evidence:{},resolve:async()=>({method:'sql',pool:{query:async options=>{reads++;return root.query(options);}}})})},()=>now,undefined,new LoadFormalization(pool,registry,()=>new Date(now)));
     jobs=new JobRegistry();scheduler.register(jobs);
     const run=async()=>{
       const t=Date.now();await scheduler.tick();

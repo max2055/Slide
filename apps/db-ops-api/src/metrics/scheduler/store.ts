@@ -1,7 +1,7 @@
 import { appendConfigurationHistory } from '../policy/configuration-history.js';
 import { validSourceSnapshot } from '../rollout/source-history.js';
 import { instanceAccessLifecycle } from '../../resources/instance-access-lifecycle.js';
-import { validateBindings, type Resource } from '../../contracts/metrics/index.js';
+import { validateBindings, type CollectionAttempt, type Resource } from '../../contracts/metrics/index.js';
 import { createHash, randomUUID } from 'node:crypto';
 import type { Pool, PoolConnection, RowDataPacket } from 'mysql2/promise';
 import { dueMetricIds } from '../../collection-scheduler.js';
@@ -16,12 +16,17 @@ import { bindingReadCode, readLegacyPublished, readStoredBinding, TEMPLATE_BINDI
 import { decodeBindingPayload, encodeTemplateAppliedPayload, type DecodedTemplateBindingPayload } from '../bindings/persistence-codec.js';
 import { evaluateTemplateSamples } from '../triggers/runtime.js';
 import { updateFormalDiscovery } from '../templates/discovery-store.js';
-import type { TemplateCollectionPlan } from '../bindings/plan.js';
+import { itemIntervals, type TemplateCollectionPlan, type TemplateReleasePlan } from '../bindings/plan.js';
 import type { PackageResult } from '../packages/runner.js';
+import { metricKey } from '../policy/model.js';
+import { advanceCadence, initialCadence, nextDeadline, planIntervals, selectDueReleases, type TemplateCadence } from './template-cadence.js';
 import { compilePlan, hash, jitterFor, type CollectorPlan } from './compiler.js';
 import { assetCollectionEnabled } from '../config/effective-state.js';
 import { trustedTargetIdentity } from '../bindings/target-identity.js';
 import { stable } from '../packages/model.js';
+import { applyItemRetention } from '../retention.js';
+import { metricTiming } from '../timing.js';
+import { FILESYSTEM_INODE_AVAILABLE_METRIC } from '../packages/filesystem-discovery.js';
 
 export const JOB_TYPE = 'metrics.collect';
 /** A manual collection is a distinct job type in the same queue and worker lanes. */
@@ -43,6 +48,7 @@ export interface ScheduleScan {
 export interface TemplateExecutionSnapshot {
   decoded: DecodedTemplateBindingPayload;
   plan: TemplateCollectionPlan;
+  releases?: TemplateReleasePlan[];
   states: Map<string, CounterState>;
   /** Formal publication tickets captured before remote IO; empty until formalized. */
   tickets: Map<string, Ticket>;
@@ -63,6 +69,12 @@ export interface CollectSample {
   attempt_ids: string[];
 }
 export interface CollectAttempt { id: string; collector_id: string | null; status: string }
+type ApplicationSample = { sample: string; attempt: string; observed_ms: number };
+type SourceCheck = { sample_ids?: string[]; application_samples?: Record<string, ApplicationSample> };
+function scheduledMetricKeys(releases: TemplateReleasePlan[]): Set<string> {
+  return new Set(releases.flatMap(release =>
+    release.steps.flatMap(step => step.items.map(item => metricKey(item.canonical_metric)))));
+}
 export interface CollectTask {
   id: string;
   resource: Ref;
@@ -345,7 +357,7 @@ export class MysqlScheduleStore {
   }
   // ---------------------------------------------------------- template rows
   //
-  // A template binding executes the exact pending plan of its `templates-v1`
+  // A template binding executes the exact pending plan of its `template-pending`
   // payload: one existing release at a time, restricted to the plan's own
   // collector and metric selection. It never synthesizes a single-package
   // `Published`, never compiles all package metrics and never rewrites the
@@ -366,7 +378,9 @@ export class MysqlScheduleStore {
     const plan = decoded.pending.plan;
     const ref = decoded.binding.resource;
     const revision = decoded.binding.revision;
-    const intervalMs = plan.settings.interval_ms;
+    const intervals = planIntervals(plan);
+    if (!intervals.length) return false;
+    const intervalMs = Math.min(...intervals);
     if (!plan.settings.enabled) return false;
     if (ref.type === 'instance') {
       try { await instanceAccessLifecycle.assertAvailable(ref.id); } catch { return false; }
@@ -380,28 +394,33 @@ export class MysqlScheduleStore {
       if (!await assetCollectionEnabled(c, ref, true)) return false;
       const [rows] = await c.execute<RowDataPacket[]>('SELECT * FROM metric_schedule WHERE resource_key = ? FOR UPDATE', [refKey(ref)]);
       const row = rows[0];
-      let next = row ? Number(row.next_due_ms) : now + jitterMs;
-      let pending = (row?.job_id ?? null) as string | null;
-      if (row && Number(row.revision) !== revision) {
-        pending = null;
-        next = row.last_end_ms === null ? now + jitterMs : Number(row.last_end_ms) + intervalMs;
-      }
+      const sameRevision = row && Number(row.revision) === revision;
+      let cadence = sameRevision && row.cadence ? decode<TemplateCadence>(row.cadence)
+        : initialCadence(intervals, sameRevision ? Number(row.next_due_ms) : now + jitterMs);
+      const pending = sameRevision ? row.job_id : null;
       if (pending) {
         const [jobs] = await c.execute<RowDataPacket[]>('SELECT state FROM workflow_jobs WHERE id = ?', [pending]);
         if (jobs.length && !['completed', 'dead_letter', 'cancelled'].includes(jobs[0].state)) return false;
-        pending = null; next = Math.max(next, now + intervalMs);
+        // A terminal failed batch advances just its due items. Other deadlines
+        // can still run even when one collector has exhausted its retries.
+        const batch = { ...cadence, through: cadence.through ?? Number(row.next_due_ms) };
+        if (current.application.applied_revision !== revision && (!jobs.length || jobs[0].state === 'dead_letter')) {
+          await this.discardApplicationSamples(c, ref, revision, selectDueReleases(plan, batch, this.registry));
+        }
+        cadence = advanceCadence(batch, now);
       }
-      await c.execute(`INSERT INTO metric_schedule (resource_key, revision, next_due_ms, states) VALUES (?, ?, ?, ?)
-        ON DUPLICATE KEY UPDATE states = IF(revision = VALUES(revision), states, VALUES(states)), revision = VALUES(revision), next_due_ms = VALUES(next_due_ms), job_id = ?`,
-      [refKey(ref), revision, next, '{}', pending]);
-      if (next > now) return false;
-      if (row?.last_end_ms !== null && row?.last_end_ms !== undefined && !dueMetricIds([{ id: 'cycle', default_interval: intervalMs / 1000 }],
-        new Map([['cycle', Number(row.last_end_ms)]]), now).length) return false;
-      const id = randomUUID();
+      const next = nextDeadline(cadence);
+      if (sameRevision && row.cadence && !pending && next > now) return false;
+      const id = next <= now ? randomUUID() : null;
+      if (id) cadence.through = now;
+      await c.execute(`INSERT INTO metric_schedule (resource_key, revision, next_due_ms, states, cadence, job_id) VALUES (?, ?, ?, ?, ?, ?)
+        ON DUPLICATE KEY UPDATE states = IF(revision = VALUES(revision), states, VALUES(states)), revision = VALUES(revision),
+          next_due_ms = VALUES(next_due_ms), cadence = VALUES(cadence), job_id = VALUES(job_id)`,
+      [refKey(ref), revision, next, '{}', JSON.stringify(cadence), id]);
+      if (!id) return false;
       const queue = new MysqlWorkflowStore(() => c as never);
       await queue.enqueue({ id, type: JOB_TYPE, schemaVersion: 1, payload: { resource: ref, revision: revision },
         idempotencyKey: `metric:${refKey(ref)}:${id}`, maxAttempts: 3, availableAt: new Date(now) });
-      await c.execute('UPDATE metric_schedule SET job_id = ? WHERE resource_key = ?', [id, refKey(ref)]);
       return true;
     });
   }
@@ -419,11 +438,14 @@ export class MysqlScheduleStore {
       [job.id, ctx.workerId, ctx.fencingToken]);
       if (jobs.length !== 1) return null;
       const [schedule] = await c.execute<RowDataPacket[]>(
-        'SELECT states, job_id FROM metric_schedule WHERE resource_key = ? AND revision = ? AND job_id = ?',
+        'SELECT states, job_id, cadence FROM metric_schedule WHERE resource_key = ? AND revision = ? AND job_id = ?',
         [refKey(ref), revision, job.id]);
       if (schedule.length !== 1) return null;
       rule(now >= Date.parse(decoded.published_at), 'SCHEDULE_APPLICATION_TIME');
       const plan = decoded.pending.plan;
+      const cadence = schedule[0].cadence ? decode<TemplateCadence>(schedule[0].cadence) : null;
+      const releases = cadence ? selectDueReleases(plan, cadence, this.registry) : plan.releases;
+      rule(releases.some(release => release.steps.length > 0), 'SCHEDULE_NO_DUE_ITEMS');
       const pins = new Set(plan.releases.map(entry => `${entry.release.id}@${entry.release.version}#${entry.release.digest}`));
       const [sources] = await c.execute<RowDataPacket[]>(`SELECT * FROM metric_rollout
         WHERE resource_type = ? AND resource_id = ? ORDER BY series_hash FOR UPDATE`, [ref.type, String(ref.id)]);
@@ -435,7 +457,7 @@ export class MysqlScheduleStore {
           || !pins.has(`${pin.id}@${pin.version}#${pin.digest}`)) continue;
         tickets.set(String(source.series_hash), { source: 'semantic', generation: Number(source.generation), revision });
       }
-      return { decoded, plan, tickets,
+      return { decoded, plan, releases, tickets,
         states: new Map(Object.entries(decode<Record<string, CounterState>>(schedule[0].states))) };
     });
   }
@@ -487,17 +509,21 @@ export class MysqlScheduleStore {
     const ref = decoded.binding.resource, revision = decoded.binding.revision;
     return this.transaction(async c => {
       if (!await this.validTemplate(c, ref, revision, job, ctx)) return false;
-      const [rows] = await c.execute<RowDataPacket[]>('SELECT job_id FROM metric_schedule WHERE resource_key = ? FOR UPDATE', [refKey(ref)]);
+      const [rows] = await c.execute<RowDataPacket[]>('SELECT job_id, cadence, next_due_ms FROM metric_schedule WHERE resource_key = ? FOR UPDATE', [refKey(ref)]);
       if (rows[0]?.job_id !== job.id) return false;
       await this.writeTemplateResults(c, snapshot, results, now);
       // Re-checked after the last asynchronous work: anything written below is
       // rolled back if the lease, revision or switch changed during the call.
       rule(await this.validTemplate(c, ref, revision, job, ctx), 'SCHEDULE_STALE_EXECUTION');
-      await this.recordTemplateCapabilities(c, ref, results);
-      const states = new Map(snapshot.states);
-      for (const { result } of results) for (const [key, value] of result.states) states.set(key, value);
-      await c.execute('UPDATE metric_schedule SET states = ?, job_id = NULL, last_end_ms = ?, next_due_ms = ? WHERE resource_key = ?',
-        [JSON.stringify(Object.fromEntries(states)), now, now + plan.settings.interval_ms, refKey(ref)]);
+      await this.recordTemplateCapabilities(c, ref, plan, results);
+      const cadence = rows[0].cadence ? decode<TemplateCadence>(rows[0].cadence) : {
+        ...initialCadence(planIntervals(plan), Number(rows[0].next_due_ms)), through: now,
+      };
+      const next = advanceCadence(cadence, now);
+      const deadline = Object.keys(next.next).length ? nextDeadline(next) : now + plan.settings.interval_ms;
+      const states = results.at(-1)?.result.states ?? snapshot.states;
+      await c.execute('UPDATE metric_schedule SET states = ?, job_id = NULL, last_end_ms = ?, next_due_ms = ?, cadence = ? WHERE resource_key = ?',
+        [JSON.stringify(Object.fromEntries(states)), now, deadline, JSON.stringify(next), refKey(ref)]);
       return true;
     });
   }
@@ -513,7 +539,7 @@ export class MysqlScheduleStore {
     now: number): Promise<{ samples: CollectSample[]; attempts: CollectAttempt[] }> {
     const { decoded } = snapshot;
     const ref = decoded.binding.resource, revision = decoded.binding.revision;
-    const discovered = await updateFormalDiscovery(c, decoded, results, now);
+    const discovered = await updateFormalDiscovery(c, decoded, results, now, snapshot.releases ?? snapshot.plan.releases);
     if (discovered.size) for (const { result } of results) {
       result.observations = result.observations.filter(({ observation: o }) => {
         const dimensions = discovered.get(`${o.metric.id}@${o.metric.semantic_version}`);
@@ -573,45 +599,105 @@ export class MysqlScheduleStore {
           [attempt.id, JSON.stringify(attempt), new Date(now)]);
       }
     }
+    await this.recordTemplateAttempts(c, ref, snapshot.plan, results.flatMap(entry => entry.result.attempts));
+    const observations = results.flatMap(entry => entry.result.observations.map(o => o.observation));
+    const required = snapshot.plan.releases.flatMap(release => release.steps.flatMap(step => step.items));
+    let live = await this.currentTemplate(c, ref);
+    rule(live && live.binding.revision === revision, 'SCHEDULE_STALE_EXECUTION');
+    let proof: Map<string, ApplicationSample> | null = null;
+    let previous: SourceCheck | undefined;
+    if (live.application.applied_revision !== revision) {
+      const [checks] = await c.execute<RowDataPacket[]>('SELECT payload FROM metric_source_checks WHERE resource_key=? AND revision=?', [refKey(ref), revision]);
+      previous = checks[0] && decode<SourceCheck>(checks[0].payload);
+      proof = new Map();
+      const scheduled = scheduledMetricKeys(snapshot.releases ?? snapshot.plan.releases);
+      const usableAttempts = new Map(results.flatMap(entry => entry.result.attempts)
+        .filter(attempt => ['succeeded', 'partial'].includes(attempt.status))
+        .map(attempt => [attempt.id, new Set(attempt.observation_ids)]));
+      const byMetric = new Map<string, ApplicationSample>();
+      for (const observation of observations) {
+        const goodValue = observation.value !== null && ['good', 'partial'].includes(observation.quality.status);
+        // A complete filesystem sample can prove that inode accounting is inapplicable.
+        const inapplicableInodes = observation.metric.id === FILESYSTEM_INODE_AVAILABLE_METRIC
+          && observation.value === null && observation.quality.reason === 'not_applicable';
+        if ((!goodValue && !inapplicableInodes) || !usableAttempts.get(observation.source.attempt_id)?.has(observation.id)) continue;
+        const key = metricKey(observation.metric), observed_ms = Date.parse(observation.observed_at);
+        if (!byMetric.has(key) || observed_ms > byMetric.get(key)!.observed_ms) {
+          byMetric.set(key, { sample: observation.id, attempt: observation.source.attempt_id, observed_ms });
+        }
+      }
+      for (const item of required) {
+        const key = metricKey(item.canonical_metric);
+        const fact = scheduled.has(key) ? byMetric.get(key) : previous?.application_samples?.[key];
+        if (fact && fact.observed_ms <= now
+          && now - fact.observed_ms <= metricTiming(snapshot.plan.settings, item.interval_ms).stale_after_ms) proof.set(key, fact);
+      }
+    }
+    const complete = proof !== null && required.length > 0 && proof.size === required.length;
     if (sampleIds.length) {
       // Preserve the validated envelope, including a prior formal commit proof.
       // Re-encoding an applied revision as pending rejects the next normal sample.
       await appendConfigurationHistory(c, decoded.payload, 'formal_observation_commit', new Date(now).toISOString(), sampleIds);
       await c.execute(`INSERT INTO metric_source_checks(resource_key,revision,payload,checked_at) VALUES(?,?,?,?)
         ON DUPLICATE KEY UPDATE payload=VALUES(payload),checked_at=VALUES(checked_at)`,
-      [refKey(ref), revision, JSON.stringify({ sample_ids: sampleIds }), new Date(now)]);
+      [refKey(ref), revision, JSON.stringify({ sample_ids: sampleIds,
+        ...(proof && !complete ? { application_samples: Object.fromEntries(proof) } : {}),
+      }), new Date(now)]);
+    } else if (proof && previous?.application_samples) {
+      await c.execute("UPDATE metric_source_checks SET payload=JSON_SET(payload, '$.application_samples', CAST(? AS JSON)) WHERE resource_key=? AND revision=?",
+        [JSON.stringify(Object.fromEntries(proof)), refKey(ref), revision]);
     }
-    // Application is a successful normal writer outcome, never an API label.
-    // Require every selected metric, successful reads and usable values before first promotion.
-    const observations = results.flatMap(entry => entry.result.observations.map(o => o.observation));
-    const required = snapshot.plan.releases.flatMap(release => release.steps.flatMap(step => step.items));
-    const complete = required.length > 0 && required.every(item => observations.some(o =>
-      o.metric.id === item.canonical_metric.id && o.metric.semantic_version === item.canonical_metric.semantic_version
-      && o.value !== null && ['good','partial'].includes(o.quality.status)))
-      && attempts.length > 0 && attempts.every(a => a.status === 'succeeded');
-    let live = await this.currentTemplate(c, ref);
-    rule(live && live.binding.revision === revision, 'SCHEDULE_STALE_EXECUTION');
-    if (complete && live.application.applied_revision !== revision) {
+    // A failing item does not force faster reads for the others. The first
+    // promotion can use recent successful samples from several committed batches.
+    if (complete && proof) {
+      const evidence = [...proof.values()];
       const appliedPayload = encodeTemplateAppliedPayload(live, {
-        sample_ids:sampleIds,attempt_ids:attempts.map(a => a.id),at:new Date(now).toISOString(),
+        sample_ids: [...new Set(evidence.map(entry => entry.sample))],
+        attempt_ids: [...new Set(evidence.map(entry => entry.attempt))], at: new Date(now).toISOString(),
       });
+      await applyItemRetention(c, refKey(ref), [
+        ...required.map(item => item.canonical_metric), ...snapshot.plan.excluded.map(item => item.metric),
+      ], snapshot.plan.item_retention ?? []);
       await c.execute('UPDATE metric_policy_bindings SET payload=? WHERE resource_key=?', [appliedPayload,refKey(ref)]);
       live = decodeBindingPayload(appliedPayload) as DecodedTemplateBindingPayload;
     }
     if (live.application.status === 'applied' && live.application.applied_revision === revision) {
-      await evaluateTemplateSamples(c,live,observations,now);
+      await evaluateTemplateSamples(c,live,observations,now,false,complete && proof ? proof : undefined);
     }
     return { samples, attempts };
   }
 
   /** A template run is capability evidence for the exact releases it read. */
-  private async recordTemplateCapabilities(c: PoolConnection, ref: Ref,
+  private async recordTemplateCapabilities(c: PoolConnection, ref: Ref, plan: TemplateCollectionPlan,
     results: Array<{ result: PackageResult }>): Promise<void> {
     const capabilities = results.flatMap(({ result }) => result.capabilities ?? []);
     if (capabilities.length) {
+      const [rows] = await c.execute<RowDataPacket[]>('SELECT capabilities FROM metric_policy_bindings WHERE resource_key = ?', [refKey(ref)]);
+      const selected = new Set(plan.releases.flatMap(release => release.metric_keys));
+      const previous = decode<typeof capabilities>(rows[0]?.capabilities ?? '[]').filter(entry => selected.has(metricKey(entry.metric)));
+      const merged = new Map([...previous, ...capabilities].map(entry => [`${entry.method}:${metricKey(entry.metric)}`, entry]));
       await c.execute('UPDATE metric_policy_bindings SET capabilities = ? WHERE resource_key = ?',
-        [JSON.stringify(capabilities), refKey(ref)]);
+        [JSON.stringify([...merged.values()]), refKey(ref)]);
     }
+  }
+
+  private async recordTemplateAttempts(c: PoolConnection, ref: Ref, plan: TemplateCollectionPlan, attempts: CollectionAttempt[]) {
+    const updates = attempts.flatMap(attempt => (attempt.metrics ?? []).map(metric => [metricKey(metric), attempt.id] as const));
+    if (!updates.length) return;
+    const [rows] = await c.execute<RowDataPacket[]>('SELECT item_attempt_ids FROM metric_policy_bindings WHERE resource_key=?', [refKey(ref)]);
+    const selected = new Set(plan.releases.flatMap(release => release.metric_keys));
+    const previous = Object.entries(decode<Record<string, string>>(rows[0]?.item_attempt_ids ?? '{}')).filter(([key]) => selected.has(key));
+    await c.execute('UPDATE metric_policy_bindings SET item_attempt_ids=? WHERE resource_key=?',
+      [JSON.stringify(Object.fromEntries([...previous, ...updates])), refKey(ref)]);
+  }
+
+  private async discardApplicationSamples(c: PoolConnection, ref: Ref, revision: number, releases: TemplateReleasePlan[]) {
+    const [checks] = await c.execute<RowDataPacket[]>('SELECT payload FROM metric_source_checks WHERE resource_key=? AND revision=?', [refKey(ref), revision]);
+    const proof = checks[0] && decode<SourceCheck>(checks[0].payload).application_samples;
+    if (!proof) return;
+    for (const key of scheduledMetricKeys(releases)) delete proof[key];
+    await c.execute("UPDATE metric_source_checks SET payload=JSON_SET(payload, '$.application_samples', CAST(? AS JSON)) WHERE resource_key=? AND revision=?",
+      [JSON.stringify(proof), refKey(ref), revision]);
   }
 
   async recordTemplateFailure(snapshot: TemplateExecutionSnapshot,
@@ -621,12 +707,17 @@ export class MysqlScheduleStore {
     await this.transaction(async c => {
       // Failure rows are an execution side effect too: only a live lease for the
       // current revision may append them.
-      rule(await this.validTemplate(c, ref, revision, job, ctx), 'SCHEDULE_STALE_EXECUTION');
+      const current = await this.validTemplate(c, ref, revision, job, ctx);
+      rule(current, 'SCHEDULE_STALE_EXECUTION');
       for (const { result } of results) {
         for (const attempt of result.attempts) {
           await c.execute('INSERT INTO metric_attempts (id, payload, stored_at) VALUES (?, ?, ?)',
             [attempt.id, JSON.stringify(attempt), new Date(now)]);
         }
+      }
+      await this.recordTemplateAttempts(c, ref, snapshot.plan, results.flatMap(entry => entry.result.attempts));
+      if (current.application.applied_revision !== revision) {
+        await this.discardApplicationSamples(c, ref, revision, snapshot.releases ?? snapshot.plan.releases);
       }
     });
   }
@@ -877,14 +968,13 @@ export class MysqlScheduleStore {
       // A grant revoked while the writer waited must not persist a result.
       await authorizeOn?.(c);
       rule(await this.validCollectNow(c, ref, revision, requestId, job, ctx), 'SCHEDULE_STALE_EXECUTION');
-      await this.recordTemplateCapabilities(c, ref, results);
+      await this.recordTemplateCapabilities(c, ref, snapshot.plan, results);
       const outcome: CollectOutcome = written.samples.length ? 'sampled' : 'no_samples';
       await c.execute(`UPDATE metric_collect_requests SET state = 'completed', outcome = ?, error_code = NULL,
         samples = ?, attempts = ?, finished_at = NOW(6), updated_at = NOW(6) WHERE id = ?`,
       [outcome, JSON.stringify(written.samples), JSON.stringify(written.attempts), requestId]);
       // Counter continuity only: never the schedule's job id, last end or cadence.
-      const states = new Map(snapshot.states);
-      for (const { result } of results) for (const [key, value] of result.states) states.set(key, value);
+      const states = results.at(-1)?.result.states ?? snapshot.states;
       await c.execute('UPDATE metric_schedule SET states = ? WHERE resource_key = ? AND revision = ?',
         [JSON.stringify(Object.fromEntries(states)), refKey(ref), revision]);
       return true;

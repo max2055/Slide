@@ -67,6 +67,7 @@ export class MetricStudy extends LitElement {
     try{await work(request);}catch(e){if(current()){
       if(e instanceof MetricRequestError && [401,403,404].includes(e.status)){this.clear();this.error='无权限、登录已失效或资源不可用。';}
       else if(e instanceof MetricRequestError && e.code==='HISTORY_RAW_EXPIRED')this.error='该窗口原始证据已过期；保全趋势可读，但不能用于回放。';
+      else if(e instanceof MetricRequestError && e.code==='HISTORY_COMPOSITE_REPLAY_UNAVAILABLE')this.error='组合触发器支持正式告警，历史回放暂仅支持单监控项。';
       else this.error=e instanceof MetricRequestError?`请求失败（${e.status}）；请检查窗口、采样预算与当前权限。`:e instanceof Error?e.message:'历史研究失败';
     }}finally{if(current())this.busy=false;}
   }

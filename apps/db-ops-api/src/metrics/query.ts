@@ -10,6 +10,7 @@ import type { CounterState } from './state.js';
 type Point = NormalizedObservation;
 /** Bounded response: 7 days at the 60s default interval is 10,080 buckets; longer windows need coarser buckets. */
 export const MAX_BUCKETS = 10_080;
+export const MAX_HISTORY_CHART_DAYS = 366;
 type Space = 'none' | 'sum' | 'min' | 'max' | 'weighted_mean' | 'merge';
 type Mode = 'last' | 'min' | 'max' | 'mean' | 'rate' | 'ratio' | 'duration' | 'merge' | 'quantile';
 export interface SemanticQuery {
@@ -22,8 +23,13 @@ export interface SemanticQuery {
   max_gap_ms: number;
   stale_after_ms: number;
   bucket_ms?: number;
+  /** Match the UTC boundaries of persisted trend buckets when plotting history. */
+  align_buckets?: boolean;
   mode: Mode;
   space: Space;
+  /** A chart of original samples keeps an invalid last reading as a gap. */
+  sample_last?: boolean;
+  history_chart?: true;
   /** A time-weighted gauge holds a sample only until the next sample or max_gap_ms. */
   weighting?: 'samples' | 'time';
   /** Spatial means require explicit population weights; sample counts are not population sizes. */
@@ -52,6 +58,8 @@ export interface SemanticBucket {
   sample_count: number;
   /** count/min/max/avg of the samples behind value; null where the bucket has no scalar samples. */
   stats: BucketStats | null;
+  /** Number of observations represented by retained statistics, for charts only. */
+  retained_sample_count?: number;
   sources: { id: string; source: Point['source']; versions: Point['versions'] }[];
 }
 export interface QueryStore {
@@ -73,10 +81,12 @@ const time = (p: Point) => Date.parse(p.observed_at);
 const overlap = (a: number, b: number, from: number, to: number) => Math.max(0, Math.min(b, to) - Math.max(a, from));
 const rank = { good: 0, partial: 1, unknown: 2, invalid: 3 };
 const accurate = { exact: 0, estimated: 1, unknown: 2 };
-function unique(points: Point[]): Point[] {
-  const byTime = new Map<number, Point>();
-  for (const p of [...points].sort((a, b) => time(a) - time(b) || a.id.localeCompare(b.id))) byTime.set(time(p), p);
-  return [...byTime.values()].sort((a, b) => time(a) - time(b));
+function unique(points: Point[], byObservation = false): Point[] {
+  const selected = new Map<number | string, Point>();
+  for (const p of [...points].sort((a, b) => time(a) - time(b) || a.id.localeCompare(b.id))) {
+    selected.set(byObservation ? p.id : time(p), p);
+  }
+  return [...selected.values()].sort((a, b) => time(a) - time(b));
 }
 /** First index at or after `at` in an ascending, duplicate-free time array. */
 function lowerBound(times: number[], at: number): number {
@@ -188,7 +198,12 @@ function reduceRate(intervals: RateInterval[], ends: number[], from: number, to:
 }
 /** `points` is already deduplicated, ascending, and sliced to one bucket plus its edge neighbours. */
 function reduceSeries(q: SemanticQuery, points: Point[], from: number, to: number): Group {
-  const inside = points.filter(p => time(p) >= from && time(p) < to && valid(p));
+  const window = points.filter(p => time(p) >= from && time(p) < to);
+  const last = window.at(-1);
+  if (q.sample_last && last && !valid(last)) {
+    return { ...empty(), points: [last], quality: last.quality, accuracy: last.accuracy };
+  }
+  const inside = window.filter(valid);
   const duration = to - from;
   if (q.mode === 'duration' || q.weighting === 'time') {
     let total = rational(0n), covered = 0;
@@ -277,15 +292,18 @@ function validateQuery(q: SemanticQuery): void {
   validateDefinition(q.definition);
   const start = Date.parse(q.from), end = Date.parse(q.to);
   if (!Number.isFinite(start) || !Number.isFinite(end) || start >= end || !Number.isFinite(Date.parse(q.now))
-    || end - start > 31 * 86_400_000 || !q.series.length || q.series.length > 50
+    || end - start > (q.history_chart ? MAX_HISTORY_CHART_DAYS : 31) * 86_400_000 || !q.series.length || q.series.length > 50
     || ![q.interval_ms, q.max_gap_ms, q.stale_after_ms, q.bucket_ms ?? q.interval_ms].every(n => Number.isSafeInteger(n) && n > 0)) throw new Error('QUERY_WINDOW');
   if (q.series.some(s => s.resource_type !== q.definition.resource_type || s.metric.id !== q.definition.id
     || s.metric.semantic_version !== q.definition.semantic_version) || new Set(q.series.map(seriesIdentity)).size !== q.series.length) throw new Error('QUERY_IDENTITY');
   if (q.space === 'none' && q.series.length !== 1) throw new Error('SPACE_OPERATION_REQUIRED');
+  if (q.sample_last && (q.mode !== 'last' || q.space !== 'none' || q.weighting === 'time')) throw new Error('QUERY_KIND');
+  if (q.history_chart && !q.sample_last) throw new Error('QUERY_KIND');
   for (const s of q.series) validateDimensions(s.dimensions, q.definition);
   if (q.mode === 'rate' ? q.definition.kind !== 'counter' || q.definition.temporality !== 'cumulative' :
     ['merge', 'quantile'].includes(q.mode) ? q.definition.kind !== 'histogram' :
-      q.definition.kind !== 'gauge' && q.definition.kind !== 'summary') throw new Error('QUERY_KIND');
+      q.definition.kind !== 'gauge' && q.definition.kind !== 'summary'
+      && !(q.definition.kind === 'counter' && q.mode === 'last' && q.space === 'none' && q.series.length === 1)) throw new Error('QUERY_KIND');
   if (q.mode === 'rate' && q.definition.unit !== 'By' && q.definition.unit !== 'count') throw new Error('COUNTER_RATE_UNIT');
   if (q.definition.kind === 'summary' && (q.mode !== 'last' || q.series.length !== 1)) throw new Error('SUMMARY_NON_MERGEABLE');
   if (q.mode !== 'duration' && q.mode !== 'ratio' && !q.definition.aggregation.time.includes(q.mode)) throw new Error('AGGREGATION_NOT_ALLOWED');
@@ -321,17 +339,18 @@ export function aggregate(q: SemanticQuery, data: Point[][], denominators?: Poin
   }
   const result: SemanticBucket[] = [];
   const start = Date.parse(q.from), end = Date.parse(q.to), step = q.bucket_ms ?? end - start;
-  if (Math.ceil((end - start) / step) > MAX_BUCKETS) throw new Error('QUERY_LIMIT_EXCEEDED');
+  const anchor = q.align_buckets ? Math.floor(start / step) * step : start;
+  if (Math.ceil((end - anchor) / step) > MAX_BUCKETS) throw new Error('QUERY_LIMIT_EXCEEDED');
   // Deduplicate once per series, then slice each bucket: a full-window scan per bucket would be
   // quadratic and cannot serve 1,440+ buckets at the target window without truncating.
-  const prepared = data.map(unique), preparedAt = prepared.map(rows => rows.map(time));
+  const prepared = data.map(rows => unique(rows, q.history_chart)), preparedAt = prepared.map(rows => rows.map(time));
   // Counter rate depends on state carried across bucket edges, so its intervals are built once for
   // the whole window instead of restarting the reducer from an empty state inside every bucket.
   const rateIntervals = q.mode === 'rate' ? prepared.map(rows => counterIntervals(q, rows)) : null;
   const rateEnds = rateIntervals?.map(rows => rows.map(interval => time(interval.point)));
-  const preparedDenominators = denominators?.map(unique), preparedDenominatorAt = preparedDenominators?.map(rows => rows.map(time));
-  for (let from = start; from < end; from += step) {
-    const to = Math.min(end, from + step);
+  const preparedDenominators = denominators?.map(rows => unique(rows)), preparedDenominatorAt = preparedDenominators?.map(rows => rows.map(time));
+  for (let boundary = anchor; boundary < end; boundary += step) {
+    const from = Math.max(start, boundary), to = Math.min(end, boundary + step);
     const groups = prepared.map((rows, i) => q.mode === 'ratio'
       ? ratioSeries(q, bucketSlice(rows, preparedAt[i], from, to),
         bucketSlice(preparedDenominators![i], preparedDenominatorAt![i], from, to), from, to)
@@ -345,7 +364,7 @@ export function aggregate(q: SemanticQuery, data: Point[][], denominators?: Poin
       group = validGroups.length ? { value: divide(numerator.map(scalar).reduce(add, rational(0n)), denominator.map(scalar).reduce(add, rational(0n))),
         coverage: groups.reduce((n, g) => n + g.coverage, 0) / groups.length, points: validGroups.flatMap(g => g.points), samples: [],
         ...qualityOf(validGroups.flatMap(g => g.points)) } : groups.find(g => g.quality.reason === 'invalid_denominator') ?? empty();
-    } else group = spatial(q, groups);
+    } else group = q.sample_last ? groups[0] : spatial(q, groups);
     const coverage = Math.min(1, group.coverage);
     let value: Point['value'] = null;
     let accuracy = group.accuracy;
@@ -367,10 +386,11 @@ export function aggregate(q: SemanticQuery, data: Point[][], denominators?: Poin
       value = encoded.value;
       if (!encoded.exact) { accuracy = 'estimated'; precisionLoss = true; }
     }
-    if (coverage < q.definition.aggregation.min_coverage || !value) {
+    const invalidLastSample = q.sample_last && !value && group.points.length > 0;
+    if (!invalidLastSample && (coverage < q.definition.aggregation.min_coverage || !value)) {
       value = null; quality = { status: 'unknown', reason: coverage && !value && quality.reason === 'partial_input' ? 'partial_input' : coverage ? 'gap' :
         group.quality.reason === 'invalid_denominator' ? 'invalid_denominator' : 'missing_input' }; accuracy = 'unknown';
-    } else if (precisionLoss || coverage < 1 || accuracy !== 'exact' || quality.status === 'partial') {
+    } else if (!invalidLastSample && (precisionLoss || coverage < 1 || accuracy !== 'exact' || quality.status === 'partial')) {
       quality = quality.status === 'partial' ? quality : { status: 'partial',
         reason: precisionLoss ? 'precision_loss' : coverage < 1 ? 'gap' : 'partial_input' };
     }

@@ -20,6 +20,23 @@ function transportFor(rows: () => unknown[], clock: () => string) {
 }
 
 describe('trusted MySQL counter lifecycle', () => {
+  it('collects the installed status package using the same snapshot for values and counter lifecycle', async () => {
+    const now = '2026-10-24T10:00:00.000Z';
+    const execute = vi.fn(async () => ({ rows: [
+      { Variable_name: 'Uptime', Value: '100' },
+      { Variable_name: 'Queries', Value: '1234' },
+      { Variable_name: 'Uptime_since_flush_status', Value: '40' },
+    ] }));
+    const transport = mysqlCounterTransport(execute, new MysqlCounterDiscovery(() => now));
+    const [row] = await collectFixed('builtin:mysql.status.v1', transport, {}, 1000, 10);
+    expect(execute).toHaveBeenCalledExactlyOnceWith(
+      "SHOW GLOBAL STATUS WHERE Variable_name IN ('Uptime', 'Queries', 'Uptime_since_flush_status')", 1000,
+    );
+    expect(row).toMatchObject({ observed_at: now, fields: {
+      Uptime: { encoding: 'float64', value: 100 }, Queries: { encoding: 'uint64', value: '1234' },
+    }, counter: { bits: '64', discontinuity: { reason: 'reset' } } });
+  });
+
   it('keeps one epoch while both durations advance with elapsed time', async () => {
     let now = '2026-10-24T10:00:00.000Z';
     let state = { uptime: 100, flush: 40, commits: '10' };
@@ -54,6 +71,8 @@ describe('trusted MySQL counter lifecycle', () => {
     const missing = mysqlCounterTransport(async () => ({ rows: [{ Variable_name: 'Uptime', Value: '100' },
       { Variable_name: 'Com_commit', Value: '1' }, { Variable_name: 'Com_rollback', Value: '1' }] }), new MysqlCounterDiscovery(() => now));
     await expect(missing.counterQuery!({ sql: counterSql, timeout: 1000 })).rejects.toMatchObject({ code: 'parse_error', evidenceCode: 'MYSQL_COUNTER_LIFECYCLE_UNAVAILABLE' });
+    await expect(collectFixed('builtin:mysql.status.v1', missing, {}, 1000, 10))
+      .rejects.toMatchObject({ code: 'parse_error', evidenceCode: 'MYSQL_COUNTER_LIFECYCLE_UNAVAILABLE' });
     const duplicate = mysqlCounterTransport(async () => ({ rows: [...statusRows({ uptime: 100, flush: 40 }), { Variable_name: 'Uptime', Value: '101' }] }),
       new MysqlCounterDiscovery(() => now));
     await expect(duplicate.counterQuery!({ sql: counterSql, timeout: 1000 })).rejects.toMatchObject({ code: 'parse_error' });

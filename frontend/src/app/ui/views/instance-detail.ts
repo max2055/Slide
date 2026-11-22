@@ -2,7 +2,7 @@ import { detailTabKeydown, returnToResourceList } from '../components/resource-d
 import { hasListPermission } from '../components/resource-list-access.js';
 import "../components/investigation-operation-context.ts";
 import '../components/resource-investigation-links.js';
-import "../components/semantic-metrics.js";
+import "../components/resource-metric-browser.js";
 import "../components/resource-collection-section.js";
 import { returnToDashboard, freshness, type Overview, type OverviewItem } from './dashboard-model.js';
 import { sharedBtnStyles } from '../../styles/shared-btn-styles.js';
@@ -294,7 +294,7 @@ export class InstanceDetailPage extends LitElement {
       this.instance = instance;
       this.lastUpdated = new Date();
       await Promise.all([this.loadTabData(), this.loadOverview()]);
-      if (instanceId === this.instanceId && version === this.contextVersion) await this.renderRoot.querySelector<import('../components/semantic-metrics.js').SemanticMetrics>('semantic-metrics')?.load();
+      if (instanceId === this.instanceId && version === this.contextVersion) await this.renderRoot.querySelector<import('../components/resource-metric-browser.js').ResourceMetricBrowser>('resource-metric-browser')?.load();
     } catch { if (instanceId === this.instanceId && version === this.contextVersion) { this._invalidateQueryReads('error'); this.detailReadError = '实例详情读取失败'; } }
     finally { if (version === this.contextVersion) this.isRefreshing = false; }
   }
@@ -648,7 +648,7 @@ export class InstanceDetailPage extends LitElement {
     switch (this.activeTab) {
       case "overview": return this._renderOverview();
       case "metrics":
-      case "trend": return html`<semantic-metrics resourceType="instance" .resourceId=${this.instanceId}></semantic-metrics>`;
+      case "trend": return html`<resource-metric-browser resourceType="instance" .resourceId=${this.instanceId}></resource-metric-browser>`;
       case "health": return html`<health-score-tab .instanceId=${this.instanceId}></health-score-tab>`;
       case "topsql": return this._renderTopSQL();
       case "sessions": return this._renderSessions();
@@ -659,7 +659,7 @@ export class InstanceDetailPage extends LitElement {
       case "logs": return html`<database-log-tab .instanceId=${this.instanceId}></database-log-tab>`;
       case "qan": return html`<query-analysis-tab .instanceId=${this.instanceId}></query-analysis-tab>`;
       case "diagnosis": return this._renderDiagnosisHistory();
-      default: return html`<semantic-metrics resourceType="instance" .resourceId=${this.instanceId}></semantic-metrics>`;
+      default: return html`<resource-metric-browser resourceType="instance" .resourceId=${this.instanceId}></resource-metric-browser>`;
     }
   }
   private _renderTopSQL() {

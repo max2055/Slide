@@ -134,22 +134,22 @@ export class AlertList extends LitElement {
 
     return html`
       <div style="display:grid;gap:var(--space-md);grid-template-columns:repeat(5,1fr);margin-bottom:var(--space-xl)">
-        <stat-card label="总告警数" .value="${this.stats.total ?? 0}" hint="活跃 + 已恢复"></stat-card>
+        <stat-card label="总告警数" .value="${this.stats.total ?? 0}" hint="活跃 + 已结束"></stat-card>
         <stat-card label="未处理" .value="${this.stats.unread ?? 0}" variant="warn" .hint=${html`<span class="dot warn"></span>待确认`}></stat-card>
-        <stat-card label="已恢复" .value="${this.stats.resolved ?? 0}" variant="ok" .hint=${html`<span class="dot ok"></span>自动/手动`}></stat-card>
+        <stat-card label="已结束" .value="${this.stats.resolved ?? 0}" variant="ok" .hint=${html`<span class="dot ok"></span>已恢复或关闭`}></stat-card>
         <stat-card label="严重告警" .value="${this.stats.critical ?? 0}" variant="danger" .hint=${html`<span class="dot danger"></span>需立即处理`}></stat-card>
         <stat-card label="警告告警" .value="${this.stats.warning ?? 0}" variant="warn" .hint=${html`<span class="dot warn"></span>需关注`}></stat-card>
       </div>
 
       <div aria-label="等级统计" style="display:flex;gap:var(--space-sm);flex-wrap:wrap;margin-bottom:var(--space-md);">
-        <span style="color:var(--muted);font-size:var(--text-sm);">${this.activeListTab === 'active' ? '活跃' : '已恢复'}告警等级：</span>
+        <span style="color:var(--muted);font-size:var(--text-sm);">${this.activeListTab === 'active' ? '活跃' : '已结束'}告警等级：</span>
         ${this.levelCounts === null ? html`<span>等级统计不可用</span>` : levels.map(level => html`
           <app-badge variant=${alertLevelVariant(level)}>${alertLevelLabel(level)}：${this.levelCounts[level] ?? 0}</app-badge>
         `)}
       </div>
       <div style="display:flex;gap:var(--space-md);margin-bottom:var(--space-lg);">
         <button class="tab ${this.activeListTab === 'active' ? 'active' : ''}" @click=${() => this._emit('alert-list-tab-change', { tab: 'active' })}>活跃告警<span class="tab-badge">${this.statsActiveTotal}</span></button>
-        <button class="tab ${this.activeListTab === 'recovered' ? 'active' : ''}" @click=${() => this._emit('alert-list-tab-change', { tab: 'recovered' })}>已恢复<span class="tab-badge" style="background:var(--ok-subtle);color:var(--ok);">${this.statsResolved}</span></button>
+        <button class="tab ${this.activeListTab === 'recovered' ? 'active' : ''}" @click=${() => this._emit('alert-list-tab-change', { tab: 'recovered' })}>已结束<span class="tab-badge" style="background:var(--ok-subtle);color:var(--ok);">${this.statsResolved}</span></button>
       </div>
 
       <div class="card" style="background:var(--card);border:1px solid var(--border);border-radius:var(--radius-lg);overflow:hidden;">
@@ -197,8 +197,8 @@ export class AlertList extends LitElement {
           <div class="empty" style="min-height:200px;">
             <div class="empty__content">
               <div class="empty__icon">${this.activeListTab === 'recovered' ? icons['check-circle'] : icons['party-popper']}</div>
-              <div class="empty__title">${this.filterSeverity ? '没有匹配等级的告警' : this.activeListTab === 'recovered' ? '没有已恢复告警' : '暂无活跃告警'}</div>
-              <div class="empty__desc">${this.filterSeverity ? '请选择其他等级或查看全部告警' : this.activeListTab === 'recovered' ? '已恢复的告警会出现在这里' : '系统运行正常'}</div>
+              <div class="empty__title">${this.filterSeverity ? '没有匹配等级的告警' : this.activeListTab === 'recovered' ? '暂无已结束的告警' : '暂无活跃告警'}</div>
+              <div class="empty__desc">${this.filterSeverity ? '请选择其他等级或查看全部告警' : this.activeListTab === 'recovered' ? '显示已恢复或关闭的告警' : '系统运行正常'}</div>
             </div>
           </div>
         `}

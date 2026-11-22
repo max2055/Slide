@@ -376,7 +376,7 @@ describe.skipIf(!port)('T04 investigation workflow execution / real MySQL', () =
     const policies = new PolicyService(new MysqlPolicyStore(() => pool), packages,
       { exists: async () => true, inventory: async r => resource(r.id) }, () => new Date(now).toISOString());
     await policies.changeBinding(policyActor, { type: 'instance', id: 101 }, { expected_revision: 0, package: pin }, true);
-    const scheduler = new MetricScheduler(schedules, packages, { resolve: async ref => ({ resource: resource(ref.id),
+    const scheduler = MetricScheduler.forLegacyPackages(schedules, packages, { resolve: async ref => ({ resource: resource(ref.id),
       credential_ref: 'credential:local-fixture', evidence: {}, resolve: async () => ({ method: 'sql', pool: { query: async () => [[], []] } }) }) }, () => now,
     async () => [{ dimensions: {}, fields: { Uptime: { encoding: 'float64', value: 100 }, Queries: { encoding: 'uint64', value: '200' } }, counter: { bits: '64', start_at: new Date(now - 100000).toISOString() } }]);
     scheduler.register(registry);

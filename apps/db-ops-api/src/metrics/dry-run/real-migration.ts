@@ -87,13 +87,13 @@ export const FINGERPRINT_TABLES = [
   'alerts', 'audit_log_entries', 'database_instances', 'instance_permissions', 'metric_definitions',
   'metric_observations', 'metric_policy_audit', 'metric_policy_bindings', 'metric_policy_groups',
   'metric_policy_lock', 'metric_publications', 'metric_rollout', 'metric_schedule',
-  'metric_template_items', 'metric_template_item_versions', 'metric_template_versions', 'metric_templates_v2',
+  'metric_template_items', 'metric_template_item_versions', 'metric_template_versions', 'monitoring_templates',
   'metrics_history', 'network_device_credentials', 'network_device_observations', 'network_devices',
   'server_metrics', 'servers',
 ] as const;
 
 /** Template tables come from the candidate S8 DDL (140), applied only in the isolated library. */
-const TEMPLATE_TABLES = ['metric_templates_v2', 'metric_template_versions'];
+const TEMPLATE_TABLES = ['monitoring_templates', 'metric_template_versions'];
 
 /** Tables whose full row content is part of the preservation proof. */
 const CONTENT_TABLES = [
@@ -639,7 +639,7 @@ async function readTemplates(session: SqlSession): Promise<{ templates: Record<s
   if (present.length < TEMPLATE_TABLES.length) return { templates: {}, supported: false };
   const templates: Record<string, RealTemplateEntry> = {};
   for (const row of await session.query<{ template_id: string; status: string }>(
-    'SELECT template_id, status FROM metric_templates_v2 ORDER BY template_id')) {
+    'SELECT template_id, status FROM monitoring_templates ORDER BY template_id')) {
     templates[row.template_id] = { status: row.status, versions: {} };
   }
   for (const row of await session.query<{

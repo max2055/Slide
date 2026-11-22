@@ -17,7 +17,7 @@ export interface ConfigurationEvidence {
   formal: { state: 'pending' | 'validating' | 'available' | 'failed'; last_observed_at: string | null; generation: number | null };
 }
 /**
- * The authoritative facts of a `templates-v1` binding. They are read through the
+ * The authoritative facts of a `template-pending` binding. They are read through the
  * shared persistence codec, never cast into the legacy single-package `Published`
  * shape, so a template binding is reported as bound even though it has no
  * package pin.
@@ -40,7 +40,7 @@ export interface ConfigurationReader {
   migration?(ref: Ref, currentPackage?: PackagePin): Promise<NonNullable<MetricConfigurationStatus['legacy_configuration']>>;
   inventory(ref: Ref): Promise<Resource>;
   evidence(ref: Ref, revision: number | null): Promise<ConfigurationEvidence>;
-  /** Only a `templates-v1` row answers; a legacy row keeps its own reader. */
+  /** Only a `template-pending` row answers; a legacy row keeps its own reader. */
   template?(ref: Ref): Promise<TemplateBindingFacts | null>;
 }
 
@@ -90,7 +90,7 @@ export function configurationStatus(ref: Ref, effective: Effective | null, attem
 }
 
 /**
- * The same independent facts for a `templates-v1` binding. There is deliberately
+ * The same independent facts for a `template-pending` binding. There is deliberately
  * no `resolved` snapshot here: a template plan is not a legacy `Resolved`, and
  * synthesizing one would let the status reader claim a plan it never resolved.
  * Pending application, applied revision, first sample and formal visibility stay
@@ -149,20 +149,11 @@ export class MetricConfigurationReader {
     private attempts: (ref: Ref) => Promise<CollectionAttempt[]>, private clock = () => new Date().toISOString()) {}
   async status(actor: ActorContext, ref: Ref) {
     await this.policy.assertAccess(actor, ref, false);
-    let effective: Effective | null = null, template: TemplateBindingFacts | null = null;
-    try { effective = await this.policy.effective(actor, ref); }
-    catch(e) {
-      if (e instanceof PolicyError && e.code === 'POLICY_NOT_FOUND') { /* unbound */ }
-      // The legacy reader refuses a templates-v1 row on purpose. Its own facts
-      // are read through the shared codec instead; a read failure stays an error.
-      // A reader without that codec can only repeat the fence — never "unbound".
-      else if (e instanceof PolicyError && e.code === 'TEMPLATE_BINDING_UNSUPPORTED') {
-        if (!this.reader.template) throw e;
-        template = await this.reader.template(ref);
-        // The row was just refused as a template binding; an empty re-read is a
-        // read failure, never an unbound resource.
-        if (!template) throw new PolicyError('POLICY_BINDING_INVALID', 409);
-      } else throw e;
+    let effective: Effective | null = null;
+    const template = this.reader.template ? await this.reader.template(ref) : null;
+    if (!this.reader.template) {
+      try { effective = await this.policy.effective(actor, ref); }
+      catch (error) { if (!(error instanceof PolicyError && error.code === 'POLICY_NOT_FOUND')) throw error; }
     }
     const evidence = await this.reader.evidence(ref, template
       ? template.application.applied_revision ?? template.revision

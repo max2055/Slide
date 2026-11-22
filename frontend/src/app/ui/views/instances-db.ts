@@ -565,6 +565,7 @@ export class InstancesPage extends LitElement {
   @state() private editorTab = 'basic';
   private editorReturnId: number | null = null;
   @state() private connectionPending = false;
+  private readonly monitoringReconnectPending = new Set<number>();
   @state() private metricRefreshVersion = 0;
   @state() private metricsLoading = false;
   private openColumnSettings() {
@@ -1044,6 +1045,10 @@ export class InstancesPage extends LitElement {
     }
 
     const formData = { ...this.formData };
+    const original = this.editingInstance;
+    const needsConnection = !original?.db_version || !!formData.password.trim()
+      || original.host !== formData.host || original.port !== formData.port || original.username !== formData.username
+      || original.db_type !== formData.db_type || (original.database_name || '') !== formData.database_name;
     const instanceHosts = (this.instanceHosts ?? []).map((host) => ({ ...host }));
     const editingInstanceId = this.editingInstance?.id ?? null;
     const pendingCreatedInstanceId = this.pendingCreatedInstanceId;
@@ -1096,14 +1101,36 @@ export class InstancesPage extends LitElement {
         await relationResponse.json() as ReplaceInstanceHostsResponse;
       }
 
-      this.pendingCreatedInstanceId = null;
-      if (!configureCollection || !isEdit) this._resetDialogs();
+      let connectionIssue = '';
+      if (configureCollection && (needsConnection || this.monitoringReconnectPending.has(instanceId))) {
+        this.monitoringReconnectPending.add(instanceId);
+        const status = hasListPermission('instance:manage')
+          ? await authFetch(`/api/database/instances/${instanceId}/reload`, { method: 'POST' })
+            .then(response => response.ok ? 200 : response.status, () => 0)
+          : 403;
+        if (status === 200) this.monitoringReconnectPending.delete(instanceId);
+        else connectionIssue = status === 401 || status === 403
+          ? '连接信息已保存，当前权限无法建立监控连接'
+          : '连接信息已保存，但监控连接未确认，请核对连接信息后重试';
+      }
+      if (!configureCollection) this._resetDialogs();
       await this.loadInstances();
       showToast('连接信息已保存；采集配置需单独检查并发布', 'success');
       if (configureCollection) {
-        const saved = this.instances.find(i => i.id === instanceId);
-        if (!saved) { showToast('连接已保存，但资源列表未能读取，请刷新后配置采集', 'warning'); return; }
-        this._editInstance(saved); this.editorTab = 'collection'; await this.updateComplete;
+        const saved = this.error ? undefined : this.instances.find(i => i.id === instanceId);
+        if (!saved) {
+          if (!isEdit) this.pendingCreatedInstanceId = instanceId;
+          this.editorTab = 'basic';
+          this.saveError = '连接信息已保存，但未能读取更新后的实例，请重试';
+          return;
+        }
+        if (!isEdit) this._resetDialogs();
+        this._editInstance(saved);
+        if (connectionIssue) {
+          this.saveError = connectionIssue;
+          return;
+        }
+        this.editorTab = 'collection'; await this.updateComplete;
         this.renderRoot.querySelector<import('../components/resource-collection-section.js').ResourceCollectionSection>('resource-collection-section')?.openEditor();
       }
     } catch (err: any) {

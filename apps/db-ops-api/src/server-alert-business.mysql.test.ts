@@ -4,6 +4,7 @@ import { dbConnection } from './db-connection.js';
 import { serverAlertEvaluator } from './server-alert-evaluator.js';
 import { createConfigurationRegistry } from './metrics/config/registry.js';
 import { policyService } from './metrics/policy/service.js';
+import { upgradeMonitoringBindings } from './metrics/templates/upgrade-bindings.js';
 import { MysqlPolicyStore } from './metrics/policy/store.js';
 import { admin } from './metrics/policy/test-support.js';
 import { RolloutControl } from './metrics/rollout/control.js';
@@ -33,6 +34,7 @@ describe('server rule lifecycle / formal metrics and alerts in MySQL', () => {
       basis: [{ kind: 'permission' as const, evidence: 'isolated SQL observation fixture' }],
       evaluated_at: at, valid_until: new Date(Date.now() + 3600_000).toISOString(),
     }))), null);
+    expect(await upgradeMonitoringBindings(f.pool, registry)).toBe(1);
   }, 120_000);
   afterAll(async () => { vi.restoreAllMocks(); await f?.close(); }, 30_000);
   beforeEach(async () => {
@@ -59,13 +61,13 @@ describe('server rule lifecycle / formal metrics and alerts in MySQL', () => {
           value: definition.value_type === 'uint64' ? { encoding: 'uint64', value: String(point.value) } : { encoding: 'float64', value: point.value },
           quality: { status: 'good', reason: 'none' }, accuracy: 'exact', production: 'measured',
           source: { binding_id: 'server:901', metric_binding_id: definition.id, collector_id: 'fixture', attempt_id: `fixture-${age}` },
-          versions: { contract: '1.0.0', package_id: pin.id, package_version: pin.version, transform_version: '1.0.0', config_revision: 1 },
+          versions: { contract: '1.0.0', package_id: pin.id, package_version: pin.version, transform_version: '1.0.0', config_revision: 2 },
           lineage: [{ id: 'isolated-raw', stage: 'raw' }] });
       };
       const first = observation((point.age ?? 1000) + 120_000);
-      await control.initialize(first, { source: 'semantic', read: 'semantic', revision: 1,
+      await control.initialize(first, { source: 'semantic', read: 'semantic', revision: 2,
         package: { id: pin.id, version: pin.version, digest: pin.digest } });
-      const ticket = { source: 'semantic', generation: 1, revision: 1 };
+      const ticket = { source: 'semantic', generation: 1, revision: 2 };
       await control.applied(first, ticket);
       await control.publish(first, definition, ticket);
       await control.publish(observation(point.age ?? 1000), definition, ticket);

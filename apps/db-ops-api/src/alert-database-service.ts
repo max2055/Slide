@@ -366,7 +366,8 @@ class AlertDatabaseService {
         message: row.message,
         description: row.description,
         status: row.status,
-        acknowledged: row.status === 'acknowledged' || row.status === 'resolved' || row.status === 'closed',
+        acknowledged: row.source === 'template-trigger' && row.status === 'closed' && row.resolved_by
+          ? Boolean(row.acknowledged_at) : ['acknowledged', 'resolved', 'closed'].includes(row.status),
         acknowledged_by: row.acknowledged_by ? String(row.acknowledged_by) : undefined,
         acknowledged_at: row.acknowledged_at ? new Date(row.acknowledged_at).toISOString() : undefined,
         resolved_at: row.resolved_at ? new Date(row.resolved_at).toISOString() : undefined,
@@ -562,7 +563,8 @@ class AlertDatabaseService {
     try {
       if(!connection)await c.beginTransaction();
       const [rows]=await c.execute<mysql.RowDataPacket[]>('SELECT status,source FROM alerts WHERE id=? FOR UPDATE',[alertId]);
-      if(!rows.length||rows[0].source==='template-trigger')throw Error('模板告警须由独立恢复条件恢复或告警不存在');
+      if (!rows.length) throw Error('告警不存在');
+      if (rows[0].source === 'template-trigger') throw Error('模板告警按触发器配置的恢复方式处理');
       if(!['resolved','closed'].includes(rows[0].status)){
         await c.execute('UPDATE alerts SET status="resolved",resolved_by=?,resolved_at=NOW() WHERE id=?',[userId??null,alertId]);
         await enqueueNotificationTransition(c,alertId,{id:'recovery',phase:'recovery',at:new Date().toISOString()});

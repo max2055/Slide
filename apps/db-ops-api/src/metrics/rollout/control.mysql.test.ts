@@ -4,6 +4,8 @@ import { MigrationRunner } from '../../migrations/runner.js';
 import type { MigrationPool } from '../../migrations/types.js';
 import { definitions, sample, identify } from '../../contracts/metrics/fixtures.js';
 import { MysqlMetricStorage } from '../storage.js';
+import { applyItemRetention, DEFAULT_RETENTION } from '../retention.js';
+import { RetainedTrendStore } from '../consumers/retained-trends.js';
 import { MetricStorageAdapter } from '../../migrations/metric-history/adapter.js';
 import { RolloutControl, type Target } from './control.js';
 import { MysqlFormalMetricStore } from './formal-store.js';
@@ -33,7 +35,8 @@ describe.skipIf(!port)('isolated formal rollout and alert replay', () => {
   }, 120000);
   afterAll(async () => { await pool?.end(); if (root) { await root.query(`DROP DATABASE IF EXISTS ${database}`); await root.end(); } });
   beforeEach(async () => {
-    for (const table of ['metric_alert_transitions', 'metric_alert_state', 'alerts', 'metric_rollout', 'metric_publications', 'metric_observations']) await pool.query(`DELETE FROM ${table}`);
+    for (const table of ['metric_alert_transitions', 'metric_alert_state', 'alerts', 'metric_rollout', 'metric_publications',
+      'metric_observations', 'metric_item_retention', 'metric_trend_receipts', 'metric_retained_trends']) await pool.query(`DELETE FROM ${table}`);
     await pool.query("UPDATE database_instances SET name = 'isolated' WHERE id = 1");
     await control.initialize(series, target); await control.applied(series, ticket);
   });
@@ -281,6 +284,63 @@ describe.skipIf(!port)('isolated formal rollout and alert replay', () => {
     expect((await pool.query<RowDataPacket[]>('SELECT * FROM metric_alert_transitions'))[0]).toHaveLength(1);
     expect(await new MysqlMetricStorage(pool, future).evidence(series.id)).toMatchObject({ status: 'available' });
     expect(await later.transition(series, ticket, input)).toBe(false);
+  });
+  it('applies current retention independently by item and resource, with safe trend archiving and expiry', async () => {
+    const clock = () => new Date('2026-09-01T03:00:00Z');
+    const short = new MysqlMetricStorage(pool, clock, { ...DEFAULT_RETENTION, valueTypeMs: { uint64: 86400000 } });
+    const formalTicket = { source: 'semantic', generation: 2, revision: 2 } as const;
+    await control.switch(series, 1, { ...target, source: 'semantic', read: 'semantic', revision: 2 });
+    await control.applied(series, formalTicket);
+    const old = observation(0, 2), protectedLatest = observation(60, 2);
+    await control.publish(old, definition, formalTicket);
+    await control.publish(protectedLatest, definition, formalTicket);
+    const otherResource = identify({ ...old, resource_id: '2' });
+    const otherDefinition = definitions.find(entry => entry.id === 'mysql.cpu.heuristic_percent')!;
+    const otherItem = identify({ ...sample(otherDefinition.id), resource_id: '1' });
+    await storage.write(otherResource, definition);
+    await storage.write(otherItem, otherDefinition);
+    const [updated] = await pool.execute('UPDATE metric_observations SET stored_at = ?', ['2026-09-01 00:01:30.000']);
+    expect(updated).toMatchObject({ affectedRows: 4 });
+
+    const setPolicies = async (trends_ms?: number) => {
+      const conn = await pool.getConnection();
+      try {
+        await conn.beginTransaction();
+        await conn.query('SELECT id FROM metric_policy_lock WHERE id=1 FOR UPDATE');
+        await applyItemRetention(conn, 'instance:1', [old.metric, otherItem.metric],
+          trends_ms === undefined ? [] : [{ metric: old.metric, history_ms: 3600000, trends_ms }]);
+        await conn.commit();
+      } finally { conn.release(); }
+    };
+    await setPolicies(86400000);
+    const formalStore = new MysqlFormalMetricStore(pool);
+    const readHistory = () => formalStore.readObservationPage(series, '2026-09-01T00:00:00Z', clock().toISOString(), { limit: 20, after: null });
+    const liveTrendPoints = () => formalStore.readStudyWindow(series, '2026-09-01T00:00:00Z', clock().toISOString(), clock());
+    expect(await readHistory()).toMatchObject({ total: 0, observations: [] });
+    expect(await liveTrendPoints()).toHaveLength(2);
+    expect(await short.preview()).toMatchObject({ normalized: { count: 1 }, retainedTrends: { count: 0 } });
+    await short.prune();
+    expect(await short.evidence(old.id)).toEqual({ status: 'not_retained' });
+    for (const item of [protectedLatest, otherResource, otherItem]) {
+      expect(await short.evidence(item.id)).toMatchObject({ status: 'available' });
+    }
+    const retained = new RetainedTrendStore(pool, () => clock().getTime());
+    const readTrends = () => retained.read(series, '2026-09-01T00:00:00Z', clock().toISOString());
+    expect(await readTrends()).toMatchObject([{ bucket: { count: 1 } }]);
+
+    await setPolicies(0);
+    expect(await readTrends()).toEqual([]);
+    expect(await liveTrendPoints()).toEqual([]);
+    expect(await formalStore.latestObservations({ type: 'instance', id: 1 }, clock().toISOString()))
+      .toMatchObject([{ id: protectedLatest.id }]);
+    expect(await formalStore.readWindow(series, '2026-09-01T00:00:00Z', clock().toISOString()))
+      .toMatchObject([{ id: protectedLatest.id }]);
+    expect(await retained.withoutPreserved([old])).toEqual([old]);
+    await short.prune();
+    expect((await pool.query('SELECT 1 FROM metric_retained_trends'))[0]).toEqual([]);
+    expect((await pool.query('SELECT 1 FROM metric_trend_receipts'))[0]).toEqual([]);
+    await setPolicies();
+    expect(await readHistory()).toMatchObject({ total: 1, observations: [{ id: protectedLatest.id }] });
   });
   it('alert write failure rolls back transition and state, permitting safe retry', async () => {
     const o = identify({ ...series, resource_id: '999999' });

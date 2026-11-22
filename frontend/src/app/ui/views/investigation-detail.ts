@@ -2,9 +2,10 @@ import { hasSlidePermission } from '../app-settings.ts';
 import './operations-actions.ts';
 import '../components/system-investigation-facts.ts';
 import { resourceDetailUrl } from '../components/resource-investigation-links.ts';
-import {returnToWorkbench} from '../workbench-position.ts';
+import {openWorkbenchRecord, returnToWorkbench} from '../workbench-position.ts';
 import { workspaceReturnTo } from '../workbench-routing.ts';
-import { html, nothing } from 'lit';
+import { html, nothing, type TemplateResult } from 'lit';
+import { investigationSubject, recordExcerpt } from './record-summary.ts';
 import { investigationMessages, type InvestigationsController } from '../controllers/investigations.ts';
 import { messagePartsRenderRows, messagePartsToolOutputs } from '../chat/message-normalizer.ts';
 import { renderMessageGroup } from '../chat/grouped-render.ts';
@@ -30,6 +31,7 @@ const stopLabels: Record<string, string> = {
 const problemLabels = { unconfirmed: '未确认', in_progress: '处理中', resolved: '已验证恢复', not_applicable: '不适用' };
 export function renderInvestigationDetail(controller: InvestigationsController, options: {
   permissions?: Set<string> | null; draft: string; onDraft: (value: string) => void; onContinue: () => void; onEvidence: () => void;
+  sourceEvidence?: TemplateResult;
 }) {
   const detail = controller.detail;
   if (controller.detailLoading) return html`<p role="status">正在加载调查…</p>`;
@@ -42,10 +44,31 @@ export function renderInvestigationDetail(controller: InvestigationsController, 
   const result = controller.results.items.reduce<(typeof controller.results.items)[number] | undefined>((latest, item) =>
     !latest || item.version > latest.version ? item : latest, undefined);
   const returnTo=workspaceReturnTo(new URL(location.href).searchParams.get('returnTo')) || '/workbench?workspaceTab=investigations';
+  const origin = workspaceReturnTo(location.pathname + location.search);
+  const events = hasSlidePermission(options.permissions ?? null, 'alert:view')
+    ? [...new Set(detail.context?.entry ? detail.context.entry.sourceEventIds : detail.sourceEventIds ?? [])]
+      .filter(id => Number.isSafeInteger(id) && id > 0) : [];
+  const eventLink = (id: number) => {
+    const query = new URLSearchParams({ view: 'aggregate', eventId: String(id) });
+    if (origin) query.set('returnTo', origin);
+    return `/events?${query}`;
+  };
+  const renderEventLink = (id: number, cssClass = '') => {
+    const url = eventLink(id);
+    const key = `source-event-${id}`;
+    return html`<a class=${cssClass} data-workbench-key=${key} href=${url}
+      @click=${(e: MouseEvent) => openWorkbenchRecord(e, url, key)}>查看事件 #${id}</a>`;
+  };
+  const otherEvents = events.length > 1 ? html`<details data-restore-open><summary>其他来源事件</summary><ul>${events.slice(1).map(id =>
+    html`<li>${renderEventLink(id)}</li>`)}</ul></details>` : nothing;
+  const summary = result?.result.summary?.trim() || '未提供调查结论';
+  const recommendations = [...(result?.result.recommendations ?? [])].sort((a,b) =>
+    ['high','medium','low'].indexOf(a.priority) - ['high','medium','low'].indexOf(b.priority));
+  const recommendation = recommendations[0]?.action || '先核对已有证据与停止原因。';
   return html`
     <a @click=${(e:MouseEvent)=>returnToWorkbench(e,returnTo)} href=${returnTo}>返回来源页面</a>
-    <app-card class="investigation-decision"><span slot="header">调查判断 · V${detail.version}</span>
-      <h2 class="investigation-detail-title" tabindex="-1">${detail.title}</h2>
+    <app-card class="investigation-decision"><span slot="header">调查详情 · V${detail.version}</span>
+      <h2 class="investigation-detail-title" tabindex="-1">${investigationSubject(detail.title, detail.context?.entry)}</h2>
       <dl class="investigation-states">
         <div><dt>本次执行</dt><dd><app-badge variant=${execution === 'unknown' ? 'warn' : 'info'}>${execution ? executionLabels[execution] ?? '状态未知' : '尚未执行'}</app-badge></dd></div>
         <div><dt>调查进度</dt><dd><app-badge>${lifecycleLabels[detail.lifecycle]}</app-badge></dd></div>
@@ -59,7 +82,15 @@ export function renderInvestigationDetail(controller: InvestigationsController, 
       <section aria-label="本次调查结果">
       ${result ? html`
         ${active ? html`<p role="status">当前执行仍在进行；以下为上一份已保存结果 V${result.version}。</p>` : nothing}
-        <p class="investigation-result-summary">${result.result.summary}</p>
+        <p class="investigation-result-summary">${recordExcerpt(summary)}</p>
+        <p class="investigation-next"><strong>建议下一步</strong> ${recordExcerpt(recommendation, 100)}</p>
+        <div class="investigation-next-actions">
+          ${events[0] ? renderEventLink(events[0], 'btn-primary') : nothing}
+          <button class=${events.length ? 'btn' : 'btn-primary'} @click=${options.onEvidence}>查看完整结果与证据</button>
+          ${otherEvents}
+        </div>
+        <details class="investigation-full-result"><summary>展开完整结论与检查</summary>
+        <p class="investigation-result-summary">${summary}</p>
         <p class="muted">执行状态与业务问题分别记录；工具返回不代表根因或恢复已验证。</p>
         <h3>已完成的检查</h3>
         ${result.result.facts.length ? html`<ul>${result.result.facts.slice(0, 6).map(f => html`<li>${f.statement}</li>`)}</ul>`
@@ -67,11 +98,10 @@ export function renderInvestigationDetail(controller: InvestigationsController, 
         <h3>证据缺口</h3>${result.result.unresolvedQuestions.length ? result.result.unresolvedQuestions.map(q => html`<p>${q}</p>`) : html`<p>未记录具体缺口，不代表根因与恢复已验证。</p>`}
         <h3>${active ? '最近结果的停止原因' : '停止原因'}</h3>
         <p>${result.result.execution?.reasonCode ? stopLabels[result.result.execution.reasonCode] ?? '已记录停止原因码，请展开执行过程与技术详情核对原始记录。' : '历史记录未保留具体停止原因；不能据此认定检查已完整完成。'}</p>
-        <h3>下一步</h3>${result.result.recommendations.length
-          ? html`<p>${[...result.result.recommendations].sort((a,b)=>['high','medium','low'].indexOf(a.priority)-['high','medium','low'].indexOf(b.priority))[0].action}</p>${result.result.recommendations.length>1?html`<details><summary>全部建议（尚未执行）</summary>${result.result.recommendations.map(r=>html`<p>${r.action}</p>`)}</details>`:nothing}`
-          : html`<p>先核对已有证据与停止原因；需要时提交新的只读调查，保留原执行记录。</p>`}
-        <button class="btn" @click=${options.onEvidence}>查看完整结果与证据</button>
-      ` : html`<p role="status">${active ? '正在检查，尚无持久化结果。' : execution === 'cancelled' ? '执行已取消，未发布结果。可核对已保留的执行过程。' : '暂无持久化结果；可查看已保留的证据与执行过程。'}</p>`}
+        <h3>建议（尚未执行）</h3>${recommendations.length ? recommendations.map(r => html`<p>${r.action}</p>`) : html`<p>${recommendation}</p>`}
+        </details>
+      ` : html`<p role="status">${active ? '正在检查，尚无持久化结果。' : execution === 'cancelled' ? '执行已取消，未发布结果。可核对已保留的执行过程。' : '暂无持久化结果；可查看已保留的证据与执行过程。'}</p>
+        ${events[0] ? renderEventLink(events[0], 'btn') : nothing}${otherEvents}`}
       </section>
       <details aria-label="调查目标"><summary>调查目标</summary><p style="white-space:pre-wrap;overflow-wrap:anywhere">${detail.goal}</p></details>
       <p class="muted">${detail.profileId === 'system' ? '平台调查' : '资源调查'} · 只读检查</p>
@@ -84,6 +114,7 @@ export function renderInvestigationDetail(controller: InvestigationsController, 
         @click=${() => void controller.cancel()}>${controller.cancelRequested ? '等待取消确认' : '取消本次执行'}</button>` : nothing}
       ${controller.cancelRequested ? html`<p role="status">取消请求已发送，等待后端确认；工具可能仍在收尾。</p>` : nothing}
     </app-card>
+    ${options.sourceEvidence ? html`<details class="investigation-source"><summary>调查来源与授权事实</summary>${options.sourceEvidence}</details>` : nothing}
     ${result&&!active&&result.result.unresolvedQuestions.length&&detail.lifecycle!=='closed'&&detail.lifecycle!=='archived'?html`<app-card><span slot="header">需要你处理 · 当前调查记录</span><p>${result.result.unresolvedQuestions[0]}</p><button class="btn" @click=${()=>document.querySelector('investigation-supplement')?.scrollIntoView({block:'center'})}>补充当前缺口</button><p class="muted">来自当前结果 V${result.version}，不创建第二套待办或事件状态。</p></app-card>`:nothing}
     ${detail.profileId === 'system' ? html`<system-investigation-facts .investigationId=${detail.id} .version=${detail.version}
       .disabled=${active || controller.busy || controller.operationForbidden || !controller.online || detail.lifecycle === 'closed' || detail.lifecycle === 'archived'}

@@ -7,6 +7,8 @@ import {
 import { normalize, executeDerived, type Computation, type CounterState } from '../index.js';
 import { PackageRegistry, stable, type Selection } from './model.js';
 import { AdapterError, collectFixed, classifyError, type DecodedRow, type DriverEvidence, type Transport } from './adapters.js';
+import { metricKey } from '../policy/model.js';
+import { metricTiming, withDerivedIntervals } from '../timing.js';
 
 const metricBindingId = (binding: string, metric: string, dimensions: Record<string, string>) =>
   `${binding}:${metric}${Object.keys(dimensions).length ? ':' + createHash('sha256').update(stable(dimensions)).digest('hex').slice(0, 16) : ''}`;
@@ -16,6 +18,7 @@ export interface PackageExecution {
   /** Internal compiled plan selection; absent preserves the standalone package API. */
   collector_ids?: string[];
   metric_keys?: string[];
+  item_intervals_ms?: ReadonlyMap<string, number>;
   /** Trusted adapter seam for isolated collector tests; never populated from configuration. */
   collect?: typeof collectFixed;
   before_request?: () => Promise<void>;
@@ -51,6 +54,8 @@ export async function runPackage(registry: PackageRegistry, input: Selection, ex
   const definitions = registry.catalog(selection.package);
   const selected = (metric: { id: string; semantic_version: string }) => !execution.metric_keys || execution.metric_keys.includes(`${metric.id}@${metric.semantic_version}`);
   release.derived = release.derived.filter(d => selected(d.output));
+  const intervals = withDerivedIntervals(execution.item_intervals_ms, release.derived, settings.interval_ms);
+  const timing = (metric: Capability['metric']) => metricTiming(settings, intervals.get(metricKey(metric)));
   p.collectors = p.collectors.filter(c => !execution.collector_ids || execution.collector_ids.includes(c.id));
   for (const c of p.collectors) c.mappings = c.mappings.filter(m => selected(m.metric));
   const bounds = new Map<string, string>();
@@ -77,9 +82,9 @@ export async function runPackage(registry: PackageRegistry, input: Selection, ex
     if (condition.status === 'unsupported') applicable = 'unsupported';
     else if (condition.status === 'unknown' && applicable !== 'unsupported') applicable = 'unknown';
   }
-  const until = new Date(Date.parse(at) + settings.stale_after_ms).toISOString();
   const capability = (metric: Capability['metric'], method: Capability['method'], status: Capability['status'], evidence: Capability['basis']): Capability => CapabilitySchema.parse({
-    resource_id: resource.id, metric, method, status, basis: evidence, evaluated_at: at, valid_until: until,
+    resource_id: resource.id, metric, method, status, basis: evidence, evaluated_at: at,
+    valid_until: new Date(Math.min(Date.parse('9999-12-31T23:59:59.999Z'), Date.parse(at) + timing(metric).stale_after_ms)).toISOString(),
   });
   if (applicable !== 'supported') {
     for (const collector of p.collectors) for (const mapping of collector.mappings) result.capabilities.push(capability(mapping.metric, collector.method, applicable, basis));
@@ -89,7 +94,8 @@ export async function runPackage(registry: PackageRegistry, input: Selection, ex
   for (const collector of p.collectors) {
     await check();
     const attempt: CollectionAttempt = { id: `${execution.attempt_id}:${collector.id}`, resource_id: resource.id, binding_id: execution.binding_id,
-      collector_id: collector.id, config_revision: execution.config_revision, started_at: at, status: 'running', error: null, observation_ids: [] };
+      collector_id: collector.id, config_revision: execution.config_revision, started_at: at, status: 'running', error: null,
+      ...(execution.metric_keys ? { metrics: collector.mappings.map(mapping => mapping.metric) } : {}), observation_ids: [] };
     validateAttempt(attempt);
     let error: CollectionAttempt['error'] = null;
     let evidenceCode: AdapterError['evidenceCode'];
@@ -112,7 +118,8 @@ export async function runPackage(registry: PackageRegistry, input: Selection, ex
           dimensions: structuredClone(row.dimensions), name: row.display_name ?? Object.values(row.dimensions).join(' / ') })));
         const discovered = new Set(rows.map(row => stable(row.dimensions)));
         for (const [key, state] of result.states) {
-          if (state.baseline.source.collector_id === collector.id && !discovered.has(stable(state.baseline.dimensions))) result.states.delete(key);
+          if (state.baseline.source.collector_id === collector.id && state.baseline.versions.package_id === p.id
+            && state.baseline.versions.package_version === p.version && !discovered.has(stable(state.baseline.dimensions))) result.states.delete(key);
         }
         const collectedAt = TimestampSchema.parse(clock());
         for (const row of rows) for (const mapping of collector.mappings) {
@@ -132,7 +139,7 @@ export async function runPackage(registry: PackageRegistry, input: Selection, ex
               ...(definition.kind === 'counter' ? { counter: detail?.counter ?? row.counter } : {}),
             };
             raw.id = observationIdentity(raw);
-            const output = normalize(raw, definition, { now: collectedAt, stale_after_ms: settings.stale_after_ms });
+            const output = normalize(raw, definition, { now: collectedAt, stale_after_ms: timing(mapping.metric).stale_after_ms });
             validateObservationBatch([output.observation], definitions);
             outputs.push(output);
             rawOutputs.push(raw);
@@ -200,7 +207,8 @@ export async function runPackage(registry: PackageRegistry, input: Selection, ex
       versions: { ...anchor.versions, transform_version: d.transform_version },
     }]));
     const derived = executeDerived(nodes, definitions, inputs, { anchor, context: { now: clock(), stale_after_ms: settings.stale_after_ms },
-      targets, counter: { max_gap_ms: settings.max_counter_gap_ms }, states: result.states, counter_bounds: bounds });
+      targets, counter: { max_gap_ms: settings.max_counter_gap_ms }, states: result.states, counter_bounds: bounds,
+      ...(intervals.size ? { timing } : {}) });
     result.observations.push(...derived.outputs); result.states = derived.states;
   }
   for (const node of release.derived) {

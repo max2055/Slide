@@ -35,7 +35,6 @@ const releases = builtinReleases();
 const releaseFor = (kind: string) => releases.find(r => r.package.id === (kind === 'instance' ? 'mysql-basic' : 'linux-host'))!;
 const definitionFor = (kind: string) => canonicalDefinitions.find(d => d.id === (kind === 'instance' ? 'db.uptime_seconds' : 'host.filesystem.used_bytes'))!;
 let uptime = 0;
-let readMetrics: (kind: 'instance' | 'server') => Promise<unknown>;
 
 test.beforeAll(async () => {
   if (!process.env.MAX163_TEST_MYSQL_PORT) throw new Error('MAX163_TEST_MYSQL_PORT must point to an isolated fixture');
@@ -68,10 +67,12 @@ test.beforeAll(async () => {
   control = new RolloutControl(pool as any, undefined, () => new Date(serviceClock()));
   const formal = new MysqlFormalMetricStore(pool as any);
   const service = new MetricConsumerService(policy, registry, {
-    queryWindow: (...args) => formal.queryWindow(...args), inventory: (...args) => formal.inventory(...args),
-    dimensions: (...args) => formal.dimensions(...args), attempts: async () => [],
+    queryWindow: (...args) => formal.queryWindow(...args),
+    latestObservations: (...args) => formal.latestObservations(...args),
+    inventory: (...args) => formal.inventory(...args),
+    dimensions: (...args) => formal.dimensions(...args),
+    attempts: async () => [],
   }, serviceClock);
-  readMetrics = kind => service.query(actor, { resource: { type: kind, id: 992 }, view: 'all', from: new Date(Date.parse(evaluatedAt) - 3600000).toISOString(), to: evaluatedAt, bucket_ms: 60000 });
   app = Fastify(); const verify = createVerifyToken(secret, contexts);
   await registerMetricConsumerRoutes(app, verify, service);
   app.get('/api/database/instances/:id', { preHandler: [verify, requirePermission('instance:view'), requireInstanceAccess('read-only')] }, async () => (await pool.query('SELECT id,name,db_type,host,port,status FROM database_instances WHERE id=992'))[0][0]);
@@ -99,66 +100,75 @@ async function seed(kind: 'instance' | 'server', at: string, reset = false) {
   const ticket = { source: 'semantic', generation: 1, revision: 1 };
   if (reset) { await control.initialize(observation, { source: 'semantic', read: 'semantic', package: { id, version, digest }, revision: 1 }); await control.applied(observation, ticket); }
   await control.publish(observation, definition, ticket);
-  await readMetrics(kind);
 }
 async function capture(page: Page, name: string) {
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   await page.evaluate(() => window.scrollTo(0, 0));
   await page.screenshot({ path: `${output}/${name}.png`, animations: 'disabled' });
-  // Keep the actual observation readable even when earlier empty buckets make the table long.
-  const observed = page.locator('semantic-metrics time:visible').first();
+  const observed = page.locator('resource-metric-browser time:visible').first();
   if (await observed.count()) {
-    await observed.locator('..').locator('..').screenshot({ path: `${output}/${name}-observed.png`, animations: 'disabled' });
+    await observed.locator('xpath=ancestor::tr').screenshot({ path: `${output}/${name}-observed.png`, animations: 'disabled' });
   }
 }
-for (const kind of ['instance', 'server'] as const) for (const [width, theme] of [[1280, 'dark'], [390, 'light']] as const) test(`${kind} observation and read states ${width} ${theme}`, async ({ page }) => {
+for (const kind of ['instance', 'server'] as const) for (const [width, height] of [[1366, 768], [1440, 900]] as const) test(`${kind} observation and read states ${width}×${height}`, async ({ page }) => {
   await seed(kind, sampledAt, true);
   const errors: string[] = []; page.on('pageerror', e => errors.push(e.message));
   await page.clock.install({ time: Date.parse(evaluatedAt) });
-  await page.setViewportSize({ width, height: 900 });
+  await page.setViewportSize({ width, height });
   await page.addInitScript(token => localStorage.setItem('token', token), token);
   await page.goto(`${url}/e2e/fixtures/detail-observation.html?kind=${kind}&tab=${kind === 'server' ? 'server-detail' : 'instance-detail'}&id=992`);
-  await page.evaluate(theme => { document.documentElement.dataset.themeMode = theme; }, theme);
   const view = page.locator(kind === 'server' ? 'server-detail' : 'instance-detail-page');
   if (kind === 'instance') await view.evaluate((el: any) => { el.autoRefresh = false; el.stopAutoRefresh(); });
   await view.getByRole('tab', { name: '指标与趋势', exact: true }).click();
-  const metrics = view.locator('semantic-metrics'), header = view.locator('.last-updated');
-  const times = metrics.locator('time');
-  await expect(times.first()).toHaveAttribute('datetime', sampledAt);
-  await expect(metrics).toContainText('过期'); await expect(header).toContainText('非资源观测');
-  await capture(page, `${kind}-stale-${width}-${theme}`);
+  const metrics = view.locator('resource-metric-browser'), header = view.locator('.last-updated');
+  const metricId = definitionFor(kind).id;
+  await metrics.getByRole('searchbox', { name: '筛选指标' }).fill(metricId);
+  const metricRow = metrics.getByRole('row').filter({ hasText: metricId });
+  const time = metricRow.locator('time');
+  const evidence = (state: string) => capture(page, `${kind}-${state}-${width}`);
+  await expect(time).toHaveAttribute('datetime', sampledAt);
+  await expect(metricRow).toContainText('已过期'); await expect(header).toContainText('非资源观测');
+  await evidence('stale');
   const firstRead = await header.textContent();
   await page.clock.fastForward(2000);
   const refresh = view.getByRole('button', { name: '刷新', exact: true }); await refresh.focus(); await page.keyboard.press('Enter');
   await expect(header).not.toHaveText(firstRead!); await expect(refresh).toBeEnabled();
-  await expect(times.first()).toHaveAttribute('datetime', sampledAt); await expect(metrics).toContainText('过期');
-  await capture(page, `${kind}-refreshed-still-stale-${width}-${theme}`);
+  await expect(time).toHaveAttribute('datetime', sampledAt); await expect(metricRow).toContainText('已过期');
+  await evidence('refreshed-still-stale');
   const successfulRead = await header.textContent();
   const path = kind === 'instance' ? '**/api/database/instances/992' : '**/api/servers/992';
   let release!: () => void;
   await page.route(path, async route => { await new Promise<void>(resolve => release = resolve); await route.fulfill({ status: 500, body: '{}' }); });
   await page.clock.fastForward(2000); await refresh.click(); await expect(refresh).toBeDisabled();
-  await expect(header).toHaveText(successfulRead!); await capture(page, `${kind}-loading-${width}-${theme}`);
+  await expect(header).toHaveText(successfulRead!); await evidence('loading');
   release(); await expect(view.getByRole('alert').filter({ hasText: '成功读取时间未更新' })).toContainText('成功读取时间未更新'); await expect(refresh).toBeEnabled();
-  await expect(header).toHaveText(successfulRead!); await capture(page, `${kind}-detail-failed-${width}-${theme}`);
+  await expect(header).toHaveText(successfulRead!); await expect(time).toHaveAttribute('datetime', sampledAt);
+  await evidence('detail-failed');
   await page.unroute(path);
   // New accepted evidence changes observed_at and freshness together; server values are controlled, not SSH acceptance.
   const freshAt = new Date(Date.parse(evaluatedAt) - 1000).toISOString(); await seed(kind, freshAt);
-  await refresh.click(); await expect(refresh).toBeEnabled(); await expect(times.last()).toHaveAttribute('datetime', freshAt);
-  await expect(metrics).toContainText('新鲜'); await capture(page, `${kind}-fresh-${width}-${theme}`);
+  const latest = page.waitForResponse(response => response.url().endsWith('/api/metrics/latest') && response.ok());
+  await refresh.click();
+  const result: Awaited<ReturnType<MetricConsumerService['latest']>> = await (await latest).json();
+  expect(result.metrics.find(metric => metric.definition.id === metricId)?.series).toEqual([
+    expect.objectContaining({ observed_at: freshAt, freshness: 'fresh' }),
+  ]);
+  await expect(refresh).toBeEnabled(); await expect(time).toHaveAttribute('datetime', freshAt);
+  await expect(metricRow).not.toContainText(/已过期|时效待确认/); await evidence('fresh');
   await pool.query('DELETE FROM metric_publications');
-  await refresh.click(); await expect(refresh).toBeEnabled(); await expect(times).toHaveCount(0);
-  await expect(metrics).toContainText('未知'); await capture(page, `${kind}-unknown-${width}-${theme}`);
-  await page.route('**/api/metrics/query', route => route.fulfill({ status: 403, body: '{}' }));
-  await metrics.getByRole('button', { name: '刷新标准指标' }).click(); await expect(metrics.getByRole('alert').filter({ hasText: '权限' })).toContainText('权限');
-  await expect(times).toHaveCount(0); await capture(page, `${kind}-metrics-forbidden-${width}-${theme}`);
-  await page.unroute('**/api/metrics/query');
+  await refresh.click(); await expect(refresh).toBeEnabled(); await expect(time).toHaveCount(0);
+  await expect(metricRow).toContainText('暂无采样'); await evidence('unknown');
+  await page.route('**/api/metrics/latest', route => route.fulfill({ status: 403, body: '{}' }));
+  await metrics.getByRole('button', { name: '刷新指标' }).click(); await expect(metrics.getByRole('alert')).toContainText('权限');
+  await expect(metricRow).toHaveCount(0); await expect(metrics.locator('time')).toHaveCount(0);
+  await evidence('metrics-forbidden');
+  await page.unroute('**/api/metrics/latest');
   await page.route(path, route => route.fulfill({ status: 403, body: '{}' }));
-  await refresh.click(); await expect(view).toContainText('无权读取'); await expect(view.locator('semantic-metrics')).toHaveCount(0);
-  await capture(page, `${kind}-detail-forbidden-${width}-${theme}`);
+  await refresh.click(); await expect(view).toContainText('无权读取'); await expect(metrics).toHaveCount(0);
+  await evidence('detail-forbidden');
   expect(errors).toEqual([]);
-  await writeFile(`${output}/${kind}-${width}-fields.json`, JSON.stringify({ kind, width, theme, sampledAt, evaluatedAt: serviceClock(), browserClockAt: evaluatedAt, freshAt, firstRead, successfulRead,
+  await writeFile(`${output}/${kind}-${width}-fields.json`, JSON.stringify({ kind, width, height, sampledAt, evaluatedAt: serviceClock(), browserClockAt: evaluatedAt, freshAt, firstRead, successfulRead,
     source: kind === 'instance' ? 'live isolated MySQL SHOW GLOBAL STATUS Uptime; controlled evaluation clock' : 'controlled filesystem normalized observation; no SSH',
-    path: 'JWT -> live SQL actor -> production metric consumer -> MySQL policy + formal publication store -> production reducer -> detail component',
+    path: 'JWT -> live SQL actor -> production latest-metric consumer -> MySQL policy + formal publication store -> resource metric browser',
   }, null, 2));
 });

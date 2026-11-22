@@ -12,7 +12,7 @@ afterEach(()=>{fetch.mockReset();roots.forEach(root=>root.remove());roots.length
 it('keeps overview distinct from metrics and exposes the next evidence steps',()=>{
   const el=page();el.overview=snapshot();const content=text(el);
   expect(content).toContain('当前需要关注'); expect(content).toContain('核对指标与时间范围');expect(content).toContain('查看日志与完整事件');
-  expect(roots[0].querySelector('semantic-metrics')).toBeNull();
+  expect(roots[0].querySelector('resource-metric-browser')).toBeNull();
 });
 it.each([
   {freshness:'stale',observedAt:new Date(Date.now()-600_000).toISOString(),gaps:['OBSERVATIONS_STALE']},

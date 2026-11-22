@@ -6,6 +6,8 @@ import { OperationsResource, authorizedJson, operationLabels, resourceLabel, cur
 import { hasSlidePermission } from '../app-settings.ts';
 import { resourceDetailUrl } from '../components/resource-investigation-links.ts';
 import { operationsStyles } from './operations-styles.ts';
+import { displayTime } from './diagnosis-presentation.ts';
+import { recordExcerpt } from './record-summary.ts';
 import '../components/app-card.ts';
 import '../components/app-badge.ts';
 import '../components/app-empty-state.ts';
@@ -17,6 +19,9 @@ import '../components/investigation-feedback.ts';
 
 interface PlanApproval { id: number | string; status: string; args_redacted: unknown; tool_name: string }
 interface ApprovalPage { items: Array<PlanApproval & { kind?: string }> }
+const planVerificationLabels: Record<string, string> = {
+  pending: '待验证', observing: '恢复观察中', passed: '验证通过', failed: '验证未通过', inconclusive: '证据不足，无法确认恢复',
+};
 export function approvalPlanBinding(row: PlanApproval) {
   if (row.tool_name !== 'operations_action_plan' || !row.args_redacted || typeof row.args_redacted !== 'object') return null;
   const args = row.args_redacted as Record<string,unknown>;
@@ -43,7 +48,21 @@ export class OperationsActions extends LitElement {
     .list-layout { display:block; }
     .list-layout > aside { margin-top:var(--space-lg); }
     .list-layout > section > app-card { margin-top:var(--space-lg); }
-    .table-title { display:block; font-weight:600; color:var(--accent); }
+    .plan-list-filters { margin:0; padding:var(--space-md); border-bottom:1px solid var(--border); }
+    .plan-list-filters label { max-width:240px; }
+    .plan-list-filters details { flex:0 1 250px; margin:0; }
+    .plan-list-filters details label { margin-top:var(--space-xs); }
+    .plan-list-table { overflow:auto; }
+    .plan-list-table table { min-width:760px; table-layout:fixed; }
+    .plan-list-table th { background:var(--bg-muted); border-bottom-width:1px; }
+    .plan-list-table td { vertical-align:top; overflow-wrap:anywhere; }
+    .plan-list-table tr:last-child td { border-bottom:0; }
+    .plan-list-table .skeleton-line { min-height:var(--space-md); }
+    .plan-list-cell { display:grid; justify-items:start; gap:var(--space-xs); }
+    .plan-list-cell strong { color:var(--text-strong); }
+    .plan-list-cell small { color:var(--muted); font-size:var(--text-xs); }
+    .plan-list-message { margin:var(--space-md); }
+    .plan-list-footer { padding:var(--space-sm) var(--space-md); border-top:1px solid var(--border); }
     .layout { grid-template-columns:minmax(0,1.98fr) minmax(280px,1fr); }
     .approval-conditions { margin-block:var(--space-md); }
     .outcome-strip { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); padding:var(--space-md); border:1px solid var(--border); border-radius:var(--radius-md); margin-bottom:var(--space-lg); }
@@ -144,26 +163,58 @@ export class OperationsActions extends LitElement {
     const value=await this.plans.write<{plan:PlanRecord}>('/actions/drafts',{investigationId:this.investigation.trim(),resultVersion:this.draftResult,targetId:this.draftTarget,impact:this.draftImpact.trim()});
     if(value)await this.open(value.plan.id);
   }
+  private discoveryRow(plan: PlanRecord) {
+    const { content } = plan;
+    const execution = plan.executions?.find(item => item.planVersion === plan.version);
+    const verification = execution && plan.verificationState;
+    const target = plan.targetName || resourceLabel(content.target);
+    const requester = `${content.requester.kind === 'service' ? '服务账号' : '用户'} #${content.requester.id}`;
+    const title = content.tool.name === 'restart_demo_service' ? '重启专用演练服务' : '行动计划';
+    const phase = plan.state === 'pending_approval' ? '待独立审批' : operationLabels[plan.state] ?? '计划状态未知';
+    const variant = plan.state === 'approved' ? 'info' : plan.state === 'pending_approval' || plan.state === 'expired' ? 'warn' : 'muted';
+    const openLabel = plan.state === 'pending_approval' ? '查看审批条件'
+      : execution?.state === 'outcome_unknown' ? '核对原执行'
+      : execution?.state === 'succeeded' ? '查看验证要求' : execution ? '查看执行记录' : '查看计划';
+    return {
+      plan: html`<div class="plan-list-cell"><strong>${title}</strong><span>${target}</span>
+        <small>计划 V${plan.version}${plan.updatedAt ? ` · ${displayTime(plan.updatedAt)}` : ''}</small>
+        ${hasSlidePermission(this.permissions, 'chat:view') ? html`<a href=${`/workbench?investigation=${encodeURIComponent(content.investigationId)}`}>查看来源调查 · 结果 V${content.resultVersion}</a>` : nothing}</div>`,
+      owner: html`<div class="plan-list-cell">
+        ${plan.state === 'pending_approval' ? html`<strong>独立审批人</strong><small>提交者 ${requester}</small>`
+          : html`<span>${plan.state === 'draft' ? '提议人' : '提交者'} ${requester}</span>`}
+      </div>`,
+      phase: html`<div class="plan-list-cell"><app-badge variant=${variant}>${phase}</app-badge>
+        ${execution ? html`<span>${execution.state === 'failed' ? '执行失败' : operationLabels[execution.state] ?? '执行状态未知'}</span>`
+          : plan.state === 'approved' ? html`<small>当前版本暂无执行记录</small>` : nothing}
+        ${verification ? html`<span>${planVerificationLabels[verification] ?? '验证状态未知'}</span>`
+          : execution?.state === 'succeeded' ? html`<small>尚无验证报告</small>` : nothing}
+      </div>`,
+      impact: html`<div class="plan-list-cell"><span>${recordExcerpt(content.impact)}</span>
+        <small>风险 ${operationLabels[content.risk] ?? '未提供'}</small>
+        ${execution?.state === 'succeeded' ? html`<small>恢复观察 ${content.verifier.observationSeconds} 秒，每 ${content.verifier.intervalSeconds} 秒采样</small>` : nothing}
+      </div>`,
+      open: html`<button class="btn-ghost btn-sm" data-plan=${plan.id} data-workbench-key=${plan.id} @click=${() => void this.open(plan.id)}>${openLabel}</button>`,
+    };
+  }
   private discoveryView() {
     const d=this.discovery;
-    return html`<app-card><span slot="header">行动计划</span><div class="toolbar"><details><summary>按调查标识筛选（高级）</summary><label>来源调查<input aria-label="计划来源调查" .value=${this.investigation} @input=${(e:Event)=>{this.investigation=(e.target as HTMLInputElement).value;this.source.reset();this.draftResult=0;}}></label></details>
-      <label>计划状态<select aria-label="计划状态筛选" .value=${this.stateFilter} @change=${(e:Event)=>{this.stateFilter=(e.target as HTMLSelectElement).value;void this.discover();}}><option value="">全部状态</option>${['draft','pending_approval','approved','rejected','expired'].map(s=>html`<option value=${s}>${operationLabels[s]}</option>`)}</select></label><button class="btn btn-refresh" ?disabled=${d.locked} @click=${()=>this.discover()}>查找计划</button></div>
-      ${d.loading?html`<p role="status">正在查找计划…</p>`:nothing}${d.error?html`<p role="alert">${d.error}</p>`:nothing}
-      <app-data-table .loading=${d.loading} .columns=${[
-        {key:'plan',label:'行动计划 / 影响'}, {key:'target',label:'目标'},
-        {key:'state',label:'计划阶段'}, {key:'verification',label:'恢复验证'},
-        {key:'updated',label:'计划更新'}, {key:'open',label:'操作'}
-      ]} .rows=${(d.data?.items ?? []).map(p=>({
-        plan:html`<span class="table-title">${p.content.impact}</span><small>${p.id} · v${p.version}</small>
-          ${hasSlidePermission(this.permissions,'chat:view') ? html`<p><a href=${`/workbench?investigation=${encodeURIComponent(p.content.investigationId)}`}>查看来源调查</a> · 结果 V${p.content.resultVersion}</p>` : nothing}`,
-        target:p.targetName || '目标名称未提供', state:operationLabels[p.state] || p.state,
-        verification:p.verificationState ? ({passed:'已通过（需核对恢复范围）',failed:'未改善',inconclusive:'证据不足'} as Record<string,string>)[p.verificationState] || '状态未知' : '未验证',
-        updated:p.updatedAt ? new Date(p.updatedAt).toLocaleString('zh-CN') : '未提供',
-        open:html`<button class="btn-ghost" data-plan=${p.id} data-workbench-key=${p.id} @click=${()=>void this.open(p.id)}>查看计划</button>`
-      }))}></app-data-table>
-      ${d.data?.items?.length===0?html`<app-empty-state title="没有匹配计划" description="仅显示当前授权范围。"></app-empty-state>`:nothing}
-      ${d.data?.partial?html`<p class="notice warn">当前窗口不完整；本页 ${d.data.authorizedCounts.total} 条可见计划，请继续翻页。</p>`:nothing}
-      ${d.data?.nextCursor?html`<button class="btn" ?disabled=${d.locked} @click=${()=>this.discover(d.data!.nextCursor!)}>下一页计划</button>`:nothing}
+    return html`<app-card .compact=${true}><div class="toolbar plan-list-filters">
+      <label>计划状态<select aria-label="计划状态筛选" @change=${(e: Event) => { this.stateFilter = (e.target as HTMLSelectElement).value; void this.discover(); }}>
+        <option value="" .selected=${!this.stateFilter}>全部状态</option>
+        ${['draft', 'pending_approval', 'approved', 'rejected', 'expired'].map(state => html`<option value=${state} .selected=${state === this.stateFilter}>${operationLabels[state]}</option>`)}
+      </select></label>
+      <details><summary>按调查标识筛选（高级）</summary><label>来源调查<input aria-label="计划来源调查" .value=${this.investigation} @input=${(e:Event)=>{this.investigation=(e.target as HTMLInputElement).value;this.source.reset();this.draftResult=0;}}></label></details>
+      <button class="btn btn-refresh" ?disabled=${d.locked} @click=${()=>this.discover()}>查找计划</button></div>
+      ${d.loading?html`<p class="plan-list-message" role="status">正在查找计划…</p>`:nothing}${d.error?html`<p class="plan-list-message" role="alert">${d.error}</p>`:nothing}
+      <app-data-table class="plan-list-table" tabindex="0" role="region" aria-label="行动计划表"
+        .striped=${false} .loading=${d.loading} .emptyMessage=${d.error ? '行动列表暂不可用' : d.data ? '没有匹配计划' : '等待读取计划'} .columns=${[
+          {key:'plan',label:'行动计划与资源',width:'24%'}, {key:'owner',label:'处理角色 / 提交者',width:'16%'},
+          {key:'phase',label:'行动阶段',width:'18%'}, {key:'impact',label:'影响或验证要求',width:'26%'}, {key:'open',label:'操作',width:'16%'}
+        ]} .rows=${(d.data?.items ?? []).map(plan => this.discoveryRow(plan))}></app-data-table>
+      ${d.data?.partial || d.data?.nextCursor ? html`<div class="plan-list-footer">
+        ${d.data.partial?html`<p>本页 ${d.data.authorizedCounts.total} 条可见计划，可继续翻页。</p>`:nothing}
+        ${d.data.nextCursor?html`<button class="btn" ?disabled=${d.locked} @click=${()=>this.discover(d.data!.nextCursor!)}>下一页计划</button>`:nothing}
+      </div>`:nothing}
     </app-card>${this.can('propose')&&hasSlidePermission(this.permissions,'chat:view')?html`<details><summary>从当前调查创建草案</summary><app-card><span slot="header">创建可信来源草案</span><p>服务器解析已注册工具、策略和验证器；创建草案后仍需独立审批与显式执行。</p>
       ${this.source.loading?html`<p role="status">正在读取来源结果与授权目标…</p>`:nothing}
       ${this.source.error?html`<p role="alert">${this.source.error}</p>`:nothing}

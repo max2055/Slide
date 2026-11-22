@@ -105,8 +105,10 @@ describe('generated public API contract', () => {
       '/api/alerts/dependencies/resources',
       '/api/alerts/dependencies/{id}',
       '/api/alerts/events',
+      '/api/alerts/events/investigations',
       '/api/alerts/events/{id}/close',
       '/api/alerts/events/{id}/investigate',
+      '/api/alerts/events/{id}/investigation',
       '/api/alerts/events/{id}/resolve',
       '/api/alerts/events/{id}/verify-recovery',
       '/api/alerts/{id}/investigation',
@@ -145,20 +147,13 @@ describe('generated public API contract', () => {
       '/api/investigations/{id}/workflow',
       '/api/llm/models',
       '/api/llm/test',
-      '/api/metrics/config/bulk',
-      '/api/metrics/config/bulk/preview',
-      '/api/metrics/config/bulk/{id}',
-      '/api/metrics/config/bulk/{id}/cancel',
-      '/api/metrics/config/bulk/{id}/confirm',
-      '/api/metrics/config/bulk/{id}/retry',
-      '/api/metrics/config/resources/{type}/{id}/activate',
       '/api/metrics/config/resources/{type}/{id}/migration',
-      '/api/metrics/config/resources/{type}/{id}/operations/{key}',
       '/api/metrics/config/resources/{type}/{id}/recommendations',
       '/api/metrics/config/resources/{type}/{id}/status',
       '/api/metrics/configuration-history/{type}/{id}/{revision}',
       '/api/metrics/discovery/{type}/{id}',
       '/api/metrics/discovery/{type}/{id}/stop',
+      '/api/metrics/latest',
       '/api/metrics/observations',
       '/api/metrics/policy/groups',
       '/api/metrics/study/capacity',
@@ -178,6 +173,7 @@ describe('generated public API contract', () => {
       '/api/metrics/template-bindings/{type}/{id}/unbind-preview',
       '/api/metrics/template-events/{eventId}',
       '/api/metrics/template-events/{eventId}/acknowledge',
+      '/api/metrics/template-events/{eventId}/close',
       '/api/metrics/template-governance/batches',
       '/api/metrics/template-governance/batches/{id}',
       '/api/metrics/template-governance/batches/{id}/{type}/{resourceId}',
@@ -196,6 +192,7 @@ describe('generated public API contract', () => {
       '/api/metrics/templates/{templateId}/name',
       '/api/metrics/templates/{templateId}/publish',
       '/api/metrics/templates/{templateId}/repin',
+      '/api/metrics/templates/{templateId}/save',
       '/api/metrics/templates/{templateId}/triggers',
       '/api/metrics/templates/{templateId}/versions/{version}',
       '/api/metrics/templates/{templateId}/versions/{version}/triggers',
@@ -256,14 +253,14 @@ describe('generated public API contract', () => {
       '/api/servers/{id}/diagnostics',
       '/api/servers/{id}/instances',
     ]);
-    const operationLookup = document.paths['/api/metrics/config/resources/{type}/{id}/operations/{key}'].get;
-    expect(operationLookup.operationId).toBe('getMetricConfigurationOperation');
-    expect(operationLookup.security).toEqual([{ bearerAuth: [] }]);
-    expect(operationLookup.parameters.map((parameter: any) => [parameter.name, parameter.in, parameter.required]))
-      .toEqual([['type', 'path', true], ['id', 'path', true], ['key', 'path', true]]);
-    expect(operationLookup.parameters[2].schema.pattern).toBe('^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$');
-    expect(operationLookup.responses['200'].content['application/json'].schema.$ref).toBe('#/components/schemas/MetricOperationState');
-    expect(Object.keys(operationLookup.responses)).toEqual(['200', '400', '401', '403', '404', '503']);
+    const eventInvestigation = document.paths['/api/alerts/events/{id}/investigation'].get;
+    const eventInvestigations = document.paths['/api/alerts/events/investigations'].get;
+    expect(eventInvestigation.responses['200'].content['application/json'].schema.$ref).toBe('#/components/schemas/EventInvestigationResponse');
+    expect(eventInvestigations.parameters[0]).toMatchObject({ name: 'ids', explode: false, schema: { minItems: 1, maxItems: 20, uniqueItems: true } });
+    expect(eventInvestigations.responses['200'].content['application/json'].schema.$ref).toBe('#/components/schemas/EventInvestigationsResponse');
+    expect(buildClientTypes()).toContain('export type EventInvestigationsResponse');
+    expect(document.paths['/api/metrics/config/resources/{type}/{id}/activate']).toBeUndefined();
+    expect(document.paths['/api/metrics/config/resources/{type}/{id}/operations/{key}']).toBeUndefined();
     expect(document.paths['/api/operations/knowledge'].post.security).toEqual([{ bearerAuth: [] }]);
     expect(document.paths['/api/operations/knowledge'].post.requestBody.content['application/json'].schema.$ref).toBe('#/components/schemas/OperationsCaseCandidate');
     expect(document.paths['/api/operations/actions/execute']).toBeUndefined();
@@ -324,6 +321,7 @@ describe('generated public API contract', () => {
       '/api/metrics/template-bindings/{type}/{id}/unbind-preview',
       '/api/metrics/template-events/{eventId}',
       '/api/metrics/template-events/{eventId}/acknowledge',
+      '/api/metrics/template-events/{eventId}/close',
       '/api/metrics/template-governance/batches',
       '/api/metrics/template-governance/batches/{id}',
       '/api/metrics/template-governance/batches/{id}/{type}/{resourceId}',
@@ -342,6 +340,7 @@ describe('generated public API contract', () => {
       '/api/metrics/templates/{templateId}/name',
       '/api/metrics/templates/{templateId}/publish',
       '/api/metrics/templates/{templateId}/repin',
+      '/api/metrics/templates/{templateId}/save',
       '/api/metrics/templates/{templateId}/triggers',
       '/api/metrics/templates/{templateId}/versions/{version}',
       '/api/metrics/templates/{templateId}/versions/{version}/triggers',

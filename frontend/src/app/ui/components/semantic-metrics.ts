@@ -23,6 +23,7 @@ export interface MetricBucket {
   quality: { status: string; reason: string }; freshness: string; observed_at?: string | null; accuracy: string;
   sources: unknown[]; window: { from: string; to: string }; sample_count?: number;
   stats?: { count: number; min: MetricValue; max: MetricValue; avg: MetricValue } | null;
+  retained_sample_count?: number;
 }
 export interface MetricResult {
   definition: { id: string; semantic_version?: string; category: string; meaning: string; unit: string; kind?: string; aggregation?: { time?: string[]; space?: string[] } };
