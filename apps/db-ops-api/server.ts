@@ -4291,6 +4291,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
           endTime: endTime || undefined,
           limit: limit ? Number(limit) : 50,
           offset: offset ? Number(offset) : 0,
+          strict: true,
         });
         reply.send(result);
       } catch (error: any) {
@@ -4546,8 +4547,8 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
         const { instanceId } = request.params as any;
         const times = await schemaDatabaseService.getSnapshotTimes(Number(instanceId));
         return reply.send(times);
-      } catch (error: any) {
-        return reply.code(500).send({ error: error.message });
+      } catch {
+        return reply.code(500).send({ error: 'SCHEMA_READ_FAILED' });
       }
     }
   });
@@ -4560,8 +4561,8 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
         const { instanceId } = request.params as any;
         const tableList = await schemaDatabaseService.getTableList(Number(instanceId));
         return reply.send({ tables: tableList });
-      } catch (error: any) {
-        return reply.code(500).send({ error: error.message });
+      } catch {
+        return reply.code(500).send({ error: 'SCHEMA_READ_FAILED' });
       }
     }
   });
@@ -4573,12 +4574,12 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
       try {
         const { instanceId } = request.params as any;
         const result = await schemaService.detectChanges(Number(instanceId));
-        if ('error' in result) {
-          return reply.send({ changes: [] });
+        if ('hint' in result) {
+          return reply.send({ changes: [], hint: result.hint });
         }
         return reply.send({ changes: result });
-      } catch (error: any) {
-        return reply.code(500).send({ error: error.message });
+      } catch {
+        return reply.code(500).send({ error: 'SCHEMA_READ_FAILED' });
       }
     }
   });
@@ -4591,14 +4592,11 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
         const { instanceId } = request.params as any;
         const result = await schemaService.detectChanges(Number(instanceId));
         if ('hint' in result) {
-          return reply.send({ success: true, changes: [], hint: (result as any).hint });
+          return reply.send({ success: true, changes: [], hint: result.hint });
         }
-        if ('error' in result) {
-          return reply.send({ success: false, error: result.error, changes: [] });
-        }
-        reply.send({ success: true, changes: result });
-      } catch (error: any) {
-        reply.code(500).send({ error: error.message });
+        return reply.send({ success: true, changes: result });
+      } catch {
+        return reply.code(500).send({ error: 'SCHEMA_READ_FAILED' });
       }
     }
   });
@@ -4613,9 +4611,9 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
         if ('error' in detail) {
           return reply.code(404).send({ error: detail.error });
         }
-        reply.send(detail);
-      } catch (error: any) {
-        reply.code(500).send({ error: error.message });
+        return reply.send(detail);
+      } catch {
+        return reply.code(500).send({ error: 'SCHEMA_READ_FAILED' });
       }
     }
   });
