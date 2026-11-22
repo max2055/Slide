@@ -56,6 +56,15 @@ const schemaProbes = [
   'SELECT id FROM alert_dependency_lock LIMIT 0',
   'SELECT payload FROM alert_dependencies LIMIT 0',
   'SELECT identity_hash, resource_key, payload FROM alert_dependency_decisions LIMIT 0',
+  // Opening and recovering a template event run inside the formal sample transaction.
+  'SELECT id, instance_id, server_id, target_type, network_device_id, alert_type, level, title, message, description, source, metric_name, metric_value, threshold_value, tags, status, resolved_at, resolved_by, created_at FROM alerts LIMIT 0',
+  'SELECT id, event_id, title, description, instance_id, source_type, severity, status, resolved_at, resolved_by FROM alert_events LIMIT 0',
+  'SELECT event_id, alert_id, role FROM alert_event_members LIMIT 0',
+  'SELECT event_id, action, actor_id, details FROM alert_event_logs LIMIT 0',
+  'SELECT id, revision, payload FROM maintenance_interval_history LIMIT 0',
+  'SELECT alert_id, payload FROM maintenance_event_links LIMIT 0',
+  'SELECT id, config, delivery_start_at, enabled FROM notification_channels LIMIT 0',
+  'SELECT workflow_job_id, business_key, state FROM notification_delivery_states LIMIT 0',
 ];
 
 /** initializeControlPlane runs migrations first; enabled collection must fail closed on incomplete schema. */
