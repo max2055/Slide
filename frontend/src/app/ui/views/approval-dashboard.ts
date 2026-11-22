@@ -146,6 +146,8 @@ export class ApprovalDashboard extends LitElement {
     .tab { padding: var(--space-sm) var(--space-xl); font-size: var(--text-md); cursor: pointer; border: none; background: none; color: var(--muted); border-bottom: 2px solid transparent; }
     .tab.active { color: var(--accent-text); border-bottom-color: var(--accent); }
     .approval-card { margin-bottom: var(--space-md); }
+    .approval-card::part(header), .approval-card::part(footer),
+    .detail-split app-card::part(footer) { display: none; }
     .approval-card:hover::part(root) { border-color: var(--border-strong); }
     .approval-card.selected::part(root) { background: var(--accent-subtle); border-color: var(--accent); }
     .card-row { display: flex; align-items: flex-start; gap: var(--space-md); cursor: pointer; }

@@ -1433,9 +1433,9 @@ export class AlertsPage extends LitElement {
                             <span class="slider"></span>
                           </label>
                         </td>
-                        <td style="text-align:center;">
+                        <td style="text-align:center;white-space:nowrap;">
                           <button class="btn-sm action-btn" @click=${() => this._openRuleModal(rule)}>编辑</button>
-                          <button class="btn-sm danger action-btn" style="margin-left:4px;" @click=${() => this._deleteRule(rule)}>删除</button>
+                          <button class="btn-sm danger action-btn" style="margin-left:var(--space-xs);" @click=${() => this._deleteRule(rule)}>删除</button>
                         </td>
                       </tr>
                     `)}
