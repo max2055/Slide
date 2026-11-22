@@ -129,7 +129,7 @@ test('MAX-627 four fixes: real MySQL, HTTP, Adapter, WS, Gateway and desktop com
     await expect(page.getByText(/本地斜杠命令不支持附件/)).toBeVisible();
     for (const viewport of [{ width: 1366, height: 768 }, { width: 1440, height: 900 }, { width: 1920, height: 1080 }]) {
       await page.setViewportSize(viewport); await draft.focus(); await expect(draft).toBeFocused();
-      const send = page.getByRole('button', { name: 'Send message', exact: true });
+      const send = page.getByRole('button', { name: '发送消息', exact: true });
       await expect(send).toBeVisible(); expect(await send.getAttribute('aria-label')).toBeTruthy();
       const box = await send.boundingBox(); expect(box!.y + box!.height).toBeLessThanOrEqual(viewport.height);
       await page.screenshot({ path: info.outputPath(`composer-${viewport.width}.png`) });

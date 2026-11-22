@@ -71,7 +71,7 @@ test('#636 preserves the existing narrow-screen auto minimum', async ({ page }) 
 });
 
 test('#706 disabled export keeps its colors on hover; enabled ghost still responds', async ({ page }, info) => {
-  const button = page.getByRole('button', { name: 'Export chat', exact: true });
+  const button = page.getByRole('button', { name: '导出对话', exact: true });
   const colors = (node: Locator) => node.evaluate(el => {
     const style = getComputedStyle(el);
     return { background: style.backgroundColor, color: style.color, border: style.borderColor };

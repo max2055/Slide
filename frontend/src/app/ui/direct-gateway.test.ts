@@ -63,13 +63,13 @@ describe('109-04: DirectGatewayClient', () => {
 
   it('rejects sendChat when no WebSocket is available', async () => {
     const client = new DirectGatewayClient({ onEvent, onStateChange });
-    await expect(client.sendChat('test-session', 'hello world')).rejects.toThrow(/not connected/);
+    await expect(client.sendChat('test-session', 'hello world')).rejects.toThrow('消息尚未发送');
   });
 
   it('reports chat.send as rejected when no WebSocket is available', async () => {
     const client = new DirectGatewayClient({ onEvent, onStateChange });
     await expect(client.request('chat.send', { sessionKey: 'session-1', message: 'hello' }))
-      .rejects.toThrow(/could not be queued/);
+      .rejects.toThrow('消息尚未发送');
   });
 
   it('requestHistory does not throw', () => {
@@ -455,10 +455,7 @@ describe('109-04: DirectGatewayClient', () => {
     expect(onEvent).toHaveBeenCalledWith(snapshot);
   });
 
-  it.each([
-    [4001, 'Unauthorized', '登录已失效，请重新登录。', 'auth_failed'],
-    [4008, 'Rate limit exceeded', '请求过于频繁，请稍后再试。', 'rate_limited'],
-  ] as const)('rejects an unacknowledged chat with close-specific error %s', async (code, reason, error, state) => {
+  it('rejects an unacknowledged chat when authentication has expired', async () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {});
     const socket = installMockWebSocket();
     const client = new DirectGatewayClient({ onEvent, onStateChange });
@@ -466,10 +463,29 @@ describe('109-04: DirectGatewayClient', () => {
     socket.receive({ type: 'auth_ok' });
 
     const request = client.request('chat.send', { sessionKey: 'session-1', message: 'hello' });
-    socket.closeWith(code, reason, true);
+    socket.closeWith(4001, 'Unauthorized', true);
 
-    await expect(request).rejects.toThrow(error);
-    expect(onStateChange).toHaveBeenCalledWith(state);
+    await expect(request).rejects.toThrow('登录已失效，请重新登录。');
+    expect(onStateChange).toHaveBeenCalledWith('auth_failed');
+  });
+
+  it('4008 before authentication reports unsent and does not send on reconnect', async () => {
+    vi.useFakeTimers();
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const socket = installMockWebSocket();
+    const client = new DirectGatewayClient({ onEvent, onStateChange });
+    client.connect();
+    const result = client.sendChat('session-1', 'unsent').catch(error => error);
+    socket.closeWith(4008, 'controlled rate limit', true);
+
+    const error = await result;
+    expect(error).not.toBeInstanceOf(ChatAcceptanceTimeoutError);
+    expect(error.message).toContain('消息尚未发送');
+    expect(onStateChange).toHaveBeenCalledWith('rate_limited');
+    await vi.advanceTimersByTimeAsync(1_000);
+    socket.receive({ type: 'auth_ok' });
+    expect(socket.frames.filter(frame => frame.type === 'chat.send')).toEqual([]);
+    client.disconnect();
   });
 
   it.each([false, true])('bounds acceptance from enqueue while authenticated=%s', async (authenticated) => {
@@ -480,8 +496,14 @@ describe('109-04: DirectGatewayClient', () => {
     if (authenticated) socket.receive({ type: 'auth_ok' });
     const result = client.sendChat('one', 'hello').catch(error => error);
     await vi.advanceTimersByTimeAsync(60_000);
-    expect(await result).toBeInstanceOf(ChatAcceptanceTimeoutError);
-    expect((await result).message).toContain('发送结果尚未确认');
+    const error = await result;
+    if (authenticated) {
+      expect(error).toBeInstanceOf(ChatAcceptanceTimeoutError);
+      expect(error.message).toContain('发送结果尚未确认');
+    } else {
+      expect(error).not.toBeInstanceOf(ChatAcceptanceTimeoutError);
+      expect(error.message).toContain('消息尚未发送');
+    }
     const count = socket.frames.length;
     socket.receive({ type: 'auth_ok' });
     await vi.advanceTimersByTimeAsync(120_000);
@@ -513,7 +535,7 @@ describe('109-04: DirectGatewayClient', () => {
     const result = client.sendChat('one', 'hello').catch(error => error);
     vi.setSystemTime(Date.now() + 101);
     socket.receive({ type: 'auth_ok' });
-    expect(await result).toBeInstanceOf(ChatAcceptanceTimeoutError);
+    expect((await result).message).toContain('消息尚未发送');
     expect(socket.frames).toHaveLength(0);
     client.disconnect();
   });

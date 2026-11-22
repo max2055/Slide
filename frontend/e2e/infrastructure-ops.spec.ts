@@ -463,7 +463,7 @@ test('persisted auth, first chat send, and appearance survive a deep-route refre
   const input = page.locator('.agent-chat__input textarea');
   await expect(input).toBeEnabled({ timeout: 10_000 });
   await input.fill('First fixture message');
-  await page.getByRole('button', { name: 'Send message' }).click();
+  await page.getByRole('button', { name: '发送消息' }).click();
 
   await expect.poll(() => page.evaluate(() => {
     const app = document.querySelector('slide-app') as HTMLElement & { chatMessages?: Array<{ role?: string }> };

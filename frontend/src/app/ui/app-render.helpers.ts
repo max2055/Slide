@@ -600,7 +600,7 @@ function renderChatModelSelect(state: AppViewState) {
     <label class="field chat-controls__session chat-controls__model">
       <select
         data-chat-model-select="true"
-        aria-label="Chat model"
+        aria-label=${t("chat.selectors.model")}
         title=${selectedLabel}
         ?disabled=${disabled}
         @change=${async (e: Event) => {
@@ -701,7 +701,7 @@ function resolveChatThinkingSelectState(state: AppViewState): ChatThinkingSelect
       : "off";
   return {
     currentOverride,
-    defaultLabel: `Default (${defaultLevel})`,
+    defaultLabel: `默认（${defaultLevel}）`,
     options: buildThinkingOptions(provider, model, currentOverride),
   };
 }
@@ -719,7 +719,7 @@ function renderChatThinkingSelect(state: AppViewState) {
     <label class="field chat-controls__session chat-controls__thinking-select">
       <select
         data-chat-thinking-select="true"
-        aria-label="Chat thinking level"
+        aria-label=${t("chat.selectors.thinkingLevel")}
         title=${selectedLabel}
         ?disabled=${disabled}
         @change=${async (e: Event) => {

@@ -8,6 +8,9 @@ import {
   loadChatHistory,
   sendChatMessage,
   sendDetachedChatMessage,
+  restoreChatDraft,
+  unconfirmedChatMessageId,
+  updateChatDraft,
   type ChatState,
 } from "./controllers/chat.ts";
 import { loadSessions, type SessionsState } from "./controllers/sessions.ts";
@@ -19,7 +22,7 @@ import type { ChatModelOverride, ModelCatalogEntry } from "./types.ts";
 import type { SessionsListResult } from "./types.ts";
 import type { ChatAttachment, ChatQueueItem } from "./ui-types.ts";
 import { generateUUID } from "./uuid.ts";
-import { chatSessionHost, isVisibleChatSession } from './chat-session-state.ts';
+import { chatSessionHost, isCurrentChatSession, isVisibleChatSession } from './chat-session-state.ts';
 
 export type ChatHost = {
   client: DirectGatewayClient | null;
@@ -28,6 +31,7 @@ export type ChatHost = {
   connected: boolean;
   chatMessage: string;
   chatAttachments: ChatAttachment[];
+  chatDraftRevision?: number;
   chatQueue: ChatQueueItem[];
   chatRunId: string | null;
   chatSending: boolean;
@@ -161,37 +165,36 @@ async function sendChatMessageNow(
   // Reset thinking state for new message
   host.chatThinkingText = '';
   host.chatThinkingComplete = false;
-  const sendingSessionKey = host.sessionKey;
-  const runId = await sendChatMessage(host as unknown as ChatState, message, opts?.attachments);
-  if (!runId && host.sessionKey !== sendingSessionKey) return false;
-  const ok = Boolean(runId);
-  if (!ok && opts?.previousDraft != null) {
-    host.chatMessage = opts.previousDraft;
+  const draftRevision = host.chatDraftRevision;
+  const result = await sendChatMessage(host as unknown as ChatState, message, opts?.attachments);
+  if (!isCurrentChatSession(host)) return null;
+  const runId = result?.runId;
+  if (!runId && host.chatDraftRevision === draftRevision && !host.chatMessage && !host.chatAttachments.length
+    && (opts?.previousDraft !== undefined || opts?.previousAttachments?.length)) {
+    restoreChatDraft(host as unknown as ChatState, opts?.previousDraft ?? "", opts?.previousAttachments ?? [],
+      result?.unconfirmedMessageId);
   }
-  if (!ok && opts?.previousAttachments) {
-    host.chatAttachments = opts.previousAttachments;
-  }
-  if (ok && isVisibleChatSession(host)) {
+  if (runId && isVisibleChatSession(host)) {
     setLastActiveSessionKey(
       host as unknown as Parameters<typeof setLastActiveSessionKey>[0],
       host.sessionKey,
     );
   }
-  if (ok && opts?.restoreDraft && opts.previousDraft?.trim()) {
-    host.chatMessage = opts.previousDraft;
-  }
-  if (ok && opts?.restoreAttachments && opts.previousAttachments?.length) {
-    host.chatAttachments = opts.previousAttachments;
+  if (runId && host.chatDraftRevision === draftRevision) {
+    const draft = opts?.restoreDraft && opts.previousDraft?.trim() ? opts.previousDraft : host.chatMessage;
+    const attachments = opts?.restoreAttachments && opts.previousAttachments?.length
+      ? opts.previousAttachments : host.chatAttachments;
+    if (draft !== host.chatMessage || attachments !== host.chatAttachments) updateChatDraft(host, draft, attachments);
   }
   // Force scroll after sending to ensure viewport is at bottom for incoming stream
   if (isVisibleChatSession(host)) scheduleChatScroll(host as unknown as Parameters<typeof scheduleChatScroll>[0], true);
-  if (ok && !host.chatRunId) {
+  if (runId && !host.chatRunId) {
     void flushChatQueue(host);
   }
-  if (ok && opts?.refreshSessions && runId) {
+  if (runId && opts?.refreshSessions) {
     host.refreshSessionsAfterChat.add(runId);
   }
-  return ok;
+  return result;
 }
 
 async function sendDetachedBtwMessage(
@@ -203,52 +206,62 @@ async function sendDetachedBtwMessage(
     previousAttachments?: ChatAttachment[];
   },
 ) {
-  const runId = await sendDetachedChatMessage(
+  const draftRevision = host.chatDraftRevision;
+  const result = await sendDetachedChatMessage(
     host as unknown as ChatState,
     message,
     opts?.attachments,
   );
-  const ok = Boolean(runId);
-  if (!ok && opts?.previousDraft != null) {
-    host.chatMessage = opts.previousDraft;
+  if (!isCurrentChatSession(host)) return;
+  const runId = result?.runId;
+  if (!runId && host.chatDraftRevision === draftRevision && !host.chatMessage && !host.chatAttachments.length
+    && (opts?.previousDraft !== undefined || opts?.previousAttachments?.length)) {
+    restoreChatDraft(host as unknown as ChatState, opts?.previousDraft ?? "", opts?.previousAttachments ?? [],
+      result?.unconfirmedMessageId);
   }
-  if (!ok && opts?.previousAttachments) {
-    host.chatAttachments = opts.previousAttachments;
-  }
-  if (ok && isVisibleChatSession(host)) {
+  if (runId && isVisibleChatSession(host)) {
     setLastActiveSessionKey(
       host as unknown as Parameters<typeof setLastActiveSessionKey>[0],
       host.sessionKey,
     );
   }
-  return ok;
 }
 
 async function flushChatQueue(host: ChatHost) {
   if (!isVisibleChatSession(host) || !host.connected || isChatBusy(host)) {
     return;
   }
-  const nextIndex = host.chatQueue.findIndex((item) => !item.pendingRunId);
+  const nextIndex = host.chatQueue.findIndex((item) => !item.pendingRunId && !item.unconfirmedMessageId);
   if (nextIndex < 0) {
     return;
   }
   const next = host.chatQueue[nextIndex];
+  const state = host as unknown as ChatState;
+  if (unconfirmedChatMessageId(state, next.text, next.attachments)) return;
   host.chatQueue = host.chatQueue.filter((_, index) => index !== nextIndex);
+  const draftRevision = host.chatDraftRevision;
   let ok = false;
+  let unconfirmedMessageId: string | undefined;
   try {
     if (next.localCommandName) {
       ok = await dispatchSlashCommand(host, next.localCommandName, next.localCommandArgs ?? "");
     } else {
-      ok = await sendChatMessageNow(host, next.text, {
+      const result = await sendChatMessageNow(host, next.text, {
         attachments: next.attachments,
         refreshSessions: next.refreshSessions,
       });
+      ok = Boolean(result?.runId);
+      unconfirmedMessageId = result?.unconfirmedMessageId;
     }
   } catch (err) {
     host.lastError = String(err);
   }
   if (!ok) {
-    host.chatQueue = [next, ...host.chatQueue];
+    if (unconfirmedMessageId && host.chatDraftRevision === draftRevision && !host.chatMessage && !host.chatAttachments.length) {
+      restoreChatDraft(state, next.text, next.attachments ?? [], unconfirmedMessageId);
+    } else {
+      host.chatQueue = [{ ...next, unconfirmedMessageId }, ...host.chatQueue];
+    }
   } else if (host.chatQueue.length > 0) {
     // Continue draining — local commands don't block on server response
     void flushChatQueue(host);
@@ -280,6 +293,7 @@ export async function handleSendChat(
     return;
   }
   const previousDraft = host.chatMessage;
+  const draftRevision = host.chatDraftRevision;
   const message = (messageOverride ?? host.chatMessage).trim();
   const attachments = host.chatAttachments ?? [];
   const attachmentsToSend = messageOverride == null ? attachments : [];
@@ -296,8 +310,7 @@ export async function handleSendChat(
 
   if (isBtwCommand(message)) {
     if (messageOverride == null) {
-      host.chatMessage = "";
-      host.chatAttachments = [];
+      updateChatDraft(host, "", []);
     }
     await sendDetachedBtwMessage(host, message, {
       previousDraft: messageOverride == null ? previousDraft : undefined,
@@ -316,8 +329,7 @@ export async function handleSendChat(
     }
     if (isChatBusy(host) && shouldQueueLocalSlashCommand(parsed.command.key)) {
       if (messageOverride == null) {
-        host.chatMessage = "";
-        host.chatAttachments = [];
+        updateChatDraft(host, "", []);
       }
       enqueueChatMessage(host, message, undefined, isChatResetCommand(message), {
         args: parsed.args,
@@ -327,18 +339,16 @@ export async function handleSendChat(
     }
     // Keep the draft until success; failures must not destroy unsent work.
     const ok = await dispatchSlashCommand(host, parsed.command.key, parsed.args);
-    if (ok && messageOverride == null && host.chatMessage === previousDraft
-      && host.chatAttachments === attachments) {
-      host.chatMessage = "";
-      host.chatAttachments = [];
+    if (ok && messageOverride == null && host.chatDraftRevision === draftRevision
+      && host.chatMessage === previousDraft && host.chatAttachments === attachments) {
+      updateChatDraft(host, "", []);
     }
     return;
   }
 
   const refreshSessions = isChatResetCommand(message);
   if (messageOverride == null) {
-    host.chatMessage = "";
-    host.chatAttachments = [];
+    updateChatDraft(host, "", []);
   }
 
   if (isChatBusy(host)) {

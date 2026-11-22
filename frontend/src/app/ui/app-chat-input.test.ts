@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { flushChatQueueForEvent, handleSendChat, type ChatHost } from './app-chat.ts';
 import { activateChatSession } from './chat-session-state.ts';
+import { ChatAcceptanceTimeoutError, handleDirectAdapterEvent } from './direct-gateway.ts';
 
 function host(request = vi.fn().mockResolvedValue({ sessions: [] })) {
   return {
@@ -73,6 +74,29 @@ describe('MAX-627 chat input', () => {
     state.chatMessage = '/usage'; state.chatRunId = 'running'; await handleSendChat(state);
     state.chatRunId = null; await flushChatQueueForEvent(state);
     expect(state.chatQueue).toMatchObject([{ localCommandName: 'usage' }]);
+  });
+
+  it.each(['', '下一条草稿'])('MAX-723 queue never replays unknown acceptance and preserves draft %j', async newerDraft => {
+    const retry = vi.fn();
+    const request = vi.fn().mockRejectedValue(new ChatAcceptanceTimeoutError('queued-message', retry, () => 'main'));
+    const state = host(request);
+    state.chatRunId = 'running';
+    state.chatMessage = '已排队的运维消息';
+    await handleSendChat(state);
+    state.chatRunId = null;
+    state.chatMessage = newerDraft;
+    await flushChatQueueForEvent(state);
+    expect(state.chatMessage).toBe(newerDraft || '已排队的运维消息');
+    if (newerDraft) expect(state.chatQueue).toMatchObject([{ unconfirmedMessageId: 'queued-message' }]);
+    await flushChatQueueForEvent(state);
+    expect(request).toHaveBeenCalledTimes(1);
+    expect(retry).not.toHaveBeenCalled();
+    handleDirectAdapterEvent(state as unknown as Record<string, unknown>, {
+      type: 'run.started', runId: 'accepted-run', sessionKey: 'main', messageId: 'queued-message',
+    });
+    expect(state.chatQueue).toEqual([]);
+    expect(state.chatMessage).toBe(newerDraft);
+    expect(state.lastError).toBeNull();
   });
 
   it('does not inject an old command result into a different session (#410)', async () => {
