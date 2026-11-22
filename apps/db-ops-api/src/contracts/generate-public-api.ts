@@ -344,7 +344,7 @@ export function buildOpenApiDocument() {
           requestBody: { required: true, content: { 'application/json': { schema: refSchema(PublicApiSchemas.NetworkDeviceTestConnectionRequest) } } },
           responses: {
             '200': { description: 'Validated read-only SNMP probe or command-free SSH handshake result', content: { 'application/json': { schema: refSchema(PublicApiSchemas.NetworkDeviceTestConnectionResponse) } } },
-            '400': { description: 'Invalid probe input or rejected probe. An SSH fingerprint mismatch returns SSH_HOST_KEY_MISMATCH.', content: { 'application/json': { schema: refSchema(PublicApiSchemas.ErrorResponse) } } },
+            '400': { description: 'Invalid probe input or rejected probe. Request validation can return only error. An SSH fingerprint mismatch returns SSH_HOST_KEY_MISMATCH with success set to false.', content: { 'application/json': { schema: refSchema(PublicApiSchemas.NetworkDeviceTestConnectionBadRequest) } } },
             '401': { description: 'Authentication required', content: { 'application/json': { schema: refSchema(PublicApiSchemas.ErrorResponse) } } },
             '403': { description: 'Network-device manage permission required', content: { 'application/json': { schema: refSchema(PublicApiSchemas.ErrorResponse) } } },
             '502': { description: 'Probe failed or target was denied', content: { 'application/json': { schema: refSchema(PublicApiSchemas.ErrorResponse) } } },

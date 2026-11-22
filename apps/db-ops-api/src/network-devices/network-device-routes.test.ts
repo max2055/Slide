@@ -2,6 +2,8 @@ import {actorContextService} from '../auth/actor-context.js';
 import { generateKeyPairSync, randomBytes } from 'node:crypto';
 import { createSocket, type Socket } from 'node:dgram';
 import { once } from 'node:events';
+import { readFileSync } from 'node:fs';
+import Ajv2020 from 'ajv/dist/2020.js';
 import Fastify, { type FastifyInstance, type preHandlerHookHandler } from 'fastify';
 import * as snmp from 'net-snmp';
 import { Server, utils, type Connection } from 'ssh2';
@@ -97,7 +99,15 @@ describe('MAX-308 explicit key compatibility audit', () => {
 });
 
 describe('network-device routes', () => {
-  it('MAX-699 reports host identity from real SSH handshakes in both probe modes', async () => {
+  it('MAX-699 reports host identity and contract-compatible errors in both probe modes', async () => {
+    const document = JSON.parse(readFileSync(new URL('../../../../docs/slide/openapi.json', import.meta.url), 'utf8'));
+    const probe = document.paths['/api/network-devices/test-connection'].post;
+    const { $ref } = probe.responses['400'].content['application/json'].schema;
+    const schemaName = $ref.replace('#/components/schemas/', '');
+    const validateBadRequest = new Ajv2020().compile(document.components.schemas[schemaName]);
+    expect(validateBadRequest({ success: false })).toBe(false);
+    expect(validateBadRequest({ error: 'fixture', success: true })).toBe(false);
+    expect(validateBadRequest({ error: 'fixture', extra: true })).toBe(false);
     const host = '127.0.0.1';
     const community = 'fixture-community';
     const password = randomBytes(16).toString('hex');
@@ -157,12 +167,13 @@ describe('network-device routes', () => {
       });
       const base = await app.listen({ host, port: 0 });
       for (const mode of ['ssh', 'snmp']) {
-        const send = async (hostKeyFingerprint?: string, credentialValue = password) => {
+        const send = async (hostKeyFingerprint?: string, credentialValue = password, extraFields: Record<string, unknown> = {}) => {
           const response = await fetch(`${base}/api/network-devices/test-connection`, {
             method: 'POST', headers: { authorization: 'Bearer manager', 'content-type': 'application/json' },
             body: JSON.stringify({
               mode, host, sshPort, ...(mode === 'snmp' ? { version: 2, snmpPort, snmpv2c: { community } } : {}),
               ssh: { username: 'fixture', credentialType: 'password', credentialValue, hostKeyFingerprint },
+              ...extraFields,
             }),
           });
           return { status: response.status, body: await response.json() };
@@ -178,9 +189,16 @@ describe('network-device routes', () => {
           }
         }
         const before = authentications;
-        expect(await send(wrongPin)).toEqual({ status: 400, body: { success: false, error: 'SSH_HOST_KEY_MISMATCH' } });
+        const mismatch = await send(wrongPin);
+        expect(mismatch).toEqual({ status: 400, body: { success: false, error: 'SSH_HOST_KEY_MISMATCH' } });
+        expect.soft(validateBadRequest(mismatch.body), `${mode} fingerprint mismatch matches the HTTP 400 schema`).toBe(true);
+        const invalidRequest = await send(pin, password, { unexpectedField: true });
+        expect(invalidRequest).toEqual({ status: 400, body: { error: expect.stringContaining('unexpectedField') } });
+        expect.soft(validateBadRequest(invalidRequest.body), `${mode} request validation matches the HTTP 400 schema`).toBe(true);
         expect(authentications).toBe(before);
-        expect(await send(pin, 'incorrect fixture password')).toEqual({ status: 400, body: { success: false, error: 'SSH_CONNECT_FAILED' } });
+        const rejectedPassword = await send(pin, 'incorrect fixture password');
+        expect(rejectedPassword).toEqual({ status: 400, body: { success: false, error: 'SSH_CONNECT_FAILED' } });
+        expect.soft(validateBadRequest(rejectedPassword.body), `${mode} password rejection matches the HTTP 400 schema`).toBe(true);
       }
       expect(sessions).toBe(0);
     } finally {

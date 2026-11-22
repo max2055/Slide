@@ -27921,6 +27921,23 @@
           }
         ]
       },
+      "NetworkDeviceTestConnectionBadRequest": {
+        "$id": "NetworkDeviceTestConnectionBadRequest",
+        "additionalProperties": false,
+        "properties": {
+          "error": {
+            "type": "string"
+          },
+          "success": {
+            "const": false,
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "error"
+        ],
+        "type": "object"
+      },
       "NetworkDeviceTestConnectionRequest": {
         "$id": "NetworkDeviceTestConnectionRequest",
         "additionalProperties": false,
@@ -59351,11 +59368,11 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
+                  "$ref": "#/components/schemas/NetworkDeviceTestConnectionBadRequest"
                 }
               }
             },
-            "description": "Invalid probe input or rejected probe. An SSH fingerprint mismatch returns SSH_HOST_KEY_MISMATCH."
+            "description": "Invalid probe input or rejected probe. Request validation can return only error. An SSH fingerprint mismatch returns SSH_HOST_KEY_MISMATCH with success set to false."
           },
           "401": {
             "content": {

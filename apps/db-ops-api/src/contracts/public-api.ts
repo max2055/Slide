@@ -180,6 +180,10 @@ export const NetworkDeviceTestConnectionResponseSchema = Type.Object({
   }, { additionalProperties: false })),
   error: Type.Optional(Type.String()),
 }, { $id: 'NetworkDeviceTestConnectionResponse', additionalProperties: false });
+export const NetworkDeviceTestConnectionBadRequestSchema = Type.Object({
+  ...ErrorResponseSchema.properties,
+  success: Type.Optional(Type.Literal(false)),
+}, { $id: 'NetworkDeviceTestConnectionBadRequest', additionalProperties: false });
 export const NetworkDeviceProbeResponseSchema = Type.Object({
   success: Type.Boolean(),
   observations: Type.Optional(Type.Integer({ minimum: 0 })),
@@ -754,6 +758,7 @@ export const PublicApiSchemas = {
   NetworkDeviceTestConnectionRequest: NetworkDeviceTestConnectionRequestSchema,
   NetworkDeviceProbeResult: NetworkDeviceProbeResultSchema,
   NetworkDeviceTestConnectionResponse: NetworkDeviceTestConnectionResponseSchema,
+  NetworkDeviceTestConnectionBadRequest: NetworkDeviceTestConnectionBadRequestSchema,
   NetworkDeviceProbeResponse: NetworkDeviceProbeResponseSchema,
   NetworkDeviceCapability: NetworkDeviceCapabilitySchema,
   NetworkDeviceCapabilitiesResponse: NetworkDeviceCapabilitiesResponseSchema,
