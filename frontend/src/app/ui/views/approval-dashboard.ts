@@ -2,12 +2,15 @@ import { approvalPlanBinding } from './operations-actions.ts';
 import { sharedFieldStyles } from "../../styles/shared-field-styles.ts";
 import { LitElement, html, css, nothing } from "lit";
 import { sharedBtnStyles } from "../../styles/shared-btn-styles.ts";
+import { sharedSkeletonStyles } from "../../styles/shared-skeleton-styles.js";
+import { retryReadWithFocus } from '../controllers/retry-read-focus.js';
 import { customElement, state } from "lit/decorators.js";
 import "../components/app-dialog.js";
 import "../components/app-card.js";
 import "../components/app-data-table.js";
 import "../components/app-badge.js";
 import "../components/app-empty-state.js";
+import "../components/app-notice.js";
 import { EditorView, lineNumbers } from "@codemirror/view";
 import { EditorState } from "@codemirror/state";
 import { sql, MySQL, PostgreSQL } from "@codemirror/lang-sql";
@@ -102,7 +105,7 @@ interface OperationEvent { toState: string; reasonCode: string; metadata?: Recor
 
 @customElement("approval-dashboard")
 export class ApprovalDashboard extends LitElement {
-  static styles = [sharedFieldStyles, sharedBtnStyles, css`
+  static styles = [sharedFieldStyles, sharedBtnStyles, sharedSkeletonStyles, css`
     :host { display: block; padding: var(--space-xl); min-width: 0; color: var(--text); }
     * { box-sizing: border-box; }
     .page-head { display: flex; justify-content: space-between; align-items: start; gap: var(--space-md); margin-bottom: var(--space-xl); }
@@ -142,74 +145,70 @@ export class ApprovalDashboard extends LitElement {
       .batch-bar { height: auto !important; padding: var(--space-sm) !important; }
       .card-checkbox { min-width: 24px !important; }
     }
-    .tabs { display: flex; gap: var(--space-xs); margin-bottom: 16px; border-bottom: 1px solid var(--border, #e5e7eb); }
-    .tab { padding: 10px var(--space-xl); font-size: var(--text-md); cursor: pointer; border: none; background: none; color: var(--muted, #6b7280); border-bottom: 2px solid transparent; }
-    .tab.active { color: var(--accent-text); border-bottom-color: var(--accent, #3b82f6); }
-    .card { background: var(--card, #fff); border: 1px solid var(--border, #e5e7eb); border-radius: var(--radius-md); padding: var(--space-lg); margin-bottom: 12px; }
-    .card:hover { border-color: var(--border-strong, #d1d1d6); }
-    .card.selected { background: var(--accent-subtle, rgba(64,158,255,0.08)); border-color: var(--accent, #3b82f6); }
+    .tabs { display: flex; gap: var(--space-xs); margin-bottom: var(--space-lg); border-bottom: 1px solid var(--border); }
+    .tab { padding: var(--space-sm) var(--space-xl); font-size: var(--text-md); cursor: pointer; border: none; background: none; color: var(--muted); border-bottom: 2px solid transparent; }
+    .tab.active { color: var(--accent-text); border-bottom-color: var(--accent); }
+    .approval-card { margin-bottom: var(--space-md); }
+    .approval-card::part(header), .approval-card::part(footer),
+    .detail-split app-card::part(footer) { display: none; }
+    .approval-card:hover::part(root) { border-color: var(--border-strong); }
+    .approval-card.selected::part(root) { background: var(--accent-subtle); border-color: var(--accent); }
     .card-row { display: flex; align-items: flex-start; gap: var(--space-md); cursor: pointer; }
-    .card-checkbox { margin-top: 4px; min-width: 44px; display: flex; align-items: center; justify-content: center; background: var(--bg-secondary, #f3f4f6); border-radius: var(--radius-sm); }
-    .card-checkbox input[type="checkbox"] { width: 16px; height: 16px; cursor: pointer; accent-color: var(--accent, #409eff); }
+    .card-checkbox { margin-top: var(--space-xs); min-width: 44px; display: flex; align-items: center; justify-content: center; background: var(--secondary); border-radius: var(--radius-sm); }
+    .card-checkbox input[type="checkbox"] { width: 16px; height: 16px; cursor: pointer; accent-color: var(--accent); }
     .card-body { overflow-wrap: anywhere; flex: 1; min-width: 0; }
-    .card-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 8px; }
-    .sql-preview { font-family: var(--mono, monospace); font-size: var(--text-sm); padding: var(--space-sm); background: var(--bg-elevated, #f9fafb); border-radius: var(--radius-sm); overflow: hidden; text-overflow: ellipsis; white-space: pre-wrap; max-height: 80px; }
-    .actions { display: flex; gap: var(--space-sm); margin-top: 12px; }
+    .card-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: var(--space-sm); }
+    .sql-preview { font-family: var(--mono); font-size: var(--text-sm); padding: var(--space-sm); background: var(--bg-elevated); border-radius: var(--radius-sm); overflow: hidden; text-overflow: ellipsis; white-space: pre-wrap; max-height: 80px; }
+    .actions { display: flex; gap: var(--space-sm); margin-top: var(--space-md); }
 
-    .btn-approve { background: var(--ok-subtle, #ecfdf5); color: var(--ok, #22c55e); border-color: var(--ok, #22c55e); }
-    .btn-reject { background: var(--danger-subtle, #fef2f2); color: var(--danger, #ef4444); border-color: var(--danger, #ef4444); }
-    .batch-bar { display: flex; align-items: center; gap: var(--space-md); height: 48px; padding: 0 var(--space-lg); margin-bottom: 12px; background: var(--card, #fff); border: 1px solid var(--border, #e5e7eb); border-radius: var(--radius-md); animation: fade-in 0.2s ease; }
-    .batch-bar .count { font-size: var(--text-md); color: var(--text, #3c3c43); font-weight: 500; }
+    .batch-bar { display: flex; align-items: center; gap: var(--space-md); height: 48px; padding: 0 var(--space-lg); margin-bottom: var(--space-md); background: var(--card); border: 1px solid var(--border); border-radius: var(--radius-md); animation: fade-in 0.2s ease; }
+    .batch-bar .count { font-size: var(--text-md); color: var(--text); font-weight: 500; }
     .batch-bar .spacer { flex: 1; }
-    .card-exec-checkbox { margin-top: 8px; padding-top: 12px; border-top: 1px solid var(--border, #e5e7eb); font-size: var(--text-sm); color: var(--muted, #6e6e73); display: flex; align-items: center; gap: var(--space-xs); }
-    .card-exec-checkbox input[type="checkbox"] { width: 14px; height: 14px; cursor: pointer; accent-color: var(--accent, #409eff); }
+    .card-exec-checkbox { margin-top: var(--space-sm); padding-top: var(--space-md); border-top: 1px solid var(--border); font-size: var(--text-sm); color: var(--muted); display: flex; align-items: center; gap: var(--space-xs); }
+    .card-exec-checkbox input[type="checkbox"] { width: 14px; height: 14px; cursor: pointer; accent-color: var(--accent); }
     .card-exec-checkbox label { cursor: pointer; user-select: none; }
-    .exec-result { margin-top: 8px; font-size: var(--text-sm); padding: var(--space-xs) var(--space-sm); border-radius: var(--radius-sm); }
-    .exec-result.success { color: var(--ok, #22c55e); background: var(--ok-subtle, #ecfdf5); }
-    .exec-result.fail { color: var(--danger, #ef4444); background: var(--danger-subtle, #fef2f2); }
-    .empty { padding: 40px; text-align: center; color: var(--muted, #6b7280); }
-    .ai-badge { font-size: var(--text-xs); padding: var(--space-xs) var(--space-sm); background: var(--bg-elevated, #f9fafb); border-radius: var(--radius-sm); color: var(--muted, #6b7280); }
-    .loading { padding: 40px; text-align: center; color: var(--muted, #6b7280); }
+    .exec-result { margin-top: var(--space-sm); font-size: var(--text-sm); padding: var(--space-xs) var(--space-sm); border-radius: var(--radius-sm); }
+    .exec-result.success { color: var(--ok); background: var(--ok-subtle); }
+    .exec-result.fail { color: var(--danger); background: var(--danger-subtle); }
+    .skeleton-block { min-height: 8rem; }
+    .ai-badge { font-size: var(--text-xs); padding: var(--space-xs) var(--space-sm); background: var(--bg-elevated); border-radius: var(--radius-sm); color: var(--muted); }
+    .loading { padding: var(--space-xl); text-align: center; color: var(--muted); }
     .detail-header { display: flex; align-items: center; gap: var(--space-md); margin-bottom: 20px; }
     .back-link { color: var(--accent-text); cursor: pointer; font-size: var(--text-md); text-decoration: none; }
     .back-link:hover { text-decoration: underline; }
-    .detail-title { font-size: var(--text-xl); font-weight: 600; color: var(--text-strong, #1a1a1e); margin: 0; }
+    .detail-title { font-size: var(--text-xl); font-weight: 600; color: var(--text-strong); margin: 0; }
 
-    .error-box { background: var(--danger-subtle, #fef2f2); color: var(--danger, #ef4444); padding: var(--space-sm) var(--space-md); border-radius: var(--radius-sm); font-size: var(--text-base); margin-bottom: 12px; }
+    .error-box { background: var(--danger-subtle); color: var(--danger); padding: var(--space-sm) var(--space-md); border-radius: var(--radius-sm); font-size: var(--text-base); margin-bottom: var(--space-md); }
     .detail-split { display: grid; grid-template-columns: 1fr 360px; gap: 32px; align-items: start; }
-    .detail-sql-panel { background: var(--card, #fff); border: 1px solid var(--border, #e5e7eb); border-radius: var(--radius-md); overflow: hidden; min-height: 300px; }
     .detail-sql-panel .cm-editor { height: 100%; }
-    .detail-sql-panel .cm-scroller { font-family: var(--mono, 'JetBrains Mono', monospace); font-size: var(--text-base); overflow: auto; }
+    .detail-sql-panel .cm-scroller { font-family: var(--mono); font-size: var(--text-base); overflow: auto; }
     .detail-sidebar { display: flex; flex-direction: column; gap: var(--space-lg); }
-    .meta-card { background: var(--card, #fff); border: 1px solid var(--border, #e5e7eb); border-radius: var(--radius-md); padding: var(--space-lg); }
-    .meta-card h3 { font-size: var(--text-md); font-weight: 600; color: var(--text-strong, #1a1a1e); margin: 0 0 12px 0; padding-bottom: 8px; border-bottom: 1px solid var(--border, #e5e7eb); }
     .meta-row { display: flex; justify-content: space-between; padding: var(--space-sm) 0; font-size: var(--text-base); }
-    .meta-label { color: var(--muted, #6e6e73); }
-    .meta-value { color: var(--text, #3c3c43); font-weight: 500; text-align: right; }
-    .timeline-card { background: var(--card, #fff); border: 1px solid var(--border, #e5e7eb); border-radius: var(--radius-md); padding: var(--space-lg); }
-    .timeline-header { font-size: var(--text-md); font-weight: 600; color: var(--text-strong, #1a1a1e); margin-bottom: 16px; padding-bottom: 8px; border-bottom: 1px solid var(--border, #e5e7eb); }
+    .meta-label { color: var(--muted); }
+    .meta-value { color: var(--text); font-weight: 500; text-align: right; }
     .timeline-list { position: relative; padding-left: 24px; }
-    .timeline-list::before { content: ''; position: absolute; left: 11px; top: 0; bottom: 0; width: 2px; background: var(--border, #e5e5ea); }
+    .timeline-list::before { content: ''; position: absolute; left: 11px; top: 0; bottom: 0; width: 2px; background: var(--border); }
     .timeline-node { display: flex; gap: var(--space-md); padding-bottom: 20px; position: relative; animation: fade-in 0.3s ease-out both; }
-    .timeline-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; margin-top: 4px; z-index: 1; }
+    .timeline-dot { width: 10px; height: 10px; border-radius: var(--radius-full); flex-shrink: 0; margin-top: var(--space-xs); z-index: 1; }
     .timeline-dot--submitted,
-    .timeline-dot--notified { background: var(--accent, #409eff); }
-    .timeline-dot--ai_reviewed { background: var(--warn, #f59e0b); }
+    .timeline-dot--notified { background: var(--accent); }
+    .timeline-dot--ai_reviewed { background: var(--warn); }
     .timeline-dot--approved,
-    .timeline-dot--executed { background: var(--ok, #22c55e); }
+    .timeline-dot--executed { background: var(--ok); }
     .timeline-dot--rejected,
-    .timeline-dot--execution_failed { background: var(--danger, #ef4444); }
+    .timeline-dot--execution_failed { background: var(--danger); }
     .timeline-content { min-width: 0; }
-    .timeline-event-name { font-size: var(--text-md); font-weight: 500; color: var(--text-strong, #1a1a1e); }
-    .timeline-timestamp { font-size: var(--text-sm); color: var(--muted, #6e6e73); margin-top: 2px; }
-    .timeline-detail { font-size: var(--text-sm); color: var(--text, #3c3c43); margin-top: 4px; white-space: pre-wrap; }
-    .detail-error { padding: 20px; text-align: center; color: var(--danger, #ef4444); }
-    .detail-error button { margin-top: 12px; }
+    .timeline-event-name { font-size: var(--text-md); font-weight: 500; color: var(--text-strong); }
+    .timeline-timestamp { font-size: var(--text-sm); color: var(--muted); margin-top: 2px; }
+    .timeline-detail { font-size: var(--text-sm); color: var(--text); margin-top: var(--space-xs); white-space: pre-wrap; }
+    .detail-error { padding: var(--space-xl); text-align: center; color: var(--danger); }
+    .detail-error button { margin-top: var(--space-md); }
   `];
 
   @state() private view: "list" | "detail" = "list";
   @state() private requests: ApprovalRequest[] = [];
   @state() private agentApprovals: AgentApproval[] = [];
+  @state() private listError: string | null = null;
   @state() private agentApprovalsError: string | null = null;
   @state() private reviewingAgentTools: Set<string> = new Set();
   @state() private filter: "pending" | "processed" = "pending";
@@ -274,6 +273,7 @@ export class ApprovalDashboard extends LitElement {
   private async loadRequests() {
     const generation = ++this.listGeneration;
     this.loading = true;
+    this.listError = null;
     this.agentApprovalsError = null;
     try {
       const endpoint = `/api/approval/unified?status=${this.filter}`;
@@ -282,26 +282,28 @@ export class ApprovalDashboard extends LitElement {
       if (res.ok) {
         const payload = await res.json() as { items?: Array<ApprovalRequest & { kind?: 'sql' | 'agent' }> };
         if (generation !== this.listGeneration) return;
-        const items = Array.isArray(payload?.items) ? payload.items : [];
+        if (!Array.isArray(payload?.items)) throw new Error('审批列表响应无效');
+        const items = payload.items;
         this.requests = items.filter((item) => item.kind !== 'agent') as ApprovalRequest[];
         this.agentApprovals = items.filter((item) => item.kind === 'agent') as unknown as AgentApproval[];
-        this.agentApprovalsError = null;
         if (this.filter === 'pending') {
           this.executeAfterApprove = Object.fromEntries(this.requests.map(r => [r.id, true]));
         }
       } else {
         this.requests = [];
         this.agentApprovals = [];
-        this.agentApprovalsError = agentApprovalsLoadError(res.status);
+        this.listError = agentApprovalsLoadError(res.status);
       }
     } catch {
       if (generation !== this.listGeneration) return;
       this.requests = [];
       this.agentApprovals = [];
-      this.agentApprovalsError = '审批列表加载失败，请检查数据库迁移和当前用户权限';
+      this.listError = '审批列表加载失败，请重试';
     }
     this.loading = false;
-    this.historyPage = Math.min(this.historyPage, Math.max(0, Math.ceil(this.historyItems().length / 6) - 1));
+    if (!this.listError) {
+      this.historyPage = Math.min(this.historyPage, Math.max(0, Math.ceil(this.historyItems().length / 6) - 1));
+    }
     this.saveHistoryContext();
   }
 
@@ -489,7 +491,7 @@ export class ApprovalDashboard extends LitElement {
           EditorView.editable.of(false),
           EditorView.theme({
             "&": { height: "100%" },
-            ".cm-scroller": { fontFamily: "var(--mono, 'JetBrains Mono', monospace)", fontSize: "13px", overflow: "auto" },
+            ".cm-scroller": { fontFamily: "var(--mono)", fontSize: "13px", overflow: "auto" },
           }),
         ],
       }),
@@ -629,47 +631,57 @@ export class ApprovalDashboard extends LitElement {
         <button class="tab ${this.filter === 'pending' ? 'active' : ''}" aria-pressed=${this.filter === 'pending'} @click=${() => this.switchFilter('pending')}>待审批</button>
         <button class="tab ${this.filter === 'processed' ? 'active' : ''}" aria-pressed=${this.filter === 'processed'} @click=${() => this.switchFilter('processed')}>审批历史</button>
       </div>
-      ${this.agentApprovalsError ? html`<div class="error-box" role="alert">${this.agentApprovalsError}</div>` : nothing}
-      ${this.filter === 'processed' ? this.renderHistory() : this.loading ? html`<div class="loading" role="status">加载中...</div>` : this.agentApprovalsError ? nothing : html`
+      <section data-read-results aria-label=${this.filter === 'processed' ? '审批历史结果' : '待审批结果'}
+        aria-busy=${String(this.loading)} tabindex="-1">
+      ${this.listError ? html`<app-notice severity="error">
+        <div role="alert">${this.listError}</div>
+        <button type="button" class="btn btn-refresh" data-read-retry
+          @click=${(event: Event) => retryReadWithFocus(this, event, () => this.loadRequests())}>重试</button>
+      </app-notice>` : nothing}
+      ${this.agentApprovalsError ? html`<app-notice severity="error" role="alert">${this.agentApprovalsError}</app-notice>` : nothing}
+      ${this.filter === 'processed' ? this.renderHistory()
+        : this.loading ? html`<div class="skeleton skeleton-block" role="status" aria-label="正在加载待审批请求"></div>`
+        : this.listError || this.agentApprovalsError ? nothing : html`
         ${agentItems.map((approval) => html`
-          <div class="card">
+          <app-card class="approval-card">
             <div class="card-header"><div><app-badge variant="info">Agent</app-badge> <strong>${approval.tool_name}</strong>${this.actionLink(approval)}</div><span class="ai-badge">#${approval.id}</span></div>
             <div class="sql-preview pending-preview">${JSON.stringify({ args: approval.args_redacted, resource: approval.resource_json }, null, 2)}</div>
-            <div style="margin-top:8px;font-size:12px;color:var(--muted)">状态：${this._statusLabel(approval.status)}</div>
+            <div style="margin-top:var(--space-sm);font-size:var(--text-sm);color:var(--muted)">状态：${this._statusLabel(approval.status)}</div>
             ${approval.status === 'pending' ? html`
             <div class="actions">
               <span class="ai-badge">风险：${approval.risk_level || 'high'} / ${approval.scope || 'once'}</span>
-              <button class="btn btn-approve" @click=${() => this.reviewAgentApproval(approval.id, 'approve', approval.risk_level === 'high' ? 'once' : approval.scope || 'window')}>通过</button>
-              ${approval.risk_level !== 'high' ? html`<button class="btn btn-approve" @click=${() => this.reviewAgentApproval(approval.id, 'approve', 'window')}>允许 5 分钟</button>` : nothing}
+              <button class="btn-primary btn-success" @click=${() => this.reviewAgentApproval(approval.id, 'approve', approval.risk_level === 'high' ? 'once' : approval.scope || 'window')}>通过</button>
+              ${approval.risk_level !== 'high' ? html`<button class="btn" @click=${() => this.reviewAgentApproval(approval.id, 'approve', 'window')}>允许 5 分钟</button>` : nothing}
               ${(pendingAgentToolCounts.get(approval.tool_name) ?? 0) > 1
                 && firstPendingAgentApproval.get(approval.tool_name) === String(approval.id) ? html`
                 <button
-                  class="btn btn-approve agent-batch-approve"
+                  class="btn agent-batch-approve"
+                  aria-busy=${this.reviewingAgentTools.has(approval.tool_name)}
                   .disabled=${this.reviewingAgentTools.has(approval.tool_name)}
                   @click=${() => this.reviewPendingAgentTool(approval.tool_name)}
                 >同工具全部通过 (${pendingAgentToolCounts.get(approval.tool_name)})</button>
               ` : nothing}
-              <button class="btn btn-reject" @click=${() => this.reviewAgentApproval(approval.id, 'reject')}>驳回</button>
+              <button class="btn-danger-outline" @click=${() => this.reviewAgentApproval(approval.id, 'reject')}>驳回</button>
             </div>
             ` : nothing}
-          </div>
+          </app-card>
         `)}
 
       ${this.filter === 'pending' && this.selectedIds.size > 0 ? html`
         <div class="batch-bar">
           <span class="count">已选择 <strong>${this.selectedIds.size}</strong> 项</span>
           <div class="spacer"></div>
-          <button class="btn btn-approve" @click=${() => this._openBatchDialog(Array.from(this.selectedIds), 'approve')}>
+          <button class="btn-primary btn-success" @click=${() => this._openBatchDialog(Array.from(this.selectedIds), 'approve')}>
             通过 (${this.selectedIds.size})
           </button>
-          <button class="btn btn-reject" @click=${() => this._openBatchDialog(Array.from(this.selectedIds), 'reject')}>
+          <button class="btn-danger-outline" @click=${() => this._openBatchDialog(Array.from(this.selectedIds), 'reject')}>
             驳回 (${this.selectedIds.size})
           </button>
         </div>
       ` : ''}
 
       ${sqlItems.map(r => html`
-        <div class="card ${this.selectedIds.has(r.id) ? 'selected' : ''}">
+        <app-card class="approval-card ${this.selectedIds.has(r.id) ? 'selected' : ''}">
           <div class="card-row" @click=${() => this.openDetail(r)}>
             ${this.filter === 'pending' ? html`
               <div class="card-checkbox" @click=${(e: Event) => e.stopPropagation()}>
@@ -680,7 +692,7 @@ export class ApprovalDashboard extends LitElement {
               <div class="card-header">
                 <div>
                   <app-badge variant="info">SQL</app-badge> ${this._riskBadge(r.risk_level)}
-                  <span style="margin-left:8px;font-size:12px;color:var(--muted)">#${r.id} · ${new Date(r.created_at).toLocaleString("zh-CN")}</span>
+                  <span style="margin-left:var(--space-sm);font-size:var(--text-sm);color:var(--muted)">#${r.id} · ${new Date(r.created_at).toLocaleString("zh-CN")}</span>
                   <span class="caption">目标：${this.historyTarget({ kind: 'sql', record: r })}</span>
                 </div>
                 ${r.ai_recommendation ? html`
@@ -690,14 +702,14 @@ export class ApprovalDashboard extends LitElement {
               <button data-request-id=${r.id} class="btn-ghost pending-detail" @click=${(e: Event) => { e.stopPropagation(); this.openDetail(r, e.currentTarget as HTMLElement); }}>查看完整证据</button>
               <div class="sql-preview pending-preview" @click=${(e: Event) => e.stopPropagation()}>${r.sql_text}</div>
               ${approvalValue(r.ai_recommendation)?.reasoning ? html`
-                <div style="margin-top:8px;font-size:12px;color:var(--muted);">${approvalValue(r.ai_recommendation).reasoning}</div>
+                <div style="margin-top:var(--space-sm);font-size:var(--text-sm);color:var(--muted);">${approvalValue(r.ai_recommendation).reasoning}</div>
               ` : ''}
               ${r.status === 'approved' ? html`
-                ${r.execution_result ? this._renderExecResult(r) : html`<div style="margin-top:8px;font-size:12px;color:var(--ok,#15803d);">✓ 已通过 ${r.review_notes ? '— ' + r.review_notes : ''}</div>`}
+                ${r.execution_result ? this._renderExecResult(r) : html`<div style="margin-top:var(--space-sm);font-size:var(--text-sm);color:var(--ok);">✓ 已通过 ${r.review_notes ? '— ' + r.review_notes : ''}</div>`}
               ` : ''}
               ${r.status === 'executed' ? this._renderExecResult(r) : ''}
               ${r.status === 'rejected' ? html`
-                <div style="margin-top:8px;font-size:12px;color:var(--danger,#ef4444);">✗ 已驳回 ${r.review_notes ? '— ' + r.review_notes : ''}</div>
+                <div style="margin-top:var(--space-sm);font-size:var(--text-sm);color:var(--danger);">✗ 已驳回 ${r.review_notes ? '— ' + r.review_notes : ''}</div>
               ` : ''}
             </div>
           </div>
@@ -709,16 +721,17 @@ export class ApprovalDashboard extends LitElement {
               <label for="exec-${r.id}">审批后自动执行</label>
             </div>
             <div class="actions" @click=${(e: Event) => e.stopPropagation()}>
-              <button class="btn btn-approve" @click=${() => this._openBatchDialog([r.id], 'approve')}>通过</button>
-              <button class="btn btn-reject" @click=${() => this._openBatchDialog([r.id], 'reject')}>驳回</button>
+              <button class="btn-primary btn-success" @click=${() => this._openBatchDialog([r.id], 'approve')}>通过</button>
+              <button class="btn-danger-outline" @click=${() => this._openBatchDialog([r.id], 'reject')}>驳回</button>
             </div>
           ` : ''}
-        </div>
+        </app-card>
       `)}
-      ${agentItems.length === 0 && sqlItems.length === 0 ? html`<div class="empty">${this.filter === 'pending' ? '暂无待审批请求' : '暂无已审批记录'}</div>` : nothing}
+      ${agentItems.length === 0 && sqlItems.length === 0 ? html`<app-empty-state title="暂无待审批请求"></app-empty-state>` : nothing}
 
       ${this._renderBatchDialog()}
       `}
+      </section>
     `;
   }
 
@@ -795,11 +808,12 @@ export class ApprovalDashboard extends LitElement {
         </select></label>
       </div>
       <div class="history-notice"><strong>审批结果与执行结果分开核对</strong>批准不表示已经执行。待审批页面仍直接展示 SQL、目标资源、风险与关键证据。<br>仅筛选本次已读取记录：SQL 与 Agent 各最多 100 条，不代表全部历史。Agent 授权已使用也不代表工具执行成功。</div>
-      ${this.agentApprovalsError ? nothing : html`<app-card class="history-card" .compact=${true}>
+      ${this.listError ? nothing : html`<app-card class="history-card" .compact=${true}>
         <div class="table-scroll" role="region" aria-label="审批历史，可横向滚动" tabindex="0"><app-data-table .columns=${[
           { key: 'summary', label: '建议摘要' }, { key: 'target', label: '目标资源' }, { key: 'risk', label: '风险' },
           { key: 'decision', label: '审批' }, { key: 'execution', label: '执行' }, { key: 'detail', label: '详情' },
-        ]} .rows=${rows} .loading=${this.loading} .dense=${true} .striped=${false} emptyMessage="没有符合条件的审批记录"></app-data-table></div>
+        ]} .rows=${rows} .loading=${this.loading} .dense=${true} .striped=${false}
+          emptyMessage=${this.requests.length || this.agentApprovals.length ? "没有符合条件的审批记录" : "暂无已审批记录"}></app-data-table></div>
         <div class="pagination" aria-live="polite"><span>${this.loading ? '正在读取历史…' : `已读取 ${this.requests.length + this.agentApprovals.length} 条 · 筛选后 ${items.length} 条 · 每页 6 条`}</span><div>
           <button class="btn" ?disabled=${this.loading || this.historyPage === 0} @click=${() => { this.historyPage--; this.saveHistoryContext(); }}>上一页</button>
           <span>第 ${this.historyPage + 1} / ${pages} 页</span><button class="btn" ?disabled=${this.loading || this.historyPage + 1 >= pages} @click=${() => { this.historyPage++; this.saveHistoryContext(); }}>下一页</button>
@@ -860,12 +874,12 @@ export class ApprovalDashboard extends LitElement {
       html`
         ${this.evidenceWarning ? html`<div class="history-notice" role="status">${this.evidenceWarning}</div>` : nothing}
         <div class="detail-split">
-          <div class="detail-sql-panel">
+          <app-card class="detail-sql-panel" compact>
             <div id="cm-container-${r.id}" style="height:100%;min-height:300px;"></div>
-          </div>
+          </app-card>
           <div class="detail-sidebar">
-            <div class="meta-card">
-              <h3>基本信息</h3>
+            <app-card>
+              <span slot="header">基本信息</span>
               <div class="meta-row"><span class="meta-label">实例名称</span><span class="meta-value">${(r as any).instance_name || String(r.instance_id)}</span></div>
               <div class="meta-row"><span class="meta-label">目标数据库</span><span class="meta-value">${(r as any).target_database || '默认数据库'}</span></div>
               <div class="meta-row"><span class="meta-label">提交人</span><span class="meta-value">${(r as any).submitted_by || '-'}</span></div>
@@ -873,23 +887,23 @@ export class ApprovalDashboard extends LitElement {
               <div class="meta-row"><span class="meta-label">风险等级</span><span class="meta-value">${this._riskBadge(r.risk_level)}</span></div>
               <div class="meta-row"><span class="meta-label">当前状态</span><span class="meta-value">${this._statusLabel(r.status)}</span></div>
               ${r.operation_id ? html`<div class="meta-row"><span class="meta-label">Operation</span><span class="meta-value">${this.operationState ?? '加载中'}</span></div>` : ''}
-              ${r.operation_id && ['queued', 'waiting_approval', 'claimed'].includes(this.operationState ?? '') ? html`<div class="actions"><button class="btn btn-reject" @click=${this._cancelOperation}>取消 Operation</button></div>` : ''}
-              ${r.operation_id && ['failed', 'unknown', 'cancelled'].includes(this.operationState ?? '') ? html`<div class="actions"><button class="btn btn-approve" @click=${this._retryOperation}>创建重试尝试</button></div>` : ''}
+              ${r.operation_id && ['queued', 'waiting_approval', 'claimed'].includes(this.operationState ?? '') ? html`<div class="actions"><button class="btn-danger-outline" @click=${this._cancelOperation}>取消 Operation</button></div>` : ''}
+              ${r.operation_id && ['failed', 'unknown', 'cancelled'].includes(this.operationState ?? '') ? html`<div class="actions"><button class="btn-primary" @click=${this._retryOperation}>创建重试尝试</button></div>` : ''}
               ${r.ai_recommendation ? html`
                 <div class="meta-row"><span class="meta-label">AI 分析</span><span class="meta-value"><span class="ai-badge">AI: ${approvalValue(r.ai_recommendation)?.recommendation === 'approve' ? '建议通过' : approvalValue(r.ai_recommendation)?.recommendation === 'reject' ? '建议驳回' : '建议未知'}</span></span></div>
-                ${approvalValue(r.ai_recommendation)?.reasoning ? html`<div class="meta-row"><span class="meta-label">AI 理由</span><span class="meta-value" style="font-size:12px;color:var(--muted);">${approvalValue(r.ai_recommendation)?.reasoning}</span></div>` : ''}
+                ${approvalValue(r.ai_recommendation)?.reasoning ? html`<div class="meta-row"><span class="meta-label">AI 理由</span><span class="meta-value" style="font-size:var(--text-sm);color:var(--muted);">${approvalValue(r.ai_recommendation)?.reasoning}</span></div>` : ''}
               ` : ''}
-            </div>
-            ${r.operation_id ? html`<div class="timeline-card">
-              <div class="timeline-header">Operation 时间线</div>
+            </app-card>
+            ${r.operation_id ? html`<app-card>
+              <span slot="header">Operation 时间线</span>
               <div class="timeline-list">
                 ${this.operationEvents.map((ev, i) => html`<div class="timeline-node" style="animation-delay:${i * 50}ms"><div class="timeline-dot timeline-dot--${ev.toState}"></div><div class="timeline-content"><div class="timeline-event-name">${ev.reasonCode}</div><div class="timeline-timestamp">${new Date(ev.createdAt).toLocaleString("zh-CN")}</div></div></div>`)}
               </div>
-            </div>` : ''}
-            <div class="timeline-card">
-              <div class="timeline-header">审批历程</div>
+            </app-card>` : ''}
+            <app-card>
+              <span slot="header">审批历程</span>
               <div class="timeline-list">
-                ${this.events.length === 0 ? html`<div style="color:var(--muted);font-size:13px;padding:8px 0;">暂无事件记录</div>` :
+                ${this.events.length === 0 ? html`<div style="color:var(--muted);font-size:13px;padding:var(--space-sm) 0;">暂无事件记录</div>` :
                 this.events.map((ev, i) => html`
                   <div class="timeline-node" style="animation-delay:${i * 50}ms">
                     <div class="timeline-dot timeline-dot--${ev.event_type}"></div>
@@ -901,7 +915,7 @@ export class ApprovalDashboard extends LitElement {
                   </div>
                 `)}
               </div>
-            </div>
+            </app-card>
           </div>
         </div>
       `}
@@ -912,16 +926,17 @@ export class ApprovalDashboard extends LitElement {
     if (!this.batchDialogOpen) return nothing;
     return html`
       <app-dialog .open=${true} .closable=${!this.batchLoading} .closeOnOverlay=${false} size="md" title="${this.batchAction === 'approve' ? '批量通过' : '批量驳回'}" @app-dialog-close=${this._closeBatchDialog}>
-        <div style="margin-bottom:12px;font-size:var(--text-md);color:var(--text, #3c3c43);">
+        <div style="margin-bottom:var(--space-md);font-size:var(--text-md);color:var(--text);">
           确认对选中的 <strong>${this.batchIds.length}</strong> 项请求执行${this.batchAction === 'approve' ? '通过' : '驳回'}操作？
         </div>
         ${this.batchError ? html`<div class="error-box" role="alert">${this.batchError}</div>` : ''}
-        <textarea aria-label="审批备注" style="width:100%;min-height:80px;padding:var(--space-sm) var(--space-md);border:1px solid var(--border, #e5e7eb);border-radius:var(--radius-sm);font-size:var(--text-md);color:var(--text, #3c3c43);resize:vertical;box-sizing:border-box;font-family:inherit;"
+        <textarea aria-label="审批备注" style="width:100%;min-height:80px;padding:var(--space-sm) var(--space-md);border:1px solid var(--border);border-radius:var(--radius-sm);font-size:var(--text-md);color:var(--text);resize:vertical;box-sizing:border-box;font-family:inherit;"
           placeholder="审批备注（可选）" .value=${this.batchNote}
           @input=${(e: Event) => { this.batchNote = (e.target as HTMLTextAreaElement).value; }}></textarea>
         <div slot="footer">
           <button class="btn" @click=${this._closeBatchDialog} ?disabled=${this.batchLoading}>取消</button>
-          <button class="btn ${this.batchAction === 'approve' ? 'btn-approve' : 'btn-reject'}"
+          <button class="btn-primary ${this.batchAction === 'approve' ? 'btn-success' : 'btn-danger'}"
+            aria-busy=${this.batchLoading}
             @click=${this._confirmBatch} ?disabled=${this.batchLoading}>
             ${this.batchLoading ? '处理中...' : (this.batchAction === 'approve' ? '确认通过' : '确认驳回')}
           </button>

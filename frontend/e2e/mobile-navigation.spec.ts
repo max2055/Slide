@@ -143,7 +143,9 @@ for (const width of [375, 768]) for (const theme of ['light', 'dark']) {
     await page.keyboard.press('Tab');
     await expect(first).toBeFocused();
     await captureFocus(page, '.shell-nav .nav-collapse-toggle', 'close-focus');
-    await page.locator('.topbar-search').evaluate(el => (el as HTMLElement).focus());
+    const pageJump = page.locator('.topbar-search');
+    const pageJumpName = await pageJump.getAttribute('aria-label');
+    await pageJump.evaluate(el => (el as HTMLElement).focus());
     expect(await nav.evaluate(el => el.contains(document.activeElement))).toBe(true);
     await capture(page, info.outputPath('keyboard-focus.png'), theme);
     await page.addScriptTag({ path: axeRequire.resolve('axe-core/axe.min.js') });
@@ -153,7 +155,7 @@ for (const width of [375, 768]) for (const theme of ['light', 'dark']) {
     const cdp = await page.context().newCDPSession(page);
     const tree = await cdp.send('Accessibility.getFullAXTree');
     expect(tree.nodes.some(node => !node.ignored && node.role?.value === 'dialog' && node.name?.value)).toBe(true);
-    expect(tree.nodes.some(node => !node.ignored && node.role?.value === 'button' && node.name?.value === 'Open command palette')).toBe(false);
+    expect(tree.nodes.some(node => !node.ignored && node.role?.value === 'button' && node.name?.value === pageJumpName)).toBe(false);
     await cdp.detach();
     await page.mouse.click(width - 10, 400);
     await expect(toggle).toHaveAttribute('aria-expanded', 'false');

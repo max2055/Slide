@@ -30,7 +30,7 @@ test.beforeEach(async ({ page }) => {
   await page.addStyleTag({ content: '* { transition: none !important; animation: none !important; }' });
   await expect(page.locator('html')).toHaveAttribute('data-theme-mode', 'light');
   await expect(page.locator('.topbar')).toBeVisible();
-  await expect(page.locator('.topbar-search__label')).toHaveText('搜索');
+  await expect(page.locator('.topbar-search__label')).toHaveText('跳转到页面');
 });
 
 for (const [width, height] of [[1440, 900], [1366, 768], [1920, 1080]]) {

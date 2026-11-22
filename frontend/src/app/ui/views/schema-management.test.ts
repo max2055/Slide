@@ -75,6 +75,7 @@ it('#677 renders an insufficient-snapshot hint and clears it after successful de
   vi.mocked(authFetch).mockResolvedValueOnce(reply({ success: true, changes: [], hint }));
   await view.handleDetect(); await view.updateComplete;
   expect(view.shadowRoot.querySelector('[role="status"]').textContent).toContain(hint);
+  expect(view.shadowRoot.querySelector('stat-card[label="新增"]').value).toBe('未比较');
   vi.mocked(authFetch).mockResolvedValueOnce(reply({ success: true, changes: [{ table_name: 'updated', target: 'table', type: 'added' }] }));
   await view.handleDetect(); view.activeTab = 'changes'; await view.updateComplete;
   expect(view.shadowRoot.textContent).not.toContain(hint);
@@ -87,7 +88,32 @@ it('#677 a late initial read cannot overwrite an explicit detection result', asy
   vi.mocked(authFetch).mockResolvedValueOnce(reply({ success: true, changes: [], hint }));
   await view.handleDetect();
   gate.resolve(reply({ changes: [{ table_name: 'old' }] })); await initial;
-  expect(view.hint).toBe(hint); expect(view.changes).toEqual([]);
+  expect(view.hint).toBe(hint); expect(view.changes).toBeNull();
+});
+it.each([{ changes: [], hint }, { changes: { hint } }])('MAX-717 distinguishes an insufficient comparison from a successful zero', async response => {
+  const view = await mount();
+  view.activeTab = 'changes';
+  const count = (label: string) => view.shadowRoot.querySelector(`stat-card[label="${label}"]`).value;
+  vi.mocked(authFetch).mockResolvedValueOnce(reply(response));
+  await view.loadChanges();
+  await view.updateComplete;
+  expect(count('新增')).toBe('未比较');
+  expect(count('删除')).toBe('未比较');
+  expect(view.shadowRoot.querySelector('app-empty-state[title="暂无变更"]')).toBeNull();
+
+  vi.mocked(authFetch).mockResolvedValueOnce(reply({}, 503));
+  await view.loadChanges();
+  await view.updateComplete;
+  expect(count('新增')).toBe('未知');
+  expect(count('删除')).toBe('未知');
+  expect(view.shadowRoot.querySelector('[role="alert"]').textContent).toContain('变更历史读取失败');
+
+  vi.mocked(authFetch).mockResolvedValueOnce(reply({ changes: [] }));
+  await view.loadChanges();
+  await view.updateComplete;
+  expect(count('新增')).toBe('0');
+  expect(count('删除')).toBe('0');
+  expect(view.shadowRoot.querySelector('app-empty-state[title="暂无变更"]')).toBeTruthy();
 });
 it.each([[null, '0', 'NULL → 0'], ['0', null, '0 → NULL'], ['', 'value', '"" → value'], ['value', '', 'value → ""'], [null, '', 'NULL → ""'], ['', null, '"" → NULL'], [0, false, '0 → false']])('#678 displays both default values for %j → %j', async (old, next, expected) => {
   const view = await mount();
@@ -101,6 +127,7 @@ it.each([[null, '0', 'NULL → 0'], ['0', null, '0 → NULL'], ['', 'value', '""
 it.each([403, 503])('#676 clears the former table on HTTP %s and recovers explicitly', async status => {
   const view = await mount();
   vi.mocked(authFetch).mockResolvedValueOnce(reply({}, status));
-  await view.loadTableList(); expect(view.tableList).toEqual([]); expect(view.tablesError).toBeTruthy();
-  await view.loadTableList(); expect(view.tableList[0].table_name).toBe('table-1'); expect(view.tablesError).toBeNull();
+  await view.loadTableList(); expect(view.tableList).toEqual([]); expect(status === 403 ? view.schemaAccessError : view.tablesError).toBeTruthy();
+  if (status === 403) await view.refreshData(); else await view.loadTableList();
+  expect(view.tableList[0].table_name).toBe('table-1'); expect(view.tablesError).toBeNull();
 });
