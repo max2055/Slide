@@ -492,6 +492,145 @@ const serveWithRaw = (data: unknown, raw: unknown | (() => unknown)) => authFetc
   return { ok: false, status: 404 };
 });
 const rawCalls = () => authFetch.mock.calls.filter(call => call[0] === '/api/metrics/observations');
+const rawBody = (index: number) => JSON.parse(rawCalls()[index][1].body);
+const rawHistory = (dimensions: Record<string, string> = { device: 'sda' }) => {
+  const data = withBuckets([bucketAt(0), bucketAt(1)]);
+  const metric = data.metrics[0];
+  return { ...data, metrics: [{
+    ...metric, definition: { ...metric.definition, semantic_version: '1.0.0' },
+    series: [{ ...metric.series[0], dimensions }],
+  }] };
+};
+it.each([200, 400, 401, 403])('ignores a late raw response (%s) after switching metrics with observations open', async status => {
+  const data = rawHistory();
+  const second = structuredClone(data.metrics[0]);
+  second.definition.id = 'mysql.key_cache.used_percent';
+  second.series[0].dimensions = { device: 'sdb' };
+  data.metrics.push(second);
+  const oldRequest = Promise.withResolvers<unknown>();
+  const newRequest = Promise.withResolvers<unknown>();
+  const requests = [oldRequest.promise, newRequest.promise];
+  serveWithRaw(data, () => requests.shift());
+  const el = await mount();
+  const details = await openRaw(el);
+  const select = el.shadowRoot!.querySelector<HTMLSelectElement>('select[aria-label="指标"]')!;
+  select.value = second.definition.id;
+  select.dispatchEvent(new Event('change'));
+  await el.updateComplete;
+  expect(details.open).toBe(true);
+  expect(rawCalls()).toHaveLength(2);
+  expect(rawCalls()[0][1].signal.aborted).toBe(true);
+  expect(rawBody(1)).toMatchObject({
+    metric: { id: second.definition.id, semantic_version: '1.0.0' },
+    dimensions: { device: 'sdb' },
+  });
+  expect(rawBody(1).cursor).toBeUndefined();
+
+  oldRequest.resolve(status === 200 ? ok(rawPage({ total: 99 })) : { ok: false, status, json: async () => ({}) });
+  await settle();
+  expect(el.error).toBe('');
+  expect(details.querySelector('app-data-table, [role="alert"]')).toBeNull();
+  expect(details.querySelector('.skeleton')).toBeTruthy();
+
+  newRequest.resolve(ok(rawPage({ total: 1, observations: [rawObservation('obs-3', 33)] })));
+  await settle();
+  expect(details.textContent).toContain('33 s');
+  expect(details.textContent).toContain('正式窗口内共 1 条');
+  expect(details.querySelector('.skeleton')).toBeNull();
+});
+
+it('refreshes open observations with the new window and uses only its cursor for the first next page', async () => {
+  const initial = rawHistory();
+  const refreshed = rawHistory();
+  refreshed.window = { from: bucketAt(1).window.from, to: bucketAt(2).window.to };
+  const oldNext = Promise.withResolvers<unknown>();
+  const newFirst = Promise.withResolvers<unknown>();
+  const responses = [
+    ok(rawPage({ total: 99, has_more: true, next_cursor: 'old-cursor' })),
+    oldNext.promise,
+    newFirst.promise,
+    ok(rawPage({ total: 3, observations: [rawObservation('obs-4', 44)] })),
+  ];
+  const nextResponse = () => responses.shift();
+  serveWithRaw(initial, nextResponse);
+  const el = await mount();
+  const details = await openRaw(el);
+  expect(details.textContent).toContain('正式窗口内共 99 条');
+  details.querySelector<HTMLButtonElement>('button')!.click();
+  expect(rawBody(1).cursor).toBe('old-cursor');
+
+  serveWithRaw(refreshed, nextResponse);
+  el.shadowRoot!.querySelector<HTMLButtonElement>('.btn-refresh')!.click();
+  await settle();
+  expect(details.open).toBe(true);
+  expect(details.textContent).not.toContain('正式窗口内共 99 条');
+  expect(details.querySelector('app-data-table, button')).toBeNull();
+  expect(details.querySelector('.skeleton')).toBeTruthy();
+  expect(rawCalls()).toHaveLength(3);
+  expect(rawBody(2)).toMatchObject(refreshed.window);
+  expect(rawBody(2).cursor).toBeUndefined();
+
+  oldNext.resolve(ok(rawPage({ total: 99, observations: [rawObservation('obs-3', 99)] })));
+  await settle();
+  expect(details.querySelector('app-data-table')).toBeNull();
+  expect(details.querySelector('.skeleton')).toBeTruthy();
+
+  newFirst.resolve(ok(rawPage({ total: 3, has_more: true, next_cursor: 'new-cursor' })));
+  await settle();
+  const next = details.querySelector<HTMLButtonElement>('button')!;
+  expect(next.disabled).toBe(false);
+  next.click();
+  await settle();
+  expect(rawBody(3)).toEqual({ ...rawBody(2), cursor: 'new-cursor' });
+  expect(details.textContent).toContain('44 s');
+});
+
+it('keeps the cursor on an unchanged scope and reloads on a semantic version change in the same window', async () => {
+  const data = rawHistory({ device: 'sda', mount: '/' });
+  serveWithRaw(data, rawPage({ total: 99, has_more: true, next_cursor: 'same-scope' }));
+  const el = await mount();
+  const details = await openRaw(el);
+
+  const reordered = rawHistory({ mount: '/', device: 'sda' });
+  serveWithRaw(reordered, rawPage());
+  await el.load();
+  await el.updateComplete;
+  expect(rawCalls()).toHaveLength(1);
+  details.querySelector<HTMLButtonElement>('button')!.click();
+  await settle();
+  expect(rawBody(1).cursor).toBe('same-scope');
+
+  const versioned = structuredClone(reordered);
+  versioned.metrics[0].definition.semantic_version = '2.0.0';
+  serveWithRaw(versioned, rawPage({ total: 0, observations: [] }));
+  await el.load();
+  await settle();
+  expect(rawCalls()).toHaveLength(3);
+  expect(rawBody(2)).toMatchObject({ ...data.window, metric: { semantic_version: '2.0.0' } });
+  expect(rawBody(2).cursor).toBeUndefined();
+  expect(details.textContent).toContain('暂无原始观测');
+});
+
+it('clears displayed observations and ignores pending pages when permissions change', async () => {
+  const page = Promise.withResolvers<unknown>();
+  const responses = [ok(rawPage({ has_more: true, next_cursor: 'cursor-2' })), page.promise];
+  serveWithRaw(rawHistory(), () => responses.shift());
+  const el = await mount();
+  const details = await openRaw(el);
+  expect(details.querySelector('app-data-table')).toBeTruthy();
+  details.querySelector<HTMLButtonElement>('button')!.click();
+  window.dispatchEvent(new Event('slide-permissions-loaded'));
+  await el.updateComplete;
+  expect(el.result).toBeNull();
+  expect(rawDetails(el)).toBeUndefined();
+  page.resolve(ok(rawPage()));
+  await settle();
+  expect(el.result).toBeNull();
+  expect(rawDetails(el)).toBeUndefined();
+  expect(el.error).toContain('权限或登录状态已变更');
+  expect(rawCalls()).toHaveLength(2);
+});
+
 it('pages formal raw observations with next_cursor and leaves the curve untouched', async () => {
   const data = withBuckets([bucketAt(0), bucketAt(1)]);
   (data.metrics[0].definition as any).semantic_version = '1.0.0';
