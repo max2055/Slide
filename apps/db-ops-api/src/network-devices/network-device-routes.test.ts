@@ -1,5 +1,12 @@
 import {actorContextService} from '../auth/actor-context.js';
+import { generateKeyPairSync, randomBytes } from 'node:crypto';
+import { createSocket, type Socket } from 'node:dgram';
+import { once } from 'node:events';
+import { readFileSync } from 'node:fs';
+import Ajv2020 from 'ajv/dist/2020.js';
 import Fastify, { type FastifyInstance, type preHandlerHookHandler } from 'fastify';
+import * as snmp from 'net-snmp';
+import { Server, utils, type Connection } from 'ssh2';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
@@ -20,6 +27,8 @@ vi.mock('../db-connection.js', () => ({
 
 import { registerNetworkDeviceRoutes } from './network-device-routes.js';
 import { registerHttpSecurity } from '../security/http-security.js';
+import { fingerprintSshHostKey } from '../security/ssh-host-key.js';
+import { verifySshHostKey } from './config-backup-service.js';
 
 type Token = 'reader' | 'manager' | 'backup' | 'none';
 const actors: Record<Token, any> = {
@@ -51,7 +60,7 @@ beforeEach(() => {
 
 describe('MAX-308 explicit key compatibility audit', () => {
   it.each(['reader', 'manager'] as const)('checks permission before auditing or probing for %s', async token => {
-    const sshProbe = vi.fn(async () => {});
+    const sshProbe = vi.fn(async () => ({ verified: false }));
     const app = await appWith({ sshProbe });
     try {
       const response = await app.inject({ method: 'POST', url: '/api/network-devices/test-connection',
@@ -71,7 +80,7 @@ describe('MAX-308 explicit key compatibility audit', () => {
     } finally { await app.close(); }
   });
   it('refuses key probes when audit fails while password probes keep their behavior', async () => {
-    const sshProbe = vi.fn(async () => {});
+    const sshProbe = vi.fn(async () => ({ verified: false }));
     const app = await appWith({ sshProbe });
     mocks.execute.mockRejectedValueOnce(new Error('SSH_TRUST_AUDIT_UNAVAILABLE'));
     const send = (credentialType: string) => app.inject({ method: 'POST', url: '/api/network-devices/test-connection',
@@ -82,7 +91,7 @@ describe('MAX-308 explicit key compatibility audit', () => {
       expect(sshProbe).not.toHaveBeenCalled();
       const password = await send('password');
       expect(password.statusCode).toBe(200);
-      expect(password.json().ssh.verified).toBe(true);
+      expect(password.json().ssh.verified).toBe(false);
       expect(mocks.execute).toHaveBeenCalledTimes(1);
       expect(sshProbe).toHaveBeenCalledTimes(1);
     } finally { await app.close(); }
@@ -90,6 +99,118 @@ describe('MAX-308 explicit key compatibility audit', () => {
 });
 
 describe('network-device routes', () => {
+  it('MAX-699 reports host identity and contract-compatible errors in both probe modes', async () => {
+    const document = JSON.parse(readFileSync(new URL('../../../../docs/slide/openapi.json', import.meta.url), 'utf8'));
+    const probe = document.paths['/api/network-devices/test-connection'].post;
+    const { $ref } = probe.responses['400'].content['application/json'].schema;
+    const schemaName = $ref.replace('#/components/schemas/', '');
+    const validateBadRequest = new Ajv2020().compile(document.components.schemas[schemaName]);
+    expect(validateBadRequest({ success: false })).toBe(false);
+    expect(validateBadRequest({ error: 'fixture', success: true })).toBe(false);
+    expect(validateBadRequest({ error: 'fixture', extra: true })).toBe(false);
+    const host = '127.0.0.1';
+    const community = 'fixture-community';
+    const password = randomBytes(16).toString('hex');
+    const { privateKey } = generateKeyPairSync('rsa', {
+      modulusLength: 2048, privateKeyEncoding: { type: 'pkcs1', format: 'pem' },
+      publicKeyEncoding: { type: 'spki', format: 'pem' },
+    });
+    const key = utils.parseKey(privateKey);
+    if (key instanceof Error || Array.isArray(key)) throw new Error('Could not parse fixture host key');
+    const pin = fingerprintSshHostKey(key.getPublicSSH());
+    const wrongPin = fingerprintSshHostKey(Buffer.from('different fixture host key'));
+    const clients = new Set<Connection>();
+    let authentications = 0;
+    let sessions = 0;
+    const sshServer = new Server({ hostKeys: [privateKey] }, client => {
+      clients.add(client);
+      client.on('close', () => clients.delete(client));
+      client.on('error', () => {});
+      client.on('authentication', context => {
+        if (context.method !== 'password') return context.reject(['password']);
+        authentications++;
+        if (context.username === 'fixture' && context.password === password) context.accept();
+        else context.reject();
+      });
+      client.on('session', (_accept, reject) => { sessions++; reject(); });
+    });
+    const reservation = createSocket('udp4');
+    reservation.bind(0, host);
+    await once(reservation, 'listening');
+    const snmpPort = reservation.address().port;
+    await new Promise<void>(resolve => reservation.close(resolve));
+    const agent = snmp.createAgent({ address: host, port: snmpPort }, () => {});
+    const snmpSockets = Object.values(agent.listener.sockets) as Socket[];
+    let app: FastifyInstance | undefined;
+    try {
+      await Promise.all(snmpSockets.map(socket => once(socket, 'listening')));
+      agent.getAuthorizer().addCommunity(community);
+      agent.getMib().registerProvider({
+        name: 'uptime', type: snmp.MibProviderType.Scalar, oid: '1.3.6.1.2.1.1.3',
+        scalarType: snmp.ObjectType.TimeTicks, maxAccess: snmp.MaxAccess['read-only'],
+      });
+      agent.getMib().setScalarValue('uptime', 9500);
+      sshServer.listen(0, host);
+      await once(sshServer, 'listening');
+      const sshPort = (sshServer.address() as { port: number }).port;
+      // Restrict the loopback policy override to the two fixture listeners.
+      const authorizeTarget = async (target?: { host: string; port: number } | null) => {
+        if (target?.host !== host || (target.port !== sshPort && target.port !== snmpPort)) {
+          throw new Error('Unexpected fixture target');
+        }
+        return { hostname: host, address: host, port: target.port };
+      };
+      app = await appWith({
+        authorizeTarget,
+        sshProbe: (input: Parameters<typeof verifySshHostKey>[0]) =>
+          verifySshHostKey(input, { authorizeTarget, readyTimeoutMs: 2000 }),
+      });
+      const base = await app.listen({ host, port: 0 });
+      for (const mode of ['ssh', 'snmp']) {
+        const send = async (hostKeyFingerprint?: string, credentialValue = password, extraFields: Record<string, unknown> = {}) => {
+          const response = await fetch(`${base}/api/network-devices/test-connection`, {
+            method: 'POST', headers: { authorization: 'Bearer manager', 'content-type': 'application/json' },
+            body: JSON.stringify({
+              mode, host, sshPort, ...(mode === 'snmp' ? { version: 2, snmpPort, snmpv2c: { community } } : {}),
+              ssh: { username: 'fixture', credentialType: 'password', credentialValue, hostKeyFingerprint },
+              ...extraFields,
+            }),
+          });
+          return { status: response.status, body: await response.json() };
+        };
+        for (const [fingerprint, verified] of [[undefined, false], ['   ', false], [pin, true]] as const) {
+          const response = await send(fingerprint);
+          expect(response.status).toBe(200);
+          expect(response.body).toMatchObject({ success: true, ssh: { verified } });
+          if (mode === 'snmp') {
+            expect(response.body).toMatchObject({ probe: { reachable: true, uptimeSeconds: 95 } });
+          } else {
+            expect(response.body).not.toHaveProperty('probe');
+          }
+        }
+        const before = authentications;
+        const mismatch = await send(wrongPin);
+        expect(mismatch).toEqual({ status: 400, body: { success: false, error: 'SSH_HOST_KEY_MISMATCH' } });
+        expect.soft(validateBadRequest(mismatch.body), `${mode} fingerprint mismatch matches the HTTP 400 schema`).toBe(true);
+        const invalidRequest = await send(pin, password, { unexpectedField: true });
+        expect(invalidRequest).toEqual({ status: 400, body: { error: expect.stringContaining('unexpectedField') } });
+        expect.soft(validateBadRequest(invalidRequest.body), `${mode} request validation matches the HTTP 400 schema`).toBe(true);
+        expect(authentications).toBe(before);
+        const rejectedPassword = await send(pin, 'incorrect fixture password');
+        expect(rejectedPassword).toEqual({ status: 400, body: { success: false, error: 'SSH_CONNECT_FAILED' } });
+        expect.soft(validateBadRequest(rejectedPassword.body), `${mode} password rejection matches the HTTP 400 schema`).toBe(true);
+      }
+      expect(sessions).toBe(0);
+    } finally {
+      await app?.close();
+      for (const client of clients) client.end();
+      await Promise.all([
+        new Promise<void>(resolve => sshServer.close(() => resolve())),
+        new Promise<void>(resolve => agent.close(() => resolve())),
+      ]);
+    }
+  }, 15_000);
+
   it('MAX-606 exposes only saved-backup metadata on audit failure and discourages replay', async () => {
     const capture = vi.fn(async () => ({ success: false, error: 'CONFIG_BACKUP_SAVED_AUDIT_FAILED', backupSaved: true, retryable: false,
       duplicate: false, backup: { id: 9, deviceId: 7, contentEncrypted: 'private', content: 'private', preview: 'private', secret: 'private' } }));
@@ -222,7 +343,7 @@ describe('network-device routes', () => {
 
   it('rejects unknown test-connection fields and probes only validated SNMPv3 payloads', async () => {
     const probe = vi.fn(async () => ({ reachable: true, observedAt: new Date(), quality: 'good' as const }));
-    const sshProbe = vi.fn(async () => undefined);
+    const sshProbe = vi.fn(async () => ({ verified: false }));
     const app = await appWith({
       snmpAdapter: { probe },
       sshProbe,
@@ -232,6 +353,7 @@ describe('network-device routes', () => {
     expect(unknown.statusCode).toBe(400);
     const sshWithoutFingerprint = await app.inject({ method: 'POST', url: '/api/network-devices/test-connection', headers: { authorization: 'Bearer manager', 'content-type': 'application/json' }, payload: { host: '192.0.2.10', snmpv3: { username: 'm', securityLevel: 'authPriv', authProtocol: 'SHA', authSecret: '12345678', privacyProtocol: 'AES', privacySecret: '12345678' }, ssh: { username: 'readonly', credentialType: 'password', credentialValue: 'secret' } } });
     expect(sshWithoutFingerprint.statusCode).toBe(200);
+    expect(sshWithoutFingerprint.json().ssh).toEqual({ verified: false });
     expect(sshProbe).toHaveBeenCalledWith(expect.objectContaining({
       host: '192.0.2.10', username: 'readonly', credentialType: 'password',
       hostKeyFingerprint: undefined,
@@ -239,6 +361,7 @@ describe('network-device routes', () => {
     const valid = await app.inject({ method: 'POST', url: '/api/network-devices/test-connection', headers: { authorization: 'Bearer manager', 'content-type': 'application/json' }, payload: { host: '192.0.2.10', version: 3, snmpPort: 161, snmpv3: { username: 'm', securityLevel: 'authPriv', authProtocol: 'SHA', authSecret: '12345678', privacyProtocol: 'AES', privacySecret: '12345678' } } });
     expect(valid.statusCode).toBe(200);
     expect(probe).toHaveBeenCalledTimes(2);
+    sshProbe.mockResolvedValueOnce({ verified: true });
     const withSsh = await app.inject({ method: 'POST', url: '/api/network-devices/test-connection', headers: { authorization: 'Bearer manager', 'content-type': 'application/json' }, payload: { host: '192.0.2.10', version: 3, snmpPort: 161, sshPort: 22, snmpv3: { username: 'm', securityLevel: 'authPriv', authProtocol: 'SHA', authSecret: '12345678', privacyProtocol: 'AES', privacySecret: '12345678' }, ssh: { username: 'readonly', credentialType: 'password', credentialValue: 'secret', hostKeyFingerprint: `SHA256:${'A'.repeat(43)}` } } });
     expect(withSsh.statusCode).toBe(200);
     expect(withSsh.json()).toMatchObject({ success: true, ssh: { verified: true } });
@@ -249,7 +372,7 @@ describe('network-device routes', () => {
     const snmpProbeCalls = probe.mock.calls.length;
     const sshOnly = await app.inject({ method: 'POST', url: '/api/network-devices/test-connection', headers: { authorization: 'Bearer manager', 'content-type': 'application/json' }, payload: { mode: 'ssh', host: '192.0.2.10', sshPort: 22, ssh: { username: 'readonly', credentialType: 'password', credentialValue: 'secret' } } });
     expect(sshOnly.statusCode).toBe(200);
-    expect(sshOnly.json()).toEqual({ success: true, ssh: { verified: true } });
+    expect(sshOnly.json()).toEqual({ success: true, ssh: { verified: false } });
     expect(probe).toHaveBeenCalledTimes(snmpProbeCalls);
     expect(sshProbe).toHaveBeenLastCalledWith(expect.objectContaining({ host: '192.0.2.10', port: 22, username: 'readonly', credentialType: 'password', hostKeyFingerprint: undefined }));
     await app.close();

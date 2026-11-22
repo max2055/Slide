@@ -45,3 +45,16 @@ it('#477 create null/omitted descriptions normalize to empty and long source is 
   }
   const updated = await service.updateExtension(1, { sourceText: 's'.repeat(256 * 1024 + 1) }, 1); expect(updated!.sourceText).toHaveLength(256 * 1024); check(updated!);
 });
+
+it('#1027 create and update hash nested definition keys independently of insertion order', async () => {
+  const name = 'sample';
+  const first = { z: [{ short: 1, longer: 2 }], frontmatter: { b: null, a: true } };
+  const second = { frontmatter: { a: true, b: null }, z: [{ longer: 2, short: 1 }] };
+  const created = await service.createExtension({ kind: 'skill', name, definition: first }, 1);
+  const updated = await service.updateExtension(1, { definition: second }, 1);
+  const expected = createHash('sha256')
+    .update('{"kind":"skill","name":"sample","description":"","definition":{"frontmatter":{"a":true,"b":null},"z":[{"longer":2,"short":1}]},"sourceText":null}')
+    .digest('hex');
+  expect(created.digest).toBe(expected);
+  expect(updated?.digest).toBe(expected);
+});

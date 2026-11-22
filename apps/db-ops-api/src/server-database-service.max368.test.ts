@@ -7,7 +7,6 @@ import Fastify from 'fastify';
 import mysql, { type Pool, type PoolConnection, type RowDataPacket } from 'mysql2/promise';
 import ts from 'typescript';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import { filterByInstanceAccess } from './auth/require-instance-access.js';
 import { requirePermission } from './auth/require-permission.js';
 import { dbConnection } from './db-connection.js';
 import { MigrationError, MigrationRunner, splitSqlStatements } from './migrations/runner.js';
@@ -27,10 +26,6 @@ const deletionRoute = serverSource.slice(
   serverSource.indexOf("  fastify.post('/api/servers/test-connection'"),
 );
 const deleteMethod = serviceSource.slice(serviceSource.indexOf('async deleteServer'), serviceSource.indexOf('async testConnection'));
-const reportListRoute = serverSource.slice(
-  serverSource.indexOf("  fastify.get('/api/reports'"),
-  serverSource.indexOf('  // ========== 定时报表配置 API =========='),
-);
 
 describe('MAX-368 server deletion keeps historical reports', () => {
   it('checks reports inside the server lock and leaves the runs_on guard ahead of delete', () => {
@@ -61,14 +56,12 @@ describe('MAX-368 server deletion keeps historical reports', () => {
     expect(migrationSource).not.toContain('ON DELETE CASCADE');
   });
 
-  it('returns a business error from the existing delete route without changing report read permission', () => {
+  it('returns the historical report conflict from the existing delete route', () => {
     expect(deletionRoute).toContain("requirePermission('servers:manage')");
     expect(deletionRoute).toContain('SERVER_HAS_HISTORICAL_REPORTS');
     expect(deletionRoute).toContain('reply.code(409)');
     expect(deletionRoute).toContain('SERVER_HISTORICAL_REPORT_DELETE_ERROR');
     expect(deletionRoute).not.toContain('auditLogManager');
-    expect(reportListRoute).toContain("requirePermission('report:view')");
-    expect(reportListRoute).toContain('filterByInstanceAccess');
   });
 });
 
@@ -261,8 +254,8 @@ describe.skipIf(!realMysql)('MAX-368 real delete service on isolated mysql3308',
       id: reportId, server_id: serverId, server_name: '203.0.113.68', instance_id: null,
       content: 'max368-historical-report', name: 'MAX-368 historical',
     });
-    const scopedReader = { permissions: ['report:view'], instanceScopes: { 9: 'read-only' as const } };
-    expect(filterByInstanceAccess(scopedReader, [report!], row => row.instance_id)).toEqual([report]);
+    expect(await reportDatabaseService.getReportsByFilters({ limit: 1 }, { instanceIds: [9], serverIds: [] })).toEqual([]);
+    expect(await reportDatabaseService.getReportsByFilters({ limit: 1 }, { instanceIds: [9], serverIds: [serverId] })).toEqual([report]);
     const reply = fakeReply();
     await requirePermission('report:view')({ user: { permissions: ['servers:manage'] } }, reply);
     expect(reply.code).toHaveBeenCalledWith(403);

@@ -54,14 +54,16 @@ test('real application saves and permission failure preserve drafts; local filte
  await page.getByRole('combobox').selectOption('critical');
  await expect(page.locator('event-management-page .event-title').filter({hasText:'验收事件55'})).toBeVisible();
  await page.getByRole('button',{name:'下一页 →'}).click();
- await expect(page.getByText('第 2/2 页，共 55 条')).toBeVisible();
+ await expect(page.getByText('第 2/2 页',{exact:true})).toBeVisible();
  await expect(page.getByText('暂无匹配的事件')).toBeVisible();
+ await expect(page.getByRole('status')).toHaveText('本页命中 0 条 · 当前状态可见事件共 55 条');
  await page.getByRole('combobox').selectOption('all');
  await page.getByRole('button',{name:'← 上一页'}).click();
- await expect(page.getByText('第 1/2 页，共 55 条')).toBeVisible();
+ await expect(page.getByText('第 1/2 页',{exact:true})).toBeVisible();
+ await expect(page.getByRole('status')).toHaveText('本页命中 50 条 · 当前状态可见事件共 55 条');
  await page.getByRole('textbox',{name:'搜索本页事件'}).fill('不存在');
  await expect(page.getByText('暂无匹配的事件')).toBeVisible();
- await expect(page.getByText('第 1/2 页，共 55 条')).toBeVisible();
+ await expect(page.getByRole('status')).toHaveText('本页命中 0 条 · 当前状态可见事件共 55 条');
  await page.getByRole('textbox',{name:'搜索本页事件'}).fill('');
  for(const size of [{width:1366,height:768},{width:1440,height:900},{width:1920,height:1080}]){
   await page.setViewportSize(size);

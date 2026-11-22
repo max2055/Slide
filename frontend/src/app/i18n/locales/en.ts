@@ -547,8 +547,9 @@ export const en: TranslationMap = {
   },
   overview: {
     palette: {
-      placeholder: "Search commands and pages",
-      noResults: "No matching commands",
+      label: "Jump to page",
+      placeholder: "Enter a page name",
+      noResults: "No matching pages. Try another page name.",
     },
   },
   chat: {

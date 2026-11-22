@@ -9,6 +9,17 @@ const agentWsProxyTarget = process.env.VITE_AGENT_WS_PROXY_TARGET || 'http://loc
 
 export default defineConfig({
   plugins: [],
+  optimizeDeps: {
+    // Pre-bundle the editor entries together before the lazy routes can load them.
+    include: [
+      'codemirror',
+      '@codemirror/autocomplete',
+      '@codemirror/lang-sql',
+      '@codemirror/state',
+      '@codemirror/theme-one-dark',
+      '@codemirror/view',
+    ],
+  },
   build: {
     rollupOptions: {
       output: {
@@ -24,6 +35,8 @@ export default defineConfig({
     }
   },
   resolve: {
+    // Extensions and views must use the same CodeMirror classes for instanceof checks.
+    dedupe: ['@codemirror/state', '@codemirror/view'],
     extensions: ['.ts', '.tsx', '.js', '.jsx', '.mjs', '.json'],
     alias: {
       '@': fileURLToPath(new URL('./src', import.meta.url)),
