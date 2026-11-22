@@ -3,7 +3,7 @@
  *
  * A stored `metric_policy_bindings.payload` is either the accepted single-package
  * `Published` value (no envelope or explicit `package-v1`) or the template
- * `templates-v1` envelope. Only the accepted codec may decide which one it is;
+ * `template-pending` envelope. Only the accepted codec may decide which one it is;
  * no reader may cast a row straight to `Published`. Legacy readers call
  * `readLegacyPublished` and get either the validated legacy value or a stable
  * error: a template row, an unknown envelope, an ambiguous source and a corrupt

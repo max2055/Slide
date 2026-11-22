@@ -50,7 +50,7 @@ describe('independent resource configuration facts',()=>{
     delete inventory.attributes['db.version'];
     expect((await reader.recommendations(admin,ref)).packages.some(p=>p.recommended)).toBe(false);
   });
-  it('reads a templates-v1 binding through its own facts, never as an unbound resource',async()=>{
+  it('reads a template-pending binding through its own facts, never as an unbound resource',async()=>{
     const settings={enabled:true,interval_ms:60000,timeout_ms:5000,stale_after_ms:120000,max_counter_gap_ms:300000,
       max_rows:100,max_concurrency:1,max_series_per_resource:100};
     const facts:TemplateBindingFacts={revision:5,published_at:at,application:{status:'pending',applied_revision:4},settings,
@@ -67,10 +67,10 @@ describe('independent resource configuration facts',()=>{
     expect(status.coverage.find(m=>m.metric.id==='mysql.threads_running')).toMatchObject({state:'disabled',reason:'METRIC_DISABLED'});
     expect(status.blockers).toEqual(expect.arrayContaining(['APPLICATION_PENDING','AWAITING_SAMPLE']));
     expect(status.formal_visibility).toMatchObject({state:'pending',source:'none'});
-    // A template row that vanishes between the two reads is an error, not "unbound".
+    // The direct binding reader alone decides whether a row exists.
     const missing=new MetricConfigurationReader(policy,registry,{inventory:async()=>resource(),evidence:async()=>evidence,
       template:async()=>null},async()=>[],()=>at);
-    await expect(missing.status(admin,ref)).rejects.toThrow('POLICY_BINDING_INVALID');
+    expect((await missing.status(admin,ref)).binding.state).toBe('unbound');
     // A reader without the shared codec repeats the fence; it never guesses unbound.
     const noPort=new MetricConfigurationReader(policy,registry,{inventory:async()=>resource(),evidence:async()=>evidence},async()=>[],()=>at);
     await expect(noPort.status(admin,ref)).rejects.toThrow('TEMPLATE_BINDING_UNSUPPORTED');

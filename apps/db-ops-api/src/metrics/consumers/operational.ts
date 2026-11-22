@@ -2,9 +2,9 @@
 import { dbConnection } from '../../db-connection.js';
 import type { ActorContext } from '../../auth/actor-context.js';
 import { compileAlertRule } from '../../alerts/compiled-rule.js';
-import { policyService } from '../policy/service.js';
-import { PolicyError, type Ref } from '../policy/model.js';
-import { internalMetricConsumerService as metricConsumerService, operationalSource } from './runtime.js';
+import { configurationInventory } from '../config/inventory.js';
+import type { Ref } from '../policy/model.js';
+import { internalMetricConsumerService as metricConsumerService, operationalSource, templateQueryPort } from './runtime.js';
 import { migrateReference } from './migration.js';
 import { evaluateMetric } from './evaluation.js';
 const actorFor = (ref: Ref): ActorContext => ({ userId: 0, username: 'metric-policy-evaluator', roles: [],
@@ -20,13 +20,13 @@ export async function evaluateOperationalRule(ref: Ref, rule: Rule, seconds: num
   try {
     const source = await operationalSource(ref);
     if (source !== 'semantic') return unavailable;
-    let effective;
-    try { effective = await policyService.effective(actor, ref); }
-    catch (e) { if (e instanceof PolicyError && e.code === 'POLICY_NOT_FOUND') return unavailable; throw e; }
-    const engine = effective.resolved.plan.binding.package.id.split('-')[0];
+    const binding = await templateQueryPort.read(ref);
+    if (!binding?.settings.enabled) return unavailable;
+    const inventory = await configurationInventory(ref);
+    const engine = String(inventory.attributes['db.engine']?.value ?? '');
     const migration = migrateReference(ref, engine, rule.metric_name);
     if (!migration.metric_id || rule.threshold_type === 'dynamic') return { ...unavailable, migration };
-    const interval = effective.resolved.settings.interval_ms;
+    const interval = binding.settings.interval_ms;
     // Sustained rules need one extra bucket to absorb the gap between the query
     // edge and the latest collection. Without it the trailing partial bucket has
     // no samples and every multi-bucket rule would be unknown; a real outage
@@ -79,14 +79,14 @@ export async function evaluateOperationalRule(ref: Ref, rule: Rule, seconds: num
 export async function migrateOperationalChecks(id: number, checks: Array<{ name: string; status: string; score: number; message?: string }>) {
   const unavailable = () => checks.map(c => c.name === '连接状态' ? c : { ...c, status: 'unknown', score: 0, message: '正式指标来源未就绪，不能判为健康' });
   if (!dbConnection.isConnected()) return unavailable();
-  const ref: Ref = { type: 'instance', id }, actor = actorFor(ref);
+  const ref: Ref = { type: 'instance', id };
   try {
     const source = await operationalSource(ref);
     if (source !== 'semantic') return unavailable();
-    await policyService.effective(actor, ref);
+    if (!(await templateQueryPort.read(ref))?.settings.enabled) return unavailable();
   } catch { return unavailable(); }
   // These legacy score references have no frozen equivalent in the bound semantic catalog.
   // In particular PostgreSQL backend count / max_connections and Oracle sessions / processes are not valid utilization ratios.
   return checks.map(c => c.name === '连接状态' ? c : { ...c, status: 'unknown', score: 0,
-    message: `评分引用迁移 v1：${c.name} 无已冻结等价指标；保留原策略，等待口径复核，不将缺失补零或计数改为比例` });
+    message: `评分引用：${c.name} 无已冻结等价指标；保留原策略，等待口径复核，不将缺失补零或计数改为比例` });
 }

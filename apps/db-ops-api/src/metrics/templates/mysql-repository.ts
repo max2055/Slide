@@ -15,7 +15,7 @@
  *
  * | port value            | column(s)                                                        |
  * |-----------------------|------------------------------------------------------------------|
- * | TemplateRecord        | `metric_templates_v2` same-named columns; SQL NULL stays NULL    |
+ * | TemplateRecord        | `monitoring_templates` same-named columns; SQL NULL stays NULL    |
  * | TemplateDraft         | `metric_template_drafts` same-named columns; revision 0 start    |
  * | TemplateItemVersion   | `metric_template_item_versions`; `canonical_metric.id`/`semantic_version` split into `canonical_metric_id`/`canonical_semantic_version` |
  * | item identity         | `metric_template_items`; `status='active'` and `created_at` set only on the first item input |
@@ -62,6 +62,8 @@
  */
 import { TimestampSchema } from '../../contracts/metrics/index.js';
 import { TemplateError } from './errors.js';
+import { mysqlTriggerCatalog } from '../triggers/persistence.js';
+import { referencedTriggerItems } from '../triggers/model.js';
 import {
   TemplateDraftSchema, TemplateItemVersionSchema, TemplateRecordSchema, TemplateVersionSchema,
   type HashId, type Revision, type TemplateDraft, type TemplateItemVersion, type TemplateRecord,
@@ -458,7 +460,7 @@ export class MySqlTemplateRepository implements TemplateRepository {
     await this.transaction('create', { template_id: record.template_id }, async connection => {
       try {
         await connection.execute(
-          `INSERT INTO metric_templates_v2
+          `INSERT INTO monitoring_templates
             (template_id, name, status, current_published_version, revision, created_by, created_at, updated_at)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
           [record.template_id, record.name, record.status, currentPublishedVersion, record.revision, createdBy, createdAt, updatedAt],
@@ -503,7 +505,7 @@ export class MySqlTemplateRepository implements TemplateRepository {
     toSqlTimestamp('patch.updated_at', patch.updated_at);
     return this.transaction('updateTemplate', { template_id: templateId, expected_revision: expectedRevision }, async connection => {
       const row = firstRow(await connection.execute(
-        `SELECT ${TEMPLATE_SELECT} FROM metric_templates_v2 WHERE template_id = ? FOR UPDATE`,
+        `SELECT ${TEMPLATE_SELECT} FROM monitoring_templates WHERE template_id = ? FOR UPDATE`,
         [templateId],
       ));
       if (!row) throw new TemplateError('TEMPLATE_NOT_FOUND', `template ${templateId} does not exist`);
@@ -525,7 +527,7 @@ export class MySqlTemplateRepository implements TemplateRepository {
       const currentPublishedVersion = sqlInt('template.current_published_version', next.current_published_version);
       const updatedAt = toSqlTimestamp('template.updated_at', next.updated_at);
       const [result] = await connection.execute(
-        `UPDATE metric_templates_v2
+        `UPDATE monitoring_templates
             SET name = ?, status = ?, current_published_version = ?, revision = ?, updated_at = ?
           WHERE template_id = ? AND revision = ?`,
         [next.name, next.status, currentPublishedVersion, next.revision, updatedAt, templateId, expectedRevision],
@@ -544,7 +546,7 @@ export class MySqlTemplateRepository implements TemplateRepository {
     return this.transaction('updateDraft', { template_id: templateId, expected_revision: expectedRevision }, async connection => {
       // Lock order: template parent row first, then the draft row.
       const parent = firstRow(await connection.execute(
-        'SELECT template_id FROM metric_templates_v2 WHERE template_id = ? FOR UPDATE',
+        'SELECT template_id FROM monitoring_templates WHERE template_id = ? FOR UPDATE',
         [templateId],
       ));
       if (!parent) throw new TemplateError('TEMPLATE_NOT_FOUND', `template ${templateId} does not exist`);
@@ -593,7 +595,7 @@ export class MySqlTemplateRepository implements TemplateRepository {
       // The existing template row is the lock that serialises first-item races;
       // a not-yet-existing item row can never play that role.
       const parent = firstRow(await connection.execute(
-        'SELECT template_id FROM metric_templates_v2 WHERE template_id = ? FOR UPDATE',
+        'SELECT template_id FROM monitoring_templates WHERE template_id = ? FOR UPDATE',
         [input.template_id],
       ));
       if (!parent) throw new TemplateError('TEMPLATE_NOT_FOUND', `template ${input.template_id} does not exist`);
@@ -668,7 +670,7 @@ export class MySqlTemplateRepository implements TemplateRepository {
       expected_revision: command.expectedTemplateRevision,
     }, async connection => {
       const templateRow = firstRow(await connection.execute(
-        `SELECT ${TEMPLATE_SELECT} FROM metric_templates_v2 WHERE template_id = ? FOR UPDATE`,
+        `SELECT ${TEMPLATE_SELECT} FROM monitoring_templates WHERE template_id = ? FOR UPDATE`,
         [command.templateId],
       ));
       if (!templateRow) throw new TemplateError('TEMPLATE_NOT_FOUND', `template ${command.templateId} does not exist`);
@@ -688,6 +690,14 @@ export class MySqlTemplateRepository implements TemplateRepository {
       if (draft.revision !== command.expectedDraftRevision) {
         throw new TemplateError('TEMPLATE_DRAFT_CONFLICT',
           `draft ${command.templateId} is at revision ${draft.revision}, expected ${command.expectedDraftRevision}`);
+      }
+      const itemIds = new Set(snapshot.items.map(item => item.item_id));
+      const triggerCatalog = mysqlTriggerCatalog(connection);
+      for (const ref of snapshot.aggregate.triggers) {
+        const rule = await triggerCatalog.getVersion(ref.rule_id, ref.version);
+        if (!rule) continue;
+        const operands = referencedTriggerItems(ref.scope.slice('item:'.length), rule.problem, rule.recovery);
+        if (operands.some(id => !itemIds.has(id))) throw new TemplateError('TEMPLATE_TRIGGER_ITEM_REFERENCED');
       }
       const existing = firstRow(await connection.execute(
         `SELECT ${VERSION_SELECT} FROM metric_template_versions WHERE template_id = ? AND content_hash = ?`,
@@ -736,7 +746,7 @@ export class MySqlTemplateRepository implements TemplateRepository {
         throw error;
       }
       const [templateUpdate] = await connection.execute(
-        `UPDATE metric_templates_v2
+        `UPDATE monitoring_templates
             SET current_published_version = ?, revision = ?, updated_at = ?
           WHERE template_id = ? AND revision = ?`,
         [versionNumber, templateRevision, publishedAt, command.templateId, command.expectedTemplateRevision],
@@ -764,7 +774,7 @@ export class MySqlTemplateRepository implements TemplateRepository {
   async getTemplate(templateId: string): Promise<TemplateRecord | null> {
     return this.withConnection(async connection => {
       const row = firstRow(await connection.execute(
-        `SELECT ${TEMPLATE_SELECT} FROM metric_templates_v2 WHERE template_id = ?`,
+        `SELECT ${TEMPLATE_SELECT} FROM monitoring_templates WHERE template_id = ?`,
         [templateId],
       ));
       return row ? this.templateFromRow(row) : null;
@@ -792,7 +802,7 @@ export class MySqlTemplateRepository implements TemplateRepository {
     return this.withConnection(async connection => {
       const [result] = await connection.execute(
         `SELECT template_id, name, status, current_published_version, revision
-           FROM metric_templates_v2 ${where}
+           FROM monitoring_templates ${where}
           ORDER BY template_id ASC LIMIT ${limit + 1}`,
         values,
       );

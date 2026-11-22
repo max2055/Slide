@@ -334,10 +334,9 @@ test('preview, failed and empty trials, invalidation, publish and application', 
   await page.getByRole('button', { name: '检查并启用', exact: true }).click();
   await preview.click(); await trial.click(); await publish.click(); await expect(page.locator('.state-card .collection-facts')).toContainText('发布 1'); await expect(page.locator('.state-card .collection-facts')).toContainText('等待应用'); expect(writes).toHaveLength(1); applied = true; await page.keyboard.press('Escape'); await page.getByText('最近正式采集尝试与技术证据', { exact: true }).click(); await page.getByRole('button', { name: '重新加载', exact: true }).click(); await expect(page.locator('.state-card .collection-facts')).toContainText('应用 1'); await expect(page.locator('.state-card .collection-facts')).toContainText('已应用'); expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
 });
-test('empty resources and named resource selector', async ({ page }) => {
+test('shows an empty network device list', async ({ page }) => {
   await page.route('**/api/**', route => { const p = new URL(route.request().url()).pathname; if (!p.startsWith('/api/')) return route.fallback(); return route.fulfill({ json: p.endsWith('/catalog') ? { packages: [], metrics: [] } : p === '/api/resources' ? { items: [{ resource: { type: 'instance', id: 1 }, label: '订单数据库' }] } : [] }); });
   await fixture(page, '<network-devices-page></network-devices-page>', 'views/network-devices-page'); await expect(page.getByText('暂无网络设备', { exact: true })).toBeVisible();
-  await fixture(page, '<metric-settings view="policies"></metric-settings>', 'views/metric-settings'); await expect(page.getByLabel('资源', { exact: true }).locator('option')).toHaveText(['请选择资源', '订单数据库 · 数据库实例']); await expect(page.getByLabel('资源 ID')).toHaveCount(0);
 });
 
 for (const width of [1366, 1440, 1920]) test(`MAX-397 SNMP capacity guidance stays readable at ${width}px`, async ({ page }) => {

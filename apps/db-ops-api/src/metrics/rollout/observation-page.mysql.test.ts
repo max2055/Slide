@@ -39,7 +39,7 @@ describe.skipIf(!port)('formal raw observation pages over MySQL and the real HTT
     identify({ ...fixture, resource_id: '1', observed_at: iso(ms), collected_at: iso(ms), stored_at: iso(ms),
       value: { encoding: 'float64', value }, source: { ...fixture.source, attempt_id: `raw-page-${tag}` }, ...overrides });
 
-  const seed = async (rows: NormalizedObservation[], options: { publication?: 'current' | 'none' } = {}) => {
+  const seed = async (rows: NormalizedObservation[], options: { publication?: 'current' | 'none'; generation?: number } = {}) => {
     if (!rows.length) return;
     await pool.query(`INSERT INTO metric_observations
       (id, series_hash, stage, observed_at, stored_at, valid_value, payload, payload_hash, evidence_expires_at)
@@ -49,7 +49,7 @@ describe.skipIf(!port)('formal raw observation pages over MySQL and the real HTT
     if (options.publication === 'none') return;
     await pool.query(`INSERT INTO metric_publications (observation_id, series_hash, generation, observed_at)
       VALUES ${rows.map(() => '(?,?,?,?)').join(',')}`,
-    rows.flatMap(o => [o.id, seriesHash(o), 1, sqlTime(o.observed_at)]));
+    rows.flatMap(o => [o.id, seriesHash(o), options.generation ?? 1, sqlTime(o.observed_at)]));
   };
 
   beforeAll(async () => {
@@ -68,10 +68,11 @@ describe.skipIf(!port)('formal raw observation pages over MySQL and the real HTT
       readWindow: (...args) => store.readWindow(...args),
       queryWindow: (...args) => store.queryWindow(...args),
       readObservationPage: (...args) => store.readObservationPage(...args),
+      latestObservations: (...args) => store.latestObservations(...args),
       dimensions: (...args) => store.dimensions(...args),
       inventory: async () => inventory(),
       attempts: async () => [],
-    } satisfies ConsumerStore);
+    } satisfies ConsumerStore, () => iso(to + 10_000));
     definition = (await new MetricConsumerService(policy, registry, {
       queryWindow: async () => [], inventory: async () => inventory(), dimensions: async () => [{}], attempts: async () => [],
     }).discover(admin, ref)).definitions.find(d => d.id === 'db.uptime_seconds')!;
@@ -157,6 +158,25 @@ describe.skipIf(!port)('formal raw observation pages over MySQL and the real HTT
     expect(empty.body).toMatchObject({ total: 0, has_more: false, observations: [] });
     expect(empty.body.next_cursor).toBeUndefined();
   }, 120_000);
+
+  it('returns the latest accepted original value without a chart window', async () => {
+    const latest = async () => {
+      const response = await fetch(`${base}/api/metrics/latest`, { method: 'POST',
+        headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(ref) });
+      expect(response.status).toBe(200);
+      const body = await response.json() as { metrics: Array<{ definition: { id: string }; series: unknown[] }> };
+      return body.metrics.find(metric => metric.definition.id === definition.id)?.series;
+    };
+    await seed([observation(to + 4000, 900, 'latest-shadow')], { publication: 'none' });
+    await seed([observation(to + 5000, 800, 'latest-wrong-generation')], { generation: 2 });
+    await seed([observation(to + 6000, 700, 'latest-wrong-revision', { versions: { ...fixture.versions, config_revision: 2 } })]);
+    expect(await latest()).toMatchObject([{ dimensions: {}, observed_at: iso(to), value: { value: 6 }, unit: 's' }]);
+    await seed([observation(to + 1000, 0, 'latest-null', {
+      value: null, quality: { status: 'unknown', reason: 'source_error' }, accuracy: 'unknown',
+    })]);
+    expect(await latest()).toMatchObject([{ dimensions: {}, observed_at: iso(to + 1000), value: null,
+      quality: { status: 'unknown', reason: 'source_error' }, unit: 's' }]);
+  });
 
   it('rejects a revoked reader before reading any page', async () => {
     actor = { ...admin, permissions: ['instance:view'], instanceScopes: {} };

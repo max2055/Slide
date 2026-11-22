@@ -90,7 +90,7 @@ const conversionReport = (converted: ConvertedTemplate[], head: string) => ({
 });
 
 const EXPECTED_TABLES = [
-  'metric_templates_v2',
+  'monitoring_templates',
   'metric_template_drafts',
   'metric_template_versions',
   'metric_template_items',

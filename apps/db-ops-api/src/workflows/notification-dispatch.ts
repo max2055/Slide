@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { WorkflowJobInput } from './worker-runtime.js';
 
-export type NotificationTransition = { id: string; phase: 'recovery' | 'escalation'; at: string; from_level?: string; to_level?: string };
+export type NotificationTransition = { id: string; phase: 'recovery' | 'escalation'; at: string; from_level?: string; to_level?: string; cause?: 'manual' };
 
 type PendingAlert = { id: number; level: string; created_at?: Date | string; transition?: NotificationTransition };
 type Channel = { id: number; delivery_start_at?: Date | string | null };

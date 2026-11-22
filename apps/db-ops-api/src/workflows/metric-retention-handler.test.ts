@@ -26,7 +26,7 @@ it('registers a fixed handler, cooperates with cancellation and leaves recovery 
 
 import { randomUUID } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
-import type { RetentionGuard } from '../metrics/retention.js';
+import { applyItemRetention, type RetentionGuard } from '../metrics/retention.js';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import mysql, { type Pool, type RowDataPacket } from 'mysql2/promise';
@@ -63,8 +63,10 @@ describe.skipIf(!port && !mysqlConfig)('production retention assembly through re
   }, 120000);
   afterAll(async () => { await pool?.end(); if (root) { await root.query(`DROP DATABASE IF EXISTS ${database}`); await root.end(); } });
   beforeEach(async () => {
-    for (const table of ['workflow_jobs', 'metric_alert_transitions', 'metric_alert_state', 'alerts', 'metric_rollout', 'metric_publications', 'metric_observations', 'metric_attempts']) await pool.query(`DELETE FROM ${table}`);
-    await pool.query('UPDATE metric_retention_state SET preview_policy_hash = NULL, preview_at = NULL, last_report = NULL');
+    for (const table of ['workflow_jobs', 'metric_alert_transitions', 'metric_alert_state', 'alerts', 'metric_rollout',
+      'metric_publications', 'metric_observations', 'metric_attempts', 'metric_item_retention']) await pool.query(`DELETE FROM ${table}`);
+    await pool.query(`UPDATE metric_retention_state SET preview_policy_hash = NULL, preview_at = NULL, last_report = NULL,
+      item_policy_revision = 0, preview_item_policy_revision = 0`);
     now = new Date(Date.now() - 5000); config = { ...env }; store = new MysqlWorkflowStore(() => pool as any);
   });
   it('apply fails closed without a completed matching policy preview; default dry-run gives counts/time range without deletion', async () => {
@@ -82,6 +84,29 @@ describe.skipIf(!port && !mysqlConfig)('production retention assembly through re
     expect((await pool.query<RowDataPacket[]>('SELECT payload FROM metric_observations'))[0][0].payload).not.toBeNull();
     config.METRICS_RETENTION_HISTORY_MS = '11000'; config.METRICS_RETENTION_MODE = 'apply'; now = new Date(now.getTime() + 1000);
     expect((await run()).result).toBe('retry');
+  });
+  it('previews newly applied item lifetimes before existing platform approval can delete history', async () => {
+    const item = identify({ ...observations[0], resource_id: '1' });
+    const storage = new MysqlMetricStorage(pool, () => new Date(now.getTime() - 1000));
+    await storage.write(item, definitions[0]);
+    expect((await run()).result).toBe('completed');
+    const connection = await pool.getConnection();
+    try {
+      await connection.beginTransaction();
+      await connection.query('SELECT id FROM metric_policy_lock WHERE id=1 FOR UPDATE');
+      await applyItemRetention(connection, 'instance:1', [item.metric], [{ metric: item.metric, history_ms: 0 }]);
+      await connection.commit();
+    } finally { connection.release(); }
+    expect(Number((await state()).item_policy_revision)).toBe(1);
+    config.METRICS_RETENTION_MODE = 'apply';
+    now = new Date(now.getTime() + 1000);
+    expect((await run()).result).toBe('completed');
+    expect((await state()).last_report).toMatchObject({ mode: 'dry-run', itemPolicyRevision: '1', preview: { normalized: { count: 1 } } });
+    expect(await storage.evidence(item.id)).toMatchObject({ status: 'available' });
+    now = new Date(now.getTime() + 1000);
+    expect((await run()).result).toBe('completed');
+    expect((await state()).last_report).toMatchObject({ mode: 'apply', itemPolicyRevision: '1', counts: { normalized: 1 } });
+    expect(await storage.evidence(item.id)).toEqual({ status: 'not_retained' });
   });
   it('expires sensitive raw payload despite current lineage, retains source tombstone/current alert, clears unreferenced history and terminal attempts across batches and restarts', async () => {
     const old = new MysqlMetricStorage(pool, () => new Date(now.getTime() - 20000), { rawMs: 1000, historyMs: 10000, attemptMs: 5000 });

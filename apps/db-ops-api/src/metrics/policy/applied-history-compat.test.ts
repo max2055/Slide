@@ -19,6 +19,6 @@ it('preserves the strict applied envelope, formal proof and effective revision o
 it('still rejects a malformed applied proof through the unchanged strict decoder', () => {
   const pending=decodeBindingPayload(historicalTemplatePayload());
   if(pending.kind!=='template_pending') throw Error('fixture');
-  pending.payload.envelope='templates-applied-v1';
+  pending.payload.envelope='template-applied';
   expect(()=>templateHistoryPayload(pending)).toThrow();
 });

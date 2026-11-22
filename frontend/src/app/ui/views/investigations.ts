@@ -6,12 +6,16 @@ import { customElement, property, state } from 'lit/decorators.js';
 import { authFetch } from '../../../api/index.ts';
 import type { DirectGatewayClient } from '../direct-gateway.ts';
 import { InvestigationsController } from '../controllers/investigations.ts';
-import { renderInvestigationDetail, lifecycleLabels } from './investigation-detail.ts';
+import type { InvestigationRecord } from '../controllers/investigation-api.ts';
+import { resourceLabel } from '../controllers/operations-api.ts';
+import { renderInvestigationDetail, executionLabels, lifecycleLabels } from './investigation-detail.ts';
+import { recordExcerpt } from './record-summary.ts';
 import { sharedBtnStyles } from '../../styles/shared-btn-styles.ts';
 import { displayTime } from './diagnosis-presentation.ts';
 import { icons } from '../../../icons.ts';
 import { hasSlidePermission } from '../app-settings.ts';
 import '../components/app-card.ts';
+import '../components/app-badge.ts';
 import '../components/app-form-field.ts';
 import '../components/app-dialog.ts';
 import '../components/app-data-table.ts';
@@ -29,6 +33,31 @@ const workspaceShellStyles = `@media(max-width:1100px) {
     grid-template-areas:"topbar nav" "content nav";
   }
 }`;
+
+function investigationListState(row: InvestigationRecord, hasGap: boolean) {
+  const execution = row.derivedRunState;
+  if (execution) {
+    const variant = execution === 'failed' || execution === 'timed_out' ? 'danger'
+      : execution === 'unknown' || execution === 'partial' ? 'warn'
+      : execution === 'completed' ? 'ok' : execution === 'cancelled' ? 'muted' : 'info';
+    return { label: executionLabels[execution] ?? '执行状态未知', variant };
+  }
+  if (row.activeRequestId) return { label: '调查中', variant: 'info' };
+  if (hasGap) return { label: '有证据缺口', variant: 'warn' };
+  if (row.latestOutcome) return { label: '已有结果', variant: 'info' };
+  return { label: '执行状态未提供', variant: 'muted' };
+}
+
+function investigationListNext(row: InvestigationRecord, hasGap: boolean) {
+  switch (row.derivedRunState) {
+    case 'failed': case 'timed_out': case 'cancelled': return '查看调查，核对本次执行的停止原因。';
+    case 'unknown': return '查看原调查，核对本次执行的结果。';
+    case 'queued': case 'running': return '等待本次调查保存结果。';
+  }
+  if (row.activeRequestId) return '等待本次调查保存结果。';
+  if (hasGap) return '核对缺失证据，再决定是否补充调查。';
+  return row.latestOutcome ? '查看完整结论，核对支持证据。' : '查看调查进度和已有记录。';
+}
 
 @customElement('investigations-page')
 export class InvestigationsPage extends LitElement {
@@ -137,7 +166,11 @@ export class InvestigationsPage extends LitElement {
     if (push) { history.replaceState({...history.state, investigationPages:this.loadedPages}, '', location.href); const origin=rememberWorkbenchPosition(id); const url = new URL(location.href); url.searchParams.set('returnTo', origin); url.searchParams.set('investigation', id); history.pushState({workbenchOrigin:origin}, '', url); }
     await this.controller.select(id);
     await this.updateComplete;
-    this.querySelector<HTMLElement>('.investigation-detail-title')?.focus();
+    if (this.isConnected && this.controller.detail?.id === id) {
+      const previousFocus = history.state?.workbenchPosition?.key;
+      if (typeof previousFocus === 'string' && previousFocus.startsWith('source-event-')) await restoreWorkbenchPosition(this);
+      else this.querySelector<HTMLElement>('.investigation-detail-title')?.focus();
+    }
     const url=new URL(location.href),d=this.controller.detail,r=this.controller.results.items[0];
     if(d && url.searchParams.has('attentionVersion') && url.searchParams.get('attentionVersion')===String(d.version)
       && (!url.searchParams.has('attentionResult') || url.searchParams.get('attentionResult')===r?.id)
@@ -145,6 +178,34 @@ export class InvestigationsPage extends LitElement {
       for(const name of ['attentionVersion','attentionResult','attentionResultVersion'])url.searchParams.delete(name);
       history.replaceState(history.state,'',url);
     }
+  }
+  private listRow(row: InvestigationRecord) {
+    const entry = hasSlidePermission(this.permissions, 'alert:view') ? row.context?.entry : undefined;
+    const events = [...new Set(entry?.sourceEventIds ?? [])].filter(id => Number.isSafeInteger(id) && id > 0);
+    const resources = row.resources ?? [];
+    const primary = resources.find(ref => ref.role === 'primary') ?? resources[0];
+    const gap = row.latestOutcome?.gaps.find(question => question.trim());
+    const state = investigationListState(row, Boolean(gap));
+    const summary = row.latestOutcome?.summary.trim();
+    return {
+      subject: html`<div class="investigation-list-cell">
+        <strong>${events.length ? `事件 ${events.slice(0, 2).map(id => `#${id}`).join('、')}${events.length > 2 ? ` 等 ${events.length} 项` : ''}`
+          : primary ? resourceLabel(primary) : row.title}</strong>
+        ${events.length && primary ? html`<small>${resourceLabel(primary)}${resources.length > 1 ? ` 等 ${resources.length} 项资源` : ''}</small>`
+          : resources.length > 1 ? html`<small>共 ${resources.length} 项资源</small>` : nothing}
+        ${events.length || primary ? html`<small>${row.title}</small>` : nothing}
+      </div>`,
+      state: html`<div class="investigation-list-cell"><app-badge variant=${state.variant}>${state.label}</app-badge>
+        <small>${lifecycleLabels[row.lifecycle] ?? '记录状态未知'} · ${displayTime(row.updatedAt)}</small></div>`,
+      result: html`<div class="investigation-list-cell">
+        <span>${summary ? recordExcerpt(summary) : '暂无可用调查结论'}</span>
+        ${summary && row.activeRequestId ? html`<small>上次保存的结果</small>` : nothing}
+        ${gap ? html`<small>待核对：${recordExcerpt(gap, 80)}</small>` : nothing}
+      </div>`,
+      next: html`<div class="investigation-list-cell"><span>${investigationListNext(row, Boolean(gap))}</span>
+        <button class="btn-ghost btn-sm" data-investigation=${row.id} data-workbench-key=${row.id}
+          @click=${() => void this.openInvestigation(row.id)}>查看调查</button></div>`,
+    };
   }
   render() {
     const c = this.controller;
@@ -158,9 +219,29 @@ export class InvestigationsPage extends LitElement {
     const filtered = !!(this.query.trim() || this.lifecycle || this.profile || this.resources.length || this.resource.trim());
     const advancedCount = Number(!!this.profile) + this.resources.length + Number(!!this.resource.trim());
     const firstUse = !entry && !entryError && c.listLoaded && !c.loading && !c.listError && !c.error && !c.list.items.length && !filtered && !c.detail && !c.detailLoading;
+    const listFilters = html`<form class="workspace-filters" aria-label="调查筛选" @submit=${(e: Event) => { e.preventDefault(); void this.filter(); }}>
+      <div class="workspace-filter-common">
+        <label class="workspace-search"><span>调查名称或问题</span><input aria-label="搜索调查" placeholder="按调查名称或问题搜索" .value=${this.query} @input=${(e: Event) => this.query = (e.target as HTMLInputElement).value}></label>
+        <label class="workspace-status"><span>记录状态</span><select aria-label="调查状态" .value=${this.lifecycle} @change=${(e: Event) => { this.lifecycle = (e.target as HTMLSelectElement).value; void this.filter(); }}><option value="">全部状态</option><option value="open">开放</option><option value="waiting">等待处理</option><option value="closed">已关闭</option><option value="archived">归档</option></select></label>
+        <button class="btn" type="submit" ?disabled=${c.loading}>筛选</button>
+        <button class="btn-ghost workspace-advanced-toggle" type="button" aria-expanded=${this.resourceFilterOpen} aria-controls="workspace-advanced-filters" @click=${() => this.resourceFilterOpen = !this.resourceFilterOpen}>${icons['chevron-right']}高级筛选${advancedCount ? ` · ${advancedCount}` : ''}</button>
+        ${filtered ? html`<button class="btn-ghost" type="button" @click=${() => { this.query = ''; this.lifecycle = ''; this.profile = ''; this.resources = []; this.resource = ''; void this.filter(); }}>清除筛选</button>` : nothing}
+        <p class="workspace-list-count" aria-live="polite">${c.loading ? '正在加载调查…' : c.listError ? '调查列表读取失败' : !c.listLoaded ? '等待读取调查' : c.multiResourceFilter ? `已加载 ${c.list.items.length} 项匹配调查${c.list.nextCursor ? '，可继续加载' : ''}（多资源去重）` : `${c.list.authorizedCounts.total} 项可访问调查`}</p>
+      </div>
+      <div id="workspace-advanced-filters" class="workspace-filter-advanced" ?hidden=${!this.resourceFilterOpen}>
+        <app-form-field class="workspace-profile" label="Profile 筛选"><select aria-label="Profile 筛选" .value=${this.profile} @change=${(e: Event) => { this.profile = (e.target as HTMLSelectElement).value; void this.filter(); }}><option value="">全部 Profile</option><option value="ops">Ops</option><option value="system">System</option></select></app-form-field>
+        <h3>按资源名称 / 类型筛选${this.resources.length ? ` · 已选 ${this.resources.length} 项（匹配任一）` : ''}</h3>
+        ${this.resourceFilterOpen ? html`<investigation-resource-picker .value=${this.resources} @resource-selection-change=${(e: CustomEvent<{ value: string[] }>) => { this.resources = e.detail.value; void this.filter(); }}></investigation-resource-picker>` : nothing}
+        <app-form-field label="高级资源筛选" hint="instance:ID / server:ID / network_device:ID，逗号分隔；与所选资源合并。"><input aria-label="资源筛选" .value=${this.resource} @input=${(e: Event) => this.resource = (e.target as HTMLInputElement).value}></app-form-field>
+      </div>
+    </form>`;
     return html`<style>${sharedBtnStyles.cssText}${workspaceShellStyles}
       investigations-page [hidden] { display:none !important; }
-      investigations-page .investigation-decision { --card:color-mix(in srgb,var(--accent) 9%,var(--bg-elevated)); }
+      investigations-page .investigation-decision { --border:color-mix(in srgb,var(--accent) 24%,var(--bg-elevated)); }
+      investigations-page .investigation-decision .investigation-detail-title { margin:0 0 var(--space-sm); overflow-wrap:anywhere; }
+      investigations-page .investigation-next { border-top:1px solid var(--border); padding-top:var(--space-sm); }
+      investigations-page .investigation-next-actions { display:flex; align-items:center; flex-wrap:wrap; gap:var(--space-sm); }
+      investigations-page .investigation-source > summary { padding:var(--space-sm) 0; }
       investigations-page { display:block; min-width:0; }
       investigations-page .workspace { display:grid; grid-template-columns:minmax(180px, 240px) minmax(0, 1fr) minmax(240px, 320px); gap:var(--space-md); align-items:start; }
       investigations-page .workspace.workspace-list { display:block; }
@@ -176,8 +257,9 @@ export class InvestigationsPage extends LitElement {
       investigations-page h3 { font-size:var(--text-md); font-weight:600; color:var(--text-strong); margin:0 0 var(--space-sm); }
       investigations-page .workspace-header { margin-bottom:var(--space-lg); }
       investigations-page .workspace-header p { color:var(--muted); font-size:14px; margin:var(--space-xs) 0 0; }
-      investigations-page .workspace-filters { margin-bottom:var(--space-md); }
-      investigations-page .workspace-filter-common { display:flex; align-items:center; flex-wrap:wrap; gap:var(--space-sm); padding-bottom:var(--space-lg); }
+      investigations-page .workspace-filters { padding:var(--space-md); border-bottom:1px solid var(--border); }
+      investigations-page .workspace-filter-common { display:flex; align-items:end; flex-wrap:wrap; gap:var(--space-sm); }
+      investigations-page .workspace-filter-common label { display:grid; gap:var(--space-xs); color:var(--muted-strong); font-size:var(--text-sm); }
       investigations-page .workspace-search { flex:1 1 180px; max-width:380px; min-width:0; }
       investigations-page .workspace-status { flex:0 1 140px; min-width:0; }
       investigations-page .workspace-filter-common input, investigations-page .workspace-filter-common select { min-height:36px; }
@@ -185,13 +267,25 @@ export class InvestigationsPage extends LitElement {
       investigations-page .workspace-advanced-toggle { gap:var(--space-xs); }
       investigations-page .workspace-advanced-toggle svg { width:14px; height:14px; transition:transform .15s; }
       investigations-page .workspace-advanced-toggle[aria-expanded=true] svg { transform:rotate(90deg); }
-      investigations-page .workspace-filter-advanced { padding:var(--space-lg); margin-bottom:var(--space-md); border:1px solid var(--border); border-radius:var(--radius-md); background:var(--panel); }
+      investigations-page .workspace-filter-advanced { padding:var(--space-lg); margin-top:var(--space-md); border:1px solid var(--border); border-radius:var(--radius-md); background:var(--panel); }
       investigations-page .workspace-filter-advanced app-form-field { max-width:720px; margin-bottom:var(--space-md); }
       investigations-page .workspace-filter-advanced app-form-field:last-child { margin-bottom:0; }
       investigations-page .workspace-filter-advanced .workspace-profile { max-width:220px; }
       investigations-page .workspace-filter-advanced investigation-resource-picker { max-width:720px; margin:var(--space-md) 0; }
       investigations-page .workspace-filter-advanced h3 { font-size:var(--text-sm); }
-      investigations-page .workspace-filter-label { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip-path:inset(50%); white-space:nowrap; }
+      investigations-page .investigation-list-panel.is-first-use { margin-bottom:var(--space-md); }
+      investigations-page .investigation-list-panel.is-first-use .workspace-filters { border-bottom:0; }
+      investigations-page .investigation-list-panel { min-width:0; }
+      investigations-page .investigation-list-panel::part(footer) { display:none; }
+      investigations-page .investigation-list-table { overflow:auto; }
+      investigations-page .investigation-list-table table { min-width:700px; table-layout:fixed; }
+      investigations-page .investigation-list-table th { background:var(--bg-muted); border-bottom-width:1px; }
+      investigations-page .investigation-list-table td { vertical-align:top; overflow-wrap:anywhere; }
+      investigations-page .investigation-list-table tr:last-child td { border-bottom:0; }
+      investigations-page .investigation-list-cell { display:grid; justify-items:start; gap:var(--space-xs); }
+      investigations-page .investigation-list-cell small { color:var(--muted); font-size:var(--text-xs); }
+      investigations-page .investigation-list-cell strong { color:var(--text-strong); }
+      investigations-page .investigation-list-footer { padding:var(--space-sm) var(--space-md); border-top:1px solid var(--border); }
       investigations-page app-card::part(header) { font-size:var(--text-lg); font-weight:600; }
       investigations-page .workspace-start { display:grid; grid-template-columns:minmax(0,1fr) 276px; gap:var(--space-lg); align-items:start; }
       investigations-page .workspace-start app-card::part(footer), investigations-page .start-intro::part(header) { display:none; }
@@ -229,30 +323,30 @@ export class InvestigationsPage extends LitElement {
       @media(max-width:767px) { investigations-page .workspace { grid-template-columns:minmax(0,1fr); } investigations-page .investigation-list { max-height:220px; overflow:auto; } }
     </style>
     ${!this.canView ? html`<app-empty-state title="无访问权限" description="需要对话读取权限。"></app-empty-state>` : html`
-      <div class="workspace-header"><div><h2>调查记录</h2><p>明确范围，保留过程，用证据支持判断。</p></div><button class="btn-primary" @click=${() => this.createOpen = true}>创建手动调查</button></div>
+      ${!c.detail && !c.detailLoading ? html`<div class="workspace-header"><div><h2>调查列表</h2><p>按事件和资源核对调查进度、结论与证据缺口。</p></div><button class="btn-primary" @click=${() => this.createOpen = true}>创建手动调查</button></div>` : nothing}
       ${c.error || c.acceptanceUnknown ? html`<div class="workspace-error" role="alert">${c.error || "提交结果尚未确认，请核对原请求。"}${c.acceptanceUnknown ? html`<button class="btn" ?disabled=${c.busy} @click=${() => void c.retryPending()}>核对原请求</button>` : nothing}<button class="btn" @click=${this.reload}>重试读取</button></div>` : nothing}
-      ${entryError ? html`<p role="alert">${entryError}</p>` : entry || (c.detail as any)?.context?.entry ? html`<investigation-entry
-        .context=${entry ?? null} .investigationId=${entry ? '' : c.detail!.id}
+      ${entryError ? html`<p role="alert">${entryError}</p>` : entry && !c.detail ? html`<investigation-entry
+        .context=${entry}
         @investigation-entry-denied=${() => { this.controller.clearSensitive(); this.refreshControllerView(); }}
         @investigation-draft-created=${(e: CustomEvent<{ id: string }>) => { void this.openInvestigation(e.detail.id, false); void this.filter(false); }}></investigation-entry>` : nothing}
-      <form ?hidden=${!!c.detail || c.detailLoading} class="workspace-filters" aria-label="调查筛选" @submit=${(e: Event) => { e.preventDefault(); void this.filter(); }}>
-        <div class="workspace-filter-common">
-          <label class="workspace-search"><span class="workspace-filter-label">搜索调查</span><input aria-label="搜索调查" placeholder="按调查名称查找" .value=${this.query} @input=${(e: Event) => this.query = (e.target as HTMLInputElement).value}></label>
-          <label class="workspace-status"><span class="workspace-filter-label">调查状态</span><select aria-label="调查状态" .value=${this.lifecycle} @change=${(e: Event) => { this.lifecycle = (e.target as HTMLSelectElement).value; void this.filter(); }}><option value="">全部状态</option><option value="open">开放</option><option value="waiting">等待处理</option><option value="closed">已关闭</option><option value="archived">归档</option></select></label>
-          <button class="btn" type="submit" ?disabled=${c.loading}>筛选</button>
-          <button class="btn-ghost workspace-advanced-toggle" type="button" aria-expanded=${this.resourceFilterOpen} aria-controls="workspace-advanced-filters" @click=${() => this.resourceFilterOpen = !this.resourceFilterOpen}>${icons['chevron-right']}高级筛选${advancedCount ? ` · ${advancedCount}` : ''}</button>
-          ${filtered ? html`<button class="btn-ghost" type="button" @click=${() => { this.query = ''; this.lifecycle = ''; this.profile = ''; this.resources = []; this.resource = ''; void this.filter(); }}>清除筛选</button>` : nothing}
-          <p class="workspace-list-count" aria-live="polite">${c.loading ? '正在加载调查…' : c.listError ? '调查列表读取失败' : !c.listLoaded ? '等待读取调查' : c.multiResourceFilter ? `已加载 ${c.list.items.length} 项匹配调查${c.list.nextCursor ? '，可继续加载' : ''}（多资源去重）` : `${c.list.authorizedCounts.total} 项可访问调查`}</p>
-        </div>
-        <div id="workspace-advanced-filters" class="workspace-filter-advanced" ?hidden=${!this.resourceFilterOpen}>
-          <app-form-field class="workspace-profile" label="Profile 筛选"><select aria-label="Profile 筛选" .value=${this.profile} @change=${(e: Event) => { this.profile = (e.target as HTMLSelectElement).value; void this.filter(); }}><option value="">全部 Profile</option><option value="ops">Ops</option><option value="system">System</option></select></app-form-field>
-          <h3>按资源名称 / 类型筛选${this.resources.length ? ` · 已选 ${this.resources.length} 项（匹配任一）` : ''}</h3>
-          ${this.resourceFilterOpen ? html`<investigation-resource-picker .value=${this.resources} @resource-selection-change=${(e: CustomEvent<{ value: string[] }>) => { this.resources = e.detail.value; void this.filter(); }}></investigation-resource-picker>` : nothing}
-          <app-form-field label="高级资源筛选" hint="instance:ID / server:ID / network_device:ID，逗号分隔；与所选资源合并。"><input aria-label="资源筛选" .value=${this.resource} @input=${(e: Event) => this.resource = (e.target as HTMLInputElement).value}></app-form-field>
-        </div>
-      </form>
       ${reminder.has('attentionSourcePlan')&&reminder.has('attentionExecution')?html`<p>续查来源：原行动计划 V${reminder.get('attentionSourcePlanVersion')}。<a href=${`/workbench?workspaceTab=actions&plan=${encodeURIComponent(reminder.get('attentionSourcePlan')!)}&attentionExecution=${encodeURIComponent(reminder.get('attentionExecution')!)}`}>核对原执行与验证记录</a></p>`:nothing}
       ${reminderStale?html`<p role="alert">提醒引用的原版本已变化。请先核对当前记录，再继续处理。<a href=${`/workbench?investigation=${encodeURIComponent(c.detail!.id)}`}>打开当前原调查并重新确认</a></p>`:nothing}
+      <div class="workspace ${c.detail || c.detailLoading ? 'workspace-detail' : 'workspace-list'}">
+        <aside aria-label="调查导航"><app-card class="investigation-list-panel ${firstUse ? 'is-first-use' : ''}" .compact=${true}>
+          ${listFilters}
+          ${firstUse ? nothing : html`<app-data-table class="investigation-list-table" tabindex="0" role="region" aria-label="调查记录表"
+            .striped=${false} .loading=${c.loading} .emptyMessage=${c.listError ? '调查列表暂不可用' : c.listLoaded ? '暂无匹配调查' : '等待读取调查'} .columns=${[
+              {key:'subject',label:'事件与资源',width:'28%'}, {key:'state',label:'调查状态',width:'17%'},
+              {key:'result',label:'调查结论',width:'32%'}, {key:'next',label:'建议下一步',width:'23%'}
+            ]} .rows=${c.listError ? [] : c.list.items.map(row => this.listRow(row))}></app-data-table>`}
+          ${c.list.nextCursor && !c.listError ? html`<div class="investigation-list-footer"><button class="btn" ?disabled=${c.loading} @click=${() => void this.loadMore()}>加载更多调查</button></div>` : nothing}
+        </app-card></aside>
+        <section class="workspace-main" aria-label="执行协作">${renderInvestigationDetail(c, { permissions: this.permissions, draft: this.draft, onDraft: v => this.draft = v,
+          sourceEvidence: c.detail?.context?.entry && !entryError ? html`<investigation-entry .investigationId=${c.detail.id}
+            @investigation-entry-denied=${() => { this.controller.clearSensitive(); this.refreshControllerView(); }}></investigation-entry>` : undefined,
+          onContinue: () => void c.continue(this.draft).then(result => { if (result) this.draft = ''; }), onEvidence: () => this.evidenceOpen = true })}</section>
+        <aside class="workspace-context" aria-label="证据成果"><investigation-context .results=${c.results} .evidence=${c.evidence} .onMore=${() => void c.loadResults()}></investigation-context></aside>
+      </div>
       ${firstUse ? html`<div class="workspace-start"><app-card class="start-intro"><div class="start-panel">
         <div class="start-signature">${icons.activity}<span>从一个具体问题开始</span></div>
         <h2>让资源证据，汇成可追溯的调查。</h2><p>选择需要关注的资源，描述你观察到的现象。调查将保留执行过程、证据与结论，便于后续核对。</p>
@@ -260,24 +354,7 @@ export class InvestigationsPage extends LitElement {
         <ol class="start-steps">${[['选择范围', '按名称选择一个或多个有权限的资源。'], ['说明问题', '补充现象与时间窗口，避免泛泛地分析一切。'], ['核对证据', '区分事实、推断与缺口，再决定下一步。']].map(([title, text], index) => html`<li><span class="step-number">${index + 1}</span><div><h3>${title}</h3><p>${text}</p></div></li>`)}</ol>
       </div></app-card><aside><app-card><span slot="header">创建前，先明确范围</span>
         ${[['调查与对话', '临时交流可进入对话；需要保留过程与证据时，创建调查。'], ['不会扩大资源权限', '仅显示当前可读取的资源，提交时仍需核验当前授权与操作权限。'], ['没有证据，不代表正常', '缺失、失效和未知结果会单独提示。']].map(([title, text]) => html`<div class="start-note"><h3>${title}</h3><p>${text}</p></div>`)}
-      </app-card></aside></div>` : html`<div class="workspace ${c.detail || c.detailLoading ? 'workspace-detail' : 'workspace-list'}">
-        <aside aria-label="调查导航"><app-card><span slot="header">调查列表</span>
-          <app-data-table .loading=${c.loading} .columns=${[
-            {key:'title',label:'调查 / 当前结论'}, {key:'stage',label:'阶段'},
-            {key:'updated',label:'调查更新'}, {key:'open',label:'操作'}
-          ]} .rows=${c.list.items.map(row=>({
-            title:html`<strong>${row.title}</strong><p class="muted">${row.latestOutcome?.summary || '尚未提供可靠结论'}</p>`,
-            stage:row.activeRequestId ? '调查进行中' : lifecycleLabels[row.lifecycle],
-            updated:displayTime(row.updatedAt),
-            open:html`<button class="btn-ghost" data-investigation=${row.id} data-workbench-key=${row.id} @click=${()=>void this.openInvestigation(row.id)}>查看调查</button>`
-          }))}></app-data-table>
-          ${c.listLoaded && !c.loading && !c.listError && !c.list.items.length ? html`<app-empty-state title="暂无匹配调查" description="更换名称、状态或资源筛选；也可清除筛选查看全部调查。"></app-empty-state>` : nothing}
-          ${c.list.nextCursor ? html`<button class="btn" ?disabled=${c.loading} @click=${() => void this.loadMore()}>加载更多调查</button>` : nothing}
-        </app-card></aside>
-        <section class="workspace-main" aria-label="执行协作">${renderInvestigationDetail(c, { permissions: this.permissions, draft: this.draft, onDraft: v => this.draft = v,
-          onContinue: () => void c.continue(this.draft).then(result => { if (result) this.draft = ''; }), onEvidence: () => this.evidenceOpen = true })}</section>
-        <aside class="workspace-context" aria-label="证据成果"><investigation-context .results=${c.results} .evidence=${c.evidence} .onMore=${() => void c.loadResults()}></investigation-context></aside>
-      </div>`}
+      </app-card></aside></div>` : nothing}
       <app-dialog .open=${this.evidenceOpen && !c.forbidden} title="证据与成果" size="lg" @app-dialog-close=${() => this.evidenceOpen = false}>
         <investigation-context .results=${c.results} .evidence=${c.evidence} .onMore=${() => void c.loadResults()}></investigation-context>
       </app-dialog>

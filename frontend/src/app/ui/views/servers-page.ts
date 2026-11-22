@@ -502,12 +502,12 @@ export class ServersPage extends LitElement {
     if (this._testingServerId !== null) return;
     this._testingServerId = server.id;
     try {
-      const res = await authFetch(`/api/servers/${server.id}/collect`, { method: "POST" });
+      const res = await authFetch(`/api/servers/${server.id}/collect-diagnostics`, { method: "POST" });
       const result = await res.json().catch(() => ({}));
       if (!res.ok || result.success === false) {
         throw new Error(result.error || "测试失败");
       }
-      showToast("连接测试成功，指标已刷新", "success");
+      showToast("服务器诊断采集完成", "success");
       await this._loadServers();
     } catch (err: any) {
       showToast(err?.message || "测试失败", "error");

@@ -2,6 +2,7 @@ import { ConfigurationAtSchema } from './configuration-history.js';
 import { z } from 'zod';
 import { RefSchema } from '../../metrics/policy/model.js';
 import { TriggerResourceSnapshotSchema } from './triggers.js';
+import { DimensionsSchema, MetricRefSchema } from './definitions.js';
 
 export const MetricConsumerQuerySchema = z.strictObject({
   resource: RefSchema,
@@ -10,6 +11,8 @@ export const MetricConsumerQuerySchema = z.strictObject({
   view: z.enum(['core', 'canonical', 'extension', 'all']).default('core'),
   bucket_ms: z.number().int().positive().max(86400000).optional(),
   latest_capacity: z.boolean().default(false), history: z.boolean().default(false),
+  series: z.strictObject({ metric: MetricRefSchema, dimensions: DimensionsSchema }).optional(),
+  include_retained_trends: z.literal(true).optional(),
 });
 export const MetricHistoryContextSchema = z.strictObject({
   configurations: z.array(ConfigurationAtSchema).max(100).optional(),

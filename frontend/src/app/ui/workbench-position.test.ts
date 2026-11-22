@@ -37,3 +37,17 @@ it('reveals the restored row through nested scroll containers without smooth scr
  expect(document.activeElement).toBe(target);
  expect(target.scrollIntoView).toHaveBeenCalledWith({block:'center',inline:'nearest',behavior:'instant'});
 });
+
+it('reopens the investigation source list and focuses the event that was opened', async () => {
+ const root = document.createElement('section');
+ root.innerHTML = '<details data-restore-open><summary>其他来源事件</summary><a href="/events" data-workbench-key="source-event-2">事件 2</a></details>';
+ document.body.append(root);
+ const event = root.querySelector('a')!;
+ vi.spyOn(event, 'getClientRects').mockReturnValue([{width:100,height:20}] as unknown as DOMRectList);
+ vi.spyOn(window, 'scrollTo').mockImplementation(() => {});
+ event.scrollIntoView = vi.fn();
+ history.replaceState({workbenchPosition:{key:'source-event-2',y:0}}, '', '/');
+ await restoreWorkbenchPosition(root);
+ expect(root.querySelector('details')!.open).toBe(true);
+ expect(document.activeElement).toBe(event);
+});

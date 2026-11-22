@@ -1,12 +1,19 @@
 import '../components/template-event-evidence.js';
+import '../components/event-investigation-record.ts';
+import type { EventInvestigationRecord } from '../components/event-investigation-record.ts';
+import '../components/app-card.ts';
 import { sharedFieldStyles } from "../../styles/shared-field-styles.ts";
 import { LitElement, html, css } from "lit";
+import { keyed } from 'lit/directives/keyed.js';
 import { sharedBtnStyles } from '../../styles/shared-btn-styles.ts';
-import { customElement, state } from "lit/decorators.js";
+import { customElement, property, state } from "lit/decorators.js";
 import { nothing } from "lit-html";
 import { icons, renderIcon } from "../../../icons.js";
 import { authFetch } from "../../../api/index.js";
 import { showToast } from "../components/app-toast-container.js";
+import { workspaceReturnTo } from '../workbench-routing.ts';
+import { returnToWorkbench } from '../workbench-position.ts';
+import { eventDisplayTitle } from '../controllers/event-investigation-api.ts';
 
 const API_BASE = "/api";
 
@@ -18,7 +25,7 @@ interface AlertEvent {
   severity: string;
   instance_id: number | null;
   instance_name?: string;
-  alert_count: number;
+  alert_count?: number;
   root_cause?: string;
   assignee?: string;
   created_at: string;
@@ -63,6 +70,9 @@ interface EventLog {
 
 @customElement("event-management-page")
 export class EventManagementPage extends LitElement {
+  @property({type:Number}) eventId = 0;
+  @property() returnTo = '';
+  @property({type:Boolean}) canViewInvestigations = false;
   static styles = [sharedFieldStyles, sharedBtnStyles, css`
     :host {
       display: flex;
@@ -83,6 +93,13 @@ export class EventManagementPage extends LitElement {
       flex: 1;
       min-height: 0;
     }
+    .record { display:grid; gap:var(--space-md); min-width:0; }
+    .record-nav, .record-status { display:flex; align-items:center; flex-wrap:wrap; gap:var(--space-sm) var(--space-md); }
+    .record h3 { font-size:var(--text-xl); line-height:1.4; margin:0 0 var(--space-sm); overflow-wrap:anywhere; }
+    .record-status { margin:var(--space-sm) 0; }
+    .record-meta { margin:var(--space-sm) 0; color:var(--muted); overflow-wrap:anywhere; }
+    .record-more > summary { cursor:pointer; color:var(--accent-text); }
+    .record-overview { background:var(--card); border:1px solid var(--border); border-radius:var(--radius-md); overflow:hidden; }
 
     .page-top {
       flex-shrink: 0;
@@ -237,7 +254,7 @@ export class EventManagementPage extends LitElement {
 
     .main-layout {
       display: grid;
-      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+      grid-template-columns: minmax(0, 1fr);
       gap: var(--space-lg);
       flex: 1;
       min-height: 0;
@@ -444,6 +461,9 @@ export class EventManagementPage extends LitElement {
   @state() private stats: EventStats | null = null;
   @state() private mttr: MTTREntry | null = null;
   @state() private selectedEvent: AlertEvent | null = null;
+  @state() private detailLoading = false;
+  @state() private detailError = '';
+  @state() private recordMore = false;
   @state() private eventMembers: AlertMember[] = [];
   @state() private eventLogs: EventLog[] = [];
   @state() private loading = true;
@@ -464,11 +484,13 @@ export class EventManagementPage extends LitElement {
   @state() private eventsTotal = 0;
   private readonly eventsPageSize = 50;
   private closeDetail = (event?: KeyboardEvent) => {
-    if (event && event.key !== 'Escape') return;
+    if (event && (event.key !== 'Escape' || event.defaultPrevented
+      || event.composedPath().some(target => target instanceof HTMLDialogElement))) return;
+    if (this.eventId) return;
     const id = this.selectedEvent?.id;
-    this.detailRequest++;
-    this.selectedEvent = null; this.eventMembers = []; this.eventLogs = [];
-    if (id !== undefined) this.renderRoot?.querySelector<HTMLButtonElement>(`button[data-event-id="${id}"]`)?.focus();
+    this._clearDetail();
+    if (id !== undefined) void this.updateComplete.then(() =>
+      Array.from(this.renderRoot.querySelectorAll<HTMLButtonElement>('button[data-event-id]')).find(row => row.dataset.eventId === String(id))?.focus());
   };
   override disconnectedCallback() {
     this.listRequest++; this.detailRequest++;
@@ -479,7 +501,6 @@ export class EventManagementPage extends LitElement {
   override connectedCallback() {
     super.connectedCallback();
     window.addEventListener('keydown', this.closeDetail);
-    this._loadEvents();
     // Restore persisted RCA result
     try {
       const saved = localStorage.getItem('event_rca_result');
@@ -490,6 +511,15 @@ export class EventManagementPage extends LitElement {
       }
     } catch {
       try { localStorage.removeItem('event_rca_result'); } catch {}
+    }
+  }
+
+  protected override updated(changes: Map<string, unknown>) {
+    if (!changes.has('eventId')) return;
+    if (this.eventId) void this._readDetail(this.eventId);
+    else {
+      if (changes.get('eventId')) this.closeDetail();
+      void this._loadEvents();
     }
   }
 
@@ -553,44 +583,100 @@ export class EventManagementPage extends LitElement {
   }
 
   private detailRequest = 0;
+  private detailKey = '';
 
-  private async _selectEvent(event: AlertEvent) {
-    const request = ++this.detailRequest;
-    this.selectedEvent = event;
+  private _resetDrafts() {
+    this.noteText = '';
+    this.postmortemText = '';
+    this.recoveryVerificationReason = '';
+    this.showPostmortemForm = false;
+    this.error = null;
+  }
+
+  private _clearDetail(detailError = '') {
+    this.detailRequest++;
+    this.detailKey = '';
+    this.selectedEvent = null;
     this.eventMembers = [];
     this.eventLogs = [];
-    try {
-      const [detailRes, logsRes] = await Promise.all([
-        authFetch(`${API_BASE}/alerts/events/${event.id}`),
-        authFetch(`${API_BASE}/alerts/events/${event.id}/logs`),
-      ]);
-      const detail = detailRes.ok ? await detailRes.json() : null;
-      const logs = logsRes.ok ? await logsRes.json() : [];
-      if (request !== this.detailRequest || this.selectedEvent?.id !== event.id) return;
-      if (detail && String(detail.id) === String(event.id)) {
-        this.eventMembers = detail.alerts || [];
-        this.selectedEvent = { ...event, ...detail };
-      }
-      this.eventLogs = logs;
-    } catch (e: any) {
-      if (request === this.detailRequest && this.selectedEvent?.id === event.id) {
-        showToast('Failed to load event details', 'error');
-      }
+    this.detailError = detailError;
+    this.detailLoading = false;
+    this.recordMore = false;
+    this._resetDrafts();
+  }
+
+  private async _selectEvent(event: AlertEvent) {
+    const read = this._readDetail(event.id, event);
+    if (this.isConnected) {
+      await this.updateComplete;
+      if (this.selectedEvent?.id === event.id) this.focusRecord();
     }
+    await read;
+  }
+
+  private focusRecord() {
+    const overview = this.renderRoot.querySelector<EventInvestigationRecord>('event-investigation-record');
+    if (overview) overview.focusHeading();
+    else this.renderRoot.querySelector<HTMLElement>('.record h3')?.focus({preventScroll:true});
+  }
+
+  private async _readDetail(id: string | number, event?: AlertEvent) {
+    const request = ++this.detailRequest;
+    if (this.detailKey !== String(id)) { this._resetDrafts(); this.recordMore = false; }
+    this.detailKey = String(id);
+    this.selectedEvent = event ?? null;
+    this.eventMembers = [];
+    this.eventLogs = [];
+    this.detailLoading = true;
+    this.detailError = '';
+    const detailRead = authFetch(`${API_BASE}/alerts/events/${id}`);
+    const accessDenied = (response: Response) => {
+      if (![401, 403, 404].includes(response.status)) return false;
+      if (request === this.detailRequest) this._clearDetail('事件不可访问或已不存在。');
+      return true;
+    };
+    const logsRead = authFetch(`${API_BASE}/alerts/events/${id}/logs`)
+      .then(async response => !accessDenied(response) && response.ok ? await response.json() : [])
+      .catch(() => []);
+    try {
+      const detailRes = await detailRead;
+      if (request !== this.detailRequest) return;
+      if (accessDenied(detailRes)) return;
+      const detail = detailRes.ok ? await detailRes.json() : null;
+      if (request !== this.detailRequest) return;
+      if (!detail || String(detail.id) !== String(id)) throw new Error('EVENT_DETAIL_INVALID');
+      this.eventMembers = Array.isArray(detail.alerts) ? detail.alerts : [];
+      this.selectedEvent = {
+        ...event, ...detail,
+        alert_count: Array.isArray(detail.alerts) ? this.eventMembers.length : detail.alert_count ?? event?.alert_count,
+      };
+      if (this.eventId && this.isConnected) void this.updateComplete.then(() => {
+        if (request === this.detailRequest) this.focusRecord();
+      });
+    } catch {
+      if (request === this.detailRequest) this.detailError = '读取事件详情失败，请重试。';
+      return;
+    } finally {
+      if (request === this.detailRequest) this.detailLoading = false;
+    }
+    const logs = await logsRead;
+    if (request === this.detailRequest && Array.isArray(logs)) this.eventLogs = logs;
   }
 
   private async _action(action: () => Promise<void>) {
     if (this.actionLoading) return;
+    const request = this.detailRequest;
     this.error = null;
     this.actionLoading = true;
     try {
       await action();
-      await this._loadEvents();
-      if (this.selectedEvent) {
+      if (request !== this.detailRequest) return;
+      if (!this.eventId) await this._loadEvents();
+      if (request === this.detailRequest && this.selectedEvent) {
         await this._selectEvent(this.selectedEvent);
       }
     } catch (e: any) {
-      this.error = e.message;
+      if (request === this.detailRequest) this.error = e.message;
     } finally {
       this.actionLoading = false;
     }
@@ -612,6 +698,7 @@ export class EventManagementPage extends LitElement {
   private async _addNote() {
     const eventId = this.selectedEvent?.id;
     if (!eventId || !this.noteText.trim()) return;
+    const request = this.detailRequest;
     const draft = this.noteText;
     const note = draft.trim();
     await this._action(async () => {
@@ -623,7 +710,7 @@ export class EventManagementPage extends LitElement {
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const result = await res.json();
       if (result.success === false) throw new Error(result.error || "保存失败");
-      if (String(this.selectedEvent?.id) === String(eventId) && this.noteText === draft) this.noteText = "";
+      if (request === this.detailRequest && String(this.selectedEvent?.id) === String(eventId) && this.noteText === draft) this.noteText = "";
     });
   }
 
@@ -637,6 +724,7 @@ export class EventManagementPage extends LitElement {
     if (this.rcaLoading) return;
     const eventId = this.selectedEvent?.id;
     if (!eventId) { this.error = "未选择事件"; return; }
+    const request = this.detailRequest;
     this.rcaLoading = true;
     this.rcaResult = null;
     this.error = null;
@@ -647,12 +735,13 @@ export class EventManagementPage extends LitElement {
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
+      if (request !== this.detailRequest) return;
       const result = { ...data, eventId: Number(eventId) };
       if (!this._validRCAResult(result)) throw new Error(data?.error || '根因分析失败，未返回有效分析结果');
       this.rcaResult = result;
       this._saveRCAResult();
     } catch (e: any) {
-      this.error = e.message;
+      if (request === this.detailRequest) this.error = e.message;
     } finally {
       this.rcaLoading = false;
     }
@@ -687,8 +776,10 @@ export class EventManagementPage extends LitElement {
 
   private async _verifyRecovery() {
     const eventId = this.selectedEvent?.id;
-    const reason = this.recoveryVerificationReason.trim();
+    const draft = this.recoveryVerificationReason;
+    const reason = draft.trim();
     if (!eventId || !reason) return;
+    const request = this.detailRequest;
     await this._action(async () => {
       const res = await authFetch(`${API_BASE}/alerts/events/${eventId}/verify-recovery`, {
         method: "POST",
@@ -699,14 +790,17 @@ export class EventManagementPage extends LitElement {
         const body = await res.json().catch(() => null);
         throw new Error(body?.error || `HTTP ${res.status}`);
       }
-      this.recoveryVerificationReason = "";
-      showToast("人工恢复确认已记录，可以关闭事件", "success");
+      if (request === this.detailRequest && String(this.selectedEvent?.id) === String(eventId)) {
+        if (this.recoveryVerificationReason === draft) this.recoveryVerificationReason = '';
+        showToast('人工恢复确认已记录，可以关闭事件', 'success');
+      }
     });
   }
 
   private async _addPostmortem() {
     const eventId = this.selectedEvent?.id;
     if (!eventId || !this.postmortemText.trim()) return;
+    const request = this.detailRequest;
     const draft = this.postmortemText;
     const postmortem = draft.trim();
     await this._action(async () => {
@@ -718,7 +812,7 @@ export class EventManagementPage extends LitElement {
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const result = await res.json();
       if (result.success === false) throw new Error(result.error || "保存失败");
-      if (String(this.selectedEvent?.id) === String(eventId) && this.postmortemText === draft) {
+      if (request === this.detailRequest && String(this.selectedEvent?.id) === String(eventId) && this.postmortemText === draft) {
         this.postmortemText = "";
         this.showPostmortemForm = false;
       }
@@ -790,6 +884,7 @@ export class EventManagementPage extends LitElement {
   }
 
   override render() {
+    if (this.eventId || this.selectedEvent || this.detailError) return this._renderRecord();
     if (this.loading) {
       return html`<div class="page"><button class="btn" disabled aria-label="刷新事件">正在加载事件</button><div role="status" class="loading" style="flex-direction:column;gap:16px;">
           <div style="display:grid;grid-template-columns:repeat(6,1fr);gap:var(--space-md);width:100%;">
@@ -811,6 +906,7 @@ export class EventManagementPage extends LitElement {
 
     return html`
       <div class="page">
+        ${this.detailError ? html`<p class="error" role="alert">${this.detailError}</p>` : nothing}
         ${this.loadError ? html`<div class="error" role="alert">加载失败: ${this.loadError}
           <button class="btn btn-refresh" ?disabled=${this.retryLoading} @click=${this._loadEvents}>${this.retryLoading ? '重试中...' : '重试加载'}</button>
         </div>` : nothing}
@@ -894,15 +990,53 @@ export class EventManagementPage extends LitElement {
                   ${this._renderPagination()}
                 </div>
 
-                <div class="panel">
-                  <div class="panel-header">事件详情</div>
-                  ${this.selectedEvent ? this._renderDetail() : html`<div class="detail-empty">选择左侧事件查看详情</div>`}
-                </div>
               </div>
             `}
       </div>
     </div>
     `;
+  }
+
+  private _renderRecord() {
+    const event = this.selectedEvent;
+    const origin = workspaceReturnTo(this.returnTo);
+    const workspace = origin && new URL(origin,location.origin).pathname === '/workbench' ? origin : null;
+    const returnLabel = workspace && new URL(workspace,location.origin).searchParams.has('investigation') ? '返回调查' : '返回工作台';
+    const severity: Record<string, string> = { critical: '严重', error: '错误', warning: '警告', info: '提示' };
+    const template = event?.source_type === 'template-trigger';
+    return html`<section class="record" aria-label="事件详情">
+      <nav class="record-nav" aria-label="返回">
+        ${this.eventId ? html`<a class="btn" href="/events?view=aggregate">返回事件列表</a>`
+          : html`<button class="btn" @click=${() => this.closeDetail()}>返回事件列表</button>`}
+        ${workspace ? html`<a class="btn" href=${workspace} @click=${(e: MouseEvent) => returnToWorkbench(e, workspace)}>${returnLabel}</a>` : nothing}
+      </nav>
+      ${this.detailLoading && !event ? html`<p role="status">正在读取事件 #${this.eventId}…</p>` : nothing}
+      ${this.detailError ? html`<p role="alert" class="error">${this.detailError}
+        ${this.detailError.startsWith('读取') ? html`<button class="btn" @click=${() => void this._readDetail(event?.id ?? this.eventId, event ?? undefined)}>重试</button>` : nothing}</p>` : nothing}
+      ${event ? html`${this.canViewInvestigations ? keyed(event.id,html`<div class="record-overview">
+        <event-investigation-record .event=${event} .lookup=${true} .full=${true} .allowStart=${true}
+          @template-event-closed=${() => void this._action(async () => {})}
+          @event-investigation-denied=${() => this._clearDetail('事件不可访问或已不存在。')}></event-investigation-record>
+      </div>`) : html`<app-card><span slot="header">事件详情</span>
+        <h3 tabindex="-1">事件 #${event.id}：${eventDisplayTitle(event)}</h3>
+        <div class="record-status">
+          <span>事件处理 ${this._statusBadge(event.status)}</span>
+          <span>严重度 <app-badge variant="muted">${severity[event.severity] ?? '未知'}</app-badge></span>
+          ${event.source_type !== 'template-trigger' ? html`<span>恢复确认 <app-badge variant="muted">${event.verification_passed_at ? '已人工确认' : '待核对'}</app-badge></span>` : nothing}
+        </div>
+        <p class="record-meta">发生于 ${this._formatTime(event.created_at)}
+          ${event.alert_count != null ? html` · ${event.alert_count} 条关联告警` : nothing}
+          ${event.instance_name ? html` · ${event.instance_name}` : nothing}</p>
+        <template-event-evidence .eventId=${Number(event.id)} .compact=${template} .allowClose=${template}
+          @template-event-closed=${() => void this._action(async () => {})}></template-event-evidence>
+        ${event.source_type !== 'template-trigger' ? html`<button class="btn" @click=${() => this.renderRoot.querySelector<HTMLElement>('.detail-panel')?.scrollIntoView({block:'start'})}>查看事件记录与操作</button>` : nothing}
+      </app-card>`}${template ? html`<details class="record-more" ?open=${this.recordMore}
+        @toggle=${(e:Event) => {this.recordMore = (e.target as HTMLDetailsElement).open;}}>
+        <summary>更多事件记录与操作</summary>
+        ${this.canViewInvestigations && this.recordMore ? keyed(event.status, html`<template-event-evidence
+          .eventId=${Number(event.id)} .compact=${true}></template-event-evidence>`) : nothing}
+        ${this._renderDetail()}</details>` : this._renderDetail()}` : nothing}
+    </section>`;
   }
 
   private _renderStats() {
@@ -942,15 +1076,12 @@ export class EventManagementPage extends LitElement {
     const e = this.selectedEvent!;
     return html`
       <div class="detail-panel">
-        <button class="btn" @click=${() => this.closeDetail()}>返回事件列表</button>
-        <h3>事件 #${e.id}：${e.title}</h3>
-        <template-event-evidence .eventId=${e.id}></template-event-evidence>
         <div class="detail-section">
           <h4>基本信息</h4>
           <div class="detail-row"><span class="label">标题</span><span class="value">${e.title}</span></div>
           <div class="detail-row"><span class="label">状态</span><span class="value">${this._statusBadge(e.status)}</span></div>
           <div class="detail-row"><span class="label">严重度</span><span class="value" style="color: ${this._severityColor(e.severity)}">${e.severity.toUpperCase()}</span></div>
-          <div class="detail-row"><span class="label">告警数</span><span class="value">${e.alert_count}</span></div>
+          <div class="detail-row"><span class="label">告警数</span><span class="value">${e.alert_count ?? '未知'}</span></div>
           <div class="detail-row"><span class="label">实例</span><span class="value">${e.instance_name || "N/A"}</span></div>
           <div class="detail-row"><span class="label">负责人</span><span class="value">${e.assignee || "未分配"}</span></div>
           <div class="detail-row"><span class="label">创建时间</span><span class="value">${this._formatTime(e.created_at)}</span></div>

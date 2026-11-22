@@ -9,6 +9,7 @@ import { resolveInvestigationProfile } from './profiles.js';
 import { InvestigationStoreError, type InvestigationAcceptance, type InvestigationList } from './store.js';
 import { InvestigationCreateRequestSchema, InvestigationRequestSchema, InvestigationPatchRequestSchema } from './http-contracts.js';
 import { LegacyAnalysisBridge } from './legacy-analysis-bridge.js';
+import { automaticSourceEventIds } from './automatic-source-events.js';
 
 const invalid = () => new InvestigationStoreError('INVESTIGATION_INPUT_INVALID');
 const actorOf = (request: FastifyRequest) => (request as FastifyRequest & { user: ActorContext }).user;
@@ -134,7 +135,11 @@ export async function registerInvestigationRoutes(app: FastifyInstance, verifyTo
     const run = record.activeRequestId
       ? snapshot.runs.find(run => run.requestId === record.activeRequestId)
       : snapshot.runs.at(-1);
-    return { ...record, canOperate:await workflow.canOperate(actor,id),legacyAnalysis: await legacy.read(actor, id), derivedRunState: run ? run.resolution === 'outcome_unknown' ? 'unknown' : run.state : record.activeRequestId ? 'queued' : null,
+    const canOperate = await workflow.canOperate(actor, id);
+    const legacyAnalysis = await legacy.read(actor, id);
+    const sourceEventIds = await automaticSourceEventIds(actor, record);
+    return { ...record, canOperate, legacyAnalysis, ...(sourceEventIds.length ? { sourceEventIds } : {}),
+      derivedRunState: run ? run.resolution === 'outcome_unknown' ? 'unknown' : run.state : record.activeRequestId ? 'queued' : null,
       latestResult: results.items[0] ?? null, watermark: snapshot.watermark };
   });
   route('GET', '/api/investigations/:id/events', async (request, _reply, actor) => {

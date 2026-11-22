@@ -24,7 +24,7 @@ async function load(page: Page, status = 200, data: unknown = { items }) {
     const body = data as {items?: typeof items};
     return route.fulfill({ status, json: states && Array.isArray(body.items) ? {...body, items:body.items.filter(item=>states.includes(item.status))} : data });
   });
-  await page.route('**/api/alerts/events/*', route => {
+  await page.route('**/api/alerts/events/**', route => {
     const path = new URL(route.request().url()).pathname;
     if (path.endsWith('/stats')) return route.fulfill({json:{total:2,open:1,investigating:1,handled:0,resolved:0,closed:0}});
     if (path.endsWith('/mttr')) return route.fulfill({json:{avg_mttr_minutes:0}});
@@ -43,7 +43,8 @@ for (const width of [1440, 375]) for (const theme of ['light', 'dark']) {
     await expect(page.getByRole('button', { name: '查看事件 #1 详情' })).toBeVisible();
     await capture(page, `attention-${width}-${theme}`);
     const open = page.getByRole('button', { name: '查看事件 #2 详情' }); await open.focus(); await page.keyboard.press('Enter');
-    await expect(page.getByRole('heading', { name: `事件 #2：${items[1].title}` })).toBeVisible();
+    await expect(page.getByRole('heading', { name: items[1].title, exact: true })).toBeVisible();
+    await expect(page.getByText('事件 #2', { exact: true })).toBeVisible();
     await expect(page.getByText('事件 2 专属告警')).toBeVisible();
     await expect(page.getByText('事件 1 专属告警')).toHaveCount(0);
     await capture(page, `detail-keyboard-${width}-${theme}`);
@@ -119,7 +120,7 @@ test('reads current real MySQL events over HTTP and opens an exact event with re
   await page.goto('/e2e/fixtures/workbench-clarity.html');
   const first = page.locator('event-management-page .event-item').first(); await expect(first).toBeVisible();
   const identity = await first.getAttribute('aria-label'); await first.click();
-  await expect(page.locator('event-management-page h3')).toContainText(identity!.replace('查看', '').replace(' 详情', ''));
+  await expect(page.locator('event-management-page .record-id')).toContainText(identity!.replace('查看', '').replace(' 详情', ''));
   await expect(page.locator('event-management-page [role="alert"]')).toHaveCount(0);
   await capture(page, 'real-mysql-event-detail');
   expect((await request.get(`${process.env.SLIDE_REAL_API}/api/alerts/events`)).status()).toBe(401);

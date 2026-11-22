@@ -132,6 +132,7 @@ export interface TriggerEpisodeRecord {
   closed_at: string | null;
   /** 0 or 1 by construction: a recovery closes an episode at most once. */
   recovery_count: 0 | 1;
+  manual_close?: { actor_id: number };
   last: TriggerEpisodeEvidence;
   /**
    * The evidence this occurrence opened with; `at` is this record's `opened_at`.
@@ -222,6 +223,13 @@ const unknownIntervalsAfter = (
       unknown_open_from: evidence.at,
     };
   }
+  return endUnknownInterval(record, evidence.at);
+};
+
+function endUnknownInterval(
+  record: TriggerEpisodeRecord,
+  at: string,
+): Pick<TriggerEpisodeRecord, 'unknown_segments' | 'unknown_open_from'> {
   if (record.unknown_open_from === null) {
     return { unknown_segments: record.unknown_segments, unknown_open_from: null };
   }
@@ -232,10 +240,23 @@ const unknownIntervalsAfter = (
   // file) must not fabricate a segment out of nothing.
   if (open === undefined) return { unknown_segments: record.unknown_segments, unknown_open_from: null };
   return {
-    unknown_segments: [...record.unknown_segments.slice(0, -1), { ...open, to: evidence.at }],
+    unknown_segments: [...record.unknown_segments.slice(0, -1), { ...open, to: at }],
     unknown_open_from: null,
   };
-};
+}
+
+/** A manual close ends the episode without rewriting any sample verdict. */
+export function manuallyCloseTriggerEpisode(record: TriggerEpisodeRecord, actorId: number, at: string): TriggerEpisodeRecord {
+  if (record.state !== 'open') return record;
+  const closed_at = new Date(Math.max(instantOf(at), instantOf(record.last.at))).toISOString();
+  return {
+    ...record,
+    ...endUnknownInterval(record, closed_at),
+    state: 'closed',
+    closed_at,
+    manual_close: { actor_id: actorId },
+  };
+}
 
 /**
  * Apply one evaluation to the last episode record of one incident identity.
@@ -271,7 +292,7 @@ export function nextTriggerEpisode(transition: TriggerEpisodeTransition): Trigge
   // next occurrence, and `last` does not move backwards. Equal and later times
   // keep the accepted transition below.
   if (owned !== null
-    && instantOf(evaluation.evaluated_at) < instantOf(owned.last.at)) {
+    && instantOf(evaluation.evaluated_at) < instantOf(owned.closed_at ?? owned.last.at)) {
     return owned;
   }
 

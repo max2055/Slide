@@ -31,7 +31,8 @@ import type { TemplatePin, TemplateTriggerRefSchema } from '../../contracts/metr
 import type { z } from 'zod';
 import { BindingPreflightError, preflightResourceBinding, type TemplateVersionReadPort } from '../bindings/preflight.js';
 import { templateResolutionIdentity, type ResolvedTemplateBinding } from '../bindings/resolve.js';
-import { expressionBudget, frozenCopy, referencedParameters, triggerRuleContentHash } from './model.js';
+import { expressionBudget, frozenCopy, referencedParameters, referencedTriggerItems, triggerRuleContentHash } from './model.js';
+import { metricKey } from '../policy/model.js';
 
 /** The trusted rule catalog. It answers one exact identity or `null`; it never lists "latest". */
 export interface TriggerRuleCatalogPort {
@@ -342,13 +343,13 @@ function checkExpressionBudget(expression: TriggerExpression, location: TriggerR
 export function validatePublishedTrigger(input: unknown): TriggerRuleVersion {
   const rule = TriggerRuleVersionSchema.parse(input);
   checkExpressionBudget(rule.problem, NO_LOCATION);
-  checkExpressionBudget(rule.recovery, NO_LOCATION);
+  if (rule.recovery) checkExpressionBudget(rule.recovery, NO_LOCATION);
   for (const name of [...referencedParameters(rule.problem), ...referencedParameters(rule.recovery)]) {
     if (!rule.parameters.schema[name]) fail('TRIGGER_PARAMETER_UNKNOWN', { ...NO_LOCATION, parameter: name });
   }
   const parameters = resolveParameters(rule, undefined, NO_LOCATION);
   resolveExpression(rule.problem, parameters.numeric, NO_LOCATION);
-  resolveExpression(rule.recovery, parameters.numeric, NO_LOCATION);
+  if (rule.recovery) resolveExpression(rule.recovery, parameters.numeric, NO_LOCATION);
   return rule;
 }
 
@@ -402,7 +403,7 @@ function resolveOne(
   };
 
   checkExpressionBudget(rule.problem, location);
-  checkExpressionBudget(rule.recovery, location);
+  if (rule.recovery) checkExpressionBudget(rule.recovery, location);
 
   const itemId = location.item_id!;
   const stored = pin.items.filter(item => item.item_id === itemId);
@@ -432,7 +433,31 @@ function resolveOne(
 
   const parameters = resolveParameters(rule, overrides, location);
   const problem = resolveExpression(rule.problem, parameters.numeric, location);
-  const recovery = resolveExpression(rule.recovery, parameters.numeric, location);
+  const recovery = rule.recovery_mode === 'problem_expression' || rule.recovery_mode === 'none'
+    ? { recovery_mode: rule.recovery_mode }
+    : { ...(rule.recovery_mode ? { recovery_mode: rule.recovery_mode } : {}),
+        recovery: resolveExpression(rule.recovery, parameters.numeric, location) };
+  const referenced = referencedTriggerItems(itemId, problem, 'recovery' in recovery ? recovery.recovery : undefined);
+  if (referenced.length > TRIGGER_LIMITS.max_nodes) fail('TRIGGER_EXPRESSION_BUDGET', location);
+  const metrics = new Set([metricKey(item.canonical_metric)]);
+  const inputs = referenced.map(id => {
+    const at = { ...location, item_id: id };
+    const matches = pin.items.filter(candidate => candidate.item_id === id);
+    const choices = selected.get(`${pin.pin.template_id}\u0000${id}`) ?? [];
+    if (!matches.length || !choices.length) fail('TRIGGER_ITEM_UNKNOWN', at);
+    if (matches.length !== 1 || choices.length !== 1) fail('TRIGGER_ITEM_AMBIGUOUS', at);
+    const [target] = matches;
+    const [choice] = choices;
+    if (choice.item_version !== target.version || Object.keys(target.dimensions).length || Object.keys(item.dimensions).length) {
+      fail('TRIGGER_ITEM_MISMATCH', at);
+    }
+    const key = metricKey(target.canonical_metric);
+    if (key !== metricKey(choice.canonical_metric) || choice.unit !== target.unit) fail('TRIGGER_ITEM_MISMATCH', at);
+    if (metrics.has(key)) fail('TRIGGER_ITEM_AMBIGUOUS', at);
+    metrics.add(key);
+    return { item: { template_id: pin.pin.template_id, item_id: id, item_version: target.version },
+      metric: target.canonical_metric, unit: target.unit, decision: choice.decision };
+  });
 
   return {
     rule_id: rule.rule_id,
@@ -442,11 +467,14 @@ function resolveOne(
     item: { template_id: pin.pin.template_id, item_id: item.item_id, item_version: item.version },
     metric: { ...item.canonical_metric },
     unit: item.unit,
+    ...(rule.severity ? { severity: rule.severity } : {}),
+    ...(rule.allow_manual_close !== undefined ? { allow_manual_close: rule.allow_manual_close } : {}),
     dimensions: { ...item.dimensions },
     decision: selection.decision,
     parameters: parameters.list,
     problem,
-    recovery,
+    ...recovery,
+    ...(inputs.length ? { inputs } : {}),
     quality: { ...rule.quality, accepted_quality: [...rule.quality.accepted_quality] },
     clock: { ...rule.clock },
   };

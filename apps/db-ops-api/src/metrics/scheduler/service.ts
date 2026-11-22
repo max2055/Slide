@@ -1,4 +1,3 @@
-import { SourceSnapshotCapture } from '../rollout/source-shadow.js';
 import { discoveryBudget } from '../templates/discovery-store.js';
 import { platformLogs } from '../../platform/structured-log-evidence-adapter.js';
 import { instanceAccessLifecycle } from '../../resources/instance-access-lifecycle.js';
@@ -8,8 +7,8 @@ import type { JobRegistry } from '../../workflows/job-registry.js';
 import { runPackage, type PackageExecution } from '../packages/runner.js';
 import type { PackageRegistry } from '../packages/model.js';
 import { type Ref, RefSchema, refKey, rule, PolicyError } from '../policy/model.js';
-import { bindingReadCode, isTemplateBindingUnsupported } from '../bindings/package-reader.js';
-import { compilePlan } from './compiler.js';
+import { bindingReadCode } from '../bindings/package-reader.js';
+import { itemIntervals } from '../bindings/plan.js';
 import { COLLECT_NOW_JOB_TYPE, JOB_TYPE, MysqlScheduleStore, type CollectAttempt, type TemplateExecutionSnapshot } from './store.js';
 import type { ClaimedJob, JobExecutionContext } from '../../workflows/worker-runtime.js';
 
@@ -82,8 +81,7 @@ export class MetricScheduler {
   async tick(): Promise<number> {
     let count = 0;
     const scan = await this.store.scan();
-    // A template/corrupt row is isolated with a stable diagnostic; it never blocks
-    // a legal legacy row from formalizing or enqueueing.
+    // Isolate a corrupt row without suppressing other schedules.
     for (const rejected of scan.rejected) {
       platformLogs.record({ component: 'metrics', eventType: 'collection.scan_skipped', status: 'failed',
         errorCode: rejected.code, correlationId: rejected.resource_key });
@@ -98,18 +96,6 @@ export class MetricScheduler {
         if (globalSchedulingFailure(error)) throw error;
         platformLogs.record({ component: 'metrics', eventType: `collection.${phase}_failed`, status: 'failed',
           errorCode: schedulingFailureCode(error), correlationId: template.resource_key });
-      }
-    }
-    for (const published of scan.published) {
-      let phase = 'formalization';
-      try {
-        await this.formalization?.reconcile(published.binding.resource, published.binding.revision);
-        phase = 'enqueue';
-        if (await this.store.enqueue(published, this.clock())) count++;
-      } catch (error) {
-        if (globalSchedulingFailure(error)) throw error;
-        platformLogs.record({ component: 'metrics', eventType: `collection.${phase}_failed`, status: 'failed',
-          errorCode: schedulingFailureCode(error), correlationId: refKey(published.binding.resource) });
       }
     }
     return count;
@@ -183,7 +169,8 @@ export class MetricScheduler {
         signal.throwIfAborted();
       };
       await check();
-      for (const release of plan.releases) {
+      let states = snapshot.states;
+      for (const release of snapshot.releases ?? snapshot.plan.releases) {
         if (release.steps.length === 0) continue;
         const result = await runPackage(this.packages, {
           package: { ...release.release }, credential_ref: access.credential_ref,
@@ -193,7 +180,7 @@ export class MetricScheduler {
           ...access, binding_id: refKey(ref), attempt_id: `${job.id}:${job.fencingToken}:${release.release_ref}`,
           config_revision: revision, observed_at: new Date(this.clock()).toISOString(),
           clock: () => new Date(this.clock()).toISOString(), signal,
-          collector_ids: release.collector_ids, metric_keys: release.metric_keys, states: snapshot.states,
+          collector_ids: release.collector_ids, metric_keys: release.metric_keys, states, item_intervals_ms: itemIntervals([release]),
           previous_capabilities: release.steps.flatMap(step => step.items.map(item => item.capability)),
           before_request: check,
           collect: async (...args) => {
@@ -205,6 +192,7 @@ export class MetricScheduler {
             } finally { inFlight = false; }
           },
         });
+        states = result.states;
         results.push({ release: { ...release.release }, result });
       }
       signal.throwIfAborted();
@@ -241,19 +229,14 @@ export class MetricScheduler {
     registry.register(JOB_TYPE, async (payload, job, context) => {
       const { resource: ref, revision } = Payload.parse(payload);
       context.signal.throwIfAborted();
-      // A template row runs the exact pending plan; the legacy single-package
-      // path below never sees a `templates-v1` payload.
-      if (await this.store.currentTemplate(this.store.pool, ref) !== null) {
-        return this.executeTemplate(ref, revision, job, context, execution => ({
-          onMissingBinding: () => 'return',
-          assertCurrent: () => this.store.assertCurrentTemplate(ref, revision, job, execution),
-          begin: () => this.store.beginTemplate(ref, revision, job, execution, this.clock()),
-          commit: (snapshot, results) => this.store.commitTemplate(snapshot, results, job, execution, this.clock()),
-          recordFailure: (snapshot, results) => this.store.recordTemplateFailure(snapshot, results, job, execution, this.clock()),
-          fail: async () => undefined,
-        }));
-      }
-      return this.runLegacy(ref, revision, job, context);
+      return this.executeTemplate(ref, revision, job, context, execution => ({
+        onMissingBinding: () => 'return',
+        assertCurrent: () => this.store.assertCurrentTemplate(ref, revision, job, execution),
+        begin: () => this.store.beginTemplate(ref, revision, job, execution, this.clock()),
+        commit: (snapshot, results) => this.store.commitTemplate(snapshot, results, job, execution, this.clock()),
+        recordFailure: (snapshot, results) => this.store.recordTemplateFailure(snapshot, results, job, execution, this.clock()),
+        fail: async () => undefined,
+      }));
     });
     // Manual collection: the same plan and writer, fenced by one persisted task.
     registry.register(COLLECT_NOW_JOB_TYPE, async (payload, job, context) => {
@@ -291,106 +274,4 @@ export class MetricScheduler {
     });
   }
 
-  private async runLegacy(ref: Ref, revision: number, job: ClaimedJob, context: JobExecutionContext): Promise<void> {
-      const reservation = await this.store.reserve(ref);
-      if (!reservation) throw new Error('SCHEDULE_CAPACITY');
-      const started = this.clock();
-      let reads = 0, inFlight = false, cancelled = false, uncertain = false;
-      const controller = new AbortController();
-      const signal = ref.type === 'instance' ? AbortSignal.any([controller.signal, instanceAccessLifecycle.signal(ref.id)]) : controller.signal;
-      const executionContext = { ...context, signal };
-      let cancellationRecord: Promise<void> | undefined;
-      const cancel = (reason: unknown) => {
-        if (cancelled) return;
-        cancelled = true; uncertain = inFlight; controller.abort(reason);
-        cancellationRecord = this.store.event(ref, revision, job.id, 'cancellation_requested', inFlight, this.clock() - started, reads);
-        // Retain the promise for foreground cleanup; avoid an unhandled rejection while IO is still pending.
-        void cancellationRecord.catch(() => undefined);
-      };
-      const abort = () => cancel(context.signal.reason);
-      context.signal.addEventListener('abort', abort, { once: true });
-      if (context.signal.aborted) abort();
-      let timer: ReturnType<typeof setTimeout> | undefined;
-      try {
-        const current = await this.store.current(this.store.pool, ref);
-        if (!current || current.binding.revision !== revision) return;
-        const initial = compilePlan(this.packages, current.resolved);
-        timer = setTimeout(() => cancel(new Error('SCHEDULE_TIMEOUT')), initial.timeoutMs);
-        await this.store.assertCurrent(ref, revision, job, executionContext);
-        const access: Awaited<ReturnType<CollectorAccess['resolve']>> = current.resolved.settings.enabled ? await this.access.resolve(ref) : {
-          resource: { type: ref.type, id: String(ref.id), attributes: {} }, credential_ref: 'credential:disabled', evidence: {},
-          resolve: async () => { throw new Error('SCHEDULE_DISABLED'); },
-        };
-        rule(access.resource.type === ref.type && access.resource.id === String(ref.id), 'SCHEDULE_ACCESS_IDENTITY');
-        signal.throwIfAborted();
-        const snapshot = await this.store.begin(ref, revision, job, executionContext, this.clock(), access.resource);
-        if (!snapshot) return;
-        platformLogs.record({ component: 'metrics', eventType: 'collection.begun', status: 'ok', correlationId: job.id, jobType: JOB_TYPE, durationMs: Math.max(0, this.clock() - started) });
-        const { plan, published } = snapshot;
-        const settings = published.resolved.settings;
-        const check = async () => {
-          signal.throwIfAborted();
-          await reservation.connection.ping();
-          await this.store.assertCurrent(ref, revision, job, executionContext);
-          await access.assertCurrent?.();
-          signal.throwIfAborted();
-        };
-        await check();
-        const capture = new SourceSnapshotCapture();
-        const result = await runPackage(this.packages, { package: published.binding.package, credential_ref: access.credential_ref,
-          overrides: { enabled: settings.enabled, interval_ms: settings.interval_ms, timeout_ms: settings.timeout_ms,
-            stale_after_ms: settings.stale_after_ms, max_counter_gap_ms: settings.max_counter_gap_ms, max_rows: settings.max_rows } }, {
-          ...access, resolve: access.resolve, resource: access.resource, binding_id: refKey(ref), attempt_id: `${job.id}:${job.fencingToken}`,
-          // Metadata can be observed after job start; started still anchors elapsed time and cancellation.
-          config_revision: revision, observed_at: new Date(this.clock()).toISOString(), clock: () => new Date(this.clock()).toISOString(),
-          signal, collector_ids: plan.collectorIds, metric_keys: plan.metricKeys, states: snapshot.states,
-          previous_capabilities: published.resolved.metric_templates.map(t => t.capability), before_request: check,
-          collect: async (...args) => {
-            await check(); inFlight = true;
-            reads += args[1].method === 'ssh' ? 2 : 1;
-            try {
-              const collector = this.collect ?? (await import('../packages/adapters.js')).collectFixed;
-              return await collector(args[0], capture.inCollector(args[0], args[1]), ...args.slice(2) as [typeof args[2],typeof args[3],typeof args[4]]);
-            } finally { inFlight = false; }
-          },
-        });
-        signal.throwIfAborted();
-        await check();
-        // Failed batches are retried by the existing Worker. Partial success is committed without re-querying healthy outputs.
-        if (result.attempts.length && result.attempts.every(a => a.status === 'failed')) {
-          await this.store.recordFailure(snapshot, result, job, executionContext, this.clock());
-          throw new Error('SCHEDULE_COLLECTION_FAILED');
-        }
-        result.source_validation = capture.compare(ref, String(access.resource.attributes['db.engine']?.value ?? ''),
-          result.observations.map(o=>o.observation), this.packages.catalog(published.binding.package), this.packages.get(published.binding.package).package.collectors);
-        const committed = await this.store.commit(snapshot, result, job, executionContext, this.clock());
-        platformLogs.record({ component: 'metrics', eventType: 'collection.committed', status: committed ? 'ok' : 'unknown', correlationId: job.id, jobType: JOB_TYPE, durationMs: Math.max(0, this.clock() - started) });
-        await this.store.event(ref, revision, job.id, committed ? 'committed' : 'late_result_discarded', false, this.clock() - started, reads);
-      } catch (error) {
-        // A template row (or a corrupt snapshot) can never become collectable by
-        // retrying the same legacy job: record one stable diagnostic and end it.
-        if (isTemplateBindingUnsupported(error)) {
-          await this.store.event(ref, revision, job.id, 'template_binding_unsupported', false, this.clock() - started, reads);
-          return;
-        }
-        const payloadCode = bindingReadCode(error);
-        if (payloadCode !== null) {
-          await this.store.event(ref, revision, job.id, 'binding_payload_invalid', false, this.clock() - started, reads);
-          return;
-        }
-        // Never store remote errors, credentials or SQL. Abort cannot retract an already issued request.
-        const superseded = error instanceof Error && error.message === 'SCHEDULE_SUPERSEDED';
-        const stale = error instanceof Error && error.message === 'SCHEDULE_STALE_EXECUTION';
-        const code = cancelled ? 'cancelled_result_uncertain' : superseded || stale
-          ? 'late_result_discarded' : 'collection_failed';
-        await this.store.event(ref, revision, job.id, code, uncertain || inFlight, this.clock() - started, reads);
-        // A superseded revision can never become current again; retrying it can starve the replacement job.
-        if (superseded) return;
-        throw new Error(code);
-      } finally {
-        if (timer) clearTimeout(timer);
-        context.signal.removeEventListener('abort', abort);
-        try { await cancellationRecord; } finally { await reservation.release(); }
-      }
-  }
 }

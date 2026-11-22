@@ -121,7 +121,7 @@ export class InvestigationEntry extends LitElement {
       investigation-entry td, investigation-entry th { text-align:left; padding:var(--space-sm); border-bottom:1px solid var(--border); overflow-wrap:anywhere; }
       investigation-entry .entry-table { overflow:auto; max-height:360px; }
     </style><app-card><span slot="header">${this.investigationId ? '调查来源与授权事实' : '只读调查草案'}</span>
-      <p>本页仅核对授权事实，尚未进行模型分析。缺少模型不影响查看；审批、执行与恢复验证尚未开始。</p>
+      ${!this.investigationId ? html`<p>本页仅核对授权事实，尚未进行模型分析。缺少模型不影响查看；审批、执行与恢复验证尚未开始。</p>` : nothing}
       ${this.loading ? html`<p role="status">正在读取原窗口内的事实…</p>` : nothing}
       ${this.error ? html`<p role="alert">${this.error}</p>` : nothing}
       ${c ? html`<dl><dt>资源范围</dt><dd>${c.resourceRefs.map(r => `${r.type}:${r.id}（${r.role === 'primary' ? '主资源' : '关联资源'}）`).join('、')}</dd>

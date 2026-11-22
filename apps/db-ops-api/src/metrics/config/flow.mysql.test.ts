@@ -16,7 +16,6 @@ import { registerMetricPolicyRoutes } from '../policy/routes.js';
 import { MysqlMetricStorage } from '../storage.js';
 import { admin, pin, resource } from '../policy/test-support.js';
 import { sealRelease } from '../packages/model.js';
-import { installHistoricalMetricRoutes } from '../legacy-routes.js';
 import { createConfigurationRegistry } from './registry.js';
 import { MetricConfigurationService } from './service.js';
 import { createTrialStore, registerMetricConfigurationRoutes } from './routes.js';
@@ -59,7 +58,7 @@ describe.skipIf(!port)('configuration real HTTP / MySQL / browser', () => {
       // Fixed simulated remote target; HTTP, policy persistence, CAS and reservation are real.
       resolve: async () => ({ method: 'sql', pool: { query: async () => [remoteHasRows ? [{ Variable_name: 'Uptime', Value: '1000' }, { Variable_name: 'Queries', Value: '9007199254740993' }] : [], []] } }),
     }) }, configurationReader(() => pool));
-    app = Fastify(); installHistoricalMetricRoutes(app); await registerMetricPolicyRoutes(app, auth, policy, async seed => seed); await registerMetricConfigurationRoutes(app, auth, service);
+    app = Fastify(); await registerMetricPolicyRoutes(app, auth, policy, async seed => seed); await registerMetricConfigurationRoutes(app, auth, service);
     // The ordinary configuration entry reads the stored binding source before it
     // picks the legacy editor or the fixed-version template flow. That read is
     // part of the product contract, so this isolated app serves the real route

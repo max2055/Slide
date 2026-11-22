@@ -286,7 +286,7 @@ test(visualReview ? 'R1 targeted visual review without collection or probes' : m
     }
     await page.goto(site + '/settings/monitoring/metrics?view=packages');
     const settings = page.locator('metric-settings');
-    await page.getByRole('tab', { name: '采集包', exact: true }).click();
+    await page.getByRole('tab', { name: '监控模板', exact: true }).click();
     await settings.getByLabel('搜索采集包', { exact: true }).fill(pin.id);
     const open = settings.getByRole('row').filter({ hasText: 'MySQL 现有自定义指标' }).getByRole('button', { name: '查看模板', exact: true });
     await open.click();
@@ -409,7 +409,7 @@ test(visualReview ? 'R1 targeted visual review without collection or probes' : m
     await captureMatrix(page, 'metrics-normal');
   }
   await page.goto(site + '/settings/monitoring/metrics?view=packages');
-  await page.getByRole('tab', { name: '采集包', exact: true }).click();
+  await page.getByRole('tab', { name: '监控模板', exact: true }).click();
   await expect(page.locator('metric-settings')).toContainText('MySQL 现有自定义指标');
   await page.screenshot({ path: `${output}/templates-formal.png`, fullPage: true });
   if (matrix) {
