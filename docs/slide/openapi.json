@@ -17427,6 +17427,11 @@
                         ],
                         "type": "string"
                       },
+                      "observation_id": {
+                        "maxLength": 256,
+                        "minLength": 1,
+                        "type": "string"
+                      },
                       "observed_at": {
                         "allOf": [
                           {
@@ -17657,6 +17662,7 @@
                       }
                     },
                     "required": [
+                      "observation_id",
                       "dimensions",
                       "observed_at",
                       "value",
@@ -56104,7 +56110,7 @@
     },
     "/api/metrics/latest": {
       "post": {
-        "description": "Configured metrics and the latest accepted observation of each retained series. Samples retain their original units, exact values and quality, independent of chart windows. Current authorization is checked before and after storage reads.",
+        "description": "Configured metrics and the latest accepted observation of each retained series. Each observation_id is the identifier used by the authorized raw observation endpoint for that record. Samples retain their original units, exact values and quality, independent of chart windows. Current authorization is checked before and after storage reads.",
         "operationId": "listLatestMetricObservations",
         "requestBody": {
           "content": {

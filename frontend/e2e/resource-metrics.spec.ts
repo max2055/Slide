@@ -1,4 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
+import { writeFile } from 'node:fs/promises';
 import type { TemplateBindingRequest, TemplateBindingStatus, TemplatePreview, TemplateTrial } from '../src/app/ui/components/metric-api.js';
 import { collectionStatus } from '../src/app/ui/components/metric-test-fixtures.js';
 const fixture = async (page: Page, tag: string, file: string) => {
@@ -478,3 +479,380 @@ for (const width of [1366, 1440, 1920]) test(`MAX-397 SNMP capacity guidance sta
   expect(await guidance.evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
 });
+
+const metricReadings = [
+  { id: 'db.uptime_seconds', unit: 's', encoding: 'float64', value: 318711, reading: '3 天 16 小时' },
+  { id: 'mysql.connections.limit', unit: 'count', encoding: 'uint64', value: '13', reading: '13 个连接' },
+  { id: 'mysql.queries.per_second', unit: 'count/s', encoding: 'float64', value: 6.774611940888977, reading: '6.77 次/秒' },
+  { id: 'mysql.tables.estimated_allocated_bytes', unit: 'By', encoding: 'uint64', value: '5638258688', reading: '5.25 GiB' },
+];
+const metricsFixture = (from: string, to: string) => metricReadings.map((item, index) => {
+  const definition = { id: item.id, semantic_version: '1.0.0', category: 'canonical', meaning: item.id,
+    unit: item.unit, kind: 'gauge', value_type: item.encoding };
+  const point = {
+    dimensions: { scope: 'primary' }, unit: item.unit, value: { encoding: item.encoding, value: item.value }, observed_at: from,
+    quality: { status: 'good', reason: 'none' }, freshness: index === 1 ? 'stale' : 'fresh', accuracy: 'exact',
+    sources: [{ source: { collector_id: 'controlled-fixture' } }],
+  };
+  const bucket = { ...point, coverage: 1, window: { from, to } };
+  return { definition, point, bucket, state: index === 1 ? 'temporary_failure' : 'available' };
+});
+
+for (const [resourceType, width, height] of [['instance', 1366, 768], ['server', 1440, 900], ['network_device', 1920, 1080]] as const) {
+  test(`metric readings, evidence and dimensions for ${resourceType} at ${width}×${height}`, async ({ page, context }, info) => {
+    await page.setViewportSize({ width, height });
+    await context.grantPermissions(['clipboard-read', 'clipboard-write']);
+    const observed = new Date(Date.now() - 30 * 60_000).toISOString();
+    const latest = metricsFixture(observed, new Date().toISOString());
+    let history: { metric: unknown; dimensions: unknown; from: string; to: string } | undefined;
+    await page.route('**/api/metrics/**', route => {
+      const path = new URL(route.request().url()).pathname;
+      if (path.endsWith('/status')) return route.fulfill({ json: collectionStatus() });
+      if (path.endsWith('/attempts')) return route.fulfill({ json: [] });
+      const body = route.request().postDataJSON();
+      if (path.endsWith('/latest')) return route.fulfill({ json: {
+        resource: body, evaluated_at: observed, metrics: latest.map(({ definition, point, state }) => ({ definition, state, series: [point] })),
+      } });
+      if (path.endsWith('/catalog')) return route.fulfill({ json: { metrics: [], snapshots: [] } });
+      const window = { from: body.from, to: body.to };
+      const metrics = metricsFixture(body.from, body.to);
+      if (path.endsWith('/observations')) {
+        history = body;
+        const point = metrics.find(item => item.definition.id === body.metric.id)!.point;
+        return route.fulfill({ json: { window, observations: [point], total: 1, has_more: false } });
+      }
+      return route.fulfill({ json: { profile: { columns: [] }, window, metrics: metrics.map(({ definition, bucket, state }) => ({
+        definition, state, series: [
+          { dimensions: { scope: 'primary' }, buckets: definition.unit === 'count/s'
+            ? [bucket, { ...bucket, value: null, observed_at: null, quality: { status: 'unknown', reason: 'gap' } }] : [bucket] },
+          ...(definition.id === 'db.uptime_seconds' ? [{ dimensions: { scope: 'replica' }, buckets: [{ ...bucket, value: null, observed_at: null, quality: { status: 'unknown', reason: 'gap' }, freshness: 'unknown' }] }] : []),
+        ],
+      })) } });
+    });
+    await page.route('**/api/maintenance-windows/intervals/**', route => {
+      const url = new URL(route.request().url());
+      return route.fulfill({ json: { resource: { type: resourceType, id: 1 }, from: url.searchParams.get('from'),
+        to: url.searchParams.get('to'), intervals: [], event_links: [] } });
+    });
+    await fixture(page, `<resource-metric-browser resourcetype="${resourceType}" resourceid="1"></resource-metric-browser>`, 'components/resource-metric-browser');
+    const browser = page.locator('resource-metric-browser');
+    const table = browser.locator('app-data-table').first();
+    for (const { reading } of metricReadings) await expect(table.getByText(reading, { exact: true })).toBeVisible();
+    await expect(table.getByText('旧值', { exact: true })).toBeVisible();
+    await browser.getByText('进阶分析与采集证据', { exact: true }).click();
+    const metrics = browser.locator('semantic-metrics');
+    const summary = metrics.getByRole('region', { name: '窗口内最近可用值' });
+    for (const { reading } of metricReadings) {
+      const value = summary.getByText(reading, { exact: true });
+      await expect(value).toBeVisible();
+      expect(await value.evaluate(element => {
+        const selection = document.createRange();
+        selection.selectNodeContents(element);
+        return selection.getClientRects().length;
+      })).toBe(1);
+    }
+    await expect(summary.locator('.latest-value').filter({ hasText: 'scope=replica' })).toContainText('暂无可用观测');
+    await summary.scrollIntoViewIfNeeded();
+    await page.screenshot({ path: info.outputPath(`metrics-${width}x${height}.png`) });
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
+
+    if (resourceType === 'instance') {
+      const actions = metrics.getByRole('group', { name: '所选指标操作' });
+      await actions.getByRole('combobox').selectOption({ label: 'MySQL 每秒语句数 · scope=primary' });
+      await actions.getByText('原始值与来源', { exact: true }).click();
+      await actions.getByRole('button', { name: '复制证据' }).click();
+      const copied = JSON.parse(await page.evaluate(() => navigator.clipboard.readText()));
+      expect(copied).toMatchObject({ metric: 'mysql.queries.per_second', semantic_version: '1.0.0', dimensions: { scope: 'primary' },
+        unit: 'count/s', value: { encoding: 'float64', value: 6.774611940888977 }, sources: [{ source: { collector_id: 'controlled-fixture' } }] });
+      await actions.getByRole('button', { name: '查看历史趋势' }).click();
+      const chart = metrics.locator('.trend-grid metric-chart');
+      await expect(chart.locator('canvas').first()).toBeVisible();
+      const plotted = await chart.evaluate((element: any) => ({
+        data: element.series[0].data,
+        tooltip: element._chart.getOption().tooltip[0].valueFormatter(element.series[0].data[0]),
+      }));
+      expect(plotted).toEqual({ data: [6.774611940888977, null], tooltip: '6.77 次/秒' });
+      await actions.getByRole('button', { name: '查看采集详情' }).click();
+      await expect(metrics.locator('.raw-observations').getByText('6.77 次/秒', { exact: true })).toBeVisible();
+      expect(history).toMatchObject({ metric: { id: copied.metric, semantic_version: copied.semantic_version }, dimensions: copied.dimensions });
+    }
+  });
+}
+
+test('metric, maintenance and 30-day study reads recover independently', async ({ page }, info) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  let queryStatus = 503, maintenanceStatus = 504, studyStatus = 503;
+  let populate = false;
+  const queries: Array<{ from: string; to: string }> = [];
+  const maintenance: Array<{ from: string | null; to: string | null }> = [];
+  const studies: Array<{ from: string; to: string }> = [];
+  await page.route('**/api/metrics/**', route => {
+    const path = new URL(route.request().url()).pathname;
+    if (path.endsWith('/status')) return route.fulfill({ json: collectionStatus() });
+    if (path.endsWith('/attempts')) return route.fulfill({ json: [] });
+    const { from, to } = route.request().postDataJSON();
+    if (path.endsWith('/catalog')) {
+      studies.push({ from, to });
+      return route.fulfill({ status: studyStatus, json: studyStatus === 200 ? { metrics: [], snapshots: [] } : {} });
+    }
+    queries.push({ from, to });
+    const metrics = populate ? metricsFixture(from, to).map(({ definition, bucket, state }) =>
+      ({ definition, state, series: [{ dimensions: {}, buckets: [bucket] }] })) : [];
+    return route.fulfill({ status: queryStatus, json: queryStatus === 200 ? { profile: { columns: [] }, window: { from, to }, metrics } : {} });
+  });
+  await page.route('**/api/maintenance-windows/intervals/**', route => {
+    const url = new URL(route.request().url());
+    const from = url.searchParams.get('from'), to = url.searchParams.get('to');
+    maintenance.push({ from, to });
+    return route.fulfill({ status: maintenanceStatus, json: maintenanceStatus === 200 ? {
+      resource: { type: 'instance', id: 9 }, from, to, event_links: [],
+      intervals: populate ? [{ id: 'test', revision: 1, name: '计划维护', reason: '定期巡检', timezone: 'Asia/Shanghai',
+        effective_from: from, effective_to: to }] : [],
+    } : {} });
+  });
+  await fixture(page, '<semantic-metrics resourceid="9"></semantic-metrics>', 'components/semantic-metrics');
+  const metrics = page.locator('semantic-metrics');
+  const section = metrics.getByRole('region', { name: '维护历史' });
+  const study = metrics.locator('metric-study');
+  await expect(metrics.getByText('指标查询服务暂不可用（503），请稍后重试。', { exact: true })).toBeVisible();
+  await expect(section).toContainText('维护历史读取超时');
+  await expect(study).toContainText('长窗口目录服务暂不可用（503）');
+  await expect(study.getByRole('combobox', { name: '历史研究窗口' })).toHaveValue('30');
+  await expect(metrics.getByText('主图窗口（', { exact: false }).first()).toBeVisible();
+  await expect(study.getByText('研究窗口（', { exact: false })).toBeVisible();
+  await expect(metrics).not.toContainText('正在读取');
+  await expect(metrics).not.toContainText('保留同窗口');
+  await page.screenshot({ path: info.outputPath('independent-read-errors.png') });
+
+  queryStatus = 504;
+  await metrics.getByRole('button', { name: '重试主图指标' }).click();
+  await expect(metrics.getByText('指标查询读取超时，请重试。', { exact: true })).toBeVisible();
+  queryStatus = 200;
+  await metrics.getByRole('button', { name: '重试主图指标' }).click();
+  await expect(metrics.getByText('主图窗口没有指标记录。')).toBeVisible();
+
+  maintenanceStatus = 503;
+  await section.getByRole('button', { name: '重试维护历史' }).click();
+  await expect(section).toContainText('维护历史服务暂不可用（503）');
+  maintenanceStatus = 200;
+  await section.getByRole('button', { name: '重试维护历史' }).click();
+  await expect(section).toContainText('没有已记录的有限期限维护区段');
+
+  studyStatus = 200;
+  await study.getByRole('button', { name: '重试长窗口目录' }).click();
+  await expect(study).toContainText('研究窗口没有可读取的正式历史');
+  expect(queries).toEqual([queries[0], queries[0], queries[0]]);
+  expect(maintenance).toEqual([queries[0], queries[0], queries[0]]);
+  expect(studies).toEqual([studies[0], studies[0]]);
+  expect(Date.parse(studies[0].to) - Date.parse(studies[0].from)).toBe(30 * 86_400_000);
+
+  populate = true;
+  await metrics.getByRole('button', { name: '刷新标准指标' }).click();
+  await expect(metrics.getByRole('region', { name: '窗口内最近可用值' })).toBeVisible();
+  await expect(section).toContainText('计划维护');
+  await expect(section).toContainText('告警通知受抑制');
+  await section.getByText('维护区间边界与事件影响', { exact: true }).click();
+  await section.scrollIntoViewIfNeeded();
+  await page.screenshot({ path: info.outputPath('maintenance-recovered.png') });
+  expect(studies).toHaveLength(2);
+
+  queryStatus = 403;
+  await metrics.getByRole('button', { name: '刷新标准指标' }).click();
+  await expect(metrics.getByText('没有此资源的查看权限', { exact: true })).toBeVisible();
+  await expect(metrics.getByRole('region', { name: '窗口内最近可用值' })).toHaveCount(0);
+  await expect(section).not.toContainText('计划维护');
+});
+
+test('MAX-719 study keeps the 30-day catalog and rule choices when dimensions cannot be read', async ({ page }) => {
+  const missing = { id: 'legacy.missing_definition', semantic_version: '1.0.0' };
+  const first = { id: 'db.uptime_seconds', semantic_version: '1.0.0' };
+  const second = { id: 'mysql.threads.connected', semantic_version: '1.0.0' };
+  const dimensionReads: Array<{ from: string; to: string; metric: typeof first }> = [];
+  let window: { from: string; to: string };
+  await page.route('**/api/metrics/study/**', route => {
+    const { from, to, metric, dimensions } = route.request().postDataJSON();
+    const path = new URL(route.request().url()).pathname;
+    if (path.endsWith('/catalog')) {
+      window = { from, to };
+      return route.fulfill({ json: {
+        metrics: [{ metric: missing, definition: null }, { metric: first, definition: { unit: 's' } },
+          { metric: second, definition: { unit: 'count' } }],
+        snapshots: [{ config_revision: 3, snapshot_hash: 'fixture', rules: [{ metric: first, version: 1, rule_id: 'uptime', scope: 'item:uptime' }] }],
+      } });
+    }
+    if (path.endsWith('/dimensions')) {
+      dimensionReads.push({ from, to, metric });
+      if (metric.id === missing.id) return route.fulfill({ status: 400, json: { error: 'UNKNOWN_METRIC' } });
+      if (metric.id === first.id) return route.fulfill({ status: 503, json: {} });
+      return route.fulfill({ json: { dimensions: [{}] } });
+    }
+    expect({ from, to }).toEqual(window);
+    expect(metric).toEqual(second);
+    expect(dimensions).toEqual({});
+    const value = { numerator: '13', denominator: '1' };
+    return route.fulfill({ json: { tier: '1h', note: '受控趋势', buckets: [{
+      from, to: new Date(Date.parse(from) + 3_600_000).toISOString(),
+      count: 1, numeric_count: 1, min: value, max: value, avg: value,
+      quality: 'good', coverage: 1, max_gap_ms: 0, invalid_count: 0, non_numeric_count: 0, estimated_count: 0,
+    }] } });
+  });
+  await fixture(page, '<metric-study resourceid="9"></metric-study>', 'components/metric-study');
+  const study = page.locator('metric-study');
+  const choices = study.getByRole('combobox', { name: '历史研究指标' });
+  const rule = study.getByRole('combobox', { name: '历史回放规则' });
+  const dimensions = study.getByRole('region', { name: '历史研究维度' });
+  await expect(choices).toHaveValue(JSON.stringify(missing));
+  await expect(rule).toBeEnabled();
+  const selectedRule = await rule.inputValue();
+  expect(selectedRule).toContain('uptime');
+  await expect(dimensions).toContainText('该指标缺少定义');
+  await choices.selectOption(JSON.stringify(first));
+  await expect(dimensions.getByRole('alert')).toContainText('长窗口维度服务暂不可用（503）');
+  await expect(rule).toHaveValue(selectedRule);
+  await dimensions.getByRole('button', { name: '重试长窗口维度' }).click();
+  await expect.poll(() => dimensionReads.length).toBe(2);
+  await choices.selectOption(JSON.stringify(second));
+  await expect(dimensions.getByRole('alert')).toHaveCount(0);
+  await study.getByRole('button', { name: '对照原始与趋势' }).click();
+  await expect(study).toContainText('趋势已完成 · 1 个桶');
+  await expect(study.getByText('13 个连接', { exact: true })).toHaveCount(3);
+  await expect(study.getByRole('combobox', { name: '历史研究窗口' })).toHaveValue('30');
+  await expect(rule).toHaveValue(selectedRule);
+  expect(Date.parse(window!.to) - Date.parse(window!.from)).toBe(30 * 86_400_000);
+  expect(dimensionReads).toEqual([first, first, second].map(metric => ({ ...window, metric })));
+});
+
+for (const outcome of ['503', 'late success'] as const) {
+  test(`MAX-719 study discards the previous metric's ${outcome} from the resource menu`, async ({ page }, info) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await listResponses(page);
+    await page.addInitScript(() => {
+      localStorage.setItem('slide.i18n.locale', 'zh-CN');
+      localStorage.setItem('slide.control.settings.v1:default', JSON.stringify({ locale: 'zh-CN' }));
+    });
+    await page.route('**/api/auth/permissions', route => route.fulfill({ json: ['*'] }));
+    await page.route('**/__slide/control-ui-config.json', route => route.fulfill({ json: {} }));
+    await page.routeWebSocket('**/agent-ws', socket => socket.onMessage(message => {
+      if (JSON.parse(String(message)).type === 'auth') socket.send(JSON.stringify({ type: 'auth_ok' }));
+    }));
+    const resource = { type: 'instance', id: fixtureEntries[0].id };
+    await page.route(`**/api/database/instances/${resource.id}`, route => route.fulfill({ json: fixtureEntries[0] }));
+    const first = { id: 'db.uptime_seconds', semantic_version: '1.0.0' };
+    const second = { id: 'mysql.threads.connected', semantic_version: '1.0.0' };
+    const reads: Array<{ operation: string; body: { from: string; to: string; metric?: typeof first; dimensions?: Record<string, string> }; status: number }> = [];
+    const interrupted: Array<{ metric: typeof first; error?: string }> = [];
+    page.on('requestfailed', request => {
+      if (request.url().endsWith('/study/trend')) interrupted.push({
+        metric: request.postDataJSON().metric, error: request.failure()?.errorText,
+      });
+    });
+    let secondDimensions = 0, secondTrends = 0;
+    let releaseFirst!: () => void;
+    const firstResponse = new Promise<void>(resolve => { releaseFirst = resolve; });
+    let firstReleased!: () => void;
+    const firstFinished = new Promise<void>(resolve => { firstReleased = resolve; });
+    await page.route('**/api/metrics/study/**', async route => {
+      const operation = new URL(route.request().url()).pathname.split('/').at(-1)!;
+      const body = route.request().postDataJSON();
+      const { from, to, metric, dimensions, tier, interval_ms } = body;
+      const respond = async (json: object, status = 200) => {
+        reads.push({ operation, body, status });
+        await route.fulfill({ status, json });
+      };
+      if (operation === 'catalog') return respond({
+        resource, window: { from, to },
+        metrics: [{ metric: first, definition: { unit: 's' } }, { metric: second, definition: { unit: 'count' } }],
+        snapshots: [{ config_revision: 3, snapshot_hash: 'fixture', rules: [{ metric: first, version: 1, rule_id: 'uptime', scope: 'item:uptime' }] }],
+      });
+      const isFirst = metric.id === first.id;
+      if (operation === 'dimensions') {
+        if (!isFirst && outcome === '503' && ++secondDimensions === 1) return respond({}, 503);
+        return respond({ dimensions: [isFirst ? { scope: 'primary' } : { scope: 'replica' }] });
+      }
+      if (isFirst && outcome === '503') return respond({}, 503);
+      if (!isFirst && outcome === '503' && ++secondTrends === 1) return respond({}, 503);
+      const reading = { numerator: isFirst ? '318711' : '13', denominator: '1' };
+      const result = { resource, window: { from, to }, metric, dimensions, tier,
+        sampling: { interval_ms, basis: 'explicit_measurement_assumption' },
+        evidence_hash: isFirst ? 'evidence-A' : 'evidence-B', note: '受控趋势',
+        buckets: [{ from, to: new Date(Date.parse(from) + 3_600_000).toISOString(),
+          count: 1, numeric_count: 1, min: reading, max: reading, avg: reading, quality: 'good',
+          coverage: 1, max_gap_ms: 0, invalid_count: 0, non_numeric_count: 0, estimated_count: 0 }],
+      };
+      if (isFirst) {
+        await firstResponse;
+        try { await respond(result); }
+        finally { firstReleased(); }
+      } else await respond(result);
+    });
+    await page.goto('/');
+    await page.getByRole('link', { name: '数据库', exact: true }).click();
+    await page.locator(`button[data-resource-detail-id="${resource.id}"]`).click();
+    await page.getByRole('tab', { name: '指标与趋势', exact: true }).click();
+    await page.getByText('进阶分析与采集证据', { exact: true }).click();
+    const study = page.locator('metric-study');
+    const choices = study.getByRole('combobox', { name: '历史研究指标' });
+    const rule = study.getByRole('combobox', { name: '历史回放规则' });
+    const trend = study.getByRole('button', { name: '对照原始与趋势' });
+    const trendRetry = study.getByRole('button', { name: '重试长窗口趋势', exact: true });
+    const dimensions = study.getByRole('region', { name: '历史研究维度' });
+    await expect(trend).toBeEnabled();
+    const selectedRule = await rule.inputValue();
+    const initial = page.waitForRequest(request => request.url().endsWith('/study/trend'));
+    try {
+      await trend.click();
+      await initial;
+      if (outcome === '503') await expect(trendRetry).toBeVisible();
+      else await expect(study.getByText('正在读取长窗口趋势', { exact: true })).toBeVisible();
+      await expect(choices).toBeEnabled({ timeout: 3000 });
+      await choices.selectOption(JSON.stringify(second));
+      await expect(study.getByText('长窗口趋势服务暂不可用（503）', { exact: false })).toHaveCount(0);
+      await expect(trendRetry).toHaveCount(0);
+      if (outcome === '503') {
+        await expect(dimensions.getByRole('alert')).toContainText('长窗口维度服务暂不可用（503）');
+        const retryDimensions = study.getByRole('button', { name: '重试长窗口维度', exact: true });
+        await expect(retryDimensions).toHaveCount(1);
+        await expect(trend).toBeDisabled();
+        await retryDimensions.press('Enter');
+        await expect(dimensions.getByRole('alert')).toHaveCount(0);
+      }
+      await trend.click();
+      if (outcome === '503') {
+        await expect(trendRetry).toBeVisible();
+        await trendRetry.press('Enter');
+      }
+      await expect(study).toContainText('趋势已完成 · 1 个桶');
+      if (outcome === 'late success') {
+        releaseFirst();
+        await firstFinished;
+      }
+      await expect(choices).toHaveValue(JSON.stringify(second));
+      await study.getByText('趋势定义与证据', { exact: true }).click();
+      await expect(study.getByText('mysql.threads.connected · 语义版本 1.0.0 · 单位 count', { exact: true })).toBeVisible();
+      await expect(study.getByText('证据 evidence-B', { exact: true })).toBeVisible();
+      await expect(study.getByText('13 个连接', { exact: true })).toHaveCount(3);
+      await expect(study).not.toContainText(/evidence-A|318711/);
+      await expect(study.getByRole('combobox', { name: '历史研究窗口' })).toHaveValue('30');
+      await expect(rule).toHaveValue(selectedRule);
+      const { from, to } = reads.find(read => read.operation === 'catalog')!.body;
+      expect(Date.parse(to) - Date.parse(from)).toBe(30 * 86_400_000);
+      for (const read of reads) expect(read.body).toMatchObject({ resource, from, to });
+      const dimensionReads = reads.filter(read => read.operation === 'dimensions');
+      expect(dimensionReads.map(({ body, status }) => [body.metric, status])).toEqual(outcome === '503'
+        ? [[first, 200], [second, 503], [second, 200]] : [[first, 200], [second, 200]]);
+      if (outcome === '503') expect(dimensionReads[1].body).toEqual(dimensionReads[2].body);
+      const trends = reads.filter(read => read.operation === 'trend');
+      expect(trends.map(({ body, status }) => [body.metric, body.dimensions, status])).toEqual(outcome === '503'
+        ? [[first, { scope: 'primary' }, 503], [second, { scope: 'replica' }, 503], [second, { scope: 'replica' }, 200]]
+        : [[second, { scope: 'replica' }, 200], [first, { scope: 'primary' }, 200]]);
+      if (outcome === '503') expect(trends[1].body).toEqual(trends[2].body);
+      await study.getByText('证据 evidence-B', { exact: true }).scrollIntoViewIfNeeded();
+      await page.screenshot({ path: info.outputPath('trend-B.png') });
+      await writeFile(info.outputPath('reads.json'), JSON.stringify({
+        browser: page.context().browser()?.version(), viewport: page.viewportSize(), outcome, reads, interrupted,
+      }, null, 2));
+    } finally {
+      releaseFirst();
+    }
+  });
+}

@@ -139,14 +139,16 @@ test.afterAll(async()=>{
   report.checks.agentObservationTimesValid=agentObservations.length>0&&agentObservations.every((r:any)=>typeof r.observedAt==='string'&&Number.isFinite(Date.parse(r.observedAt))&&r.observedAt===new Date(r.observedAt).toISOString()&&typeof r.validUntil==='string'&&Number.isFinite(Date.parse(r.validUntil)));
   report.checks.agentResultPersisted=report.results.length>0;report.checks.modelMeterCaptured=budget().requests>report.baselineBudget.requests;
   if(report.checks.agentCompleted){
-    await page.getByRole('button',{name:'查看证据与成果',exact:true}).click();
-    await expect(page.locator('investigation-context').filter({visible:true})).toContainText(report.results[0].result_json.summary);
+    await expect(page.locator('section[aria-label="本次调查结果"]')).toContainText(report.results[0].result_json.summary.trim());
+    await page.getByRole('button',{name:'查看完整结果与证据',exact:true}).click();
+    await expect(page.getByRole('dialog',{name:'证据与成果'})).toBeVisible();
     report.checks.agentDetail=true;
   }
   await page.screenshot({path:`${output}/agent-result-real.png`,fullPage:true});await page.reload();if(report.checks.agentCompleted){
     await expect(page.locator('.investigation-states')).toContainText('执行完成',{timeout:30000});
-    await page.getByRole('button',{name:'查看证据与成果',exact:true}).click();
-    await expect(page.locator('investigation-context').filter({visible:true})).toContainText(report.results[0].result_json.summary);
+    await expect(page.locator('section[aria-label="本次调查结果"]')).toContainText(report.results[0].result_json.summary.trim());
+    await page.getByRole('button',{name:'查看完整结果与证据',exact:true}).click();
+    await expect(page.getByRole('dialog',{name:'证据与成果'})).toBeVisible();
   }
   await page.screenshot({path:`${output}/agent-refresh-real.png`,fullPage:true});report.checks.agentRefresh=report.checks.agentCompleted;
   const permissionCheck=await launch(['--import','tsx','../../scripts/qualification/max175-failure-permissions.ts'],resolve('../apps/db-ops-api'),{...process.env,MAX175_CHECK_SCHEMA:schema,MAX175_TARGET_HOST:targetHost,MAX175_DB_PASSWORD:targetRoot,MAX175_OUTPUT_DIR:output},'permissions');

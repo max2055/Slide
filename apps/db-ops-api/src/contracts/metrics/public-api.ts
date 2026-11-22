@@ -62,6 +62,7 @@ export const LatestMetricObservationsSchema = z.strictObject({
   metrics: z.array(z.strictObject({
     definition: MetricDefinitionSchema, state: z.string(),
     series: z.array(z.strictObject({
+      observation_id: IdSchema,
       dimensions: DimensionsSchema, observed_at: TimestampSchema, value: MetricValueSchema.nullable(),
       unit: UnitSchema, quality: QualitySchema, accuracy: AccuracySchema, freshness: FreshnessSchema,
     })),
@@ -201,7 +202,7 @@ export const metricPublicPaths = {
     description: 'Same resource type only; actual engine/version/protocol applicability. Unknown is never a compatible recommendation.',
     responses: { '200': response('MetricRecommendations'), ...errors } } },
   '/api/metrics/latest': { post: { operationId: 'listLatestMetricObservations', security: [{ bearerAuth: [] }],
-    description: 'Configured metrics and the latest accepted observation of each retained series. Samples retain their original units, exact values and quality, independent of chart windows. Current authorization is checked before and after storage reads.',
+    description: 'Configured metrics and the latest accepted observation of each retained series. Each observation_id is the identifier used by the authorized raw observation endpoint for that record. Samples retain their original units, exact values and quality, independent of chart windows. Current authorization is checked before and after storage reads.',
     requestBody: { required: true, content: { 'application/json': { schema: schema('LatestMetricResource') } } },
     responses: { '200': response('LatestMetricObservations'), ...errors } } },
   '/api/metrics/observations': { post: { operationId: 'listMetricObservations', security: [{ bearerAuth: [] }],
