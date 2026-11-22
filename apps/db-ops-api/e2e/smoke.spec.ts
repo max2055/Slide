@@ -10,6 +10,7 @@
  * Requires: cd apps/db-ops-api && npx tsx server.ts
  */
 import { test, expect, Page } from "@playwright/test";
+import { apiURL } from "./targets";
 
 // All pages in the app
 const ALL_PAGES = ["dashboard", "instances-db", "alerts", "reports", "metric-registry", "events", "chat", "overview", "sessions", "usage", "cron", "agents", "skills", "config", "appearance", "system", "users"];
@@ -132,7 +133,7 @@ test.describe("Instance sub-tabs", () => {
 test.describe("API health", () => {
   test("backend is reachable", async ({ page }) => {
     cur = "api-health";
-    const res = await page.request.get("http://localhost:3000/api/health");
+    const res = await page.request.get(apiURL("/api/health"));
     expect(res.status()).toBe(200);
     const json = await res.json();
     expect(json.status).toBe("ok");
