@@ -299,7 +299,19 @@ test('MAX-683 closed investigation discovers both plans and long confirmation re
   await env.plans.submit(env.author,{planId:first.id,expectedVersion:first.version});
   await page.addInitScript(({token,actor})=>{localStorage.setItem('slide.i18n.locale','zh-CN');localStorage.setItem('slide.control.settings.v1:default',JSON.stringify({locale:'zh-CN',navCollapsed:true}));localStorage.setItem('token',token);localStorage.setItem('user',JSON.stringify({id:actor.userId}));localStorage.setItem('permissions',JSON.stringify(actor.permissions));},{token:env.token(env.reviewer),actor:env.reviewer});
   const view=page.locator('operations-actions');
-  await page.goto(`${env.url}/workbench?workspaceTab=actions&plan=${first.id}`);
+  const firstPlanUrl = `${env.url}/workbench?workspaceTab=actions&plan=${first.id}`;
+  await page.goto(firstPlanUrl);
+  await page.reload();
+  await expect(view).toContainText(impact);
+  await page.locator('.shell-nav').getByRole('link', { name: 'AI 工作台', exact: true }).click();
+  await expect(page).toHaveURL(`${env.url}/workbench`);
+  await expect(page.getByRole('heading', { name: '运维工作台', exact: true })).toBeVisible();
+  await page.goBack();
+  await expect(page).toHaveURL(firstPlanUrl);
+  await expect(view).toContainText(impact);
+  await page.goForward();
+  await expect(page.getByRole('heading', { name: '运维工作台', exact: true })).toBeVisible();
+  await page.goBack();
   for(const [width,height] of [[1440,900],[1366,768],[1920,1080]]) {
     await page.setViewportSize({width,height});
     await expect(view.locator('.outcome-strip')).toContainText('业务恢复');

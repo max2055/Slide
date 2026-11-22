@@ -48,7 +48,7 @@ import { exportChatMarkdown } from "./chat/export.ts";
 import type { ChatSideResult } from "./chat/side-result.ts";
 import type { DirectGatewayClient } from "./direct-gateway.ts";
 import type { ExecApprovalRequest } from "./controllers/exec-approval.ts";
-import type { Tab } from "./navigation.ts";
+import { pathForTab, type Tab } from "./navigation.ts";
 import type { SidebarContent } from "./sidebar-content.ts";
 import { loadSettings, type UiSettings } from "./storage.ts";
 import { VALID_THEME_NAMES, type ResolvedTheme, type ThemeMode, type ThemeName } from "./theme.ts";
@@ -113,6 +113,7 @@ export class SlideApp extends LitElement {
   @state() loginShowGatewayPassword = false;
   userPermissions: Set<string> | null = null;
   @state() tab: Tab = "chat";
+  basePath = "";
   @state() onboarding = resolveOnboardingMode();
   // Start disconnected - let gateway connection determine state
   @state() connected = false;
@@ -620,6 +621,13 @@ export class SlideApp extends LitElement {
   }
 
   setTab(next: Tab, preserveContext = false) {
+    if (next === "investigations" && !preserveContext) {
+      this.navDrawerOpen = false;
+      const url = new URL(pathForTab(next, this.basePath), window.location.href);
+      if (url.href !== window.location.href) window.history.pushState({}, "", url);
+      window.dispatchEvent(new PopStateEvent("popstate"));
+      return;
+    }
     setTabInternal(this as unknown as Parameters<typeof setTabInternal>[0], next);
     this.navDrawerOpen = false;
     if (preserveContext) return;
