@@ -301,6 +301,8 @@ export class ResourceMetricsTable extends LitElement {
       app-data-table .data-table th, app-data-table .data-table td { white-space:nowrap; vertical-align:middle; }
       .actions { display:flex; gap:var(--space-xs); flex-wrap:nowrap; align-items:center; }
       .actions > button { white-space:nowrap; flex-shrink:0; }
+      .instance-actions { gap:var(--space-sm); }
+      .instance-actions > .danger { margin-inline-start:var(--space-xs); }
       .cell-value, .resource-name { display:block; position:relative; min-width:0; max-width:100%; }
       .truncated, .resource-name > button { display:block; max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; box-sizing:border-box; }
       .resource-name > button { font-weight:600; }

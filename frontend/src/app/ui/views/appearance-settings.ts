@@ -1,3 +1,4 @@
+import { sharedSettingsPageStyles } from "../../styles/shared-settings-page-styles.ts";
 import { DEFAULT_ACCENT_COLOR } from "../accent-color.ts";
 import { sharedFieldStyles } from "../../styles/shared-field-styles.ts";
 /**
@@ -118,13 +119,9 @@ export class AppearanceSettings extends LitElement {
   @state() private btnPalDangerBg: string = DEFAULT_PALETTE.dangerBg;
   @state() private btnPalGhostColor: string = DEFAULT_PALETTE.ghostColor;
 
-  static styles = [sharedFieldStyles, sharedBtnStyles, css`
-    :host { display: block; width: min(100%, 800px); }
+  static styles = [sharedFieldStyles, sharedBtnStyles, sharedSettingsPageStyles, css`
     :host > app-card { display: block; }
     :host > app-card + app-card { margin-top: var(--space-sm); }
-    .page-header { margin-bottom: var(--space-lg); }
-    .page-header h1 { font-size: 22px; font-weight: 700; margin: 0 0 4px; color: var(--text-strong); }
-    .page-header p { font-size: 13px; color: var(--muted); margin: 0; }
     .color-grid { display: flex; gap: var(--space-sm); flex-wrap: wrap; }
     .color-swatch {
       padding: 0;
@@ -199,7 +196,7 @@ export class AppearanceSettings extends LitElement {
       font-size: 13px; box-sizing: border-box;
     }
     .text-input:focus { outline: none; border-color: var(--accent); }
-    .range-input { width: 100%; }
+    .range-input { display: block; width: 100%; min-height: var(--control-height-sm); margin: 0; }
     .desc { font-size: 12px; color: var(--muted); margin: 0 0 14px; }
   `];
 
@@ -364,10 +361,11 @@ export class AppearanceSettings extends LitElement {
 
       <!-- Sidebar Width -->
       <app-card>
-        <div slot="header">${t("appearance.sidebarWidth")}</div>
+        <div slot="header" id="appearance-sidebar-width">${t("appearance.sidebarWidth")}</div>
         <p class="desc">${t("appearance.sidebarWidthDesc")} (${this.navWidth}px)</p>
         <input type="range" min="200" max="400" step="10"
           class="range-input"
+          aria-labelledby="appearance-sidebar-width"
           .value=${String(this.navWidth)}
           @input=${(e: Event) => this._setNavWidth(Number((e.target as HTMLInputElement).value))} />
       </app-card>
