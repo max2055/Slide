@@ -69,7 +69,7 @@ describe('109-04: DirectGatewayClient', () => {
   it('reports chat.send as rejected when no WebSocket is available', async () => {
     const client = new DirectGatewayClient({ onEvent, onStateChange });
     await expect(client.request('chat.send', { sessionKey: 'session-1', message: 'hello' }))
-      .rejects.toThrow(/could not be queued/);
+      .rejects.toThrow('消息尚未发送');
   });
 
   it('requestHistory does not throw', () => {
