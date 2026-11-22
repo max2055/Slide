@@ -234,6 +234,37 @@ describe('MAX-688 / #1013: MySQL executable comments in preflight', () => {
     expect(sqlAuditService.detectRisks(sql, 'mysql')).toEqual([]);
   });
 
+  it.each(['#', '--'])('keeps a versioned marker after a lone CR inside a %s comment at admission', async marker => {
+    vi.mocked(databaseService.getConnection).mockReturnValue({ db_type: 'mysql' } as any);
+    const sql = 'SELECT 1 ' + marker + ' note\r/*!80030 FROM audit_fixture */';
+    const result = await sqlAuditService.submitAudit(sql, 1, actor);
+    expect(result.preAuditResults).toEqual([]);
+    expect(databaseService.detectVersion).not.toHaveBeenCalled();
+  });
+
+  it.each(['#', '--'])('keeps a plain predicate after a lone CR inside a %s comment', marker => {
+    const sql = 'SELECT 1 FROM audit_fixture ' + marker + ' note\rWHERE id = 1';
+    expect(sqlAuditService.detectRisks(sql, 'mysql')).toEqual([
+      expect.objectContaining({ pattern: 'MISSING WHERE', level: 'warning' }),
+    ]);
+  });
+
+  it.each([
+    { marker: '#', ending: 'LF', separator: '\n' },
+    { marker: '--', ending: 'LF', separator: '\n' },
+    { marker: '#', ending: 'CRLF', separator: '\r\n' },
+    { marker: '--', ending: 'CRLF', separator: '\r\n' },
+  ])('applies the MySQL version threshold after a $marker comment ending in $ending', ({ marker, separator }) => {
+    const sql = 'SELECT 1 ' + marker + ' note' + separator + '/*!80030 FROM audit_fixture */';
+    const unfilteredRead = expect.objectContaining({ pattern: 'MISSING WHERE', level: 'warning' });
+    expect(sqlAuditService.detectRisks(sql, 'mysql', '8.0.29')).toEqual([]);
+    expect(sqlAuditService.detectRisks(sql, 'mysql', '8.0.30')).toEqual([unfilteredRead]);
+    expect(sqlAuditService.detectRisks(sql, 'mysql')).toEqual([
+      unfilteredRead,
+      expect.objectContaining({ pattern: 'MYSQL EXECUTABLE COMMENT VERSION UNKNOWN', level: 'warning' }),
+    ]);
+  });
+
   it.each(['postgresql', 'oracle', 'dameng', 'unknown'])('keeps executable comment syntax inert for %s', dialect => {
     expect(sqlAuditService.detectRisks('/*!80030 SELECT COUNT(*) FROM audit_fixture */', dialect)).toEqual([]);
   });
