@@ -2240,15 +2240,15 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
       if (!conn) return reply.send([]);
       if (conn.db_type === 'postgresql' && conn.pgClient) {
         const res = await conn.pgClient.query('SELECT datname FROM pg_database WHERE datistemplate = false ORDER BY datname');
-        reply.send((res.rows || []).map((r: any) => r.datname));
+        return reply.send((res.rows || []).map((r: any) => r.datname));
       } else if (conn.pool) {
         const [rows] = await conn.pool.query('SHOW DATABASES') as any;
-        reply.send(rows.map((r: any) => r.Database));
+        return reply.send(rows.map((r: any) => r.Database));
       } else {
-        reply.send([]);
+        return reply.send([]);
       }
     } catch (error: any) {
-      reply.code(500).send({ error: error.message });
+      return reply.code(500).send({ error: error.message });
     }
   });
 
@@ -2257,9 +2257,9 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
       const { id } = request.params as any;
       const objects = await databaseService.getSchemaObjects(Number(id));
       if (!objects) return reply.code(503).send({ error: '实例不可达或已离线，无法获取 schema 对象' });
-      reply.send(objects);
+      return reply.send(objects);
     } catch (error: any) {
-      reply.code(500).send({ error: error.message });
+      return reply.code(500).send({ error: error.message });
     }
   });
 
@@ -4286,9 +4286,9 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
           limit: limit ? Number(limit) : 50,
           offset: offset ? Number(offset) : 0,
         });
-        reply.send(result);
+        return reply.send(result);
       } catch (error: any) {
-        reply.code(500).send({ error: error.message });
+        return reply.code(500).send({ error: error.message });
       }
     }
   });
@@ -4314,9 +4314,9 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
         if (!stats) {
           return reply.code(500).send({ error: '获取日志统计失败' });
         }
-        reply.send(stats);
+        return reply.send(stats);
       } catch (error: any) {
-        reply.code(500).send({ error: error.message });
+        return reply.code(500).send({ error: error.message });
       }
     }
   });
@@ -5182,6 +5182,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
   registerWorkflowHandlers(workflowRegistry, {
     ...(systemComposition.enabled ? { systemEventBridge: systemComposition.bridge } : {}),
     investigationEngine: getAgentEngine,
+    databaseLogService,
     faultDiagnosisService, monitorCollector, baselineCalculator, alertEngine,
     workflowStore, capacityConsistencyMonitor, notificationScheduler, enqueueNotificationDispatch,
     reportSchedule: {

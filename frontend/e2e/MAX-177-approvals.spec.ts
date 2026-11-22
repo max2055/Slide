@@ -113,14 +113,14 @@ test('real pending approve without execute and reject persist correct states; cu
   await expect(view.locator('.pending-preview').first()).toHaveText(longSql);
   await page.setViewportSize({ width: 390, height: 900 }); await capture(page, 'pending-390');
   await page.setViewportSize({ width: 1440, height: 900 });
-  const card = view.locator('.card').filter({ has: page.locator(`#exec-${pendingId}`) });
+  const card = view.locator('app-card.approval-card').filter({ has: page.locator(`#exec-${pendingId}`) });
   await card.getByLabel('审批后自动执行').uncheck();
   await card.getByRole('button', { name: '通过', exact: true }).click();
   await view.locator('app-dialog').getByRole('textbox', { name: '审批备注' }).fill('MAX177 approve without execution');
   const result = page.waitForResponse(r => r.url().endsWith('/api/approval/batch-review') && r.request().method() === 'POST');
   await view.locator('app-dialog').getByRole('button', { name: '确认通过' }).click();
   expect(await (await result).json()).toMatchObject([{ id: pendingId, success: true }]);
-  const reject = view.locator('.card').filter({ has: page.locator(`#exec-${rejectId}`) });
+  const reject = view.locator('app-card.approval-card').filter({ has: page.locator(`#exec-${rejectId}`) });
   await reject.getByRole('button', { name: '驳回', exact: true }).click();
   await view.locator('app-dialog').getByRole('button', { name: '确认驳回' }).click(); await expect(view.locator('app-dialog')).toHaveCount(0);
   const [stored] = await pool.query('SELECT id,status,execution_result FROM approval_requests WHERE id IN (?,?) ORDER BY id', [pendingId, rejectId]);
@@ -153,7 +153,7 @@ test('real permission revoked after dialog opens blocks review with visible feed
   const view = page.locator('approval-dashboard');
   expect(await page.evaluate(() => JSON.parse(localStorage.getItem('user')!).id)).toBe(reviewer.insertId);
   await view.getByRole('button', { name: '待审批', exact: true }).click();
-  const card = view.locator('.card').filter({ has: page.locator(`#exec-${approval.insertId}`) });
+  const card = view.locator('app-card.approval-card').filter({ has: page.locator(`#exec-${approval.insertId}`) });
   await card.getByLabel('审批后自动执行').uncheck(); await card.getByRole('button', { name: '通过', exact: true }).click();
   await pool.query("DELETE rp FROM role_permissions rp JOIN permissions p ON p.id=rp.permission_id WHERE rp.role_id=? AND p.code='approval:approve'", [role.insertId]);
   const review = page.waitForResponse(r => r.url().endsWith('/api/approval/batch-review'));
