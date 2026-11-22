@@ -1,6 +1,8 @@
-import { LitElement, html, nothing } from 'lit';
+import { LitElement, css, html, nothing } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
-import { OperationsResource, watchCase, authorizedJson, operationLabels, validRecord, currentUserId, type CasePage, type CaseRecord, type CaseCandidate } from '../controllers/operations-api.ts';
+import { OperationsApiError, OperationsResource, watchCase, authorizedJson, operationsApi, operationsErrorText, operationLabels, resourceLabel, validRecord, currentUserId, type CasePage, type CaseRecord, type CaseCandidate } from '../controllers/operations-api.ts';
+import type { InvestigationList, InvestigationRecord } from '../controllers/investigation-api.ts';
+import { workspaceResourceKey, type WorkspaceInventory } from '../controllers/investigations.ts';
 import { hasSlidePermission } from '../app-settings.ts';
 import { operationsStyles } from './operations-styles.ts';
 import '../components/app-card.ts';
@@ -9,13 +11,27 @@ import '../components/app-empty-state.ts';
 import '../components/app-form-field.ts';
 import '../components/app-dialog.ts';
 
-const freshCandidate = (): CaseCandidate => ({ investigationId: '', resultVersion: 1,
+const freshCandidate = (): CaseCandidate => ({ investigationId: '', resultVersion: 0,
   content: { title: '', symptoms: '', faultType: '', confirmedCause: '', actions: '', actualEffect: '', counterexamples: '' },
   applicability: { conditions: '', productVersion: '', resourceVersion: '' }, validUntil: '', humanConfirmed: true });
 
+type CandidateSource = Pick<CaseCandidate, 'investigationId' | 'resultVersion'> & { investigation?: InvestigationRecord; title?: string };
+type PreparedCase = { candidate: Omit<CaseCandidate, 'humanConfirmed'>; redactionPolicyVersion: string };
+const sourceKey = (id: string, version: number) => `${id}:${version}`;
+const validVersion = (version: number) => Number.isSafeInteger(version) && version > 0;
+const sourceDate = new Intl.DateTimeFormat('zh-CN', { dateStyle: 'medium', timeStyle: 'medium' });
+
 @customElement('operations-knowledge')
 export class OperationsKnowledge extends LitElement {
-  static styles = operationsStyles;
+  static styles = [operationsStyles, css`
+    .source-filters { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr) auto; gap:var(--space-sm); align-items:end; }
+    .source-list { list-style:none; padding:0; margin:0; }
+    .source-row { display:flex; justify-content:space-between; align-items:start; gap:var(--space-md); }
+    .source-row p, .source-choice p { margin:0; }
+    .source-row button { flex-shrink:0; }
+    .source-choice { display:grid; gap:var(--space-xs); }
+    .source-actions { display:flex; flex-wrap:wrap; gap:var(--space-sm); }
+  `];
   @property({ attribute: false }) permissions: Set<string> | null = null;
   @state() private bindingConfirmed=false;
   @state() private bindingNote='';
@@ -31,19 +47,48 @@ export class OperationsKnowledge extends LitElement {
   @state() private candidate = freshCandidate();
   @state() private humanConfirmed = false;
   @state() private formError = '';
-  private candidateGeneration=0;
-  private preparation=new OperationsResource<{candidate:Omit<CaseCandidate,'humanConfirmed'>;redactionPolicyVersion:string;requiresHumanReview:true}>(this,()=>this.clearDrafts());
+  @state() private source: CandidateSource | null = null;
+  @state() private sourceQuery = '';
+  @state() private appliedSourceQuery = '';
+  @state() private sourceResource = '';
+  @state() private sourceNotice = '';
+  @state() private preparing = false;
+  @state() private preparedPolicy = '';
+  private candidateGeneration = 0;
+  private readonly unavailableSources = new Set<string>();
+  private readonly sourcePages = new OperationsResource<InvestigationList>(this, undefined, authorizedJson);
+  private readonly inventory = new OperationsResource<WorkspaceInventory>(this, undefined, authorizedJson);
   private pages = new OperationsResource<CasePage>(this, () => this.clearDrafts());
   private record = new OperationsResource<CaseRecord>(this, () => this.clearDrafts());
-  private clearDrafts() { this.candidateGeneration++;this.note = ''; this.formOpen = false; this.candidate = freshCandidate(); this.humanConfirmed = false; this.formError = ''; }
+  private clearPreparation() {
+    ++this.candidateGeneration;
+    this.preparing = false;
+    this.preparedPolicy = '';
+    this.candidate = freshCandidate();
+    this.humanConfirmed = false;
+    this.formError = '';
+  }
+  private closeCandidate() {
+    this.clearPreparation();
+    this.formOpen = false;
+    this.source = null;
+    this.sourceQuery = '';
+    this.appliedSourceQuery = '';
+    this.sourceResource = '';
+    this.sourceNotice = '';
+    this.unavailableSources.clear();
+    this.sourcePages.reset();
+    this.inventory.reset();
+  }
+  private clearDrafts() { this.note = ''; this.closeCandidate(); }
   private can(code: string) { return hasSlidePermission(this.permissions, `operations:cases:${code}`); }
-  private pop = () => { this.stopWatch?.();this.stopWatch=null; const id = new URL(location.href).searchParams.get('case') ?? ''; this.selected = id; this.record.reset(); this.clearDrafts(); if (id) void this.open(id, false); else void this.search(); };
+  private pop = () => { this.stopWatch?.();this.stopWatch=null; const id = new URL(location.href).searchParams.get('case') ?? ''; this.selected = id; this.record.reset(); if (id) void this.open(id, false); else { void this.search(); this.openLinkedCandidate(); } };
   connectedCallback() { super.connectedCallback(); window.addEventListener('popstate', this.pop); }
   disconnectedCallback() { this.stopWatch?.();this.stopWatch=null; window.removeEventListener('popstate', this.pop); super.disconnectedCallback(); }
   protected firstUpdated() {
     const p = new URL(location.href).searchParams;
     this.query = p.get('query')?.slice(0,200) ?? '';
-    const id = p.get('case'); if (id) void this.open(id, false); else void this.search();
+    const id = p.get('case'); if (id) void this.open(id, false); else { void this.search(); this.openLinkedCandidate(); }
   }
   private async search(cursor?: string) {
     const query = new URLSearchParams({ state: this.filter, query: this.query, limit: '20' });
@@ -66,23 +111,118 @@ export class OperationsKnowledge extends LitElement {
     this.stopWatch?.();this.stopWatch=null;this.selected = ''; this.record.reset(); this.clearDrafts();
     const u = new URL(location.href); u.searchParams.delete('case'); history.pushState({}, '', u); void this.search();
   }
-  private startCandidate(edit = false) {
-    const r = this.record.data, p = new URL(location.href).searchParams;
-    this.editing = edit; this.formError = ''; this.humanConfirmed = false;
+  private openLinkedCandidate() {
+    const p = new URL(location.href).searchParams;
+    const investigationId = p.get('sourceInvestigation'), version = p.get('resultVersion');
+    if (!investigationId || !version || !this.can('manage') || this.record.locked || this.pages.accessInvalidated) return;
+    const resultVersion = Number(version);
+    if (/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(investigationId)
+      && /^[1-9]\d*$/.test(version) && validVersion(resultVersion)) {
+      this.startCandidate(false, { investigationId, resultVersion });
+    } else {
+      this.startCandidate();
+      this.sourceNotice = '链接中的调查或结果版本无效，请重新选择来源。';
+    }
+  }
+  private startCandidate(edit = false, source?: CandidateSource) {
+    if (!this.can('manage') || this.record.locked) return;
+    const r = this.record.data;
+    this.closeCandidate();
+    this.editing = edit;
     this.candidate = edit && r?.content && r.source && r.applicability ? {
       content: { ...r.content }, applicability: { ...r.applicability }, investigationId: r.source.investigationId,
       resultVersion: r.source.resultVersion, validUntil: r.validUntil, humanConfirmed: true,
-    } : { ...freshCandidate(), investigationId: p.get('sourceInvestigation') ?? '', resultVersion: Number(p.get('resultVersion')) || 1 };
+    } : this.candidate;
     this.formOpen = true;
-    if(!edit&&this.candidate.investigationId&&p.get('resultVersion'))void this.prepareCandidate();
+    if (edit) return;
+    if (source) {
+      this.source = source;
+      void this.prepareCandidate();
+    } else this.chooseAnotherSource();
   }
-  private async prepareCandidate(){
-    const gen=++this.candidateGeneration,c=this.candidate;this.humanConfirmed=false;
-    const value=await this.preparation.load(`/knowledge/prepare?investigationId=${encodeURIComponent(c.investigationId)}&resultVersion=${c.resultVersion}`);
-    if(value&&gen===this.candidateGeneration&&this.formOpen&&!this.editing)this.candidate={...value.candidate,humanConfirmed:true};
+  private availableSources(page: InvestigationList | null) {
+    return (page?.items ?? []).filter(row => {
+      const version = row.latestOutcome?.resultVersion ?? 0;
+      return row.lifecycle === 'closed' && !row.activeRequestId && row.resources.length > 0
+        && validVersion(version) && !this.unavailableSources.has(sourceKey(row.id, version));
+    });
+  }
+  private async loadSources(cursor?: string) {
+    const query = new URLSearchParams({ state: 'closed', limit: '20' });
+    if (!cursor) this.appliedSourceQuery = this.sourceQuery.trim();
+    if (this.appliedSourceQuery) query.set('query', this.appliedSourceQuery);
+    if (this.sourceResource) query.set('resource', this.sourceResource);
+    // A page can contain only investigations without a result. Continue until
+    // there is a selectable row or the authorized list is exhausted.
+    do {
+      if (cursor) query.set('cursor', cursor);
+      const page = await this.sourcePages.load(`/api/investigations?${query}`);
+      if (!page || page !== this.sourcePages.data || this.source || !this.formOpen || this.availableSources(page).length) return;
+      cursor = page.nextCursor ?? undefined;
+    } while (cursor);
+  }
+  private loadSourceInventory() {
+    return this.inventory.load('/api/resources');
+  }
+  private chooseAnotherSource(notice = '') {
+    this.clearPreparation();
+    this.source = null;
+    this.sourceNotice = notice;
+    if (!this.inventory.data && !this.inventory.loading) void this.loadSourceInventory();
+    void this.loadSources();
+    void this.focusCandidate('#source-query');
+  }
+  private async focusCandidate(selector: string) {
+    await this.updateComplete;
+    this.renderRoot.querySelector<HTMLElement>(selector)?.focus();
+  }
+  private selectSource(row: InvestigationRecord) {
+    const resultVersion = row.latestOutcome?.resultVersion ?? 0;
+    if (!validVersion(resultVersion) || !this.availableSources(this.sourcePages.data).includes(row)) return;
+    this.clearPreparation();
+    this.sourceNotice = '';
+    this.source = { investigationId: row.id, resultVersion, investigation: row };
+    void this.focusCandidate('#prepare-case');
+  }
+  private async prepareCandidate() {
+    const source = this.source;
+    if (!source?.investigationId || !validVersion(source.resultVersion) || !this.formOpen
+      || this.editing || this.preparing || this.record.locked || !this.can('manage')) return;
+    this.clearPreparation();
+    const generation = this.candidateGeneration;
+    this.preparing = true;
+    const query = new URLSearchParams({ investigationId: source.investigationId, resultVersion: String(source.resultVersion) });
+    try {
+      const { candidate, redactionPolicyVersion } = await operationsApi<PreparedCase>(`/knowledge/prepare?${query}`);
+      if (generation !== this.candidateGeneration) return;
+      if (candidate.investigationId !== source.investigationId || candidate.resultVersion !== source.resultVersion) {
+        this.formError = '返回的来源与选择不一致，请重试读取。';
+        return;
+      }
+      if (!source.investigation) this.source = { ...source, title: candidate.content.title };
+      this.candidate = { ...candidate, humanConfirmed: true };
+      this.preparedPolicy = redactionPolicyVersion;
+    } catch (error) {
+      if (generation !== this.candidateGeneration) return;
+      if (error instanceof OperationsApiError && ([403, 404, 409, 410].includes(error.status)
+        || error.code === 'OPERATIONS_PRECONDITION_FAILED' || error.code === 'OPERATIONS_INPUT_INVALID')) {
+        this.unavailableSources.add(sourceKey(source.investigationId, source.resultVersion));
+        this.inventory.reset();
+        this.sourceResource = '';
+        this.chooseAnotherSource('该来源或结果版本已不可引用，请重新选择。');
+      } else {
+        this.formError = `读取脱敏草稿失败。${operationsErrorText(error)}`;
+      }
+    } finally {
+      if (generation === this.candidateGeneration) this.preparing = false;
+    }
+  }
+  private get canSaveCandidate() {
+    return this.formOpen && this.can('manage') && (this.editing || Boolean(this.preparedPolicy))
+      && this.humanConfirmed && !this.record.locked && !this.preparing;
   }
   private async saveCandidate(e: Event) {
-    e.preventDefault(); if (!this.humanConfirmed || this.record.locked || this.preparation.loading) return;
+    e.preventDefault(); if (!this.canSaveCandidate) return;
     const c = this.candidate;
     if (!Number.isSafeInteger(c.resultVersion) || c.resultVersion < 1 || !Number.isFinite(Date.parse(c.validUntil))) { this.formError = '请填写有效结果版本与到期时间。'; return; }
     const body = { ...c, validUntil: new Date(c.validUntil).toISOString() };
@@ -132,7 +272,11 @@ export class OperationsKnowledge extends LitElement {
       ${!p.loading && p.data ? html`<app-card><span slot="header">当前可访问案例 · ${p.data.authorizedCounts.total}</span>
         ${p.data.items.length ? p.data.items.map(r => html`<div class="row"><div class="row-head"><button class="btn-ghost" @click=${() => void this.open(r.id)}>${r.content?.title ?? '历史案例元数据'}</button><app-badge variant=${r.state === 'published' && !r.tombstone ? 'ok' : 'warn'}>${operationLabels[r.state]}</app-badge></div>
           <p>${r.content?.symptoms ?? '正文已不可引用，保留审核与版本轨迹。'}</p><div class="meta"><span>版本 ${r.version}</span><span>作者 #${r.author.id}</span><span>有效期至 ${new Date(r.validUntil).toLocaleString('zh-CN')}</span></div></div>`)
-          : html`<app-empty-state title="没有匹配的案例" description="可缩短搜索词或调整状态与资源类型。"></app-empty-state>`}
+          : html`<app-empty-state title="没有匹配的案例" description=${!this.query && !this.resourceType && this.filter === 'published'
+            ? '当前没有可访问的已发布案例。' : '可缩短搜索词或调整状态与资源类型。'}>
+            ${!this.query && !this.resourceType && this.filter === 'published' && this.can('manage') ? html`
+              <button slot="actions" class="btn" ?disabled=${this.record.locked} @click=${() => this.startCandidate()}>选择来源调查</button>` : nothing}
+          </app-empty-state>`}
         </app-card><div class="toolbar"><span class="muted">当前页 ${p.data.items.length} 条 · 仅统计当前授权范围</span>${p.data.nextCursor ? html`<button class="btn" @click=${() => void this.search(p.data!.nextCursor!)}>下一页</button>` : nothing}</div>` : nothing}
       ${p.error ? html`<button class="btn btn-refresh" ?disabled=${p.accessInvalidated} @click=${() => void this.search()}>重试读取案例</button>` : nothing}
     </section><aside class="stack"><app-card><span slot="header">经验有依据，复用有条件</span><p>仅已发布且有效的案例可作为参考。引用前仍需核对当前资源、版本与证据。</p><p class="muted">历史经验属于参考材料，不是本次故障的事实证据，也不授予执行许可。</p></app-card></aside></div>`;
@@ -162,21 +306,101 @@ export class OperationsKnowledge extends LitElement {
         ${this.formError ? html`<p role="alert">${this.formError}</p>` : nothing}</app-card>` : nothing}
       </aside></div>`;
   }
-  private candidateForm() {
+  private sourceObject(ref: CaseRecord['resources'][number]) {
+    return this.inventory.data?.items.find(item => workspaceResourceKey(item.resource) === workspaceResourceKey(ref))?.label
+      ?? resourceLabel(ref);
+  }
+  private sourceObjects(row: InvestigationRecord) {
+    return row.resources.map(ref => this.sourceObject(ref)).join('、');
+  }
+  private sourceOptions() {
+    const p = this.sourcePages;
+    const rows = this.availableSources(p.data);
+    const inventory = this.inventory;
+    return html`<section class="stack" aria-labelledby="case-source-heading">
+      <div>
+        <h2 id="case-source-heading">选择来源调查与结果</h2>
+        <p class="muted">请选择已关闭调查的结果版本。生成草稿前会重新核对来源权限和证据。</p>
+      </div>
+      ${this.sourceNotice ? html`<p role="alert">${this.sourceNotice}</p>` : nothing}
+      <form class="source-filters" @submit=${(e: Event) => { e.preventDefault(); void this.loadSources(); }}>
+        <label>调查标题<input id="source-query" maxlength="200" placeholder="搜索调查标题" .value=${this.sourceQuery}
+          @input=${(e: Event) => this.sourceQuery = (e.target as HTMLInputElement).value}></label>
+        <label>调查对象<select .value=${this.sourceResource} ?disabled=${inventory.loading || !inventory.data}
+          @change=${(e: Event) => { this.sourceResource = (e.target as HTMLSelectElement).value; void this.loadSources(); }}>
+          <option value="">全部对象</option>
+          ${(inventory.data?.items ?? []).map(item => html`<option value=${workspaceResourceKey(item.resource)}>${item.label} · ${resourceLabel(item.resource)}</option>`)}
+        </select></label>
+        <button class="btn" type="submit" ?disabled=${p.accessInvalidated}>查找调查</button>
+      </form>
+      ${inventory.error || inventory.data?.dataQuality === 'partial' ? html`
+        <div role="status" class="muted">调查对象名称${inventory.error ? '读取失败' : '列表不完整'}，仍可按调查标题查找。
+          <button class="btn btn-refresh" type="button" ?disabled=${inventory.loading || inventory.accessInvalidated} @click=${this.loadSourceInventory}>重试读取对象</button>
+        </div>` : nothing}
+      ${p.loading ? html`<p role="status">正在读取来源调查…</p>` : nothing}
+      ${p.error ? html`<div role="alert"><p>读取来源调查失败。${p.error}</p>
+        <button class="btn btn-refresh" type="button" ?disabled=${p.accessInvalidated} @click=${() => this.loadSources()}>重试读取调查</button>
+      </div>` : nothing}
+      ${rows.length ? html`<ul class="source-list">${rows.map(row => {
+        const version = row.latestOutcome!.resultVersion, objects = this.sourceObjects(row);
+        return html`<li class="row source-row">
+          <div><strong>${row.title}</strong><p>${objects}</p>
+            <p class="muted">创建于 ${sourceDate.format(new Date(row.createdAt))} · ${row.id}</p></div>
+          <button class="btn" type="button" aria-label=${`选择结果 V${version} · ${row.title} · ${objects} · ${row.id}`}
+            @click=${() => this.selectSource(row)}>选择结果 V${version}</button>
+        </li>`;
+      })}</ul>` : p.data && !p.data.nextCursor ? html`<app-empty-state
+        title=${this.appliedSourceQuery || this.sourceResource ? '没有匹配的调查' : '暂无可用的来源调查'}
+        description=${this.appliedSourceQuery || this.sourceResource
+          ? '可缩短搜索词或切换调查对象。' : '来源需要是当前可访问、已关闭且有调查结果的记录。'}></app-empty-state>` : nothing}
+      ${rows.length && p.data?.nextCursor ? html`<div><button class="btn" type="button"
+        @click=${() => void this.loadSources(p.data?.nextCursor ?? undefined)}>下一页调查</button></div>` : nothing}
+    </section>`;
+  }
+  private selectedSource() {
+    const source = this.source!;
+    return html`<section class="source-choice" aria-labelledby="case-source-heading">
+      <h2 id="case-source-heading">已选来源 · 结果 V${source.resultVersion}</h2>
+      ${source.investigation ? html`<p><strong>${source.investigation.title}</strong></p>
+        <p>${this.sourceObjects(source.investigation)}</p>` : source.title ? html`<p><strong>${source.title}</strong></p>` : nothing}
+      <p class="muted">调查 ${source.investigationId}</p>
+      <div class="source-actions">
+        ${!this.preparedPolicy ? html`<button id="prepare-case" class="btn-primary" type="button"
+          ?disabled=${this.preparing || this.record.locked}
+          @click=${this.prepareCandidate}>读取来源生成脱敏草稿</button>` : nothing}
+        <button class="btn" type="button" ?disabled=${this.record.writing} @click=${() => this.chooseAnotherSource()}>重新选择来源</button>
+      </div>
+      ${this.preparing ? html`<p role="status">正在读取结果 V${source.resultVersion}，生成脱敏草稿…</p>` : nothing}
+      ${!this.preparedPolicy && this.formError ? html`<p role="alert">${this.formError}</p>` : nothing}
+    </section>`;
+  }
+  private candidateEditor() {
     const c = this.candidate;
     const field = (name: string, value: string, change: (v: string) => void, max = 4000) => html`<label>${name}<textarea aria-label=${name} required maxlength=${max} rows="2" .value=${value} ?disabled=${this.record.locked} @input=${(e: Event) => change((e.target as HTMLTextAreaElement).value)}></textarea></label>`;
-    return html`<app-dialog .open=${this.formOpen} title=${this.editing ? '编辑为新案例版本' : '从调查整理案例'} @app-dialog-close=${() => this.formOpen = false}>
-      <form id="case-candidate" class="form" @submit=${this.saveCandidate}><p>请人工核实来源与处理效果；保存草稿不会自动发布。原记录草稿中的未知原因与缺口保持未知。</p>
-        ${!this.editing?html`<button class="btn btn-refresh" type="button" ?disabled=${this.preparation.locked||this.record.locked} @click=${this.prepareCandidate}>读取来源生成脱敏草稿</button>${this.status(this.preparation)}${this.preparation.data?html`<p>脱敏策略：${this.preparation.data.redactionPolicyVersion}；保存后仍需独立审核。</p>`:nothing}`:nothing}
-        <details><summary>核对来源调查与结果版本</summary>
-        <label>来源调查 ID<input aria-label="来源调查 ID" required maxlength="128" .value=${c.investigationId} ?disabled=${this.editing || this.record.locked} @input=${(e: Event) => this.candidate = {...c, investigationId:(e.target as HTMLInputElement).value}}></label>
-        <label>来源结果版本<input aria-label="来源结果版本" type="number" min="1" required .value=${String(c.resultVersion)} ?disabled=${this.editing || this.record.locked} @input=${(e: Event) => this.candidate = {...c, resultVersion:Number((e.target as HTMLInputElement).value)}}></label></details>
+    return html`<form id="case-candidate" class="form" @submit=${this.saveCandidate}>
+        ${this.editing ? html`<p class="muted">来源调查 ${c.investigationId} · 结果 V${c.resultVersion}</p>`
+          : html`<p role="status" class="muted">已生成脱敏草稿 · ${this.preparedPolicy}</p>`}
+        <p>请人工核实来源、处理效果和脱敏内容。保存草稿后仍需独立审核。</p>
         ${Object.entries({title:'案例标题',symptoms:'问题现象',faultType:'故障类型',confirmedCause:'已确认原因',actions:'实际处理',actualEffect:'实际效果',counterexamples:'反面证据与不适用条件'}).map(([key,label]) => field(label,c.content[key as keyof typeof c.content],v => this.candidate = {...this.candidate,content:{...this.candidate.content,[key]:v}}, key === 'title' ? 200 : key === 'faultType' ? 100 : 4000))}
         ${Object.entries({conditions:'适用条件',productVersion:'产品版本',resourceVersion:'资源版本'}).map(([key,label]) => field(label,c.applicability[key as keyof typeof c.applicability],v => this.candidate = {...this.candidate,applicability:{...this.candidate.applicability,[key]:v}},key === 'conditions' ? 4000 : 128))}
         <label>有效期至<input aria-label="有效期至" type="datetime-local" step="0.001" required .value=${c.validUntil ? localDate(c.validUntil) : ''} ?disabled=${this.record.locked} @input=${(e: Event) => this.candidate = {...c,validUntil:(e.target as HTMLInputElement).value}}></label>
         <label class="check"><input type="checkbox" required .checked=${this.humanConfirmed} ?disabled=${this.record.locked} @change=${(e: Event) => this.humanConfirmed = (e.target as HTMLInputElement).checked}>我已人工确认来源结果、处理效果与脱敏内容</label>
         ${this.formError ? html`<p role="alert">${this.formError}</p>` : nothing}${this.status(this.record)}
-      </form><div slot="footer"><button class="btn" @click=${() => this.formOpen = false}>取消</button><button class="btn-primary" ?disabled=${this.record.locked || this.preparation.loading || !this.humanConfirmed} @click=${() => this.renderRoot.querySelector<HTMLFormElement>('#case-candidate')?.requestSubmit()}>保存案例草稿</button></div>
+      </form>`;
+  }
+  private candidateForm() {
+    const showEditor = this.editing || Boolean(this.preparedPolicy);
+    return html`<app-dialog .open=${this.formOpen} size="lg" title=${this.editing ? '编辑为新案例版本' : '从调查整理案例'}
+      .closable=${!this.record.writing} @app-dialog-close=${this.closeCandidate}>
+      ${this.formOpen ? html`<div class="stack">
+        ${!this.editing ? this.source ? this.selectedSource() : this.sourceOptions() : nothing}
+        ${showEditor ? this.candidateEditor() : nothing}
+      </div>
+      <div slot="footer">
+        <button class="btn" ?disabled=${this.record.writing} @click=${this.closeCandidate}>取消</button>
+        ${showEditor ? html`<button class="btn-primary" ?disabled=${!this.canSaveCandidate}
+          @click=${() => this.renderRoot.querySelector<HTMLFormElement>('#case-candidate')?.requestSubmit()}>保存案例草稿</button>` : nothing}
+      </div>` : nothing}
     </app-dialog>`;
   }
   render() {

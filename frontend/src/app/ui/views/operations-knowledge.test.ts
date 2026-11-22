@@ -9,6 +9,23 @@ vi.mock('../controllers/operations-api.ts',async importOriginal=>({...await impo
 const record=():CaseRecord=>({id:'case',revision:4,version:2,contentHash:'a'.repeat(64),state:'pending_review',author:{kind:'user',id:11},resources:[],validUntil:new Date(Date.now()+600000).toISOString(),tombstone:false,referenceOnly:true,
   content:{title:'合成案例：服务无响应',symptoms:'当前症状',faultType:'服务异常',confirmedCause:'已确认事实',actions:'隔离测试',actualEffect:'恢复',counterexamples:'依赖故障不适用'},applicability:{conditions:'有证据',productVersion:'1',resourceVersion:'1'},source:{investigationId:'inv',resultId:'result',resultVersion:3,evidence:[]}});
 const json=(v:unknown,status=200)=>({ok:status<400,status,json:async()=>v}) as Response;
+const firstId = '00000000-0000-4000-8000-000000000001';
+const secondId = '00000000-0000-4000-8000-000000000002';
+const investigation = (id: string, resultVersion: number) => ({
+  id, title: '同名故障调查', lifecycle: 'closed', createdAt: '2026-11-22T08:00:00Z',
+  activeRequestId: null, resources: [{ type: 'instance', id: id === firstId ? 11 : 12 }],
+  latestOutcome: { resultVersion },
+});
+const investigations = (items: ReturnType<typeof investigation>[], nextCursor: string | null = null) =>
+  json({ items, nextCursor, authorizedCounts: { total: items.length } });
+const inventory = () => json({ dataQuality: 'complete', items: [
+  { resource: { type: 'instance', id: 11 }, label: '交易库', status: 'unknown' },
+  { resource: { type: 'instance', id: 12 }, label: '报表库', status: 'unknown' },
+] });
+const prepared = (investigationId: string, resultVersion: number, title: string) => json({
+  candidate: { investigationId, resultVersion, content: { ...record().content, title },
+    applicability: record().applicability, validUntil: record().validUntil }, redactionPolicyVersion: 'case-redaction/v1',
+});
 let view:OperationsKnowledge;
 async function mount(r=record()){
   history.replaceState({},'','/operations-knowledge?case=case');api.mockResolvedValueOnce(json(r));
@@ -16,6 +33,18 @@ async function mount(r=record()){
   document.body.append(view);await flush();return view.shadowRoot!;
 }
 async function flush(){await new Promise(r=>setTimeout(r,0));await view?.updateComplete;}
+async function mountHome(path = '/operations-knowledge') {
+  history.replaceState({}, '', path);
+  view = document.createElement('operations-knowledge') as OperationsKnowledge;
+  view.permissions = new Set(['operations:cases:view', 'operations:cases:manage']);
+  document.body.append(view);
+  await flush();
+  return view.shadowRoot!;
+}
+const emptyKnowledge = () => json({ items: [], nextCursor: null, authorizedCounts: { total: 0 } });
+const button = (root: ShadowRoot, name: string) =>
+  [...root.querySelectorAll('button')].find(item => item.textContent?.trim() === name);
+const prepareReads = () => api.mock.calls.map(([url]) => String(url)).filter(url => url.includes('/prepare?'));
 beforeEach(()=>{api.mockReset();localStorage.setItem('user',JSON.stringify({id:22}));});
 afterEach(()=>{view?.remove();localStorage.clear();history.replaceState({},'','/');});
 it('review submits the exact displayed revision, content version and hash',async()=>{
@@ -37,4 +66,98 @@ it('permission changes clear the article and open draft before a late response c
   const root=await mount();expect(root.textContent).toContain('已确认事实');
   window.dispatchEvent(new CustomEvent('slide-permissions-loaded',{detail:{permissions:[]}}));await flush();
   expect(root.textContent).not.toContain('已确认事实');expect(root.textContent).not.toContain('当前症状');expect(root.textContent).toContain('内容已清除');
+});
+
+it('starts with an authorized paginated source search and distinguishes empty, no match and read failure', async () => {
+  api.mockResolvedValueOnce(emptyKnowledge());
+  const root = await mountHome();
+  api.mockResolvedValueOnce(inventory()).mockResolvedValueOnce(investigations([investigation(firstId, 0)], 'next'))
+    .mockResolvedValueOnce(investigations([investigation(secondId, 2)]));
+  button(root, '选择来源调查')!.click();
+  await flush();
+  expect(root.querySelector('textarea')).toBeNull();
+  expect(button(root, '读取来源生成脱敏草稿')).toBeUndefined();
+  expect(prepareReads()).toEqual([]);
+  expect(root.textContent).toContain('报表库');
+  expect(api.mock.calls.map(([url]) => url)).toContain('/api/investigations?state=closed&limit=20&cursor=next');
+
+  const objects = root.querySelector<HTMLSelectElement>('.source-filters select')!;
+  objects.value = 'instance:12';
+  api.mockResolvedValueOnce(json({}, 503));
+  objects.dispatchEvent(new Event('change'));
+  await flush();
+  expect(root.textContent).toContain('读取来源调查失败');
+  expect(root.textContent).not.toContain('没有匹配的调查');
+  api.mockResolvedValueOnce(investigations([]));
+  button(root, '重试读取调查')!.click();
+  await flush();
+  expect(api.mock.lastCall?.[0]).toContain('resource=instance%3A12');
+  expect(root.querySelector('app-dialog app-empty-state')?.getAttribute('title')).toBe('没有匹配的调查');
+
+  objects.value = '';
+  api.mockResolvedValueOnce(investigations([]));
+  objects.dispatchEvent(new Event('change'));
+  await flush();
+  expect(root.querySelector('app-dialog app-empty-state')?.getAttribute('title')).toBe('暂无可用的来源调查');
+});
+
+it('drops a late preparation after switching result versions and clears checked drafts when changing the source', async () => {
+  api.mockResolvedValueOnce(emptyKnowledge());
+  const root = await mountHome();
+  api.mockResolvedValueOnce(inventory()).mockResolvedValueOnce(investigations([investigation(firstId, 1)]));
+  button(root, '从调查整理案例')!.click();
+  await flush();
+  button(root, '选择结果 V1')!.click();
+  await flush();
+  let finishOld!: (value: Response) => void;
+  api.mockImplementationOnce(() => new Promise(resolve => { finishOld = resolve; }));
+  button(root, '读取来源生成脱敏草稿')!.click();
+  await flush();
+  api.mockResolvedValueOnce(investigations([investigation(firstId, 2), investigation(secondId, 3)]));
+  button(root, '重新选择来源')!.click();
+  await flush();
+  button(root, '选择结果 V2')!.click();
+  await flush();
+  api.mockResolvedValueOnce(prepared(firstId, 2, '新版本草稿'));
+  button(root, '读取来源生成脱敏草稿')!.click();
+  finishOld(prepared(firstId, 1, '旧版本草稿'));
+  await flush();
+
+  const title = () => root.querySelector<HTMLTextAreaElement>('textarea[aria-label="案例标题"]')?.value;
+  expect(title()).toBe('新版本草稿');
+  expect(prepareReads()).toEqual([1, 2].map(v => `/api/operations/knowledge/prepare?investigationId=${firstId}&resultVersion=${v}`));
+  root.querySelector<HTMLInputElement>('input[type="checkbox"]')!.click();
+  await flush();
+  expect(button(root, '保存案例草稿')?.disabled).toBe(false);
+  api.mockResolvedValueOnce(investigations([investigation(secondId, 3)]));
+  button(root, '重新选择来源')!.click();
+  await flush();
+  expect(title()).toBeUndefined();
+  expect(button(root, '保存案例草稿')).toBeUndefined();
+  expect(button(root, '选择结果 V3')).toBeDefined();
+});
+
+it('uses the exact linked version and never falls through to the newer version when the server rejects it', async () => {
+  api.mockResolvedValueOnce(emptyKnowledge()).mockResolvedValueOnce(json({ error: 'OPERATIONS_PRECONDITION_FAILED' }, 422))
+    .mockResolvedValueOnce(inventory()).mockResolvedValueOnce(investigations([investigation(firstId, 3)]));
+  const root = await mountHome(`/operations-knowledge?sourceInvestigation=${firstId}&resultVersion=2`);
+  expect(prepareReads()).toEqual([`/api/operations/knowledge/prepare?investigationId=${firstId}&resultVersion=2`]);
+  expect(root.textContent).toContain('该来源或结果版本已不可引用');
+  expect(button(root, '选择结果 V3')).toBeDefined();
+  expect(button(root, '保存案例草稿')).toBeUndefined();
+});
+
+it('clears the source and ignores a late draft on a permission change', async () => {
+  api.mockResolvedValueOnce(emptyKnowledge());
+  let finish!: (value: Response) => void;
+  api.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+  const root = await mountHome(`/operations-knowledge?sourceInvestigation=${firstId}&resultVersion=1`);
+  expect(root.textContent).toContain(firstId);
+  window.dispatchEvent(new CustomEvent('slide-permissions-loaded', { detail: { permissions: [] } }));
+  finish(prepared(firstId, 1, '过期草稿'));
+  await flush();
+  expect(root.textContent).not.toContain(firstId);
+  expect(root.textContent).not.toContain('过期草稿');
+  expect(root.querySelector('textarea')).toBeNull();
+  expect(button(root, '从调查整理案例')?.disabled).toBe(true);
 });
