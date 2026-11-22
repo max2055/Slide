@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { parseInlineDirectives } from './directive-tags.ts';
 import { normalizeMessage } from '../../ui/chat/message-normalizer.ts';
+import { toSanitizedMarkdownHtml } from "../../ui/markdown.ts";
+
 
 describe('MAX-632 / #634 whitespace preservation', () => {
   it.each([
@@ -115,5 +117,57 @@ describe('MAX-705 / #1030 literal reply tags in code', () => {
         replyToId: 'real',
       });
     }
+  });
+});
+
+describe('MAX-705 reply tags follow Markdown code boundaries', () => {
+  const example = '[[reply_to:example]]';
+  const wanted = { kind: 'id', id: 'wanted' };
+  const normalize = (content: string) => normalizeMessage({ role: 'assistant', content });
+
+  it('parses a reply between unmatched backticks in a heading and a paragraph', () => {
+    const source = '# 标题 `\n正文 [[reply_to:wanted]] `  ';
+    expect(toSanitizedMarkdownHtml(source)).not.toContain('<code>');
+    expect(normalize(source)).toMatchObject({
+      content: [{ type: 'text', text: '# 标题 `\n正文 `  ' }],
+      replyTarget: wanted,
+    });
+  });
+
+  it('protects a multiline inline code span within a single paragraph', () => {
+    const code = '讲义 `示例\r\n' + example + '`';
+    const source = code + ' [[reply_to:wanted]] 正文';
+    expect(toSanitizedMarkdownHtml(source)).toContain('<code>示例 ' + example + '</code>');
+    expect(normalize(source)).toMatchObject({
+      content: [{ type: 'text', text: code + ' 正文' }],
+      replyTarget: wanted,
+    });
+  });
+
+  it('matches inline backticks within each rendered table cell', () => {
+    const source = '| ` | [[reply_to:wanted]] ` | `' + example + '` |\n| --- | --- | --- |';
+    expect(toSanitizedMarkdownHtml(source).match(/<code>/g)).toHaveLength(1);
+    expect(normalize(source)).toMatchObject({
+      content: [{ type: 'text', text: '| ` | ` | `' + example + '` |\n| --- | --- | --- |' }],
+      replyTarget: wanted,
+    });
+  });
+
+  it('preserves the source of a closed quoted fence and filters a later directive', () => {
+    const quote = '> ~~~text\r\n>   ' + example + '\t  \r\n> ~~~\r\n\r\n';
+    const source = quote + '[[reply_to:wanted]]\r\n正文';
+    expect(toSanitizedMarkdownHtml(source)).toContain('  ' + example + '\t  ');
+    expect(normalize(source)).toMatchObject({
+      content: [{ type: 'text', text: quote + '正文' }],
+      replyTarget: wanted,
+    });
+  });
+
+  it('preserves an unclosed quoted fence including trailing whitespace', () => {
+    const quote = '> ~~~text\n>   ' + example + '\t  \n';
+    expect(toSanitizedMarkdownHtml(quote)).toContain(example + '</code>');
+    const message = normalize(quote);
+    expect(message.content).toEqual([{ type: 'text', text: quote }]);
+    expect(message.replyTarget).toBeUndefined();
   });
 });

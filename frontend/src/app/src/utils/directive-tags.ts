@@ -1,5 +1,5 @@
 import { normalizeOptionalString } from "../shared/string-coerce.js";
-import { findCodeRegions } from "../shared/text/code-regions.js";
+import { findMarkdownCodeRegions } from "../markdown/code-regions.js";
 
 export type InlineDirectiveParseResult = {
   text: string;
@@ -123,7 +123,7 @@ export function parseInlineDirectives(
   let hasReplyTag = false;
   let sawCurrent = false;
   let lastExplicitId: string | undefined;
-  const codeRegions = findCodeRegions(text);
+  const codeRegions = findMarkdownCodeRegions(text);
   const overlapsCode = (start: number, length: number) =>
     codeRegions.some((region) => start < region.end && start + length > region.start);
 
