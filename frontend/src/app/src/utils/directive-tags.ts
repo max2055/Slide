@@ -1,4 +1,5 @@
 import { normalizeOptionalString } from "../shared/string-coerce.js";
+import { findCodeRegions } from "../shared/text/code-regions.js";
 
 export type InlineDirectiveParseResult = {
   text: string;
@@ -18,19 +19,14 @@ type InlineDirectiveParseOptions = {
 const REPLY_TAG_RE = /\[\[\s*(?:reply_to_current|reply_to\s*:\s*([^\]\n]+))\s*\]\]/gi;
 const INLINE_DIRECTIVE_TAG_WITH_PADDING_RE =
   /\s*\[\[\s*(?:reply_to_current|reply_to\s*:\s*[^\]\n]+)\s*\]\]\s*/gi;
+// Only tidy whitespace touching a removed directive.
+const REPLY_TAG_REMOVAL_RE =
+  /^[ \t]*\[\[\s*(?:reply_to_current|reply_to\s*:\s*[^\]\n]+)\s*\]\][ \t]*(?:\r?\n|$)|[ \t]*\[\[\s*(?:reply_to_current|reply_to\s*:\s*[^\]\n]+)\s*\]\][ \t]*/gim;
 
 function replacementPreservesWordBoundary(source: string, offset: number, length: number): string {
   const before = source[offset - 1];
   const after = source[offset + length];
   return before && after && !/\s/u.test(before) && !/\s/u.test(after) ? " " : "";
-}
-
-// Only tidy whitespace touching a removed directive. Never normalize the message body.
-function removeReplyTags(text: string): string {
-  return text.replace(
-    /^[ \t]*\[\[\s*(?:reply_to_current|reply_to\s*:\s*[^\]\n]+)\s*\]\][ \t]*(?:\r?\n|$)|[ \t]*\[\[\s*(?:reply_to_current|reply_to\s*:\s*[^\]\n]+)\s*\]\][ \t]*/gim,
-    (match, offset, source) => replacementPreservesWordBoundary(source, offset, match.length),
-  );
 }
 
 type StripInlineDirectiveTagsResult = {
@@ -124,13 +120,17 @@ export function parseInlineDirectives(
     };
   }
 
-  let hasAudioTag = false;
   let hasReplyTag = false;
   let sawCurrent = false;
   let lastExplicitId: string | undefined;
-
+  const codeRegions = findCodeRegions(text);
+  const overlapsCode = (start: number, length: number) =>
+    codeRegions.some((region) => start < region.end && start + length > region.start);
 
   for (const match of text.matchAll(REPLY_TAG_RE)) {
+    if (overlapsCode(match.index, match[0].length)) {
+      continue;
+    }
     const idRaw = match[1];
     hasReplyTag = true;
     if (idRaw === undefined) {
@@ -143,7 +143,13 @@ export function parseInlineDirectives(
     }
   }
 
-  const cleaned = stripReplyTags ? removeReplyTags(text) : text;
+  const cleaned = stripReplyTags && hasReplyTag
+    ? text.replace(REPLY_TAG_REMOVAL_RE, (match, offset: number) =>
+        overlapsCode(offset, match.length)
+          ? match
+          : replacementPreservesWordBoundary(text, offset, match.length),
+      )
+    : text;
 
   const replyToId =
     lastExplicitId ?? (sawCurrent ? normalizeOptionalString(currentMessageId) : undefined);
@@ -153,7 +159,7 @@ export function parseInlineDirectives(
     replyToId,
     replyToExplicitId: lastExplicitId,
     replyToCurrent: sawCurrent,
-    hasAudioTag,
+    hasAudioTag: false,
     hasReplyTag,
   };
 }

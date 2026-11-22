@@ -33,3 +33,87 @@ describe('MAX-632 / #634 whitespace preservation', () => {
     expect(parseInlineDirectives(text, { stripReplyTags: false }).text).toBe(text);
   });
 });
+
+describe('MAX-705 / #1030 literal reply tags in code', () => {
+  it.each([
+    '示例 `  [[reply_to_current]]  [[reply_to:literal]]  `  \n\n',
+    '``  [[reply_to_current]]  `one`  [[reply_to:literal]]  ``',
+    '```text\r\n  [[reply_to_current]]  \r\n\r\n  [[reply_to:literal]]\t\r\n```  \r\n',
+    '~~~text\n\t[[reply_to_current]]  \n  [[reply_to:literal]]  \n~~~\n',
+    '```text\n  [[reply_to:literal]]  \n\n  [[reply_to_current]]\t',
+    '~~~~text\n~~~\n  [[reply_to:literal]]  \n\n  [[reply_to_current]]\t',
+  ])('preserves text and leaves reply metadata unset: %j', text => {
+    expect(parseInlineDirectives(text, { currentMessageId: 'current' })).toMatchObject({
+      text,
+      hasReplyTag: false,
+      replyToCurrent: false,
+    });
+    expect(parseInlineDirectives(text).replyToId).toBeUndefined();
+    const message = normalizeMessage({ role: 'assistant', content: text });
+    expect(message.content).toEqual([{ type: 'text', text }]);
+    expect(message.replyTarget).toBeUndefined();
+  });
+
+  it('handles real directives between and beside code regions', () => {
+    const closed = '```text\r\n  [[reply_to_current]]\t\r\n```  \r\n';
+    const prose = '说明  `  [[reply_to:example]]  `  \n\n';
+    const open = '~~~text\n  [[reply_to:open]]\t';
+    const text = `[[reply_to:first]]\r\n${closed}[[reply_to:last]]\r\n${prose}${open}`;
+    const cleaned = closed + prose + open;
+
+    expect(parseInlineDirectives(text)).toMatchObject({
+      text: cleaned,
+      hasReplyTag: true,
+      replyToId: 'last',
+      replyToExplicitId: 'last',
+      replyToCurrent: false,
+    });
+    expect(parseInlineDirectives(text, { stripReplyTags: false })).toMatchObject({
+      text,
+      replyToExplicitId: 'last',
+      replyToCurrent: false,
+    });
+    expect(normalizeMessage({ role: 'assistant', content: [{ type: 'text', text }] })).toMatchObject({
+      content: [{ type: 'text', text: cleaned }],
+      replyTarget: { kind: 'id', id: 'last' },
+    });
+  });
+
+  it('resolves the current message when the explicit ID is a code example', () => {
+    const example = '`[[reply_to:example]]`';
+    const text = `说明  [[reply_to_current]]  ${example}  `;
+    expect(parseInlineDirectives(text, { currentMessageId: ' current ' })).toMatchObject({
+      text: `说明 ${example}  `,
+      hasReplyTag: true,
+      replyToId: 'current',
+      replyToCurrent: true,
+    });
+    expect(normalizeMessage({ role: 'assistant', content: text })).toMatchObject({
+      replyTarget: { kind: 'current' },
+    });
+  });
+
+  it('keeps a real directive between unmatched backtick runs', () => {
+    expect(parseInlineDirectives('开头 `` [[reply_to:real]] `  结尾')).toMatchObject({
+      text: '开头 `` `  结尾',
+      replyToId: 'real',
+    });
+  });
+
+  it('handles a triple-backtick inline span at the start of a line', () => {
+    const example = '```  [[reply_to:example]]  ```';
+    expect(parseInlineDirectives(`${example}  [[reply_to:real]]  说明`)).toMatchObject({
+      text: `${example} 说明`,
+      replyToId: 'real',
+    });
+  });
+
+  it('keeps a real directive after an escaped backtick or a paragraph break', () => {
+    for (const prefix of ['\\`', '`开头\r\n\r\n']) {
+      expect(parseInlineDirectives(`${prefix}说明 [[reply_to:real]] 结尾\``)).toMatchObject({
+        text: `${prefix}说明 结尾\``,
+        replyToId: 'real',
+      });
+    }
+  });
+});
