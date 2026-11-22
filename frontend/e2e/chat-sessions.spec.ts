@@ -115,7 +115,7 @@ for (const width of [1440, 390]) test(`MAX-134 A/B slow runs, late events and re
 
 type ChatSend = { messageId: string; idempotencyKey: string; message: string; sessionKey?: string };
 
-async function enterChatFromMenu(page: Page, greetingFails = true) {
+async function enterChatFromMenu(page: Page, greetingFails = true, existingSession = false) {
   const sockets: WebSocketRoute[] = [];
   const sends: ChatSend[] = [];
   const session = 'receipt-session';
@@ -138,7 +138,7 @@ async function enterChatFromMenu(page: Page, greetingFails = true) {
       case '/api/sessions':
         return route.fulfill({ json: {
           ok: true,
-          sessions: sends.length ? [{ key: session, label: '回执会话' }] : [],
+          sessions: existingSession || sends.length ? [{ key: session, label: '回执会话' }] : [],
           defaults: { model: 'fixture-model', modelProvider: 'fixture-provider' },
         } });
       case '/api/agents':
@@ -267,9 +267,13 @@ test('MAX-723 unconfirmed chat keeps the draft after session allocation and retr
   await page.screenshot({ path: info.outputPath('已确认后断线.png') });
   await authenticate(3);
   expect(sends).toHaveLength(2);
+  await info.attach('receipt-frames.json', {
+    body: JSON.stringify({ closeCode: 1006, sendsAfterFirstReconnect: 1, sendsAfterConfirmedReconnect: 2, sends }, null, 2),
+    contentType: 'application/json',
+  });
 });
 
-test('MAX-723 late acceptance retires the pending draft with zero replay', async ({ page }) => {
+test('MAX-723 late acceptance retires the pending draft with zero replay', async ({ page }, info) => {
   const { sockets, sends, input, uncertainty, authenticate, confirm } = await enterChatFromMenu(page);
   await authenticate(1);
   await input.fill('等待迟到回执');
@@ -284,4 +288,120 @@ test('MAX-723 late acceptance retires the pending draft with zero replay', async
   await expect(input).toHaveValue('');
   await input.press('Enter');
   expect(sends).toHaveLength(1);
+  await info.attach('receipt-frames.json', {
+    body: JSON.stringify({ closeCode: 1006, restoredDraftAfterConfirmation: await input.inputValue(), sends }, null, 2),
+    contentType: 'application/json',
+  });
+});
+
+for (const existingSession of [true, false]) {
+  test(`MAX-723 4008 preserves the original request in an ${existingSession ? 'existing' : 'allocated'} session`, async ({ page }, info) => {
+    const { sockets, sends, session, input, uncertainty, authenticate, allocateSession, confirm } =
+      await enterChatFromMenu(page, true, existingSession);
+    await authenticate(1);
+    if (existingSession) {
+      const sessionSelect = page.locator('.content-header select').filter({ has: page.locator(`option[value="${session}"]`) });
+      await sessionSelect.selectOption(session);
+      await expect(page).toHaveURL(new RegExp(`session=${session}$`));
+    }
+    await input.fill('等待限流断线前的确认');
+    await input.press('Enter');
+    await expect.poll(() => sends.length).toBe(1);
+    expect(sends[0].sessionKey).toBe(existingSession ? session : undefined);
+    if (!existingSession) {
+      allocateSession(sockets[0]);
+      await expect(page).toHaveURL(new RegExp(`session=${session}$`));
+    }
+
+    await sockets[0].close({ code: 4008, reason: 'controlled rate limit' });
+    await expect(page.getByText('请求过于频繁，请稍后再试。', { exact: true })).toBeVisible();
+    await expect(input).toBeDisabled();
+    await expect(input).toHaveValue(sends[0].message);
+    await expect(uncertainty).toHaveCount(1);
+    await authenticate(2);
+    await expect(uncertainty).toHaveCount(1);
+    expect(sends).toHaveLength(1);
+
+    await input.press('Enter');
+    await expect.poll(() => sends.length).toBe(2);
+    expect(sends[1]).toMatchObject({ ...sends[0], sessionKey: session });
+    confirm(sockets[1]);
+    await expect(uncertainty).toHaveCount(0);
+    await expect(input).toHaveValue('');
+    await info.attach('receipt-frames.json', {
+      body: JSON.stringify({ existingSession, closeCode: 4008, sendsAfterReconnect: 1, sends }, null, 2),
+      contentType: 'application/json',
+    });
+  });
+}
+
+for (const editTime of ['before disconnect', 'after restoration'] as const) {
+  test(`MAX-723 late confirmation preserves a same-text draft edited ${editTime}`, async ({ page }, info) => {
+    const { sockets, sends, session, input, uncertainty, authenticate, allocateSession } = await enterChatFromMenu(page);
+    const editedDraft = editTime === 'before disconnect' ? '  等待原消息确认  ' : '等待原消息确认';
+    await authenticate(1);
+    await input.fill('等待原消息确认');
+    await input.press('Enter');
+    await expect.poll(() => sends.length).toBe(1);
+    allocateSession(sockets[0]);
+    await expect(page).toHaveURL(new RegExp(`session=${session}$`));
+    if (editTime === 'before disconnect') await input.fill(editedDraft);
+    await sockets[0].close({ code: 1006 });
+    await expect(uncertainty).toHaveCount(1);
+    await authenticate(2);
+    if (editTime === 'after restoration') {
+      await expect(input).toHaveValue(editedDraft);
+      await input.press('End');
+      await input.press('Space');
+      await input.press('Backspace');
+    }
+    const { messageId, idempotencyKey } = sends[0];
+    const recovered = { type: 'run.snapshot', sessionKey: session, messageId,
+      run: { id: 'recovered-run', sessionId: session, state: 'running', messageId, idempotencyKey } };
+    sockets[1].send(JSON.stringify(recovered));
+    await expect(uncertainty).toHaveCount(0);
+    await expect(input).toHaveValue(editedDraft);
+    expect(sends).toHaveLength(1);
+    await info.attach('receipt-frames.json', {
+      body: JSON.stringify({ editTime, closeCode: 1006, editedDraft, sends, recovered }, null, 2),
+      contentType: 'application/json',
+    });
+  });
+}
+
+test('MAX-723 empty history refresh keeps the unresolved receipt until confirmation', async ({ page }, info) => {
+  const { sockets, sends, session, input, uncertainty, authenticate, allocateSession, confirm } = await enterChatFromMenu(page);
+  await authenticate(1);
+  await input.fill('空历史不能确认此消息');
+  await input.press('Enter');
+  await expect.poll(() => sends.length).toBe(1);
+  allocateSession(sockets[0]);
+  await expect(page).toHaveURL(new RegExp(`session=${session}$`));
+  await sockets[0].close({ code: 1006 });
+  await expect(uncertainty).toHaveCount(1);
+  await authenticate(2);
+
+  const refresh = page.getByRole('button', { name: '刷新聊天数据', exact: true });
+  await expect(refresh).toBeEnabled();
+  const [response] = await Promise.all([
+    page.waitForResponse(response => new URL(response.url()).pathname === '/api/chat/history'),
+    refresh.press('Enter'),
+  ]);
+  expect(response.status()).toBe(200);
+  expect(await response.json()).toEqual({ messages: [], nextBefore: null });
+  await expect(refresh).toBeEnabled();
+  await expect(uncertainty).toHaveCount(1);
+  await expect(input).toHaveValue(sends[0].message);
+  expect(sends).toHaveLength(1);
+
+  await input.press('Enter');
+  await expect.poll(() => sends.length).toBe(2);
+  expect(sends[1]).toMatchObject({ ...sends[0], sessionKey: session });
+  confirm(sockets[1]);
+  await expect(uncertainty).toHaveCount(0);
+  await expect(input).toHaveValue('');
+  await info.attach('receipt-frames.json', {
+    body: JSON.stringify({ closeCode: 1006, historyStatus: response.status(), messages: [], sendsAfterRefresh: 1, sends }, null, 2),
+    contentType: 'application/json',
+  });
 });

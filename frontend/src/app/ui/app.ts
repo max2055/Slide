@@ -160,6 +160,8 @@ export class SlideApp extends LitElement {
   @state() chatNewMessagesBelow = false;
   @state() chatSending = false;
   @state() chatMessage = "";
+  chatDraftRevision = 0;
+  @state() chatReceiptNotice: string | null = null;
   @state() chatMessages: unknown[] = [];
   @state() chatToolMessages: unknown[] = [];
   toolStreamById = new Map<string, ToolStreamEntry>();

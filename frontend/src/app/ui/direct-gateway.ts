@@ -314,14 +314,13 @@ export class DirectGatewayClient {
         this.onStateChange('auth_failed');
         return; // Don't schedule reconnect — permanent auth failure
       }
+      // A connection-level close cannot say which in-flight frames were accepted.
+      this.pausePendingChatAcknowledgements();
       if (ev.code === 4008) {
-        const error = new Error(RATE_LIMITED_MESSAGE);
-        this.rejectPendingChatAcknowledgements(error);
         this.onStateChange('rate_limited');
         if (!this.closed) this.scheduleReconnect();
         return;
       }
-      this.pausePendingChatAcknowledgements();
       reportServiceUnavailable();
       if (ev.code === 1013) {
         this.onStateChange('service_unavailable');
@@ -742,8 +741,9 @@ export class DirectGatewayClient {
     }
 
     if (type === 'session.created' || type === 'run.started' || type === 'run.snapshot') {
-      const messageId = typeof msg.messageId === 'string' ? msg.messageId : '';
-      const sessionKey = typeof msg.sessionKey === 'string' ? msg.sessionKey : '';
+      const snapshot = type === 'run.snapshot' ? (msg as AdapterRunSnapshotEvent).run : undefined;
+      const messageId = typeof msg.messageId === 'string' ? msg.messageId : snapshot?.messageId ?? '';
+      const sessionKey = typeof msg.sessionKey === 'string' ? msg.sessionKey : snapshot?.sessionId ?? '';
       const pending = messageId
         ? this.pendingChatAcknowledgements.get(messageId) ?? this.unconfirmedChats.get(messageId)
         : undefined;
@@ -756,16 +756,10 @@ export class DirectGatewayClient {
           this.streamSubscriptions.set(sessionKey, pending.frame.subscriptionId);
         }
       }
-    }
-
-    if (type === 'run.started') {
-      const messageId = typeof msg.messageId === 'string' ? msg.messageId : '';
-      if (messageId) this.resolveChatAcknowledgement(messageId);
+      if (messageId && type !== 'session.created') this.resolveChatAcknowledgement(messageId);
     }
 
     if (type === 'run.snapshot') {
-      const messageId = typeof msg.messageId === 'string' ? msg.messageId : '';
-      if (messageId) this.resolveChatAcknowledgement(messageId);
       this.onEvent(data as AdapterRunSnapshotEvent);
       return;
     }
@@ -1211,10 +1205,11 @@ export function handleDirectAdapterEvent(host: Record<string, unknown>, event: A
   if (!isCurrentChatSession(host) || host.chatAccessDenied) return;
   const runId = host.chatRunId as string | null;
   const sessionKey = host.sessionKey as string;
-  if ((event.type === 'run.started' || event.type === 'run.snapshot') && runId) {
+  if (event.type === 'run.started' || event.type === 'run.snapshot') {
     const eventRunId = event.type === 'run.started' ? event.runId : event.run.id;
     const messageId = event.messageId ?? (event.type === 'run.snapshot' ? event.run.messageId : undefined);
-    if (eventRunId !== runId && messageId !== runId) return;
+    if (!confirmChatSend(host as unknown as ChatState, messageId)) return;
+    if (runId && eventRunId !== runId && messageId !== runId) return;
   }
   if (event.sessionKey && event.sessionKey !== sessionKey && !['session.created', 'run.started', 'run.snapshot'].includes(event.type)) return;
   if (event.type === 'stream.snapshot' || event.type === 'stream.delta') {
@@ -1302,7 +1297,6 @@ export function handleDirectAdapterEvent(host: Record<string, unknown>, event: A
 
   switch (event.type) {
     case 'run.started':
-      if (!confirmChatSend(host as unknown as ChatState, event.messageId)) break;
       if (host.chatRunId !== event.runId) clearChatRecoveryNotice(host as unknown as Parameters<typeof clearChatRecoveryNotice>[0]);
       host.chatRunId = event.runId;
       host.chatRuntimePhase = 'preparing';
@@ -1310,7 +1304,6 @@ export function handleDirectAdapterEvent(host: Record<string, unknown>, event: A
       applyDirectSessionKey(host, event.sessionKey);
       break;
     case 'run.snapshot':
-      if (!confirmChatSend(host as unknown as ChatState, event.messageId)) break;
       applyDirectSessionKey(host, event.run.sessionId);
       if (host.chatRunId !== event.run.id) clearChatRecoveryNotice(host as unknown as Parameters<typeof clearChatRecoveryNotice>[0]);
       host.chatRunId = event.run.state === 'running' ? event.run.id : null;

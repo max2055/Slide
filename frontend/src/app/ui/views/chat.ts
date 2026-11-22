@@ -109,6 +109,7 @@ export type ChatProps = {
   disabledReason: string | null;
   error: string | null;
   lastError: string | null;
+  receiptNotice?: string | null;
   recoveryNotice?: string | null;
   onDismissRecoveryNotice?: () => void;
   onReconnect?: () => void;
@@ -1780,6 +1781,7 @@ export function renderChat(props: ChatProps) {
       ${[...new Set([props.error ?? props.lastError, props.disabledReason].filter(Boolean))].map(message => html`
         <app-notice severity="error" role="alert">${mapErrorMessage(message!)}</app-notice>
       `)}
+      ${props.receiptNotice ? html`<app-notice severity="warning" role="status">${props.receiptNotice}</app-notice>` : nothing}
       ${props.recoveryNotice && ![props.error, props.lastError, props.disabledReason].includes(props.recoveryNotice)
         ? html`<app-notice severity="warning" role="status" .dismissible=${!!props.onDismissRecoveryNotice}
             @dismiss=${props.onDismissRecoveryNotice}>${props.recoveryNotice}</app-notice>` : nothing}

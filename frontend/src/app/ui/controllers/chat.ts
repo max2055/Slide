@@ -86,6 +86,8 @@ export type ChatState = {
   chatSending: boolean;
   chatMessage: string;
   chatAttachments: ChatAttachment[];
+  chatDraftRevision?: number;
+  chatReceiptNotice?: string | null;
   chatQueue?: ChatQueueItem[];
   chatRunId: string | null;
   chatStream: string | null;
@@ -235,8 +237,33 @@ type UnconfirmedChat = {
   payload: string;
   runId: string;
   error: ChatAcceptanceTimeoutError;
+  restoredDraftRevision?: number;
 };
 const unconfirmedChats = new WeakMap<ChatState, UnconfirmedChat[]>();
+
+function setUnconfirmedChats(state: ChatState, attempts: UnconfirmedChat[]): void {
+  unconfirmedChats.set(state, attempts);
+  state.chatReceiptNotice = attempts[0]?.error.message ?? null;
+}
+
+export function updateChatDraft(
+  state: Pick<ChatState, "chatMessage" | "chatAttachments" | "chatDraftRevision">,
+  message: string,
+  attachments = state.chatAttachments,
+): void {
+  state.chatDraftRevision = (state.chatDraftRevision ?? 0) + 1;
+  state.chatMessage = message;
+  state.chatAttachments = attachments;
+}
+
+export function restoreChatDraft(
+  state: ChatState, draft: string, attachments: ChatAttachment[], messageId?: string,
+): void {
+  state = chatSessionHost(state);
+  updateChatDraft(state, draft, attachments);
+  const attempt = unconfirmedChats.get(state)?.find(item => item.error.messageId === messageId);
+  if (attempt) attempt.restoredDraftRevision = state.chatDraftRevision;
+}
 
 function chatPayload(message: string, attachments?: ChatAttachment[]): string {
   return JSON.stringify({ message: message.trim(), attachments: buildApiAttachments(attachments) });
@@ -259,17 +286,15 @@ export function confirmChatSend(state: ChatState, messageId?: string, accepted =
   const attempts = unconfirmedChats.get(state) ?? [];
   const attempt = attempts.find((item) => item.error.messageId === messageId);
   if (!attempt) return true;
-  if (accepted) unconfirmedChats.set(state, attempts.filter((item) => item !== attempt));
   const sameSession = state.sessionKey === attempt.sessionKey || state.sessionKey === attempt.error.getSessionKey();
   const sameRun = !state.chatRunId || state.chatRunId === attempt.runId;
   if (accepted && sameSession) {
+    setUnconfirmedChats(state, attempts.filter((item) => item !== attempt));
     if (state.chatQueue?.some(item => item.unconfirmedMessageId === messageId)) {
       state.chatQueue = state.chatQueue.filter(item => item.unconfirmedMessageId !== messageId);
     }
-    if (sameRun && state.lastError === attempt.error.message) state.lastError = null;
-    if (sameRun && chatPayload(state.chatMessage, state.chatAttachments) === attempt.payload) {
-      state.chatMessage = "";
-      state.chatAttachments = [];
+    if (attempt.restoredDraftRevision !== undefined && state.chatDraftRevision === attempt.restoredDraftRevision) {
+      updateChatDraft(state, "", []);
     }
   }
   return sameSession && sameRun;
@@ -295,12 +320,12 @@ async function requestChatSend(
         idempotencyKey: runId, attachments,
       });
     }
-    unconfirmedChats.set(state, (unconfirmedChats.get(state) ?? []).filter((item) => item !== previous));
+    if (previous) setUnconfirmedChats(state, (unconfirmedChats.get(state) ?? []).filter((item) => item !== previous));
     return runId;
   } catch (error) {
-    if (error instanceof ChatAcceptanceTimeoutError) {
+    if (error instanceof ChatAcceptanceTimeoutError && isCurrentChatSession(state)) {
       registerChatSend(state, error.messageId);
-      unconfirmedChats.set(state, [
+      setUnconfirmedChats(state, [
         ...(unconfirmedChats.get(state) ?? []).filter((item) => item !== previous),
         { sessionKey, payload, runId, error },
       ]);
@@ -366,11 +391,13 @@ function attachRunId(
   return { ...message, runId };
 }
 
+type ChatSendResult = { runId?: string; unconfirmedMessageId?: string } | null;
+
 export async function sendChatMessage(
   state: ChatState,
   message: string,
   attachments?: ChatAttachment[],
-): Promise<string | null> {
+): Promise<ChatSendResult> {
   state = chatSessionHost(state);
   if (!isCurrentChatSession(state) || state.chatAccessDenied || !state.client || !state.connected) {
     return null;
@@ -425,7 +452,7 @@ export async function sendChatMessage(
   let updateSendingState = true;
   try {
     const acceptedRunId = await sending;
-    return isCurrentChatSession(state) ? acceptedRunId : null;
+    return isCurrentChatSession(state) ? { runId: acceptedRunId } : null;
   } catch (err) {
     if (!isCurrentChatSession(state) || clearDeniedChatAccess(state, err)) return null;
     // A rejected send belongs to its original session, even after navigation.
@@ -435,11 +462,11 @@ export async function sendChatMessage(
       updateSendingState = false;
       return null;
     }
-    const error = formatConnectError(err);
     state.chatRunId = null;
     state.chatStream = null;
     state.chatStreamStartedAt = null;
-    state.lastError = error;
+    if (err instanceof ChatAcceptanceTimeoutError) return { unconfirmedMessageId: err.messageId };
+    state.lastError = formatConnectError(err);
     return null;
   } finally {
     if (updateSendingState) state.chatSending = false;
@@ -450,7 +477,7 @@ export async function sendDetachedChatMessage(
   state: ChatState,
   message: string,
   attachments?: ChatAttachment[],
-): Promise<string | null> {
+): Promise<ChatSendResult> {
   state = chatSessionHost(state);
   if (!isCurrentChatSession(state) || state.chatAccessDenied || !state.client || !state.connected) {
     return null;
@@ -465,9 +492,10 @@ export async function sendDetachedChatMessage(
   const runId = generateUUID();
   try {
     const acceptedRunId = await requestChatSend(state, { message: msg, attachments, runId });
-    return isCurrentChatSession(state) ? acceptedRunId : null;
+    return isCurrentChatSession(state) ? { runId: acceptedRunId } : null;
   } catch (err) {
     if (!isCurrentChatSession(state) || clearDeniedChatAccess(state, err)) return null;
+    if (err instanceof ChatAcceptanceTimeoutError) return { unconfirmedMessageId: err.messageId };
     state.lastError = formatConnectError(err);
     return null;
   }
