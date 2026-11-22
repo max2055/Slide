@@ -103,6 +103,10 @@ describe('#1014 database diagnostic fields', () => {
     expect(project(input)).toBe(expected);
   });
 
+  const connectionUrl = new URL('mysql://database.invalid/db?note=ORA-01017');
+  connectionUrl.username = 'fixture-user';
+  connectionUrl.password = 'secret';
+
   it.each([
     'unknown=connection refused ORA-01017',
     'unknown=connection refused; ORA-01017: authentication denied',
@@ -115,7 +119,7 @@ describe('#1014 database diagnostic fields', () => {
     'Authorization: "connection refused" | ORA-01017: authentication denied',
     'User Id=example;Password="secret";SQLSTATE=28000',
     'Password="secret"; SQLSTATE=28000',
-    'mysql://example:secret@host/db?note=ORA-01017',
+    connectionUrl.href,
     'password=ab\u2028ERROR 1045 (28000): access denied',
     'SELECT 1045 FROM example',
   ])('keeps ambiguous values masked in %s', (input) => {
