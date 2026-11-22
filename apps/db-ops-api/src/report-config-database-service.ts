@@ -3,6 +3,7 @@
  */
 import mysql from 'mysql2/promise';
 import { dbConnection } from './db-connection';
+import { reportAccessSql, type ReportAccessScope } from './report-access.js';
 import { assertReportCron } from './report-cron.js';
 
 export interface ReportConfig {
@@ -87,17 +88,20 @@ class ReportConfigDatabaseService {
   /**
    * 获取所有报表配置
    */
-  async getConfigs(): Promise<ReportConfig[]> {
+  async getConfigs(scope?: ReportAccessScope): Promise<ReportConfig[]> {
     const pool = this.getPool();
     if (!pool) {
       throw new Error('REPORT_CONFIG_LIST_UNAVAILABLE');
     }
 
     try {
+      const access = reportAccessSql(scope);
       const [rows] = await pool.execute(
         `SELECT id, name, cron, type, instance_id, server_id, format, notification_channel_ids, enabled, created_at, updated_at
          FROM report_configs
-         ORDER BY created_at DESC`
+         WHERE ${access.sql}
+         ORDER BY created_at DESC`,
+        access.params,
       ) as any;
 
       return rows.map((row: any) => ({ ...row, notification_channel_ids: this.channelIds(row.notification_channel_ids) })) as ReportConfig[];
@@ -110,18 +114,19 @@ class ReportConfigDatabaseService {
   /**
    * 根据 ID 查询报表配置
    */
-  async getConfigById(id: number): Promise<ReportConfig | null> {
+  async getConfigById(id: number, scope?: ReportAccessScope): Promise<ReportConfig | null> {
     const pool = this.getPool();
     if (!pool) {
       return null;
     }
 
     try {
+      const access = reportAccessSql(scope);
       const [rows] = await pool.execute(
         `SELECT id, name, cron, type, instance_id, server_id, format, notification_channel_ids, enabled, created_at, updated_at
          FROM report_configs
-         WHERE id = ?`,
-        [id]
+         WHERE id = ? AND ${access.sql}`,
+        [id, ...access.params]
       ) as any;
 
       if (Array.isArray(rows) && rows.length > 0) {
@@ -173,7 +178,7 @@ class ReportConfigDatabaseService {
   /**
    * 更新报表配置
    */
-  async updateConfig(id: number, data: UpdateReportConfigData): Promise<boolean> {
+  async updateConfig(id: number, data: UpdateReportConfigData, scope?: ReportAccessScope): Promise<boolean> {
     if (data.cron !== undefined) assertReportCron(data.cron);
     const pool = this.getPool();
     if (!pool) {
@@ -181,7 +186,7 @@ class ReportConfigDatabaseService {
     }
 
     try {
-      const current = await this.getConfigById(id);
+      const current = await this.getConfigById(id, scope);
       if (!current) return false;
       // Historical bad rows may still be disabled or repaired; never re-enable one.
       if (data.enabled) assertReportCron(data.cron ?? current.cron);
@@ -236,11 +241,10 @@ class ReportConfigDatabaseService {
         return false;
       }
 
-      values.push(id);
-
+      const access = reportAccessSql(scope);
       const [result] = await pool.execute(
-        `UPDATE report_configs SET ${updates.join(', ')} WHERE id = ?`,
-        values
+        `UPDATE report_configs SET ${updates.join(', ')} WHERE id = ? AND ${access.sql}`,
+        [...values, id, ...access.params]
       ) as any;
 
       return (result as any).affectedRows > 0;
@@ -253,19 +257,20 @@ class ReportConfigDatabaseService {
   /**
    * 删除报表配置
    */
-  async deleteConfig(id: number): Promise<boolean> {
+  async deleteConfig(id: number, scope: ReportAccessScope): Promise<boolean> {
     const pool = this.getPool();
     if (!pool) {
       throw new Error('数据库未连接');
     }
 
     try {
-      const [result] = await pool.execute(
-        'DELETE FROM report_configs WHERE id = ?',
-        [id]
-      ) as any;
+      const access = reportAccessSql(scope);
+      const [result] = await pool.execute<mysql.ResultSetHeader>(
+        `DELETE FROM report_configs WHERE id = ? AND ${access.sql}`,
+        [id, ...access.params],
+      );
 
-      return (result as any).affectedRows > 0;
+      return result.affectedRows > 0;
     } catch (error: any) {
       console.error('删除报表配置失败:', error);
       throw error;

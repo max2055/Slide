@@ -1,7 +1,7 @@
 /** MAX-618 / #546 and #631: full production server, TCP HTTP, real MySQL and live JWT/RBAC.
  * Explicit MAX618_MYSQL_HOST/PORT/USER/PASSWORD and MAX618_OUTPUT_DIR required.
  * Run from slide-api: pnpm exec tsx tests/report-scope-http.acceptance.ts
- * Never loads credentials from a private file. Only the generated schema is changed.
+ * Also covers MAX-687 / #1012. Only the generated schema is changed.
  */
 import assert from 'node:assert/strict';
 import { spawn, execFileSync } from 'node:child_process';
@@ -10,6 +10,7 @@ import { once } from 'node:events';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:net';
 import { resolve } from 'node:path';
+import bcrypt from 'bcrypt';
 import mysql from 'mysql2/promise';
 import { createOwnedDatabase } from '../src/testing/owned-fixture.js';
 import { dbConnection } from '../src/db-connection.js';
@@ -93,7 +94,9 @@ async function start() {
 async function request(base: string, path: string, body: unknown, status: number, token?: string, method = 'POST', json = true) {
   const response = await fetch(`${base}${path}`, { method, headers: { ...(json ? { 'content-type': 'application/json' } : {}),
     ...(token ? { authorization: `Bearer ${token}` } : {}) }, body: body === undefined ? undefined : JSON.stringify(body) });
-  const result = await response.json() as any;
+  const result = await response.json().catch(cause => {
+    throw new Error(`${method} ${path} returned invalid JSON (HTTP ${response.status})`, { cause });
+  }) as any;
   observations.push({ round, path, method, input: body === undefined ? (json ? 'empty-json-body' : 'absent-body') :
     body === null ? 'null' : Array.isArray(body) ? 'array' : typeof body, expected: status, actual: response.status,
     ...(response.status === 400 ? { error: result.error, message: result.message } : {}) });
@@ -124,22 +127,59 @@ try {
     observations.push({ check: 'stats', status, actual });
   };
   const counts = (n: number) => ({total:n*3, completed:n, running:n, failed:n});
+  const list = (actor: string, query = '') => request(base, '/api/reports' + query, undefined, 200, actor, 'GET', false);
+  const configs = (actor: string, query = '') => request(base, '/api/reports/configs' + query, undefined, 200, actor, 'GET', false);
+  const [reports] = await pool.query<(mysql.RowDataPacket & { id: number; instance_id: number | null; server_id: number | null })[]>(
+    'SELECT id, instance_id, server_id FROM reports ORDER BY id DESC',
+  );
+  const instance = reports.find(row => row.instance_id === 701)!.id;
+  const deniedInstance = reports.find(row => row.instance_id === 702)!.id;
+  const server = reports.find(row => row.server_id === 701)!.id;
+  const byIds = (rows: { id: number }[]) => rows.map(row => row.id);
+  await pool.execute("UPDATE reports SET content='fixture-body', data=JSON_OBJECT('marker','fixture-data')");
+  await pool.execute("INSERT INTO report_notification_deliveries(workflow_job_id,report_id,channel_id,attempt_number,status) VALUES ('fixture',?,1,1,'sent')", [server]);
+  const inspect = async (actor: string, id: number, status: 200 | 404) => {
+    for (const suffix of ['', '/download?format=json', '/notifications']) {
+      const result = await request(base, `/api/reports/${id}${suffix}`, undefined, status, actor, 'GET', false);
+      if (status === 404) assert.deepEqual(result, { error: '报表不存在' });
+      else if (suffix === '/notifications') assert.deepEqual(result.map((row: any) => row.status), id === server ? ['sent'] : []);
+      else {
+        assert.equal(result.id, id);
+        assert.equal(result.content, 'fixture-body');
+        assert.deepEqual(result.data, { marker: 'fixture-data' });
+      }
+    }
+  };
+  const remove = (actor: string, path: string, status: number) => request(base, path, undefined, status, actor, 'DELETE', false);
   await stats(undefined, null, 401);
   await stats(token, counts(4));
-  await request(base, '/api/users', { username: 'max618_reader', password: 'synthetic-password' }, 201, token);
-  const reader = (await request(base, '/api/auth/login', { username: 'max618_reader', password: 'synthetic-password' }, 200)).token;
-  const [users] = await pool.query<any[]>("SELECT id FROM users WHERE username='max618_reader'");
-  const uid = users[0].id;
-  await pool.execute('DELETE FROM user_roles WHERE user_id=?', [uid]);
+  const readerUsername = 'max618_reader';
+  const readerPassword = randomBytes(24).toString('hex');
+  const [user] = await pool.execute<mysql.ResultSetHeader>(
+    "INSERT INTO users(username,password_hash,status) VALUES (?,?,'active')",
+    [readerUsername, await bcrypt.hash(readerPassword, 10)],
+  );
+  const uid = user.insertId;
   const [role] = await pool.execute<any>("INSERT INTO roles(name) VALUES ('max618_scoped')");
   await pool.execute('INSERT INTO user_roles(user_id,role_id) VALUES (?,?)', [uid,role.insertId]);
   await pool.execute("INSERT INTO role_permissions(role_id,permission_id) SELECT ?,id FROM permissions WHERE code IN ('report:view','report:create')", [role.insertId]);
+  const reader = (await request(base, '/api/auth/login', { username: readerUsername, password: readerPassword }, 200)).token;
   await stats(reader, counts(0));
+  assert.deepEqual(await list(reader), [], 'report list must agree with zero visible reports');
+  await inspect(reader, server, 404);
+  await inspect(reader, instance, 404);
+  assert.deepEqual(await remove(reader, `/api/reports/${server}`, 404), { error: '报表不存在' });
   const [legacy] = await pool.query<any[]>('SELECT COUNT(*) AS total FROM reports WHERE instance_id IS NULL');
   assert.equal(legacy[0].total,6);
   observations.push({check:'baseline #546 predicate reproduction',legacyUnscopedServerCount:legacy[0].total,currentNoResourceCount:0});
   await pool.execute("INSERT INTO instance_permissions(user_id,instance_id,access_level) VALUES (?,701,'read-only')", [uid]);
   await stats(reader, counts(1));
+  const instanceRows = reports.filter(row => row.instance_id === 701);
+  assert.deepEqual(byIds(await list(reader, '?limit=1&page=1')), [instanceRows[0].id]);
+  assert.deepEqual(byIds(await list(reader, '?limit=1&page=2')), [instanceRows[1].id]);
+  assert.deepEqual(byIds(await list(reader)), byIds(instanceRows));
+  await inspect(reader, instance, 200);
+  await inspect(reader, deniedInstance, 404);
   const value = { name: 'target', cron:'@daily', type:'server_health', server_id:701, enabled:false };
   for (const payload of [
     {...value, server_id:undefined}, {...value, server_id:undefined, instance_id:701},
@@ -148,15 +188,62 @@ try {
   await request(base, '/api/reports/configs', value, 403, reader);
   await pool.execute("INSERT INTO role_permissions(role_id,permission_id) SELECT ?,id FROM permissions WHERE code='servers:view'", [role.insertId]);
   await stats(reader, counts(3));
+  assert.deepEqual(byIds(await list(reader)), byIds(reports.filter(row => row.instance_id === 701 || row.server_id !== null)));
+  assert.deepEqual(byIds(await list(reader, '?target_type=server')), byIds(reports.filter(row => row.server_id !== null)));
+  await inspect(reader, server, 200);
   const good = await request(base, '/api/reports/configs', value, 200, reader);
+  const instanceConfig = await request(base, '/api/reports/configs', { ...value, type:'health', server_id:undefined, instance_id:701 }, 200, reader);
+  const deniedConfig = await request(base, '/api/reports/configs', { ...value, type:'health', server_id:undefined, instance_id:702 }, 200, token);
+  assert.deepEqual(byIds(await configs(reader, '?target_type=server')), [good.id]);
+  assert.deepEqual(byIds(await configs(reader, '?target_type=instance')), [instanceConfig.id]);
+  assert.deepEqual(await remove(reader, `/api/reports/configs/${deniedConfig.id}`, 404), { error: '报表配置不存在' });
+  const disposableConfig = await request(base, '/api/reports/configs', value, 200, reader);
+  assert.deepEqual(await remove(reader, `/api/reports/configs/${disposableConfig.id}`, 200), { message: '删除成功' });
+  const [disposableReport] = await pool.execute<mysql.ResultSetHeader>(
+    "INSERT INTO reports(name,type,server_id) VALUES ('disposable','server_health',701)",
+  );
+  assert.deepEqual(await remove(reader, `/api/reports/${disposableReport.insertId}`, 200), { message: '删除成功' });
+  await inspect(token, disposableReport.insertId, 404);
+  const [history] = await pool.execute<mysql.ResultSetHeader>(
+    "INSERT INTO reports(name,type,content,data) VALUES ('aggregate','server_health','fixture-body',JSON_OBJECT('marker','fixture-data'))",
+  );
+  const [mixed] = await pool.execute<mysql.ResultSetHeader>(
+    "INSERT INTO reports(name,type,instance_id,server_id,content,data) VALUES ('mixed','server_health',701,701,'fixture-body',JSON_OBJECT('marker','fixture-data'))",
+  );
+  const [wrongType] = await pool.execute<mysql.ResultSetHeader>(
+    "INSERT INTO reports(name,type,instance_id,content,data) VALUES ('wrong target','server_health',701,'fixture-body',JSON_OBJECT('marker','fixture-data'))",
+  );
+  for (const id of [history.insertId, mixed.insertId, wrongType.insertId]) {
+    await inspect(reader, id, 404);
+    await inspect(token, id, 200);
+  }
+  await stats(reader, counts(3));
+  assert.equal((await list(reader)).length, counts(3).total);
+  const [legacyConfig] = await pool.execute<mysql.ResultSetHeader>(
+    "INSERT INTO report_configs(name,type,cron,enabled) VALUES ('legacy','server_health','@daily',0)",
+  );
+  assert.deepEqual(await remove(reader, `/api/reports/configs/${legacyConfig.insertId}`, 404), { error: '报表配置不存在' });
+  assert(byIds(await configs(token)).includes(legacyConfig.insertId));
   await request(base, `/api/reports/configs/${good.id}`, {type:'health'}, 400, reader, 'PUT');
   await request(base, `/api/reports/configs/${good.id}`, {name:'renamed'}, 200, reader, 'PUT');
   await pool.execute("DELETE rp FROM role_permissions rp JOIN permissions p ON p.id=rp.permission_id WHERE rp.role_id=? AND p.code='servers:view'", [role.insertId]);
   await stats(reader, counts(1));
+  await inspect(reader, server, 404);
+  assert.deepEqual(byIds(await configs(reader)), [instanceConfig.id]);
+  assert.deepEqual(await remove(reader, `/api/reports/configs/${good.id}`, 404), { error: '报表配置不存在' });
   await request(base, `/api/reports/configs/${good.id}`, {name:'denied'}, 404, reader, 'PUT');
+  assert.deepEqual(await remove(reader, `/api/reports/configs/${instanceConfig.id}`, 200), { message: '删除成功' });
   await pool.execute('DELETE FROM instance_permissions WHERE user_id=?', [uid]);
   await stats(reader, counts(0));
-  await stats(token, counts(4));
+  await inspect(reader, instance, 404);
+  assert.deepEqual(await configs(reader), []);
+  assert.deepEqual(byIds(await list(token)), [wrongType.insertId, mixed.insertId, history.insertId, ...byIds(reports)]);
+  await stats(token, { ...counts(4), total: 15, running: 7 });
+  const disposable = await request(base, '/api/reports/configs', value, 200, token);
+  const otherServerConfig = await request(base, '/api/reports/configs', { ...value, server_id:702 }, 200, token);
+  assert.deepEqual(await remove(token, `/api/reports/configs/${disposable.id}`, 200), { message: '删除成功' });
+  assert.deepEqual(await remove(token, `/api/reports/${history.insertId}`, 200), { message: '删除成功' });
+  await inspect(token, history.insertId, 404);
   await stop();
 
   // Formal durable occurrence/worker/persistence chain. Only the metric query
@@ -174,6 +261,12 @@ try {
     assert.deepEqual(await reportDatabaseService.getReportStats([701], [701]), counts(2));
     assert.deepEqual(await reportDatabaseService.getReportStats([], [702]), counts(1));
     assert.deepEqual(await reportDatabaseService.getReportStats([], []), counts(0));
+    const partial = { instanceIds: [701], serverIds: [701] };
+    assert.deepEqual(byIds(await reportDatabaseService.getReportsByFilters({}, partial)),
+      byIds(reports.filter(row => row.instance_id === 701 || row.server_id === 701)));
+    assert.equal(await reportDatabaseService.getReportById(reports.find(row => row.server_id === 702)!.id, partial), null);
+    assert.deepEqual(byIds(await reportConfigService.getConfigs(partial)), [good.id]);
+    assert.equal(await reportConfigService.deleteConfig(otherServerConfig.id, partial), false);
     observations.push({check:'partial instance/server SQL scope', passed:true});
     const store = new MysqlReportOccurrenceStore(() => pool);
     const workflows = new MysqlWorkflowStore(() => pool as any);
