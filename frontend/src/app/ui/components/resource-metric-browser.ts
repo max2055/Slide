@@ -1,5 +1,6 @@
 import { LitElement, css, html, nothing } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
+import { keyed } from 'lit/directives/keyed.js';
 import { sharedBtnStyles } from '../../styles/shared-btn-styles.js';
 import { sharedFieldStyles } from '../../styles/shared-field-styles.js';
 import { isMetricAccessError, metricReadError, metricRequest } from './metric-api.js';
@@ -7,6 +8,7 @@ import { metricDisplayName } from './metric-display.js';
 import { metricPurpose, metricValueText, renderMetricEvidence } from './metric-value-display.js';
 import { bucketMsFor, type MetricValue, type SemanticResult } from './semantic-metrics.js';
 import type { MetricSeries } from './metric-chart.js';
+import type { MetricObservationPage } from '../../../api/generated/public-api.js';
 import './app-badge.js';
 import './app-card.js';
 import './app-data-table.js';
@@ -19,7 +21,7 @@ type Window = { from: string; to: string };
 type Mode = 'graph' | 'values';
 type Preset = '15' | '60' | '360' | '1440' | '10080' | '129600' | 'custom';
 type Sample = { observed_at: string; value: MetricValue | null; unit: string; quality: { status: string; reason?: string }; accuracy: string; sources?: unknown[]; id?: string };
-type Point = Sample & { dimensions: Dimensions; freshness: string };
+type Point = Sample & { dimensions: Dimensions; freshness: string; observation_id?: string };
 type Latest = {
   resource: { type: string; id: number }; evaluated_at: string;
   metrics: Array<{
@@ -31,6 +33,7 @@ type Latest = {
 };
 type HistoryPage = { window: Window; observations: Sample[]; total: number; has_more: boolean; next_cursor?: string };
 type Row = { key: string; metric: Latest['metrics'][number]; point?: Point; dimensions: Dimensions; name: string; graph: boolean };
+type LatestEvidence = { state: 'loading' | 'missing' } | { state: 'ready'; sample: Sample } | { state: 'error'; message: string };
 
 const pageSize = 25;
 const historyPageSize = 50;
@@ -100,9 +103,11 @@ export class ResourceMetricBrowser extends LitElement {
   @state() private historyPage: HistoryPage | null = null;
   @state() private historyBusy = false;
   @state() private historyError = '';
+  @state() private latestEvidence: LatestEvidence | null = null;
   @state() private cursorStack: Array<string | undefined> = [undefined];
   @state() private advanced = false;
   private latestRequest?: AbortController;
+  private evidenceRequest?: AbortController;
   private historyRequest?: AbortController;
   private historyScope = '';
   private historyAt = '';
@@ -164,6 +169,7 @@ export class ResourceMetricBrowser extends LitElement {
     window.removeEventListener('popstate', this.restoreRoute);
     this.latestRequest?.abort();
     this.historyRequest?.abort();
+    this.evidenceRequest?.abort();
     super.disconnectedCallback();
   }
 
@@ -275,6 +281,7 @@ export class ResourceMetricBrowser extends LitElement {
       this.preset = 'custom';
       this.setInputs();
     }
+    if (this.selection?.point !== row.point) this.clearLatestEvidence();
     this.selection = row;
     this.mode = row.graph && params.get('metricView') !== 'values' ? 'graph' : 'values';
     void this.readHistory();
@@ -309,6 +316,7 @@ export class ResourceMetricBrowser extends LitElement {
   }
 
   private async open(row: Row) {
+    this.clearLatestEvidence();
     this.selection = row;
     this.preset = '60';
     this.window = rolling(60);
@@ -332,6 +340,7 @@ export class ResourceMetricBrowser extends LitElement {
   }
 
   private clearHistory() {
+    this.clearLatestEvidence();
     this.historyRequest?.abort();
     this.historyBusy = false;
     this.graph = null;
@@ -339,6 +348,79 @@ export class ResourceMetricBrowser extends LitElement {
     this.historyError = '';
     this.historyScope = ''; this.historyAt = '';
     this.cursorStack = [undefined];
+  }
+
+  private clearLatestEvidence() {
+    this.evidenceRequest?.abort();
+    this.latestEvidence = null;
+  }
+
+  private async readLatestEvidence(row: Row) {
+    const point = row.point;
+    const id = point?.observation_id;
+    const at = Date.parse(point?.observed_at ?? '');
+    if (!id || !Number.isFinite(at) || this.invalidated || this.selection !== row) return;
+    this.evidenceRequest?.abort();
+    const request = this.evidenceRequest = new AbortController();
+    const resource = this.resource;
+    const metric = { id: row.metric.definition.id, semantic_version: row.metric.definition.semantic_version };
+    // SQL stores millisecond timestamps. This half-open range includes only the selected instant.
+    const from = new Date(at).toISOString(), to = new Date(at + 1).toISOString();
+    const cursors = new Set<string>();
+    let cursor: string | undefined;
+    const current = () => !request.signal.aborted && this.selection?.point === point
+      && this.resourceType === resource.type && this.resourceId === resource.id;
+    this.latestEvidence = { state: 'loading' };
+    try {
+      do {
+        const page = await metricRequest<MetricObservationPage>('observations', {
+          resource, metric, dimensions: row.dimensions, from, to,
+          limit: historyPageSize, ...(cursor ? { cursor } : {}),
+        }, request.signal);
+        if (!current()) return;
+        if (page.resource.type !== resource.type || page.resource.id !== resource.id
+          || page.metric.id !== metric.id || page.metric.semantic_version !== metric.semantic_version
+          || dimensionKey(page.dimensions) !== dimensionKey(row.dimensions)
+          || page.window.from !== from || page.window.to !== to) throw new Error('METRIC_EVIDENCE_CONTEXT');
+        const sample = page.observations.find(item => item.id === id && Date.parse(item.observed_at) === at);
+        if (sample) {
+          const sources = sample.sources.filter(source => source.id === id);
+          this.latestEvidence = sources.length ? { state: 'ready', sample: { ...sample, sources } } : { state: 'missing' };
+          return;
+        }
+        cursor = page.has_more ? page.next_cursor : undefined;
+        if (page.has_more && (!cursor || cursors.has(cursor))) throw new Error('METRIC_EVIDENCE_CURSOR');
+        if (cursor) cursors.add(cursor);
+      } while (cursor);
+      this.latestEvidence = { state: 'missing' };
+    } catch (error) {
+      if (!current()) return;
+      const message = metricReadError(error, '最近正式值来源');
+      if (isMetricAccessError(error)) {
+        this.invalidate();
+        this.listError = message;
+      } else {
+        this.latestEvidence = { state: 'error', message };
+      }
+    }
+  }
+
+  private renderLatestEvidence(row: Row) {
+    const point = row.point;
+    if (!point) return renderMetricEvidence(row.metric.definition, row.dimensions);
+    const evidence = this.latestEvidence;
+    const sample = evidence?.state === 'ready' ? evidence.sample : {
+      observed_at: point.observed_at, value: point.value, unit: point.unit, quality: point.quality, accuracy: point.accuracy,
+    };
+    const validIdentity = Boolean(point.observation_id && Number.isFinite(Date.parse(point.observed_at)));
+    const status = !validIdentity ? html`<p>该读数缺少可核对的观测标识，暂无法读取来源。</p>`
+      : evidence?.state === 'loading' ? html`<p role="status">正在读取最近正式值来源</p>`
+      : evidence?.state === 'missing' ? html`<p role="status">此正式观测的来源不可读，可能已超出保留期。</p>`
+      : evidence?.state === 'error' ? html`<p class="error" role="alert">${evidence.message}</p>
+        <button class="btn" @click=${() => void this.readLatestEvidence(row)}>重试读取来源</button>` : nothing;
+    return renderMetricEvidence(row.metric.definition, row.dimensions, sample, {
+      observation_id: point.observation_id, observed_at: sample.observed_at, quality: sample.quality, accuracy: sample.accuracy,
+    }, { onOpen: () => { if (!this.latestEvidence && validIdentity) void this.readLatestEvidence(row); }, status });
   }
 
   private changePreset(preset: Preset) {
@@ -567,7 +649,7 @@ export class ResourceMetricBrowser extends LitElement {
           </div>` : html`<h3>历史记录</h3>`}
           <p class="window">主图窗口（${timezone()}）：${timestamp(this.window.from)} — ${timestamp(this.window.to)}</p>
         </div>
-        ${renderMetricEvidence(row.metric.definition, row.dimensions, row.point, { observed_at: row.point?.observed_at, quality: row.point?.quality, accuracy: row.point?.accuracy })}
+        ${keyed(row.point, this.renderLatestEvidence(row))}
         ${this.historyError ? html`<p class="error" role="alert">${this.historyError}</p>
           <button class="btn" @click=${() => void this.readHistory(this.cursorStack)}>重试</button>` : nothing}
         ${this.historyBusy ? html`<div role="status">正在读取指标历史</div>` : nothing}

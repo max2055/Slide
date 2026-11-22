@@ -1,4 +1,4 @@
-import { html } from 'lit';
+import { html, nothing, type TemplateResult } from 'lit';
 import { formatDurationCompact } from '../../src/infra/format-time/format-duration.js';
 import { showToast } from './app-toast-container.js';
 import { formatDatabaseBytes } from './resource-metric-summary.js';
@@ -60,13 +60,17 @@ export function renderMetricEvidence(
   dimensions: Record<string, string>,
   sample?: { value: MetricValue | null; unit: string; sources?: unknown[] },
   details: Record<string, unknown> = {},
+  options?: { onOpen: () => void; status: TemplateResult | typeof nothing },
 ) {
   const evidence = JSON.stringify({
     metric: definition.id, semantic_version: definition.semantic_version ?? null, dimensions,
     unit: sample?.unit ?? definition.unit, value: sample?.value ?? null, ...details,
     ...(sample?.sources ? { sources: sample.sources } : {}),
   }, null, 2);
-  return html`<details class="metric-evidence"><summary>原始值与来源</summary>
+  return html`<details class="metric-evidence" @toggle=${options ? (event: Event) => {
+    if ((event.currentTarget as HTMLDetailsElement).open) options.onOpen();
+  } : nothing}><summary>原始值与来源</summary>
+    ${options?.status ?? nothing}
     <button class="btn-ghost btn-sm" @click=${async () => {
       try { await navigator.clipboard.writeText(evidence); showToast('已复制指标证据', 'success'); }
       catch { showToast('复制失败，可选择下方内容手动复制', 'error'); }
