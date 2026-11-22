@@ -239,6 +239,63 @@ try {
   assert.deepEqual(await configs(reader), []);
   assert.deepEqual(byIds(await list(token)), [wrongType.insertId, mixed.insertId, history.insertId, ...byIds(reports)]);
   await stats(token, { ...counts(4), total: 15, running: 7 });
+  assert.equal((await remove(token, '/api/servers/701', 409)).code, 'SERVER_HAS_HISTORICAL_REPORTS');
+  await inspect(token, server, 200);
+
+  // MAX-687: generate with the seeded DBA role, then exercise the same JWT after revocation.
+  const dbaUsername = 'max687_dba';
+  const dbaPassword = randomBytes(24).toString('hex');
+  const [dbaUser] = await pool.execute<mysql.ResultSetHeader>(
+    "INSERT INTO users(username,password_hash,status) VALUES (?,?,'active')",
+    [dbaUsername, await bcrypt.hash(dbaPassword, 10)],
+  );
+  await pool.execute("INSERT INTO user_roles(user_id,role_id) SELECT ?,id FROM roles WHERE name='dba'", [dbaUser.insertId]);
+  const dba = (await request(base, '/api/auth/login', { username: dbaUsername, password: dbaPassword }, 200)).token;
+  await stats(dba, counts(2));
+  const generation = await fetch(`${base}/api/servers/reports/generate`, {
+    method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${dba}` },
+    body: JSON.stringify({ server_id: null }),
+  });
+  assert.equal(generation.status, 200);
+  await generation.text();
+  // The generation route can acknowledge before the document is committed.
+  let generated: mysql.RowDataPacket[] = [];
+  for (let attempt = 0; attempt < 60 && !generated.length; attempt++) {
+    [generated] = await pool.execute<mysql.RowDataPacket[]>(
+      'SELECT id, server_id, server_target_ids FROM reports WHERE id > ?', [wrongType.insertId],
+    );
+    if (!generated.length) await delay(100);
+  }
+  assert.equal(generated.length, 1);
+  const aggregate = Number(generated[0].id);
+  assert.equal(generated[0].server_id, null);
+  assert.deepEqual(generated[0].server_target_ids, [701, 702]);
+  const serverRows = reports.filter(row => row.server_id !== null);
+  assert.deepEqual(byIds(await list(dba, '?limit=1&page=1')), [aggregate]);
+  assert.deepEqual(byIds(await list(dba, '?limit=1&page=2')), [serverRows[0].id]);
+  assert.deepEqual(byIds(await list(dba, '?target_type=server')), [aggregate, ...byIds(serverRows)]);
+  assert.deepEqual(await list(dba, '?target_type=instance'), []);
+  await stats(dba, { ...counts(2), total: 7, completed: 3 });
+  for (const suffix of ['', '/download?format=json']) {
+    const result = await request(base, `/api/reports/${aggregate}${suffix}`, undefined, 200, dba, 'GET', false);
+    assert.equal(result.id, aggregate);
+    assert.equal(Object.hasOwn(result, 'server_target_ids'), false);
+    assert.deepEqual(result.data.servers.map((row: { host: string }) => row.host).sort(), ['allowed.invalid', 'excluded.invalid']);
+  }
+  assert.deepEqual(await request(base, `/api/reports/${aggregate}/notifications`, undefined, 200, dba, 'GET', false), []);
+  // Historical payloads may contain server IDs, but cannot establish trusted scope.
+  await pool.execute("UPDATE reports SET data = JSON_OBJECT('server_target_ids', JSON_ARRAY(701, 702)) WHERE id = ?", [history.insertId]);
+  await inspect(dba, history.insertId, 404);
+  assert.deepEqual(await remove(dba, `/api/reports/${history.insertId}`, 404), { error: '报表不存在' });
+  assert(byIds(await list(token)).includes(aggregate));
+  assert(byIds(await list(token)).includes(history.insertId));
+  await pool.execute("DELETE rp FROM role_permissions rp JOIN roles r ON r.id=rp.role_id JOIN permissions p ON p.id=rp.permission_id WHERE r.name='dba' AND p.code='servers:view'");
+  assert.deepEqual(await list(dba), []);
+  await stats(dba, counts(0));
+  await inspect(dba, aggregate, 404);
+  assert.deepEqual(await remove(dba, `/api/reports/${aggregate}`, 404), { error: '报表不存在' });
+  observations.push({check:'generated aggregate DBA access, pagination, history and live revocation', reportId:aggregate, passed:true});
+
   const disposable = await request(base, '/api/reports/configs', value, 200, token);
   const otherServerConfig = await request(base, '/api/reports/configs', { ...value, server_id:702 }, 200, token);
   assert.deepEqual(await remove(token, `/api/reports/configs/${disposable.id}`, 200), { message: '删除成功' });
@@ -262,9 +319,22 @@ try {
     assert.deepEqual(await reportDatabaseService.getReportStats([], [702]), counts(1));
     assert.deepEqual(await reportDatabaseService.getReportStats([], []), counts(0));
     const partial = { instanceIds: [701], serverIds: [701] };
-    assert.deepEqual(byIds(await reportDatabaseService.getReportsByFilters({}, partial)),
-      byIds(reports.filter(row => row.instance_id === 701 || row.server_id === 701)));
+    const partialRows = reports.filter(row => row.instance_id === 701 || row.server_id === 701);
+    assert.deepEqual(byIds(await reportDatabaseService.getReportsByFilters({}, partial)), byIds(partialRows));
+    assert.deepEqual(byIds(await reportDatabaseService.getReportsByFilters({ limit: 1 }, partial)), [partialRows[0].id]);
+    assert.deepEqual(byIds(await reportDatabaseService.getReportsByFilters({ limit: 1, offset: 1 }, partial)), [partialRows[1].id]);
     assert.equal(await reportDatabaseService.getReportById(reports.find(row => row.server_id === 702)!.id, partial), null);
+    assert.equal(await reportDatabaseService.getReportById(aggregate, partial), null);
+    assert.equal(await reportDatabaseService.deleteReport(aggregate, partial), false);
+    const complete = { instanceIds: [], serverIds: [701, 702] };
+    assert.deepEqual(byIds(await reportDatabaseService.getReportsByFilters({ limit: 1 }, complete)), [aggregate]);
+    assert.deepEqual(await reportDatabaseService.getReportStats(complete.instanceIds, complete.serverIds), { ...counts(2), total: 7, completed: 3 });
+    assert.equal((await reportDatabaseService.getReportById(aggregate, complete))?.id, aggregate);
+    const [invalid] = await pool.execute<mysql.ResultSetHeader>(
+      "INSERT INTO reports(name,type,server_target_ids) VALUES ('invalid snapshot','server_health',JSON_ARRAY('701'))",
+    );
+    assert.equal(await reportDatabaseService.getReportById(invalid.insertId, { instanceIds: [], serverIds: null }), null);
+    assert.equal(await reportDatabaseService.getReportById(invalid.insertId, complete), null);
     assert.deepEqual(byIds(await reportConfigService.getConfigs(partial)), [good.id]);
     assert.equal(await reportConfigService.deleteConfig(otherServerConfig.id, partial), false);
     observations.push({check:'partial instance/server SQL scope', passed:true});

@@ -32,6 +32,7 @@ export interface CreateReportData {
   format?: ReportFormat;
   instance_id?: number;
   server_id?: number;
+  server_target_ids?: readonly number[];
   content?: string;
   data?: any;
   generated_by?: number;
@@ -79,8 +80,8 @@ class ReportDatabaseService {
     try {
       const [result] = await pool.execute(
         `INSERT INTO reports
-         (name, type, format, instance_id, server_id, content, data, generated_by, status)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         (name, type, format, instance_id, server_id, content, data, generated_by, status, server_target_ids)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           data.name,
           data.type,
@@ -91,6 +92,7 @@ class ReportDatabaseService {
           data.data ? JSON.stringify(data.data) : null,
           data.generated_by || null,
           data.status || 'pending',
+          data.server_target_ids === undefined ? null : JSON.stringify(data.server_target_ids),
         ]
       ) as any;
 
@@ -111,7 +113,7 @@ class ReportDatabaseService {
     }
 
     try {
-      const access = reportAccessSql(scope, 'r.');
+      const access = reportAccessSql(scope, 'reports', 'r.');
       const [rows] = await pool.execute(
         `SELECT r.id, r.name, r.type, r.format, r.instance_id, r.server_id,
                 r.content, r.data, r.generated_by, r.status, r.created_at,
@@ -148,7 +150,7 @@ class ReportDatabaseService {
     }
 
     try {
-      const access = reportAccessSql(scope, 'r.');
+      const access = reportAccessSql(scope, 'reports', 'r.');
       const conditions = [access.sql];
       const params: (string | number)[] = access.params;
 
@@ -168,9 +170,9 @@ class ReportDatabaseService {
       }
 
       if (filters.target_type === 'server') {
-        conditions.push('r.server_id IS NOT NULL');
+        conditions.push('(r.server_id IS NOT NULL OR r.server_target_ids IS NOT NULL)');
       } else if (filters.target_type === 'instance') {
-        conditions.push('r.server_id IS NULL');
+        conditions.push('r.server_id IS NULL AND r.server_target_ids IS NULL');
       }
 
       if (filters.status) {
@@ -269,7 +271,7 @@ class ReportDatabaseService {
     }
 
     try {
-      const access = reportAccessSql(scope);
+      const access = reportAccessSql(scope, 'reports');
       const [result] = await pool.execute<mysql.ResultSetHeader>(
         `DELETE FROM reports WHERE id = ? AND ${access.sql}`,
         [id, ...access.params],
@@ -330,7 +332,7 @@ class ReportDatabaseService {
     }
 
     try {
-      const access = reportAccessSql({ instanceIds: allowedInstanceIds, serverIds: allowedServerIds });
+      const access = reportAccessSql({ instanceIds: allowedInstanceIds, serverIds: allowedServerIds }, 'reports');
       const [rows] = await pool.execute(`
         SELECT
           COUNT(*) as total,

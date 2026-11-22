@@ -18,8 +18,8 @@ export function getReportAccessScope(actor: ActorContext): ReportAccessScope {
 }
 
 /** Filter stored targets before reading payloads or applying pagination. */
-export function reportAccessSql(scope?: ReportAccessScope, alias: '' | 'r.' = '') {
-  const params: number[] = [];
+export function reportAccessSql(scope: ReportAccessScope | undefined, table: 'reports' | 'report_configs', alias: '' | 'r.' = '') {
+  const params: (number | string)[] = [];
   if (!scope || (scope.instanceIds === null && scope.serverIds === null)) {
     return { sql: 'TRUE', params };
   }
@@ -30,14 +30,22 @@ export function reportAccessSql(scope?: ReportAccessScope, alias: '' | 'r.' = ''
     for (const id of ids) params.push(id);
     return `${column} IN (${ids.map(() => '?').join(', ')})`;
   };
+  const snapshot = table === 'reports' ? `${alias}server_target_ids` : null;
+  const singleTarget = snapshot ? ` AND ${snapshot} IS NULL` : '';
   const instance = columnScope(`${alias}instance_id`, scope.instanceIds);
-  const server = columnScope(`${alias}server_id`, scope.serverIds);
-  // Restricted readers need exactly one target and a matching report type.
+  let server = `(${columnScope(`${alias}server_id`, scope.serverIds)}${singleTarget})`;
+  if (snapshot && (scope.serverIds === null || scope.serverIds.length > 0)) {
+    // Bounded server grants must cover every recorded target in the summary.
+    const coverage = scope.serverIds === null ? '' : ` AND JSON_LENGTH(${snapshot}) > 0 AND JSON_CONTAINS(?, ${snapshot})`;
+    if (scope.serverIds !== null) params.push(JSON.stringify(scope.serverIds));
+    server += ` OR (${alias}server_id IS NULL
+      AND JSON_SCHEMA_VALID('{"type":"array","items":{"type":"integer","minimum":1}}', ${snapshot})${coverage})`;
+  }
   // Historical aggregate, mixed, and unclassified records require full scope.
   const sql = `${alias}network_device_id IS NULL AND (
     (${alias}type IN ('health', 'performance', 'slow_query', 'capacity', 'audit', 'custom')
-      AND ${alias}server_id IS NULL AND ${instance})
-    OR (${alias}type = 'server_health' AND ${alias}instance_id IS NULL AND ${server})
+      AND ${alias}server_id IS NULL AND ${instance}${singleTarget})
+    OR (${alias}type = 'server_health' AND ${alias}instance_id IS NULL AND (${server}))
   )`;
   return { sql, params };
 }

@@ -95,7 +95,7 @@ class ReportConfigDatabaseService {
     }
 
     try {
-      const access = reportAccessSql(scope);
+      const access = reportAccessSql(scope, 'report_configs');
       const [rows] = await pool.execute(
         `SELECT id, name, cron, type, instance_id, server_id, format, notification_channel_ids, enabled, created_at, updated_at
          FROM report_configs
@@ -121,7 +121,7 @@ class ReportConfigDatabaseService {
     }
 
     try {
-      const access = reportAccessSql(scope);
+      const access = reportAccessSql(scope, 'report_configs');
       const [rows] = await pool.execute(
         `SELECT id, name, cron, type, instance_id, server_id, format, notification_channel_ids, enabled, created_at, updated_at
          FROM report_configs
@@ -241,7 +241,7 @@ class ReportConfigDatabaseService {
         return false;
       }
 
-      const access = reportAccessSql(scope);
+      const access = reportAccessSql(scope, 'report_configs');
       const [result] = await pool.execute(
         `UPDATE report_configs SET ${updates.join(', ')} WHERE id = ? AND ${access.sql}`,
         [...values, id, ...access.params]
@@ -264,7 +264,7 @@ class ReportConfigDatabaseService {
     }
 
     try {
-      const access = reportAccessSql(scope);
+      const access = reportAccessSql(scope, 'report_configs');
       const [result] = await pool.execute<mysql.ResultSetHeader>(
         `DELETE FROM report_configs WHERE id = ? AND ${access.sql}`,
         [id, ...access.params],
