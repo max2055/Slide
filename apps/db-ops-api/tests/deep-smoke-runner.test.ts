@@ -35,8 +35,9 @@ it('MAX-681 deep smoke rejects missing credentials before fetch and forwards exp
   }
 });
 
-type FixtureResponse = { status: number; body: string; contentType?: string };
+type FixtureResponse = { status: number; body: string; contentType?: string; location?: string };
 
+const alertRedirectTarget = '/fixture/alerts-redirect';
 const emptyAlertPage = { items: [], total: 0, unread: 0, critical: 0, warning: 0, resolved: 0, level_counts: {} };
 const alertItem = {
   id: 1, instance_id: 1, instance_name: 'Fixture instance', server_id: null, target_type: 'instance',
@@ -67,11 +68,19 @@ async function runShapeChecks(
     return alerts;
   });
   let alertReads = 0;
+  let alertRedirectReads = 0;
+  server.get(alertRedirectTarget, async () => {
+    alertRedirectReads++;
+    return emptyAlertPage;
+  });
   server.addHook('onRequest', async (req, reply) => {
     if (req.url !== '/api/alerts') return;
     alertReads++;
     const override = responses[req.url];
-    if (override) return reply.code(override.status).type(override.contentType ?? 'application/json').send(override.body);
+    if (override) {
+      if (override.location) reply.header('location', override.location);
+      return reply.code(override.status).type(override.contentType ?? 'application/json').send(override.body);
+    }
   });
   let reportsReads = 0;
   server.setNotFoundHandler((req, reply) => {
@@ -103,7 +112,7 @@ async function runShapeChecks(
     });
     expect(alertReads).toBe(1);
     expect(getAlerts).toHaveBeenCalledTimes(responses['/api/alerts'] ? 0 : 1);
-    return result;
+    return { ...result, alertRedirectReads };
   } finally {
     await server.close();
   }
@@ -142,6 +151,28 @@ it('MAX-701 counts a failed production alert request without exposing its respon
   const { status, output } = await runShapeChecks({}, new Error(canary));
   expect(status, output).toBe(1);
   expect(output).toContain('/api/alerts — HTTP 500: JSON response');
+  expect(output).toContain('DEEP SMOKE: 12 passed, 1 failed');
+  expect(output).not.toContain(canary);
+});
+
+it('MAX-701 counts the original alert redirect as a failure without requesting its target', async () => {
+  const { status, output, alertRedirectReads } = await runShapeChecks({
+    '/api/alerts': { status: 302, body: JSON.stringify(emptyAlertPage), location: alertRedirectTarget },
+  });
+  expect(alertRedirectReads).toBe(0);
+  expect(status, output).toBe(1);
+  expect(output).toContain('/api/alerts — HTTP 302: JSON response');
+  expect(output).toContain('DEEP SMOKE: 12 passed, 1 failed');
+});
+
+it('MAX-701 reports an alert field type mismatch without disclosing its value', async () => {
+  const canary = 'fixture-alert-field-value';
+  const invalidPage = { ...alertPage, items: [{ ...alertItem, message: { note: canary } }] };
+  const { status, output } = await runShapeChecks({
+    '/api/alerts': { status: 200, body: JSON.stringify(invalidPage) },
+  });
+  expect(status, output).toBe(1);
+  expect(output).toContain('/api/alerts — HTTP 200: [alert-item] message: expected string, got object');
   expect(output).toContain('DEEP SMOKE: 12 passed, 1 failed');
   expect(output).not.toContain(canary);
 });

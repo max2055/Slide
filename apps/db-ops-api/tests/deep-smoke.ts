@@ -175,7 +175,7 @@ async function checkShape({ path, label, fields, list }: ShapeCheck): Promise<st
   const token = getToken();
   if (token) headers["Authorization"] = `Bearer ${token}`;
 
-  const res = await fetch(`${getBaseUrl()}${path}`, { headers }).catch(() => undefined);
+  const res = await fetch(`${getBaseUrl()}${path}`, { headers, redirect: "manual" }).catch(() => undefined);
   if (!res) return [`${path} — request failed`];
 
   const status = `${path} — HTTP ${res.status}`;

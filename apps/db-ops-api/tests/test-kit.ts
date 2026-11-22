@@ -133,7 +133,7 @@ export function assertShape(
     }
     const actual = Array.isArray(val) ? "array" : typeof val;
     if (actual !== a.type) {
-      errors.push(`[${label}] ${a.field}: expected ${a.type}, got ${actual} (value: ${JSON.stringify(val).slice(0, 60)})`);
+      errors.push(`[${label}] ${a.field}: expected ${a.type}, got ${actual}`);
     }
   }
   return errors;
