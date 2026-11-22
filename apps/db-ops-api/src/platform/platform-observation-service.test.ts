@@ -4,6 +4,27 @@ import { installPlatformObservation } from './platform-observation-service.js';
 import { StructuredLogEvidenceAdapter } from './structured-log-evidence-adapter.js';
 
 describe('platform observation runtime hooks', () => {
+  it('reports truncation only in component summaries with matching evictions (#1033)', async () => {
+    const now = Date.parse('2026-10-12T12:00:00Z');
+    const logs = new StructuredLogEvidenceAdapter(() => now, 2);
+    logs.record({ component: 'queue', eventType: 'job.wait', status: 'ok' });
+    const app = Fastify();
+    await installPlatformObservation(app, async request => { (request as any).user = { permissions: ['config:view'] }; }, logs);
+    app.get('/status', async () => ({ ok: true }));
+    try {
+      for (let i = 0; i < 2; i++) expect((await app.inject('/status')).statusCode).toBe(200);
+      const url = `/api/platform/observations?from=${new Date(now).toISOString()}`;
+      const response = await app.inject(`${url}&component=api`);
+      expect(response.statusCode).toBe(200);
+      const body = response.json();
+      expect(body.logs).toMatchObject({ quality: 'good', gaps: [], groups: [expect.objectContaining({ component: 'api', count: 2 })] });
+      expect(body.components).toEqual(expect.arrayContaining([
+        expect.objectContaining({ component: 'api', quality: 'good', gaps: [] }),
+        expect.objectContaining({ component: 'queue', quality: 'unknown', gaps: expect.arrayContaining(['LOG_BUFFER_TRUNCATED']) }),
+      ]));
+      expect((await app.inject(url)).json().logs).toMatchObject({ quality: 'degraded', gaps: ['LOG_BUFFER_TRUNCATED'] });
+    } finally { await app.close(); }
+  });
   it('uses the requested historical window for every component summary', async () => {
     const now = Date.parse('2026-10-12T12:00:00Z');
     let observedAt = now - 30 * 60_000;

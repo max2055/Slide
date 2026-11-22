@@ -107,6 +107,8 @@ it.each([
   ['/api/v1/rbac/roles', []],
   ['/api/llm/configs', []],
   ['/api/alerts', alertPage],
+  ['/api/logs', { logs: [{ id: 9, source: 'mysql_error', message: 'fixture log' }], total: 1 }, '/api/logs?instanceId=25'],
+  ['/api/logs/stats', { total: 1 }, '/api/logs/stats?instanceId=25'],
   ['/api/ai/analysis', [{ id: 1, related_id: 2, status: 'completed', trigger_type: 'manual' }], '/api/ai/analysis?analysis_type=alert_rca&limit=500'],
   ['/api/models', [{ id: 'fixture-model', name: 'fixture-model', provider: 'fixture', reasoning: false }]],
   ['/api/schema/snapshots/:instanceId', [], '/api/schema/snapshots/25'],
@@ -133,10 +135,14 @@ it.each([
     } else {
       registerInline({
         fastify, verifyToken: verifyAdmin, requirePermission, getReportAccessScope,
-        getAccessibleInstanceIds, requireInstanceAccess, publicLLMProvider,
+        getAccessibleInstanceIds, requireInstanceAccess, hasInstanceAccess, publicLLMProvider,
         publicNotificationDto: publicDto.publicNotificationDto,
         dbConnection: { getPool: () => ({ query: async () => [[{ config_key: 'slide_version', config_value: 'test-version' }]] }) },
         brandingConfigService: { getBranding: async () => ({ cli_name: 'slide' }) },
+        databaseLogService: {
+          getLogs: async () => ({ logs: [{ id: 9, source: 'mysql_error', message: 'fixture log' }], total: 1 }),
+          getLogsStats: async () => ({ total: 1 }),
+        },
         userPreferenceService: { getPreferences: async () => ({ theme: 'light' }) },
         getAgentEngine: async () => ({ capabilities: () => ({ features: {} }) }),
         reportDatabaseService: { getReportsByFilters: async () => [], getReportStats: async () => ({ total: 0 }) },
