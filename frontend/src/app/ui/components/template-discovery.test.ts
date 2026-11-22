@@ -16,11 +16,33 @@ async function mount(){
 async function select(e:any,value:string){const s=e.shadowRoot.querySelector('select[aria-label="发现授权资源"]');s.value=value;s.dispatchEvent(new Event('change'));await settle();await e.updateComplete;}
 afterEach(()=>{document.body.replaceChildren();request.mockReset();localStorage.clear();});
 it.each([['builtin:linux.interface-discovery.v1','interface_epoch'],['builtin:mysql.innodb-discovery.v1','table_epoch'],['builtin:linux.filesystem-discovery.v1','filesystem_epoch']])('MAX245: %s fixes identity independently of display dimensions',async(implementation,identity)=>{
-  const e=await mount();e.aggregate={discovery_rules:[],triggers:[]};e.item='prototype';
-  e.items=[{item_id:'prototype',display_name:'动态原型',canonical_metric:{id:'test'},collector_ref:{implementation_id:implementation,package_release:'pin'}}];
+  const e=await mount();e.aggregate={discovery_rules:[],triggers:[]};e.editable=true;e.item='prototype';
+  e.items=[{item_id:'prototype',display_name:'动态原型',canonical_metric:{id:'test'},dimensions:{[identity]:'稳定标识'},collector_ref:{implementation_id:implementation,package_release:'pin'}}];
   e.capabilities={candidates:[{metric:{id:'test'},package_release:'pin',dimensions:[{name:identity},{name:'display_name'}]}]};
   let rules:any;e.addEventListener('discovery-change',(event:any)=>rules=event.detail);e.add();
+  await e.updateComplete;
+  expect(e.shadowRoot.querySelector('option[value="prototype"]')?.textContent).toBe('动态原型');
   expect(rules[0].identity_dimensions).toEqual([identity]);
+});
+it('creates one filesystem discovery rule for all selected capacity prototypes', async () => {
+  const e = await mount();
+  e.aggregate = { discovery_rules: [], triggers: [] };
+  e.editable = true;
+  const prototype = (id: string, version: string) => ({ item_id: id, display_name: id, canonical_metric: { id },
+    dimensions: { filesystem_epoch: '稳定标识' }, collector_ref: {
+      implementation_id: `builtin:linux.filesystem-discovery.${version}`, package_release: version,
+    } });
+  e.items = [prototype('used', 'v2'), prototype('total', 'v2'), prototype('original', 'v1')];
+  const changed = vi.fn();
+  e.addEventListener('discovery-change', changed);
+  await e.updateComplete;
+  const select = e.shadowRoot.querySelector('select[aria-label="发现监控项原型"]');
+  select.value = 'used';
+  select.dispatchEvent(new Event('change'));
+  await e.updateComplete;
+  expect(e.shadowRoot.textContent).toContain('同一挂载点生成 used、total');
+  [...e.shadowRoot.querySelectorAll('button')].find(button => button.textContent === '添加规则').click();
+  expect(changed.mock.calls[0][0].detail[0]).toMatchObject({ item_ids: ['used', 'total'], identity_dimensions: ['filesystem_epoch'] });
 });
 it.each([200,401,403])('Chief R3: A late %s never overwrites B or clears its rows',async status=>{
   const e=await mount(),a=deferred();

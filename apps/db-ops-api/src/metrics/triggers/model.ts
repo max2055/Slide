@@ -35,9 +35,12 @@ export const triggerRuleContentHash = (rule: Omit<TriggerRuleVersion, 'content_h
     scope: rule.scope,
     metric: rule.metric,
     unit: rule.unit,
+    ...(rule.severity ? { severity: rule.severity } : {}),
     parameters: rule.parameters,
     problem: rule.problem,
-    recovery: rule.recovery,
+    ...(rule.recovery_mode ? { recovery_mode: rule.recovery_mode } : {}),
+    ...(rule.allow_manual_close !== undefined ? { allow_manual_close: rule.allow_manual_close } : {}),
+    ...(rule.recovery ? { recovery: rule.recovery } : {}),
     quality: rule.quality,
     clock: rule.clock,
   });
@@ -52,11 +55,15 @@ export const triggerRuleSnapshotHash = (rule: Omit<TriggerRuleSnapshot, 'snapsho
     item: rule.item,
     metric: rule.metric,
     unit: rule.unit,
+    ...(rule.severity ? { severity: rule.severity } : {}),
     dimensions: rule.dimensions,
+    ...(rule.inputs ? { inputs: rule.inputs } : {}),
     decision: rule.decision,
     parameters: rule.parameters,
     problem: rule.problem,
-    recovery: rule.recovery,
+    ...(rule.recovery_mode ? { recovery_mode: rule.recovery_mode } : {}),
+    ...(rule.allow_manual_close !== undefined ? { allow_manual_close: rule.allow_manual_close } : {}),
+    ...(rule.recovery ? { recovery: rule.recovery } : {}),
     quality: rule.quality,
     clock: rule.clock,
   });
@@ -83,6 +90,26 @@ export interface ExpressionBudget {
   depth: number;
 }
 
+/** The absent item ID keeps the original rule scope as the operand. */
+export function triggerSelectors(...expressions: (TriggerExpression | ResolvedTriggerExpression | undefined)[]) {
+  const selectors = [];
+  for (const expression of expressions) {
+    if (!expression) continue;
+    const stack = [expression];
+    while (stack.length) {
+      const node = stack.pop()!;
+      if (node.node === 'compare') selectors.push(node.select);
+      else stack.push(...node.children);
+    }
+  }
+  return selectors;
+}
+
+export function referencedTriggerItems(anchor: string, ...expressions: (TriggerExpression | ResolvedTriggerExpression | undefined)[]) {
+  return [...new Set(triggerSelectors(...expressions).map(select => select.item_id ?? anchor))]
+    .filter(id => id !== anchor).sort();
+}
+
 /**
  * Walk the expression once and return its real size. Iterative (explicit stack)
  * so a hostile depth cannot exhaust the call stack, even though the resolver
@@ -104,7 +131,8 @@ export function expressionBudget(expression: TriggerExpression | ResolvedTrigger
 }
 
 /** Collect every parameter name an expression threshold references, in first-seen order. */
-export function referencedParameters(expression: TriggerExpression | ResolvedTriggerExpression): string[] {
+export function referencedParameters(expression: TriggerExpression | ResolvedTriggerExpression | undefined): string[] {
+  if (!expression) return [];
   const names: string[] = [];
   const stack: Array<TriggerExpression | ResolvedTriggerExpression> = [expression];
   while (stack.length > 0) {

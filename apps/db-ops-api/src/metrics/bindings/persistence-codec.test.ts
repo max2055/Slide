@@ -682,7 +682,7 @@ describe('explicit formal-commit application envelope',()=>{
   expect(()=>decodeBindingPayload(withoutProof)).toThrow();
   const forged=structuredClone(payload);forged.effective.plan.settings.enabled=false;
   expect(()=>decodeBindingPayload(forged)).toThrow();
-  const oldEnvelope=structuredClone(payload);oldEnvelope.envelope='templates-v1';delete oldEnvelope.formal_commit;
+  const oldEnvelope=structuredClone(payload);oldEnvelope.envelope='template-pending';delete oldEnvelope.formal_commit;
   expect(()=>decodeBindingPayload(oldEnvelope)).toThrow();
   expect(()=>encodeTemplateAppliedPayload(pending,{...proof,sample_ids:[]})).toThrow();
   expect(()=>encodeTemplateAppliedPayload(pending,{...proof,attempt_ids:[]})).toThrow();

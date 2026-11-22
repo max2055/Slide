@@ -498,12 +498,12 @@ export class RoleManagementTab extends LitElement {
           ? html`<div class="save-error" style="margin-bottom:8px">${this.saveError}</div>`
           : ""}
         <div class="form-group">
-          <label>角色名称</label>
-          <input .value=${this.formName} @input=${(e: any) => (this.formName = e.target.value)} placeholder="如：高级 DBA" />
+          <label for="role-name">角色名称</label>
+          <input id="role-name" .value=${this.formName} @input=${(e: any) => (this.formName = e.target.value)} placeholder="如：高级 DBA" />
         </div>
         <div class="form-group">
-          <label>描述</label>
-          <textarea .value=${this.formDescription} @input=${(e: any) => (this.formDescription = e.target.value)} placeholder="可选角色说明"></textarea>
+          <label for="role-description">描述</label>
+          <textarea id="role-description" .value=${this.formDescription} @input=${(e: any) => (this.formDescription = e.target.value)} placeholder="可选角色说明"></textarea>
         </div>
         <div slot="footer">
           <button class="btn" @click=${this._closeFormModal}>取消</button>

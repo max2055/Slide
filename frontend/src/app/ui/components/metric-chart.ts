@@ -20,9 +20,22 @@ export interface MetricSeries {
   name: string;
   data: Array<number | null>;
   color?: string;
+  showSymbols?: boolean;
+  showIsolatedPoints?: boolean;
+  pointsOnly?: boolean;
   /** Optional bucket envelope; shown as dashed bounds so an in-bucket spike survives downsampling. */
   min?: Array<number | null>;
   max?: Array<number | null>;
+}
+
+function isolatedSymbols(data: MetricSeries['data'], size: number) {
+  return {
+    showSymbol: true,
+    showAllSymbol: true,
+    symbolSize: size,
+    symbol: (_value: unknown, { dataIndex }: { dataIndex: number }) =>
+      data[dataIndex - 1] == null && data[dataIndex + 1] == null ? 'circle' : 'none',
+  };
 }
 
 export interface ThresholdConfig {
@@ -245,8 +258,12 @@ export class MetricChart extends LitElement {
           type: "line" as const,
           data: s.data,
           smooth: true,
-          showSymbol: false,
-          lineStyle: { width: 2 },
+          showSymbol: s.showSymbols ?? false,
+          symbolSize: s.showSymbols ? 5 : undefined,
+          ...(s.showIsolatedPoints
+            ? s.showSymbols ? { showAllSymbol: true } : isolatedSymbols(s.data, 5)
+            : {}),
+          lineStyle: { width: s.pointsOnly ? 0 : 2 },
           itemStyle: rgba ? { color: color(1) } : undefined,
           areaStyle: rgba
             ? {
@@ -295,10 +312,14 @@ export class MetricChart extends LitElement {
         seriesOptions.push(base);
         // The envelope keeps the bucket's own minimum/maximum visible without pretending
         // they are another measurement series.
-        if (s.min) seriesOptions.push({ name: `${s.name} · 下限`, type: "line" as const, data: s.min, smooth: true, showSymbol: false,
-          lineStyle: { width: 1, type: "dashed" as const, opacity: 0.7 }, itemStyle: rgba ? { color: color(0.7) } : undefined, z: 1 });
-        if (s.max) seriesOptions.push({ name: `${s.name} · 上限`, type: "line" as const, data: s.max, smooth: true, showSymbol: false,
-          lineStyle: { width: 1, type: "dashed" as const, opacity: 0.7 }, itemStyle: rgba ? { color: color(0.7) } : undefined, z: 1 });
+        const boundSymbols = (values: MetricSeries['data']) => s.pointsOnly
+          ? { showSymbol: true, showAllSymbol: true, symbolSize: 3 }
+          : s.showIsolatedPoints ? isolatedSymbols(values, 3) : { showSymbol: false };
+        const boundLine = { width: s.pointsOnly ? 0 : 1, type: "dashed" as const, opacity: 0.7 };
+        if (s.min) seriesOptions.push({ name: `${s.name} · 下限`, type: "line" as const, data: s.min, smooth: true,
+          ...boundSymbols(s.min), lineStyle: boundLine, itemStyle: rgba ? { color: color(0.7) } : undefined, z: 1 });
+        if (s.max) seriesOptions.push({ name: `${s.name} · 上限`, type: "line" as const, data: s.max, smooth: true,
+          ...boundSymbols(s.max), lineStyle: boundLine, itemStyle: rgba ? { color: color(0.7) } : undefined, z: 1 });
       });
 
       const option: EChartsOption = {

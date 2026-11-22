@@ -14,6 +14,7 @@ export interface DerivedExecution {
   targets: Record<string, { source: Observation['source']; versions: Observation['versions'] }>;
   counter: Omit<CounterOptions, 'context'>;
   counter_bounds?: ReadonlyMap<string, string>;
+  timing?: (metric: DerivedMetric['output']) => { stale_after_ms: number; max_counter_gap_ms: number };
   states?: ReadonlyMap<string, CounterState>;
 }
 const refKey = (ref: { id: string; semantic_version: string }): string => `${ref.id}@${ref.semantic_version}`;
@@ -60,6 +61,8 @@ export function executeDerived(nodesInput: DerivedMetric[], definitions: MetricD
     const observations = present.map(a => a.observation);
     const anchor = observations[0] ?? execution.anchor;
     const d = definition(node.output);
+    const timing = execution.timing?.(node.output);
+    const context = timing ? { ...execution.context, stale_after_ms: timing.stale_after_ms } : execution.context;
     if (node.inputs.some(ref => ['histogram', 'summary'].includes(definition(ref).value_type))) throw new Error('SCALAR_REQUIRED');
     let result: Computation;
     if (node.operation === 'rate' && args[0]) {
@@ -74,7 +77,8 @@ export function executeDerived(nodesInput: DerivedMetric[], definitions: MetricD
           t.versions.contract, t.versions.package_id, t.versions.package_version, t.versions.config_revision]);
       }).sort()]);
       const transition = processCounter(input, definition(node.inputs[0]), d, 'rate', initialStates.get(key) ?? null,
-        { ...execution.counter, ...(execution.counter_bounds?.has(key) ? { max_increment_per_second: execution.counter_bounds.get(key) } : {}), processing_revision: processingRevision, context: execution.context });
+        { ...execution.counter, ...(timing ? { max_gap_ms: timing.max_counter_gap_ms } : {}),
+          ...(execution.counter_bounds?.has(key) ? { max_increment_per_second: execution.counter_bounds.get(key) } : {}), processing_revision: processingRevision, context });
       if (transition.state) states.set(key, transition.state);
       result = transition.output;
       result.observation.source = structuredClone(target.source);
@@ -104,10 +108,10 @@ export function executeDerived(nodesInput: DerivedMetric[], definitions: MetricD
       const from = present.length ? new Date(Math.min(...present.map(p => Date.parse(p.window.from)))).toISOString() : anchor.observed_at;
       const to = observations.length ? new Date(Math.max(...times)).toISOString() : anchor.observed_at;
       result = buildOutput({ anchor, definition: d, inputs: observations.length ? observations : [anchor], value, quality,
-        derived: true, context: execution.context, window: { from, to }, source: target.source, versions: target.versions });
+        derived: true, context, window: { from, to }, source: target.source, versions: target.versions });
     }
     // Preserve transitive window freshness and source/transform versions, including dependency failures.
-    const ages = present.flatMap(p => [p.freshness, freshness(p.window.from, execution.context.now, execution.context.stale_after_ms)]);
+    const ages = present.flatMap(p => [p.freshness, freshness(p.window.from, context.now, context.stale_after_ms)]);
     if (ages.includes('unknown')) result.freshness = 'unknown';
     else if (result.freshness !== 'unknown' && ages.includes('stale')) result.freshness = 'stale';
     const provenance = [...result.input_provenance, ...present.flatMap(p => p.input_provenance)];

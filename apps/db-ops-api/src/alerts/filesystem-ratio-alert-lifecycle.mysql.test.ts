@@ -5,10 +5,10 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi, t
 // evaluator state machine and every alert-row read/write are production code
 // running against a disposable, fully migrated MySQL.
 const mocks = vi.hoisted(() => ({ effective: vi.fn(), query: vi.fn(), source: vi.fn() }));
-vi.mock('../metrics/policy/service.js', () => ({ policyService: { effective: mocks.effective } }));
+vi.mock('../metrics/config/inventory.js', () => ({ configurationInventory: async () => ({ attributes: {} }) }));
 vi.mock('../metrics/consumers/runtime.js', async importOriginal => ({
   ...await importOriginal<typeof import('../metrics/consumers/runtime.js')>(),
-  internalMetricConsumerService: { query: mocks.query }, operationalSource: mocks.source,
+  internalMetricConsumerService: { query: mocks.query }, operationalSource: mocks.source, templateQueryPort: { read: mocks.effective },
   authenticatedMetricConsumerService: { query: mocks.query },
 }));
 vi.mock('../workflows/execution-context.js', () => ({ assertWorkflowActive: () => {} }));
@@ -107,8 +107,7 @@ describe('filesystem ratio alert lifecycle / real MySQL (MAX-232)', () => {
     await f.pool.query('DELETE FROM alert_rules');
     current = state({});
     mocks.source.mockResolvedValue('semantic');
-    mocks.effective.mockResolvedValue({ resolved: { plan: { binding: { package: { id: 'linux-representative' } } },
-      settings: { interval_ms: 60_000 } } });
+    mocks.effective.mockResolvedValue({ settings: { enabled: true, interval_ms: 60_000 } });
     mocks.query.mockImplementation(async () => results());
     failure = vi.spyOn(console, 'error');
   });

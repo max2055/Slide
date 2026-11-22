@@ -1,8 +1,16 @@
 -- Read-only anomaly/candidate inventory. No historical state or actor inference.
 -- Review the original logs and external evidence per event; a candidate is NOT a repair instruction.
 -- No secret or user-authored basis contents are emitted.
+WITH manual_template_closures AS (
+  SELECT e.id, t.episode_id
+  FROM alert_events e JOIN metric_trigger_episodes t ON t.event_id = e.id
+  WHERE e.status = 'closed' AND e.source_type = 'template-trigger'
+    AND t.payload->>'$.state' = 'closed'
+    AND t.payload->>'$.manual_close.actor_id' = CAST(e.resolved_by AS CHAR)
+)
 SELECT e.id AS event_id, e.status, 'closed_without_confirmation' AS finding
-FROM alert_events e WHERE e.status = 'closed' AND e.verification_passed_at IS NULL
+FROM alert_events e LEFT JOIN manual_template_closures t ON t.id = e.id
+WHERE e.status = 'closed' AND e.verification_passed_at IS NULL AND t.id IS NULL
 UNION ALL
 SELECT e.id, e.status, 'confirmation_basis_or_actor_missing'
 FROM alert_events e WHERE e.verification_passed_at IS NOT NULL
@@ -17,14 +25,20 @@ FROM alert_events e WHERE e.verification_passed_at IS NOT NULL AND NOT EXISTS (
 )
 UNION ALL
 SELECT e.id, e.status, 'resolved_without_resolution_log'
-FROM alert_events e WHERE e.status IN ('resolved', 'closed') AND NOT EXISTS (
+FROM alert_events e LEFT JOIN manual_template_closures t ON t.id = e.id
+WHERE e.status IN ('resolved', 'closed') AND t.id IS NULL AND NOT EXISTS (
   SELECT 1 FROM alert_event_logs l WHERE l.event_id = e.id AND l.action = 'resolved'
 )
 UNION ALL
 SELECT e.id, e.status, 'closed_without_close_log'
-FROM alert_events e WHERE e.status = 'closed' AND NOT EXISTS (
+FROM alert_events e LEFT JOIN manual_template_closures t ON t.id = e.id
+WHERE e.status = 'closed' AND NOT EXISTS (
   SELECT 1 FROM alert_event_logs l WHERE l.event_id = e.id
-    AND (l.action = 'closed' OR (l.action = 'status_changed' AND JSON_UNQUOTE(JSON_EXTRACT(l.details, '$.action')) = 'closed'))
+    AND (
+      (t.id IS NULL AND (l.action = 'closed' OR (l.action = 'status_changed' AND l.details->>'$.action' = 'closed')))
+      OR (t.id IS NOT NULL AND l.action = 'status_changed' AND l.details->>'$.action' = 'trigger_manually_closed'
+          AND l.actor_id = e.resolved_by AND l.details->>'$.episode_id' = t.episode_id)
+    )
 )
 UNION ALL
 SELECT e.id, e.status, 'resolved_with_active_members'

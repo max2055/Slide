@@ -799,8 +799,8 @@ export class CronJobsSettings extends LitElement {
         <button class="btn-primary" @click=${this.openCreateDialog} ?disabled=${!this.canManage}>+ 新建任务</button>
       </div>
       <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px;">
-        <label style="font-size:12px;color:var(--muted);">筛选模式：</label>
-        <select class="form-input" style="width:auto;min-width:140px;" .value=${this.filterMode} @change=${(e: Event) => { this.filterMode = (e.target as HTMLSelectElement).value as "all" | "script" | "agent"; }}>
+        <label for="cron-filter-mode" style="font-size:12px;color:var(--muted);">筛选模式<span aria-hidden="true">：</span></label>
+        <select id="cron-filter-mode" class="form-input" style="width:auto;min-width:140px;" .value=${this.filterMode} @change=${(e: Event) => { this.filterMode = (e.target as HTMLSelectElement).value as "all" | "script" | "agent"; }}>
           <option value="all">全部</option>
           <option value="script">Script</option>
           <option value="agent">Agent</option>
@@ -952,8 +952,11 @@ export class CronJobsSettings extends LitElement {
             </div>
             ${this.formTargetInstanceId && this.scriptEditorDbType === "mysql" ? html`
               <div class="form-group">
-                <label class="form-label">目标数据库 <span style="font-weight:400;color:var(--muted);font-size:12px;">（MySQL 需要指定库名）</span></label>
-                <input class="form-input" placeholder="例如：information_schema" .value=${this.formTargetDatabase} @input=${(e: any) => { this.formTargetDatabase = e.target.value; }} />
+                <div>
+                  <label class="form-label" for="cron-target-database">目标数据库</label>
+                  <span id="cron-target-database-hint" style="color:var(--muted);font-size:12px;">（MySQL 需要指定库名）</span>
+                </div>
+                <input id="cron-target-database" aria-describedby="cron-target-database-hint" class="form-input" placeholder="例如：information_schema" .value=${this.formTargetDatabase} @input=${(e: any) => { this.formTargetDatabase = e.target.value; }} />
               </div>
             ` : nothing}
             ${this.testResult !== null ? html`

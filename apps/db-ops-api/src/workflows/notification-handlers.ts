@@ -43,10 +43,21 @@ export function registerNotificationHandlers(
             const validation = validateNotificationChannelConfig(channel.type, channel.config);
             if (validation.valid === false) throw new Error(validation.code);
             if (channel.type !== 'email' && !channel.config.webhook_url) throw new Error('WEBHOOK_CONFIGURATION_INVALID');
+            const alert = source as Parameters<NotificationService['buildMessage']>[1];
+            const transition = identity.transition;
+            let notification = alert;
+            if (transition) {
+              const recovery = transition.phase === 'recovery';
+              const manual = transition.cause === 'manual';
+              const label = manual ? '手动关闭' : recovery ? '恢复' : '升级';
+              const message = manual ? '模板事件已由授权人员手动关闭。' : recovery ? '固定规则已判定恢复。'
+                : `等级 ${transition.from_level} → ${transition.to_level}`;
+              notification = { ...alert, title: `[${label}] ${alert.title}`, message, level: transition.to_level ?? alert.level };
+            }
             request = {
               channel,
               message: identity.kind === 'notification'
-                ? notificationService.buildMessage(channel.type, identity.transition ? {...source, title:`[${identity.transition.phase === 'recovery' ? '恢复' : '升级'}] ${(source as any).title}`, message: identity.transition.phase === 'recovery' ? '固定规则已判定恢复。' : `等级 ${identity.transition.from_level} → ${identity.transition.to_level}`, level: identity.transition.to_level ?? (source as any).level} : source as any, (source as any).instance_name, (source as any).instance_host)
+                ? notificationService.buildMessage(channel.type, notification, alert.instance_name, alert.instance_host)
                 : { type: 'scheduled_report', report: { id: source.id, name: (source as any).name, type: (source as any).type, format: (source as any).format, status: (source as any).status }, downloadPath: `/api/reports/${source.id}/download` },
               rolloutFence: identity.kind === 'notification' ? parseRolloutAlertFence(source as any) : undefined,
             };

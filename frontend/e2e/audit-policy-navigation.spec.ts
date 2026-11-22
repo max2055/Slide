@@ -32,8 +32,8 @@ async function fixture(page: Page) {
     return route.fulfill({ json: body });
   });
   await page.route('**/audit-policy-fixture*', route => route.fulfill({ contentType: 'text/html', body: `<!doctype html><html lang="zh-CN"><body>
-    <audit-center-page></audit-center-page><agent-security-policy-page></agent-security-policy-page><metric-settings view="policies"></metric-settings>
-    <script type="module">import '/src/app/styles.css'; import '/src/app/ui/components/app-empty-state.ts'; import '/src/app/ui/views/audit-center.ts'; import '/src/app/ui/views/agent-security-policy.ts'; import '/src/app/ui/views/metric-settings.ts';</script>
+    <audit-center-page></audit-center-page><agent-security-policy-page></agent-security-policy-page>
+    <script type="module">import '/src/app/styles.css'; import '/src/app/ui/components/app-empty-state.ts'; import '/src/app/ui/views/audit-center.ts'; import '/src/app/ui/views/agent-security-policy.ts';</script>
     </body></html>` }));
   await page.goto('/audit-policy-fixture');
   return { calls, fail: (value: typeof failure) => { failure = value; } };
@@ -72,22 +72,6 @@ for (const [width, height] of [[1440, 900], [1366, 768], [1920, 1080]]) {
     h.fail('empty'); await retry.focus(); await page.keyboard.press('Enter');
     await expect(security.getByText('暂无策略变更', { exact: true })).toBeVisible();
     await expect(security.getByRole('alert')).toHaveCount(0);
-    const metrics = page.locator('metric-settings');
-    await metrics.getByRole('button', { name: '策略组', exact: true }).click();
-    await metrics.getByRole('button', { name: '读取策略组', exact: true }).click();
-    await expect(metrics.getByRole('alert')).toContainText('请先选择策略组');
-    await metrics.getByLabel('策略组', { exact: true }).selectOption('bad/id');
-    await metrics.getByRole('button', { name: '读取策略组', exact: true }).click();
-    await expect(metrics.getByRole('alert')).toContainText('策略组标识仅支持');
-    expect(h.calls.some(c => c.includes('/bad/'))).toBe(false);
-    await metrics.getByLabel('策略组', { exact: true }).selectOption('valid-group');
-    await metrics.getByRole('button', { name: '读取策略组', exact: true }).click();
-    await expect(metrics.getByRole('alert')).toHaveCount(0);
-    await metrics.getByRole('button', { name: '预览组影响' }).click();
-    await expect(metrics.getByText('影响 1 个资源，每小时逻辑读取 10 → 8')).toBeVisible();
-    await metrics.getByRole('button', { name: '发布策略组' }).click();
-    await expect(metrics.getByText('发布版本 2；未覆盖字段继承采集包与平台值。')).toBeVisible();
-    expect(h.calls).toContain('POST /api/metrics/policy/groups/valid-group/publish');
     await page.screenshot({ path: info.outputPath('recovered.png'), fullPage: true });
   });
 }

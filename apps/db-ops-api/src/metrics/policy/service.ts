@@ -109,7 +109,9 @@ export class PolicyService {
     PolicyIdSchema.parse(id);
     return this.store.transaction(async tx => {
       actor = await this.liveActor(actor, check);
-      await this.groupAccess(actor, tx, id, false);
+      const members = await tx.memberRefs(id);
+      if (!members.length) rule(actor.permissions.includes('*'), 'POLICY_FORBIDDEN', 403);
+      for (const member of members) await this.assertAccess(actor, member, false);
       const group = await tx.group(id); rule(group, 'POLICY_NOT_FOUND', 404);
       return group;
     });
@@ -136,8 +138,10 @@ export class PolicyService {
     PolicyIdSchema.parse(id);
     return this.store.transaction(async tx => {
       actor = await this.liveActor(actor, check);
-      const members = await this.groupAccess(actor, tx, id, false);
-      return { can_manage: members.length ? members.every(member => canManageResource(actor, member.binding.resource)) : actor.permissions.includes('*') };
+      const members = await tx.memberRefs(id);
+      if (!members.length) rule(actor.permissions.includes('*'), 'POLICY_FORBIDDEN', 403);
+      for (const member of members) await this.assertAccess(actor, member, false);
+      return { can_manage: members.length ? members.every(member => canManageResource(actor, member)) : actor.permissions.includes('*') };
     });
   }
   /** Resolve the intended publication from the request. No write, no revision CAS. */

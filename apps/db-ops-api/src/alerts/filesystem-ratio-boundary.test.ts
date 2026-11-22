@@ -4,9 +4,9 @@ const mocks = vi.hoisted(() => ({ effective: vi.fn(), query: vi.fn(), source: vi
   getAlertRules: vi.fn(), getServers: vi.fn(), findActive: vi.fn(), findActiveAlerts: vi.fn(), createAlert: vi.fn(),
   touchAlert: vi.fn(), resolveAlert: vi.fn() }));
 vi.mock('../db-connection.js', () => ({ dbConnection: { isConnected: mocks.connected } }));
-vi.mock('../metrics/policy/service.js', () => ({ policyService: { effective: mocks.effective } }));
+vi.mock('../metrics/config/inventory.js', () => ({ configurationInventory: async () => ({ attributes: {} }) }));
 vi.mock('../metrics/consumers/runtime.js', () => ({
-  internalMetricConsumerService: { query: mocks.query }, operationalSource: mocks.source,
+  internalMetricConsumerService: { query: mocks.query }, operationalSource: mocks.source, templateQueryPort: { read: mocks.effective },
 }));
 vi.mock('../server-database-service.js', () => ({ serverDatabaseService: { getCollectionEnabledServers: mocks.getServers } }));
 vi.mock('../alert-database-service.js', () => ({ alertDatabaseService: {
@@ -203,8 +203,7 @@ describe('production consumer evaluation per mount (MAX-232, isolated replay)', 
     vi.clearAllMocks();
     mocks.connected.mockReturnValue(true);
     mocks.source.mockResolvedValue('semantic');
-    mocks.effective.mockResolvedValue({ resolved: { plan: { binding: { package: { id: 'linux-representative' } } },
-      settings: { interval_ms: 60_000 } } });
+    mocks.effective.mockResolvedValue({ settings: { enabled: true, interval_ms: 60_000 } });
   });
 
   function ratioSeries(mount: Mount, used: string | null) {
@@ -320,8 +319,7 @@ describe('server alert state chain per mount (MAX-232, isolated replay)', () => 
     current = [];
     mocks.connected.mockReturnValue(true);
     mocks.source.mockResolvedValue('semantic');
-    mocks.effective.mockResolvedValue({ resolved: { plan: { binding: { package: { id: 'linux-representative' } } },
-      settings: { interval_ms: 60_000 } } });
+    mocks.effective.mockResolvedValue({ settings: { enabled: true, interval_ms: 60_000 } });
     mocks.getServers.mockResolvedValue([{ id: 3, label: 'server-3', host: '10.0.0.3' }]);
     mocks.getAlertRules.mockResolvedValue([baseRule]);
     mocks.query.mockImplementation(async () => results(current));

@@ -13,6 +13,10 @@ import {
 import {
   resolveTemplateBinding, templateResolutionIdentity, type ResolvedTemplateBinding, type TemplateResolutionContext,
 } from './resolve.js';
+import { advanceCadence, initialCadence, nextDeadline, planIntervals, selectDueReleases } from '../scheduler/template-cadence.js';
+import { MysqlScheduleStore } from '../scheduler/store.js';
+import type { DecodedTemplateBindingPayload } from './persistence-codec.js';
+import type { Pool } from 'mysql2/promise';
 
 const T0 = '2026-10-01T00:00:00Z';
 const T1 = '2026-10-02T00:00:00Z';
@@ -198,6 +202,50 @@ function planOf(resolution: ResolvedTemplateBinding): TemplateCollectionPlan {
 }
 
 describe('internal multi-template release plans', () => {
+  it('keeps independent deadlines and coalesces them without accelerating a slow item on retry', async () => {
+    const version = templateVersion('tpl-cadence', [
+      item('tpl-cadence', 'alpha', alpha, releaseA), item('tpl-cadence', 'beta', beta, releaseA),
+    ]);
+    version.aggregate.items[0].interval_ms = 5000;
+    version.aggregate.items[1].interval_ms = 15000;
+    version.content_hash = templateContentHash(version.aggregate);
+    const resolution = await resolve([version], binding({ template_pins: [pin(version)] }));
+    const plan = planOf(resolution), registry = fixtureRegistry();
+    expect(planIntervals(plan)).toEqual([5000, 15000]);
+    expect(plan.budget.requests_per_hour_estimate).toBe(960);
+    const initial = { ...initialCadence(planIntervals(plan), 10000), through: 10000 };
+    const due = (cadence: typeof initial) => selectDueReleases(plan, cadence, registry)[0];
+    expect(due(initial)).toMatchObject({ collector_ids: ['status'], metric_keys: ['fixture.alpha@1.0.0', 'fixture.beta@1.0.0'] });
+    const next = advanceCadence(initial, 10300);
+    expect(nextDeadline(next)).toBe(15000);
+    const retry = JSON.parse(JSON.stringify({ ...next, through: 15000 }));
+    expect(due(retry).metric_keys).toEqual(['fixture.alpha@1.0.0']);
+    const overdue = advanceCadence(retry, 24000);
+    expect(overdue.next).toEqual({ 5000: 25000, 15000: 25000 });
+    expect(due({ ...overdue, through: 25000 }).metric_keys).toEqual(['fixture.alpha@1.0.0', 'fixture.beta@1.0.0']);
+
+    const fast = { sample: 'fast', attempt: 'fast-read', observed_ms: 10000 };
+    const slow = { sample: 'slow', attempt: 'slow-read', observed_ms: 10000 };
+    const execute = vi.fn(async (sql: string, _params?: unknown[]) => {
+      if (sql.includes('FROM servers')) return [[{ enabled: 1 }]];
+      if (sql.includes('FROM metric_schedule')) return [[{ revision: 4, job_id: 'timed-out', cadence: JSON.stringify(retry) }]];
+      if (sql.includes('FROM workflow_jobs')) return [[{ state: 'dead_letter' }]];
+      if (sql.includes('SELECT payload FROM metric_source_checks')) return [[{ payload: { application_samples: {
+        'fixture.alpha@1.0.0': fast, 'fixture.beta@1.0.0': slow,
+      } } }]];
+      return [[]];
+    });
+    const connection = { execute, query: async () => [[{ id: 1 }]], beginTransaction: async () => {},
+      commit: async () => {}, rollback: async () => {}, release: () => {} };
+    const store = new MysqlScheduleStore({ getConnection: async () => connection } as unknown as Pool, registry);
+    const decoded = { binding: { resource: { type: 'server', id: 7 }, revision: 4 },
+      application: { applied_revision: null }, pending: { plan } } as unknown as DecodedTemplateBindingPayload;
+    vi.spyOn(store, 'currentTemplate').mockResolvedValue(decoded);
+    expect(await store.enqueueTemplate({ resource_key: 'server:7', decoded }, 24000)).toBe(false);
+    const invalidated = execute.mock.calls.find(([sql]) => sql.includes('UPDATE metric_source_checks'))?.[1]?.[0];
+    expect(JSON.parse(String(invalidated))).toEqual({ 'fixture.beta@1.0.0': slow });
+  });
+
   it('builds isolated selected-only release plans with the exact resolution identity', async () => {
     const { one, two, input } = twoTemplates();
     const resolution = await resolve([one, two], input);

@@ -330,7 +330,7 @@ export class SettingsShell extends LitElement {
       ? requestedView
       : (views[0]?.id ?? "");
 
-    if (route.legacy || (views.length > 0 && requestedView !== this.activeView)) {
+    if (route.legacy || (route.item.id === "metrics" && requestedView) || (views.length > 0 && requestedView !== this.activeView)) {
       this.navigateTo(route.item, true, this.activeView);
     }
   }
@@ -451,7 +451,7 @@ export class SettingsShell extends LitElement {
       case "branding": return html`<branding-settings></branding-settings>`;
       case "appearance": return html`<appearance-settings></appearance-settings>`;
       case "notifications": return html`<feishu-notification-settings></feishu-notification-settings>`;
-      case "metrics": return html`<metric-settings .view=${this.activeView || "catalog"}></metric-settings>`;
+      case "metrics": return html`<metric-settings></metric-settings>`;
       case "analysis": return this.activeView === "scoring"
         ? html`<scoring-settings-page></scoring-settings-page>`
         : html`<ai-settings-page></ai-settings-page>`;

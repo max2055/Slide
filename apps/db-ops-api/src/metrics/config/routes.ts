@@ -28,8 +28,8 @@ export const metricConfigurationService = new MetricConfigurationService(policyS
   actor => actorContextService.revalidateActor(actor, actor.requestId));
 export async function registerMetricConfigurationRoutes(app: FastifyInstance, verifyToken: preHandlerHookHandler,
   implementation = metricConfigurationService): Promise<void> {
-  for (const operation of ['catalog', 'access', 'attempts', 'trial', 'status', 'recommendations', 'activate', 'migration'] as const) {
-    app.route({ method: operation === 'trial' || operation === 'activate' ? 'POST' : 'GET',
+  for (const operation of ['catalog', 'access', 'attempts', 'status', 'recommendations', 'migration'] as const) {
+    app.route({ method: 'GET',
       url: operation === 'catalog' ? '/api/metrics/config/catalog' : `/api/metrics/config/resources/:type/:id/${operation}`,
       preHandler: [verifyToken], bodyLimit: 65536, handler: async (request, reply) => {
         reply.header('Cache-Control', 'private, no-store');
@@ -44,9 +44,7 @@ export async function registerMetricConfigurationRoutes(app: FastifyInstance, ve
           if (operation === 'attempts') return await implementation.attempts(actor, ref);
           if (operation === 'migration') return await implementation.migration(actor, ref);
           if (operation === 'status') return await implementation.status(actor, ref);
-          if (operation === 'recommendations') return await implementation.recommendations(actor, ref);
-          if (operation === 'activate') return await implementation.activate(actor, ref, request.body);
-          return await implementation.trial(actor, ref, request.body);
+          return await implementation.recommendations(actor, ref);
         } catch (error) {
           if (error instanceof ActorAuthenticationError) return reply.code(401).send({ error: 'POLICY_AUTH_REQUIRED' });
           if (error instanceof PolicyError) return reply.code(error.status).send({ error: error.code });
@@ -56,23 +54,4 @@ export async function registerMetricConfigurationRoutes(app: FastifyInstance, ve
         }
       } });
   }
-  // Retry support: an absent key is authoritative (no publication with that key
-  // is in flight), so a client can decide to retry the same intent without
-  // resending a mutation whose outcome it could not observe.
-  app.route({ method: 'GET', url: '/api/metrics/config/resources/:type/:id/operations/:key', preHandler: [verifyToken],
-    handler: async (request, reply) => {
-      reply.header('Cache-Control', 'private, no-store');
-      const actor = (request as unknown as { user?: ActorContext }).user;
-      if (!actor) return reply.code(401).send({ error: 'POLICY_AUTH_REQUIRED' });
-      try {
-        const params = request.params as { type: string; id: string; key: string };
-        rule(/^[1-9]\d*$/.test(params.id), 'POLICY_RESOURCE');
-        return await implementation.operation(actor, RefSchema.parse({ type: params.type, id: Number(params.id) }), params.key);
-      } catch (error) {
-        if (error instanceof ActorAuthenticationError) return reply.code(401).send({ error: 'POLICY_AUTH_REQUIRED' });
-        if (error instanceof PolicyError) return reply.code(error.status).send({ error: error.code });
-        if (error instanceof z.ZodError) return reply.code(400).send({ error: 'POLICY_INPUT_INVALID' });
-        return reply.code(500).send({ error: 'POLICY_FAILED' });
-      }
-    } });
 }

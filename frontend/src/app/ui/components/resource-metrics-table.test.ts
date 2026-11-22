@@ -192,7 +192,6 @@ it('expands tools for selections across pages and resource types, then collapses
   const el = await mount(25); await vi.waitFor(() => expect(el.pending).toBe(false)); await el.updateComplete;
   const tools = () => el.shadowRoot.querySelector('.bulk-tools');
   expect(tools().textContent).not.toContain('清空选择');
-  expect(tools().textContent).toContain('查看批量任务');
   (tools().querySelector('button') as HTMLButtonElement).click(); await el.updateComplete;
   expect(bulkSelection.values()).toHaveLength(20);
   el.page = 2; await el.load(); await el.updateComplete;

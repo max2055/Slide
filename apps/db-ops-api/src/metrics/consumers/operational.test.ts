@@ -1,14 +1,15 @@
 import { beforeEach, expect, it, vi } from 'vitest';
-import { PolicyError } from '../policy/model.js';
 const mocks = vi.hoisted(() => ({ effective: vi.fn(), query: vi.fn(), source: vi.fn(), connected: vi.fn() }));
 vi.mock('../../db-connection.js', () => ({ dbConnection: { isConnected: mocks.connected } }));
-vi.mock('../policy/service.js', () => ({ policyService: { effective: mocks.effective } }));
-vi.mock('./runtime.js', () => ({ internalMetricConsumerService: { query: mocks.query }, operationalSource: mocks.source }));
+vi.mock('../config/inventory.js', () => ({ configurationInventory: async () => ({
+  attributes: { 'db.engine': { value: 'mysql' } },
+}) }));
+vi.mock('./runtime.js', () => ({ internalMetricConsumerService: { query: mocks.query }, operationalSource: mocks.source, templateQueryPort: { read: mocks.effective } }));
 import { evaluateOperationalRule, migrateOperationalChecks } from './operational.js';
 const rule = { metric_name: 'connections', operator: '>' as const, threshold: 50, severity: 'warning' as const, duration_seconds: 60 };
-beforeEach(() => { vi.resetAllMocks(); mocks.connected.mockReturnValue(true); mocks.source.mockResolvedValue('semantic'); mocks.effective.mockResolvedValue({ resolved: { plan: { binding: { package: { id: 'mysql-representative' } } }, settings: { interval_ms: 60000 } } }); });
+beforeEach(() => { vi.resetAllMocks(); mocks.connected.mockReturnValue(true); mocks.source.mockResolvedValue('semantic'); mocks.effective.mockResolvedValue({ settings: { enabled: true, interval_ms: 60000 } }); });
 it('a missing binding never authorizes a legacy fallback after formal cutover', async () => {
-  mocks.effective.mockRejectedValueOnce(new PolicyError('POLICY_NOT_FOUND', 404)).mockRejectedValueOnce(new Error('storage failure'));
+  mocks.effective.mockResolvedValueOnce(null).mockRejectedValueOnce(new Error('storage failure'));
   expect(await evaluateOperationalRule({ type: 'instance', id: 1 }, rule, 60)).toMatchObject({ handled: true, state: 'unknown' });
   expect(await evaluateOperationalRule({ type: 'instance', id: 1 }, rule, 60)).toMatchObject({ handled: true, state: 'unknown', recovery: false });
   expect(mocks.query).not.toHaveBeenCalled();
@@ -24,7 +25,7 @@ it('retains legacy score policies but marks unsupported ratios unknown instead o
   const checks = [{ name: '连接状态', status: 'ok', score: 100 }, { name: '连接数使用率', status: 'ok', score: 100 }];
   expect(await migrateOperationalChecks(1, checks)).toMatchObject([{ status: 'ok' }, { status: 'unknown', score: 0 }]);
   expect(checks[1].score).toBe(100);
-  mocks.effective.mockRejectedValue(new PolicyError('POLICY_NOT_FOUND', 404));
+  mocks.effective.mockResolvedValue(null);
   expect(await migrateOperationalChecks(1, checks)).toMatchObject([{ status: 'ok' }, { status: 'unknown' }]);
 });
 

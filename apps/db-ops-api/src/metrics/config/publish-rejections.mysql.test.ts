@@ -11,7 +11,7 @@ import { configurationInventory } from './inventory.js';
 import { createConfigurationRegistry } from './registry.js';
 import { createTrialStore } from './routes.js';
 import { MetricConfigurationService } from './service.js';
-import { configurationReader } from './status-store.js';
+import { legacyConfigurationReader } from './legacy-configuration-test-support.js';
 import { PolicyService } from '../policy/service.js';
 import { MysqlPolicyStore } from '../policy/store.js';
 import { refKey } from '../policy/model.js';
@@ -99,7 +99,7 @@ describe.skipIf(!port)('MAX-238 publish rejections keep the published revision a
     policies = new PolicyService(new MysqlPolicyStore(() => pool), packages,
       { exists: async () => true, inventory: configurationInventory });
     service = new MetricConfigurationService(policies, packages, createTrialStore(() => pool, packages),
-      { resolve: async () => { throw new Error('status must not collect'); } }, configurationReader(() => pool));
+      { resolve: async () => { throw new Error('status must not collect'); } }, legacyConfigurationReader(() => pool));
   }, 180000);
 
   afterAll(async () => {

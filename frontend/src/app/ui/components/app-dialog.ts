@@ -28,6 +28,7 @@ export class AppDialog extends LitElement {
   @property({ type: Boolean }) open = false;
   @property() size: DialogSize = "md";
   @property() title = "";
+  @property() placement: "center" | "end" = "center";
   @property({ type: Boolean }) closable = true;
   @property({ type: Boolean }) closeOnOverlay = false;
 
@@ -146,6 +147,8 @@ export class AppDialog extends LitElement {
           flex-direction: column;
           animation: scale-in 200ms var(--ease-out) both;
         }
+        .dialog-overlay.end { justify-content:flex-end; padding:0; }
+        .end .dialog { height:100%; max-height:100%; border-radius:var(--radius-lg) 0 0 var(--radius-lg); }
         .dialog-header {
           display: flex;
           align-items: center;
@@ -197,7 +200,7 @@ export class AppDialog extends LitElement {
         }
       </style>
       <dialog
-        class="dialog-overlay"
+        class="dialog-overlay ${this.placement === 'end' ? 'end' : ''}"
         aria-label=${this.title || nothing}
         @click=${this._onOverlayClick}
         @cancel=${this._onCancel}
