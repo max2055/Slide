@@ -216,6 +216,7 @@ export class ServersPage extends LitElement {
   @state() private _loading = true;
   @state() private inventoryError = "";
   private inventoryRequest = 0;
+  private editorRequest = 0;
   @state() private _showDialog = false;
   @state() private _editingId: number | null = null;
   @state() private _showDeleteDialog = false;
@@ -257,7 +258,24 @@ export class ServersPage extends LitElement {
     this.renderRoot.querySelector<ResourceMetricsTable>('resource-metrics-table')?.openColumnSettings();
   }
 
-  private readonly listAccessChanged = () => this.requestUpdate();
+  private readonly listAccessChanged = (event: Event) => {
+    this.inventoryRequest++;
+    this.editorRequest++;
+    this._servers = [];
+    this.metricsLoading = false;
+    if (this._editingId !== null) {
+      this._editingId = null;
+      this._showDialog = false;
+    }
+    this._deletingServer = null;
+    this._showDeleteDialog = false;
+    if (event.type === 'slide-permissions-loaded' && hasListPermission('servers:view')) {
+      void this._loadServers();
+    } else {
+      this._loading = false;
+      this.inventoryError = '无法读取服务器清单，请确认登录和查看权限';
+    }
+  };
   override connectedCallback() {
     super.connectedCallback();
     window.addEventListener('slide-permissions-loaded', this.listAccessChanged);
@@ -265,6 +283,7 @@ export class ServersPage extends LitElement {
   }
   override disconnectedCallback() {
     this.inventoryRequest++;
+    this.editorRequest++;
     window.removeEventListener('slide-permissions-loaded', this.listAccessChanged);
     window.removeEventListener('slide-session-expired', this.listAccessChanged);
     super.disconnectedCallback();
@@ -300,7 +319,9 @@ export class ServersPage extends LitElement {
       const url = new URL(location.href), editId = Number(url.searchParams.get('edit'));
       const edit = this._servers.find(server => server.id === editId);
       if (edit && !this._showDialog) {
-        await this._openEditDialog(edit); this.editorTab = 'collection';
+        await this._openEditDialog(edit);
+        if (request !== this.inventoryRequest) return;
+        this.editorTab = 'collection';
         url.searchParams.delete('edit'); history.replaceState({}, '', url);
       }
       this.metricRefreshVersion++;
@@ -335,6 +356,7 @@ export class ServersPage extends LitElement {
   }
 
   private async _openEditDialog(server: ServerRow) {
+    const request = ++this.editorRequest;
     this.editorTab = "basic";
     this.connectionPending = false;
     this._editingId = server.id;
@@ -347,6 +369,7 @@ export class ServersPage extends LitElement {
         credentialUsername = detail.credential_username || "";
       }
     } catch { /* fall back to empty */ }
+    if (request !== this.editorRequest || this._editingId !== server.id) return;
 
     const originalOsType = server.os_type ?? "";
     const recognized = canonicalOsKey(originalOsType);

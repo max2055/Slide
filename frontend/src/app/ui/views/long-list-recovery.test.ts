@@ -33,7 +33,7 @@ describe('list failure and compatibility', () => {
   it('accepts the existing single-snapshot hint envelope without crashing the table page', async () => {
     const view = new SchemaManagementPage() as any; view.selectedInstance = 1;
     authFetch.mockResolvedValue(response({ changes: { hint: '需要至少两次快照才能进行变更检测' } }));
-    await view.loadChanges(); expect(view.changes).toEqual([]); expect(view.hint).toContain('至少两次');
+    await view.loadChanges(); expect(view.changes).toBeNull(); expect(view.hint).toContain('至少两次');
   });
   it('groups composite indexes by table and orders columns by sequence', () => {
     const view = new IndexManagementPage() as any;

@@ -528,10 +528,20 @@ export class InstancesPage extends LitElement {
   @state() private hostRelationError: string | null = null;
   @state() private pendingCreatedInstanceId: number | null = null;
   private hostRelationRequestVersion = 0;
-  private readonly handlePermissionsLoaded = () => {
-    this.requestUpdate();
-    if (this.editingInstance && this.canViewHostRelations) {
-      void this._loadInstanceHosts(this.editingInstance.id);
+  private readonly handlePermissionsLoaded = (event: Event) => {
+    this.instancesRequest++;
+    this.instances = [];
+    this.healthEvidence = [];
+    this.healthEvidenceReady = false;
+    this.metricsLoading = false;
+    this.searchResultCount = null;
+    this.refreshing = false;
+    if (this.editingInstance || this.testingInstance || this.deletingInstance) this._resetDialogs();
+    if (event.type === 'slide-permissions-loaded' && hasListPermission('instance:view')) {
+      void this.loadInstances();
+    } else {
+      this.loading = false;
+      this.error = '无法读取数据库实例清单，请确认登录和查看权限';
     }
   };
 
@@ -595,13 +605,15 @@ export class InstancesPage extends LitElement {
 
   private instancesRequest = 0;
 
-  private async loadInstances() {
+  private async loadInstances(refresh = false) {
     const request = ++this.instancesRequest;
     this.loading = true;
+    this.refreshing = refresh;
     this.error = "";
     let failure = '数据库实例清单读取失败';
     try {
       const res = await authFetch("/api/database/instances", { signal: AbortSignal.timeout(15000) });
+      if (request !== this.instancesRequest) return;
       if (!res.ok) {
         if ([401, 403].includes(res.status)) failure = '无法读取数据库实例清单，请确认登录和查看权限';
         throw new Error();
@@ -626,27 +638,26 @@ export class InstancesPage extends LitElement {
       this.healthEvidenceReady = false;
       this.error = failure;
       this.loading = false;
+      this.refreshing = false;
       return;
     }
     this.healthEvidence = [];
     try {
       const overview = await authFetch('/api/resources/overview', { signal: AbortSignal.timeout(15000) });
-      if (!overview.ok) return;
+      if (request !== this.instancesRequest || !overview.ok) return;
       const body = await overview.json();
       if (request === this.instancesRequest && Array.isArray(body?.items)) {
         this.healthEvidence = body.items;
         this.healthEvidenceReady = true;
       }
     } catch { /* Unavailable health evidence stays unknown. */ }
+    finally {
+      if (request === this.instancesRequest) this.refreshing = false;
+    }
   }
 
   private async refreshInstances() {
-    this.refreshing = true;
-    try {
-      await this.loadInstances();
-    } finally {
-      this.refreshing = false;
-    }
+    await this.loadInstances(true);
   }
 
   async refreshReadData() { await this.loadInstances(); }

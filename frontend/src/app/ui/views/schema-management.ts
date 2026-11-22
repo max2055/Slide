@@ -289,7 +289,7 @@ export class SchemaManagementPage extends LitElement {
   private snapshotRequest = 0;
   private changesRequest = 0;
   @state() private tableList: TableListEntry[] = [];
-  @state() private changes: SchemaChange[] = [];
+  @state() private changes: SchemaChange[] | null = null;
   @state() private expandedTable: string | null = null;
   @state() private detailError: string | null = null;
   @state() private detailLoading = false;
@@ -357,7 +357,7 @@ export class SchemaManagementPage extends LitElement {
     this.selectedInstanceName = this.instances.find(i => i.id === this._activeInstanceId)?.name || "";
     this.snapshotTimes = [];
     this.tableList = [];
-    this.changes = [];
+    this.changes = null;
     this.expandedTable = null;
     this.tableDetail = [];
     this.snapshotDetail = [];
@@ -476,7 +476,7 @@ export class SchemaManagementPage extends LitElement {
     if (!id) return;
     const current = () => request === this.changesRequest && id === this._activeInstanceId;
     this.changesLoading = true;
-    this.changes = [];
+    this.changes = null;
     this.changesError = '';
     this.hint = null;
     try {
@@ -488,8 +488,8 @@ export class SchemaManagementPage extends LitElement {
       const legacyHint = typeof changes?.hint === 'string' ? changes.hint : null;
       if (!Array.isArray(changes) && !legacyHint) throw new Error();
       if (!current()) return;
-      this.changes = Array.isArray(changes) ? changes : [];
       this.hint = data.hint || legacyHint;
+      this.changes = !this.hint && Array.isArray(changes) ? changes : null;
     } catch {
       if (current()) this.changesError = '变更历史读取失败';
     } finally { if (current()) this.changesLoading = false; }
@@ -537,6 +537,7 @@ export class SchemaManagementPage extends LitElement {
     ++this.changesRequest;
     this.changesLoading = false;
     this.hint = null;
+    this.changes = null;
     this.error = null;
     this.detecting = true;
     try {
@@ -556,8 +557,8 @@ export class SchemaManagementPage extends LitElement {
       if (!isCurrent()) return;
       if (data.success) {
         this.changesError = "";
-        this.changes = Array.isArray(data.changes) ? data.changes : [];
         this.hint = data.hint || data.changes?.hint || null;
+        this.changes = !this.hint && Array.isArray(data.changes) ? data.changes : null;
       } else {
         this.error = data.error || "检测变更失败";
       }
@@ -646,11 +647,11 @@ export class SchemaManagementPage extends LitElement {
   private get stats() {
     return {
       totalTables: this.tableList.length,
-      totalChanges: this.changes.length,
+      totalChanges: this.changes?.length ?? 0,
       totalSnapshots: this.snapshotTimes.length,
-      added: this.changes.filter(c => c.type === "added").length,
-      modified: this.changes.filter(c => c.type === "modified").length,
-      deleted: this.changes.filter(c => c.type === "deleted").length,
+      added: this.changes?.filter(c => c.type === "added").length ?? 0,
+      modified: this.changes?.filter(c => c.type === "modified").length ?? 0,
+      deleted: this.changes?.filter(c => c.type === "deleted").length ?? 0,
     };
   }
 
@@ -668,8 +669,10 @@ export class SchemaManagementPage extends LitElement {
         </div>`;
     }
 
-    const count = (value: number, loading: boolean, error: string | null) =>
-      loading ? '读取中' : error || !this._activeInstanceId || this.accessInvalidated || this.schemaAccessError ? '未知' : value;
+    const count = (value: number | null, loading: boolean, error: string | null) =>
+      loading ? '读取中' : error || !this._activeInstanceId || this.accessInvalidated || this.schemaAccessError ? '未知' : value ?? '未知';
+    const changeCount = (value: number) => this.hint ? '未比较'
+      : count(this.changes ? value : null, this.changesLoading || this.detecting, this.changesError);
 
     return html`
       <div class="page">
@@ -686,8 +689,8 @@ export class SchemaManagementPage extends LitElement {
         <div style="display:grid;gap:var(--space-md);grid-template-columns:repeat(4,1fr);margin-bottom:var(--space-xl)">
           <stat-card label="表数量" value="${count(this.stats.totalTables, this.tablesLoading, this.tablesError)}" hint="已存快照"></stat-card>
           <stat-card label="快照数" value="${count(this.stats.totalSnapshots, this.snapshotsLoading, this.snapshotsError)}" hint="历史记录" variant="info"></stat-card>
-          <stat-card label="新增" value="${count(this.stats.added, this.changesLoading, this.changesError)}" hint="新增表/列" variant="ok"></stat-card>
-          <stat-card label="删除" value="${count(this.stats.deleted, this.changesLoading, this.changesError)}" hint="删除表/列" variant="danger"></stat-card>
+          <stat-card label="新增" value="${changeCount(this.stats.added)}" hint="新增表/列" variant="ok"></stat-card>
+          <stat-card label="删除" value="${changeCount(this.stats.deleted)}" hint="删除表/列" variant="danger"></stat-card>
         </div>
 
         <p style="color:var(--muted);font-size:var(--text-sm);overflow-wrap:anywhere;">
@@ -863,8 +866,9 @@ export class SchemaManagementPage extends LitElement {
   private _renderChanges() {
     if (this.schemaAccessError) return "";
     if (!this._activeInstanceId || this.accessInvalidated) return html`<p>请选择可访问的数据库实例</p>`;
-    if (this.changesLoading) return html`<div role="status" class="loading">正在读取变更历史…</div>`;
+    if (this.changesLoading || this.detecting) return html`<div role="status" class="loading">正在读取变更历史…</div>`;
     if (this.changesError) return html`<div role="alert">${this.changesError} <button class="btn btn-refresh" @click=${this.loadChanges}>重试变更历史</button></div>`;
+    if (!this.changes) return "";
     if (this.changes.length === 0) {
       return html`
         <app-empty-state title="暂无变更" description="点击「检测变更」对比最近两次快照">
