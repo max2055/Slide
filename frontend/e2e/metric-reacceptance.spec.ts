@@ -1,5 +1,8 @@
 import { expect, test } from '@playwright/test';
 import { writeFileSync } from 'node:fs';
+import { collectionStatus } from '../src/app/ui/components/metric-test-fixtures.js';
+
+test.use({ timezoneId: 'Asia/Shanghai' });
 
 // Controlled API responses exercise browser state and rendering, not formal
 // collection or real-model acceptance. Those require separate live receipts.
@@ -9,6 +12,14 @@ for (const width of [375, 768, 1440]) for (const theme of ['light', 'dark']) {
     await context.grantPermissions(['clipboard-read', 'clipboard-write']);
     const errors: string[] = []; page.on('pageerror', error => errors.push(error.message));
     const queries: any[] = []; let release: (() => void) | undefined, hold = false, missing = false;
+    await page.route('**/api/maintenance-windows/intervals/instance/8?*', route => {
+      const url = new URL(route.request().url());
+      return route.fulfill({ json: { resource: { type: 'instance', id: 8 },
+        from: url.searchParams.get('from'), to: url.searchParams.get('to'), intervals: [], event_links: [] } });
+    });
+    await page.route('**/api/metrics/config/resources/instance/8/status', route => route.fulfill({ json: collectionStatus() }));
+    await page.route('**/api/metrics/config/resources/instance/8/attempts', route => route.fulfill({ json: [] }));
+    await page.route('**/api/metrics/study/catalog', route => route.fulfill({ json: { metrics: [], snapshots: [] } }));
     await page.route('**/api/metrics/query', async route => {
       const query = route.request().postDataJSON(); queries.push(query);
       if (hold) await new Promise<void>(resolve => { release = resolve; });
