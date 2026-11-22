@@ -15,10 +15,15 @@ type Replay=MetricStudyReplayResult;
 type Bucket=Trend['buckets'][number];
 type Exact=Bucket['min'];
 type StudyRequest = <T>(operation: string, body: unknown) => Promise<T>;
-type StudyWork = (request: StudyRequest) => Promise<void>;
+type StudyWork = (request: StudyRequest, current: () => boolean) => Promise<void>;
 type StudyWindow = Catalog['window'];
 type CatalogMetric = Catalog['metrics'][number];
+type StudyScope = StudyWindow & { resource: { type: string; id: number } };
+type TrendRequest = StudyScope & Pick<Trend, 'metric' | 'dimensions'> & { tier: string; interval_ms: number };
 const dimensionOperation = '长窗口维度';
+const trendOperation = '长窗口趋势';
+const rawOperation = '同桶原始观测';
+const isTrendRead = (operation: string) => operation === trendOperation || operation === rawOperation;
 const text=(v:Exact)=>v? v.denominator==='1'?v.numerator:`${v.numerator}/${v.denominator}`:'不适用 / 未知';
 const local=(s:string)=>new Date(s).toLocaleString('zh-CN');
 const inputTime=(s:string)=>{const d=new Date(s),p=(n:number)=>String(n).padStart(2,'0');return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;};
@@ -45,12 +50,11 @@ export class MetricStudy extends LitElement {
   @state() private error='';
   @state() private operation = '';
   @state() private appliedWindow: StudyWindow | null = null;
-  private retry?: () => Promise<void>;
+  private failedRead?: { operation: string; retry: () => Promise<void> };
   private catalogAt = '';
-  private trendAt = '';
   private replayAt = '';
   @state() private catalog:Catalog|null=null;
-  @state() private trend:Trend|null=null;
+  @state() private trend: { result: Trend; request: TrendRequest; metric: CatalogMetric; readAt: string } | null = null;
   @state() private replay:Replay|null=null;
   @state() private capacity:MetricStudyCapacityResult|null=null;
   @state() private raw:any=null;
@@ -80,20 +84,21 @@ export class MetricStudy extends LitElement {
     this.clearResults();
   }
   private clearResults() {
-    this.catalog = null; this.trend = null; this.replay = null; this.capacity = null; this.raw = null;
-    this.dimensions = []; this.dimKey = '{}'; this.metricKey = ''; this.ruleKey = ''; this.offset = 0;
+    this.catalog = null; this.replay = null; this.capacity = null;
+    this.clearTrend();
+    this.dimensions = []; this.dimKey = '{}'; this.metricKey = ''; this.ruleKey = '';
     this.clearDimensionFailure();
-    this.catalogAt = ''; this.trendAt = ''; this.replayAt = '';
+    this.catalogAt = ''; this.replayAt = '';
   }
   private clearFailure() {
     this.error = '';
-    this.retry = undefined;
+    this.failedRead = undefined;
   }
   private clearDimensionFailure() {
     this.dimensionError = '';
     this.retryDimensions = undefined;
   }
-  private window() {
+  private window(): StudyScope {
     const from = Date.parse(this.from), to = Date.parse(this.to);
     if (!Number.isFinite(from) || !Number.isFinite(to) || from >= to || to - from > 366 * 86400000) {
       throw new Error('时间窗口需在 366 天内且起点早于终点');
@@ -120,7 +125,7 @@ export class MetricStudy extends LitElement {
       if (!current()) throw new Error('STALE_STUDY');
       return value;
     };
-    try { await work(request); }
+    try { await work(request, current); }
     catch (error) {
       if (!current()) return;
       if (isMetricAccessError(error)) {
@@ -136,7 +141,7 @@ export class MetricStudy extends LitElement {
       } else {
         this.error = metricReadError(error, operation)
           + (retainedAt ? ` 保留同窗口 ${local(retainedAt)} 读取的结果。` : '');
-        this.retry = () => this.run(operation, work, retainedAt);
+        this.failedRead = { operation, retry: () => this.run(operation, work, retainedAt) };
       }
     } finally {
       if (current()) this.busy = false;
@@ -144,7 +149,7 @@ export class MetricStudy extends LitElement {
   }
   async load() {
     if (this.invalidated || !this.resourceId) return;
-    let requested: ReturnType<MetricStudy['window']>;
+    let requested: StudyScope;
     try { requested = this.window(); }
     catch (error) {
       this.clear();
@@ -181,12 +186,24 @@ export class MetricStudy extends LitElement {
     this.from = inputTime(new Date(now - days * 86400000).toISOString());
     void this.load();
   }
-  private clearTrend() { this.trend = null; this.raw = null; this.offset = 0; this.trendAt = ''; }
+  private clearTrend() {
+    if (this.busy && isTrendRead(this.operation)) {
+      this.generation++;
+      this.controller.abort();
+      this.busy = false;
+    }
+    if (this.failedRead && isTrendRead(this.failedRead.operation)) this.clearFailure();
+    this.trend = null;
+    this.raw = null;
+    this.offset = 0;
+  }
   private async selectMetric(key: string) {
     const metric = this.catalog?.metrics.find(item => JSON.stringify(item.metric) === key);
-    if (metric) await this.loadDimensions(this.window(), metric);
+    if (metric && key !== this.metricKey && this.appliedWindow) {
+      await this.loadDimensions({ resource: { type: this.resourceType, id: this.resourceId }, ...this.appliedWindow }, metric);
+    }
   }
-  private async loadDimensions(window: ReturnType<MetricStudy['window']>, metric?: CatalogMetric) {
+  private async loadDimensions(window: StudyScope, metric?: CatalogMetric) {
     this.clearDimensionFailure();
     const key = metric ? JSON.stringify(metric.metric) : '';
     if (key !== this.metricKey) {
@@ -204,8 +221,9 @@ export class MetricStudy extends LitElement {
       return;
     }
     const body = { ...window, metric: metric.metric };
-    await this.run(dimensionOperation, async request => {
+    await this.run(dimensionOperation, async (request, current) => {
       const result = await request<{ dimensions: Record<string, string>[] }>('study/dimensions', body);
+      if (!current()) return;
       this.dimensions = result.dimensions;
       const dimension = this.dimensions.find(item => JSON.stringify(item) === this.dimKey) ?? this.dimensions[0];
       const dimensionKey = JSON.stringify(dimension ?? {});
@@ -214,11 +232,21 @@ export class MetricStudy extends LitElement {
     });
   }
   async queryTrend() {
-    const body = { ...this.window(), metric: JSON.parse(this.metricKey), dimensions: JSON.parse(this.dimKey), tier: this.tier, interval_ms: this.interval * 1000 };
-    await this.run('长窗口趋势', async request => {
-      this.trend = await request<Trend>('study/trend', body);
-      this.raw = null; this.offset = 0; this.trendAt = new Date().toISOString();
-    }, this.trendAt);
+    const metric = this.catalog?.metrics.find(item => JSON.stringify(item.metric) === this.metricKey);
+    if (!metric?.definition || !this.appliedWindow || this.dimensionError) return;
+    const dimensions = this.dimensions.find(item => JSON.stringify(item) === this.dimKey);
+    if (!dimensions) return;
+    const body: TrendRequest = {
+      ...this.appliedWindow, resource: { type: this.resourceType, id: this.resourceId },
+      metric: metric.metric, dimensions, tier: this.tier, interval_ms: this.interval * 1000,
+    };
+    await this.run(trendOperation, async (request, current) => {
+      const result = await request<Trend>('study/trend', body);
+      if (!current()) return;
+      this.trend = { result, request: body, metric, readAt: new Date().toISOString() };
+      this.raw = null;
+      this.offset = 0;
+    }, this.trend?.readAt);
   }
   async replayWindow() {
     const body = { ...this.window(), ...JSON.parse(this.ruleKey) };
@@ -236,10 +264,14 @@ export class MetricStudy extends LitElement {
   }
   private async moreRaw() { await this.readRaw(this.raw.window, this.raw.next_cursor); }
   private async readRaw({ from, to }: StudyWindow, cursor?: string) {
-    const body = { resource: { type: this.resourceType, id: this.resourceId }, metric: JSON.parse(this.metricKey),
-      dimensions: JSON.parse(this.dimKey), from, to, ...(cursor ? { cursor } : {}), limit: 100 };
+    if (!this.trend) return;
+    const { resource, metric, dimensions } = this.trend.request;
+    const body = { resource, metric, dimensions, from, to, ...(cursor ? { cursor } : {}), limit: 100 };
     if (!cursor) this.raw = null;
-    await this.run('同桶原始观测', async request => { this.raw = await request('observations', body); });
+    await this.run(rawOperation, async (request, current) => {
+      const raw = await request('observations', body);
+      if (current()) this.raw = raw;
+    });
   }
   private statistic(value: Exact, metric: Catalog['metrics'][number] | undefined) {
     if (!value) return text(value);
@@ -250,8 +282,8 @@ export class MetricStudy extends LitElement {
       ? metricValueText(value.denominator === '1' ? value.numerator : number, unit, metric.metric.id) : exact;
     return html`<span class="reading">${reading}</span><details><summary>精确值</summary><code>${exact}${unit ? ` ${unit}` : ''}</code></details>`;
   }
-  override render(){const rules=this.rules(),buckets=this.trend?.buckets??[];
-    const metric = this.catalog?.metrics.find(item => JSON.stringify(item.metric) === this.metricKey);
+  override render(){const rules=this.rules(),buckets=this.trend?.result.buckets??[];
+    const metric = this.trend?.metric;
     const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
     return html`<app-card><span slot="header">长窗口历史、趋势与隔离回放</span>
       <p class="hint">研究窗口与主图窗口独立。时间按 ${timezone} 显示。</p>
@@ -262,9 +294,9 @@ export class MetricStudy extends LitElement {
       ${this.appliedWindow ? html`<p class="hint">研究窗口（${timezone}）：${local(this.appliedWindow.from)} — ${local(this.appliedWindow.to)}</p>
         <details><summary>研究窗口边界</summary><p>UTC [${this.appliedWindow.from}, ${this.appliedWindow.to})。聚合保留缺口，回放从未知状态开始。</p></details>` : nothing}
       ${this.busy && this.operation !== dimensionOperation ? html`<p role="status">正在读取${this.operation}</p>` : nothing}
-      ${this.error ? html`<p role="alert">${this.error}</p>${this.retry ? html`<button class="btn" @click=${() => void this.retry?.()}>重试${this.operation}</button>` : nothing}` : nothing}
+      ${this.error ? html`<p role="alert">${this.error}</p>${this.failedRead ? html`<button class="btn" ?disabled=${this.busy} @click=${() => void this.failedRead?.retry()}>重试${this.failedRead.operation}</button>` : nothing}` : nothing}
       ${!this.resourceId?html`<p>请先选择授权资源。</p>`:nothing}
-      ${this.catalog?html`<div class="tools"><label>历史指标<select aria-label="历史研究指标" ?disabled=${this.busy} @change=${(e:Event)=>void this.selectMetric((e.target as HTMLSelectElement).value)}>${this.catalog.metrics.map(m=>html`<option value=${JSON.stringify(m.metric)} .selected=${this.metricKey===JSON.stringify(m.metric)}>${metricDisplayName(m.metric.id)}${this.catalog?.metrics.some(other => other.metric.id === m.metric.id && other.metric.semantic_version !== m.metric.semantic_version) ? ` · v${m.metric.semantic_version}` : ''}</option>`)}</select></label>
+      ${this.catalog?html`<div class="tools"><label>历史指标<select aria-label="历史研究指标" ?disabled=${this.busy && !isTrendRead(this.operation)} @change=${(e:Event)=>void this.selectMetric((e.target as HTMLSelectElement).value)}>${this.catalog.metrics.map(m=>html`<option value=${JSON.stringify(m.metric)} .selected=${this.metricKey===JSON.stringify(m.metric)}>${metricDisplayName(m.metric.id)}${this.catalog?.metrics.some(other => other.metric.id === m.metric.id && other.metric.semantic_version !== m.metric.semantic_version) ? ` · v${m.metric.semantic_version}` : ''}</option>`)}</select></label>
         <label>维度<select aria-label="历史研究维度" ?disabled=${this.busy} @change=${(e:Event)=>{this.dimKey=(e.target as HTMLSelectElement).value;this.clearTrend();this.clearFailure();}}>${this.dimensions.map(d=>html`<option value=${JSON.stringify(d)} .selected=${this.dimKey===JSON.stringify(d)}>${Object.entries(d).map(([k,v])=>`${k}=${v}`).join(' / ')||'整体'}</option>`)}</select></label>
         <label>聚合层级<select aria-label="历史聚合层级" ?disabled=${this.busy} .value=${this.tier} @change=${(e:Event)=>{this.tier=(e.target as HTMLSelectElement).value;this.clearTrend();this.clearFailure();}}><option value="5m">5 分钟</option><option value="1h">1 小时</option><option value="1d">1 天</option></select></label>
         <label>采样周期假设（秒）<input aria-label="研究采样周期秒" ?disabled=${this.busy} type="number" min="1" max="86400" .value=${String(this.interval)} @change=${(e:Event)=>{this.interval=Number((e.target as HTMLInputElement).value);this.clearTrend();this.capacity=null;this.clearFailure();}}></label>
@@ -277,9 +309,9 @@ export class MetricStudy extends LitElement {
         ${!this.catalog.metrics.length && !(this.operation === '长窗口目录' && (this.busy || this.error)) ? html`<p role="status">研究窗口没有可读取的正式历史。</p>`:nothing}
         <div class="tools"><label>固定历史规则<select aria-label="历史回放规则" ?disabled=${this.busy} @change=${(e:Event)=>{this.ruleKey=(e.target as HTMLSelectElement).value;this.replay=null;this.replayAt='';this.clearFailure();}}>${rules.map(r=>html`<option value=${r.key} .selected=${this.ruleKey===r.key}>${r.label}</option>`)}</select></label><button class="btn" ?disabled=${this.busy||!this.ruleKey} @click=${this.replayWindow}>隔离回放此窗口</button></div>
         ${!rules.length?html`<p>没有保全的历史规则快照，不能用当前规则代填。</p>`:nothing}`:nothing}
-      ${this.trend?html`<p role="status">${buckets.length ? `趋势已完成 · ${buckets.length} 个桶；${this.trend.note}` : '研究窗口没有趋势记录。'}</p><details><summary>趋势定义与证据</summary>
+      ${this.trend?html`<p role="status">${buckets.length ? `趋势已完成 · ${buckets.length} 个桶；${this.trend.result.note}` : '研究窗口没有趋势记录。'}</p><details><summary>趋势定义与证据</summary>
           <p>${metric?.metric.id} · 语义版本 ${metric?.metric.semantic_version} · 单位 ${metric?.definition?.unit ?? '未知'}</p>
-          <p>证据 ${this.trend.evidence_hash}</p></details>
+          <p>证据 ${this.trend.result.evidence_hash}</p></details>
         <div class="table"><app-data-table .columns=${[{key:'window',label:'本地时间窗口'},{key:'count',label:'count / 数值有效'},{key:'min',label:'min'},{key:'max',label:'max（峰值）'},{key:'avg',label:'avg（精确比值）'},{key:'quality',label:'质量 / 覆盖假设 / 最大缺口'},{key:'raw',label:'原始对照'}]}
           .rows=${buckets.slice(this.offset,this.offset+50).map(b=>({window:`${local(b.from)} — ${local(b.to)}`,count:`${b.count} / ${b.numeric_count}`,min:this.statistic(b.min,metric),max:this.statistic(b.max,metric),avg:this.statistic(b.avg,metric),quality:`${b.quality} / ${(b.coverage*100).toFixed(0)}% / ${b.max_gap_ms/1000}s；无效${b.invalid_count} 非数值${b.non_numeric_count} 估算${b.estimated_count}`,raw:b.raw_status&&b.raw_status!=='available'?html`<span>${b.raw_status==='partial_expired'?'部分原始已过期':'原始已过期'} · ${b.statistics_complete?'保全统计':'边界统计不完整'}；不能回放</span>`:html`<button class="btn btn-sm" ?disabled=${this.busy} @click=${()=>void this.readRaw(b)}>查看原始观测</button>`}))}></app-data-table></div>
         <button class="btn" ?disabled=${this.offset===0} @click=${()=>this.offset=Math.max(0,this.offset-50)}>上一组时间桶</button><button class="btn" ?disabled=${this.offset+50>=buckets.length} @click=${()=>this.offset+=50}>下一组时间桶</button>

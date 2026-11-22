@@ -1,4 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
+import { writeFile } from 'node:fs/promises';
 import type { TemplateBindingRequest, TemplateBindingStatus, TemplatePreview, TemplateTrial } from '../src/app/ui/components/metric-api.js';
 import { collectionStatus } from '../src/app/ui/components/metric-test-fixtures.js';
 const fixture = async (page: Page, tag: string, file: string) => {
@@ -720,3 +721,138 @@ test('MAX-719 study keeps the 30-day catalog and rule choices when dimensions ca
   expect(Date.parse(window!.to) - Date.parse(window!.from)).toBe(30 * 86_400_000);
   expect(dimensionReads).toEqual([first, first, second].map(metric => ({ ...window, metric })));
 });
+
+for (const outcome of ['503', 'late success'] as const) {
+  test(`MAX-719 study discards the previous metric's ${outcome} from the resource menu`, async ({ page }, info) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await listResponses(page);
+    await page.addInitScript(() => {
+      localStorage.setItem('slide.i18n.locale', 'zh-CN');
+      localStorage.setItem('slide.control.settings.v1:default', JSON.stringify({ locale: 'zh-CN' }));
+    });
+    await page.route('**/api/auth/permissions', route => route.fulfill({ json: ['*'] }));
+    await page.route('**/__slide/control-ui-config.json', route => route.fulfill({ json: {} }));
+    await page.routeWebSocket('**/agent-ws', socket => socket.onMessage(message => {
+      if (JSON.parse(String(message)).type === 'auth') socket.send(JSON.stringify({ type: 'auth_ok' }));
+    }));
+    const resource = { type: 'instance', id: fixtureEntries[0].id };
+    await page.route(`**/api/database/instances/${resource.id}`, route => route.fulfill({ json: fixtureEntries[0] }));
+    const first = { id: 'db.uptime_seconds', semantic_version: '1.0.0' };
+    const second = { id: 'mysql.threads.connected', semantic_version: '1.0.0' };
+    const reads: Array<{ operation: string; body: { from: string; to: string; metric?: typeof first; dimensions?: Record<string, string> }; status: number }> = [];
+    const interrupted: Array<{ metric: typeof first; error?: string }> = [];
+    page.on('requestfailed', request => {
+      if (request.url().endsWith('/study/trend')) interrupted.push({
+        metric: request.postDataJSON().metric, error: request.failure()?.errorText,
+      });
+    });
+    let secondDimensions = 0, secondTrends = 0;
+    let releaseFirst!: () => void;
+    const firstResponse = new Promise<void>(resolve => { releaseFirst = resolve; });
+    let firstReleased!: () => void;
+    const firstFinished = new Promise<void>(resolve => { firstReleased = resolve; });
+    await page.route('**/api/metrics/study/**', async route => {
+      const operation = new URL(route.request().url()).pathname.split('/').at(-1)!;
+      const body = route.request().postDataJSON();
+      const { from, to, metric, dimensions, tier, interval_ms } = body;
+      const respond = async (json: object, status = 200) => {
+        reads.push({ operation, body, status });
+        await route.fulfill({ status, json });
+      };
+      if (operation === 'catalog') return respond({
+        resource, window: { from, to },
+        metrics: [{ metric: first, definition: { unit: 's' } }, { metric: second, definition: { unit: 'count' } }],
+        snapshots: [{ config_revision: 3, snapshot_hash: 'fixture', rules: [{ metric: first, version: 1, rule_id: 'uptime', scope: 'item:uptime' }] }],
+      });
+      const isFirst = metric.id === first.id;
+      if (operation === 'dimensions') {
+        if (!isFirst && outcome === '503' && ++secondDimensions === 1) return respond({}, 503);
+        return respond({ dimensions: [isFirst ? { scope: 'primary' } : { scope: 'replica' }] });
+      }
+      if (isFirst && outcome === '503') return respond({}, 503);
+      if (!isFirst && outcome === '503' && ++secondTrends === 1) return respond({}, 503);
+      const reading = { numerator: isFirst ? '318711' : '13', denominator: '1' };
+      const result = { resource, window: { from, to }, metric, dimensions, tier,
+        sampling: { interval_ms, basis: 'explicit_measurement_assumption' },
+        evidence_hash: isFirst ? 'evidence-A' : 'evidence-B', note: '受控趋势',
+        buckets: [{ from, to: new Date(Date.parse(from) + 3_600_000).toISOString(),
+          count: 1, numeric_count: 1, min: reading, max: reading, avg: reading, quality: 'good',
+          coverage: 1, max_gap_ms: 0, invalid_count: 0, non_numeric_count: 0, estimated_count: 0 }],
+      };
+      if (isFirst) {
+        await firstResponse;
+        try { await respond(result); }
+        finally { firstReleased(); }
+      } else await respond(result);
+    });
+    await page.goto('/');
+    await page.getByRole('link', { name: '数据库', exact: true }).click();
+    await page.locator(`button[data-resource-detail-id="${resource.id}"]`).click();
+    await page.getByRole('tab', { name: '指标与趋势', exact: true }).click();
+    await page.getByText('进阶分析与采集证据', { exact: true }).click();
+    const study = page.locator('metric-study');
+    const choices = study.getByRole('combobox', { name: '历史研究指标' });
+    const rule = study.getByRole('combobox', { name: '历史回放规则' });
+    const trend = study.getByRole('button', { name: '对照原始与趋势' });
+    const trendRetry = study.getByRole('button', { name: '重试长窗口趋势', exact: true });
+    const dimensions = study.getByRole('region', { name: '历史研究维度' });
+    await expect(trend).toBeEnabled();
+    const selectedRule = await rule.inputValue();
+    const initial = page.waitForRequest(request => request.url().endsWith('/study/trend'));
+    try {
+      await trend.click();
+      await initial;
+      if (outcome === '503') await expect(trendRetry).toBeVisible();
+      else await expect(study.getByText('正在读取长窗口趋势', { exact: true })).toBeVisible();
+      await expect(choices).toBeEnabled({ timeout: 3000 });
+      await choices.selectOption(JSON.stringify(second));
+      await expect(study.getByText('长窗口趋势服务暂不可用（503）', { exact: false })).toHaveCount(0);
+      await expect(trendRetry).toHaveCount(0);
+      if (outcome === '503') {
+        await expect(dimensions.getByRole('alert')).toContainText('长窗口维度服务暂不可用（503）');
+        const retryDimensions = study.getByRole('button', { name: '重试长窗口维度', exact: true });
+        await expect(retryDimensions).toHaveCount(1);
+        await expect(trend).toBeDisabled();
+        await retryDimensions.press('Enter');
+        await expect(dimensions.getByRole('alert')).toHaveCount(0);
+      }
+      await trend.click();
+      if (outcome === '503') {
+        await expect(trendRetry).toBeVisible();
+        await trendRetry.press('Enter');
+      }
+      await expect(study).toContainText('趋势已完成 · 1 个桶');
+      if (outcome === 'late success') {
+        releaseFirst();
+        await firstFinished;
+      }
+      await expect(choices).toHaveValue(JSON.stringify(second));
+      await study.getByText('趋势定义与证据', { exact: true }).click();
+      await expect(study.getByText('mysql.threads.connected · 语义版本 1.0.0 · 单位 count', { exact: true })).toBeVisible();
+      await expect(study.getByText('证据 evidence-B', { exact: true })).toBeVisible();
+      await expect(study.getByText('13 个连接', { exact: true })).toHaveCount(3);
+      await expect(study).not.toContainText(/evidence-A|318711/);
+      await expect(study.getByRole('combobox', { name: '历史研究窗口' })).toHaveValue('30');
+      await expect(rule).toHaveValue(selectedRule);
+      const { from, to } = reads.find(read => read.operation === 'catalog')!.body;
+      expect(Date.parse(to) - Date.parse(from)).toBe(30 * 86_400_000);
+      for (const read of reads) expect(read.body).toMatchObject({ resource, from, to });
+      const dimensionReads = reads.filter(read => read.operation === 'dimensions');
+      expect(dimensionReads.map(({ body, status }) => [body.metric, status])).toEqual(outcome === '503'
+        ? [[first, 200], [second, 503], [second, 200]] : [[first, 200], [second, 200]]);
+      if (outcome === '503') expect(dimensionReads[1].body).toEqual(dimensionReads[2].body);
+      const trends = reads.filter(read => read.operation === 'trend');
+      expect(trends.map(({ body, status }) => [body.metric, body.dimensions, status])).toEqual(outcome === '503'
+        ? [[first, { scope: 'primary' }, 503], [second, { scope: 'replica' }, 503], [second, { scope: 'replica' }, 200]]
+        : [[second, { scope: 'replica' }, 200], [first, { scope: 'primary' }, 200]]);
+      if (outcome === '503') expect(trends[1].body).toEqual(trends[2].body);
+      await study.getByText('证据 evidence-B', { exact: true }).scrollIntoViewIfNeeded();
+      await page.screenshot({ path: info.outputPath('trend-B.png') });
+      await writeFile(info.outputPath('reads.json'), JSON.stringify({
+        browser: page.context().browser()?.version(), viewport: page.viewportSize(), outcome, reads, interrupted,
+      }, null, 2));
+    } finally {
+      releaseFirst();
+    }
+  });
+}
