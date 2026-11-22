@@ -142,6 +142,8 @@ test('MAX-724/MAX-430: real feedback reads, permission downgrade, status rollbac
   await expect(results.getByRole('combobox')).toHaveCount(0);
   await page.screenshot({ path: info.outputPath('saved-status-after-list-503.png') });
 
+  const retryReadAt = new Date(Date.parse(savedAt) + 1_000);
+  await page.clock.setFixedTime(retryReadAt);
   await retry.press('Enter');
   await expect(select).toHaveValue('resolved');
   await expect(results).toBeFocused();
@@ -157,7 +159,7 @@ test('MAX-724/MAX-430: real feedback reads, permission downgrade, status rollbac
   await expect(failure).toContainText('HTTP 503');
   await expect(failure).toContainText('显示上次读取成功的记录');
   const nextReadAt = await failure.locator('time').getAttribute('datetime');
-  expect(Date.parse(nextReadAt!)).toBeGreaterThan(listReadAt.getTime());
+  expect(nextReadAt).toBe(retryReadAt.toISOString());
   await expect(savedRow.getByText('已解决', { exact: true })).toBeVisible();
   await expect(results.getByText(savedLabel, { exact: true })).toHaveCount(0);
   expect(writes).toEqual(writesBeforeRetry);
