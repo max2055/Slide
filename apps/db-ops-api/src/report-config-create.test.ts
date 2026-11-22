@@ -6,6 +6,7 @@ import { registerHttpSecurity } from './security/http-security.js';
 import { dbConnection } from './db-connection.js';
 import { reportConfigService, ReportConfigCreateOutcomeUnknownError } from './report-config-database-service.js';
 import { InvalidReportCronError } from './report-cron.js';
+import { getReportAccessScope } from './report-access.js';
 import { assertReportTarget } from './report-target.js';
 
 const value = { name: 'MAX-615', cron: '@daily', type: 'health', instance_id: 701 };
@@ -85,8 +86,8 @@ describe('MAX-615 R1 reconciliation list', () => {
     const end = source.indexOf('  // 创建报表配置', start);
     expect(start).toBeGreaterThan(0); expect(end).toBeGreaterThan(start);
     const code = ts.transpileModule(source.slice(start, end), { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
-    new Function('fastify', 'verifyToken', 'requirePermission', 'reportConfigService', 'filterByInstanceAccess', 'CronJob', code)(
-      app, async () => {}, () => async () => {}, reportConfigService, (_actor: unknown, rows: unknown) => rows, undefined,
+    new Function('fastify', 'verifyToken', 'requirePermission', 'reportConfigService', 'getReportAccessScope', 'CronJob', code)(
+      app, async (req: any) => { req.user = { permissions: ['*'] }; }, () => async () => {}, reportConfigService, getReportAccessScope, undefined,
     );
     vi.spyOn(console, 'error').mockImplementation(() => {});
     const execute = vi.fn().mockRejectedValueOnce(Error('SELECT private schema')).mockResolvedValueOnce([[]]);
