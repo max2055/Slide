@@ -20,6 +20,7 @@ import { RolloutControl } from '../../apps/db-ops-api/src/metrics/rollout/contro
 import { MetricConsumerService } from '../../apps/db-ops-api/src/metrics/consumers/service.js';
 import { registerMetricConsumerRoutes } from '../../apps/db-ops-api/src/metrics/consumers/routes.js';
 import { identify, sample } from '../../apps/db-ops-api/src/contracts/metrics/fixtures.js';
+import type { NormalizedObservation } from '../../apps/db-ops-api/src/contracts/metrics/index.js';
 
 // Only an explicitly isolated MySQL fixture: no shared bindings, scheduler, SSH or model calls.
 let app: ReturnType<typeof Fastify>, vite: Awaited<ReturnType<typeof createServer>>;
@@ -69,6 +70,7 @@ test.beforeAll(async () => {
   const service = new MetricConsumerService(policy, registry, {
     queryWindow: (...args) => formal.queryWindow(...args),
     latestObservations: (...args) => formal.latestObservations(...args),
+    readObservationPage: (...args) => formal.readObservationPage(...args),
     inventory: (...args) => formal.inventory(...args),
     dimensions: (...args) => formal.dimensions(...args),
     attempts: async () => [],
@@ -88,7 +90,7 @@ test.afterAll(async () => {
   await vite?.close(); await app?.close(); await pool?.end();
   if (admin) { await admin.query(`DROP DATABASE IF EXISTS ${schema}`); await admin.end(); }
 });
-async function seed(kind: 'instance' | 'server', at: string, reset = false) {
+async function seed(kind: 'instance' | 'server', at: string, reset = false, overrides: Partial<NormalizedObservation> = {}) {
   if (reset) {
     await pool.query('DELETE FROM metric_publications'); await pool.query('DELETE FROM metric_observations'); await pool.query('DELETE FROM metric_rollout');
   }
@@ -96,10 +98,12 @@ async function seed(kind: 'instance' | 'server', at: string, reset = false) {
   const observation = identify({ ...sample(definition.id), resource_id: '992', observed_at: at, collected_at: at, stored_at: null,
     ...(kind === 'instance' ? { value: { encoding: 'float64' as const, value: uptime } } : {}),
     versions: { ...sample(definition.id).versions, package_id: id, package_version: version },
+    ...overrides,
   });
   const ticket = { source: 'semantic', generation: 1, revision: 1 };
   if (reset) { await control.initialize(observation, { source: 'semantic', read: 'semantic', package: { id, version, digest }, revision: 1 }); await control.applied(observation, ticket); }
   await control.publish(observation, definition, ticket);
+  return observation;
 }
 async function capture(page: Page, name: string) {
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
@@ -122,18 +126,19 @@ for (const kind of ['instance', 'server'] as const) for (const [width, height] o
   await view.getByRole('tab', { name: '指标与趋势', exact: true }).click();
   const metrics = view.locator('resource-metric-browser'), header = view.locator('.last-updated');
   const metricId = definitionFor(kind).id;
+  const metricName = kind === 'instance' ? '数据库运行时长' : '文件系统已用空间';
   await metrics.getByRole('searchbox', { name: '筛选指标' }).fill(metricId);
-  const metricRow = metrics.getByRole('row').filter({ hasText: metricId });
+  const metricRow = metrics.getByRole('row').filter({ has: page.getByText(metricName, { exact: true }) });
   const time = metricRow.locator('time');
   const evidence = (state: string) => capture(page, `${kind}-${state}-${width}`);
   await expect(time).toHaveAttribute('datetime', sampledAt);
-  await expect(metricRow).toContainText('已过期'); await expect(header).toContainText('非资源观测');
+  await expect(metricRow).toContainText('旧值'); await expect(header).toContainText('非资源观测');
   await evidence('stale');
   const firstRead = await header.textContent();
   await page.clock.fastForward(2000);
   const refresh = view.getByRole('button', { name: '刷新', exact: true }); await refresh.focus(); await page.keyboard.press('Enter');
   await expect(header).not.toHaveText(firstRead!); await expect(refresh).toBeEnabled();
-  await expect(time).toHaveAttribute('datetime', sampledAt); await expect(metricRow).toContainText('已过期');
+  await expect(time).toHaveAttribute('datetime', sampledAt); await expect(metricRow).toContainText('旧值');
   await evidence('refreshed-still-stale');
   const successfulRead = await header.textContent();
   const path = kind === 'instance' ? '**/api/database/instances/992' : '**/api/servers/992';
@@ -154,7 +159,7 @@ for (const kind of ['instance', 'server'] as const) for (const [width, height] o
     expect.objectContaining({ observed_at: freshAt, freshness: 'fresh' }),
   ]);
   await expect(refresh).toBeEnabled(); await expect(time).toHaveAttribute('datetime', freshAt);
-  await expect(metricRow).not.toContainText(/已过期|时效待确认/); await evidence('fresh');
+  await expect(metricRow).not.toContainText(/旧值|时效待确认/); await evidence('fresh');
   await pool.query('DELETE FROM metric_publications');
   await refresh.click(); await expect(refresh).toBeEnabled(); await expect(time).toHaveCount(0);
   await expect(metricRow).toContainText('暂无采样'); await evidence('unknown');
@@ -171,4 +176,62 @@ for (const kind of ['instance', 'server'] as const) for (const [width, height] o
     source: kind === 'instance' ? 'live isolated MySQL SHOW GLOBAL STATUS Uptime; controlled evaluation clock' : 'controlled filesystem normalized observation; no SSH',
     path: 'JWT -> live SQL actor -> production latest-metric consumer -> MySQL policy + formal publication store -> resource metric browser',
   }, null, 2));
+});
+
+test('MAX-719 reads exact old observation evidence outside the chart window', async ({ page }) => {
+  const oldAt = new Date(Date.parse(evaluatedAt) - 2 * 3_600_000).toISOString();
+  const definition = definitionFor('server');
+  const fixture = sample(definition.id);
+  const exactValue = { encoding: 'uint64' as const, value: '9007199254746993' };
+  const old = await seed('server', oldAt, true, {
+    value: exactValue, source: { ...fixture.source, attempt_id: 'same-time-original' },
+  });
+  await page.clock.install({ time: Date.parse(evaluatedAt) });
+  await page.addInitScript(token => localStorage.setItem('token', token), token);
+  await page.goto(`${url}/e2e/fixtures/detail-observation.html?kind=server&tab=server-detail&id=992`);
+  const latestResponse = page.waitForResponse(r => r.url().endsWith('/api/metrics/latest') && r.ok());
+  await page.locator('server-detail').getByRole('tab', { name: '指标与趋势', exact: true }).click();
+  const latest = await (await latestResponse).json();
+  expect(latest.metrics.find((metric: any) => metric.definition.id === definition.id).series[0])
+    .toMatchObject({ observation_id: old.id, observed_at: oldAt, dimensions: old.dimensions, value: exactValue, freshness: 'stale' });
+
+  const sameTime = await seed('server', oldAt, false, {
+    value: exactValue, source: { ...fixture.source, attempt_id: 'same-time-other' },
+  });
+  expect(sameTime.id).not.toBe(old.id);
+  const observations = '**/api/metrics/observations';
+  const metrics = page.locator('resource-metric-browser');
+  const openMetric = () => metrics.getByRole('button', { name: /^图形 · 文件系统已用空间/ }).click();
+  await openMetric();
+  const defaultRead = page.waitForResponse(r => r.url().endsWith('/api/metrics/observations') && r.ok());
+  await metrics.getByRole('button', { name: '查看采集详情' }).click();
+  expect((await (await defaultRead).json()).observations).toEqual([]);
+  const evidence = metrics.locator('.metric-evidence');
+  await page.route(observations, route => route.fulfill({ status: 503, json: {} }));
+  await evidence.getByText('原始值与来源', { exact: true }).click();
+  await expect(evidence.getByRole('alert')).toContainText('最近正式值来源服务暂不可用（503）');
+  await page.unroute(observations);
+  const exactRead = page.waitForResponse(r => r.url().endsWith('/api/metrics/observations') && r.ok());
+  await evidence.getByRole('button', { name: '重试读取来源' }).click();
+  const response = await exactRead;
+  expect(response.request().postDataJSON()).toMatchObject({
+    resource: { type: 'server', id: 992 }, metric: old.metric, dimensions: old.dimensions,
+    from: oldAt, to: new Date(Date.parse(oldAt) + 1).toISOString(),
+  });
+  expect((await response.json()).observations.map((point: any) => point.id)).toEqual([old.id, sameTime.id].sort());
+  await expect(evidence.locator('pre')).toContainText('same-time-original');
+  expect(JSON.parse((await evidence.locator('pre').textContent())!)).toMatchObject({
+    metric: definition.id, semantic_version: definition.semantic_version, dimensions: old.dimensions,
+    observation_id: old.id, observed_at: oldAt, unit: old.unit, value: exactValue,
+    sources: [{ id: old.id, source: old.source, versions: old.versions }],
+  });
+  await expect(evidence.locator('pre')).not.toContainText('same-time-other');
+
+  await metrics.getByRole('button', { name: '返回指标列表' }).click();
+  await openMetric();
+  await pool.query('DELETE FROM metric_publications WHERE observation_id=?', [old.id]);
+  await evidence.getByText('原始值与来源', { exact: true }).click();
+  await expect(evidence.getByRole('status')).toContainText('此正式观测的来源不可读');
+  await expect(evidence.locator('pre')).not.toContainText(/sources|same-time-other/);
+  await expect(evidence.locator('pre')).toContainText(old.id);
 });
