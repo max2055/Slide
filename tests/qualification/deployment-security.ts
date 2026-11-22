@@ -93,6 +93,17 @@ for (const [name, service] of [['api', api], ['sandbox-controller', controller],
   requireInvariant(service.privileged !== true, `${name} must not be privileged`);
 }
 requireInvariant(!controller.ports, 'sandbox-controller must not publish a host port');
+const frontendProxyIp = frontend.networks?.edge?.ipv4_address;
+const tlsEdgeIp = tlsEdge.networks?.edge?.ipv4_address;
+requireInvariant(
+  Boolean(frontendProxyIp && tlsEdgeIp && frontendProxyIp !== tlsEdgeIp)
+    && environment(api).API_TRUSTED_PROXY_IPS === `${frontendProxyIp},${tlsEdgeIp}`,
+  'API must trust the fixed frontend and TLS edge addresses in that order',
+);
+requireInvariant(
+  Boolean(compose.networks?.edge?.ipam?.config?.[0]?.ip_range),
+  'edge must keep dynamic allocation separate from the static proxy addresses',
+);
 for (const message of retainedPortConstraintFailures(api.ports, frontend.ports, tlsEdge.ports)) {
   failures.push(message);
 }
