@@ -29,7 +29,7 @@ for (const width of [375, 768, 1440]) for (const theme of ['light', 'dark']) {
     await select.selectOption('mysql.key_cache.used_percent');
     hold = true;
     await metrics.getByRole('combobox', { name: '时间范围', exact: true }).selectOption('6');
-    await expect(metrics.getByLabel('正在读取指标')).toBeVisible();
+    await expect(metrics.getByRole('status').filter({ hasText: '正在读取主图指标' })).toBeVisible();
     await expect(select).toHaveValue('mysql.key_cache.used_percent');
     await expect.poll(() => !!release).toBe(true); hold = false; release!();
     await expect(metrics.locator('.metric-name')).toHaveText(['键缓存使用率']);
@@ -41,11 +41,12 @@ for (const width of [375, 768, 1440]) for (const theme of ['light', 'dark']) {
     await expect(metrics.getByRole('button', { name: '刷新标准指标' })).toBeEnabled();
     await expect(select).toHaveValue('mysql.key_cache.used_percent');
     const current = metrics.locator('.current');
-    await expect(current.locator('strong')).toHaveText('0');
-    await current.getByText('指标标识', { exact: true }).click();
-    await expect(current.locator('code')).toHaveText('mysql.key_cache.used_percent');
-    await current.getByRole('button', { name: '复制 mysql.key_cache.used_percent', exact: true }).click();
-    expect(await page.evaluate(() => navigator.clipboard.readText())).toBe('mysql.key_cache.used_percent');
+    await expect(current.locator('strong')).toHaveText('0 %');
+    const actions = metrics.getByRole('group', { name: '所选指标操作' });
+    await actions.getByText('原始值与来源', { exact: true }).click();
+    await expect(actions.locator('pre')).toContainText('mysql.key_cache.used_percent');
+    await actions.getByRole('button', { name: '复制证据', exact: true }).click();
+    expect(JSON.parse(await page.evaluate(() => navigator.clipboard.readText())).metric).toBe('mysql.key_cache.used_percent');
     const chart = metrics.locator('metric-chart');
     await expect(chart.locator('canvas')).toBeVisible();
     await expect(chart).toContainText('Asia/Shanghai');

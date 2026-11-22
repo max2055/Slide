@@ -478,3 +478,186 @@ for (const width of [1366, 1440, 1920]) test(`MAX-397 SNMP capacity guidance sta
   expect(await guidance.evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
 });
+
+const metricReadings = [
+  { id: 'db.uptime_seconds', unit: 's', encoding: 'float64', value: 318711, reading: '3 天 16 小时' },
+  { id: 'mysql.connections.limit', unit: 'count', encoding: 'uint64', value: '13', reading: '13 个连接' },
+  { id: 'mysql.queries.per_second', unit: 'count/s', encoding: 'float64', value: 6.774611940888977, reading: '6.77 次/秒' },
+  { id: 'mysql.tables.estimated_allocated_bytes', unit: 'By', encoding: 'uint64', value: '5638258688', reading: '5.25 GiB' },
+];
+const metricsFixture = (from: string, to: string) => metricReadings.map((item, index) => {
+  const definition = { id: item.id, semantic_version: '1.0.0', category: 'canonical', meaning: item.id,
+    unit: item.unit, kind: 'gauge', value_type: item.encoding };
+  const point = {
+    dimensions: { scope: 'primary' }, unit: item.unit, value: { encoding: item.encoding, value: item.value }, observed_at: from,
+    quality: { status: 'good', reason: 'none' }, freshness: index === 1 ? 'stale' : 'fresh', accuracy: 'exact',
+    sources: [{ source: { collector_id: 'controlled-fixture' } }],
+  };
+  const bucket = { ...point, coverage: 1, window: { from, to } };
+  return { definition, point, bucket, state: index === 1 ? 'temporary_failure' : 'available' };
+});
+
+for (const [resourceType, width, height] of [['instance', 1366, 768], ['server', 1440, 900], ['network_device', 1920, 1080]] as const) {
+  test(`metric readings, evidence and dimensions for ${resourceType} at ${width}×${height}`, async ({ page, context }, info) => {
+    await page.setViewportSize({ width, height });
+    await context.grantPermissions(['clipboard-read', 'clipboard-write']);
+    const observed = new Date(Date.now() - 30 * 60_000).toISOString();
+    const latest = metricsFixture(observed, new Date().toISOString());
+    let history: { metric: unknown; dimensions: unknown; from: string; to: string } | undefined;
+    await page.route('**/api/metrics/**', route => {
+      const path = new URL(route.request().url()).pathname;
+      if (path.endsWith('/status')) return route.fulfill({ json: collectionStatus() });
+      if (path.endsWith('/attempts')) return route.fulfill({ json: [] });
+      const body = route.request().postDataJSON();
+      if (path.endsWith('/latest')) return route.fulfill({ json: {
+        resource: body, evaluated_at: observed, metrics: latest.map(({ definition, point, state }) => ({ definition, state, series: [point] })),
+      } });
+      if (path.endsWith('/catalog')) return route.fulfill({ json: { metrics: [], snapshots: [] } });
+      const window = { from: body.from, to: body.to };
+      const metrics = metricsFixture(body.from, body.to);
+      if (path.endsWith('/observations')) {
+        history = body;
+        const point = metrics.find(item => item.definition.id === body.metric.id)!.point;
+        return route.fulfill({ json: { window, observations: [point], total: 1, has_more: false } });
+      }
+      return route.fulfill({ json: { profile: { columns: [] }, window, metrics: metrics.map(({ definition, bucket, state }) => ({
+        definition, state, series: [
+          { dimensions: { scope: 'primary' }, buckets: definition.unit === 'count/s'
+            ? [bucket, { ...bucket, value: null, observed_at: null, quality: { status: 'unknown', reason: 'gap' } }] : [bucket] },
+          ...(definition.id === 'db.uptime_seconds' ? [{ dimensions: { scope: 'replica' }, buckets: [{ ...bucket, value: null, observed_at: null, quality: { status: 'unknown', reason: 'gap' }, freshness: 'unknown' }] }] : []),
+        ],
+      })) } });
+    });
+    await page.route('**/api/maintenance-windows/intervals/**', route => {
+      const url = new URL(route.request().url());
+      return route.fulfill({ json: { resource: { type: resourceType, id: 1 }, from: url.searchParams.get('from'),
+        to: url.searchParams.get('to'), intervals: [], event_links: [] } });
+    });
+    await fixture(page, `<resource-metric-browser resourcetype="${resourceType}" resourceid="1"></resource-metric-browser>`, 'components/resource-metric-browser');
+    const browser = page.locator('resource-metric-browser');
+    const table = browser.locator('app-data-table').first();
+    for (const { reading } of metricReadings) await expect(table.getByText(reading, { exact: true })).toBeVisible();
+    await expect(table.getByText('旧值', { exact: true })).toBeVisible();
+    await browser.getByText('进阶分析与采集证据', { exact: true }).click();
+    const metrics = browser.locator('semantic-metrics');
+    const summary = metrics.getByRole('region', { name: '窗口内最近可用值' });
+    for (const { reading } of metricReadings) {
+      const value = summary.getByText(reading, { exact: true });
+      await expect(value).toBeVisible();
+      expect(await value.evaluate(element => {
+        const selection = document.createRange();
+        selection.selectNodeContents(element);
+        return selection.getClientRects().length;
+      })).toBe(1);
+    }
+    await expect(summary.locator('.latest-value').filter({ hasText: 'scope=replica' })).toContainText('暂无可用观测');
+    await summary.scrollIntoViewIfNeeded();
+    await page.screenshot({ path: info.outputPath(`metrics-${width}x${height}.png`) });
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
+
+    if (resourceType === 'instance') {
+      const actions = metrics.getByRole('group', { name: '所选指标操作' });
+      await actions.getByRole('combobox').selectOption({ label: 'MySQL 每秒语句数 · scope=primary' });
+      await actions.getByText('原始值与来源', { exact: true }).click();
+      await actions.getByRole('button', { name: '复制证据' }).click();
+      const copied = JSON.parse(await page.evaluate(() => navigator.clipboard.readText()));
+      expect(copied).toMatchObject({ metric: 'mysql.queries.per_second', semantic_version: '1.0.0', dimensions: { scope: 'primary' },
+        unit: 'count/s', value: { encoding: 'float64', value: 6.774611940888977 }, sources: [{ source: { collector_id: 'controlled-fixture' } }] });
+      await actions.getByRole('button', { name: '查看历史趋势' }).click();
+      const chart = metrics.locator('.trend-grid metric-chart');
+      await expect(chart.locator('canvas').first()).toBeVisible();
+      const plotted = await chart.evaluate((element: any) => ({
+        data: element.series[0].data,
+        tooltip: element._chart.getOption().tooltip[0].valueFormatter(element.series[0].data[0]),
+      }));
+      expect(plotted).toEqual({ data: [6.774611940888977, null], tooltip: '6.77 次/秒' });
+      await actions.getByRole('button', { name: '查看采集详情' }).click();
+      await expect(metrics.locator('.raw-observations').getByText('6.77 次/秒', { exact: true })).toBeVisible();
+      expect(history).toMatchObject({ metric: { id: copied.metric, semantic_version: copied.semantic_version }, dimensions: copied.dimensions });
+    }
+  });
+}
+
+test('metric, maintenance and 30-day study reads recover independently', async ({ page }, info) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  let queryStatus = 503, maintenanceStatus = 504, studyStatus = 503;
+  let populate = false;
+  const queries: Array<{ from: string; to: string }> = [];
+  const maintenance: Array<{ from: string | null; to: string | null }> = [];
+  const studies: Array<{ from: string; to: string }> = [];
+  await page.route('**/api/metrics/**', route => {
+    const path = new URL(route.request().url()).pathname;
+    if (path.endsWith('/status')) return route.fulfill({ json: collectionStatus() });
+    if (path.endsWith('/attempts')) return route.fulfill({ json: [] });
+    const { from, to } = route.request().postDataJSON();
+    if (path.endsWith('/catalog')) {
+      studies.push({ from, to });
+      return route.fulfill({ status: studyStatus, json: studyStatus === 200 ? { metrics: [], snapshots: [] } : {} });
+    }
+    queries.push({ from, to });
+    const metrics = populate ? metricsFixture(from, to).map(({ definition, bucket, state }) =>
+      ({ definition, state, series: [{ dimensions: {}, buckets: [bucket] }] })) : [];
+    return route.fulfill({ status: queryStatus, json: queryStatus === 200 ? { profile: { columns: [] }, window: { from, to }, metrics } : {} });
+  });
+  await page.route('**/api/maintenance-windows/intervals/**', route => {
+    const url = new URL(route.request().url());
+    const from = url.searchParams.get('from'), to = url.searchParams.get('to');
+    maintenance.push({ from, to });
+    return route.fulfill({ status: maintenanceStatus, json: maintenanceStatus === 200 ? {
+      resource: { type: 'instance', id: 9 }, from, to, event_links: [],
+      intervals: populate ? [{ id: 'test', revision: 1, name: '计划维护', reason: '定期巡检', timezone: 'Asia/Shanghai',
+        effective_from: from, effective_to: to }] : [],
+    } : {} });
+  });
+  await fixture(page, '<semantic-metrics resourceid="9"></semantic-metrics>', 'components/semantic-metrics');
+  const metrics = page.locator('semantic-metrics');
+  const section = metrics.getByRole('region', { name: '维护历史' });
+  const study = metrics.locator('metric-study');
+  await expect(metrics.getByText('指标查询服务暂不可用（503），请稍后重试。', { exact: true })).toBeVisible();
+  await expect(section).toContainText('维护历史读取超时');
+  await expect(study).toContainText('长窗口目录服务暂不可用（503）');
+  await expect(study.getByRole('combobox', { name: '历史研究窗口' })).toHaveValue('30');
+  await expect(metrics.getByText('主图窗口（', { exact: false }).first()).toBeVisible();
+  await expect(study.getByText('研究窗口（', { exact: false })).toBeVisible();
+  await expect(metrics).not.toContainText('正在读取');
+  await expect(metrics).not.toContainText('保留同窗口');
+  await page.screenshot({ path: info.outputPath('independent-read-errors.png') });
+
+  queryStatus = 504;
+  await metrics.getByRole('button', { name: '重试主图指标' }).click();
+  await expect(metrics.getByText('指标查询读取超时，请重试。', { exact: true })).toBeVisible();
+  queryStatus = 200;
+  await metrics.getByRole('button', { name: '重试主图指标' }).click();
+  await expect(metrics.getByText('主图窗口没有指标记录。')).toBeVisible();
+
+  maintenanceStatus = 503;
+  await section.getByRole('button', { name: '重试维护历史' }).click();
+  await expect(section).toContainText('维护历史服务暂不可用（503）');
+  maintenanceStatus = 200;
+  await section.getByRole('button', { name: '重试维护历史' }).click();
+  await expect(section).toContainText('没有已记录的有限期限维护区段');
+
+  studyStatus = 200;
+  await study.getByRole('button', { name: '重试长窗口目录' }).click();
+  await expect(study).toContainText('研究窗口没有可读取的正式历史');
+  expect(queries).toEqual([queries[0], queries[0], queries[0]]);
+  expect(maintenance).toEqual([queries[0], queries[0], queries[0]]);
+  expect(studies).toEqual([studies[0], studies[0]]);
+  expect(Date.parse(studies[0].to) - Date.parse(studies[0].from)).toBe(30 * 86_400_000);
+
+  populate = true;
+  await metrics.getByRole('button', { name: '刷新标准指标' }).click();
+  await expect(metrics.getByRole('region', { name: '窗口内最近可用值' })).toBeVisible();
+  await expect(section).toContainText('计划维护');
+  await expect(section).toContainText('告警通知受抑制');
+  await section.getByText('维护区间边界与事件影响', { exact: true }).click();
+  await section.scrollIntoViewIfNeeded();
+  await page.screenshot({ path: info.outputPath('maintenance-recovered.png') });
+  expect(studies).toHaveLength(2);
+
+  queryStatus = 403;
+  await metrics.getByRole('button', { name: '刷新标准指标' }).click();
+  await expect(metrics.getByText('没有此资源的查看权限', { exact: true })).toBeVisible();
+  await expect(metrics.getByRole('region', { name: '窗口内最近可用值' })).toHaveCount(0);
+  await expect(section).not.toContainText('计划维护');
+});

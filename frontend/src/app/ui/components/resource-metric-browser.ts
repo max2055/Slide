@@ -2,8 +2,9 @@ import { LitElement, css, html, nothing } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 import { sharedBtnStyles } from '../../styles/shared-btn-styles.js';
 import { sharedFieldStyles } from '../../styles/shared-field-styles.js';
-import { MetricRequestError, metricRequest } from './metric-api.js';
+import { isMetricAccessError, metricReadError, metricRequest } from './metric-api.js';
 import { metricDisplayName } from './metric-display.js';
+import { metricPurpose, metricValueText, renderMetricEvidence } from './metric-value-display.js';
 import { bucketMsFor, type MetricValue, type SemanticResult } from './semantic-metrics.js';
 import type { MetricSeries } from './metric-chart.js';
 import './app-badge.js';
@@ -17,7 +18,7 @@ type Dimensions = Record<string, string>;
 type Window = { from: string; to: string };
 type Mode = 'graph' | 'values';
 type Preset = '15' | '60' | '360' | '1440' | '10080' | '129600' | 'custom';
-type Sample = { observed_at: string; value: MetricValue | null; unit: string; quality: { status: string }; accuracy: string };
+type Sample = { observed_at: string; value: MetricValue | null; unit: string; quality: { status: string; reason?: string }; accuracy: string; sources?: unknown[]; id?: string };
 type Point = Sample & { dimensions: Dimensions; freshness: string };
 type Latest = {
   resource: { type: string; id: number }; evaluated_at: string;
@@ -59,7 +60,7 @@ const validWindow = ({ from, to }: Window, days: number) => {
   return Number.isFinite(start) && Number.isFinite(end) && start < end && end <= Date.now() && end - start <= days * 86_400_000;
 };
 const normalizedWindow = ({from, to}: Window): Window => ({ from: new Date(from).toISOString(), to: new Date(to).toISOString() });
-const accessDenied = (error: unknown) => error instanceof MetricRequestError && [401, 403, 404].includes(error.status);
+const timezone = () => Intl.DateTimeFormat().resolvedOptions().timeZone;
 
 function chartNumber(value: MetricValue | null, quality: string, sameUnit: boolean, floating: boolean): number | null {
   if (!value || !sameUnit || !['good', 'partial'].includes(quality) || !numeric.includes(value.encoding)) return null;
@@ -68,10 +69,10 @@ function chartNumber(value: MetricValue | null, quality: string, sameUnit: boole
     ? number : null;
 }
 
-function displayValue(sample: Sample | undefined, full = false) {
+function displayValue(sample: Sample | undefined, id: string, full = false) {
   if (!sample?.value) return html`<span class="subtle">${sample ? '空值' : '暂无采样'}</span>`;
   const { value, unit } = sample;
-  if (numeric.includes(value.encoding)) return html`<span class="number">${value.value}</span>${unit === '1' ? nothing : html` <span class="subtle">${unit}</span>`}`;
+  if (numeric.includes(value.encoding)) return html`<span class="number">${metricValueText(value.value!, unit, id)}</span>`;
   if (typeof value.value === 'string') return full ? html`<span class="record-text">${value.value}</span>`
     : html`<span class="sample-preview" title=${value.value}>${value.value}</span>`;
   return full ? html`<details><summary>查看结构化值</summary><pre>${JSON.stringify(value, null, 2)}</pre></details>`
@@ -103,6 +104,8 @@ export class ResourceMetricBrowser extends LitElement {
   @state() private advanced = false;
   private latestRequest?: AbortController;
   private historyRequest?: AbortController;
+  private historyScope = '';
+  private historyAt = '';
   private invalidated = false;
   private initialized = false;
 
@@ -132,7 +135,8 @@ export class ResourceMetricBrowser extends LitElement {
     .name { font-weight: 600; overflow-wrap: anywhere; }
     .dimension, .status-note { display: block; margin-top: var(--space-xs); color: var(--muted); font-size: var(--text-sm); overflow-wrap: anywhere; }
     .sample-preview { display: inline-block; max-width: 22ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom; }
-    .number, time { font-variant-numeric: tabular-nums; }
+    .number, time { font-variant-numeric: tabular-nums; white-space: nowrap; }
+    .number { font-weight: 600; }
     .record-text, pre { white-space: pre-wrap; overflow-wrap: anywhere; }
     .badges, .modes { display: flex; gap: var(--space-xs); flex-wrap: wrap; }
     .modes button[aria-pressed='true'] { color: var(--accent); background: var(--accent-subtle); }
@@ -221,8 +225,9 @@ export class ResourceMetricBrowser extends LitElement {
       }
     } catch (error) {
       if (request.signal.aborted) return;
-      if (accessDenied(error)) this.invalidate();
-      else this.listError = '读取最新采集数据失败，请刷新重试。';
+      if (isMetricAccessError(error)) this.invalidate();
+      this.listError = metricReadError(error, '最新正式采样')
+        + (this.latest ? ` 保留 ${timestamp(this.latest.evaluated_at)} 读取的结果。` : '');
     } finally {
       if (!request.signal.aborted) this.listBusy = false;
     }
@@ -241,7 +246,8 @@ export class ResourceMetricBrowser extends LitElement {
             && ['gauge', 'counter'].includes(definition.kind) && (!point?.value || numeric.includes(point.value.encoding)),
         };
       });
-    }).sort((a, b) => a.name.localeCompare(b.name, 'zh-CN') || a.key.localeCompare(b.key));
+    }).sort((a, b) => metricPurpose(a.metric.definition).localeCompare(metricPurpose(b.metric.definition), 'zh-CN')
+      || a.name.localeCompare(b.name, 'zh-CN') || a.key.localeCompare(b.key));
   }
 
   private restoreRoute = () => {
@@ -331,6 +337,7 @@ export class ResourceMetricBrowser extends LitElement {
     this.graph = null;
     this.historyPage = null;
     this.historyError = '';
+    this.historyScope = ''; this.historyAt = '';
     this.cursorStack = [undefined];
   }
 
@@ -375,8 +382,13 @@ export class ResourceMetricBrowser extends LitElement {
     const resource = this.resource;
     this.historyBusy = true;
     this.historyError = '';
-    this.graph = null;
-    this.historyPage = null;
+    const scope = JSON.stringify([row.key, from, to, mode, cursors.at(-1)]);
+    if (this.historyScope !== scope) {
+      this.graph = null;
+      this.historyPage = null;
+      this.historyAt = '';
+      this.historyScope = scope;
+    }
     this.cursorStack = cursors;
     if (mode === 'values' && !validWindow(this.window, maxDetailDays)) {
       this.historyBusy = false;
@@ -399,11 +411,16 @@ export class ResourceMetricBrowser extends LitElement {
         if (result.window.from !== from || result.window.to !== to) throw new Error('METRIC_HISTORY_WINDOW');
         this.historyPage = result;
       }
+      this.historyAt = new Date().toISOString();
     } catch (error) {
       if (request.signal.aborted) return;
-      if (accessDenied(error)) this.invalidate();
-      else this.historyError = error instanceof MetricRequestError && error.code === 'QUERY_LIMIT_EXCEEDED'
-        ? '所选范围内的数据过多，请缩短时间范围。' : '读取指标历史失败，请重试。';
+      if (isMetricAccessError(error)) {
+        this.invalidate();
+        this.listError = metricReadError(error, '指标历史');
+      } else {
+        this.historyError = metricReadError(error, '指标历史')
+          + (this.historyAt ? ` 保留同窗口 ${timestamp(this.historyAt)} 读取的结果。` : '');
+      }
     } finally {
       if (!request.signal.aborted) this.historyBusy = false;
     }
@@ -416,8 +433,8 @@ export class ResourceMetricBrowser extends LitElement {
     const shown = filtered.slice(page * pageSize, (page + 1) * pageSize);
     return html`<div class="stack">
       <div class="heading">
-        <div><h2>最新采集数据</h2><p>每项显示最新一次正式采样及其质量。</p></div>
-        <button class="btn btn-refresh" ?disabled=${this.listBusy || this.invalidated} @click=${() => void this.load()}>刷新指标</button>
+        <div><h2>最新采集数据</h2><p>每项显示最近一次正式采样及其质量，独立于历史窗口。采样时间按 ${timezone()} 显示。</p></div>
+        <button class="btn btn-refresh" aria-busy=${String(this.listBusy)} ?disabled=${this.listBusy || this.invalidated} @click=${() => void this.load()}>刷新指标</button>
       </div>
       ${this.listError ? html`<p class="error" role="alert">${this.listError}</p>` : nothing}
       ${this.latest ? html`<app-card>
@@ -428,20 +445,21 @@ export class ResourceMetricBrowser extends LitElement {
             <span class="subtle">${filtered.length} / ${rows.length} 项 · 更新于 ${timestamp(this.latest.evaluated_at)}</span>
           </div>
           ${shown.length ? html`<app-data-table .dense=${true} .columns=${[
-            { key: 'name', label: '指标' }, { key: 'time', label: '采样时间' }, { key: 'value', label: '最新值' },
+            { key: 'name', label: '指标' }, { key: 'value', label: '最新值' }, { key: 'time', label: '采样时间' },
             { key: 'state', label: '采集与质量' }, { key: 'action', label: '历史', width: '108px' },
           ]} .rows=${shown.map(row => {
             const point = row.point, dimensions = dimensionText(row.dimensions);
             return {
               name: html`<span class="name" title=${row.metric.definition.meaning}>${row.name}</span>
-                <span class="dimension">${dimensions || row.metric.definition.id}${dimensions ? ` · ${row.metric.definition.id}` : ''} · v${row.metric.definition.semantic_version}</span>`,
+                <span class="dimension">${metricPurpose(row.metric.definition)}${dimensions ? ` · ${dimensions}` : ''}</span>`,
               time: point ? html`<time datetime=${point.observed_at} title=${point.observed_at}>${timestamp(point.observed_at)}</time>` : '—',
-              value: displayValue(point),
+              value: displayValue(point, row.metric.definition.id),
               state: html`<div class="badges">${point ? html`
                 <app-badge variant=${point.quality.status === 'good' ? 'muted' : 'warn'}>${qualityLabels[point.quality.status] ?? point.quality.status}</app-badge>
-                ${point.freshness !== 'fresh' ? html`<app-badge variant="warn">${point.freshness === 'stale' ? '已过期' : '时效待确认'}</app-badge>` : nothing}` : nothing}</div>
+                <app-badge variant="muted">${qualityLabels[point.accuracy] ?? point.accuracy}</app-badge>
+                ${point.freshness !== 'fresh' || row.metric.state !== 'available' ? html`<app-badge variant="warn">${point.freshness === 'stale' || row.metric.state === 'temporary_failure' ? '旧值' : '时效待确认'}</app-badge>` : nothing}` : nothing}</div>
                 <span class="status-note">${stateLabels[row.metric.state] ?? row.metric.state}</span>`,
-              action: this.canOpen(row) ? html`<button class="btn-ghost btn-sm" data-metric-key=${row.key} title=${row.name}
+              action: this.canOpen(row) ? html`<button class="btn-ghost btn-sm" data-metric-key=${row.key} title=${row.name} aria-label=${`${row.graph ? '图形' : '历史记录'} · ${row.name}${dimensions ? ` · ${dimensions}` : ''}`}
                 @click=${() => void this.open(row)}>${row.graph ? '图形' : '历史记录'}</button>` : html`<span class="subtle">待发现维度</span>`,
             };
           })}></app-data-table>` : html`<app-empty-state title=${rows.length ? '没有匹配的指标' : '尚无可展示的指标'}
@@ -472,7 +490,7 @@ export class ResourceMetricBrowser extends LitElement {
     const trendMarkers = points.map(bucket => bucket.value === null && bucket.retained_sample_count
       ? chartNumber(bucket.stats?.avg ?? null, 'partial', bucket.unit === unit, floating) : null);
     const hasMarkers = trendMarkers.some(value => value !== null);
-    if (!hasMarkers && !data.some(value => value !== null)) return html`<app-empty-state title="该时段没有可绘制的数值"
+    if (!hasMarkers && !data.some(value => value !== null)) return this.historyBusy || this.historyError ? nothing : html`<app-empty-state title="该时段没有可绘制的数值"
       description="可改选时间范围，或切换数值核对精确值与采集质量。"></app-empty-state>`;
     const bounds = (values: MetricSeries['data'], trend = false) => {
       const bound = (side: 'min' | 'max') => points.map((bucket, index) => values[index] === null ? null
@@ -490,24 +508,26 @@ export class ResourceMetricBrowser extends LitElement {
       ? `${hasDetail ? '明细桶显示最后一个采样值。' : ''}含保留趋势的桶显示平均值，并保留最小值和最大值。`
       : '明细桶显示最后一个采样值。';
     return html`<metric-chart .title=${row.name} .yAxisLabel=${unit === '1' ? '' : unit} .height=${'320px'}
+      .formatValue=${(value: number) => metricValueText(value, unit, row.metric.definition.id)}
       .timeData=${points.map(bucket => bucket.window.to)}
       .series=${chartSeries}></metric-chart>
       <p class="window">${description}${row.metric.definition.kind === 'counter' ? '曲线显示累计值。' : ''}空桶和无效明细保留断点。${floating ? '' : '超出绘图精度的值可在数值表查看。'}</p>`;
   }
 
-  private renderValues() {
+  private renderValues(row: Row) {
     if (!validWindow(this.window, maxDetailDays)) return html`<app-empty-state title="数值查询最长 31 天"
       description="请选择更短的时间范围查看明细。"></app-empty-state>`;
     const data = this.historyPage;
     if (!data) return nothing;
-    if (!data.observations.length) return html`<app-empty-state title="该时段没有原始观测"
+    if (!data.observations.length) return this.historyBusy || this.historyError ? nothing : html`<app-empty-state title="该时段没有原始观测"
       description="可调整时间范围后重新查询。"></app-empty-state>`;
     return html`<app-data-table .dense=${true} .columns=${[
       { key: 'time', label: '采样时间', width: '206px' }, { key: 'value', label: '原始值' },
       { key: 'quality', label: '质量', width: '160px' },
     ]} .rows=${data.observations.map(sample => ({
       time: html`<time datetime=${sample.observed_at} title=${sample.observed_at}>${timestamp(sample.observed_at)}</time>`,
-      value: displayValue(sample, true),
+      value: html`${displayValue(sample, row.metric.definition.id, true)}
+        ${renderMetricEvidence(row.metric.definition, row.dimensions, sample, { observation_id: sample.id, observed_at: sample.observed_at, quality: sample.quality, accuracy: sample.accuracy })}`,
       quality: html`<app-badge variant=${sample.quality.status === 'good' ? 'muted' : 'warn'}>${qualityLabels[sample.quality.status] ?? sample.quality.status}</app-badge>
         ${qualityLabels[sample.accuracy] ?? sample.accuracy}`,
     }))}></app-data-table>
@@ -523,11 +543,11 @@ export class ResourceMetricBrowser extends LitElement {
     return html`<div class="stack">
       <div class="history-title">
         <button class="btn" @click=${() => void this.back()}>返回指标列表</button>
-        <div><h2 tabindex="-1">${row.name}</h2><span class="dimension">${dimensions ? `${dimensions} · ` : ''}${row.metric.definition.id} · v${row.metric.definition.semantic_version}</span></div>
+        <div><h2 tabindex="-1">${row.name}</h2><span class="dimension">${dimensions || '整体'}</span></div>
       </div>
       <app-card><div class="stack">
         <form class="toolbar" @submit=${(event: Event) => { event.preventDefault(); this.applyCustom(); }}>
-          <label>时间范围<select .value=${this.preset} @change=${(event: Event) => this.changePreset((event.target as HTMLSelectElement).value as Preset)}>
+          <label>主图时间范围<select .value=${this.preset} @change=${(event: Event) => this.changePreset((event.target as HTMLSelectElement).value as Preset)}>
             ${presets.map(([key, label]) => html`<option value=${key} ?selected=${key === this.preset}
               ?disabled=${key === '129600' && this.mode === 'values'}>${label}</option>`)}
           </select></label>
@@ -542,15 +562,16 @@ export class ResourceMetricBrowser extends LitElement {
         ${this.rangeError ? html`<p class="error" role="alert">${this.rangeError}</p>` : nothing}
         <div class="heading">
           ${row.graph ? html`<div class="modes" role="group" aria-label="历史查看方式">
-            <button class="btn" aria-pressed=${String(this.mode === 'graph')} @click=${() => this.changeMode('graph')}>图形</button>
-            <button class="btn" aria-pressed=${String(this.mode === 'values')} @click=${() => this.changeMode('values')}>数值</button>
+            <button class="btn" aria-pressed=${String(this.mode === 'graph')} @click=${() => this.changeMode('graph')}>查看历史趋势</button>
+            <button class="btn" aria-pressed=${String(this.mode === 'values')} @click=${() => this.changeMode('values')}>查看采集详情</button>
           </div>` : html`<h3>历史记录</h3>`}
-          <p class="window">${timestamp(this.window.from)} — ${timestamp(this.window.to)} · ${Intl.DateTimeFormat().resolvedOptions().timeZone}</p>
+          <p class="window">主图窗口（${timezone()}）：${timestamp(this.window.from)} — ${timestamp(this.window.to)}</p>
         </div>
+        ${renderMetricEvidence(row.metric.definition, row.dimensions, row.point, { observed_at: row.point?.observed_at, quality: row.point?.quality, accuracy: row.point?.accuracy })}
         ${this.historyError ? html`<p class="error" role="alert">${this.historyError}</p>
           <button class="btn" @click=${() => void this.readHistory(this.cursorStack)}>重试</button>` : nothing}
-        ${this.historyBusy ? html`<div class="skeleton loading" role="status" aria-label="正在读取指标历史"></div>` :
-          this.mode === 'graph' ? this.renderGraph(row) : this.renderValues()}
+        ${this.historyBusy ? html`<div role="status">正在读取指标历史</div>` : nothing}
+        ${this.mode === 'graph' ? this.renderGraph(row) : this.renderValues(row)}
       </div></app-card>
     </div>`;
   }

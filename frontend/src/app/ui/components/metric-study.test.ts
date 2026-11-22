@@ -26,3 +26,24 @@ it('Chief R5: expired raw is explicit and never offered as raw comparison or rep
  expect(el.shadowRoot.textContent).toContain('原始已过期');expect([...el.shadowRoot.querySelectorAll('button')].some((b:any)=>b.textContent==='查看原始观测')).toBe(false);
  fetch.mockResolvedValue(json({error:'HISTORY_RAW_EXPIRED'},409));el.ruleKey='{}';await el.replayWindow();expect(el.error).toContain('不能用于回放');expect(el.busy).toBe(false);
 });
+
+it('retries only the failed long-window operation with its original window', async () => {
+  const el = await mount();
+  const requests: unknown[] = [];
+  fetch.mockImplementation(async (url, options) => {
+    expect(String(url)).toContain('/study/trend');
+    requests.push(JSON.parse(String((options as RequestInit)?.body)));
+    return requests.length === 1 ? json({}, 503) : json({ buckets: [], tier: '1h' });
+  });
+  await el.queryTrend();
+  await el.updateComplete;
+  expect(el.error).toContain('长窗口趋势服务暂不可用（503）');
+  expect(el.error).not.toContain('保留');
+  const retry = [...el.shadowRoot.querySelectorAll('button')].find((button: any) => button.textContent === '重试长窗口趋势') as HTMLButtonElement;
+  retry.click();
+  await settle();
+  expect(requests).toEqual([requests[0], requests[0]]);
+  expect(Date.parse((requests[0] as any).to) - Date.parse((requests[0] as any).from)).toBe(30 * 86_400_000);
+  expect(el.shadowRoot.textContent).toContain('研究窗口没有趋势记录');
+  expect(el.shadowRoot.textContent).not.toContain('正在读取长窗口趋势');
+});
