@@ -127,11 +127,52 @@ describe('Oracle DML commit boundary (MAX-361)', () => {
     );
   });
 
-  it('treats a broken Oracle connection during execute as unknown and still closes the session', async () => {
+  it('records a statement failure as rolled back and requires a fresh approval for another execution (#1018)', async () => {
+    const { session, events } = oracleSession();
+    const sql = "UPDATE SLIDE_MAX361_DML SET NOTE = 'reject' WHERE ID = 1";
+    const error = new Error('ORA-02290: check constraint violated');
+    session.execute.mockImplementationOnce(async () => {
+      events.push(`execute:${sql}`);
+      throw error;
+    });
+    mocks.getConnection.mockReturnValue({
+      id: 361, name: 'oracle', db_type: 'oracle', oracleConnection: {}, oraclePool: { getConnection: async () => session },
+    });
+
+    const first = await sqlExecutor.executeSql(361, sql, { approvalGrant: grant });
+
+    expect(events).toEqual([`execute:${sql}`, 'rollback', 'close']);
+    expect(first).toMatchObject({
+      success: false, executionState: 'rolled_back', operationId: grant.operationId, retryable: true, error: error.message,
+    });
+    expect(mocks.finishIntent).toHaveBeenCalledExactlyOnceWith(grant.operationId, 'rolled_back', {
+      targetAcknowledged: false, receipt: 'rolled_back',
+    });
+    expect(mocks.auditSql).toHaveBeenCalledWith(expect.objectContaining({ status: 'error', errorMessage: error.message }));
+
+    mocks.beginIntent.mockRejectedValueOnce(new Error('SQL_OPERATION_ALREADY_RECORDED_RECONCILE_DO_NOT_RETRY'));
+    const repeated = await sqlExecutor.executeSql(361, sql, { approvalGrant: grant });
+    const unapproved = await sqlExecutor.executeSql(361, sql);
+    expect(repeated).toMatchObject({ success: false, retryable: false });
+    expect(unapproved).toMatchObject({ success: false, error: expect.stringContaining('SQL_APPROVAL_REQUIRED') });
+    expect(session.execute).toHaveBeenCalledOnce();
+
+    const newGrant = { approvalRequestId: 285, reviewerId: grant.reviewerId, operationId: 'oracle-op-2' };
+    const fresh = await sqlExecutor.executeSql(361, sql, { approvalGrant: newGrant });
+    expect(mocks.authorizeApproval).toHaveBeenLastCalledWith(expect.anything(), newGrant, { instanceId: 361, sql });
+    expect(fresh).toMatchObject({ success: true, executionState: 'succeeded', operationId: newGrant.operationId });
+    expect(session.execute).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps a failed rollback unknown and still closes the session', async () => {
     const { session, events } = oracleSession();
     session.execute.mockImplementation(async (sql: string) => {
       events.push(`execute:${sql}`);
       throw Object.assign(new Error('NJS-500: connection to the Oracle Database was broken'), { code: 'NJS-500' });
+    });
+    session.rollback.mockImplementationOnce(async () => {
+      events.push('rollback');
+      throw new Error('NJS-500: rollback acknowledgement unavailable');
     });
     mocks.getConnection.mockReturnValue({
       id: 361, name: 'oracle', db_type: 'oracle', oracleConnection: {}, oraclePool: { getConnection: async () => session },
@@ -217,6 +258,19 @@ describe('Oracle DML commit boundary (MAX-361)', () => {
     expect(session.rollback).not.toHaveBeenCalled();
     expect(session.close).not.toHaveBeenCalled();
     expect(result).toMatchObject({ success: true, executionState: 'succeeded', retryable: false });
+  });
+
+  it('keeps failed Oracle DDL unknown without attempting transactional rollback', async () => {
+    const { session } = oracleSession();
+    session.execute.mockRejectedValueOnce(new Error('ORA-00955: name is already used by an existing object'));
+    mocks.getConnection.mockReturnValue({ id: 361, name: 'oracle', db_type: 'oracle', oracleConnection: session });
+
+    const result = await sqlExecutor.executeSql(361, 'CREATE TABLE SLIDE_MAX361_DDL (ID INT)', { approvalGrant: grant });
+
+    expect(result).toMatchObject({ success: false, executionState: 'unknown', retryable: false });
+    expect(session.commit).not.toHaveBeenCalled();
+    expect(session.rollback).not.toHaveBeenCalled();
+    expect(mocks.finishIntent).toHaveBeenCalledExactlyOnceWith(grant.operationId, 'unknown', expect.anything());
   });
 
   it('commits a write on the persistent session when the pool is absent and does not close that session', async () => {
