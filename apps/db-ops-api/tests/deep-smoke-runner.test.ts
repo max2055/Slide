@@ -1,9 +1,13 @@
 import { execFile, spawnSync } from 'node:child_process';
+import { randomBytes } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import Fastify from 'fastify';
 import { expect, it, vi } from 'vitest';
 import { alertDatabaseService } from '../src/alert-database-service.js';
 import { registerAlertListRoute } from '../src/alert-list-route.js';
+import { createVerifyToken } from '../src/auth-middleware.js';
+import { signAccessToken, type ActorContext } from '../src/auth/actor-context.js';
+import { dbConnection } from '../src/db-connection.js';
 
 vi.mock('../src/alert-database-service.js', () => ({ alertDatabaseService: { getAlerts: vi.fn() } }));
 
@@ -54,19 +58,46 @@ async function runShapeChecks(
   alerts: typeof emptyAlertPage | typeof alertPage | Error = emptyAlertPage,
 ) {
   const report = { id: 17, status: 'completed' };
+  const actor: ActorContext = {
+    userId: 1, username: 'fixture-user', roles: ['smoke-reader'], permissions: ['alert:view'],
+    instanceScopes: { [alertItem.instance_id]: 'read-only' }, sessionVersion: 3, requestId: 'deep-smoke',
+  };
+  const secret = randomBytes(32).toString('hex');
   const jsonResponses: Record<string, unknown> = {
-    '/api/auth/login': { token: 'fixture-token' },
+    '/api/auth/login': { token: signAccessToken(actor, secret) },
     '/api/reports/generate': report,
     '/api/reports/17': report,
     '/api/metrics/1': { cpu_usage: 1, memory_usage: 2, disk_usage: 3, connections: 4, instance_id: 1 },
     '/api/users': [{ id: 1, username: 'fixture-user', status: 'active' }],
   };
   const server = Fastify();
+  const page = alerts instanceof Error ? alerts : structuredClone(alerts);
   const getAlerts = vi.mocked(alertDatabaseService.getAlerts);
   getAlerts.mockReset().mockImplementation(async () => {
-    if (alerts instanceof Error) throw alerts;
-    return alerts;
+    if (page instanceof Error) throw page;
+    return page;
   });
+  const readActor = vi.fn().mockResolvedValue([[{
+    id: actor.userId, username: actor.username, status: 'active', session_version: actor.sessionVersion,
+    role_name: actor.roles[0], permission_code: actor.permissions[0],
+    instance_id: alertItem.instance_id, access_level: actor.instanceScopes[alertItem.instance_id],
+  }]]);
+  const templateEventId = 41;
+  const readEpisodes = vi.fn().mockResolvedValue([[{
+    alert_id: alertItem.id, event_id: templateEventId, resource: { type: 'instance', id: alertItem.instance_id },
+  }]]);
+  // Exercise the real actor reload and resource check against deterministic storage rows.
+  const pool = {
+    query: readEpisodes,
+    async execute(sql: string, params: unknown[]) {
+      if (sql.includes('FROM users u')) return readActor(params);
+      if (sql === 'SELECT id FROM database_instances WHERE id = ? LIMIT 1') {
+        expect(params).toEqual([alertItem.instance_id]);
+        return [[{ id: alertItem.instance_id }]];
+      }
+      throw new Error('Unexpected SQL in deep smoke fixture');
+    },
+  } as unknown as NonNullable<ReturnType<typeof dbConnection.getPool>>;
   let alertReads = 0;
   let alertRedirectReads = 0;
   server.get(alertRedirectTarget, async () => {
@@ -92,12 +123,9 @@ async function runShapeChecks(
     const response = responses[endpoint] ?? { status: 200, body: JSON.stringify(jsonResponses[endpoint] ?? []) };
     return reply.code(response.status).type(response.contentType ?? 'application/json').send(response.body);
   });
+  const getPool = vi.spyOn(dbConnection, 'getPool').mockReturnValue(pool);
   try {
-    await registerAlertListRoute(server, async request => {
-      if (request.headers.authorization === 'Bearer fixture-token') {
-        Object.assign(request, { user: { permissions: ['alert:view'], instanceScopes: { 1: 'read-only' } } });
-      }
-    });
+    await registerAlertListRoute(server, createVerifyToken(secret));
     const baseUrl = await server.listen({ host: '127.0.0.1', port: 0 });
     const result = await new Promise<{ status: number; output: string }>((resolve, reject) => {
       execFile(process.execPath, ['--import', 'tsx', 'tests/deep-smoke.ts'], {
@@ -111,10 +139,23 @@ async function runShapeChecks(
       });
     });
     expect(alertReads).toBe(1);
-    expect(getAlerts).toHaveBeenCalledTimes(responses['/api/alerts'] ? 0 : 1);
+    const overridden = Boolean(responses['/api/alerts']);
+    expect(getAlerts).toHaveBeenCalledTimes(overridden ? 0 : 1);
+    const identityReads = overridden ? 0 : alerts instanceof Error ? 1 : 2;
+    expect(readActor.mock.calls).toEqual(Array.from({ length: identityReads }, () => [[actor.userId]]));
+    if (!overridden && alerts === alertPage && !(page instanceof Error)) {
+      expect(readEpisodes).toHaveBeenCalledExactlyOnceWith(expect.stringContaining('FROM metric_trigger_episodes'), [[alertItem.id]]);
+      expect(page.items).toMatchObject([{ id: alertItem.id, template_event_id: templateEventId }]);
+    } else {
+      expect(readEpisodes).not.toHaveBeenCalled();
+    }
     return { ...result, alertRedirectReads };
   } finally {
-    await server.close();
+    try {
+      await server.close();
+    } finally {
+      getPool.mockRestore();
+    }
   }
 }
 
