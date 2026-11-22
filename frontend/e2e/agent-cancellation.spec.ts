@@ -11,11 +11,11 @@ test('Stop cancels the active Agent run and persists its terminal state', async 
   await page.locator('.login-gate__connect').click();
   await expect(page.locator('.login-gate')).toBeHidden({ timeout: 15_000 });
 
-  const input = page.getByRole('textbox', { name: /Message .*Enter to send/ });
+  const input = page.getByRole('textbox', { name: '对话消息', exact: true });
   await expect(input).toBeEnabled();
   await input.fill('Keep working until I stop you');
-  await page.getByRole('button', { name: 'Send message' }).click();
-  const stop = page.getByRole('button', { name: 'Stop generating' });
+  await page.getByRole('button', { name: '发送消息' }).click();
+  const stop = page.getByRole('button', { name: '停止生成' });
   await expect(stop).toBeVisible({ timeout: 10_000 });
   expect(await dbConnection.initialize({
     host: process.env.DB_HOST ?? '127.0.0.1', port: Number(process.env.DB_PORT ?? 3306),
@@ -75,9 +75,9 @@ test('unsupported attachments fail explicitly without creating an Agent run', as
     await page.locator('input[type="file"]').setInputFiles({
       name: 'pixel.png', mimeType: 'image/png', buffer: Buffer.from('iVBORw0KGgo=', 'base64'),
     });
-    const input = page.getByRole('textbox', { name: /Message .*Enter to send|Add a message or paste more images/ });
+    const input = page.getByRole('textbox', { name: '对话消息', exact: true });
     await input.fill('Inspect this image');
-    await page.getByRole('button', { name: 'Send message' }).click();
+    await page.getByRole('button', { name: '发送消息' }).click();
     await expect.poll(() => page.evaluate(() => (document.querySelector('slide-app') as any)?.lastError ?? null))
       .toBe('PROTOCOL_V2_INVALID');
     const [rows] = await pool.query<Array<{ count: number }>>('SELECT COUNT(*) AS count FROM agent_runs');

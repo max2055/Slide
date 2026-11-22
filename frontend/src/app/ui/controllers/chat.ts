@@ -6,7 +6,7 @@ import { reconcileChatRunLifecycle } from "../chat/run-lifecycle.ts";
 import { formatConnectError } from "../connect-error.ts";
 import { ChatAcceptanceTimeoutError, type DirectGatewayClient } from "../direct-gateway.ts";
 import { normalizeLowercaseStringOrEmpty } from "../string-coerce.ts";
-import type { ChatAttachment } from "../ui-types.ts";
+import type { ChatAttachment, ChatQueueItem } from "../ui-types.ts";
 import { generateUUID } from "../uuid.ts";
 import { chatSessionHost, registerChatSend, isCurrentChatSession, chatAccessDenial, denyChatSessions, allowChatSession } from '../chat-session-state.ts';
 import {
@@ -86,6 +86,7 @@ export type ChatState = {
   chatSending: boolean;
   chatMessage: string;
   chatAttachments: ChatAttachment[];
+  chatQueue?: ChatQueueItem[];
   chatRunId: string | null;
   chatStream: string | null;
   chatStreamStartedAt: number | null;
@@ -237,6 +238,20 @@ type UnconfirmedChat = {
 };
 const unconfirmedChats = new WeakMap<ChatState, UnconfirmedChat[]>();
 
+function chatPayload(message: string, attachments?: ChatAttachment[]): string {
+  return JSON.stringify({ message: message.trim(), attachments: buildApiAttachments(attachments) });
+}
+
+function findUnconfirmedChat(state: ChatState, payload: string): UnconfirmedChat | undefined {
+  const sessionKey = state.sessionKey;
+  return unconfirmedChats.get(state)?.find((item) => item.payload === payload
+    && (item.sessionKey === sessionKey || item.error.getSessionKey() === sessionKey));
+}
+
+export function unconfirmedChatMessageId(state: ChatState, message: string, attachments?: ChatAttachment[]): string | undefined {
+  return findUnconfirmedChat(chatSessionHost(state), chatPayload(message, attachments))?.error.messageId;
+}
+
 /** Late acceptance clears the retry draft without stealing a different session/run. */
 export function confirmChatSend(state: ChatState, messageId?: string, accepted = true): boolean {
   state = chatSessionHost(state);
@@ -247,7 +262,16 @@ export function confirmChatSend(state: ChatState, messageId?: string, accepted =
   if (accepted) unconfirmedChats.set(state, attempts.filter((item) => item !== attempt));
   const sameSession = state.sessionKey === attempt.sessionKey || state.sessionKey === attempt.error.getSessionKey();
   const sameRun = !state.chatRunId || state.chatRunId === attempt.runId;
-  if (accepted && sameSession && sameRun) state.lastError = null;
+  if (accepted && sameSession) {
+    if (state.chatQueue?.some(item => item.unconfirmedMessageId === messageId)) {
+      state.chatQueue = state.chatQueue.filter(item => item.unconfirmedMessageId !== messageId);
+    }
+    if (sameRun && state.lastError === attempt.error.message) state.lastError = null;
+    if (sameRun && chatPayload(state.chatMessage, state.chatAttachments) === attempt.payload) {
+      state.chatMessage = "";
+      state.chatAttachments = [];
+    }
+  }
   return sameSession && sameRun;
 }
 
@@ -258,9 +282,7 @@ async function requestChatSend(
   const sessionKey = state.sessionKey;
   const attachments = buildApiAttachments(params.attachments);
   const payload = JSON.stringify({ message: params.message, attachments });
-  const attempts = unconfirmedChats.get(state) ?? [];
-  const previous = attempts.find((item) => item.payload === payload
-    && (item.sessionKey === sessionKey || item.error.getSessionKey() === sessionKey));
+  const previous = findUnconfirmedChat(state, payload);
   const runId = previous?.runId ?? params.runId;
   registerChatSend(state, runId);
   if (previous && state.chatRunId === params.runId) state.chatRunId = runId;
@@ -376,9 +398,7 @@ export async function sendChatMessage(
     }
   }
 
-  const payload = JSON.stringify({ message: msg, attachments: buildApiAttachments(attachments) });
-  const retrying = (unconfirmedChats.get(state) ?? []).some(item => item.payload === payload
-    && (item.sessionKey === state.sessionKey || item.error.getSessionKey() === state.sessionKey));
+  const retrying = findUnconfirmedChat(state, chatPayload(msg, attachments));
   const hasQuestion = state.chatMessages.some(message => (message as { role?: string } | null)?.role === 'user'
     && (extractText(message) ?? "") === msg
     && (!hasAttachments || JSON.stringify((message as { content?: unknown }).content) === JSON.stringify(contentBlocks)));

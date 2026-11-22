@@ -61,7 +61,7 @@ for (const [mode, width, height] of [
     await page.goto(`${origin}/e2e/fixtures/chat-greeting.html?identity=${identity}`);
     await expect.poll(() => requests.filter(value => value === identity).length).toBe(1);
     await expect.poll(() => page.evaluate(() => (window as any).greetingFixture.updates)).toBeGreaterThanOrEqual(2);
-    await expect(page.getByText('Ready to chat', { exact: true })).toBeVisible();
+    await expect(page.getByText('可以开始对话', { exact: true })).toBeVisible();
     for (let index = 0; index < 5; index++) await page.evaluate(() => (window as any).greetingFixture.update());
     const suggestion = page.getByRole('button', { name: '查看实例运行状态', exact: true });
     await suggestion.focus(); await page.keyboard.press('Enter');
@@ -108,7 +108,7 @@ test('MAX-642 aborted browser transport does not retry on re-render', async ({ p
   await page.route('**/api/chat/greeting', async route => { attempts++; await route.abort('failed'); });
   await page.goto(`${origin}/e2e/fixtures/chat-greeting.html?identity=network-failure`);
   await expect.poll(() => page.evaluate(() => (window as any).greetingFixture.updates)).toBeGreaterThanOrEqual(2);
-  await expect(page.getByText('Ready to chat', { exact: true })).toBeVisible();
+  await expect(page.getByText('可以开始对话', { exact: true })).toBeVisible();
   for (let index = 0; index < 5; index++) await page.evaluate(() => (window as any).greetingFixture.update());
   await page.waitForTimeout(200);
   expect(attempts).toBe(1);

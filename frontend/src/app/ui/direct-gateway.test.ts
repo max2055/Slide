@@ -63,7 +63,7 @@ describe('109-04: DirectGatewayClient', () => {
 
   it('rejects sendChat when no WebSocket is available', async () => {
     const client = new DirectGatewayClient({ onEvent, onStateChange });
-    await expect(client.sendChat('test-session', 'hello world')).rejects.toThrow(/not connected/);
+    await expect(client.sendChat('test-session', 'hello world')).rejects.toThrow('消息尚未发送');
   });
 
   it('reports chat.send as rejected when no WebSocket is available', async () => {
@@ -480,8 +480,14 @@ describe('109-04: DirectGatewayClient', () => {
     if (authenticated) socket.receive({ type: 'auth_ok' });
     const result = client.sendChat('one', 'hello').catch(error => error);
     await vi.advanceTimersByTimeAsync(60_000);
-    expect(await result).toBeInstanceOf(ChatAcceptanceTimeoutError);
-    expect((await result).message).toContain('发送结果尚未确认');
+    const error = await result;
+    if (authenticated) {
+      expect(error).toBeInstanceOf(ChatAcceptanceTimeoutError);
+      expect(error.message).toContain('发送结果尚未确认');
+    } else {
+      expect(error).not.toBeInstanceOf(ChatAcceptanceTimeoutError);
+      expect(error.message).toContain('消息尚未发送');
+    }
     const count = socket.frames.length;
     socket.receive({ type: 'auth_ok' });
     await vi.advanceTimersByTimeAsync(120_000);
@@ -513,7 +519,7 @@ describe('109-04: DirectGatewayClient', () => {
     const result = client.sendChat('one', 'hello').catch(error => error);
     vi.setSystemTime(Date.now() + 101);
     socket.receive({ type: 'auth_ok' });
-    expect(await result).toBeInstanceOf(ChatAcceptanceTimeoutError);
+    expect((await result).message).toContain('消息尚未发送');
     expect(socket.frames).toHaveLength(0);
     client.disconnect();
   });

@@ -8,6 +8,7 @@ import {
   loadChatHistory,
   sendChatMessage,
   sendDetachedChatMessage,
+  unconfirmedChatMessageId,
   type ChatState,
 } from "./controllers/chat.ts";
 import { loadSessions, type SessionsState } from "./controllers/sessions.ts";
@@ -19,7 +20,7 @@ import type { ChatModelOverride, ModelCatalogEntry } from "./types.ts";
 import type { SessionsListResult } from "./types.ts";
 import type { ChatAttachment, ChatQueueItem } from "./ui-types.ts";
 import { generateUUID } from "./uuid.ts";
-import { chatSessionHost, isVisibleChatSession } from './chat-session-state.ts';
+import { chatSessionHost, isCurrentChatSession, isVisibleChatSession } from './chat-session-state.ts';
 
 export type ChatHost = {
   client: DirectGatewayClient | null;
@@ -161,15 +162,12 @@ async function sendChatMessageNow(
   // Reset thinking state for new message
   host.chatThinkingText = '';
   host.chatThinkingComplete = false;
-  const sendingSessionKey = host.sessionKey;
   const runId = await sendChatMessage(host as unknown as ChatState, message, opts?.attachments);
-  if (!runId && host.sessionKey !== sendingSessionKey) return false;
+  if (!isCurrentChatSession(host)) return false;
   const ok = Boolean(runId);
-  if (!ok && opts?.previousDraft != null) {
-    host.chatMessage = opts.previousDraft;
-  }
-  if (!ok && opts?.previousAttachments) {
-    host.chatAttachments = opts.previousAttachments;
+  if (!ok && !host.chatMessage && !host.chatAttachments.length) {
+    if (opts?.previousDraft != null) host.chatMessage = opts.previousDraft;
+    if (opts?.previousAttachments) host.chatAttachments = opts.previousAttachments;
   }
   if (ok && isVisibleChatSession(host)) {
     setLastActiveSessionKey(
@@ -228,11 +226,13 @@ async function flushChatQueue(host: ChatHost) {
   if (!isVisibleChatSession(host) || !host.connected || isChatBusy(host)) {
     return;
   }
-  const nextIndex = host.chatQueue.findIndex((item) => !item.pendingRunId);
+  const nextIndex = host.chatQueue.findIndex((item) => !item.pendingRunId && !item.unconfirmedMessageId);
   if (nextIndex < 0) {
     return;
   }
   const next = host.chatQueue[nextIndex];
+  const state = host as unknown as ChatState;
+  if (unconfirmedChatMessageId(state, next.text, next.attachments)) return;
   host.chatQueue = host.chatQueue.filter((_, index) => index !== nextIndex);
   let ok = false;
   try {
@@ -248,7 +248,13 @@ async function flushChatQueue(host: ChatHost) {
     host.lastError = String(err);
   }
   if (!ok) {
-    host.chatQueue = [next, ...host.chatQueue];
+    const unconfirmedMessageId = unconfirmedChatMessageId(state, next.text, next.attachments);
+    if (unconfirmedMessageId && !host.chatMessage && !host.chatAttachments.length) {
+      host.chatMessage = next.text;
+      host.chatAttachments = next.attachments ?? [];
+    } else {
+      host.chatQueue = [{ ...next, unconfirmedMessageId }, ...host.chatQueue];
+    }
   } else if (host.chatQueue.length > 0) {
     // Continue draining — local commands don't block on server response
     void flushChatQueue(host);

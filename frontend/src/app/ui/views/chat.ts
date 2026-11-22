@@ -4,6 +4,7 @@ import { ref } from "lit/directives/ref.js";
 import { repeat } from "lit/directives/repeat.js";
 import { unsafeHTML } from "lit/directives/unsafe-html.js";
 import type { CompactionStatus, FallbackStatus } from "../app-tool-stream.ts";
+import { DEFAULT_ASSISTANT_NAME } from "../assistant-identity.ts";
 import {
   CHAT_ATTACHMENT_ACCEPT,
   isSupportedChatAttachmentMimeType,
@@ -702,20 +703,22 @@ function formatTokensCompact(n: number): string {
   return String(n);
 }
 
-function renderConnectionStatus(props: ChatProps): TemplateResult | typeof nothing {
+function chatConnectionLabel(connected: boolean, reason: string | null): string {
+  if (connected) return '已连接';
+  if (reason === '连接失败，请点击重试') return '连接失败';
+  if (reason === '认证失败，请重新登录') return '认证失败';
+  return reason ? '正在重新连接' : '正在连接';
+}
+
+function renderConnectionStatus(props: ChatProps, label: string): TemplateResult {
   const isConnected = props.connected;
   const isExhausted = props.disabledReason === '连接失败，请点击重试';
   const isAuthFailed = props.disabledReason === '认证失败，请重新登录';
 
   return html`
-    <div class="connection-status">
+    <div class="connection-status" role="status">
       <span class="connection-status__dot ${isConnected ? 'connected' : isAuthFailed || isExhausted ? 'disconnected' : 'connecting'}"></span>
-      <span class="connection-status__text">
-        ${isConnected ? '已连接' :
-          isExhausted ? '连接失败' :
-          isAuthFailed ? '认证失败' :
-          '重新连接中...'}
-      </span>
+      <span class="connection-status__text">${label}</span>
       ${isExhausted ? html`
         <button class="btn connection-status__reconnect" @click=${props.onReconnect ?? props.onRefresh}>重新连接</button>
       ` : nothing}
@@ -778,7 +781,7 @@ function handleFileSelect(e: Event, props: ChatProps) {
 function handleDrop(e: DragEvent, props: ChatProps) {
   e.preventDefault();
   const files = e.dataTransfer?.files;
-  if (!files || !props.onAttachmentsChange) {
+  if (!props.connected || !files || !props.onAttachmentsChange) {
     return;
   }
   appendChatFiles(files, props);
@@ -1109,8 +1112,8 @@ const WELCOME_SUGGESTIONS = [
   "查看运维概览",
 ];
 
-function renderWelcomeState(props: ChatProps, requestUpdate: () => void): TemplateResult {
-  const name = props.assistantName || "Assistant";
+function renderWelcomeState(props: ChatProps, connectionLabel: string, requestUpdate: () => void): TemplateResult {
+  const name = props.assistantName || DEFAULT_ASSISTANT_NAME;
 
   syncGreetingIdentity();
   // Initiate greeting fetch on first render
@@ -1139,7 +1142,7 @@ function renderWelcomeState(props: ChatProps, requestUpdate: () => void): Templa
             <img src=${logoUrl} alt="Slide" />
           </div>`}
       <h2>${name}</h2>
-      ${_agentGreeting
+      ${props.connected && _agentGreeting
         ? html`
             <div class="agent-chat__badges">
               <div class="agent-chat__badge agent-chat__badge--greeting">
@@ -1148,15 +1151,18 @@ function renderWelcomeState(props: ChatProps, requestUpdate: () => void): Templa
             </div>`
         : html`
             <div class="agent-chat__badges">
-              <span class="agent-chat__badge"><img src=${logoUrl} alt="" /> Ready to chat</span>
+              <span class="agent-chat__badge"><img src=${logoUrl} alt="" />
+                ${props.connected ? '可以开始对话' : connectionLabel}
+              </span>
             </div>
-            <p class="agent-chat__hint">Type a message below &middot; <kbd>/</kbd> for commands</p>`}
+            ${props.connected ? html`<p class="agent-chat__hint">在下方输入消息，输入 <kbd>/</kbd> 查看命令</p>` : nothing}`}
       <div class="agent-chat__suggestions">
         ${WELCOME_SUGGESTIONS.map(
           (text) => html`
             <button
               type="button"
               class="agent-chat__suggestion"
+              ?disabled=${!props.connected}
               @click=${() => {
                 props.onDraftChange(text);
                 props.onSend();
@@ -1413,13 +1419,12 @@ export function renderChat(props: ChatProps) {
   const hasAttachments = (props.attachments?.length ?? 0) > 0;
   const tokens = tokenEstimate(props.draft);
 
+  const connectionLabel = chatConnectionLabel(props.connected, props.disabledReason);
   const placeholder = props.connected
     ? hasAttachments
-      ? "Add a message or paste more images..."
-      : `Message ${props.assistantName || "agent"} (Enter to send)`
-    : props.disabledReason === '连接失败，请点击重试'
-      ? "连接失败，请检查网络"
-      : "重新连接中...";
+      ? "补充消息或继续粘贴图片"
+      : "输入消息，按 Enter 发送"
+    : connectionLabel;
 
   const requestUpdate = props.onRequestUpdate ?? (() => {});
   const getDraft = props.getDraft ?? (() => props.draft);
@@ -1496,7 +1501,7 @@ export function renderChat(props: ChatProps) {
         ${windowRange.previous ? html`<button class="btn-ghost" type="button" @click=${(event: Event) => jumpFromButton(event, windowRange.previous!)}>查看更早对话</button>` : nothing}
         ${props.loading
           ? html`
-              <div class="chat-loading-skeleton" aria-label="Loading chat">
+              <div class="chat-loading-skeleton" aria-label="正在加载对话">
                 <div class="chat-line assistant">
                   <div class="chat-msg">
                     <div class="chat-bubble">
@@ -1533,9 +1538,9 @@ export function renderChat(props: ChatProps) {
               </div>
             `
           : nothing}
-        ${isEmpty && !vs.searchOpen ? renderWelcomeState(props, requestUpdate) : nothing}
+        ${isEmpty && !vs.searchOpen ? renderWelcomeState(props, connectionLabel, requestUpdate) : nothing}
         ${isEmpty && vs.searchOpen
-          ? html` <div class="agent-chat__empty">No matching messages</div> `
+          ? html` <div class="agent-chat__empty">未找到匹配的消息</div> `
           : nothing}
         ${(() => {
           // Pre-compute tool-verified IDs from ALL groups so back-links
@@ -1848,19 +1853,20 @@ export function renderChat(props: ChatProps) {
       ${props.queue.length
         ? html`
             <div class="chat-queue" role="status" aria-live="polite">
-              <div class="chat-queue__title">Queued (${props.queue.length})</div>
+              <div class="chat-queue__title">消息队列（${props.queue.length}）</div>
               <div class="chat-queue__list">
                 ${props.queue.map(
                   (item) => html`
                     <div class="chat-queue__item">
                       <div class="chat-queue__text">
+                        ${item.unconfirmedMessageId ? "待核对回执 · " : nothing}
                         ${item.text ||
-                        (item.attachments?.length ? `Image (${item.attachments.length})` : "")}
+                        (item.attachments?.length ? `图片（${item.attachments.length}）` : "")}
                       </div>
                       <button
                         class="btn chat-queue__remove"
                         type="button"
-                        aria-label="Remove queued message"
+                        aria-label="移除队列消息"
                         @click=${() => props.onQueueRemove(item.id)}
                       >
                         ${icons['x']}
@@ -1886,13 +1892,14 @@ export function renderChat(props: ChatProps) {
 
       <!-- Input bar -->
       <div class="agent-chat__input">
-        ${renderSlashMenu(requestUpdate, props)} ${renderAttachmentPreview(props)}
+        ${canCompose ? renderSlashMenu(requestUpdate, props) : nothing} ${renderAttachmentPreview(props)}
 
         <input
           type="file"
           accept=${CHAT_ATTACHMENT_ACCEPT}
           multiple
           class="agent-chat__file-input"
+          ?disabled=${!canCompose}
           @change=${(e: Event) => handleFileSelect(e, props)}
         />
 
@@ -1900,10 +1907,11 @@ export function renderChat(props: ChatProps) {
           ${ref((el) => el && adjustTextareaHeight(el as HTMLTextAreaElement))}
           .value=${props.draft}
           dir=${detectTextDirection(props.draft)}
-          ?disabled=${!props.connected}
+          ?disabled=${!canCompose}
           @keydown=${handleKeyDown}
           @input=${handleInput}
           @paste=${(e: ClipboardEvent) => handlePaste(e, props)}
+          aria-label="对话消息"
           placeholder=${placeholder}
           rows="1"
         ></textarea>
@@ -1915,9 +1923,9 @@ export function renderChat(props: ChatProps) {
               @click=${() => {
                 document.querySelector<HTMLInputElement>(".agent-chat__file-input")?.click();
               }}
-              title="Attach file"
-              aria-label="Attach file"
-              ?disabled=${!props.connected}
+              title="添加附件"
+              aria-label="添加附件"
+              ?disabled=${!canCompose}
             >
               ${icons['paperclip']}
             </button>
@@ -1929,8 +1937,8 @@ export function renderChat(props: ChatProps) {
             <button
               class="btn btn--ghost"
               @click=${() => exportMarkdown(props)}
-              title="Export"
-              aria-label="Export chat"
+              title="导出对话"
+              aria-label="导出对话"
               ?disabled=${props.messages.length === 0}
             >
               ${icons['download']}
@@ -1941,9 +1949,9 @@ export function renderChat(props: ChatProps) {
                   <button
                     class="chat-send-btn chat-send-btn--stop"
                     @click=${props.onAbort}
-                    .disabled=${Boolean(props.cancelRequested) || !props.connected}
-                    title=${props.cancelRequested ? '取消请求已发送' : 'Stop'}
-                    aria-label=${props.cancelRequested ? '等待取消确认' : 'Stop generating'}
+                    .disabled=${Boolean(props.cancelRequested) || !canCompose}
+                    title=${props.cancelRequested ? '取消请求已发送' : '停止生成'}
+                    aria-label=${props.cancelRequested ? '等待取消确认' : '停止生成'}
                   >
                     ${icons['stop']}
                   </button>
@@ -1957,9 +1965,9 @@ export function renderChat(props: ChatProps) {
                       }
                       props.onSend();
                     }}
-                    ?disabled=${!props.connected || props.sending}
-                    title=${isBusy ? "Queue" : "Send"}
-                    aria-label=${isBusy ? "Queue message" : "Send message"}
+                    ?disabled=${!canCompose || props.sending}
+                    title=${isBusy ? "加入待发送队列" : "发送消息"}
+                    aria-label=${isBusy ? "加入待发送队列" : "发送消息"}
                   >
                     ${icons['send']}
                   </button>
@@ -1968,7 +1976,7 @@ export function renderChat(props: ChatProps) {
         </div>
       </div>
 
-      ${renderConnectionStatus(props)}
+      ${renderConnectionStatus(props, connectionLabel)}
     </section>
   `;
 }

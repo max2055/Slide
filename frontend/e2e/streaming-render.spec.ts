@@ -164,7 +164,7 @@ test('MAX-128 real phases, stop confirmation, reading and stable completion on n
     await expect(page.getByText(label, { exact: true })).toBeVisible();
   }
   await page.evaluate(() => { const f = (window as any).historyFixture; f.props.onAbort = () => { f.props.cancelRequested = true; f.update(); }; f.update(); });
-  await page.getByRole('button', { name: 'Stop generating' }).click();
+  await page.getByRole('button', { name: '停止生成' }).click();
   await expect(page.getByRole('button', { name: '等待取消确认' })).toBeDisabled();
   await expect(page.getByText('取消请求已发送，等待服务端确认')).toBeVisible();
   await page.evaluate(() => { const f = (window as any).historyFixture; f.props.cancelRequested = false; f.props.connected = false; f.update(); });

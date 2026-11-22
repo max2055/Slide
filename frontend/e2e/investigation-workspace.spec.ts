@@ -134,7 +134,7 @@ test('ordinary Chat sends directly; conversion preserves Session and message IDs
   await expect(page.locator('.agent-chat__input textarea')).toBeEnabled();
   await expect(page.getByRole('dialog')).toHaveCount(0);
   await page.locator('.agent-chat__input textarea').fill('不填调查表，直接提问');
-  await page.getByRole('button', { name: 'Send message', exact: true }).click();
+  await page.getByRole('button', { name: '发送消息', exact: true }).click();
   await expect(page.getByRole('log')).toContainText('普通对话合成回答');
   await expect(page.getByRole('button', { name: '转为调查', exact: true })).toBeEnabled();
   const [messages] = await env.pool.query('SELECT message_id FROM chat_messages WHERE session_id=? ORDER BY id', [session.session_id]);
@@ -295,9 +295,9 @@ test('ordinary Chat cancel works for bare and agent-prefixed Session routes', as
       await page.goto(`${env.url}/chat?session=${encodeURIComponent(prefix + session.session_id)}`);
       await expect(page.locator('.agent-chat__input textarea')).toBeEnabled();
       await page.locator('.agent-chat__input textarea').fill('取消受控等待');
-      await page.getByRole('button', { name: 'Send message', exact: true }).click();
+      await page.getByRole('button', { name: '发送消息', exact: true }).click();
       await expect.poll(async () => { const [rows] = await env.pool.query('SELECT state FROM agent_runs WHERE session_id=?', [session.session_id]); return rows[0]?.state; }).toBe('running');
-      await page.getByRole('button', { name: 'Stop generating', exact: true }).click();
+      await page.getByRole('button', { name: '停止生成', exact: true }).click();
       await expect.poll(async () => { const [rows] = await env.pool.query('SELECT state FROM agent_runs WHERE session_id=?', [session.session_id]); return rows[0]?.state; }).toBe('cancelled');
     }
   } finally { env.holdChat(false); }
