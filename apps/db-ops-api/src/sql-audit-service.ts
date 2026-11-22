@@ -23,8 +23,9 @@ interface AuditToken {
 }
 
 // MySQL's double dash must be followed by whitespace or an ASCII control character.
+// Only LF ends a MySQL line comment before the end of input.
 // oxlint-disable-next-line no-control-regex
-const mysqlAuditLexemes = /--(?=[\x00-\x20\x7f])[^\r\n]*|#[^\r\n]*|'(?:''|\\[\s\S]|[^'\\])*'|"(?:""|\\[\s\S]|[^"\\])*"|`(?:``|[^`])*`/u;
+const mysqlAuditLexemes = /--(?=[\x00-\x20\x7f])[^\n]*|#[^\n]*|'(?:''|\\[\s\S]|[^'\\])*'|"(?:""|\\[\s\S]|[^"\\])*"|`(?:``|[^`])*`/u;
 const mysqlBlockComment = /\/\*[\s\S]*?(?:\*\/|$)/u;
 const mysqlAuditParts = new RegExp(
   [mysqlAuditLexemes.source, mysqlBlockComment.source, /[\p{L}_$][\p{L}\p{N}_$]*|[^\s]/u.source].join('|'), 'gu',
