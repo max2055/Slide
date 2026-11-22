@@ -225,6 +225,16 @@ export class MigrationRunner {
     connection.release();
   }
 
+  /** Inspects a failed or interrupted migration after acquiring the runner's lock. */
+  async inspectMigrationForRepair(id: string): Promise<MigrationLedgerEntry & {
+    executionOutcome: 'unknown' | 'failure_recorded';
+  }> {
+    return this.withRepairEntry(id, async (_connection, recorded) => ({
+      ...recorded,
+      executionOutcome: recorded.status === 'running' ? 'unknown' : 'failure_recorded',
+    }));
+  }
+
   /** @deprecated Use acknowledgeExternallyRepairedMigration; identical guarded contract. */
   async repair(id: string, actor: string, reason: string): Promise<void> {
     return this.acknowledgeExternallyRepairedMigration(id, actor, reason);
@@ -237,6 +247,34 @@ export class MigrationRunner {
    */
   async acknowledgeExternallyRepairedMigration(id: string, actor: string, reason: string): Promise<void> {
     if (!actor.trim() || !reason.trim()) throw new MigrationError('Repair requires actor and reason');
+    await this.withRepairEntry(id, async (connection, recorded) => {
+      const { status, checksum, error } = recorded;
+      const verification = Object.hasOwn(this.repairVerifications, id) ? this.repairVerifications[id] : undefined;
+      if (!verification || verification.checksum !== checksum) {
+        throw new MigrationError(`Migration ${id} requires checksum-bound repair verification`);
+      }
+      await assertSchemaInvariants(connection);
+      await verification.verify(connection);
+      const audit = JSON.stringify({
+        action: 'acknowledgeExternallyRepairedMigration', actor: actor.trim(), reason: reason.trim(),
+        checksum, previousError: error,
+        ...(status === 'running' ? { previousStatus: status, previousExecutionOutcome: 'unknown' } : {}),
+      });
+      // TEXT is limited in bytes, not JS characters; never silently truncate audit evidence.
+      if (Buffer.byteLength(audit, 'utf8') > 65535) throw new MigrationError('Repair audit record exceeds ledger capacity');
+      const [result] = await connection.query<{ affectedRows: number }>(
+        `UPDATE app_schema_migrations SET status = 'completed', error = ?, finished_at = NOW()
+         WHERE migration_id = ? AND status = ? AND CAST(checksum AS BINARY) = CAST(? AS BINARY)`,
+        [audit, id, status, checksum],
+      );
+      if (Number(result.affectedRows) !== 1) throw new MigrationError(`Migration ${id} changed during repair verification`);
+    });
+  }
+
+  private async withRepairEntry<T>(
+    id: string,
+    operation: (connection: MigrationConnection, recorded: MigrationLedgerEntry) => Promise<T>,
+  ): Promise<T> {
     const migrations = await loadMigrations(this.directory);
     const migration = migrations.find((item) => item.id === id);
     if (!migration) throw new MigrationError(`Unknown migration ${id}`);
@@ -244,35 +282,45 @@ export class MigrationRunner {
     try {
       const [locks] = await connection.query<Array<{ locked: number }>>('SELECT GET_LOCK(?, 30) AS locked', [lockName]);
       if (Number(locks[0]?.locked) !== 1) throw new MigrationError('Could not acquire migration lock');
-      try {
-        const [rows] = await connection.query<MigrationLedgerEntry[]>(
-          'SELECT migration_id, checksum, status, statement_index, error FROM app_schema_migrations WHERE migration_id = ?', [id],
-        );
-        const recorded = rows[0];
-        if (!recorded || recorded.status !== 'failed') throw new MigrationError(`Migration ${id} is not failed`);
-        if (!isMigrationChecksumAccepted(id, recorded.checksum, migration.checksum)) {
-          throw new MigrationError(`Checksum mismatch for ${id}`);
-        }
-        const verification = Object.hasOwn(this.repairVerifications, id) ? this.repairVerifications[id] : undefined;
-        if (!verification || verification.checksum !== recorded.checksum) {
-          throw new MigrationError(`Migration ${id} requires checksum-bound repair verification`);
-        }
-        await assertSchemaInvariants(connection);
-        await verification.verify(connection);
-        const audit = JSON.stringify({
-          action: 'acknowledgeExternallyRepairedMigration', actor: actor.trim(), reason: reason.trim(),
-          checksum: recorded.checksum, previousError: recorded.error,
+    } catch (error) {
+      connection.destroy();
+      throw error;
+    }
+
+    let outcome: { value: T } | { error: unknown };
+    try {
+      const [rows] = await connection.query<MigrationLedgerEntry[]>(
+        'SELECT migration_id, checksum, status, statement_index, error FROM app_schema_migrations WHERE migration_id = ?', [id],
+      );
+      const recorded = rows[0];
+      if (!recorded || (recorded.status !== 'failed' && recorded.status !== 'running')) {
+        throw new MigrationError(`Migration ${id} is not failed or running`);
+      }
+      if (!isMigrationChecksumAccepted(id, recorded.checksum, migration.checksum)) {
+        throw new MigrationError(`Checksum mismatch for ${id}`);
+      }
+      outcome = { value: await operation(connection, recorded) };
+    } catch (error) {
+      outcome = { error };
+    }
+
+    try {
+      const [locks] = await connection.query<Array<{ released: number }>>(
+        'SELECT RELEASE_LOCK(?) AS released', [lockName],
+      );
+      if (Number(locks[0]?.released) !== 1) throw new MigrationError('Could not release migration lock');
+    } catch (cleanupError) {
+      connection.destroy();
+      if ('error' in outcome) {
+        throw new AggregateError([outcome.error, cleanupError], 'Migration repair operation and lock cleanup failed', {
+          cause: outcome.error,
         });
-        // TEXT is limited in bytes, not JS characters; never silently truncate audit evidence.
-        if (Buffer.byteLength(audit, 'utf8') > 65535) throw new MigrationError('Repair audit record exceeds ledger capacity');
-        const [result] = await connection.query<{ affectedRows: number }>(
-          `UPDATE app_schema_migrations SET status = 'completed', error = ?, finished_at = NOW()
-           WHERE migration_id = ? AND status = 'failed' AND checksum = ?`,
-          [audit, id, recorded.checksum],
-        );
-        if (Number(result.affectedRows) !== 1) throw new MigrationError(`Migration ${id} changed during repair verification`);
-      } finally { await connection.query('SELECT RELEASE_LOCK(?)', [lockName]); }
-    } finally { connection.release(); }
+      }
+      throw cleanupError;
+    }
+    connection.release();
+    if ('error' in outcome) throw outcome.error;
+    return outcome.value;
   }
 
   private async runLocked(connection: MigrationConnection): Promise<void> {
