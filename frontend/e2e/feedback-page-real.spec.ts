@@ -66,12 +66,12 @@ test('MAX-724/MAX-430: real feedback reads, permission downgrade, status rollbac
     return (await response.json()).feedback;
   }
   const feedback = await createFeedback(8, '真实反馈验收');
-  await createFeedback(7, '自己的反馈');
+  const ownFeedback = await createFeedback(7, '自己的反馈');
   const sqlStatus = async () => (await db.execute('SELECT status FROM problem_feedback WHERE id=?', [feedback.id]))[0][0].status;
   let failNextRead = true;
   const writes: string[] = [];
   const readStatuses: number[] = [];
-  const listReadAt = new Date(Date.now() - 30_000);
+  const listReadAt = new Date(Math.max(Date.now(), Date.parse(feedback.createdAt), Date.parse(ownFeedback.createdAt)));
   await page.clock.setFixedTime(listReadAt);
 
   // Forward requests to the task-owned Fastify listener instead of a shared API.
@@ -98,7 +98,6 @@ test('MAX-724/MAX-430: real feedback reads, permission downgrade, status rollbac
   const select = view.getByRole('combobox', { name: '更新 真实反馈验收 的状态' });
   await expect(select).toHaveValue('pending');
   expect(writes).toEqual([]);
-  await page.clock.setFixedTime(new Date());
   const toggle = view.getByRole('button', { name: '展开 真实反馈验收 的问题描述' });
   await toggle.press('Enter');
   // The toggle name changes when the row is expanded.
@@ -112,6 +111,7 @@ test('MAX-724/MAX-430: real feedback reads, permission downgrade, status rollbac
   await expect(select).toHaveValue('pending');
   expect(await sqlStatus()).toBe('pending');
   ownerCanAccessAll = true;
+  await expect.poll(Date.now).toBeGreaterThan(listReadAt.getTime() + 1_000);
   const success = page.waitForResponse(r => r.request().method() === 'PUT');
   await select.selectOption('resolved');
   const saved = await success;
