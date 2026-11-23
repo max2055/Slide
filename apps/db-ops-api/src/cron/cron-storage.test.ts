@@ -90,6 +90,39 @@ describe('MAX-414/415/418/420 storage failures', () => {
     } finally { await server.close(); }
   });
 
+  it.each([
+    ['empty', 200, { logs: [], total: 0 }],
+    ['invalid pagination', 400, { error: 'CRON_INVALID_PAGINATION' }],
+    ['missing job', 404, { error: '定时任务不存在' }],
+    ['unavailable', 503, { error: 'CRON_STORAGE_UNAVAILABLE' }],
+  ] as const)('MAX-715 sends cron log JSON with asynchronous serialization: %s', async (scenario, status, body) => {
+    vi.spyOn(cronJobService, 'getJobById').mockResolvedValue(
+      scenario === 'missing job' ? null : { id: 1, target_instance_id: null } as any);
+    const logs = vi.spyOn(cronJobService, 'getLogs').mockResolvedValue({ logs: [], total: 0 });
+    if (scenario === 'unavailable') logs.mockRejectedValue(new Error('CRON_STORAGE_UNAVAILABLE'));
+    const server = await app();
+    // Keep the JSON serialization pending when the async handler finishes.
+    server.addHook('preSerialization', async (_request, _reply, payload) => {
+      await new Promise<void>(resolve => setImmediate(resolve));
+      return payload;
+    });
+    try {
+      const origin = await server.listen({ host: '127.0.0.1', port: 0 });
+      const limit = scenario === 'invalid pagination' ? 200 : 100;
+      const response = await fetch(`${origin}/api/cron/jobs/1/logs?limit=${limit}&offset=1`, {
+        signal: AbortSignal.timeout(3000),
+      });
+      expect(response.status).toBe(status);
+      expect(response.headers.get('content-type')).toMatch(/^application\/json/);
+      expect(await response.json()).toEqual(body);
+      if (scenario === 'empty' || scenario === 'unavailable') {
+        expect(logs).toHaveBeenCalledExactlyOnceWith(1, 100, 1);
+      } else {
+        expect(logs).not.toHaveBeenCalled();
+      }
+    } finally { await server.close(); }
+  });
+
   it.each([false, true])('HTTP deletion success reflects storage result %s', async deleted => {
     vi.spyOn(scriptService, 'getScriptById').mockResolvedValue({ id: 1 } as any);
     vi.spyOn(scriptService, 'deleteScript').mockResolvedValue(deleted);
