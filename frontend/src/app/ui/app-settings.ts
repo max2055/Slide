@@ -529,6 +529,7 @@ export function syncUrlWithTab(host: SettingsHost, tab: Tab, replace: boolean) {
 
   const keepSettingsChildPath = tab === "settings" && isSettingsLocation(currentPath);
   if (currentPath !== targetPath && !keepSettingsChildPath) {
+    url.searchParams.delete("detailTab");
     url.pathname = targetPath;
   }
 

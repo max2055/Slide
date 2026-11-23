@@ -24,7 +24,7 @@ function host() {
   return {
     client: null as DirectGatewayClient | null, connected: true, sessionKey: 'one',
     chatMessages: [{ role: 'assistant', content: 'private history' }] as unknown[],
-    chatMessage: 'private draft', chatAttachments: [], chatQueue: [{ id: 'queued' }],
+    chatMessage: 'private draft', chatAttachments: [], chatQueue: [{ id: 'queued', text: 'queued', createdAt: 0 }],
     chatLoading: false, chatSending: true, chatThinkingLevel: null,
     chatRunId: 'old-run' as string | null, chatStream: 'private stream' as string | null,
     chatStreamStartedAt: 1, chatThinkingText: 'private reasoning', chatThinkingComplete: true,

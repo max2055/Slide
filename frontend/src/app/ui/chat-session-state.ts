@@ -1,7 +1,7 @@
 /** Stable receivers keep async sends, reducers and stream timers in their session. */
 type Host = Record<string, unknown>;
 const defaults = () => ({
-  sessionKey: '', chatMessage: '', chatAttachments: [], chatQueue: [],
+  sessionKey: '', chatMessage: '', chatAttachments: [], chatDraftRevision: 0, chatReceiptNotice: null, chatQueue: [],
   chatMessages: [], chatToolMessages: [], chatStreamSegments: [],
   chatLoading: false, chatSending: false, chatRunId: null,
   chatStream: null, chatStreamStartedAt: null, chatStreamPartId: undefined,
@@ -178,7 +178,7 @@ export function activateChatSession(host: object, key: string): void {
   for (const [oldKey, scope] of store.byKey) {
     if (store.byKey.size <= 20) break;
     if (scope === next || scope.host.chatRunId || scope.host.chatSending || scope.host.chatMessage
-      || (scope.host.chatQueue as unknown[]).length || (scope.host.chatAttachments as unknown[]).length) continue;
+      || scope.host.chatReceiptNotice || (scope.host.chatQueue as unknown[]).length || (scope.host.chatAttachments as unknown[]).length) continue;
     store.byKey.delete(oldKey);
     for (const [id, sending] of store.byMessage) if (sending === scope) store.byMessage.delete(id);
   }

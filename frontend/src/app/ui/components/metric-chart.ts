@@ -103,6 +103,7 @@ export class MetricChart extends LitElement {
   @property({ type: String }) title = "";
   @property({ type: String }) height = "280px";
   @property({ type: String }) yAxisLabel = "";
+  @property({ attribute: false }) formatValue?: (value: number) => string;
   @property({ type: Number }) yAxisMax = 100;
   @property({ type: Boolean }) percentage = false;
   @property({ type: Boolean }) compact = false;
@@ -144,7 +145,7 @@ export class MetricChart extends LitElement {
 
   override updated(changedProperties: Map<string, unknown>) {
     // Update chart when data changes
-    if (changedProperties.has("timeData") || changedProperties.has("series") || changedProperties.has("thresholds") || changedProperties.has("regions")) {
+    if (["timeData", "series", "thresholds", "regions", "formatValue", "yAxisLabel"].some(key => changedProperties.has(key))) {
       if (this._chart) {
         this._updateChart();
         this._chart.resize();
@@ -325,6 +326,8 @@ export class MetricChart extends LitElement {
       const option: EChartsOption = {
         tooltip: {
           trigger: "axis",
+          ...(this.formatValue ? { valueFormatter: (value: unknown) =>
+            typeof value === 'number' && Number.isFinite(value) ? this.formatValue!(value) : '—' } : {}),
           backgroundColor: style.getPropertyValue("--popover").trim(),
           borderColor: border,
           textStyle: { color: text, fontSize: 12 },

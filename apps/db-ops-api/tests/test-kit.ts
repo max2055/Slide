@@ -72,6 +72,17 @@ export function resetState() { failures.length = 0; warnings.length = 0; }
 // Http helper
 // ---------------------------------------------------------------------------
 
+export async function readResponseBody(
+  res: Response,
+): Promise<{ isJson: true; raw: unknown } | { isJson: false; raw: string }> {
+  const text = await res.text();
+  try {
+    return { isJson: true, raw: JSON.parse(text) };
+  } catch {
+    return { isJson: false, raw: text };
+  }
+}
+
 async function request(
   method: string,
   path: string,
@@ -92,9 +103,7 @@ async function request(
     body: body ? JSON.stringify(body) : undefined,
   });
 
-  const text = await res.text();
-  let raw: unknown = text;
-  try { raw = JSON.parse(text); } catch { /* Preserve non-JSON diagnostics. */ }
+  const { raw } = await readResponseBody(res);
   return { res, raw };
 }
 
@@ -124,7 +133,7 @@ export function assertShape(
     }
     const actual = Array.isArray(val) ? "array" : typeof val;
     if (actual !== a.type) {
-      errors.push(`[${label}] ${a.field}: expected ${a.type}, got ${actual} (value: ${JSON.stringify(val).slice(0, 60)})`);
+      errors.push(`[${label}] ${a.field}: expected ${a.type}, got ${actual}`);
     }
   }
   return errors;

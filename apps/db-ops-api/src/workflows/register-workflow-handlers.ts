@@ -1,6 +1,8 @@
 import { createInvestigationWorkflowHandler } from '../investigations/workflow-handler.js';
 import { SYSTEM_EVENT_JOB, type MysqlSystemEventBridge } from '../investigations/system-event-bridge.js';
 import type { CronCompletion } from '../cron/cron-run-store.js';
+import { DATABASE_LOG_COLLECTION_HANDLER, databaseLogCollectionCompletion } from '../cron/database-log-collection.js';
+import type { databaseLogService } from '../database-log-service.js';
 import { createSlowQueryCollectionJob } from '../monitor-collector.js';
 import { createCapacityConsistencyJob } from '../capacity-consistency-monitor.js';
 import type { JobRegistry } from './job-registry.js';
@@ -12,6 +14,7 @@ interface WorkflowHandlerDependencies {
   systemEventBridge?: Pick<MysqlSystemEventBridge, 'handler'>;
   investigationEngine?: () => Promise<import('../adapter/types.js').IAgentEngine>;
   faultDiagnosisService: { diagnoseUnhealthyInstances(): Promise<unknown> };
+  databaseLogService: Pick<typeof databaseLogService, 'collectLogs'>;
   monitorCollector: { collectCapacityNow(): Promise<unknown>; collectSlowQueriesNow?():Promise<unknown> };
   baselineCalculator: { cleanupOldBaselines(): Promise<unknown> };
   alertEngine: { triggerEvaluation(): Promise<unknown> };
@@ -42,6 +45,8 @@ export function registerWorkflowHandlers(registry: JobRegistry, deps: WorkflowHa
     reportSchedule, notificationDatabaseService, notificationService, reportDatabaseService,
   } = deps;
   registry.register('fault.diagnose-unhealthy', async () => completion('fault.diagnose-unhealthy', await faultDiagnosisService.diagnoseUnhealthyInstances()));
+  registry.register(DATABASE_LOG_COLLECTION_HANDLER, async (_payload, _job, { signal }) =>
+    databaseLogCollectionCompletion(await deps.databaseLogService.collectLogs(signal)));
   if (monitorCollector.collectSlowQueriesNow) registry.register('diagnostic.slow-queries',async (_payload,_job,{signal})=>{
     signal.throwIfAborted();await workflowStore.enqueue(createSlowQueryCollectionJob(new Date(Date.now()+300000)));
     signal.throwIfAborted();return completion('diagnostic.slow-queries',await monitorCollector.collectSlowQueriesNow!());

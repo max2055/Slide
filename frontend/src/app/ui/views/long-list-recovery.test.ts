@@ -14,8 +14,13 @@ describe('list failure and compatibility', () => {
     const view = new SchemaManagementPage() as any; view.selectedInstance = 1;
     authFetch.mockResolvedValueOnce(response({ tables: [{ table_name: 'private-old' }] })).mockResolvedValueOnce(response({}, status)).mockResolvedValueOnce(response({ tables: [] }));
     await view.loadTableList(); expect(view.tableList).toHaveLength(1);
-    await view.loadTableList(); expect(view.tableList).toEqual([]); expect(view.tablesError).toBeTruthy();
-    await view.loadTableList(); expect(view.tablesError).toBeNull(); expect(view.tableList).toEqual([]);
+    await view.loadTableList(); expect(view.tableList).toEqual([]); expect(status === 403 ? view.schemaAccessError : view.tablesError).toBeTruthy();
+    if (status === 403) {
+      authFetch.mockReset();
+      authFetch.mockResolvedValueOnce(response([])).mockResolvedValueOnce(response({ tables: [] })).mockResolvedValueOnce(response({ changes: [] }));
+      await view.refreshData();
+    } else await view.loadTableList();
+    expect(view.tablesError).toBeNull(); expect(view.tableList).toEqual([]);
   });
   it('rejects a late schema response from a prior instance', async () => {
     const view = new SchemaManagementPage() as any; view.selectedInstance = 1;
@@ -28,7 +33,7 @@ describe('list failure and compatibility', () => {
   it('accepts the existing single-snapshot hint envelope without crashing the table page', async () => {
     const view = new SchemaManagementPage() as any; view.selectedInstance = 1;
     authFetch.mockResolvedValue(response({ changes: { hint: '需要至少两次快照才能进行变更检测' } }));
-    await view.loadChanges(); expect(view.changes).toEqual([]); expect(view.hint).toContain('至少两次');
+    await view.loadChanges(); expect(view.changes).toBeNull(); expect(view.hint).toContain('至少两次');
   });
   it('groups composite indexes by table and orders columns by sequence', () => {
     const view = new IndexManagementPage() as any;
@@ -37,11 +42,11 @@ describe('list failure and compatibility', () => {
     expect(groups).toHaveLength(2); expect(groups[0].map((row: any) => row.column_name)).toEqual(['first', 'second']);
     view.selectedTable = 'b'; expect(view.getGroupedIndexes().size).toBe(1);
   });
-  it('clears all index sections on a partial fetch failure', async () => {
+  it('clears all index sections when their shared permission is revoked', async () => {
     const view = new IndexManagementPage() as any; view.selectedInstanceId = 1;
     view.indexes = view.unusedIndexes = view.redundancyReport = [{ table_name: 'private-old' }];
     authFetch.mockResolvedValueOnce(response([])).mockResolvedValueOnce(response({}, 403)).mockResolvedValueOnce(response([]));
-    await view.loadIndexes(); expect(view.indexes).toEqual([]); expect(view.unusedIndexes).toEqual([]); expect(view.redundancyReport).toEqual([]); expect(view.indexError).toContain('无权限');
+    await view.loadIndexes(); expect(view.indexes).toEqual([]); expect(view.unusedIndexes).toEqual([]); expect(view.redundancyReport).toEqual([]); expect(view.accessError).toContain('不可访问');
   });
   it('clears permissions after revoked access', async () => {
     const view = new PermissionManagementTab() as any; view.permissions = [{ code: 'private-old' }]; get.mockRejectedValue(new Error('HTTP 403'));
@@ -49,10 +54,25 @@ describe('list failure and compatibility', () => {
   });
   it('reads subsequent report batches and invalidates the loaded history on failure', async () => {
     const view = new ReportsPage() as any;
-    authFetch.mockResolvedValueOnce(response([{ id: 1, name: 'first' }])).mockResolvedValueOnce(response([{ id: 2, name: 'second' }])).mockResolvedValueOnce(response({}, 403));
-    await view.loadReports(); await view.loadReports(true);
-    expect(authFetch.mock.calls.map(c => c[0])).toEqual(['/api/reports?page=1&limit=100', '/api/reports?page=2&limit=100']);
-    expect(view.reports).toHaveLength(2); await view.loadReports(true); expect(view.reports).toEqual([]); expect(view.error).toContain('无权限');
+    vi.spyOn(view, 'firstUpdated').mockImplementation(() => {});
+    document.body.append(view);
+    try {
+      authFetch.mockResolvedValueOnce(response([{ id: 1, name: 'first' }]))
+        .mockResolvedValueOnce(response({ total: 3 }))
+        .mockResolvedValueOnce(response([{ id: 2, name: 'second' }]))
+        .mockResolvedValueOnce(response({}, 403));
+      await view.refreshReadData();
+      await view.loadHistory(true);
+      expect(authFetch.mock.calls.map(c => c[0])).toEqual([
+        '/api/reports?page=1&limit=100', '/api/reports/stats', '/api/reports?page=2&limit=100',
+      ]);
+      expect(view.reports).toHaveLength(2);
+      await view.loadHistory(true);
+      expect(view.reports).toEqual([]);
+      expect(view.historyError.message).toContain('无权限');
+    } finally {
+      view.remove();
+    }
   });
   it('keeps searching available after data shrink and clamps an obsolete page', () => {
     const browser = new ListBrowser(); browser.page = 5;
@@ -69,4 +89,23 @@ it('MAX-3: redundancy persistence failure is visible and never announces complet
   expect(view.msgType).toBe('error');
   expect(view.message).toBe('索引存储更新失败');
   expect(view.message).not.toContain('检测完成');
+});
+
+it('MAX-717 keeps successful index reads and retries only the failed section', async () => {
+  const view = new IndexManagementPage() as any;
+  view.selectedInstanceId = 1;
+  const index = { table_name: 'table-one', index_name: 'PRIMARY' };
+  const unused = { table_name: 'table-two', index_name: 'unused' };
+  authFetch.mockResolvedValueOnce(response([index])).mockResolvedValueOnce(response({}, 503)).mockResolvedValueOnce(response([unused]));
+  await view.loadIndexes();
+  expect(view.indexes).toEqual([index]);
+  expect(view.unusedIndexes).toEqual([unused]);
+  expect(view.indexReads.redundancy.state).toBe('error');
+
+  authFetch.mockClear().mockResolvedValueOnce(response([]));
+  await view.loadIndexSection('redundancy');
+  expect(authFetch.mock.calls.map(([url]) => url)).toEqual(['/api/indexes/1/redundancy']);
+  expect(view.indexReads.redundancy.state).toBe('ready');
+  expect(view.indexes).toEqual([index]);
+  expect(view.unusedIndexes).toEqual([unused]);
 });

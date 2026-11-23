@@ -90,7 +90,7 @@ test('existing data, resource filtering, no-match, back/refresh, evidence focus 
   await page.getByRole('button', { name: /订单延迟：真实资源选择闭环/ }).click(); await observed(page);
   await page.goBack(); await expect(page.getByLabel('继续调查', { exact: true })).toHaveCount(0);
   await page.goForward(); await expect(page.getByLabel('继续调查', { exact: true })).toBeVisible();
-  await page.setViewportSize({ width: 768, height: 950 }); const evidence = page.getByRole('button', { name: '查看证据与成果' });
+  await page.setViewportSize({ width: 768, height: 950 }); const evidence = page.getByRole('button', { name: /查看(?:完整结果与证据|证据与成果)/ });
   await evidence.click(); await expect(page.getByRole('dialog', { name: '证据与成果' })).toBeVisible(); await page.keyboard.press('Escape'); await expect(evidence).toBeFocused();
   await page.getByRole('button', { name: '创建手动调查' }).click();
   await page.locator('investigation-create').getByRole('checkbox', { name: `${resourceName} · 数据库实例` }).check();

@@ -61,7 +61,7 @@ it.each(['instance', 'server', 'network_device'])('starts %s at the same exact-v
   expect(calls('query')).toHaveLength(0);
   expect(calls('observations')).toHaveLength(0);
   expect(element.shadowRoot!.querySelector('time')?.getAttribute('datetime')).toBe(at);
-  expect(element.shadowRoot!.textContent).toContain('0 count');
+  expect(element.shadowRoot!.textContent).toContain('0 次');
   expect(button(element, '图形')).toBeDefined();
   expect(button(element, '历史记录')).toBeDefined();
 });
@@ -71,8 +71,8 @@ it('switches the exact series from graph to raw values and maintains the same cu
   button(element, '图形').click();
   await vi.waitFor(() => expect(element.shadowRoot!.querySelector('metric-chart')).not.toBeNull());
   expect(calls('query')[0]).toMatchObject({ series: { metric: metricRef, dimensions }, history: true, include_retained_trends: true });
-  button(element, '数值').click();
-  await waitForText(element, '原始值');
+  button(element, '查看采集详情').click();
+  await waitForText(element, '第 1 页 · 按采样时间升序');
   expect(calls('observations')[0]).toMatchObject({ metric: metricRef, dimensions,
     from: calls('query')[0].from, to: calls('query')[0].to });
 
@@ -109,7 +109,7 @@ it('plots retained mean and bounds alongside detail, while long windows stay cha
   await vi.waitFor(() => expect(calls('query')).toHaveLength(2));
   const beforeSwitch = calls('query').at(-1)!;
   expect(Date.parse(beforeSwitch.to) - Date.parse(beforeSwitch.from)).toBe(90 * 86_400_000);
-  button(element, '数值').click();
+  button(element, '查看采集详情').click();
   await waitForText(element, '数值查询最长 31 天');
   expect(calls('observations')).toHaveLength(0);
 });
@@ -179,7 +179,7 @@ it('does not show a late history reply after the authorization context changes',
   authFetch.mockResolvedValueOnce({ ok: false, status: 403, json: async () => ({ error: 'FORBIDDEN' }) });
   window.dispatchEvent(new Event('slide-permissions-loaded'));
   complete(response({ window: calls('query')[0], metrics: [] }));
-  await waitForText(element, '权限已变更');
+  await waitForText(element, '没有此资源的查看权限');
   expect(element.shadowRoot!.querySelector('metric-chart')).toBeNull();
   expect(element.shadowRoot!.querySelector('app-data-table')).toBeNull();
 });

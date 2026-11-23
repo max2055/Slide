@@ -89,3 +89,48 @@ describe('MAX-425 diagnostic-only log projection', () => {
     expect(project('')).toBe('');
   });
 });
+
+describe('#1014 database diagnostic fields', () => {
+  it.each([
+    ['ERROR 1045 (28000): access denied', 'ERROR 1045 (28000): access denied'],
+    ['ORA-00060: deadlock detected', 'ORA-00060: deadlock detected'],
+    ['password="ORA-01017"; ORA-00060: deadlock detected', '[REDACTED]=[REDACTED]; ORA-00060: deadlock detected'],
+    ["token='ERROR 1045 (28000): access denied' | ERROR 1213 (40001): deadlock detected",
+      '[REDACTED]=[REDACTED] | ERROR 1213 (40001): deadlock detected'],
+    [`tag="sample one" | reason='sample ORA-01017' | ERROR 1213 (40001): deadlock detected`,
+      '[REDACTED]=[REDACTED] | [REDACTED]=[REDACTED] | ERROR 1213 (40001): deadlock detected'],
+    [`tag="sample one"; reason='sample two'; code="SQLSTATE 28000" | SQLSTATE=40001`,
+      '[REDACTED]=[REDACTED]; [REDACTED]=[REDACTED]; code=[REDACTED] | SQLSTATE 40001'],
+    ['code="SQLSTATE 28000" | SQLSTATE=40001', 'code=[REDACTED] | SQLSTATE 40001'],
+    ['code="MY-010584"; ORA-00060', 'code=[REDACTED]; ORA-00060'],
+  ])('preserves a separate diagnostic field in %s', (input, expected) => {
+    expect(project(input)).toBe(expected);
+  });
+
+  const connectionUrl = new URL('mysql://database.invalid/db?note=ORA-01017');
+  connectionUrl.username = 'fixture-user';
+  connectionUrl.password = 'secret';
+
+  it.each([
+    'unknown=connection refused ORA-01017',
+    'unknown=connection refused; ORA-01017: authentication denied',
+    'unknown=connection refused | ERROR 1045 (28000): access denied',
+    'unknown="connection refused; ORA-01017: authentication denied"',
+    'unknown="connection refused | ERROR 1045 (28000): access denied',
+    'unknown="connection refused" ORA-01017',
+    'unknown="connection refused" additional text | ORA-01017: authentication denied',
+    'unknown=[REDACTED] | ORA-01017: authentication denied',
+    'Authorization: "connection refused" | ORA-01017: authentication denied',
+    'User Id=example;Password="secret";SQLSTATE=28000',
+    'Password="secret"; SQLSTATE=28000',
+    'tag="sample one" | reason=sample two | ERROR 1045 (28000): access denied',
+    'tag="sample one" | reason="sample two | ERROR 1045 (28000): access denied',
+    'tag="sample one" | reason="sample two" ERROR 1045 (28000): access denied',
+    'tag="sample one"; reason="sample two"; SQLSTATE=28000',
+    connectionUrl.href,
+    'password=ab\u2028ERROR 1045 (28000): access denied',
+    'SELECT 1045 FROM example',
+  ])('keeps ambiguous values masked in %s', (input) => {
+    expect(project(input)).not.toMatch(/ORA-01017|1045|28000|connection refused|authentication denied|access denied|secret/);
+  });
+});

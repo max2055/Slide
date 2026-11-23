@@ -58,6 +58,7 @@ export type AppViewState = {
   lastError: string | null;
   connectionError?: string | null;
   chatRecoveryNotice?: string | null;
+  chatReceiptNotice?: string | null;
   lastErrorCode: string | null;
   eventLog: EventLogEntry[];
   assistantName: string;
@@ -70,6 +71,7 @@ export type AppViewState = {
   chatLoading: boolean;
   chatSending: boolean;
   chatMessage: string;
+  chatDraftRevision?: number;
   chatAttachments: ChatAttachment[];
   chatMessages: unknown[];
   chatToolMessages: unknown[];
