@@ -382,13 +382,12 @@ test("real topbar entry retains document selection through refresh and browser h
   await page.goBack();
   await expect(view.locator(".docs-current")).toHaveText(second);
   expect(new URL(page.url()).searchParams.get("doc")).toBeTruthy();
-  // Controlled popstate to another tab exercises the live shell and viewer listeners together.
-  await page.evaluate(() => {
-    const url = new URL(location.href);
-    url.search = "?tab=dashboard";
-    history.pushState({}, "", url);
-    dispatchEvent(new PopStateEvent("popstate"));
-  });
+  await page.getByRole("link", { name: "资源概览", exact: true }).click();
+  await expect(page.locator("dashboard-page")).toBeVisible();
+  expect(new URL(page.url()).searchParams.has("doc")).toBe(false);
+  await page.goBack();
+  await expect(view.locator(".docs-current")).toHaveText(second);
+  await page.goForward();
   await expect(page.locator("dashboard-page")).toBeVisible();
   expect(new URL(page.url()).searchParams.has("doc")).toBe(false);
 });
