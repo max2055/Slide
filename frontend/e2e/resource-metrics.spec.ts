@@ -899,6 +899,17 @@ for (const item of detailLocationCases) {
       if (item.type === 'server') {
         await tab.route('**/api/servers/1021/instances', route => route.fulfill({ json: { instances: [] } }));
       }
+      await tab.route('**/api/metrics/policy/groups', route => route.fulfill({ json: {
+        groups: [{ id: 'draft-group', label: '待发布策略组' }],
+      } }));
+      const pin = { template_id: 'history-template', version: 1, content_hash: 'history-fixture' };
+      await tab.route(`**/api/metrics/template-bindings/${item.type}/1021`, route => route.fulfill({ json: {
+        source: 'template', revision: 1, configuration: { group_id: null, overrides: {} },
+        template_pins: [pin], pending: null,
+      } }));
+      await tab.route('**/api/metrics/templates/history-template/versions/1', route => route.fulfill({ json: {
+        ...pin, parameters: { schema: {}, defaults: {} }, items: [],
+      } }));
     };
     await seed(page);
     await page.goto('/workbench');
@@ -954,11 +965,40 @@ for (const item of detailLocationCases) {
     await expect(overview).toHaveAttribute('aria-selected', 'true');
     await expect(detail.getByRole('heading', { name: fixtureEntries[20].name })).toBeVisible();
     await expect(detail.getByRole('button', { name: '监控配置', exact: true })).toHaveCount(0);
+    const historySnapshot = () => page.evaluate(() => ({
+      url: location.href, length: history.length, index: navigation.currentEntry?.index,
+      entries: navigation.entries().map(({ key, url }) => ({ key, url })),
+    }));
+    const overviewHistory = await historySnapshot();
     const config = detail.getByRole('tab', { name: '监控配置', exact: true });
     await detail.getByRole('button', { name: '查看监控配置', exact: true }).click();
     await expect(config).toHaveAttribute('aria-selected', 'true');
     await expect(detail.locator('resource-collection-section')).toHaveJSProperty('resourceId', 1021);
-    await overview.click();
+    await detail.getByRole('button', { name: '修改模板与参数', exact: true }).click();
+    const group = detail.getByRole('combobox', { name: '策略组', exact: true });
+    await group.selectOption('draft-group');
+    const configHistory = await historySnapshot();
+    expect(configHistory.length).toBe(overviewHistory.length + 1);
+    const discard = detail.getByRole('dialog', { name: '放弃未发布的修改？' });
+    await page.goBack();
+    await expect(discard).toBeVisible();
+    await detail.getByRole('button', { name: '继续编辑', exact: true }).click();
+    await expect(discard).toBeHidden();
+    await expect(config).toHaveAttribute('aria-selected', 'true');
+    await expect(group).toHaveValue('draft-group');
+    await expect.poll(historySnapshot).toEqual(configHistory);
+    await page.goBack();
+    await expect(discard).toBeVisible();
+    await detail.getByRole('button', { name: '放弃修改并继续', exact: true }).click();
+    await expect(overview).toHaveAttribute('aria-selected', 'true');
+    const afterDiscard = await historySnapshot();
+    expect(afterDiscard).toEqual({ ...configHistory, url: overviewHistory.url, index: overviewHistory.index });
+    await page.goForward();
+    await expect(config).toHaveAttribute('aria-selected', 'true');
+    expect(await historySnapshot()).toEqual(configHistory);
+    await expect(group).toHaveCount(0);
+    await page.goBack();
+    await expect(overview).toHaveAttribute('aria-selected', 'true');
     await selected.focus();
     await page.keyboard.press('Enter');
     await expect(selected).toHaveAttribute('aria-selected', 'true');
@@ -1047,6 +1087,7 @@ for (const item of detailLocationCases) {
     await info.attach('MAX-726 result', { contentType: 'application/json', body: Buffer.from(JSON.stringify({
       resource: item.type, browser: page.context().browser()?.version(), viewport: page.viewportSize(),
       detailTab: item.key, defaultOverflow, narrowOverflow, position, writes,
+      discardHistory: { overview: overviewHistory, config: configHistory, afterDiscard },
     }, null, 2)) });
   });
 }

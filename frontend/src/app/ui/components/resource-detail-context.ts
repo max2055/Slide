@@ -29,25 +29,46 @@ export function readDetailTab<T extends string>(type: DetailResourceType, id: nu
   return tabs.find(tab => tab === selected) ?? tabs[0];
 }
 
+const approvedDetailEntries = new WeakMap<HTMLElement, string>();
+
 export function selectDetailTab(host: HTMLElement, active: string, tab: string, apply: () => void, fromHistory = false) {
   if (tab === active) return;
-  const destination = new URL(location.href);
-  if (!fromHistory) destination.searchParams.set("detailTab", tab);
   const config = (host.shadowRoot ?? host).querySelector("resource-collection-section") as
     import("./resource-collection-section.js").ResourceCollectionSection | null;
-  let applied = false;
-  const select = () => {
-    if (fromHistory) history.replaceState(history.state, "", destination);
-    else history.pushState(history.state, "", destination);
-    applied = true;
+  if (!fromHistory) {
+    const destination = new URL(location.href);
+    destination.searchParams.set("detailTab", tab);
+    const select = () => { history.pushState(history.state, "", destination); apply(); };
+    if (config) config.confirmDiscard(select);
+    else select();
+    return;
+  }
+  if (!config) { apply(); return; }
+
+  const browser = window.navigation;
+  const target = browser?.currentEntry?.key;
+  if (target && approvedDetailEntries.get(host) === target) {
+    approvedDetailEntries.delete(host);
     apply();
-  };
-  if (config) config.confirmDiscard(select);
-  else select();
-  if (fromHistory && !applied) {
-    const current = new URL(location.href);
-    current.searchParams.set("detailTab", active);
-    history.replaceState(history.state, "", current);
+    return;
+  }
+  const origin = config.editorHistoryKey;
+  let applied = false;
+  let restored: Promise<NavigationHistoryEntry | null> | undefined;
+  config.confirmDiscard(() => {
+    if (!restored || !target) { applied = true; apply(); return; }
+    void restored.then(entry => {
+      if (!entry || !config.isConnected || browser.currentEntry?.key !== origin) return;
+      approvedDetailEntries.set(host, target);
+      return browser.traverseTo(target).finished.catch(() => {
+        if (approvedDetailEntries.get(host) === target) approvedDetailEntries.delete(host);
+      });
+    });
+  });
+  if (!applied && origin && target && target !== origin) {
+    // popstate has already moved the history cursor. Return to the editor entry
+    // while the dialog is open, leaving both URLs and history states intact.
+    restored = browser.traverseTo(origin).finished.catch(() => null);
   }
 }
 

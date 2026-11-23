@@ -25,6 +25,7 @@ export class ResourceCollectionSection extends LitElement {
   @state() private loading = false;
   @state() private events: Array<{ action: string; revision: number; at: string }> = [];
   @state() private eventError = '';
+  editorHistoryKey?: string;
   private generation = 0;
   private readonly accessChanged = () => {
     this.generation++; this.editing = false; this.status = null; this.triggers = null; this.triggerError = ''; this.loading = false; this.events = []; this.eventError = '';
@@ -37,6 +38,7 @@ export class ResourceCollectionSection extends LitElement {
   }
   openEditor() {
     if (!this.resourceId || this.connectionPending || this.mode === 'edit') return;
+    this.editorHistoryKey = window.navigation?.currentEntry?.key;
     this.editing = true;
   }
 
