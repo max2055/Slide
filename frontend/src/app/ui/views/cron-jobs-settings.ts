@@ -176,6 +176,7 @@ export class CronJobsSettings extends LitElement {
   private runTracker = new CronRunTracker(() => this.requestUpdate());
   private _refreshInterval: ReturnType<typeof setInterval> | null = null;
   private jobsGeneration = 0;
+  private viewerGeneration = 0;
 
   @state() private formTaskType: "agent" | "script" = "agent";
   @state() private formScriptId: number | null = null;
@@ -199,6 +200,7 @@ export class CronJobsSettings extends LitElement {
   private readonly sessionExpired = () => {
     this.permissions = new Set<string>();
     this.closeFormDialog();
+    this.closeLogViewer();
   };
   private get canManage() { return hasSlidePermission(this.permissions, "cron:manage"); }
 
@@ -239,7 +241,7 @@ export class CronJobsSettings extends LitElement {
     .cell-index { font-size: var(--text-xs); color: var(--muted); }
     .row-actions { display: flex; align-items: center; gap: var(--space-sm); }
     .run-summary { display: block; margin-top: var(--space-xs); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--muted); }
-    .job-name { display: block; max-width: 100%; font-weight: 600; overflow: hidden; text-overflow: ellipsis; }
+    .job-name { display: block; max-width: 100%; font-weight: 600; text-align: left; white-space: normal; overflow-wrap: anywhere; }
     .job-name:focus-visible { outline-offset: 0; }
     .job-name:hover { color: var(--accent-text); }
     .job-name--disabled { color: var(--muted); }
@@ -324,6 +326,7 @@ export class CronJobsSettings extends LitElement {
     window.removeEventListener("slide-session-expired", this.sessionExpired);
     this.jobsGeneration++;
     this.formGeneration++;
+    this.closeLogViewer();
     this.runTracker.stop();
     if (this._refreshInterval) {
       clearInterval(this._refreshInterval);
@@ -657,20 +660,45 @@ export class CronJobsSettings extends LitElement {
   }
 
   private async openLogViewer(job: CronJobConfig) {
-    this.logViewerJob = job; this.viewerLogs = []; this.viewerLoading = true; this.viewerError = null;
+    this.closeLogViewer();
+    this.logViewerJob = job;
+    await this.loadViewerLogs();
+  }
+
+  private async loadViewerLogs() {
+    const job = this.logViewerJob;
+    if (!job || this.viewerLoading) return;
+    const generation = ++this.viewerGeneration;
+    this.viewerLoading = true;
+    this.viewerError = null;
     try {
-      const res = await authFetch(`/api/cron/jobs/${job.id}/logs?limit=200`);
+      const res = await authFetch(`/api/cron/jobs/${job.id}/logs?limit=100`);
       if (!res.ok) throw new Error("加载日志失败");
-      const { logs } = await res.json() as { logs: CronJobLog[] };
-      this.viewerLogs = logs || [];
-    } catch (e: any) {
-      this.viewerError = e.message || "加载日志失败";
+      const result = await res.json() as { logs?: CronJobLog[] } | null;
+      if (!Array.isArray(result?.logs)) throw new Error("日志响应无效");
+      if (generation === this.viewerGeneration) this.viewerLogs = result.logs;
+    } catch {
+      if (generation === this.viewerGeneration) this.viewerError = "加载日志失败";
     } finally {
-      this.viewerLoading = false;
+      if (generation === this.viewerGeneration) this.viewerLoading = false;
     }
   }
 
-  private closeLogViewer() { this.logViewerJob = null; this.viewerLogs = []; }
+  private retryViewerLogs(event: Event) {
+    const button = event.currentTarget as HTMLButtonElement;
+    if (this.shadowRoot?.activeElement === button) {
+      button.closest<HTMLElement>(".log-viewer-results")?.focus();
+    }
+    void this.loadViewerLogs();
+  }
+
+  private closeLogViewer() {
+    this.viewerGeneration++;
+    this.logViewerJob = null;
+    this.viewerLogs = [];
+    this.viewerLoading = false;
+    this.viewerError = null;
+  }
 
   private renderBadge(result: string | null) {
     const key = result || "na";
@@ -917,8 +945,12 @@ export class CronJobsSettings extends LitElement {
       <!-- Log Viewer Dialog -->
       ${this.logViewerJob ? html`
         <app-dialog .open=${true} size="xl" title="执行记录 — ${this.logViewerJob.name}" @app-dialog-close=${this.closeLogViewer}>
-          ${this.viewerLoading ? html`<div class="log-empty">加载中...</div>` : nothing}
-          ${this.viewerError ? html`<div style="font-size:12px;padding:8px 12px;color:var(--danger);background:var(--danger-subtle, rgba(220,38,38,0.08));border-radius:var(--radius-sm);margin-bottom:12px">${this.viewerError}</div>` : nothing}
+          <div class="log-viewer-results" tabindex="-1">
+          ${this.viewerLoading ? html`<div class="log-empty" role="status">加载中...</div>` : nothing}
+          ${this.viewerError ? html`<app-notice severity="error">
+            <div role="alert">${this.viewerError}</div>
+            <button type="button" class="btn btn-refresh" @click=${this.retryViewerLogs}>重试</button>
+          </app-notice>` : nothing}
           ${!this.viewerLoading && !this.viewerError && this.viewerLogs.length === 0 ? html`<div class="log-empty">暂无执行记录</div>` : nothing}
           ${this.viewerLogs.map(log => html`
             <div class="log-entry">
@@ -933,6 +965,7 @@ export class CronJobsSettings extends LitElement {
               ${log.result ? html`<pre class="log-entry__result">${log.result}</pre>` : log.result_summary && !log.structured_result ? html`<div class="log-entry__summary">${log.result_summary}</div>` : !log.structured_result ? html`<div class="log-empty" style="padding:8px">无输出</div>` : nothing}
             </div>
           `)}
+          </div>
         </app-dialog>
       ` : nothing}
 

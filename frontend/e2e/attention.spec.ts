@@ -1,22 +1,26 @@
-import { test, expect, type Page } from '@playwright/test';
+import { test as base, expect, type Page } from '@playwright/test';
 import { startInvestigationServer } from './fixtures/investigation-server.ts';
 
 // Normal and empty reads use real JWT/live authorization + event service + isolated SQL.
 // Intercepted HTTP responses below are explicitly controlled failure/compatibility cases.
+const test = base.extend<{ cachePermissions: boolean }>({
+  cachePermissions: [true, { option: true }],
+});
 let env: Awaited<ReturnType<typeof startInvestigationServer>>;
 const eventsPath = '**/api/alerts/events?*';
 test.beforeAll(async () => { env = await startInvestigationServer({ attentionPilot: true }); });
 test.afterAll(async () => {
   if (env) { try { expect(env.counts()).toEqual({ toolCalls: 0, providerCalls: 0 }); } finally { await env.close(); } }
 });
-test.beforeEach(async ({ page }) => {
+test.beforeEach(async ({ page, cachePermissions }) => {
   await env.pool.query('DELETE FROM alert_events');
   await page.addInitScript(({ token, permissions }) => {
-    localStorage.setItem('token', token); localStorage.setItem('permissions', JSON.stringify(permissions));
+    localStorage.setItem('token', token);
+    if (permissions) localStorage.setItem('permissions', JSON.stringify(permissions));
     localStorage.setItem('user', JSON.stringify({ id: 101, username: 't06-owner' }));
     localStorage.setItem('slide.i18n.locale', 'zh-CN');
     localStorage.setItem('slide.control.settings.v1:default', JSON.stringify({ locale: 'zh-CN', navCollapsed: true }));
-  }, { token: env.token(), permissions: env.owner.permissions });
+  }, { token: env.token(), permissions: cachePermissions ? env.owner.permissions : null });
 });
 async function capture(page: Page, name: string) {
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
@@ -341,12 +345,35 @@ test('controlled expired session and late data cannot display an empty result or
   } finally { release(); }
 });
 
-test('controlled permission hydration and denial show explicit states', async ({ page }) => {
-  await page.goto(`${env.url}/attention`); const view = page.locator('event-center-page');
-  await expect(view.locator('.empty-state')).toBeVisible();
-  await view.evaluate((element: any) => { element.permissions = null; });
-  await expect(view.getByRole('status')).toContainText('正在确认访问权限'); await noEmpty(page);
-  await view.evaluate((element: any) => { element.permissions = new Set(); });
-  await expect(view.locator('app-empty-state[title="无访问权限"]')).toBeVisible(); await noEmpty(page);
-  await capture(page, 'permission-denied-controlled');
+test.describe('without cached grants', () => {
+  test.use({ cachePermissions: false });
+
+  test('controlled permission hydration and denial show explicit states', async ({ page }) => {
+    let release!: () => void;
+    const pendingPermissions = new Promise<void>(resolve => { release = resolve; });
+    await page.route('**/api/auth/permissions', async route => {
+      await pendingPermissions;
+      await route.fulfill({ json: [] });
+    });
+    const request = page.waitForRequest(request => new URL(request.url()).pathname === '/api/auth/permissions');
+    const eventReads: string[] = [];
+    page.on('request', request => {
+      if (new URL(request.url()).pathname === '/api/alerts/events') eventReads.push(request.method());
+    });
+    try {
+      await page.goto(`${env.url}/attention`);
+      await request;
+      const view = page.locator('event-center-page');
+      await expect(view.getByRole('status')).toContainText('正在确认访问权限');
+      await noEmpty(page);
+      await capture(page, 'permission-loading-controlled');
+      release();
+      await expect(view.locator('app-empty-state[title="无访问权限"]')).toBeVisible();
+      await noEmpty(page);
+      expect(eventReads).toEqual([]);
+      await capture(page, 'permission-denied-controlled');
+    } finally {
+      release();
+    }
+  });
 });

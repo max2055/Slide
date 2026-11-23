@@ -7,7 +7,7 @@ import { t } from "../i18n/index.ts";
 import { getSafeLocalStorage } from "./local-storage.ts";
 import { refreshChatAvatar } from "./app-chat.ts";
 import { shouldRenderLoginGate } from "./auth-gate.ts";
-import { canAccessSettingsItem, permissionMatches, settingsItemById } from "./settings-navigation.ts";
+import { canAccessSettingsItem, settingsItemById } from "./settings-navigation.ts";
 
 function runUpdate(_state: unknown) { /* noop */ }
 import { renderChatControls, renderChatMobileToggle, renderChatSessionSelect } from "./app-render.helpers.ts";
@@ -33,6 +33,7 @@ import "./views/llm-config.ts";
 import "./views/feishu-notification-settings.ts";
 import "./views/ai-settings.ts";
 import "./views/agent-sessions.ts";
+import "./views/legacy-runtime-logs.ts";
 import "./views/agent-skills.ts";
 import "./views/agent-tools.ts";
 import "./views/agent-security-policy.ts";
@@ -599,18 +600,7 @@ export function renderApp(state: AppViewState) {
             </section>`
           : nothing}
         ${state.tab === "overview"
-          ? html`<section data-legacy-route aria-label="旧运行日志入口">
-              <app-empty-state title="暂不支持运行日志" icon="info"
-                description="当前未提供原始运行日志流。平台状态中的「平台观测」汇总服务信号和事件，数据库实例日志请在对应实例中查看。"
-              ></app-empty-state>
-              <div class="empty-state-actions">
-                ${permissionMatches(legacyPermissions, "config:view")
-                  ? html`<a class="btn" href=${`${basePath}/health?view=observations`}>打开平台观测</a>`
-                  : html`<span class="muted" role="status">${legacyPermissions === null
-                      ? "正在确认平台观测权限…"
-                      : "查看平台观测需要相应权限，请联系管理员。"}</span>`}
-              </div>
-            </section>`
+          ? html`<legacy-runtime-logs .basePath=${basePath}></legacy-runtime-logs>`
           : nothing}
         ${state.tab === "sessions"
           ? lazyRender(lazySessions, (m) =>
