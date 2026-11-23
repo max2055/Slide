@@ -14,9 +14,10 @@ for (const encoding of ['object', 'json-string']) {
       created_at: '2026-10-15T09:00:00Z' };
     const items = [source,
       { ...source, id: 178, sql_text: 'SELECT definite_failure', status: 'execution_failed', execution_result: { success: false, error: 'definite failure' } },
-      { ...source, id: 179, sql_text: 'SELECT not_executed', status: 'approved', execution_result: null },
+      { ...source, id: 179, sql_text: 'SELECT missing_receipt', status: 'approved', execution_result: null },
       { ...source, id: 180, sql_text: 'SELECT success', status: 'executed', execution_result: { success: true } },
-      { ...source, id: 181, sql_text: 'SELECT conflicting_evidence', status: 'rejected', execution_result: { success: true } }];
+      { ...source, id: 181, sql_text: 'SELECT conflicting_evidence', status: 'rejected', execution_result: { success: true } },
+      { ...source, id: 182, sql_text: 'SELECT not_executed', status: 'rejected', execution_result: null }];
     const writes: string[] = [];
     await page.route('http://127.0.0.1:51977/api/**', route => {
       const request = route.request();
@@ -31,9 +32,9 @@ for (const encoding of ['object', 'json-string']) {
     await page.goto('/MAX-177-F1-harness');
     const view = page.locator('approval-dashboard');
     await view.getByRole('button', { name: '审批历史', exact: true }).click();
-    await expect(view.locator('tbody tr')).toHaveCount(5);
+    await expect(view.locator('tbody tr')).toHaveCount(6);
     const execution = view.getByRole('combobox', { name: '执行结果', exact: true });
-    for (const [filter, text] of [['failed', 'definite_failure'], ['none', 'not_executed'], ['success', 'SELECT success'], ['conflict', 'conflicting_evidence']]) {
+    for (const [filter, text] of [['failed', 'definite_failure'], ['none', 'not_executed'], ['unconfirmed', 'missing_receipt'], ['success', 'SELECT success'], ['conflict', 'conflicting_evidence']]) {
       await execution.selectOption(filter);
       await expect(view.locator('tbody tr')).toHaveCount(1);
       await expect(view.locator('tbody')).toContainText(text);
@@ -60,6 +61,7 @@ for (const encoding of ['object', 'json-string']) {
       await expect(dialog).toContainText('请勿重试');
       await expect(dialog).toContainText('对账');
       await expect(dialog).toContainText(receipt.error);
+      await dialog.getByText('原始审批与事件证据', { exact: true }).click();
       await expect(dialog).toContainText('"retryable":' + (encoding === 'object' ? ' false' : 'false'));
       await expect(dialog).not.toContainText('执行失败');
       await expect(dialog.getByRole('button', { name: /重试/ })).toHaveCount(0);

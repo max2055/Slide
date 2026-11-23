@@ -41,17 +41,19 @@ describe('MAX-177 result evidence', () => {
     expect(approvalExecution({ status, execution_result: reconciliation })).toBe('conflict');
   });
   it.each([
-    ['approved', null, 'none'], ['rejected', null, 'none'], ['execution_failed', null, 'failed'],
-    ['approved', '{"success":false,"error":"timeout"}', 'failed'], ['approved', '{}', 'unknown'],
-    ['approved', 'malformed-json', 'unknown'], ['executed', null, 'success'],
+    ['approved', null, 'unconfirmed'], ['rejected', 'null', 'none'], ['execution_failed', null, 'unconfirmed'],
+    ['approved', '{"success":false,"error":"timeout"}', 'failed'], ['approved', '{}', 'unconfirmed'],
+    ['approved', 'malformed-json', 'unconfirmed'], ['executed', null, 'unconfirmed'],
+    ['execution_failed', { success: false, executionState: 'not_started' }, 'none'],
     ['rejected', { success: true }, 'conflict'], ['executed', { success: false }, 'conflict'],
-    ['approved', { success: true, error: 'ambiguous' }, 'conflict'], ['future', null, 'unknown'],
+    ['approved', { success: true, error: 'ambiguous' }, 'conflict'], ['future', null, 'unconfirmed'],
   ])('%s with %j displays %s', (status, execution_result, expected) => {
     expect(approvalExecution({ status, execution_result })).toBe(expected);
   });
   it('does not turn Agent consumption into an execution receipt', () => {
     expect(approvalDecision('consumed')).toBe('approved');
-    expect(approvalExecution({ status: 'consumed' }, true)).toBe('unknown');
+    expect(approvalExecution({ status: 'consumed' }, true)).toBe('unconfirmed');
+    expect(approvalExecution({ status: 'expired', used_count: 1 }, true)).toBe('unconfirmed');
   });
   it('filters decisions and execution independently, resets pages, preserves refresh and bounded context', async () => {
     const subject = await history([...Array.from({ length: 8 }, (_, i) => row(i + 1)), row(9, 'execution_failed', { error: 'LONG_ERROR'.repeat(1000) }), row(10, 'rejected')]);
@@ -78,6 +80,32 @@ describe('MAX-177 result evidence', () => {
     const dialog = subject.shadowRoot!.querySelector('app-dialog')!;
     expect(dialog.textContent).toContain(source.sql_text); expect(dialog.textContent).toContain(source.execution_result);
     expect(dialog.textContent).toContain(source.ai_recommendation); expect(dialog.textContent).toContain('证据不完整');
+  });
+  it.each([
+    ['rejected', null, '未执行'],
+    ['approved', null, '结果待确认'],
+    ['executed', { success: true, rowCount: 0, duration_ms: 24 }, '执行成功'],
+  ])('summarizes %s readably and preserves the raw receipt', async (status, receipt, label) => {
+    const source = {
+      ...row(1, status, receipt),
+      review_notes: null,
+      ai_recommendation: JSON.stringify({ reasoning: '按审批时的规则核对目标库。', recommendation: 'reject' }),
+    };
+    const subject = await history([source]);
+    authFetch.mockImplementation(async (url: string) => response(url.endsWith('/events') ? [] : source));
+    (subject as any).openDetail(source);
+    await flush(subject);
+    const dialog = subject.shadowRoot!.querySelector('app-dialog')!;
+    const facts = dialog.querySelector('.evidence-facts')!;
+    expect(dialog.querySelector('.evidence-meta')!.textContent).toContain(label);
+    expect(facts.textContent).toContain('未填写');
+    expect(facts.textContent).toContain('按审批时的规则核对目标库。');
+    expect(facts.textContent).not.toContain('null');
+    if (receipt) expect(facts.textContent).toContain('影响 0 行 · 耗时 24 ms');
+    const raw = dialog.querySelector('details')!;
+    expect(raw.open).toBe(false);
+    expect(raw.textContent).toContain('"execution_result": ' + (receipt ? '{' : 'null'));
+    expect(raw.textContent).toContain(source.ai_recommendation);
   });
   it('rejects a stale list response after switching tabs', async () => {
     let release!: (value: unknown) => void;
