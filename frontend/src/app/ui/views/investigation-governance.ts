@@ -4,6 +4,7 @@ import { customElement, property, state } from 'lit/decorators.js';
 import { authFetch } from '../../../api/index.ts';
 import type { InvestigationBudgetResponse, InvestigationPoliciesResponse, InvestigationUsageResponse, InvestigationEffectiveBudgetView } from '../../../api/generated/public-api.ts';
 import { sharedBtnStyles } from '../../styles/shared-btn-styles.ts';
+import { settingsEditorActionsStyles } from '../../styles/shared-settings-page-styles.ts';
 import { canAccessSettingsItem, settingsBasePath, settingsItemById } from '../settings-navigation.ts';
 import { workspaceStyles, fmt, badge, stat, table, pairs } from './workspace-ui.js';
 import '../components/app-empty-state.ts';
@@ -276,6 +277,7 @@ export class InvestigationGovernancePage extends LitElement {
     this.budgetError = '';
     if (!this.validateBudget()) { this.budgetError = '请修正标红字段后再保存。'; return; }
     this.budgetSaving = true;
+    const generation = this.generation;
     try {
       const draft = this.draft, rotates = this.policyDirty();
       const response = await authFetch('/api/investigation-budget/effective', { method: 'PUT',
@@ -291,14 +293,18 @@ export class InvestigationGovernancePage extends LitElement {
             maxCostMicrosPerDay: draft.maxCostMicrosPerDay },
         }) });
       const body = await response.json().catch(() => ({}));
+      if (generation !== this.generation) return;
       if (!response.ok) { this.budgetError = this.budgetErrorMessage(body?.error, response.status); return; }
       const view = body as EffectiveBudgetView, next = this.buildDraft(view.effective, view);
       if (!next) { this.budgetError = '有效预算响应不完整，请重新加载。'; return; }
       this.budget = view; this.draft = next;
       this.budgetFieldErrors = {};
       showToast(rotates ? `准入策略已保存，新执行将使用账本域 ${view.admission.domain}` : '有效预算已保存，新执行将使用该分配', 'success');
-    } catch { this.budgetError = '保存失败，请检查连接后重试。'; }
-    finally { this.budgetSaving = false; }
+    } catch {
+      if (generation === this.generation) this.budgetError = '保存失败，请检查连接后重试。';
+    } finally {
+      if (generation === this.generation) this.budgetSaving = false;
+    }
   }
   private renderBudgetEditor() {
     if (!this.budget) return html`<div class="section-head"><h2>有效预算（可编辑）</h2><span class="caption">${this.budgetLoading ? '正在加载…' : ''}</span></div>
@@ -310,29 +316,35 @@ export class InvestigationGovernancePage extends LitElement {
         <div class="row">${badge(budget.source === 'settings' ? `持久设置 · v${budget.effective.version}` : '当前默认值', budget.source === 'settings' ? 'ok' : 'muted')}
         ${badge(`账本域 ${budget.admission.domain} · 修订 ${budget.admission.revision}`, 'muted')}
         ${badge(budget.capabilityVerified ? 'Provider 能力已核验' : 'Provider 能力未核验', budget.capabilityVerified ? 'ok' : 'warn')}</div></div>
-      <app-card data-budget="editor">
-        ${budget.capabilityVerified ? nothing : html`<div class="notice" role="alert"><div><strong>当前 Provider 能力不可用</strong>此时只能保存准入策略；运行时与 Profile 修改需先完成模型配置。</div></div>`}
-        <div class="definitions-grid">
-          <div><h3>运行时分配</h3>${RUNTIME_KEYS.map(key => this.renderBudgetInput(key))}</div>
-          <div><h3>Profile 限制</h3>${PROFILE_KEYS.map(key => this.renderBudgetInput(key))}</div>
-          <div><h3>准入与每日配额</h3>${ADMISSION_KEYS.map(key => this.renderBudgetInput(key))}
-            <p class="caption" data-budget="rotation">修改准入策略会轮换账本域：新执行使用新域，旧账本只读保留，不重写、不迁移。</p></div>
+      <div class="settings-editor" data-budget="editor">
+        <div class="settings-editor-actions">
+          <div class="settings-editor-status">
+            <span role="status">${this.budgetSaving ? '正在保存有效预算…' : dirty
+              ? (rotates ? '准入策略已修改，保存后轮换账本域' : '有未保存的修改')
+              : '无未保存的修改'}</span>
+            ${this.budgetError ? html`<div role="alert">${this.budgetError}</div>` : nothing}
+          </div>
+          <button type="button" class="btn" data-budget-action="defaults" ?disabled=${this.budgetSaving} @click=${() => this.restoreBudgetDefaults()}>恢复默认值</button>
+          <button type="button" class="btn-primary" data-budget-action="save" ?disabled=${this.budgetSaving || !dirty || blocked}
+            aria-busy=${this.budgetSaving} @click=${() => this.saveBudget()}>保存有效预算</button>
         </div>
-        <details><summary>Provider 能力与默认值</summary>${pairs([['Provider 模型', provider?.model ?? '不可用'],
-          ['上下文窗口', provider ? fmt(provider.contextWindowTokens) : '—'],
-          ['最大输出', provider?.maxOutputTokens !== undefined ? fmt(provider.maxOutputTokens) : '—'],
-          ['来源', budget.source === 'settings' ? '持久设置' : '能力推导默认值'],
-          ['当前账本域', budget.admission.domain],
-          ['策略修订', `v${budget.admission.revision}（${budget.admission.source === 'settings' ? '持久设置' : '部署默认值'}）`],
-          ['更新时间', budget.effective.updatedAt]])}</details>
-        ${this.budgetError ? html`<div class="notice" role="alert"><div>${this.budgetError}</div></div>` : nothing}
-        <div class="row">
-          <button class="btn btn-primary" data-budget-action="save" ?disabled=${this.budgetSaving || !dirty || blocked}
-            aria-busy=${String(this.budgetSaving)} @click=${() => this.saveBudget()}>保存有效预算</button>
-          <button class="btn-ghost" data-budget-action="defaults" ?disabled=${this.budgetSaving} @click=${() => this.restoreBudgetDefaults()}>恢复默认值</button>
-          <span class="caption">${dirty ? (rotates ? '准入策略已修改 · 保存后轮换账本域' : '有未保存的修改') : '已与当前持久设置一致'}</span>
-        </div>
-      </app-card>`;
+        <app-card>
+          ${budget.capabilityVerified ? nothing : html`<div class="notice" role="alert"><div><strong>当前 Provider 能力不可用</strong>此时只能保存准入策略；运行时与 Profile 修改需先完成模型配置。</div></div>`}
+          <div class="definitions-grid">
+            <div><h3>运行时分配</h3>${RUNTIME_KEYS.map(key => this.renderBudgetInput(key))}</div>
+            <div><h3>Profile 限制</h3>${PROFILE_KEYS.map(key => this.renderBudgetInput(key))}</div>
+            <div><h3>准入与每日配额</h3>${ADMISSION_KEYS.map(key => this.renderBudgetInput(key))}
+              <p class="caption" data-budget="rotation">修改准入策略会轮换账本域：新执行使用新域，旧账本只读保留，不重写、不迁移。</p></div>
+          </div>
+          <details><summary>Provider 能力与默认值</summary>${pairs([['Provider 模型', provider?.model ?? '不可用'],
+            ['上下文窗口', provider ? fmt(provider.contextWindowTokens) : '—'],
+            ['最大输出', provider?.maxOutputTokens !== undefined ? fmt(provider.maxOutputTokens) : '—'],
+            ['来源', budget.source === 'settings' ? '持久设置' : '能力推导默认值'],
+            ['当前账本域', budget.admission.domain],
+            ['策略修订', `v${budget.admission.revision}（${budget.admission.source === 'settings' ? '持久设置' : '部署默认值'}）`],
+            ['更新时间', budget.effective.updatedAt]])}</details>
+        </app-card>
+      </div>`;
   }
   private renderBudgetInput(key: BudgetKey) {
     const field = BUDGET_FIELDS.find(item => item.key === key)!;
@@ -343,9 +355,9 @@ export class InvestigationGovernancePage extends LitElement {
         @input=${(event: Event) => this.updateBudgetField(key, event)} />
     </app-form-field>`;
   }
-  static styles = [sharedFieldStyles, sharedBtnStyles, workspaceStyles];
+  static styles = [sharedFieldStyles, sharedBtnStyles, workspaceStyles, settingsEditorActionsStyles];
   render() {
-    return html`<div class="page-header"><div><h1>${titles[this.kind]}</h1><p class="muted small">${{policies:'确认配置、接入与自动触发状态。',budget:'核对当前限额与持久冻结配置，不推算剩余额度。',usage:'查看已知结算、保留额度及未知用量。'}[this.kind]}</p></div><button aria-busy=${String(this.loading)} class="btn btn-refresh" ?disabled=${this.loading || !this.allowed} @click=${() => this.load()}>刷新${titles[this.kind]}</button></div>
+    return html`<div class="page-header"><div><h1>${titles[this.kind]}</h1><p class="muted small">${{policies:'确认配置、接入与自动触发状态。',budget:'核对当前限额与持久冻结配置，不推算剩余额度。',usage:'查看已知结算、保留额度及未知用量。'}[this.kind]}</p></div><button aria-busy=${String(this.loading)} class="btn btn-refresh" ?disabled=${this.loading || this.budgetSaving || !this.allowed} @click=${() => this.load()}>刷新${titles[this.kind]}</button></div>
       ${this.loading ? html`<app-card><div class="state-box" role="status">正在加载调查设置…</div></app-card>`
         : this.error || this.forbidden ? html`<app-card><div role="alert"><app-empty-state icon="lock" title=${this.forbidden ? '无权访问' : '暂不可用'} description=${this.error || '当前账号无权访问此调查设置。'}></app-empty-state></div></app-card>`
         : this.facts ? this.kind === 'policies' ? this.renderPolicies(this.facts as InvestigationPoliciesResponse) : this.kind === 'budget' ? this.renderBudget(this.facts as InvestigationBudgetResponse) : this.renderUsage(this.facts as InvestigationUsageResponse) : nothing}

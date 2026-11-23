@@ -405,7 +405,7 @@ test.describe('MAX-710: accessible names on application routes (controlled HTTP)
       '/api/v1/rbac/roles': [{ id: 1, name: 'viewer', description: null }],
       '/api/users': [{ id: 7, username: 'fixture-user', email: 'user@example.test', status: 'inactive', created_at: '2026-11-01T00:00:00Z' }],
     });
-    const create = page.getByRole('button', { name: '+ 新建角色', exact: true });
+    const create = page.getByRole('button', { name: '新建角色', exact: true });
     await create.focus();
     await page.keyboard.press('Enter');
     const role = appDialog(page, '新建角色');
