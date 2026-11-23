@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import type { ActorContext } from '../auth/actor-context.js';
 import { normalizeToolResult, type AnyAgentTool, type PolicyDecision, type ToolExecutionContext, type ToolPolicy, type ToolPolicyReasonCode, type ToolResult } from './types.js';
 import { getToolSecurityDefinition } from './security-catalog.js';
@@ -241,6 +242,7 @@ export async function executeToolWithPolicy(
     success: false, errorCode: 'TOOL_EXECUTION_CANCELLED', error: 'Tool execution cancelled before handler start',
   });
   if (executionOptions?.signal?.aborted) return cancelled();
+  const invocationId = randomUUID();
   const applyApproval = (outcome: boolean | ApprovalConsumeResult) => {
     const approved = typeof outcome === 'boolean' ? outcome : outcome.approved;
     if (!approved) decision = {
@@ -254,13 +256,13 @@ export async function executeToolWithPolicy(
         execution = await approvalAuthorizer.authorize(actor, tool, args, resource, approvalOptions,
           async (outcome, connection) => {
             applyApproval(outcome);
-            await auditRecorder.record({ phase: 'decision', actor, decision, args, agentId, agentPolicy }, connection);
+            await auditRecorder.record({ phase: 'decision', actor, decision, args, agentId, agentPolicy, invocationId }, connection);
           }, executionOptions?.signal);
         applyApproval(execution);
       } else {
         // Nonpersistent authorizers (e.g. embedded/test adapters) must still audit
         // before spending. The persistent path above commits both atomically.
-        await auditRecorder.record({ phase: 'decision', actor, decision, args, agentId, agentPolicy });
+        await auditRecorder.record({ phase: 'decision', actor, decision, args, agentId, agentPolicy, invocationId });
         if (executionOptions?.signal?.aborted) return cancelled();
         if (decision.allow && approvalRequired) {
           applyApproval(await approvalAuthorizer.consume(actor, tool, args, resource, approvalOptions));
@@ -387,7 +389,7 @@ export async function executeToolWithPolicy(
   let resultAuditFailed = false;
   let finishFailed = false;
   try {
-    await auditRecorder.record({ phase: 'result', actor, decision, args, result, agentId, agentPolicy });
+    await auditRecorder.record({ phase: 'result', actor, decision, args, result, agentId, agentPolicy, invocationId });
   } catch {
     resultAuditFailed = true;
     console.error('[AgentToolAudit] Failed to persist tool result', {

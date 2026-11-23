@@ -28,6 +28,7 @@ import { sqlExecutor } from '../sql-executor.js';
 
 // Opt-in, dedicated disposable localhost MySQL only; never reads application .env.
 const port = Number(process.env.CRON_TEST_MYSQL_PORT);
+const password = process.env.CRON_TEST_MYSQL_PASSWORD ?? '';
 describe.skipIf(!port)('Cron API + isolated MySQL security', () => {
   let pool: Pool;
   let admin: Pool;
@@ -73,9 +74,9 @@ describe.skipIf(!port)('Cron API + isolated MySQL security', () => {
   }
 
   beforeAll(async () => {
-    admin = mysql.createPool({ host: '127.0.0.1', port, user: 'root', password: '' });
+    admin = mysql.createPool({ host: '127.0.0.1', port, user: 'root', password });
     await admin.query(`CREATE DATABASE ${database}`);
-    pool = mysql.createPool({ host: '127.0.0.1', port, user: 'root', password: '', database, connectionLimit: 8 });
+    pool = mysql.createPool({ host: '127.0.0.1', port, user: 'root', password, database, connectionLimit: 8 });
     for (const sql of [
       `CREATE TABLE users (id INT UNSIGNED PRIMARY KEY, username VARCHAR(100), password_hash VARCHAR(255) NOT NULL DEFAULT 'not-a-login-hash', status VARCHAR(20), session_version BIGINT DEFAULT 1)`,
       `CREATE TABLE roles (id INT PRIMARY KEY, name VARCHAR(100))`,
@@ -86,7 +87,8 @@ describe.skipIf(!port)('Cron API + isolated MySQL security', () => {
       `CREATE TABLE database_instances (id INT PRIMARY KEY, name VARCHAR(100))`,
       `CREATE TABLE agent_tool_audit (id INT AUTO_INCREMENT PRIMARY KEY, phase VARCHAR(20), actor_id INT, agent_id VARCHAR(100),
         request_id VARCHAR(100), tool_name VARCHAR(100), allowed BOOLEAN, reason_code VARCHAR(100), resource_json JSON,
-        policy_snapshot JSON, args_redacted JSON, result_redacted JSON, approval_id VARCHAR(100))`,
+        policy_snapshot JSON, args_redacted JSON, result_redacted JSON, approval_id VARCHAR(100),
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP)`,
       `CREATE TABLE cron_scripts (id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY, name VARCHAR(100), description TEXT,
         script_type VARCHAR(20), content TEXT, target_db_type VARCHAR(20), created_at DATETIME DEFAULT NOW(), updated_at DATETIME DEFAULT NOW())`,
       `CREATE TABLE cron_jobs (id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY, name VARCHAR(100), task_description TEXT, output_schema JSON,
@@ -99,6 +101,7 @@ describe.skipIf(!port)('Cron API + isolated MySQL security', () => {
       'CREATE TABLE metric_baselines (id INT PRIMARY KEY, computed_at DATETIME) ENGINE=InnoDB',
       'CREATE TABLE silence_periods (id INT PRIMARY KEY, silenced_until DATETIME) ENGINE=InnoDB',
     ]) await pool.query(sql);
+    await pool.query(readFileSync(new URL('../../sql/migrations/167_agent_tool_audit_invocation.sql', import.meta.url), 'utf8'));
     await pool.query("INSERT INTO users (id, username, status, session_version) VALUES (7, 'global-manager', 'active', 1), (8, 'scoped-manager', 'active', 1), (9, 'viewer', 'active', 1)");
     await pool.query("INSERT INTO roles VALUES (1, 'global'), (2, 'scoped'), (3, 'viewer')");
     await pool.query("INSERT INTO permissions VALUES (1, '*'), (2, 'cron:manage'), (3, 'cron:view'), (4, 'instance:view'), (5, 'metric:view'), (6, 'alert:view')");
@@ -288,11 +291,14 @@ describe.skipIf(!port)('Cron API + isolated MySQL security', () => {
         expect(result).toMatchObject({ success: allow, policyDecision: { allow, reasonCode: reason },
           ...(!allow ? { errorCode: reason } : {}) });
         expect(handler).toHaveBeenCalledTimes(allow ? 1 : 0);
-        const [rows] = await pool.query<any[]>('SELECT phase, allowed, reason_code, policy_snapshot, result_redacted FROM agent_tool_audit ORDER BY id');
+        const [rows] = await pool.query<any[]>('SELECT id, phase, allowed, reason_code, policy_snapshot, result_redacted FROM agent_tool_audit ORDER BY id');
         expect(rows.map(row => [row.phase, Number(row.allowed), row.reason_code])).toEqual(allow
           ? [['decision', 1, 'ALLOW'], ['result', 1, 'ALLOW']]
           : [['decision', 1, 'ALLOW'], ['decision', 0, reason], ['result', 0, reason]]);
         expect(rows.at(-1).result_redacted).toMatchObject({ success: allow, ...(!allow ? { errorCode: reason } : {}) });
+        expect(await agentToolAuditService.detail(rows[0].id)).toMatchObject({ relatedRecordId: rows.at(-1).id });
+        expect(await agentToolAuditService.detail(rows.at(-1).id)).toMatchObject({ relatedRecordId: rows[0].id });
+        if (!allow) expect(await agentToolAuditService.detail(rows[1].id)).toMatchObject({ relatedRecordId: null });
         if (change === 'permission') expect(rows.at(-1).policy_snapshot.permissions).not.toContain('instance:view');
         if (change === 'scope') expect(rows.at(-1).policy_snapshot.resourceBoundary.instanceIds).toEqual([]);
       } finally {
@@ -322,7 +328,8 @@ describe.skipIf(!port)('Cron API + isolated MySQL security', () => {
       import { dbConnection } from './src/db-connection.ts';
       import { CronRunStore } from './src/cron/cron-run-store.ts';
       (async () => {
-        const pool = mysql.createPool({ host: '127.0.0.1', port: ${port}, user: 'root', password: '', database: ${JSON.stringify(database)} });
+        const pool = mysql.createPool({ host: '127.0.0.1', port: ${port}, user: 'root',
+          password: process.env.CRON_TEST_MYSQL_PASSWORD ?? '', database: ${JSON.stringify(database)} });
         dbConnection.getPool = () => pool;
         try {
           const store = new CronRunStore(); await store.recover();
@@ -366,6 +373,10 @@ describe.skipIf(!port)('Cron API + isolated MySQL security', () => {
     const expected = status === 'failure' ? 'failed' : status;
     expect(await cronRunStore.get(runId)).toMatchObject({ status: expected, completion: { status, result: { count: 1 } }, completedAt: expect.anything(), runnerFinishedAt: expect.anything() });
     expect(await lastLog(id)).toMatchObject({ status: status === 'failure' ? 'error' : status, structured_result: { status, result: { count: 1 } } });
+    const [audits] = await pool.query<any[]>("SELECT id, phase FROM agent_tool_audit WHERE tool_name = 'slide_complete_cron' ORDER BY id");
+    expect(audits.map(row => row.phase)).toEqual(['decision', 'result']);
+    expect(await agentToolAuditService.detail(audits[0].id)).toMatchObject({ relatedRecordId: audits[1].id });
+    expect(await agentToolAuditService.detail(audits[1].id)).toMatchObject({ relatedRecordId: audits[0].id });
     await cronRunStore.saveCompletion(runId, { status, summary: 'business result', result: { count: 1 } });
     await expect(cronRunStore.saveCompletion(runId, { status: 'success', summary: 'conflicting result' })).rejects.toThrow('CRON_COMPLETION_CONFLICT');
     await cronRunStore.finish(runId, 'success');
