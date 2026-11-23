@@ -1,4 +1,6 @@
-# Slide 用户手册
+# Slide 用户手册（v0.10 历史记录）
+
+当前菜单与操作步骤见[在线用户手册](./USER-GUIDE.html)，也可从控制台顶部「文档」打开「用户手册」。
 
 **版本**: v0.10
 **目标读者**: DBA / 运维用户
@@ -80,9 +82,6 @@
 6. 确认连接成功后点击"保存"
 7. 新实例将出现在实例列表中
 
-> ![添加实例表单](assets/screenshots/instance-add-form.png)
-> 截图待补充：添加实例表单
-
 #### 查看实例详情
 
 1. 在实例列表中点击任意实例进入详情页
@@ -95,15 +94,6 @@
    - **慢查询**: 慢查询列表及详情
    - **容量**: 容量预测与分析
    - **会话**: 当前活跃会话列表
-
-> ![实例列表](assets/screenshots/instance-list.png)
-> 截图待补充：实例管理列表
->
-> ![实例详情](assets/screenshots/instance-detail.png)
-> 截图待补充：实例详情概览页
->
-> ![实例指标](assets/screenshots/instance-metrics.png)
-> 截图待补充：实例指标监控图表
 
 #### 编辑和删除实例
 
@@ -137,9 +127,6 @@ SQL 控制台提供在线数据库查询和 SQL 执行能力，集成 AI 审核�
 5. 查看查询结果表格
 6. 需要时可导出结果数据
 
-> ![SQL 控制台](assets/screenshots/sql-console.png)
-> 截图待补充：SQL 控制台主界面
-
 #### AI SQL 审核
 
 1. 在编辑器中输入 SQL 后，点击"审核"按钮
@@ -150,17 +137,11 @@ SQL 控制台提供在线数据库查询和 SQL 执行能力，集成 AI 审核�
    - 中高风险：建议修改后重新审核
    - 高风险：需提交审批后执行
 
-> ![SQL 审核面板](assets/screenshots/sql-audit-panel.png)
-> 截图待补充：AI SQL 审核结果面板
-
 #### 查询历史
 
 1. 在 SQL 控制台的历史 tab 中查看所有已执行查询
 2. 可按时间范围、实例等条件筛选
 3. 点击历史记录中的 SQL 可重新加载到编辑器中
-
-> ![查询历史](assets/screenshots/sql-history.png)
-> 截图待补充：SQL 查询历史列表
 
 ---
 
@@ -189,21 +170,12 @@ SQL 控制台提供在线数据库查询和 SQL 执行能力，集成 AI 审核�
 3. 使用筛选条件按严重级别、状态、时间范围过滤
 4. 已触发 AI 分析的告警显示"已分析"标记
 
-> ![告警列表](assets/screenshots/alert-list.png)
-> 截图待补充：告警列表页面
-
 #### 查看告警详情
 
 1. 点击任意告警进入详情页
 2. 详情包含告警基本信息、触发指标值、历史趋势
 3. 如果 AI 分析已完成，可查看 RCA 诊断结果
 4. 可执行操作：标记已读、确认、触发手动 AI 分析
-
-> ![告警详情](assets/screenshots/alert-detail.png)
-> 截图待补充：告警详情页
->
-> ![告警分析结果](assets/screenshots/alert-analysis-result.png)
-> 截图待补充：AI 告警分析结果
 
 #### 配置告警规则
 
@@ -212,9 +184,6 @@ SQL 控制台提供在线数据库查询和 SQL 执行能力，集成 AI 审核�
 3. 配置告警升级规则：设置升级延迟时间和升级后的处理方式
 4. 配置维护窗口：指定时间范围内静默指定实例的告警
 5. 配置告警静默规则：临时静音特定类型的告警
-
-> ![告警设置](assets/screenshots/alert-settings.png)
-> 截图待补充：告警设置页面
 
 ---
 
@@ -254,9 +223,6 @@ AI 分析配置（在 AI 设置页中配置）：
 - 实例白名单
 - 分析时间窗口
 
-> ![AI 设置](assets/screenshots/ai-settings.png)
-> 截图待补充：AI 设置页面
-
 ---
 
 ## 6. Chat 助手
@@ -285,12 +251,6 @@ Chat 助手通过 OpenClaw Gateway 的 WebSocket 通道与 AI Agent 实时通信
 5. 回复中的链接可点击跳转到相关页面
 6. 如果配置了多个 Agent，可通过 Agent 选择器切换
 
-> ![Chat 界面](assets/screenshots/chat-interface.png)
-> 截图待补充：Chat 助手对话界面
->
-> ![Agent 选择器](assets/screenshots/chat-agent-selector.png)
-> 截图待补充：Agent 选择器
-
 ---
 
 ## 7. 报表管理
@@ -315,12 +275,6 @@ Chat 助手通过 OpenClaw Gateway 的 WebSocket 通道与 AI Agent 实时通信
 5. 等待报表生成完成
 6. 选择导出格式：PDF / HTML / JSON / Markdown
 7. 点击"下载"保存到本地
-
-> ![报表列表](assets/screenshots/report-list.png)
-> 截图待补充：报表管理页面
->
-> ![报表生成](assets/screenshots/report-generate.png)
-> 截图待补充：报表生成配置
 
 ---
 
@@ -350,12 +304,6 @@ SQL 审核审批模块提供高风险 SQL 执行前的审批流程。
 5. 批量操作：勾选多条后，选择"批量通过"或"批量拒绝"
 6. 已处理的审批可在历史记录中查看
 
-> ![审批列表](assets/screenshots/approval-list.png)
-> 截图待补充：SQL 审批列表
->
-> ![审批详情](assets/screenshots/approval-review.png)
-> 截图待补充：SQL 审批详情和审核窗口
-
 ---
 
 ## 9. RBAC 权限管理
@@ -379,9 +327,6 @@ RBAC（基于角色的访问控制）模块实现细粒度的用户和权限管�
 4. 编辑用户：修改用户状态（激活/停用/锁定）
 5. 分配角色：在用户编辑中选择角色
 
-> ![用户管理](assets/screenshots/user-management.png)
-> 截图待补充：用户管理页面
-
 #### 角色和权限管理
 
 1. 在左侧导航栏点击"权限管理"进入 RBAC 配置页
@@ -389,12 +334,6 @@ RBAC（基于角色的访问控制）模块实现细粒度的用户和权限管�
 3. 分配权限：编辑角色时展开权限树，勾选需要的权限点
 4. 权限点按模块分组：实例管理、告警管理、SQL 控制台、用户管理、系统设置等
 5. 绑定用户：在角色详情中将该角色分配给一个或多个用户
-
-> ![角色管理](assets/screenshots/role-management.png)
-> 截图待补充：角色管理页面
->
-> ![权限配置](assets/screenshots/rbac-config.png)
-> 截图待补充：权限树配置界面
 
 ---
 
@@ -417,9 +356,6 @@ AI 设置页面提供 AI 分析功能的全局配置。
 3. 配置完成后点击"保存"
 4. 配置立即生效，无需重启服务
 
-> ![AI 设置页](assets/screenshots/ai-settings-page.png)
-> 截图待补充：AI 设置页面
-
 ---
 
 ## 11. Schema 管理与索引管理
@@ -437,9 +373,6 @@ Schema 管理模块追踪数据库表结构的变更历史。
 3. 查看表结构变更历史记录
 4. 对比不同时间点的 Schema 差异
 
-> ![Schema 变更](assets/screenshots/schema-changes.png)
-> 截图待补充：Schema 变更历史
-
 ### 索引管理
 
 索引管理模块分析现有索引的使用情况，帮助识别优化机会。
@@ -450,9 +383,6 @@ Schema 管理模块追踪数据库表结构的变更历史。
 2. 查看实例中所有表的索引列表
 3. 系统自动检测冗余索引和未使用索引
 4. 根据建议优化索引配置
-
-> ![索引分析](assets/screenshots/index-analysis.png)
-> 截图待补充：索引分析结果
 
 ---
 

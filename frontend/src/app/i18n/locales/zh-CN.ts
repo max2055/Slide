@@ -252,6 +252,7 @@ export const zh_CN: TranslationMap = {
     // Slide 菜单组
     dashboard: "资源概览",
     docs: "文档",
+    overview: "旧运行日志",
     "instances-db": "数据库",
     servers: "服务器",
     "server-detail": "服务器详情",

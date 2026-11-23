@@ -139,14 +139,12 @@ export function renderSessions(props: SessionsProps) {
   };
 
   return html`
-    <section class="card">
+    <section class="card" aria-label="会话" aria-busy=${props.loading}>
       <div class="row" style="justify-content: space-between; margin-bottom: 12px;">
         <div>
-          <div class="card-title">Sessions</div>
+          <div class="card-title">会话</div>
           <div class="card-sub">
-            ${props.result
-              ? `Store: ${props.result.path}`
-              : "Active session keys and per-session overrides."}
+            查看当前账号可访问的会话。
           </div>
         </div>
         <button aria-busy=${String(props.loading)} class="btn btn-refresh" ?disabled=${props.loading} @click=${props.onRefresh}>
@@ -215,7 +213,7 @@ export function renderSessions(props: SessionsProps) {
       </div>
 
       ${props.error
-        ? html`<div class="callout danger" style="margin-bottom: 12px;">${props.error}</div>`
+        ? html`<div class="callout danger" role="alert" style="margin-bottom: 12px;">${props.error}</div>`
         : nothing}
 
       <div class="data-table-wrapper">
@@ -223,7 +221,8 @@ export function renderSessions(props: SessionsProps) {
           <div class="data-table-search">
             <input
               type="text"
-              placeholder="Filter by key, label, kind…"
+              aria-label="筛选会话"
+              placeholder="按标识、名称或类型筛选"
               .value=${props.searchQuery}
               @input=${(e: Event) => props.onSearchChange((e.target as HTMLInputElement).value)}
             />
@@ -242,14 +241,20 @@ export function renderSessions(props: SessionsProps) {
               </tr>
             </thead>
             <tbody>
-              ${paginated.length === 0
+              ${props.error
+                ? nothing
+                : props.loading || paginated.length === 0
                 ? html`
                     <tr>
                       <td
                         colspan="5"
                         style="text-align: center; padding: 48px 16px; color: var(--muted)"
                       >
-                        No sessions found.
+                        ${props.loading ? "正在读取会话…" : !props.result
+                          ? "尚未读取会话，请刷新。"
+                          : props.searchQuery.trim() || Number(props.activeMinutes) > 0
+                            ? "没有符合筛选条件的会话。"
+                            : "暂无会话。"}
                       </td>
                     </tr>
                   `
@@ -258,7 +263,7 @@ export function renderSessions(props: SessionsProps) {
           </table>
         </div>
 
-        ${totalRows > 0
+        ${!props.error && !props.loading && totalRows > 0
           ? html`
               <div class="data-table-pagination">
                 <div class="data-table-pagination__info">

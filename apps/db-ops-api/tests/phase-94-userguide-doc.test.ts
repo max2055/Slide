@@ -2,35 +2,31 @@
  * Phase 94, Gap 4 (94-02-02): USER-GUIDE.md / USER-GUIDE.html
  *
  * Requirement: file exists, >5000 chars, covers 10+ modules,
- * has FAQ section, has screenshot references.
- *
- * Required modules (D-11): 仪表盘, 实例管理, SQL 控制台, 告警管理,
- * AI 分析, Chat 助手, 报表, 审批, RBAC/权限, AI 设置, Schema, FAQ
+ * has FAQ and a published workflow illustration.
  *
  * NOTE: Plan specified USER-GUIDE.md; implementation converted to USER-GUIDE.html
  * (commit f70eaf6374e). Tests check the actual .html file.
  */
 
 import { describe, it, expect } from 'vitest';
-import { existsSync, readFileSync, readdirSync } from 'fs';
+import { existsSync, readFileSync } from 'fs';
 import { join } from 'path';
 import { fileURLToPath } from 'url';
 
 const ROOT = fileURLToPath(new URL('../../../', import.meta.url));
 const GUIDE_PATH = join(ROOT, 'docs/slide/USER-GUIDE.html');
-const SCREENSHOTS_DIR = join(ROOT, 'docs/slide/assets/screenshots');
 
 const REQUIRED_MODULES = [
-  '仪表盘',
-  '实例管理',
-  'SQL 控制台',
-  '告警',
-  'AI 分析',
-  'Chat',
-  '报表',
-  '审批',
-  'RBAC',
-  'AI 设置',
+  '资源概览',
+  '数据库',
+  'SQL 工作台',
+  '事件中心',
+  'AI 工作台',
+  '对话',
+  '报表中心',
+  '审批中心',
+  '用户与权限',
+  '模型配置',
 ];
 
 describe('94-02-02: User guide documentation', () => {
@@ -59,9 +55,14 @@ describe('94-02-02: User guide documentation', () => {
     expect(hasFaq).toBe(true);
   });
 
-  it('has screenshot placeholder references', () => {
+  it('includes the published workflow illustration and current observation path', () => {
     const content = readFileSync(GUIDE_PATH, 'utf-8');
-    expect(content).toContain('截图待补充');
+    expect(content).toContain('src="/docs/slide-console-workflow.svg"');
+    expect(content).toContain('平台状态 → 平台观测');
+    expect(content).not.toMatch(/截图待补充|仪表盘|SQL 控制台/);
+    const workflow = readFileSync(join(ROOT, 'frontend/public/docs/slide-console-workflow.svg'), 'utf-8');
+    expect(workflow).toContain('资源概览');
+    expect(workflow).not.toContain('仪表盘');
   });
 
   it('has step-by-step instructions (numbered lists)', () => {

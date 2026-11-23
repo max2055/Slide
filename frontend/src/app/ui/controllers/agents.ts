@@ -23,15 +23,20 @@ export async function loadAgents(state: AgentsState) {
     const res = await authFetch('/api/agents', {
       headers: token ? { 'Authorization': `Bearer ${token}` } : {},
     });
+    if (res.status === 403) {
+      state.agentsError = "无权读取 Agent 列表，请联系管理员。";
+      return;
+    }
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json() as AgentsListResult;
+    if (!Array.isArray(data.agents)) throw new Error("Invalid agents response");
     state.agentsList = data;
     const selected = state.agentsSelectedId;
     if (!selected || !data.agents.some((entry) => entry.id === selected)) {
       state.agentsSelectedId = data.defaultId ?? data.agents[0]?.id ?? null;
     }
-  } catch (err) {
-    state.agentsError = String(err);
+  } catch {
+    state.agentsError = "无法读取 Agent 列表，请刷新重试。";
   } finally {
     state.agentsLoading = false;
   }

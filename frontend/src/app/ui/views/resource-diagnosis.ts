@@ -148,13 +148,18 @@ export class ResourceDiagnosisPage extends LitElement {
   private async load() {
     const generation = ++this.listVersion;
     this.invalidateFacts(); this.loading = true; this.error = '';
+    let message = '无法读取诊断资源列表，请刷新重试。';
     try {
       const response = await authFetch('/api/resources');
-      if (!response.ok) throw new Error(response.status === 403 ? '无资源浏览权限，请联系管理员授权' : `资源列表加载失败 (${response.status})，请刷新或检查服务连接`);
+      if (response.status === 403) message = '无资源浏览权限，请联系管理员授权。';
+      if (!response.ok) throw new Error(message);
       const body = await response.json(); if (generation !== this.listVersion || !this.isConnected) return;
+      if (!Array.isArray(body.items)) throw new Error(message);
       this.resources = body.items; this.contextReady = true;
       await this.loadEvidence(true);
-    } catch (error) { if (generation === this.listVersion) this.error = String(error); } finally { if (generation === this.listVersion) this.loading = false; }
+    } catch {
+      if (generation === this.listVersion) this.error = message;
+    } finally { if (generation === this.listVersion) this.loading = false; }
   }
   private async loadEvidence(preserveTask = false) {
     const version = ++this.requestVersion;
@@ -175,12 +180,19 @@ export class ResourceDiagnosisPage extends LitElement {
     if (Number.isSafeInteger(id) && id > 0) { if (!new URL(location.href).searchParams.has('diagnosisTab')) this.tab = 'result'; this.agentResult = { analysisId: id, status: 'unconfirmed' }; this.startStatus(); }
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 15_000);
+    let message = '无法读取当前资源证据，请刷新重试。';
     try {
       const response = await authFetch(`/api/resources/${this.selected.type}/${this.selected.id}/evidence`, { signal: controller.signal });
-      if (!response.ok) throw new Error(response.status === 403 ? '无当前资源证据查看权限，请联系管理员授权' : response.status === 404 ? '资源不存在或不在当前账号可见范围，请重新选择资源' : `证据加载失败 (${response.status})，请刷新或检查采集服务`);
+      if (response.status === 403) message = '无当前资源证据查看权限，请联系管理员授权。';
+      if (response.status === 404) message = '资源不存在或不在当前账号可见范围，请重新选择资源。';
+      if (!response.ok) throw new Error(message);
       const evidence = await response.json();
       if (version === this.requestVersion) this.evidence = evidence;
-    } catch (error) { if (version === this.requestVersion) this.error = controller.signal.aborted ? '证据读取超时，当前状态未知；请刷新证据，刷新不会调用模型' : String(error); }
+    } catch {
+      if (version === this.requestVersion) this.error = controller.signal.aborted
+        ? '证据读取超时，当前状态未知；刷新证据不会调用模型。'
+        : message;
+    }
     finally { clearTimeout(timeout); if (version === this.requestVersion) this.loading = false; }
   }
   private selectResource(value: string) {
@@ -346,6 +358,7 @@ export class ResourceDiagnosisPage extends LitElement {
     return `${url.pathname}${url.search}`;
   }
   private renderEvidence() {
+    if (this.error && !this.evidence) return nothing;
     const evidence = this.evidence;
     const kind = this.evidenceKind;
     const items = [...(evidence?.[kind] ?? [])].sort((a,b) => (b.observedAt ?? '').localeCompare(a.observedAt ?? ''));
@@ -377,6 +390,13 @@ export class ResourceDiagnosisPage extends LitElement {
     const selectedListed = this.resources.some(item => this.selected && key(item.resource) === key(this.selected));
     const returnResource = new URL(location.href).searchParams.get('returnResource');
     const returnTo = safeDashboardReturn(new URL(location.href).searchParams.get('returnTo'));
+    const resourceSelection = this.loading
+      ? html`<div class="skeleton" role="status" aria-label="加载诊断资源"></div>`
+      : this.error && !this.contextReady
+        ? nothing
+        : html`<app-empty-state
+            title=${this.resources.length ? filtered.length ? '选择诊断资源' : '没有符合筛选条件的资源' : '暂无可用于诊断的资源'}
+            icon="search"></app-empty-state>`;
     return html`${returnTo ? html`<a class="btn-ghost" href=${returnTo}>返回原运维总览</a>` : nothing}
       <div class="page-header"><div><h1>跨资源诊断</h1><p class="muted small">围绕资源核对当前证据、关联关系与只读分析结果。</p></div><button aria-busy=${String(this.loading)} class="btn btn-refresh" title="刷新" aria-label="刷新" .disabled=${this.loading} @click=${this.load}>刷新</button></div>
       <app-card .compact=${true}><div class="diagnosis-picker"><app-form-field label="搜索资源"><input aria-label="搜索资源" type="search" placeholder="搜索名称或资源标识" .value=${this.search} @input=${(event: Event) => { this.search = (event.target as HTMLInputElement).value; }}></app-form-field><app-form-field label="诊断对象"><select aria-label="资源" .value=${this.selected ? key(this.selected) : ''} @change=${(event: Event) => this.selectResource((event.target as HTMLSelectElement).value)}><option value="" .disabled=${true}>选择资源</option>${this.selected && !selectedListed ? html`<option .selected=${true} value=${key(this.selected)}>${resourceLabels[this.selected.type]} #${this.selected.id}</option>` : nothing}${Object.entries(resourceLabels).map(([type,label]) => html`<optgroup label=${label}>${filtered.filter(item => item.resource.type === type).map(item => html`<option .selected=${this.selected !== null && key(item.resource) === key(this.selected)} value=${key(item.resource)}>${item.label || `${resourceLabels[item.resource.type]} #${item.resource.id}`} · #${item.resource.id}</option>`)}</optgroup>`)}</select></app-form-field><span class="caption">支持数据库、服务器及网络设备</span></div></app-card>
@@ -388,7 +408,7 @@ export class ResourceDiagnosisPage extends LitElement {
       ${this.statusUnconfirmed && !this.agentResult ? html`<p role="status">${this.taskMessage}</p>` : nothing}
       ${this.renderOverview()}${this.error ? html`<p class="error" role="alert">${this.error}</p>` : nothing}
       ${this.evidence?.truncated || this.pack?.truncated ? html`<div class="notice" role="status"><div><strong>返回证据已截断</strong>当前列表不代表完整证据，请核对缺口与采集范围。</div></div>` : nothing}
-      ${!this.selected ? this.loading ? html`<div class="skeleton" role="status" aria-label="加载证据"></div>` : html`<app-empty-state title="选择诊断资源" icon="search"></app-empty-state>` : html`
+      ${!this.selected ? resourceSelection : html`
       <div class="diagnosis-workspace"><section class="diagnosis-main"><div class="tabs" role="tablist" @keydown=${tabKeydown} aria-label="诊断工作区">${(['evidence','evaluation','relations','result'] as const).map((tab,index) => html`<button class="tab" role="tab" id=${`diagnosis-tab-${tab}`} aria-controls="diagnosis-panel" tabindex=${this.tab === tab ? 0 : -1} aria-selected=${this.tab === tab} @click=${() => this.switchTab(tab)}>${['当前证据','规则评估','关联资源','分析结果'][index]}${tab === 'result' && this.agentResult ? html`<span>${this.statusUnconfirmed ? '待确认' : this.agentResult.status === 'unknown' ? '未知' : this.agentResult.status === 'completed' ? '已完成' : '待核对'}</span>` : nothing}</button>`)}</div>
         <div id="diagnosis-panel" role="tabpanel" aria-labelledby=${`diagnosis-tab-${this.tab}`}>${this.tab === 'evidence' ? this.renderEvidence() : this.tab === 'evaluation' ? this.contextReady ? keyed(this.requestVersion, html`<resource-evaluation .resourceType=${this.selected.type} .resourceId=${this.selected.id}></resource-evaluation>`) : html`<p role="status">当前评估不可用，请先刷新资源并确认读取权限。</p>` : this.tab === 'relations' ? this.renderRelations() : this.agentResult ? html`<app-card>${this.renderAgentResult()}</app-card>` : html`<app-card><app-empty-state title="尚无诊断任务" description="按需开始只读诊断，可能产生模型费用。"></app-empty-state></app-card>`}
       </div></section>${this.renderAside()}</div>`}${this.renderDialog()}`;

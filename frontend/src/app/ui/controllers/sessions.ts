@@ -36,11 +36,16 @@ export async function loadSessions(
     const res = await authFetch(url, {
       headers: token ? { 'Authorization': `Bearer ${token}` } : {},
     });
+    if (res.status === 403) {
+      state.sessionsError = "无权读取会话，请联系管理员。";
+      return;
+    }
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
-    state.sessionsResult = data.ok ? data : { ok: true, sessions: [], defaults: {} };
-  } catch (err) {
-    state.sessionsError = String(err);
+    if (!data.ok || !Array.isArray(data.sessions)) throw new Error("Invalid sessions response");
+    state.sessionsResult = data;
+  } catch {
+    state.sessionsError = "无法读取会话列表，请刷新重试。";
   } finally {
     state.sessionsLoading = false;
   }
