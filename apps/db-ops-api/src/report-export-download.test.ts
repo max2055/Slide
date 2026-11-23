@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import ts from 'typescript';
 import Fastify from 'fastify';
 import { describe, expect, it } from 'vitest';
+import { getReportAccessScope } from './report-access.js';
 import { reportExporter } from './report-exporter.js';
 import { reportAttachmentDisposition } from './report-download.js';
 import type { Report } from './report-database-service.js';
@@ -24,8 +25,8 @@ const report: Report = {
 describe('normal PDF/Markdown download entry (#547/#548)', () => {
   it.each(['pdf', 'md', undefined] as const)('downloads %s with matching bytes and headers', async format => {
     const app = Fastify();
-    new Function('fastify', 'verifyToken', 'requirePermission', 'hasInstanceAccess', 'reportDatabaseService', 'reportExporter', 'reportAttachmentDisposition', route)(
-      app, async () => {}, () => async () => {}, () => true,
+    new Function('fastify', 'verifyToken', 'requirePermission', 'getReportAccessScope', 'reportDatabaseService', 'reportExporter', 'reportAttachmentDisposition', route)(
+      app, async (req: any) => { req.user = { permissions: ['*'] }; }, () => async () => {}, getReportAccessScope,
       { getReportById: async () => report }, reportExporter, reportAttachmentDisposition,
     );
     try {
@@ -47,8 +48,8 @@ describe('normal PDF/Markdown download entry (#547/#548)', () => {
     const persisted = { ...report, name: '<svg onload="window.__pwn=1"></svg>',
       content: '<p>https://example.invalid/x &amp;lt;tag&amp;gt; &lt;img src=x&gt;</p>' };
     const app = Fastify();
-    new Function('fastify', 'verifyToken', 'requirePermission', 'hasInstanceAccess', 'reportDatabaseService', 'reportExporter', 'reportAttachmentDisposition', route)(
-      app, async () => {}, () => async () => {}, () => true,
+    new Function('fastify', 'verifyToken', 'requirePermission', 'getReportAccessScope', 'reportDatabaseService', 'reportExporter', 'reportAttachmentDisposition', route)(
+      app, async (req: any) => { req.user = { permissions: ['*'] }; }, () => async () => {}, getReportAccessScope,
       { getReportById: async () => persisted }, reportExporter, reportAttachmentDisposition,
     );
     try {

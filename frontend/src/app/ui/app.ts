@@ -48,7 +48,7 @@ import { exportChatMarkdown } from "./chat/export.ts";
 import type { ChatSideResult } from "./chat/side-result.ts";
 import type { DirectGatewayClient } from "./direct-gateway.ts";
 import type { ExecApprovalRequest } from "./controllers/exec-approval.ts";
-import type { Tab } from "./navigation.ts";
+import { pathForTab, tabFromPath, type Tab } from "./navigation.ts";
 import type { SidebarContent } from "./sidebar-content.ts";
 import { loadSettings, type UiSettings } from "./storage.ts";
 import { VALID_THEME_NAMES, type ResolvedTheme, type ThemeMode, type ThemeName } from "./theme.ts";
@@ -113,6 +113,7 @@ export class SlideApp extends LitElement {
   @state() loginShowGatewayPassword = false;
   userPermissions: Set<string> | null = null;
   @state() tab: Tab = "chat";
+  basePath = "";
   @state() onboarding = resolveOnboardingMode();
   // Start disconnected - let gateway connection determine state
   @state() connected = false;
@@ -134,7 +135,7 @@ export class SlideApp extends LitElement {
   private globalKeydownHandler: ((e: KeyboardEvent) => void) | null = null;
   readonly popStateHandler = () => {
     const params = new URLSearchParams(window.location.search);
-    const tab = params.get("tab");
+    const tab = tabFromPath(location.pathname, this.basePath) ?? params.get("tab");
     const id = params.get("id");
     const networkId = params.get("networkDeviceId") ?? (tab === "network-device-detail" ? id : null);
     if (tab === "server-detail") (this as any).serverId = id ? Number(id) : undefined;
@@ -159,6 +160,8 @@ export class SlideApp extends LitElement {
   @state() chatNewMessagesBelow = false;
   @state() chatSending = false;
   @state() chatMessage = "";
+  chatDraftRevision = 0;
+  @state() chatReceiptNotice: string | null = null;
   @state() chatMessages: unknown[] = [];
   @state() chatToolMessages: unknown[] = [];
   toolStreamById = new Map<string, ToolStreamEntry>();
@@ -553,7 +556,12 @@ export class SlideApp extends LitElement {
       const initialNetworkId = urlParams.get("networkDeviceId") ?? (tabParam === "network-device-detail" ? initialId : null);
       if (tabParam === "server-detail" && initialId) (this as any).serverId = Number(initialId);
       if (tabParam === "network-device-detail" && initialNetworkId) (this as any).networkDeviceId = Number(initialNetworkId);
-      this.setTab(tabParam as Tab, true);
+      if (tabParam === "instance-detail" || tabParam === "server-detail" || tabParam === "network-device-detail") {
+        const url = new URL(location.href);
+        url.pathname = pathForTab(tabParam, this.basePath);
+        if (url.href !== location.href) history.replaceState(history.state, "", url);
+        onPopStateInternal(this as unknown as Parameters<typeof onPopStateInternal>[0]);
+      } else this.setTab(tabParam as Tab, true);
     }
   }
 
@@ -620,6 +628,13 @@ export class SlideApp extends LitElement {
   }
 
   setTab(next: Tab, preserveContext = false) {
+    if (next === "investigations" && !preserveContext) {
+      this.navDrawerOpen = false;
+      const url = new URL(pathForTab(next, this.basePath), window.location.href);
+      if (url.href !== window.location.href) window.history.pushState({}, "", url);
+      window.dispatchEvent(new PopStateEvent("popstate"));
+      return;
+    }
     setTabInternal(this as unknown as Parameters<typeof setTabInternal>[0], next);
     this.navDrawerOpen = false;
     if (preserveContext) return;

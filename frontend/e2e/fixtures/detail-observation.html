@@ -4,6 +4,9 @@
 <script type="module">
 import '/src/app/ui/views/instance-detail.ts';
 import '/src/app/ui/views/server-detail.ts';
-const params = new URLSearchParams(location.search);
-document.body.append(document.createElement(params.get('kind') === 'server' ? 'server-detail' : 'instance-detail-page'));
+const url = new URL(location.href);
+const isServer = url.searchParams.get('kind') === 'server';
+url.pathname = isServer ? '/server-detail' : '/instance-detail';
+history.replaceState(history.state, '', url);
+document.body.append(document.createElement(isServer ? 'server-detail' : 'instance-detail-page'));
 </script><body></body></html>

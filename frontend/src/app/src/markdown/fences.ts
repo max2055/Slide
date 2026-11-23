@@ -31,7 +31,7 @@ export function parseFenceSpans(buffer: string): FenceSpan[] {
       const marker = match[2];
       const markerChar = marker[0];
       const markerLen = marker.length;
-      if (!open) {
+      if (!open && (markerChar !== "`" || !match[3].includes("`"))) {
         open = {
           start: offset,
           markerChar,
@@ -41,6 +41,7 @@ export function parseFenceSpans(buffer: string): FenceSpan[] {
           indent,
         };
       } else if (
+        open &&
         open.markerChar === markerChar &&
         markerLen >= open.markerLen &&
         /^[ \t\r]*$/.test(match[3])

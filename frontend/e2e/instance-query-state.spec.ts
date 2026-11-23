@@ -68,9 +68,33 @@ async function capture(page: Page, name: string) {
   await page.screenshot({ path: `${output}/${name}.png`, fullPage: true, animations: 'disabled' });
 }
 
-test('real JWT -> live permissions -> production routes -> MySQL: empty, populated, session, revoke', async ({ page }) => {
+test('real JWT -> live permissions -> production routes -> MySQL: empty, populated, session, revoke', async ({ page }, info) => {
+  const requests: Array<{ method: string; path: string }> = [];
+  page.on('request', request => {
+    const path = new URL(request.url()).pathname;
+    if (/^\/api\/database\/instances\/991(?:\/|$)/.test(path)) requests.push({ method: request.method(), path });
+  });
   await pool.query('TRUNCATE performance_schema.events_statements_summary_by_digest');
   const view = await open(page);
+  await view.evaluate((el: any) => { el.autoRefresh = false; el.stopAutoRefresh(); });
+  const snapshot = () => page.evaluate(() => ({ url: location.href, length: history.length, key: navigation.currentEntry?.key }));
+  const reselect = async (kind: 'topsql' | 'sessions', label: RegExp, result: string) => {
+    const before = await snapshot();
+    const start = requests.length;
+    const path = `/api/database/instances/991/${kind}`;
+    const tab = view.getByRole('tab', { name: label });
+    await expect(tab).toHaveAttribute('aria-selected', 'true');
+    const response = page.waitForResponse(value => new URL(value.url()).pathname === path);
+    await tab.click();
+    const status = (await response).status();
+    expect(status).toBe(200);
+    await expect(view).toContainText(result);
+    const reads = requests.slice(start);
+    expect(reads).toEqual([{ method: 'GET', path }]);
+    const after = await snapshot();
+    expect(after).toEqual(before);
+    return { kind, status, reads, before, after };
+  };
   await view.getByRole('tab', { name: '慢查询', exact: true }).focus(); await page.keyboard.press('Enter');
   await expect(view).toContainText('本次查询未返回慢查询记录'); await expect(view).toContainText('MySQL performance_schema');
   await expect(view).toContainText('统计起止时间未知'); await expect(view).not.toContainText('数据库运行良好');
@@ -78,6 +102,7 @@ test('real JWT -> live permissions -> production routes -> MySQL: empty, populat
   await pool.query('SELECT SLEEP(1.1) AS max163_slow_sample');
   await view.getByRole('button', { name: '刷新', exact: true }).click();
   await expect(view.locator('tbody')).toContainText('SLEEP'); await capture(page, 'real-mysql-slow-query');
+  const slowQueryReselect = await reselect('topsql', /^慢查询/, 'MySQL performance_schema');
   const target = mysql.createConnection({ host: '127.0.0.1', port: Number(process.env.MAX163_TEST_MYSQL_PORT), user: 'root', password: process.env.MAX163_TEST_MYSQL_PASSWORD ?? '' });
   const connection = await target;
   const running = connection.query('SELECT SLEEP(4) AS max163_active_session');
@@ -86,6 +111,7 @@ test('real JWT -> live permissions -> production routes -> MySQL: empty, populat
     await expect(view.locator('tbody')).toContainText('max163_active_session'); await expect(view).toContainText('活跃会话快照');
     await capture(page, 'real-mysql-active-session');
   } finally { await running; await connection.end(); }
+  const sessionReselect = await reselect('sessions', /^会话/, '活跃会话快照');
   await view.getByRole('tab', { name: /^慢查询/ }).click();
 
   const deniedUser = `max163_denied_${randomUUID().replaceAll('-', '').slice(0, 8)}`;
@@ -106,6 +132,7 @@ test('real JWT -> live permissions -> production routes -> MySQL: empty, populat
     await expect(view.getByRole('alert')).toContainText('无权'); await expect(view.locator('tbody')).toHaveCount(0);
     await capture(page, 'real-permission-revoked');
   } finally { await pool.query("INSERT INTO instance_permissions (user_id,instance_id,access_level) VALUES (991,991,'read-only')"); }
+  await info.attach('query-reselect', { contentType: 'application/json', body: JSON.stringify([slowQueryReselect, sessionReselect]) });
 });
 
 for (const kind of ['topsql', 'sessions'] as const) for (const [width, theme] of [[1280, 'dark'], [390, 'light']] as const) test(`controlled ${kind} states and keyboard ${width} ${theme}`, async ({ page }) => {

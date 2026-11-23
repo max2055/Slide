@@ -51,9 +51,6 @@ describe.skipIf(process.env.SQL_AUDIT_MYSQL_TEST !== '1')('MAX-533 real MySQL au
       VALUES (1,'max533','127.0.0.1',3308,'fixture','fixture'),(2,'other','127.0.0.1',3309,'fixture','fixture')`);
     await pool.query('CREATE TABLE audit_subject (id INT PRIMARY KEY, note TEXT)');
     await pool.query("INSERT INTO audit_subject VALUES (1,'original')");
-    await pool.query(`INSERT INTO index_info(instance_id,table_name,index_name,column_name,seq_in_index,non_unique,index_type)
-      SELECT 1,TABLE_NAME,INDEX_NAME,COLUMN_NAME,SEQ_IN_INDEX,NON_UNIQUE,INDEX_TYPE
-      FROM information_schema.STATISTICS WHERE TABLE_SCHEMA=? AND TABLE_NAME='audit_subject'`, [schema]);
     await pool.query("INSERT INTO users(id,username,password_hash) VALUES (53301,'max533-a','fixture'),(53302,'max533-b','fixture')");
     await pool.query("INSERT INTO roles(id,name) VALUES (53301,'max533')");
     await pool.query("INSERT IGNORE INTO permissions(code,name,resource,action) VALUES ('sql:audit','SQL audit','sql','audit')");
@@ -134,7 +131,7 @@ describe.skipIf(process.env.SQL_AUDIT_MYSQL_TEST !== '1')('MAX-533 real MySQL au
     expect(analysis.status).toBe('completed');
     expect(analysis.result.pre_audit_results).toEqual(reused.preAuditResults);
     expect(analysis.result.index_info).toContain('PRIMARY (id)');
-    expect(analysis.result.table_stats).toContain('表: audit_subject');
+    expect(analysis.result.table_stats).toContain(`表: \`${schema}\`.\`audit_subject\``);
     expect(analysis.result.explain_plan).not.toContain('失败');
     expect((await rows('SELECT status,risk_level FROM sql_audit_records WHERE id=?', [reused.recordId]))[0]).toMatchObject({ status: 'completed', risk_level: 'P0' });
     expect(await rows('SELECT note FROM audit_subject')).toEqual([{ note: 'original' }]);
@@ -145,7 +142,7 @@ describe.skipIf(process.env.SQL_AUDIT_MYSQL_TEST !== '1')('MAX-533 real MySQL au
     const same = await submit(); expect(same.analysisId).toBe(first.analysisId);
     await pool.query('UPDATE ai_analysis SET completed_at=DATE_SUB(NOW(), INTERVAL 31 MINUTE) WHERE id=?', [first.analysisId]);
     const expired = await submit(); expect(expired.analysisId).not.toBe(first.analysisId); await run(expired.analysisId);
-    await pool.query("UPDATE index_info SET index_type='HASH' WHERE instance_id=1");
+    await pool.query('CREATE INDEX evidence_note ON audit_subject(note(16))');
     const evidence = await submit(); expect(evidence.analysisId).not.toBe(expired.analysisId); await run(evidence.analysisId);
     await pool.query("UPDATE llm_providers SET default_model='model-b' WHERE name='max533'");
     const config = await submit(); expect(config.analysisId).not.toBe(evidence.analysisId); await run(config.analysisId);
@@ -300,5 +297,65 @@ describe.skipIf(process.env.SQL_AUDIT_MYSQL_TEST !== '1')('MAX-533 real MySQL au
     await expect(submit()).rejects.toThrow('ANALYSIS_AUTHORITY_REVOKED');
     expect(sends).toBe(before + 1);
     console.log('MAX533 verified: concurrent/TTL/evidence/config/actor/scope identity, rollback, unknown no-replay, live revocation; controlled engine only');
+  });
+
+  it('freezes separate catalog evidence for same-name tables and marks invisible tables (#1029)', async () => {
+    const visible = `${schema}_visible`;
+    const hidden = `${schema}_hidden`;
+    const user = schema;
+    const password = randomBytes(20).toString('hex');
+    const limited = mysql.createPool({
+      host: process.env.SQL_AUDIT_MYSQL_HOST || '127.0.0.1',
+      port: Number(process.env.SQL_AUDIT_MYSQL_PORT), database: schema, user, password,
+    });
+    const getConnection = vi.mocked(databaseService.getConnection);
+    const original = getConnection.getMockImplementation();
+    try {
+      await admin.query(`CREATE DATABASE ${visible}`);
+      await admin.query(`CREATE DATABASE ${hidden}`);
+      await admin.query(`CREATE TABLE ${visible}.audit_subject (id INT, KEY visible_index (id))`);
+      await admin.query(`CREATE TABLE ${hidden}.audit_subject (id INT, KEY hidden_index (id))`);
+      await admin.query(`CREATE USER '${user}'@'%' IDENTIFIED BY ?`, [password]);
+      await admin.query(`GRANT SELECT ON ${schema}.audit_subject TO '${user}'@'%'`);
+      await admin.query(`GRANT SELECT ON ${visible}.audit_subject TO '${user}'@'%'`);
+      getConnection.mockReturnValue({ db_type: 'mysql', connected: true, pool: limited } as any);
+      // Restrict this test to catalog evidence and keep the fixture's privileged EXPLAIN out.
+      vi.mocked(databaseService.getExplainPlan).mockResolvedValueOnce(null);
+      const admitted = await submit(`SELECT a.id FROM ${visible}.audit_subject a
+        JOIN audit_subject b ON a.id=b.id JOIN ${hidden}.audit_subject c ON a.id=c.id`, await actorContextService.loadActiveActor(53302));
+      const [dispatch] = await rows('SELECT request_snapshot FROM analysis_dispatches WHERE analysis_id=?', [admitted.analysisId]);
+      const evidence = dispatch.request_snapshot.evidence.data;
+      expect(evidence.index_info).toContain(`表: \`${visible}\`.\`audit_subject\`\n  visible_index (id)`);
+      const defaults = evidence.index_info.split(`表: \`${schema}\`.\`audit_subject\`\n`)[1]?.split('\n表: ')[0];
+      expect(defaults).toContain('PRIMARY (id)');
+      expect(defaults).not.toContain('visible_index');
+      expect(evidence.index_info).toContain(`表: ${hidden}.audit_subject - 索引证据不可用`);
+      expect(evidence.index_info).not.toContain('hidden_index');
+      expect(evidence.table_stats).toContain(`表: \`${visible}\`.\`audit_subject\`\n  行数:`);
+      expect(evidence.table_stats).toContain(`表: \`${schema}\`.\`audit_subject\`\n  行数:`);
+      expect(evidence.table_stats).toContain(`表: ${hidden}.audit_subject - 表统计证据不可用`);
+    } finally {
+      getConnection.mockImplementation(original!);
+      await limited.end();
+      await admin.query(`DROP USER IF EXISTS '${user}'@'%'`);
+      await admin.query(`DROP DATABASE IF EXISTS ${visible}`);
+      await admin.query(`DROP DATABASE IF EXISTS ${hidden}`);
+    }
+  });
+
+  it('follows the target MySQL case mode for a quoted CTE with a physical namesake', async () => {
+    const [{ case_mode: caseMode }] = await rows('SELECT @@lower_case_table_names AS case_mode');
+    const sql = 'WITH `Audit_Subject` AS (SELECT 999 AS id) SELECT id FROM audit_subject';
+    expect(await rows(sql)).toEqual([{ id: caseMode === 0 ? 1 : 999 }]);
+    const { analysisId } = await submit(sql, await actorContextService.loadActiveActor(53302));
+    const [dispatch] = await rows('SELECT request_snapshot FROM analysis_dispatches WHERE analysis_id=?', [analysisId]);
+    const evidence = dispatch.request_snapshot.evidence.data;
+    if (caseMode === 0) {
+      expect(evidence.index_info).toContain('PRIMARY (id)');
+      expect(evidence.table_stats).toContain(`表: \`${schema}\`.\`audit_subject\`\n  行数:`);
+    } else {
+      expect(evidence.index_info).toContain('索引证据不可用（未识别到可查询的表）');
+      expect(evidence.table_stats).toContain('表统计证据不可用（未识别到可查询的表）');
+    }
   });
 });

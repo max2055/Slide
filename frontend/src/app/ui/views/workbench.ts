@@ -21,12 +21,15 @@ export class WorkbenchPage extends LitElement {
   private selectedTab = false;
   createRenderRoot() { return this; }
   private pop = () => {
-    const previous = `${this.home}:${this.actions}`, url = new URL(location.href);
+    const url = new URL(location.href);
+    if (!/\/workbench\/?$/.test(url.pathname)) return;
+    const previous = `${this.home}:${this.actions}`;
     this.selectedTab = false;
     this.actions = url.searchParams.get('workspaceTab') === 'actions';
     this.home = !url.search || url.searchParams.get('workspaceTab') === 'home';
     this.selectDefault();
-    if(previous !== `${this.home}:${this.actions}`) this.epoch++;
+    // Home reads its event and attention context when mounted.
+    if (this.home || previous !== `${this.home}:${this.actions}`) this.epoch++;
   };
   private authority = (event: Event) => {
     this.permissions = new Set((event as CustomEvent<{permissions: string[]}>).detail.permissions);
@@ -46,7 +49,7 @@ export class WorkbenchPage extends LitElement {
   private selectDefault() {
     // Resolve the plain entry after either cached or asynchronous authority arrives.
     // Queries carry explicit context; a user's tab choice also survives later grants.
-    if (!this.expired && !this.selectedTab && (!new URL(location.href).search || new URL(location.href).searchParams.get('workspaceTab') === 'home') && this.permissions
+    if (!this.expired && !this.selectedTab && !location.search && this.permissions
       && !hasSlidePermission(this.permissions, 'chat:view')
       && hasSlidePermission(this.permissions, 'operations:actions:view')) this.choose(true, true);
   }
@@ -78,7 +81,7 @@ export class WorkbenchPage extends LitElement {
       workbench-page investigations-page .workspace-header h2, workbench-page investigations-page .workspace-header p { display:none; }
       workbench-page investigations-page .workspace-header { justify-content:flex-end; }
       workbench-page > header { margin-bottom:var(--space-lg); }
-      workbench-page > header h1 { font-size:31px; line-height:1.32; margin:var(--space-xs) 0; color:var(--text-strong); letter-spacing:-1px; }
+      workbench-page > header h1 { font-size:var(--text-2xl); font-weight:700; line-height:1.35; margin:var(--space-xs) 0; color:var(--text-strong); }
       workbench-page > header p { color:var(--muted); margin:0; }
       workbench-page > .workbench-followup { margin-top:var(--space-lg); }
       workbench-page > .workbench-followup > summary { cursor:pointer; color:var(--accent-text); }

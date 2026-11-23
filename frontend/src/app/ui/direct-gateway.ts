@@ -108,9 +108,10 @@ const MAX_RECONNECT_DELAY_MS = 30_000;
 const STABLE_CONNECTION_MS = 30_000;
 const SESSION_EXPIRED_MESSAGE = '登录已失效，请重新登录。';
 const RATE_LIMITED_MESSAGE = '请求过于频繁，请稍后再试。';
-const NETWORK_INTERRUPTED_MESSAGE = '网络连接中断；发送回执未知，请恢复连接后核对，未自动重发。';
-const SERVICE_RESTART_MESSAGE = '服务正在重启；发送回执未知，请恢复连接后核对，未自动重发。';
-const SERVICE_UNAVAILABLE_MESSAGE = '授权服务暂不可用，请稍后重试；未自动重发消息或操作。';
+const CONNECTION_INTERRUPTED_MESSAGE = '连接已中断，正在重新连接';
+const SERVICE_RESTART_MESSAGE = '服务正在重启，正在重新连接';
+const SERVICE_UNAVAILABLE_MESSAGE = '授权服务暂不可用，正在重新连接';
+const RECONNECT_FAILED_MESSAGE = '连接失败，请点击重试';
 
 export const DEFAULT_CHAT_ACCEPT_TIMEOUT_MS = 60_000;
 
@@ -121,7 +122,7 @@ export class ChatAcceptanceTimeoutError extends Error {
     readonly retry: () => Promise<void>,
     readonly getSessionKey: () => string | undefined,
   ) {
-    super('发送结果尚未确认；再次发送相同内容将核对原消息状态，不会创建新的执行。');
+    super('发送结果尚未确认。连接恢复后，可再次发送相同内容核对原请求，系统会沿用原请求标识。');
     this.name = 'ChatAcceptanceTimeoutError';
   }
 }
@@ -313,14 +314,13 @@ export class DirectGatewayClient {
         this.onStateChange('auth_failed');
         return; // Don't schedule reconnect — permanent auth failure
       }
+      // A connection-level close cannot say which in-flight frames were accepted.
+      this.pausePendingChatAcknowledgements();
       if (ev.code === 4008) {
-        const error = new Error(RATE_LIMITED_MESSAGE);
-        this.rejectPendingChatAcknowledgements(error);
         this.onStateChange('rate_limited');
         if (!this.closed) this.scheduleReconnect();
         return;
       }
-      this.pausePendingChatAcknowledgements();
       reportServiceUnavailable();
       if (ev.code === 1013) {
         this.onStateChange('service_unavailable');
@@ -551,7 +551,7 @@ export class DirectGatewayClient {
       return Promise.reject(new Error('凭证已更新，请建立新连接；未自动重发。'));
     }
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
-      return Promise.reject(new Error('[DirectGatewayClient] chat.send could not be queued because the WebSocket is not connected'));
+      return Promise.reject(new Error('连接已中断，消息尚未发送。'));
     }
     const messageId = String(frame.messageId);
     const existing = this.pendingChatAcknowledgements.get(messageId);
@@ -572,7 +572,12 @@ export class DirectGatewayClient {
   private expireChat(messageId: string): void {
     const pending = this.pendingChatAcknowledgements.get(messageId);
     if (!pending) return;
-    const delivery = this.unconfirmedChats.get(messageId) ?? { frame: pending.frame, accepted: false };
+    const delivery = this.unconfirmedChats.get(messageId)
+      ?? (pending.transmitted ? { frame: pending.frame, accepted: false } : null);
+    if (!delivery) {
+      this.rejectChatAcknowledgement(messageId, new Error('消息尚未发送，请在连接恢复后重试。'));
+      return;
+    }
     const token = pending.credential;
     this.unconfirmedChats.set(messageId, delivery);
     this.rejectChatAcknowledgement(messageId, new ChatAcceptanceTimeoutError(
@@ -736,8 +741,9 @@ export class DirectGatewayClient {
     }
 
     if (type === 'session.created' || type === 'run.started' || type === 'run.snapshot') {
-      const messageId = typeof msg.messageId === 'string' ? msg.messageId : '';
-      const sessionKey = typeof msg.sessionKey === 'string' ? msg.sessionKey : '';
+      const snapshot = type === 'run.snapshot' ? (msg as AdapterRunSnapshotEvent).run : undefined;
+      const messageId = typeof msg.messageId === 'string' ? msg.messageId : snapshot?.messageId ?? '';
+      const sessionKey = typeof msg.sessionKey === 'string' ? msg.sessionKey : snapshot?.sessionId ?? '';
       const pending = messageId
         ? this.pendingChatAcknowledgements.get(messageId) ?? this.unconfirmedChats.get(messageId)
         : undefined;
@@ -750,16 +756,10 @@ export class DirectGatewayClient {
           this.streamSubscriptions.set(sessionKey, pending.frame.subscriptionId);
         }
       }
-    }
-
-    if (type === 'run.started') {
-      const messageId = typeof msg.messageId === 'string' ? msg.messageId : '';
-      if (messageId) this.resolveChatAcknowledgement(messageId);
+      if (messageId && type !== 'session.created') this.resolveChatAcknowledgement(messageId);
     }
 
     if (type === 'run.snapshot') {
-      const messageId = typeof msg.messageId === 'string' ? msg.messageId : '';
-      if (messageId) this.resolveChatAcknowledgement(messageId);
       this.onEvent(data as AdapterRunSnapshotEvent);
       return;
     }
@@ -1205,10 +1205,11 @@ export function handleDirectAdapterEvent(host: Record<string, unknown>, event: A
   if (!isCurrentChatSession(host) || host.chatAccessDenied) return;
   const runId = host.chatRunId as string | null;
   const sessionKey = host.sessionKey as string;
-  if ((event.type === 'run.started' || event.type === 'run.snapshot') && runId) {
+  if (event.type === 'run.started' || event.type === 'run.snapshot') {
     const eventRunId = event.type === 'run.started' ? event.runId : event.run.id;
     const messageId = event.messageId ?? (event.type === 'run.snapshot' ? event.run.messageId : undefined);
-    if (eventRunId !== runId && messageId !== runId) return;
+    if (!confirmChatSend(host as unknown as ChatState, messageId)) return;
+    if (runId && eventRunId !== runId && messageId !== runId) return;
   }
   if (event.sessionKey && event.sessionKey !== sessionKey && !['session.created', 'run.started', 'run.snapshot'].includes(event.type)) return;
   if (event.type === 'stream.snapshot' || event.type === 'stream.delta') {
@@ -1296,7 +1297,6 @@ export function handleDirectAdapterEvent(host: Record<string, unknown>, event: A
 
   switch (event.type) {
     case 'run.started':
-      if (!confirmChatSend(host as unknown as ChatState, event.messageId)) break;
       if (host.chatRunId !== event.runId) clearChatRecoveryNotice(host as unknown as Parameters<typeof clearChatRecoveryNotice>[0]);
       host.chatRunId = event.runId;
       host.chatRuntimePhase = 'preparing';
@@ -1304,7 +1304,6 @@ export function handleDirectAdapterEvent(host: Record<string, unknown>, event: A
       applyDirectSessionKey(host, event.sessionKey);
       break;
     case 'run.snapshot':
-      if (!confirmChatSend(host as unknown as ChatState, event.messageId)) break;
       applyDirectSessionKey(host, event.run.sessionId);
       if (host.chatRunId !== event.run.id) clearChatRecoveryNotice(host as unknown as Parameters<typeof clearChatRecoveryNotice>[0]);
       host.chatRunId = event.run.state === 'running' ? event.run.id : null;
@@ -1443,8 +1442,9 @@ export function initChatClient(host: Record<string, unknown>): void {
           refreshActiveTab(host as unknown as Parameters<typeof refreshActiveTab>[0]);
         };
         loadState();
-      } else if (state === 'disconnected') {
+      } else if (state === 'connecting') {
         host.connected = false;
+        if (host.connectionError === RECONNECT_FAILED_MESSAGE) host.connectionError = CONNECTION_INTERRUPTED_MESSAGE;
       } else if (state === 'auth_failed') {
         clearExpiredChatState(host);
         notifySessionExpired();
@@ -1455,9 +1455,9 @@ export function initChatClient(host: Record<string, unknown>): void {
       } else if (state === 'rate_limited') {
         host.connected = false;
         host.connectionError = RATE_LIMITED_MESSAGE;
-      } else if (state === 'network_interrupted') {
+      } else if (state === 'disconnected' || state === 'network_interrupted') {
         host.connected = false;
-        host.connectionError = NETWORK_INTERRUPTED_MESSAGE;
+        host.connectionError = CONNECTION_INTERRUPTED_MESSAGE;
       } else if (state === 'service_restarting') {
         host.connected = false;
         host.connectionError = SERVICE_RESTART_MESSAGE;
@@ -1466,7 +1466,7 @@ export function initChatClient(host: Record<string, unknown>): void {
         host.connectionError = SERVICE_UNAVAILABLE_MESSAGE;
       } else if (state === 'exhausted') {
         host.connected = false;
-        host.connectionError = '连接失败，请点击重试';
+        host.connectionError = RECONNECT_FAILED_MESSAGE;
       }
     },
   });

@@ -51,7 +51,7 @@ describe('unconfirmed chat UI', () => {
     await sendChatMessage(host, 'hello');
     expect(host.chatSending).toBe(false);
     expect(host.chatRunId).toBeNull();
-    expect(host.lastError).toContain('发送结果尚未确认');
+    expect(host.chatReceiptNotice).toContain('发送结果尚未确认');
     await sendChatMessage(host, 'hello');
     expect(retry).toHaveBeenCalledTimes(1);
     expect(request).toHaveBeenCalledTimes(1);
@@ -68,7 +68,7 @@ describe('unconfirmed chat UI', () => {
     expect(retry).toHaveBeenCalledTimes(1);
     expect(host.chatSending).toBe(false);
     expect(host.chatRunId).toBeNull();
-    expect(host.lastError).toContain('发送结果尚未确认');
+    expect(host.chatReceiptNotice).toContain('发送结果尚未确认');
   });
 
   it('clears uncertainty and adopts late acceptance for the same session', async () => {
@@ -76,6 +76,7 @@ describe('unconfirmed chat UI', () => {
     await sendChatMessage(host, 'hello');
     handleDirectAdapterEvent(host as any, { type: 'run.started', messageId: 'message-1', sessionKey: 'assigned', runId: 'server-run' });
     expect(host.lastError).toBeNull();
+    expect(host.chatReceiptNotice).toBeNull();
     expect(host.sessionKey).toBe('assigned');
     expect(host.chatRunId).toBe('server-run');
   });

@@ -155,10 +155,19 @@ test("old SQL/health/diagnosis results link lazily, render read-only and never c
     expect(response.status()).toBe(200);
     const link = await response.json();
     await page.goto(`${env.url}/investigations?investigation=${link.id}`);
-    await expect(page.locator(".legacy-analysis-result")).toContainText(`原 ${kind} 历史报告`);
+    const original = page.locator(".legacy-analysis-result");
+    const disclosure = page.getByText("展开历史调查原文", { exact: true });
+    await expect(page.getByText("历史记录只保存了自由文本，未记录结构化证据缺口。", { exact: true })).toBeVisible();
+    await expect(original).not.toBeVisible();
+    await disclosure.click();
+    await expect(original).toHaveText(`原 ${kind} 历史报告`);
     await expect(page.getByRole("button", { name: "提交新 Run", exact: true })).toBeDisabled();
     await page.reload();
-    await expect(page.locator(".legacy-analysis-result")).toContainText(`原 ${kind} 历史报告`);
+    await expect(original).not.toBeVisible();
+    await disclosure.focus();
+    await page.keyboard.press("Enter");
+    await expect(original).toBeVisible();
+    await expect(original).toHaveText(`原 ${kind} 历史报告`);
     if (kind === "topsql_analysis")
       for (const width of [1600, 1024, 390]) {
         await page.setViewportSize({ width, height: 900 });

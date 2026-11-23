@@ -1,5 +1,6 @@
 import { LitElement, html, css, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
+import { sharedBtnStyles } from "../../styles/shared-btn-styles.js";
 import { icons } from "../../../icons.js";
 import "../components/metric-chart.js";
 import { authFetch } from "../../../api/index.js";
@@ -62,12 +63,18 @@ export class HealthScoreTab extends LitElement {
   @state() private capabilities: CollectionCapability[] = [];
   @state() private loading = true;
   @state() private evidenceError: string | null = null;
-  @state() private error: string | null = null;
+  @state() private historyError = '';
+  @state() private capabilitiesError = '';
+  @state() private checksRead = false;
+  @state() private historyLoading = false;
+  @state() private capabilitiesLoading = false;
+  @state() private accessError = '';
   @state() private timeRange: string = "7d";
   @state() private expandedChecks = false;
   private loadRequestVersion = 0;
+  private historyRequest = 0;
 
-  static override styles = css`
+  static override styles = [sharedBtnStyles, css`
     :host {
       display: block;
     }
@@ -320,25 +327,36 @@ export class HealthScoreTab extends LitElement {
     .error {
       color: var(--danger);
     }
-  `;
+  `];
 
   private ageTimer?: ReturnType<typeof setInterval>;
-  override disconnectedCallback() { super.disconnectedCallback(); clearInterval(this.ageTimer); this.loadRequestVersion++; }
-  override updated(changes: Map<PropertyKey, unknown>) {
-    if (changes.has('instanceId') && changes.get('instanceId') !== undefined) void this._loadData();
+  private readonly accessChanged = () => {
+    this.loadRequestVersion++;
+    this.resetData();
+    this.loading = this.historyLoading = this.capabilitiesLoading = false;
+    this.accessError = '健康评分不可访问，请确认登录和查看权限';
+  };
+
+  override disconnectedCallback() {
+    clearInterval(this.ageTimer);
+    this.loadRequestVersion++;
+    window.removeEventListener('slide-permissions-loaded', this.accessChanged);
+    window.removeEventListener('slide-session-expired', this.accessChanged);
+    super.disconnectedCallback();
   }
-  override connectedCallback() {
-    super.connectedCallback();
-    this.ageTimer = setInterval(() => this.requestUpdate(), 30_000);
-    this._loadData();
+  override willUpdate(changes: Map<string, unknown>) {
+    if (changes.has('instanceId')) void this._loadData();
   }
 
-  private async _loadData() {
-    const requestVersion = ++this.loadRequestVersion;
-    this.loading = true;
-    this.error = null;
-    this.evidenceError = null;
-    // Never let a refresh render evidence from the previous instance state.
+  override connectedCallback() {
+    super.connectedCallback();
+    window.addEventListener('slide-permissions-loaded', this.accessChanged);
+    window.addEventListener('slide-session-expired', this.accessChanged);
+    this.ageTimer = setInterval(() => this.requestUpdate(), 30_000);
+    if (this.hasUpdated) void this._loadData();
+  }
+
+  private resetData() {
     this.healthHistory = null;
     this.latestChecks = [];
     this.latestChecksAt = null;
@@ -348,84 +366,96 @@ export class HealthScoreTab extends LitElement {
     this.overview = null;
     this.collectionEnabled = null;
     this.capabilities = [];
+    this.evidenceError = null;
+    this.historyError = this.capabilitiesError = '';
+    this.checksRead = false;
+  }
 
-    const instanceId = this.instanceId;
-    if (!instanceId) {
-      this.loading = false;
-      return;
-    }
+  private async _loadData() {
+    this.loadRequestVersion++;
+    this.accessError = '';
+    this.resetData();
+    if (!this.instanceId) { this.loading = false; return; }
+    await Promise.all([this.loadHistory(), this.loadEvidence(), this.loadCapabilities()]);
+  }
 
+  private async read<T>(path: string, current: () => boolean, instanceScoped = true): Promise<T> {
+    const res = await authFetch(path, { signal: AbortSignal.timeout(15000) });
+    if (current() && (res.status === 401 || (instanceScoped && [403, 404].includes(res.status)))) this.accessChanged();
+    if (!res.ok) throw new Error();
+    return res.json();
+  }
+
+  private async loadHistory() {
+    const id = this.instanceId, version = this.loadRequestVersion;
+    if (!id || this.accessError) return;
+    const days = this._timeRangeToDays(this.timeRange), request = ++this.historyRequest;
+    const current = () => request === this.historyRequest && version === this.loadRequestVersion && id === this.instanceId;
+    this.historyLoading = true;
+    this.healthHistory = null;
+    this.historyError = '';
     try {
-      const days = this._timeRangeToDays(this.timeRange);
-      const [historyRes, checksRes, capsRes, instanceRes, overviewRes, collectionRes] = await Promise.all([
-        authFetch(`/api/database/instances/${instanceId}/health-history?days=${days}`),
-        authFetch(`/api/database/instances/${instanceId}/health-checks`),
-        authFetch(`/api/database/instances/${instanceId}/collection-capabilities`),
-        authFetch(`/api/database/instances/${instanceId}`),
-        authFetch(`/api/resources/overview`),
-        authFetch(`/api/metrics/config/resources/instance/${instanceId}/status`),
-      ].map(request => request.catch(() => null)));
+      const history = await this.read<HealthHistory[]>(`/api/database/instances/${id}/health-history?days=${days}`, current);
+      if (!Array.isArray(history)) throw new Error();
+      if (current()) this.healthHistory = history;
+    } catch {
+      if (current()) this.historyError = '评分历史读取失败';
+    } finally { if (current()) this.historyLoading = false; }
+  }
 
-      if (requestVersion !== this.loadRequestVersion) return;
+  private async loadEvidence() {
+    const id = this.instanceId, version = this.loadRequestVersion;
+    if (!id || this.accessError) return;
+    const current = () => version === this.loadRequestVersion && id === this.instanceId;
+    this.loading = true;
+    this.evidenceError = null;
+    const path = `/api/database/instances/${id}`;
+    const [checks, instance, overview, collection] = await Promise.allSettled([
+      this.read<HealthChecksResponse>(`${path}/health-checks`, current),
+      this.read<unknown>(path, current),
+      this.read<{ items: OverviewItem[] }>('/api/resources/overview', current, false),
+      this.read<{ effective_enabled?: { enabled?: boolean } }>(`/api/metrics/config/resources/instance/${id}/status`, current, false),
+    ] as const);
+    if (!current()) return;
+    const validChecks = checks.status === 'fulfilled' && Array.isArray(checks.value?.checks);
+    const validInstance = instance.status === 'fulfilled' && isHealthScoreInstance(instance.value);
+    const validOverview = overview.status === 'fulfilled' && Array.isArray(overview.value?.items);
+    const enabled = collection.status === 'fulfilled' ? collection.value?.effective_enabled?.enabled : undefined;
 
-      if (![checksRes, instanceRes, overviewRes, collectionRes].every(response => response?.ok)) {
-        this.evidenceError = '当前证据读取失败或无权访问，无法判断当前评分';
-      }
-      if (collectionRes?.ok) {
-        const data = await collectionRes.json();
-        if (requestVersion !== this.loadRequestVersion) return;
-        this.collectionEnabled = typeof data.effective_enabled?.enabled === 'boolean' ? data.effective_enabled.enabled : null;
-      }
-      if (overviewRes?.ok) {
-        const data = await overviewRes.json();
-        if (requestVersion !== this.loadRequestVersion) return;
-        this.overview = data.items?.find((item: OverviewItem) => item.resource.type === 'instance' && item.resource.id === instanceId) ?? null;
-      }
-      if (historyRes?.ok) {
-        const history = await historyRes.json();
-        if (requestVersion !== this.loadRequestVersion) return;
-        this.healthHistory = Array.isArray(history) ? history : null;
-      }
-      if (checksRes?.ok) {
-        const data: HealthChecksResponse = await checksRes.json();
-        if (requestVersion !== this.loadRequestVersion) return;
-        this.latestChecks = Array.isArray(data?.checks) ? data.checks : [];
-        this.latestChecksAt = data?.created_at ?? null;
-        this.latestChecksStatus = data?.status ?? "unknown";
-        this.healthStatus = typeof data?.status === "string" ? data.status : "unknown";
-      }
-      if (instanceRes?.ok) {
-        const instance = await instanceRes.json();
-        if (requestVersion !== this.loadRequestVersion) return;
-        if (!isHealthScoreInstance(instance)) {
-          throw new Error("实例健康状态响应无效");
-        }
-        this.instanceState = instance;
-        this.healthStatus = this.instanceState?.health_status || "unknown";
-      } else {
-        // Checks/history may still have loaded, but without the current
-        // instance snapshot there is no safe credential/readiness evidence.
-        this.instanceState = null;
-        this.healthStatus = "unknown";
-      }
-      if (capsRes?.ok) {
-        const capabilities = await capsRes.json();
-        if (requestVersion !== this.loadRequestVersion) return;
-        this.capabilities = Array.isArray(capabilities) ? capabilities : [];
-      }
-    } catch (err: any) {
-      if (requestVersion !== this.loadRequestVersion) return;
-      this.instanceState = null;
-      this.healthStatus = "unknown";
-      this.error = err.message || "加载健康评分数据失败";
-    } finally {
-      if (requestVersion === this.loadRequestVersion) this.loading = false;
+    this.checksRead = validChecks;
+    this.latestChecks = validChecks ? checks.value.checks : [];
+    this.latestChecksAt = validChecks ? checks.value.created_at ?? null : null;
+    this.latestChecksStatus = validChecks ? checks.value.status : 'unknown';
+    this.instanceState = validInstance ? instance.value as HealthScoreInstance : null;
+    this.healthStatus = this.instanceState?.health_status ?? 'unknown';
+    this.overview = validOverview ? overview.value.items.find(item => item?.resource?.type === 'instance' && item.resource.id === id) ?? null : null;
+    this.collectionEnabled = typeof enabled === 'boolean' ? enabled : null;
+    if (!validChecks || !validInstance || !validOverview || this.collectionEnabled === null) {
+      this.evidenceError = '当前评分证据读取失败或无权查看';
     }
+    this.loading = false;
+  }
+
+  private async loadCapabilities() {
+    const id = this.instanceId, version = this.loadRequestVersion;
+    if (!id || this.accessError) return;
+    const current = () => version === this.loadRequestVersion && id === this.instanceId;
+    this.capabilitiesLoading = true;
+    this.capabilitiesError = '';
+    this.capabilities = [];
+    try {
+      const capabilities = await this.read<CollectionCapability[]>(`/api/database/instances/${id}/collection-capabilities`, current);
+      if (!Array.isArray(capabilities)) throw new Error();
+      if (current()) this.capabilities = capabilities;
+    } catch {
+      if (current()) this.capabilitiesError = '采集能力读取失败';
+    } finally { if (current()) this.capabilitiesLoading = false; }
   }
 
   private _onTimeRangeChange(range: string) {
+    if (range === this.timeRange) return;
     this.timeRange = range;
-    this._loadData();
+    void this.loadHistory();
   }
 
   private _timeRangeToDays(range: string): number {
@@ -493,12 +523,9 @@ export class HealthScoreTab extends LitElement {
   }
 
   override render() {
-    if (this.loading) {
-      return html`<div class="loading">加载中...</div>`;
-    }
-
-    if (this.error) {
-      return html`<div class="error">${this.error}</div>`;
+    if (!this.instanceId) return nothing;
+    if (this.accessError) {
+      return html`${this._renderTimeRangeSelector()}<p role="alert" class="error">${this.accessError} <button class="btn btn-refresh" @click=${this._loadData}>重试健康评分</button></p>`;
     }
 
     const score = this._getLatestScore();
@@ -513,12 +540,14 @@ export class HealthScoreTab extends LitElement {
 
       <div class="card-section">
         <div class="score-card">
-          <div class="score-number" style="color: ${scoreColor};">${score ?? "未知"}</div>
+          <div class="score-number" style="color: ${scoreColor};">${this.loading ? "读取中" : score ?? "未知"}</div>
           <div class="score-label">当前健康评分</div>
           <div class="score-label">采集：${this.collectionEnabled === true ? '已启用' : this.collectionEnabled === false ? '已暂停' : '状态未知'}</div>
           <div class="score-label">正式观测：${evidenceTime(this.overview?.observedAt)} · ${evidenceTimeState(this.overview?.observedAt)}</div>
           <div class="score-label">健康检查：${evidenceTime(this.latestChecksAt)} · ${evidenceTimeState(this.latestChecksAt)}</div>
-          ${score === null ? html`<div class="score-label">${this.evidenceError || '当前证据不足、检查不完整或采集暂停；历史评分仅供回溯'}</div>` : nothing}
+          ${this.loading ? html`<div class="score-label" role="status">正在读取当前评分证据…</div>`
+            : this.evidenceError ? html`<div class="score-label" role="alert">${this.evidenceError} <button class="btn btn-refresh" @click=${this.loadEvidence}>重试当前评分</button></div>`
+            : score === null ? html`<div class="score-label">当前证据不足、检查不完整或采集暂停；历史评分仅供回溯</div>` : nothing}
         </div>
       </div>
 
@@ -556,8 +585,11 @@ export class HealthScoreTab extends LitElement {
   }
 
   private _renderTrendChart() {
-    if (!this.healthHistory || this.healthHistory.length === 0) {
-      return html`<div class="empty">暂无评分数据</div>`;
+    if (this.historyLoading) return html`<p class="loading" role="status">正在读取评分历史…</p>`;
+    if (this.historyError) return html`<p class="error" role="alert">${this.historyError} <button class="btn btn-refresh" @click=${this.loadHistory}>重试评分历史</button></p>`;
+    if (!this.healthHistory) return nothing;
+    if (this.healthHistory.length === 0) {
+      return html`<div class="empty">所选时间范围内没有历史评分记录</div>`;
     }
 
     const timeData = this.healthHistory.map((h) => {
@@ -600,9 +632,10 @@ export class HealthScoreTab extends LitElement {
 
       ${this.expandedChecks ? html`
         <div class="collapsible-content">
-          ${(!scoreAvailable && !freshIncomplete) || this.latestChecks.length === 0 ? html`
+          ${!this.checksRead ? html`<p>${this.loading ? '正在读取最近健康检查…' : '最近健康检查读取失败，请重试当前评分'}</p>`
+            : (!scoreAvailable && !freshIncomplete) || this.latestChecks.length === 0 ? html`
             <div style="padding: var(--space-xl); text-align: center; color: var(--muted);">
-              暂无健康检查数据
+              ${this.latestChecks.length ? "当前证据不足以展示检查评分" : "没有已保存的健康检查记录"}
             </div>
           ` : this.latestChecks.map((check) => html`
             <div class="check-item">
@@ -628,7 +661,9 @@ export class HealthScoreTab extends LitElement {
     return html`
       <div class="section-title">采集能力状态</div>
       <div class="capability-grid">
-        ${this.capabilities.length === 0 ? html`
+        ${this.capabilitiesLoading ? html`<p role="status">正在读取采集能力…</p>`
+          : this.capabilitiesError ? html`<p role="alert">${this.capabilitiesError} <button class="btn btn-refresh" @click=${this.loadCapabilities}>重试采集能力</button></p>`
+          : this.capabilities.length === 0 ? html`
           <div style="color: var(--muted); font-size: var(--text-sm);">暂无采集能力数据</div>
         ` : this.capabilities.map((cap) => html`
           <div class="capability-badge">

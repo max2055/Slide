@@ -85,6 +85,16 @@ export class AppDialog extends LitElement {
     if (!first || (e.shiftKey ? active === first : active === last)) {
       e.preventDefault();
       (e.shiftKey ? last : first)?.focus();
+      return;
+    }
+    if (e.defaultPrevented || !(active instanceof HTMLElement) || e.altKey || e.ctrlKey || e.metaKey) return;
+    const current = focusable.indexOf(active);
+    if (current === -1) return;
+    const next = focusable[current + (e.shiftKey ? -1 : 1)];
+    // Chromium on macOS can skip an empty-sandbox iframe in sequential focus navigation.
+    if (next instanceof HTMLIFrameElement && next.hasAttribute("data-dialog-focus-frame")) {
+      e.preventDefault();
+      next.focus({ preventScroll: true });
     }
   }
 

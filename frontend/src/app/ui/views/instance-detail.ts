@@ -1,4 +1,4 @@
-import { detailTabKeydown, returnToResourceList } from '../components/resource-detail-context.js';
+import { detailResourceId, detailTabKeydown, readDetailTab, returnToResourceList, selectDetailTab } from '../components/resource-detail-context.js';
 import { hasListPermission } from '../components/resource-list-access.js';
 import "../components/investigation-operation-context.ts";
 import '../components/resource-investigation-links.js';
@@ -31,6 +31,8 @@ interface Session { id: number; user: string; host: string; database: string; co
 type ReadStatus = 'idle' | 'loading' | 'success' | 'error' | 'forbidden' | 'unavailable';
 interface QueryRead { status: ReadStatus; instanceId: number | null; readAt?: number; source?: string; }
 interface CapacityInfo { observed_at?: string; source?: string; scope?: string; total_size_gb: number; databases?: Array<{ name: string; size_gb: number; table_count?: number }>; tablespaces?: Array<{ name: string; size_gb: number; max_size_gb?: number; usage_percent?: number }>; top_tables: Array<{ name: string; size_gb: number; row_count?: number }>; }
+
+const instanceDetailTabs = ["overview","collection","metrics","topsql","health","sessions","capacity","schema","indexes","sqlaudit","logs","qan","diagnosis"];
 
 @customElement("instance-detail-page")
 export class InstanceDetailPage extends LitElement {
@@ -127,7 +129,7 @@ export class InstanceDetailPage extends LitElement {
 
   @state() private instanceId: number | null = null;
   @state() private instance: InstanceDetail | null = null;
-  @state() private activeTab: string = new URL(location.href).searchParams.get('metricResource')?.startsWith('instance:') ? 'metrics' : 'overview' ;
+  @state() private activeTab = 'overview';
   @state() private loading = true;
   @state() private error: string | null = null;
   @state() private slowQueries: SlowQuery[] = [];
@@ -148,10 +150,15 @@ export class InstanceDetailPage extends LitElement {
   private onNavigate = (event: Event) => {
     const detail = (event as CustomEvent).detail;
     if (detail?.tab === 'instance-detail' && Number.isSafeInteger(Number(detail.id)) && Number(detail.id) > 0) {
-      this.instanceId = Number(detail.id); this.activeTab = 'overview'; void this.loadData();
+      if (this.instanceId !== Number(detail.id)) this.loadFromUrl();
     }
   };
-  private onPopState = () => this.loadFromUrl();
+  private onPopState = () => {
+    const id = detailResourceId('instance');
+    if (id === null) return;
+    if (id !== this.instanceId) { this.loadFromUrl(); return; }
+    this._setTab(readDetailTab('instance', id, instanceDetailTabs), true);
+  };
   private onPermissionsChanged = () => {
     ++this.contextVersion; ++this.overviewRequest;
     this.instance = null; this.overview = null; this.overviewLoading = false;
@@ -239,10 +246,11 @@ export class InstanceDetailPage extends LitElement {
   }
 
   private loadFromUrl() {
-    const raw = new URLSearchParams(window.location.search).get('id');
-    if (raw && /^[1-9]\d*$/.test(raw) && Number.isSafeInteger(Number(raw))) {
-      this.instanceId = Number(raw); void this.loadData();
-    }
+    const id = detailResourceId('instance');
+    if (id === null) return;
+    this.instanceId = id;
+    this.activeTab = readDetailTab('instance', id, instanceDetailTabs);
+    void this.loadData();
   }
   private startAutoRefresh() {
     this.stopAutoRefresh();
@@ -325,12 +333,16 @@ export class InstanceDetailPage extends LitElement {
   }
 
   private _goBack() { if (returnToResourceList('instance')) return; if (returnToDashboard()) return; const u = new URL(window.location.href); u.searchParams.set("tab", "instances-db"); u.searchParams.delete("id"); window.history.pushState({}, "", u); window.dispatchEvent(new CustomEvent("slide-navigate", { detail: { tab: "instances-db" } })); }
-  private _setTab(tab: string) {
-    const configuration = this.renderRoot.querySelector('resource-collection-section') as import('../components/resource-collection-section.js').ResourceCollectionSection | null;
-    if (configuration) { configuration.confirmDiscard(() => this._applyTab(tab)); return; }
-    this._applyTab(tab);
+  private _setTab(tab: string, fromHistory = false) {
+    if (tab === this.activeTab) {
+      if (!fromHistory) void this.loadTabData();
+      return;
+    }
+    selectDetailTab(this, this.activeTab, tab, () => {
+      this.activeTab = tab;
+      void this.loadTabData();
+    }, fromHistory);
   }
-  private _applyTab(tab: string) { this.activeTab = tab; this.loadTabData(); }
   private _toggleAutoRefresh() { this.autoRefresh = !this.autoRefresh; this.startAutoRefresh(); }
   private async _manualRefresh() { await this.refreshCurrentTab(); }
   private _resetQueryReads() {
@@ -576,7 +588,7 @@ export class InstanceDetailPage extends LitElement {
             <div class="title-copy"><h1 class="instance-title">${this.instance.name}</h1><div class="resource-meta">${this.instance.db_type} · ${this.instance.host}:${this.instance.port} · 版本 ${this.instance.db_version || '未知'} · 观测于 ${this.overview?.observedAt ? new Date(this.overview.observedAt).toLocaleString('zh-CN') : '未知'}</div></div>
             ${this._healthBadge()}
           </div>
-          <div class="header-right"><button class="btn" @click=${() => this._setTab('collection')}>监控配置</button>
+          <div class="header-right">
             <span class="last-updated">详情成功读取：${this._formatTimeAgo(this.lastUpdated)}（非资源观测）</span>
             ${this.detailReadError ? html`<span role="alert">${this.detailReadError}，成功读取时间未更新</span>` : nothing}
             <button class="btn" @click=${() => { this.showDiagnosisModal = true; if (this.diagnosisStatus === "idle") this._startDiagnosis(); }}
@@ -591,7 +603,7 @@ export class InstanceDetailPage extends LitElement {
 
         <resource-investigation-links resourceType="instance" .resourceId=${this.instanceId}></resource-investigation-links>
       <div class="tabs" @keydown=${detailTabKeydown} role="tablist" aria-label="资源详情页签">
-          ${["overview","collection","metrics","topsql","health","sessions","capacity","schema","indexes","sqlaudit","logs","qan","diagnosis"].map(t => html`
+          ${instanceDetailTabs.map(t => html`
             <button role="tab" aria-selected=${String(this.activeTab === t || t === "metrics" && this.activeTab === "trend")} class="tab ${(this.activeTab === t || t === "metrics" && this.activeTab === "trend") ? "active" : ""}" @click=${() => this._setTab(t)}>
               ${({ overview:"概览", collection:"监控配置", metrics:"指标与趋势", topsql:"慢查询", trend:"趋势", health:"健康评分", sessions:"会话", capacity:"容量", schema:"表结构", indexes:"索引", sqlaudit:"SQL 审核", logs:"日志", qan:"查询分析", diagnosis:"AI 诊断" } as Record<string,string>)[t]}
               ${t === "topsql" && this._queryState('topsql') === 'success' && this.slowQueries.length > 0 ? html`<span class="tab-badge">${this.slowQueries.length}</span>` : ""}
