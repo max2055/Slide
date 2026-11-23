@@ -123,7 +123,7 @@ export class PlatformStatusPage extends LitElement {
       ${this.activeView === "observations"
         ? html`<platform-observations-page></platform-observations-page>`
         : this.activeView === "sandbox"
-        ? html`<agent-sandbox-status-page></agent-sandbox-status-page>`
+        ? html`<agent-sandbox-status-page status-only></agent-sandbox-status-page>`
         : html`<health-center-page></health-center-page>`}
     `;
   }

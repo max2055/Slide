@@ -40,9 +40,42 @@ describe('system health and consistency page', () => {
   it('loads one merged overview and collapses normal checks by default', async () => {
     const element = await renderPage();
     expect(authFetch).toHaveBeenCalledWith('/api/health/overview');
-    expect(element.shadowRoot?.textContent).toContain('系统自检');
+    expect(element.shadowRoot?.querySelector('h1')?.textContent).toBe('平台自检');
     expect(element.shadowRoot?.textContent).toContain('显示正常检查（1）');
     expect(element.shadowRoot?.querySelector('.check-table')).toBeNull();
+  });
+
+  it('keeps the last server check timestamp through a failed refresh and retries the same check', async () => {
+    const element = await renderPage();
+    const root = element.shadowRoot!;
+    const readTimes = () => Array.from(root.querySelectorAll('time'), (time) => time.dateTime);
+    const refresh = root.querySelector<HTMLButtonElement>('.refresh-btn')!;
+    expect(readTimes()[0]).not.toBe(overview.timestamp);
+    expect(readTimes()[1]).toBe(overview.timestamp);
+
+    authFetch.mockResolvedValueOnce({ ok: false, status: 503 });
+    refresh.click();
+    await vi.waitFor(() => expect(root.querySelector('[role="alert"]')?.textContent).toContain('HTTP 503'));
+    expect(readTimes()).toHaveLength(2);
+    expect(readTimes()[1]).toBe(overview.timestamp);
+    expect(root.querySelector('.health-bar')).toBeNull();
+    expect(refresh.textContent?.trim()).toBe('重试读取');
+
+    const timestamp = '2026-08-06T00:02:00.000Z';
+    authFetch.mockResolvedValueOnce({ ok: true, json: async () => ({ ...overview, timestamp }) });
+    refresh.click();
+    await vi.waitFor(() => expect(readTimes()[1]).toBe(timestamp));
+    expect(authFetch.mock.calls.slice(1).map(([path]) => path)).toEqual([
+      '/api/health/overview?refresh=true', '/api/health/overview?refresh=true',
+    ]);
+    expect(root.querySelector('[role="alert"]')).toBeNull();
+  });
+
+  it('clears check evidence on authorization loss', async () => {
+    const element = await renderPage();
+    window.dispatchEvent(new CustomEvent('slide-permissions-loaded', { detail: { permissions: [] } }));
+    await element.updateComplete;
+    expect(element.shadowRoot?.querySelector('time')).toBeNull();
   });
 
   it('navigates severe instance and server references to their detail pages', async () => {
