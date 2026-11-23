@@ -86,7 +86,7 @@ export class InvestigationAttention extends LitElement {
     const shortRecommendation = recordExcerpt(recommendation, 100);
     return html`<div class="toolbar"><button class="btn btn-refresh" ?disabled=${p.loading||p.accessInvalidated} @click=${()=>this.load()}>刷新待处理事项</button></div>
       ${p.loading ? html`<p role="status">正在核对原记录…</p>` : nothing}
-      ${p.error ? html`<p role="alert">${p.error}</p>` : nothing}
+      ${p.error ? html`<p role="alert">调查与处置待办清单读取失败。${p.error}</p>` : nothing}
       ${p.data && !p.loading ? html`
         ${first ? html`<div class="decision-grid">
           <app-card class="decision"><span slot="header">当前待跟进</span>

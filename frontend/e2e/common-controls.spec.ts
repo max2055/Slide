@@ -195,3 +195,150 @@ for (const [width, height] of [[1440, 900], [1366, 768], [1920, 1080]]) {
     await info.attach('caller-evidence.json', { path: evidencePath, contentType: 'application/json' });
   });
 }
+
+test('#1038 index, scoring and log primary actions share interaction styles', async ({ page }, info) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  const collect = Promise.withResolvers<void>();
+  let collectRequests = 0;
+  const weights = { availability: .4, performance: .3, capacity: .2, security: .1 };
+  await page.route('**/api/**', async route => {
+    const { pathname } = new URL(route.request().url());
+    if (!pathname.startsWith('/api/')) return route.fallback();
+    switch (pathname) {
+      case '/api/database/instances':
+        return route.fulfill({ json: [{ id: 1, name: '验收实例', db_type: 'mysql', database_name: 'fixture' }] });
+      case '/api/scoring/config':
+        return route.fulfill({ json: weights });
+      case '/api/logs':
+        return route.fulfill({ json: { logs: [{ id: 1, instance_id: 1, log_level: 'error', source: 'mysql_error', message: '日志样本', collected_at: '2026-11-01T00:00:00Z' }], total: 1 } });
+      case '/api/index/collect/1':
+        expect(route.request().method()).toBe('POST');
+        collectRequests++;
+        await collect.promise;
+        return route.fulfill({ json: { success: true, data: { collected: 0, indexes: 0, tables: 0 } } });
+      default:
+        return route.fulfill({ json: [] });
+    }
+  });
+
+  await mount(page, '<index-management-page></index-management-page><scoring-settings-page></scoring-settings-page><database-log-tab instanceId="1"></database-log-tab>',
+    ['index-management', 'scoring-settings', 'database-log-tab']);
+
+  const index = page.getByRole('button', { name: '采集索引' });
+  const save = page.getByRole('button', { name: '保存配置' });
+  const analyze = page.getByRole('button', { name: /^AI 分析/ });
+  await expect(analyze).toBeDisabled();
+  await expect(analyze).toHaveCSS('opacity', '0.45');
+  await expect(analyze).toHaveAttribute('aria-busy', 'false');
+  await page.getByRole('checkbox', { name: '选择日志 1', exact: true }).check();
+  await page.keyboard.press('Tab');
+  for (const button of [index, save, analyze]) {
+    await expect(button).toBeEnabled();
+    await expect(button).toHaveCSS('background-color', 'rgb(38, 95, 153)');
+    await expect(button).toHaveCSS('height', '40px');
+    await expect(button).toHaveCSS('border-radius', '6px');
+    await button.focus();
+    await expect(button).toBeFocused();
+    await expect(button).toHaveCSS('outline-style', 'solid');
+  }
+
+  const hoveredBackgrounds = [];
+  for (const button of [index, save, analyze]) {
+    await button.hover();
+    await expect(button).not.toHaveCSS('background-color', 'rgb(38, 95, 153)');
+    await expect(button).toHaveCSS('color', 'rgb(255, 255, 255)');
+    await button.evaluate(async el => { await Promise.all(el.getAnimations().map(animation => animation.finished)); });
+    hoveredBackgrounds.push(await button.evaluate(el => getComputedStyle(el).backgroundColor));
+  }
+  expect(new Set(hoveredBackgrounds).size).toBe(1);
+
+  try {
+    await index.focus();
+    await page.keyboard.press('Enter');
+    const busy = page.getByRole('button', { name: '采集中...' });
+    await expect(busy).toBeDisabled();
+    await expect(busy).toHaveAttribute('aria-busy', 'true');
+    await expect(busy).toHaveCSS('opacity', '0.45');
+    await page.keyboard.press('Enter');
+    await expect.poll(() => collectRequests).toBe(1);
+    await page.screenshot({ path: info.outputPath('index-collecting.png'), animations: 'disabled' });
+  } finally {
+    collect.resolve();
+  }
+  await expect(index).toBeEnabled();
+  await expect(index).toHaveAttribute('aria-busy', 'false');
+});
+
+test('#1038 approval card selection, evidence and destructive confirmation', async ({ page }, info) => {
+  await page.setViewportSize({ width: 1366, height: 768 });
+  const review = Promise.withResolvers<void>();
+  const sql = { id: 17, instance_id: 1, sql_text: 'SELECT 1', risk_level: 'high', status: 'pending', created_at: '2026-11-01T00:00:00Z' };
+  let reviewed = false;
+  await page.route('**/api/approval/**', async route => {
+    const { pathname } = new URL(route.request().url());
+    if (pathname === '/api/approval/batch-review') {
+      expect(route.request().postDataJSON()).toEqual({ ids: [17], action: 'reject' });
+      await review.promise;
+      reviewed = true;
+      return route.fulfill({ json: [{ id: 17, success: true }] });
+    }
+    if (pathname === '/api/approval/unified') return route.fulfill({ json: { items: reviewed ? [] : [sql] } });
+    return route.fulfill({ json: {} });
+  });
+  await mount(page, '<approval-dashboard></approval-dashboard>', ['approval-dashboard']);
+
+  const card = page.locator('app-card.approval-card').filter({ hasText: 'SELECT 1' });
+  await card.getByRole('checkbox', { name: '选择审批 17' }).check();
+  const surface = card.locator('[part="root"]');
+  await expect(surface).toHaveCSS('border-color', 'rgb(38, 95, 153)');
+  await expect(card.getByRole('checkbox', { name: '审批后自动执行' })).toBeChecked();
+  await expect(card.getByRole('button', { name: '查看完整证据' })).toBeVisible();
+  const reject = card.getByRole('button', { name: '驳回', exact: true });
+  await expect(reject).toHaveCSS('color', 'rgb(185, 28, 28)');
+  await reject.hover();
+  await expect(reject).toHaveCSS('background-color', 'rgb(185, 28, 28)');
+  await card.getByRole('button', { name: '通过', exact: true }).focus();
+  await page.keyboard.press('Tab');
+  await expect(reject).toBeFocused();
+  await expect(reject).toHaveCSS('outline-style', 'solid');
+  await page.keyboard.press('Enter');
+
+  const dialog = page.locator('app-dialog');
+  await expect(dialog.getByRole('dialog', { name: '批量驳回' })).toBeVisible();
+  const confirm = dialog.getByRole('button', { name: '确认驳回' });
+  await expect(confirm).toHaveCSS('background-color', 'rgb(185, 28, 28)');
+  await page.screenshot({ path: info.outputPath('reject-confirmation.png'), animations: 'disabled' });
+  try {
+    await confirm.focus();
+    await page.keyboard.press('Enter');
+    const busy = dialog.getByRole('button', { name: '处理中...' });
+    await expect(busy).toBeDisabled();
+    await expect(busy).toHaveAttribute('aria-busy', 'true');
+    await expect(dialog.getByRole('button', { name: '取消' })).toBeDisabled();
+  } finally {
+    review.resolve();
+  }
+  await expect(dialog).toHaveCount(0);
+  await expect(card).toHaveCount(0);
+});
+
+test('#1038 alarm rule thresholds and delete actions use semantic colors', async ({ page }, info) => {
+  await page.setViewportSize({ width: 1920, height: 1080 });
+  await page.route('**/api/alert-rules', route => route.fulfill({ json: [{
+    id: 7, name: '连接数规则', metric_name: 'connections', target_type: 'server', threshold_type: 'static',
+    threshold_template: { warning: 60, error: 80, critical: 90 }, severity: 'critical', enabled: false,
+  }] }));
+  await page.route(/\/api\/(metrics\/registry|database\/instances|servers)$/, route => route.fulfill({ json: [] }));
+  await mount(page, '<alerts-page mode="rules"></alerts-page>', ['alerts']);
+  const row = page.getByRole('row').filter({ hasText: '连接数规则' });
+  await expect(row.locator('app-badge[variant="warn"]')).toHaveText('W≥60');
+  await expect(row.locator('app-badge[variant="danger"]').filter({ hasText: 'E≥80' })).toHaveCSS('color', 'rgb(185, 28, 28)');
+  await expect(row.locator('app-badge[variant="danger"]').filter({ hasText: 'C≥90' })).toBeVisible();
+  const remove = row.getByRole('button', { name: '删除' });
+  await expect(remove).toHaveCSS('border-color', 'rgb(185, 28, 28)');
+  await row.getByRole('button', { name: '编辑' }).focus();
+  await page.keyboard.press('Tab');
+  await expect(remove).toBeFocused();
+  await expect(remove).toHaveCSS('outline-style', 'solid');
+  await page.screenshot({ path: info.outputPath('alert-rules.png'), animations: 'disabled' });
+});
