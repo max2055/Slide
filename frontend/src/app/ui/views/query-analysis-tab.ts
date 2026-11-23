@@ -1,8 +1,7 @@
-import { LitElement, html, css } from "lit";
+import { LitElement, html, css, nothing } from "lit";
 import { sharedBtnStyles } from "../../styles/shared-btn-styles.ts";
 import { customElement, state, property } from "lit/decorators.js";
 import { renderIcon } from "../../../icons.js";
-import { showToast } from "../components/app-toast-container.js";
 import { authFetch } from '../../../api/index.js';
 
 interface QanRow {
@@ -99,6 +98,8 @@ export class QueryAnalysisTab extends LitElement {
   @state() private explainPlan: any = null;
   @state() private selectedQuery: QanRow | null = null;
   @state() private loading = false;
+  @state() private qanError = "";
+  @state() private qanLoaded = false;
   @state() private explainLoading = false;
   @state() private explainError = "";
   private explainRequest = 0;
@@ -106,21 +107,39 @@ export class QueryAnalysisTab extends LitElement {
   @state() private sortField: keyof QanRow = "total_time_ms";
   @state() private sortDir: "asc" | "desc" = "desc";
 
+  private readonly accessChanged = () => {
+    this.resetQan();
+    this.qanError = '权限或登录状态已变更，请重新读取查询分析';
+  };
+
+  override connectedCallback() {
+    super.connectedCallback();
+    window.addEventListener('slide-permissions-loaded', this.accessChanged);
+    window.addEventListener('slide-session-expired', this.accessChanged);
+  }
+
+  private resetQan() {
+    this.qanRequest++;
+    this.qanData = [];
+    this.loading = false;
+    this.qanError = '';
+    this.qanLoaded = false;
+    this.selectedQuery = null;
+    this.clearExplain();
+  }
+
   override willUpdate(changed: Map<string, unknown>) {
     if (changed.has("instanceId")) {
-      this.qanRequest++;
-      this.qanData = [];
-      this.loading = false;
-      this.selectedQuery = null;
-      this.clearExplain();
+      this.resetQan();
       if (this.instanceId) void this.loadQanData();
     }
   }
 
   override disconnectedCallback() {
+    window.removeEventListener('slide-permissions-loaded', this.accessChanged);
+    window.removeEventListener('slide-session-expired', this.accessChanged);
+    this.resetQan();
     super.disconnectedCallback();
-    this.qanRequest++;
-    this.clearExplain();
   }
 
   private clearExplain() {
@@ -137,19 +156,25 @@ export class QueryAnalysisTab extends LitElement {
 
   private async loadQanData() {
     if (!this.instanceId) return;
-    const request = ++this.qanRequest;
+    this.resetQan();
+    const request = this.qanRequest;
     const instanceId = this.instanceId;
     const current = () => request === this.qanRequest && instanceId === this.instanceId;
     this.loading = true;
+    let failure = '查询分析读取失败';
     try {
-      const res = await authFetch(`/api/database/instances/${this.instanceId}/qan?limit=50`, {
-        headers: this._authHeaders(),
+      const res = await authFetch(`/api/database/instances/${instanceId}/qan?limit=50`, {
+        headers: this._authHeaders(), signal: AbortSignal.timeout(15000),
       });
-      if (!res.ok) throw new Error('QAN unavailable');
+      if (!res.ok) {
+        if ([401, 403].includes(res.status)) failure = '当前无法访问此资源的查询分析，请确认登录和权限';
+        if (res.status === 404) failure = '此资源的查询分析不可用，请确认实例连接和数据库支持情况';
+        throw new Error();
+      }
       const rows = await res.json();
       if (!Array.isArray(rows)) throw new Error('Invalid QAN response');
-      if (current()) this.qanData = rows;
-    } catch (e) { if (current()) showToast('查询分析加载失败', 'error'); }
+      if (current()) { this.qanData = this.sortedRows(rows); this.qanLoaded = true; }
+    } catch { if (current()) this.qanError = failure; }
     finally { if (current()) this.loading = false; }
   }
 
@@ -192,11 +217,15 @@ export class QueryAnalysisTab extends LitElement {
       this.sortField = field;
       this.sortDir = "desc";
     }
-    this.qanData = [...this.qanData].sort((a, b) => {
-      const va = a[field] as number, vb = b[field] as number;
-      return this.sortDir === "desc" ? vb - va : va - vb;
+    this.qanData = this.sortedRows(this.qanData);
+  }
+
+  private sortedRows(rows: QanRow[]) {
+    const field = this.sortField;
+    return [...rows].sort((a, b) => {
+      const first = Number(a[field]), second = Number(b[field]);
+      return this.sortDir === "desc" ? second - first : first - second;
     });
-    this.requestUpdate();
   }
 
   private _timeClass(ms: number) {
@@ -244,8 +273,10 @@ export class QueryAnalysisTab extends LitElement {
             ${renderIcon('search')} 查询指纹分析 ${this.qanData.length ? `(${this.qanData.length})` : ""}
           </div>
           <div class="panel-body">
-            ${this.loading ? html`<div class="loading">加载中...</div>` :
-              this.qanData.length === 0 ? html`<div class="empty">暂无数据</div>` :
+            ${this.loading ? html`<div class="loading" role="status">正在读取查询分析…</div>` :
+              this.qanError ? html`<div role="alert">${this.qanError} <button class="btn btn-refresh" @click=${this.loadQanData}>重试查询分析</button></div>` :
+              !this.qanLoaded ? nothing :
+              this.qanData.length === 0 ? html`<div class="empty">没有已记录的查询指纹</div>` :
               html`
             <table>
               <thead>
@@ -283,7 +314,7 @@ export class QueryAnalysisTab extends LitElement {
           </div>
           <div class="panel-body" aria-live="polite" aria-busy=${this.explainLoading}>
             ${this.explainLoading ? html`<div class="loading">加载执行计划...</div>` :
-              !this.selectedQuery ? html`<div class="empty">点击左侧查询查看执行计划</div>` :
+              !this.selectedQuery ? (this.qanData.length ? html`<div class="empty">选择左侧查询查看执行计划</div>` : nothing) :
               this.explainError ? html`<div class="empty" role="status">${this.explainError}</div>` :
               !this.explainPlan ? html`<div class="empty">无法获取执行计划</div>` :
               this.explainPlan.db_type !== 'postgresql' && !this.explainPlan.plan['Node Type'] ?

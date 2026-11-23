@@ -43,6 +43,61 @@ describe('platform log evidence', () => {
 describe('evicted event windows', () => {
   const origin = Date.parse('2026-09-08T10:00:00Z');
   const iso = (minutes: number) => new Date(origin + minutes * 60000).toISOString();
+  it('scopes truncation to both the component and the evicted event time (#1033)', () => {
+    let now = origin;
+    const adapter = new StructuredLogEvidenceAdapter(() => now, 2);
+    for (const [minute, component] of ['queue', 'api', 'api'].entries()) {
+      now = origin + minute * 60_000;
+      adapter.record({ component, eventType: 'event', status: 'ok' });
+    }
+    const window = { from: iso(0), to: iso(2) };
+    expect(adapter.query({ ...window, component: 'api' })).toMatchObject({ quality: 'good', gaps: [] });
+    expect(adapter.query({ ...window, component: 'queue' }).gaps).toContain('LOG_BUFFER_TRUNCATED');
+    expect(adapter.query(window)).toMatchObject({ quality: 'degraded', gaps: ['LOG_BUFFER_TRUNCATED'] });
+
+    now = origin + 3 * 60_000;
+    adapter.record({ component: 'queue', eventType: 'event', status: 'ok' });
+    expect(adapter.query({ from: iso(1), to: iso(2), component: 'api' })).toMatchObject({
+      quality: 'degraded', gaps: ['LOG_BUFFER_TRUNCATED'],
+    });
+    expect(adapter.query({ from: iso(2), to: iso(3), component: 'api' })).toMatchObject({ quality: 'good', gaps: [] });
+    expect(adapter.query({ from: iso(1), to: iso(3), component: 'queue' })).toMatchObject({ quality: 'good', gaps: [] });
+
+    now = origin + 62 * 60_000;
+    for (const component of ['api', 'queue']) {
+      expect(adapter.query({ from: iso(2), component }).gaps).not.toContain('LOG_BUFFER_TRUNCATED');
+    }
+  });
+  it('bounds loss metadata and remains conservative when component tracking fills up', () => {
+    let now = origin;
+    const adapter = new StructuredLogEvidenceAdapter(() => now, 1);
+    const record = (component: string) => adapter.record({ component, eventType: 'event', status: 'ok' });
+    record('api');
+    for (let i = 1; i < 100; i++) record(`component-${i}`);
+    now = origin + 60_000;
+    record('overflow');
+    now = origin + 2 * 60_000;
+    record('queue');
+    const window = { from: iso(1), to: iso(2) };
+    expect(adapter.query({ ...window, component: 'api' }).gaps).not.toContain('LOG_BUFFER_TRUNCATED');
+    expect(adapter.query({ ...window, component: 'overflow' }).gaps).toContain('LOG_BUFFER_TRUNCATED');
+    expect(adapter.query({ ...window, component: 'untracked' }).gaps).toContain('LOG_BUFFER_TRUNCATED');
+    expect(adapter.query({ from: iso(2), component: 'untracked' }).gaps).not.toContain('LOG_BUFFER_TRUNCATED');
+    expect(adapter.query(window).gaps).toContain('LOG_BUFFER_TRUNCATED');
+
+    // Exact slots expire before the overflow window. New losses for an
+    // overflowed component must still account for its earlier evictions.
+    now = origin + 61 * 60_000;
+    record('overflow');
+    record('queue');
+    expect(adapter.query({ ...window, component: 'overflow' }).gaps).toContain('LOG_BUFFER_TRUNCATED');
+
+    now = origin + 122 * 60_000;
+    record('queue');
+    record('api');
+    expect(adapter.query({ from: iso(122), component: 'api' })).toMatchObject({ quality: 'good', gaps: [] });
+    expect(adapter.query({ from: iso(122), component: 'queue' }).gaps).toContain('LOG_BUFFER_TRUNCATED');
+  });
   it('preserves a complete recent window and inclusive lost boundaries', () => {
     let now = origin;
     const adapter = new StructuredLogEvidenceAdapter(() => now, 2);

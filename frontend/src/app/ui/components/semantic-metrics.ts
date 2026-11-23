@@ -3,6 +3,7 @@ import { inferBasePathFromPathname } from '../navigation.ts';
 import type { MetricHistoryContext as HistoryContext } from '../../../api/generated/public-api.js';
 import { sharedFieldStyles } from "../../styles/shared-field-styles.ts";
 import { LitElement, html, nothing } from 'lit';
+import { repeat } from 'lit/directives/repeat.js';
 import { customElement, property, state } from 'lit/decorators.js';
 import { authFetch } from '../../../api/index.js';
 import { sharedBtnStyles } from '../../styles/shared-btn-styles.js';
@@ -15,8 +16,8 @@ import './metric-study.js';
 import './template-event-evidence.js';
 import './investigation-operation-context.ts';
 import { metricDisplayName as metricName } from './metric-display.js';
-import { MetricRequestError, collectionStatusLabels, metricRequest, readCollectionAttempts, readCollectionSummary, type CollectionAttempt, type CollectionStatus } from './metric-api.js';
-import { showToast } from './app-toast-container.js';
+import { MetricRequestError, collectionStatusLabels, isMetricAccessError, metricReadError, metricRequest, readCollectionAttempts, readCollectionSummary, type CollectionAttempt, type CollectionStatus } from './metric-api.js';
+import { metricDimensionText, metricPurpose, metricValueText, renderMetricEvidence, renderMetricReading } from './metric-value-display.js';
 export type MetricValue = { encoding: string; value?: number | string; [key: string]: unknown };
 export interface MetricBucket {
   value: MetricValue | null; unit: string; coverage: number;
@@ -47,18 +48,6 @@ export interface SemanticResult { history_context?: HistoryContext; profile: { c
 const states: Record<string, string> = { query_operation_unavailable: '当前定义不允许速率聚合', available: '可用', not_configured: '当前模板未覆盖', not_covered: '当前模板未覆盖', disabled: '已停用', unsupported: '能力不支持', permission_denied: '采集权限不足', temporary_failure: '采集暂时失败', capability_unknown: '能力待确认' };
 const qualityLabels: Record<string, string> = { good: '良好', partial: '部分', unknown: '未知', invalid: '无效', fresh: '新鲜', stale: '过期', exact: '精确', estimated: '估算' };
 const attemptLabels: Record<string, string> = { running: '进行中', succeeded: '成功', partial: '部分完成', failed: '失败', cancelled: '已取消' };
-/** The sources of a bucket already name the collector and the package that produced it. */
-type BucketSource = { source?: { collector_id?: unknown }; versions?: { package_id?: unknown; package_version?: unknown } };
-const sourceSummary = (b: MetricBucket) => {
-  const items = (Array.isArray(b.sources) ? b.sources : []) as BucketSource[];
-  const collectors = [...new Set(items.map(s => s?.source?.collector_id).filter((v): v is string => typeof v === 'string' && v !== ''))];
-  const packages = [...new Set(items.map(s => {
-    const id = s?.versions?.package_id, version = s?.versions?.package_version;
-    if (typeof id !== 'string' || id === '') return null;
-    return typeof version === 'string' && version !== '' ? `${id} ${version}` : id;
-  }).filter((v): v is string => v !== null))];
-  return { collectors, packages };
-};
 /** Mirrors the formal query contract: 60s default and a 7-day window at that resolution. */
 const MAX_BUCKETS = 10_080, MIN_BUCKET_MS = 60_000, MAX_WINDOW_MS = 31 * 86_400_000;
 const DETAIL_BUCKET_LIMIT = 200;
@@ -96,16 +85,25 @@ export function renderMetricValue(m: MetricResult) {
     const b = s.buckets.at(-1);
     return html`<div>
       ${Object.entries(s.dimensions).map(([k, v]) => `${k}=${v}`).join(' / ')}
-      ${b ? html`<div><strong>${b.value && 'value' in b.value ? b.value.value : '未知'}</strong> ${b.unit} · 最近时间桶</div>
+      ${b ? html`<div>${renderMetricReading(b.value, b.unit, m.definition.id, '未知')} · 最近时间桶</div>
         ${observedTime(b)}${qualityBadges(b)}
         <span>覆盖率 ${(b.coverage * 100).toFixed(0)}%</span><details><summary>窗口、质量与来源</summary><p>采集窗口 ${localTime(b.window.from)} — ${localTime(b.window.to)}</p><p>质量原因：${b.quality.reason}</p><pre>${JSON.stringify(b.sources, null, 2)}</pre></details>` : html`<span> · 暂无可用观测</span>`}
     </div>`;
   })}`;
 }
-const errors = (status: number) => status === 403 ? '没有此资源的查看权限' : status === 401 ? '登录已失效' : '查询暂时失败；保留上次结果，不能据此判断健康';
-/** The status strip clears protected history on 401/403/404, so it must not borrow the query
- *  path's copy about retaining the previous result. */
-const statusErrors = (status: number) => status === 403 ? '没有此资源的查看权限' : status === 401 ? '登录已失效' : '资源不存在或已不可读；受保护结果已清除。';
+type QueryWindow = SemanticResult['window'];
+type MaintenanceInterval = { id: string; revision: number; name: string; reason: string; timezone: string; effective_from: string; effective_to: string };
+type MaintenanceHistory = {
+  resource: { type: string; id: number }; from: string; to: string;
+  intervals: MaintenanceInterval[];
+  event_links: Array<{ event_id?: string; alert_id?: number; state: string; at: string; intervals?: Array<{ id: string; revision: number; reason: string }> }>;
+};
+const seriesKey = (metric: MetricResult, series: MetricResult['series'][number]) =>
+  JSON.stringify([metric.definition.id, metric.definition.semantic_version, Object.entries(series.dimensions).sort()]);
+const seriesGroup = (metric: MetricResult, series: MetricResult['series'][number]) =>
+  JSON.stringify([metric.definition.id, Object.entries(series.dimensions).sort()]);
+const sameWindow = (a: QueryWindow | null, b: QueryWindow) => a?.from === b.from && a.to === b.to;
+const retainedNote = (at: string) => at ? ` 保留同窗口 ${localTime(at)} 读取的结果；不能据此判断健康。` : '';
 @customElement('semantic-metrics')
 export class SemanticMetrics extends LitElement {
   @property() resourceType = 'instance';
@@ -126,7 +124,15 @@ export class SemanticMetrics extends LitElement {
   @state() result: SemanticResult | null = null;
   @state() error = '';
   @state() busy = false;
-  @state() private maintenance: { intervals: Array<{id:string;revision:number;name:string;reason:string;timezone:string;effective_from:string;effective_to:string}>; event_links: Array<{event_id?:string;alert_id?:number;state:string;at:string;intervals?:Array<{id:string;revision:number;reason:string}>}> } | null = null;
+  @state() private maintenance: MaintenanceHistory | null = null;
+  @state() private maintenanceBusy = false;
+  @state() private activeWindow: QueryWindow | null = null;
+  @state() private actionKey = '';
+  @state() private trendKey = '';
+  private resultAt = '';
+  private maintenanceAt = '';
+  private queryRequest?: AbortController;
+  private maintenanceRequest?: AbortController;
   @state() private maintenanceError = '';
   private generation = 0;
   @state() private accessInvalidated = false;
@@ -151,7 +157,11 @@ export class SemanticMetrics extends LitElement {
     window.addEventListener('slide-session-expired', this.onAccessChanged);
   }
   private resetResult() {
+    this.queryRequest?.abort(); this.maintenanceRequest?.abort();
+    this.busy = false; this.maintenanceBusy = false;
+    this.resultAt = ''; this.maintenanceAt = '';
     this.maintenance = null; this.maintenanceError = '';
+    this.activeWindow = null; this.trendKey = '';
     this.result = null; this.chartKeys = new Set(); this.bucketKeys = new Set(); this.baselineKey = '';
     this.collection = null; this.attempts = []; this.statusError = '';
     this.resetRaw();
@@ -161,7 +171,7 @@ export class SemanticMetrics extends LitElement {
       this.resetResult();
       if (changes.has('resourceId') || changes.has('resourceType')) {
         this.accessInvalidated = false;
-        this.rawOpen = false; this.rawKey = '';
+        this.rawOpen = false; this.rawKey = ''; this.actionKey = '';
         if ((changes.get('resourceId') !== undefined || changes.get('resourceType') !== undefined) && !changes.has('from') && !changes.has('to')) {
           this.from = ''; this.to = ''; this.range = null; this.custom = false; this.customFrom = ''; this.customTo = ''; this.hours = 1;
         }
@@ -169,7 +179,9 @@ export class SemanticMetrics extends LitElement {
         if (p.get('metricResource') === `${this.resourceType}:${this.resourceId}`) {
           this.selectedMetric = p.get('metric') ?? '';
           const from = p.get('metricFrom'), to = p.get('metricTo');
-          if (from && to && Number.isFinite(Date.parse(from)) && Number.isFinite(Date.parse(to))) { this.from = from; this.to = to; }
+          if (!(this.from && this.to) && from && to && Number.isFinite(Date.parse(from)) && Number.isFinite(Date.parse(to))) {
+            this.from = from; this.to = to;
+          }
         } else this.selectedMetric = '';
       }
       if (this.from && this.to) {
@@ -181,6 +193,7 @@ export class SemanticMetrics extends LitElement {
   }
   override disconnectedCallback() {
     this.generation++;
+    this.queryRequest?.abort(); this.maintenanceRequest?.abort();
     this.rawOpen = false;
     this.resetRaw();
     window.removeEventListener('slide-permissions-loaded', this.onAccessChanged);
@@ -195,58 +208,91 @@ export class SemanticMetrics extends LitElement {
   }
   async load() {
     if (this.accessInvalidated || !this.resourceId) return;
-    if (this.custom && !this.range && !(this.from && this.to)) { this.error = '请选择并应用自定义时间范围'; return; }
+    if (this.custom && !this.range && !(this.from && this.to)) { this.customError = '请选择并应用自定义时间范围'; return; }
+    const now = Date.now();
+    const window = this.range ?? (this.from && this.to ? { from: this.from, to: this.to }
+      : { from: new Date(now - this.hours * 3600000).toISOString(), to: new Date(now).toISOString() });
+    if (!sameWindow(this.activeWindow, window)) this.resetResult();
+    this.activeWindow = window;
+    this.statusError = '';
     const generation = ++this.generation, resourceId = this.resourceId, resourceType = this.resourceType;
     const current = () => generation === this.generation && resourceId === this.resourceId && resourceType === this.resourceType;
-    this.maintenance = null; this.maintenanceError = '维护历史正在读取，状态未知';
-    this.busy = true; this.error = ''; this.baselineKey = ''; this.statusError = '';
+    const scopeUrl = new URL(location.href);
+    scopeUrl.searchParams.set('metricResource', `${resourceType}:${resourceId}`);
+    scopeUrl.searchParams.set('metricFrom', window.from);
+    scopeUrl.searchParams.set('metricTo', window.to);
+    history.replaceState(history.state, '', scopeUrl);
+    globalThis.window.dispatchEvent(new CustomEvent('slide-resource-window', { detail: { type: resourceType, id: resourceId, window } }));
+    await Promise.all([this.loadQuery(window), this.loadMaintenance(window), this.loadCollection(current)]);
+  }
+  private async loadQuery(window: QueryWindow) {
+    this.queryRequest?.abort();
+    const request = this.queryRequest = new AbortController();
+    const generation = this.generation, resourceId = this.resourceId, resourceType = this.resourceType;
+    const current = () => !request.signal.aborted && generation === this.generation
+      && resourceId === this.resourceId && resourceType === this.resourceType;
+    this.busy = true;
+    this.error = '';
     try {
-      const now = Date.now();
-      let from: string, to: string;
-      if (this.range) ({ from, to } = this.range);
-      else if (this.from && this.to) { from = this.from; to = this.to; }
-      else { to = new Date(now).toISOString(); from = new Date(now - this.hours * 3600000).toISOString(); }
-      const scopeUrl=new URL(location.href);scopeUrl.searchParams.set('metricResource',`${resourceType}:${resourceId}`);scopeUrl.searchParams.set('metricFrom',from);scopeUrl.searchParams.set('metricTo',to);history.replaceState({},'',scopeUrl);
-      window.dispatchEvent(new CustomEvent('slide-resource-window',{detail:{type:resourceType,id:resourceId,window:{from,to}}}));
-      const query = { resource: { type: this.resourceType, id: this.resourceId }, view: 'all', history: true, from, to, bucket_ms: bucketMsFor(Date.parse(from), Date.parse(to)) };
-      const response = await authFetch('/api/metrics/query', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(query) });
+      const result = await metricRequest<SemanticResult>('query', {
+        resource: { type: resourceType, id: resourceId }, view: 'all', history: true, ...window,
+        bucket_ms: bucketMsFor(Date.parse(window.from), Date.parse(window.to)),
+      }, request.signal);
       if (!current()) return;
-      if (!response.ok) {
-        if ([401, 403, 404].includes(response.status)) { this.onAccessChanged(); this.error = statusErrors(response.status); return; }
-        throw new Error(errors(response.status));
-      }
-      const result: SemanticResult = await response.json();
-      if (!current()) return;
-      const previousWindow = this.result?.window;
+      const previousWindow = this.result?.window ?? null;
       const previousRawKey = this.rawChoice()?.key;
       this.result = result;
-      // Refreshing a fixed range can keep its page and pending request.
-      if (previousWindow?.from !== result.window.from || previousWindow?.to !== result.window.to
-        || previousRawKey !== this.rawChoice()?.key) {
+      this.resultAt = new Date().toISOString();
+      if (!sameWindow(previousWindow, result.window) || previousRawKey !== this.rawChoice()?.key) {
         this.resetRaw();
         if (this.rawOpen) void this.loadRaw();
       }
-      const maintenanceResponse = await authFetch(`/api/maintenance-windows/intervals/${resourceType}/${resourceId}?${new URLSearchParams({from,to})}`);
+    } catch (error) {
       if (!current()) return;
-      if (!maintenanceResponse.ok) {
-        if ([401,403,404].includes(maintenanceResponse.status)) { this.onAccessChanged(); this.error = statusErrors(maintenanceResponse.status); return; }
-        this.maintenanceError = '维护历史查询失败，状态未知；不能据此判断无维护';
-      } else {
-        const maintenance = await maintenanceResponse.json();
-        if (!current()) return;
-        if (maintenance.resource?.type !== resourceType || Number(maintenance.resource?.id) !== resourceId || maintenance.from !== from || maintenance.to !== to
-          || !Array.isArray(maintenance.intervals) || !Array.isArray(maintenance.event_links)) throw new Error('维护历史响应上下文不匹配');
-        this.maintenance = { ...maintenance, intervals: maintenance.intervals.flatMap((v: any) => {
-          const start = Math.max(Date.parse(from), Date.parse(v.effective_from)), end = Math.min(Date.parse(to), Date.parse(v.effective_to));
-          return Number.isFinite(start) && Number.isFinite(end) && start < end ? [{...v,effective_from:new Date(start).toISOString(),effective_to:new Date(end).toISOString()}] : [];
-        }) }; this.maintenanceError = '';
-      }
-    } catch (e) { if (current()) this.error = e instanceof Error ? e.message : errors(503); }
-    finally { if (current()) this.busy = false; }
-    if (current()) await this.loadCollection(generation, current);
+      if (isMetricAccessError(error)) { this.onAccessChanged(); this.error = metricReadError(error, '指标查询'); }
+      else this.error = metricReadError(error, '指标查询') + retainedNote(this.resultAt);
+    } finally {
+      if (current()) this.busy = false;
+    }
+  }
+  private async loadMaintenance(window: QueryWindow) {
+    this.maintenanceRequest?.abort();
+    const request = this.maintenanceRequest = new AbortController();
+    const generation = this.generation, resourceId = this.resourceId, resourceType = this.resourceType;
+    const current = () => !request.signal.aborted && generation === this.generation
+      && resourceId === this.resourceId && resourceType === this.resourceType;
+    const { from, to } = window;
+    this.maintenanceBusy = true;
+    this.maintenanceError = '';
+    try {
+      const response = await authFetch(`/api/maintenance-windows/intervals/${resourceType}/${resourceId}?${new URLSearchParams({ from, to })}`, {
+        signal: AbortSignal.any([request.signal, AbortSignal.timeout(35000)]),
+      });
+      if (!current()) return;
+      if (!response.ok) throw new MetricRequestError(response.status);
+      const history: MaintenanceHistory = await response.json();
+      if (!current()) return;
+      if (history.resource?.type !== resourceType || Number(history.resource?.id) !== resourceId || !sameWindow(history, window)
+        || !Array.isArray(history.intervals) || !Array.isArray(history.event_links)) throw new Error('MAINTENANCE_SCOPE');
+      const intervals = history.intervals.flatMap(interval => {
+        const start = Math.max(Date.parse(from), Date.parse(interval.effective_from));
+        const end = Math.min(Date.parse(to), Date.parse(interval.effective_to));
+        return Number.isFinite(start) && Number.isFinite(end) && start < end
+          ? [{ ...interval, effective_from: new Date(start).toISOString(), effective_to: new Date(end).toISOString() }] : [];
+      });
+      this.maintenance = { ...history, intervals };
+      this.maintenanceAt = new Date().toISOString();
+    } catch (error) {
+      if (!current()) return;
+      if (isMetricAccessError(error)) { this.onAccessChanged(); this.error = metricReadError(error, '维护历史'); }
+      else this.maintenanceError = metricReadError(error, '维护历史')
+        + (this.maintenanceAt ? ` 保留同窗口 ${localTime(this.maintenanceAt)} 读取的结果。` : ' 当前维护状态未知。');
+    } finally {
+      if (current()) this.maintenanceBusy = false;
+    }
   }
   /** The status strip is read separately: neither recommendations nor collector health may hide history. */
-  private async loadCollection(generation: number, current: () => boolean) {
+  private async loadCollection(current: () => boolean) {
     try {
       const [collection, attempts] = await Promise.all([
         readCollectionSummary(this.resourceType, this.resourceId),
@@ -257,8 +303,8 @@ export class SemanticMetrics extends LitElement {
     } catch (e) {
       if (!current()) return;
       this.collection = null; this.attempts = [];
-      if (e instanceof MetricRequestError && [401, 403, 404].includes(e.status)) { this.onAccessChanged(); this.error = statusErrors(e.status); }
-      else this.statusError = '采集状态读取失败；历史查询结果保留，不能据此判断当前采集状态。';
+      if (e instanceof MetricRequestError && [401, 403, 404].includes(e.status)) { this.onAccessChanged(); this.error = metricReadError(e, '指标'); }
+      else this.statusError = '采集状态读取失败，当前采集状态未知。';
     }
   }
   private applyCustom() {
@@ -270,11 +316,7 @@ export class SemanticMetrics extends LitElement {
     if (to > Date.now()) { this.customError = '结束时间不能晚于当前时间'; return; }
     if (to - from > MAX_WINDOW_MS) { this.customError = '自定义窗口最长 31 天'; return; }
     this.range = { from: new Date(from).toISOString(), to: new Date(to).toISOString() };
-    this.resetResult(); void this.load();
-  }
-  private async copyMetric(id: string) {
-    try { await navigator.clipboard.writeText(id); showToast('已复制指标标识', 'success'); }
-    catch { showToast('复制失败，请展开指标标识手动复制', 'error'); }
+    void this.load();
   }
   /** A historical bucket is plotted on its own quality; current collection state and age never hide it. */
   private chartValue(metric: MetricResult, b: MetricBucket): number | null {
@@ -293,8 +335,11 @@ export class SemanticMetrics extends LitElement {
     }
     return { good, partial, gap, unsafe, mismatch, records };
   }
-  private renderTrend(metric: MetricResult, series: MetricResult['series'][number]) {
+  private renderTrend(metric: MetricResult, series: MetricResult['series'][number], explainEmpty = false) {
     const data = series.buckets.map(b => this.chartValue(metric, b));
+    if (explainEmpty && !data.some(value => value !== null)) {
+      return html`<p role="status">该维度在主图窗口没有可绘制的数值。</p>`;
+    }
     // The envelope must obey the same drawable condition as the line: a bucket the line
     // refuses (unit mismatch, non-scalar, unsafe precision, unknown/invalid) must not leak
     // its min/max as a dashed range. Drawable in-bucket spikes are still preserved.
@@ -334,7 +379,9 @@ export class SemanticMetrics extends LitElement {
       while (to >= 0 && Date.parse(series.buckets[to].window.from) >= Date.parse(interval.effective_to)) to--;
       if (from >= 0 && to >= from) regions.push({name:`维护 · ${interval.name} r${interval.revision}`,from,to,color:'var(--accent)'});
     }
-    return html`<metric-chart .title=${metricName(metric.definition.id)} .yAxisLabel=${series.buckets[0]?.unit ?? metric.definition.unit}
+    const unit = series.buckets.find((_, i) => data[i] !== null)?.unit ?? metric.definition.unit;
+    return html`<metric-chart .title=${metricName(metric.definition.id)} .yAxisLabel=${unit === '1' ? '' : unit}
+      .formatValue=${(value: number) => metricValueText(value, unit, metric.definition.id)}
       .regions=${regions} .timeData=${series.buckets.map(b => b.window.to)} .series=${[{ name: metricName(metric.definition.id), data, ...envelope }, ...thresholds]}></metric-chart>`;
   }
   private renderBuckets(metric: MetricResult, series: MetricResult['series'][number]) {
@@ -343,9 +390,9 @@ export class SemanticMetrics extends LitElement {
       ${[...shown].reverse().map(b => html`<div class="bucket-row">
         <div>${localTime(b.window.from)} — ${localTime(b.window.to)}</div>
         <div>${b.value && !('value' in b.value) ? html`<strong>${b.value.encoding} 记录</strong>（非标量，不做折线）<details><summary>记录内容</summary><pre>${JSON.stringify(b.value, null, 2)}</pre></details>`
-          : html`<strong>${b.value && 'value' in b.value ? b.value.value : '缺口'}</strong> ${b.unit} · 覆盖率 ${(b.coverage * 100).toFixed(0)}%${b.sample_count !== undefined ? ` · 样本 ${b.sample_count}` : ''}${b.stats ? ` · 最小 ${b.stats.min?.value} / 最大 ${b.stats.max?.value} / 平均 ${b.stats.avg?.value}` : ''}`}</div>
+          : html`${renderMetricReading(b.value, b.unit, metric.definition.id)} · 覆盖率 ${(b.coverage * 100).toFixed(0)}%${b.sample_count !== undefined ? ` · 样本 ${b.sample_count}` : ''}${b.stats ? html` · 最小 ${renderMetricReading(b.stats.min, b.unit, metric.definition.id)} / 最大 ${renderMetricReading(b.stats.max, b.unit, metric.definition.id)} / 平均 ${renderMetricReading(b.stats.avg, b.unit, metric.definition.id)}` : nothing}`}</div>
         ${qualityBadges(b)}
-        <details><summary>质量与来源</summary><p>质量原因：${b.quality.reason}</p><pre>${JSON.stringify(b.sources, null, 2)}</pre></details>
+        ${renderMetricEvidence(metric.definition, series.dimensions, b, { window: b.window, observed_at: b.observed_at, quality: b.quality, accuracy: b.accuracy, stats: b.stats })}
       </div>`)}`;
   }
   private investigationHref(metric?: MetricResult, series?: MetricResult['series'][number], eventId?: number) {
@@ -365,7 +412,7 @@ export class SemanticMetrics extends LitElement {
     }
   }
   private renderSeries(metric: MetricResult, series: MetricResult['series'][number]) {
-    const key = metric.definition.id + JSON.stringify(series.dimensions);
+    const key = seriesKey(metric, series);
     const last = series.buckets.at(-1), summary = this.bucketSummary(metric, series);
     const retained = !last?.observed_at ? [...series.buckets].reverse().find(b => b.observed_at) : undefined;
     const mismatch = unitMismatch(metric, last?.unit);
@@ -373,11 +420,11 @@ export class SemanticMetrics extends LitElement {
     return html`<div>
       ${Object.entries(series.dimensions).map(([k, v]) => `${k}=${v}`).join(' / ')}
       ${last ? html`<div>${last.value && !('value' in last.value) ? html`<strong>${last.value.encoding} 记录</strong>（非标量，不做折线）<details><summary>记录内容</summary><pre>${JSON.stringify(last.value, null, 2)}</pre></details>`
-        : html`<strong>${last.value && 'value' in last.value ? last.value.value : '未知'}</strong> ${last.unit} · 最近时间桶 · 覆盖率 ${(last.coverage * 100).toFixed(0)}%`}</div>
+        : html`${renderMetricReading(last.value, last.unit, metric.definition.id, '未知')} · 最近时间桶 · 覆盖率 ${(last.coverage * 100).toFixed(0)}%`}</div>
         ${observedTime(last)}${qualityBadges(last)}
         ${mismatch ? html`<p class="error" role="alert">单位不符：该时间桶单位 ${last.unit} 与指标定义 ${metric.definition.unit} 不一致，不参与数值与曲线。</p>` : nothing}` : html`<p>暂无可用观测</p>`}
       ${retained ? html`<div class="hint">窗口内最后保留观测（不代表当前值）：
-        ${retained.value && 'value' in retained.value ? html`<strong>${retained.value.value}</strong> ${retained.unit}` : '未知'}
+        ${renderMetricReading(retained.value, retained.unit, metric.definition.id, '未知')}
         ${observedTime(retained)}${qualityBadges(retained)}</div>` : nothing}
       <p class="hint">时间桶 ${series.buckets.length} 个：良好 ${summary.good}${summary.partial ? ` · 部分覆盖 ${summary.partial}` : ''}${notes.length ? ` · ${notes.join(' · ')}` : ''}。缺失、质量未知或无效、单位不符及超出安全精度的桶保留断点，不补 0；过期但当时 good/partial 的值照常显示。${summary.partial ? '部分覆盖不代表当前健康。' : ''}</p>
       <details @toggle=${(e: Event) => {
@@ -395,21 +442,9 @@ export class SemanticMetrics extends LitElement {
     const coarse = bucket > MIN_BUCKET_MS ? `。窗口超过 ${MAX_BUCKETS} 个时间桶，已按较粗粒度聚合，未静默截断` : '';
     return `时间桶：每桶 ${bucketLabel(bucket)}，共 ${count} 个（数值与曲线同窗口）· 本地时区 ${timezone()}${coarse}`;
   }
-  /** Newest-to-oldest first bucket that the curve could draw; nothing else may become this value.
-   *  The window position decides recency — a bucket observed later is still older history. */
-  private windowLatest(metric: MetricResult) {
-    let newest = -Infinity;
-    for (const series of metric.series) for (const bucket of series.buckets) {
-      const at = Date.parse(bucket.window.to);
-      if (Number.isFinite(at) && at > newest) newest = at;
-    }
-    let best: { series: MetricResult['series'][number]; bucket: MetricBucket; at: number } | null = null;
-    for (const series of metric.series) for (const bucket of series.buckets) {
-      const at = Date.parse(bucket.window.to);
-      if (!Number.isFinite(at) || this.chartValue(metric, bucket) === null) continue;
-      if (!best || at > best.at) best = { series, bucket, at };
-    }
-    return best ? { ...best, latest: best.at === newest } : null;
+  private lastUsableBucket(metric: MetricResult, series: MetricResult['series'][number]) {
+    return series.buckets.findLast(bucket => bucket.value && !unitMismatch(metric, bucket.unit)
+      && ['good', 'partial'].includes(bucket.quality.status));
   }
   private renderCollectionState(collection: CollectionStatus) {
     const state = collection.collection;
@@ -438,38 +473,79 @@ export class SemanticMetrics extends LitElement {
       ${differ ? html`<p class="hint">两者不同，分别列示，不合并为同一个时间。</p>` : nothing}
     </div>`;
   }
-  private renderWindowLatest(metrics: MetricResult[]) {
-    return html`<div class="latest-cell"><h3>窗口内最近可用值</h3>${metrics.length ? metrics.map(metric => {
-      const found = this.windowLatest(metric);
-      if (!found) return html`<p>${metricName(metric.definition.id)}：暂无可用值</p>`;
-      const { series, bucket, latest } = found, dimensions = Object.entries(series.dimensions).map(([k, v]) => `${k}=${v}`).join(' / ');
-      // Never present a historical value as current health: it is old when the metric, its
-      // freshness or its position in the window says so.
-      const old = metric.state !== 'available' || bucket.freshness !== 'fresh' || !latest;
-      const { collectors, packages } = sourceSummary(bucket);
-      return html`<div class="latest-value">
-        <div>${metricName(metric.definition.id)}${dimensions ? ` · ${dimensions}` : ''}</div>
-        <div class=${old ? 'old-value' : ''}><strong>${bucketNumber(bucket)}</strong> ${bucket.unit} · 窗口内最近可用值</div>
-        <div class=${old ? 'old-value' : ''}>质量 ${qualityLabels[bucket.quality.status] ?? bucket.quality.status} · ${qualityLabels[bucket.accuracy] ?? bucket.accuracy} · ${qualityLabels[bucket.freshness] ?? bucket.freshness}</div>
-        ${observedTime(bucket)}
-        ${collectors.length ? html`<div>采集器 ${collectors.join('、')}</div>` : nothing}
-        ${packages.length ? html`<div>模板 ${packages.join('、')}</div>` : nothing}
-        ${old ? html`<p class="hint">旧值，不代表当前健康。</p>` : nothing}
-      </div>`;
-    }) : html`<p>暂无指标</p>`}</div>`;
+  private renderReadings(metrics: MetricResult[]) {
+    const rows = metrics.flatMap(metric => {
+      const series = metric.series.length ? metric.series : [{ dimensions: {}, buckets: [] }];
+      return series.map(item => ({ metric, series: item, purpose: metricPurpose(metric.definition), key: seriesKey(metric, item) }));
+    }).sort((a, b) => a.purpose.localeCompare(b.purpose, 'zh-CN')
+      || metricName(a.metric.definition.id).localeCompare(metricName(b.metric.definition.id), 'zh-CN')
+      || a.key.localeCompare(b.key));
+    return html`<section aria-label="窗口内最近可用值">
+      <h2>窗口内最近可用值</h2>
+      <div class="summary-grid">${repeat(rows, row => row.key, ({ metric, series, purpose }) => {
+        const last = series.buckets.at(-1);
+        const bucket = this.lastUsableBucket(metric, series);
+        const old = bucket && (this.error || metric.state !== 'available' || bucket.freshness !== 'fresh' || bucket !== last);
+        return html`<div class="current latest-value">
+          <div><h3 class="metric-name">${metricName(metric.definition.id)}</h3>
+            <span class="hint">${purpose}${metricDimensionText(series.dimensions) ? ` · ${metricDimensionText(series.dimensions)}` : ''}</span>
+          </div>
+          <div class=${old ? 'old-value' : ''}>${renderMetricReading(bucket?.value, bucket?.unit ?? metric.definition.unit, metric.definition.id, '暂无可用观测')}
+            ${old ? html`<p class="hint">旧值，不代表当前健康。</p>` : nothing}
+          </div>
+          <div>${observedTime(bucket ?? last)}
+            ${bucket || last ? qualityBadges((bucket ?? last)!) : nothing}
+            <div>${states[metric.state] ?? metric.state}${bucket && bucket !== last ? ' · 最新时间桶缺少可用值' : ''}</div>
+          </div>
+        </div>`;
+      })}</div>
+    </section>`;
   }
-  private renderLatest(metrics: MetricResult[]) {
+  private renderLatest() {
     if (!this.collection) return this.statusError ? html`<p class="error" role="alert">${this.statusError}</p>` : nothing;
-    return html`<h2>最新数据</h2>
-      <div class="latest-grid" aria-label="最新数据">
-        ${this.renderCollectionState(this.collection)}${this.renderLastAttempt()}${this.renderSuccessTimes(this.collection)}${this.renderWindowLatest(metrics)}
+    return html`<h2>资源采集情况</h2>
+      <div class="latest-grid" aria-label="资源采集情况">
+        ${this.renderCollectionState(this.collection)}${this.renderLastAttempt()}${this.renderSuccessTimes(this.collection)}
       </div>`;
+  }
+  private async showTrend(key: string) {
+    this.trendKey = key;
+    await this.updateComplete;
+    this.renderRoot.querySelector<HTMLElement>('.selected-trend')?.focus();
+  }
+  private async showEvidence(key: string) {
+    this.rawOpen = true;
+    if (this.rawKey !== key) this.selectRaw(key);
+    else if (!this.raw) void this.loadRaw();
+    await this.updateComplete;
+    this.renderRoot.querySelector<HTMLElement>('.raw-observations summary')?.focus();
+  }
+  private renderSelectedActions(choices: ReturnType<SemanticMetrics['rawSeries']>) {
+    const choice = choices.find(item => item.key === this.actionKey) ?? choices[0];
+    if (!choice) return nothing;
+    const { key, metric, series } = choice;
+    const bucket = this.lastUsableBucket(metric, series) ?? series.buckets.at(-1);
+    const investigation = this.investigationHref(metric, series);
+    return html`<div class="actions" role="group" aria-label="所选指标操作">
+      <label>指标与维度 <select @change=${(e: Event) => { this.actionKey = (e.target as HTMLSelectElement).value; }}>
+        ${choices.map(item => html`<option value=${item.key} .selected=${item.key === key}>${item.label}</option>`)}
+      </select></label>
+      <button class="btn" ?disabled=${['histogram', 'summary'].includes(metric.definition.kind ?? '')} @click=${() => void this.showTrend(key)}>查看历史趋势</button>
+      <button class="btn" @click=${() => void this.showEvidence(key)}>查看采集详情</button>
+      ${investigation ? html`<a class="btn btn-sm" href=${investigation}>以此指标维度打开调查草案</a>` : nothing}
+      ${renderMetricEvidence(metric.definition, series.dimensions, bucket, { observed_at: bucket?.observed_at, quality: bucket?.quality, accuracy: bucket?.accuracy })}
+    </div>`;
   }
   /** Raw observations are a separate paginated read; they never replace or reshape the curve. */
   private rawSeries(metrics = this.result?.metrics.filter(m => !this.selectedMetric || m.definition.id === this.selectedMetric) ?? []) {
-    return metrics.flatMap(metric => metric.series.map(series => ({
-      key: JSON.stringify([metric.definition.id, metric.definition.semantic_version, Object.entries(series.dimensions).sort()]),
-      metric, series })));
+    const rows = metrics.flatMap(metric => metric.series.map(series => ({ metric, series, group: seriesGroup(metric, series) })));
+    const counts = new Map<string, number>();
+    for (const { group } of rows) counts.set(group, (counts.get(group) ?? 0) + 1);
+    return rows.map(({ metric, series, group }) => ({
+      key: seriesKey(metric, series), metric, series,
+      label: `${metricName(metric.definition.id)} · ${metricDimensionText(series.dimensions) || '整体'}${counts.get(group)! > 1
+        ? ` · v${metric.definition.semantic_version ?? '未知'}` : ''}`,
+    }));
   }
   private rawChoice(choices = this.rawSeries()) {
     return choices.find(c => c.key === this.rawKey) ?? choices[0];
@@ -510,7 +586,7 @@ export class SemanticMetrics extends LitElement {
       if (!current()) return;
       if (e instanceof MetricRequestError && [401, 403, 404].includes(e.status)) {
         // Same protected clear as the status strip: a revoked or missing resource must not keep showing data.
-        this.onAccessChanged(); this.error = statusErrors(e.status);
+        this.onAccessChanged(); this.error = metricReadError(e, '指标');
       } else {
         const reason = e instanceof MetricRequestError && e.status === 400 ? '：请求、游标或窗口无效' : '';
         const retained = this.raw ? '曲线与上一页原始观测保留' : '曲线保留，可收起后重新展开重试';
@@ -543,7 +619,7 @@ export class SemanticMetrics extends LitElement {
           <p>规则 ${event.rule_id} v${event.version}；未知区段 ${event.unknown_segments.length} 个。问题区段与当前查询窗口相交。</p>
           ${this.historyEvent === event.event_id ? html`<template-event-evidence .eventId=${event.event_id}></template-event-evidence>` : nothing}
         </details>`) : html`<p>此窗口没有可读取的问题区段。</p>`}
-      <p class="hint">维护历史暂不可用，不能据此判断没有维护。调查草案沿用所选绝对窗口与来源；打开与读取事实不会调用模型。</p>
+      <p class="hint">调查草案沿用所选绝对窗口与来源。打开与读取事实不会调用模型。</p>
     </details>`;
   }
   private renderRaw(metrics: MetricResult[]) {
@@ -552,6 +628,7 @@ export class SemanticMetrics extends LitElement {
     const choice = this.rawChoice(choices);
     if (!choice) return nothing;
     const page = this.raw;
+    const { metric, series } = choice;
     return html`<details class="raw-observations" .open=${this.rawOpen} @toggle=${(e: Event) => {
       const open = (e.currentTarget as HTMLDetailsElement).open;
       if (open === this.rawOpen) return;
@@ -560,14 +637,15 @@ export class SemanticMetrics extends LitElement {
     }}><summary>原始观测（正式来源分页）</summary>
       <label>指标与维度 <select aria-label="原始观测指标与维度" ?disabled=${this.rawBusy || this.accessInvalidated} @change=${(e: Event) => {
         this.selectRaw((e.target as HTMLSelectElement).value);
-      }}>${choices.map(c => html`<option value=${c.key} .selected=${c.key === choice.key}>${metricName(c.metric.definition.id)} · ${Object.entries(c.series.dimensions).map(([k, v]) => `${k}=${v}`).join(' / ') || '整体'}</option>`)}</select></label>
+      }}>${choices.map(c => html`<option value=${c.key} .selected=${c.key === choice.key}>${c.label}</option>`)}</select></label>
       ${this.rawError ? html`<p class="error" role="alert">${this.rawError}</p>` : nothing}
       ${page ? (page.observations.length ? html`<p class="hint">本页 ${page.observations.length} 条 · 正式窗口内共 ${page.total} 条 · ${page.has_more ? '还有更多页' : '已到最后一页'} · 按观测时间升序</p>
         <app-data-table .dense=${true} .columns=${[{ key: 'time', label: '观测时间' }, { key: 'value', label: '值' }, { key: 'quality', label: '质量与来源' }]}
           .rows=${page.observations.map(o => ({ time: html`<time datetime=${o.observed_at}>${localTime(o.observed_at)}</time>`,
-            value: html`<strong>${o.value && 'value' in o.value ? o.value.value : o.value ? `${o.value.encoding} 记录` : '空值'}</strong> ${o.unit}`,
+            value: html`${renderMetricReading(o.value, o.unit, metric.definition.id, '空值')}
+               ${renderMetricEvidence(metric.definition, series.dimensions, o, { observation_id: o.id, observed_at: o.observed_at, quality: o.quality, accuracy: o.accuracy })}`,
             quality: html`<app-badge variant=${o.quality.status === 'good' ? 'muted' : 'warn'}>${qualityLabels[o.quality.status] ?? o.quality.status}</app-badge> ${qualityLabels[o.accuracy] ?? o.accuracy}` }))}></app-data-table>
-        <button class="btn" ?disabled=${this.rawBusy || !page.has_more} @click=${() => { if (this.raw === page && page.next_cursor) void this.loadRaw(page.next_cursor); }}>下一页原始观测</button>`
+        <button class="btn raw-next" ?disabled=${this.rawBusy || !page.has_more} @click=${() => { if (this.raw === page && page.next_cursor) void this.loadRaw(page.next_cursor); }}>下一页原始观测</button>`
         : html`<p>暂无原始观测</p>`) : this.rawBusy ? html`<div class="skeleton" aria-label="正在读取原始观测"></div>` : nothing}
     </details>`;
   }
@@ -575,7 +653,10 @@ export class SemanticMetrics extends LitElement {
     const metrics = this.result?.metrics.filter(m => !this.selectedMetric || m.definition.id === this.selectedMetric) ?? [];
     const baselineSeries = metrics.flatMap(metric => metric.series.map(series => ({metric,series})));
     const baseline = baselineSeries[Number(this.baselineKey)];
-    const trends = baselineSeries.filter(({series}) => series.buckets.filter(b => Number.isFinite(Date.parse(b.window.to))).length > 1);
+    const choices = this.rawSeries(metrics);
+    const selectedTrend = choices.find(choice => choice.key === this.trendKey);
+    const defaultTrends = choices.filter(({ series }) => series.buckets.filter(b => Number.isFinite(Date.parse(b.window.to))).length > 1).slice(0, 2);
+    const trends = selectedTrend ? [selectedTrend] : defaultTrends;
     return html`<style>${sharedFieldStyles}${sharedBtnStyles}
       :host { display:block; min-width:0; color:var(--text); font-size:14px; }
       .actions { display:flex; flex-wrap:wrap; align-items:end; gap:var(--space-sm); margin-block:var(--space-md); }
@@ -587,23 +668,27 @@ export class SemanticMetrics extends LitElement {
       p,strong,pre { overflow-wrap:anywhere; } pre { white-space:pre-wrap; }
       .quality-badges { display:flex; flex-wrap:wrap; gap:var(--space-xs); }
       app-data-table { display:block; max-width:100%; overflow-x:auto; }
-      .summary-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,220px),1fr)); gap:var(--space-md); border-bottom:1px solid var(--border); padding-block:var(--space-md); }
+      .summary-grid { border-block:1px solid var(--border); overflow-x:auto; }
+      .current { display:grid; grid-template-columns: minmax(11rem, 1fr) minmax(9rem, max-content) minmax(14rem, 1fr);
+        align-items:baseline; gap:var(--space-md); padding:var(--space-sm); font-size:var(--text-sm); }
+      .current + .current { border-top:1px solid var(--border); }
+      .metric-reading { white-space:nowrap; font-variant-numeric:tabular-nums; overflow-wrap:normal; }
+      .current .metric-reading { font-size:var(--text-lg); color:var(--text-strong); }
+      .current .old-value .metric-reading { color:var(--muted); }
+      .maintenance p { margin-block:var(--space-xs); }
       .latest-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,220px),1fr)); gap:var(--space-md); border-bottom:1px solid var(--border); padding-block:var(--space-md); }
       .latest-cell { min-width:0; overflow-wrap:anywhere; } .latest-cell h3 { margin:0 0 var(--space-sm); font-size:13px; color:var(--muted); }
-      .latest-cell p { margin:0 0 var(--space-xs); } .latest-value { margin-block:var(--space-sm); }
+      .latest-cell p { margin:0 0 var(--space-xs); }
       .old-value { color:var(--muted); }
-      .metric-name { margin:0 0 var(--space-sm); font-size:14px; color:var(--text-strong); }
-      .metric-id { color:var(--muted); font-size:12px; user-select:text; }
-      .current strong { font-size:24px; color:var(--text-strong); }
-      .current { font-size:12px; min-width:0; overflow-wrap:anywhere; }
-      .current time { display:block; color:var(--muted); margin-block:var(--space-xs); }
+      .metric-name { margin:0; font-size:14px; color:var(--text-strong); overflow-wrap:anywhere; }
       .trend-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:var(--space-md); margin-block:var(--space-lg); }
+      .trend-grid:has(.selected-trend) { grid-template-columns:minmax(0,1fr); }
       .trend-grid app-card { min-width:0; }
       metric-chart { display:block; min-width:0; }
       .bucket-row { border-top:1px solid var(--border); padding-block:var(--space-xs); }
       details { margin-block:var(--space-sm); } summary { cursor:pointer; color:var(--text); }
       h2 { font-size:16px; margin-block:var(--space-lg) var(--space-sm); }
-      @media(max-width:700px) { .trend-grid { grid-template-columns:minmax(0,1fr); } .summary-grid { grid-template-columns:repeat(2,minmax(0,1fr)); } .actions label { flex:1 1 120px; } select,input[type="datetime-local"] { max-width:100%; } }
+      @media(max-width:700px) { .trend-grid { grid-template-columns:minmax(0,1fr); } .actions label { flex:1 1 120px; } select,input[type="datetime-local"] { max-width:100%; } }
     </style>
     <div class="actions">
       <label>时间范围 <select aria-label="时间范围" ?disabled=${this.accessInvalidated} .value=${this.custom ? 'custom' : String(this.hours)} @change=${(e: Event) => {
@@ -621,34 +706,36 @@ export class SemanticMetrics extends LitElement {
         <button class="btn" @click=${this.applyCustom} ?disabled=${this.accessInvalidated}>应用自定义窗口</button>` : nothing}
       <label>指标 <select aria-label="指标" ?disabled=${this.accessInvalidated} @change=${(e: Event) => { this.selectedMetric = (e.target as HTMLSelectElement).value; this.baselineKey = ''; this.selectRaw(''); }}><option value="" .selected=${!this.selectedMetric}>全部指标</option>${this.selectedMetric && !this.result?.metrics.some(m => m.definition.id === this.selectedMetric) ? html`<option value=${this.selectedMetric} .selected=${true}>${metricName(this.selectedMetric)} · ${this.selectedMetric}</option>` : nothing}${this.result?.metrics.map(m => html`<option value=${m.definition.id} .selected=${m.definition.id === this.selectedMetric}>${metricName(m.definition.id)} · ${m.definition.id}</option>`)}</select></label>
       <button aria-busy=${String(this.busy)} class="btn btn-refresh" .disabled=${this.busy || this.accessInvalidated} @click=${this.load}>刷新标准指标</button>
+      <p class="window">主图窗口（${timezone()}）：${this.activeWindow ? `${localTime(this.activeWindow.from)} — ${localTime(this.activeWindow.to)}` : '待应用'}</p>
       ${this.customError ? html`<p class="error" role="alert">${this.customError}</p>` : nothing}
-      ${this.result ? html`<p class="window">查询窗口：${localTime(this.result.window.from)} — ${localTime(this.result.window.to)} · ${this.windowNote()}</p>` : nothing}
+      ${this.result ? html`<p class="window">${this.windowNote()}</p>` : nothing}
     </div>
     ${this.error ? html`<p class="error" role="alert">${this.error}</p>` : nothing}
-    ${this.busy && !this.result ? html`<div class="skeleton" aria-label="正在读取指标"></div>` : nothing}
-    ${this.result ? this.renderLatest(metrics) : nothing}
-    ${this.result && this.selectedMetric && !metrics.length ? html`<p role="status">当前窗口未返回所选指标；可刷新或选择全部指标。</p>` : nothing}
-    ${metrics.length ? html`<div class="summary-grid" aria-label="当前指标比较">${metrics.map(m => html`<div class="current"><h3 class="metric-name">${metricName(m.definition.id)} · ${m.definition.semantic_version ?? '版本未知'}</h3>
-      <details class="metric-id"><summary>指标标识</summary><code>${m.definition.id}</code><button class="btn btn-sm btn-ghost" aria-label=${`复制 ${m.definition.id}`} @click=${() => void this.copyMetric(m.definition.id)}>复制标识</button></details>
-      <span>当前采集状态：${states[m.state] ?? m.state}</span>
-      ${m.state !== 'available' ? html`<p class="hint">当前状态不代表历史：以下时间桶按各自窗口显示当时质量，旧值不代表当前健康。</p>` : nothing}
-      ${!m.series.length ? html`<p>暂无可用观测</p>` : m.series.map(series => {
-        const b = series.buckets.at(-1), investigation = this.investigationHref(m, series);
-        return html`<div>${Object.values(series.dimensions).join(' / ')}
-          ${investigation ? html`<a class="btn btn-sm" href=${investigation}>以此指标维度打开调查草案</a>` : nothing}${b ? html`<div><strong>${b.value && 'value' in b.value ? b.value.value : '未知'}</strong> ${b.unit}</div>
-          ${observedTime(b)}${qualityBadges(b)}` : html`<div>暂无可用观测</div>`}</div>`;
-      })}</div>`)}</div>` : nothing}
-    <section aria-label="维护历史"><h3>维护历史</h3>
-      <p>仅覆盖已持久化的有限期限修订；旧周期维护历史未覆盖，状态未知。区间左闭右开，按当前窗口裁剪；展示时区 ${timezone()}。</p>
-      ${this.maintenanceError ? html`<p role="status">${this.maintenanceError}</p>` : nothing}
-      ${this.maintenance?.intervals.length === 0 ? html`<p>该窗口没有已记录的有限期限维护区段。</p>` : nothing}
-      ${(this.maintenance?.intervals ?? []).map(v => html`<p>${v.name} · 修订 ${v.revision} · ${v.reason} · [${localTime(v.effective_from)}, ${localTime(v.effective_to)}) · 定义时区 ${v.timezone}</p>`)}
-      ${(this.maintenance?.event_links ?? []).map(v => html`<p>事件关联 ${v.event_id ?? v.alert_id} · ${localTime(v.at)} · 维护状态 ${v.state === 'active' ? '维护中' : v.state === 'inactive' ? '未命中' : '未知'} · ${(v.intervals ?? []).map(i => `${i.id} 修订 ${i.revision}：${i.reason}`).join('；')}</p>`)}
+    ${this.error && !this.accessInvalidated && this.activeWindow ? html`<button class="btn" @click=${() => void this.loadQuery(this.activeWindow!)}>重试主图指标</button>` : nothing}
+    ${this.busy ? html`<p role="status">正在读取主图指标</p>` : nothing}
+    ${!this.busy && !this.error && this.result && !this.result.metrics.length ? html`<p role="status">主图窗口没有指标记录。</p>` : nothing}
+    ${!this.busy && !this.error && this.result && this.selectedMetric && !metrics.length ? html`<p role="status">当前窗口未返回所选指标；可刷新或选择全部指标。</p>` : nothing}
+    ${metrics.length ? this.renderReadings(metrics) : nothing}
+    ${this.renderSelectedActions(choices)}
+    ${this.result ? this.renderLatest() : nothing}
+    <section class="maintenance" aria-label="维护历史"><h2>主图窗口的维护历史</h2>
+      ${this.maintenanceBusy ? html`<p role="status">维护历史正在读取，状态未知</p>` : nothing}
+      ${this.maintenanceError ? html`<p class="error" role="alert">${this.maintenanceError}</p>
+        <button class="btn" @click=${() => void this.loadMaintenance(this.activeWindow!)}>重试维护历史</button>` : nothing}
+      ${!this.maintenanceBusy && !this.maintenanceError && this.maintenance?.intervals.length === 0
+        ? html`<p>主图窗口没有已记录的有限期限维护区段。</p>` : nothing}
+      ${this.maintenance?.intervals.length ? html`<p class="hint">维护期间继续采集并记录问题，告警通知受抑制。</p>` : nothing}
+      ${(this.maintenance?.intervals ?? []).map(v => html`<p><strong>${v.name}</strong> · ${localTime(v.effective_from)} — ${localTime(v.effective_to)} · ${v.reason}</p>`)}
+      ${this.maintenance ? html`<details><summary>维护区间边界与事件影响</summary>
+        <p>区间按主图窗口裁剪，含起点、不含终点。显示时区 ${timezone()}。旧周期维护历史未覆盖。</p>
+        ${this.maintenance.intervals.map(v => html`<p>${v.name} · 修订 ${v.revision} · [${v.effective_from}, ${v.effective_to}) · 定义时区 ${v.timezone}</p>`)}
+        ${this.maintenance.event_links.map(v => html`<p>事件关联 ${v.event_id ?? v.alert_id} · ${localTime(v.at)} · 维护状态 ${v.state === 'active' ? '维护中' : v.state === 'inactive' ? '未命中' : '未知'} · ${(v.intervals ?? []).map(i => `${i.id} 修订 ${i.revision}：${i.reason}`).join('；')}</p>`)}
+      </details>` : nothing}
     </section>
     ${this.renderHistoryContext()}
     <metric-study .resourceType=${this.resourceType} .resourceId=${this.accessInvalidated?0:this.resourceId}></metric-study>
     ${this.renderRaw(metrics)}
-    ${trends.length ? html`<div class="trend-grid" aria-label="指标趋势比较">${trends.slice(0,2).map(({metric,series}) => html`<app-card><span slot="header">${metricName(metric.definition.id)} · ${Object.values(series.dimensions).join(' / ') || '整体'}</span>${this.renderTrend(metric,series)}</app-card>`)}</div>
+    ${trends.length ? html`<div class="trend-grid" aria-label="指标趋势比较">${trends.map(({metric,series}) => html`<app-card><span slot="header" class=${selectedTrend ? 'selected-trend' : ''} tabindex="-1">${metricName(metric.definition.id)} · ${metricDimensionText(series.dimensions) || '整体'}</span>${this.renderTrend(metric, series, Boolean(selectedTrend))}</app-card>`)}</div>
       <p class="window">断点只用于缺失、质量未知或无效、单位不符、非标量及超出安全数值精度的桶；过期但当时 good/partial 的值照常显示。桶内峰值以最小/最大包络显示，包络与曲线使用同一可绘制条件。部分覆盖的点保留在曲线上，但不代表当前健康。全部维度与精确值可在观测明细中核对。</p>` : nothing}
     <details><summary>行为基线与资格</summary>
       <label>基线指标与维度<select aria-label="基线指标与维度" .value=${this.baselineKey} ?disabled=${this.accessInvalidated || this.busy} @change=${(e:Event)=>this.baselineKey=(e.target as HTMLSelectElement).value}><option value="">选择指标与维度</option>${baselineSeries.map(({metric,series},index)=>html`<option value=${index}>${metricName(metric.definition.id)} · ${Object.values(series.dimensions).join(' / ') || '整体'}</option>`)}</select></label>
@@ -658,7 +745,7 @@ export class SemanticMetrics extends LitElement {
     ${['canonical', 'extension'].map(category => html`<app-card><span slot="header">${category === 'canonical' ? '标准指标与能力' : '模板扩展指标'}</span>
       ${metrics.filter(m => m.definition.category === category).length ? html`<details><summary>查看时间桶、定义与来源（${metrics.filter(m => m.definition.category === category).length} 项）</summary>
         <app-data-table .dense=${true} .columns=${[{key:'metric',label:'指标与口径'},{key:'value',label:'观测与质量'}]}
-        .rows=${metrics.filter(m => m.definition.category === category).map(m => ({metric:html`<strong>${metricName(m.definition.id)}</strong><details><summary>指标定义</summary><p>${m.definition.id}</p><p>${m.definition.meaning}</p></details>`,value:m.series.length ? html`${m.series.map(series => this.renderSeries(m, series))}` : html`<span>${states[m.state] ?? m.state} · 暂无可用观测</span>`}))}></app-data-table>
+        .rows=${metrics.filter(m => m.definition.category === category).map(m => ({metric:html`<strong>${metricName(m.definition.id)}</strong><details><summary>指标定义</summary><p>${m.definition.id} · ${m.definition.semantic_version ?? '版本未知'}</p><p>${m.definition.meaning}</p></details>`,value:m.series.length ? html`${m.series.map(series => this.renderSeries(m, series))}` : html`<span>${states[m.state] ?? m.state} · 暂无可用观测</span>`}))}></app-data-table>
       </details>` : html`<app-empty-state title="暂无指标证据" description="未配置或无法读取不代表无异常。"></app-empty-state>`}
     </app-card>`)}`;
   }
@@ -699,12 +786,12 @@ export class SemanticCoreList extends LitElement {
       try {
         const response = await authFetch('/api/metrics/query', { method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ resource: { type: this.resourceType, id: resource.id }, view: 'core', from: new Date(Date.parse(to) - 60000).toISOString(), to }) });
-        if (!response.ok) throw new Error(errors(response.status));
+        if (!response.ok) throw new MetricRequestError(response.status);
         const data: SemanticResult = await response.json();
         if (generation !== this.generation) return;
 
         for (const m of data.metrics) row[m.definition.id] = renderMetricValue(m);
-      } catch (e) { row.error = e instanceof Error ? e.message : errors(503); }
+      } catch (e) { row.error = metricReadError(e, '指标'); }
       rows.push(row);
     }
     if (generation === this.generation) this.rows = rows;

@@ -13,7 +13,7 @@ function deferred() {
   const promise = new Promise<any>(done => { resolve = done; });
   return { promise, resolve };
 }
-afterEach(() => { document.body.replaceChildren(); vi.resetAllMocks(); });
+afterEach(() => { document.body.replaceChildren(); history.replaceState({}, '', '/'); localStorage.removeItem('permissions'); vi.resetAllMocks(); });
 
 for (const boundary of ['capacity', 'history']) {
   it.each(['switch', 'revoke', 'disconnect'])(`rejects ${boundary} body after headers, then %s`, async action => {
@@ -52,6 +52,7 @@ it('commits current capacity and history after both bodies finish', async () => 
 });
 
 async function mountServer() {
+  localStorage.setItem('permissions', '["servers:manage"]');
   // Supported OS, empty diagnostics cache. Calling the legacy GET would collect.
   authFetch.mockImplementation(async (url: string) => {
     if (url.endsWith('/diagnostics')) throw new Error('Implicit cache-miss collection');
@@ -60,18 +61,44 @@ async function mountServer() {
     return ok({ id: Number(url.split('/').at(-1)), os_type: 'rhel', host: 'isolated.invalid', status: 'offline' });
   });
   const el = document.createElement('server-detail') as any;
-  el.serverId = 1; el.activeTab = 'logs'; document.body.append(el); await settle(); await el.updateComplete;
+  el.serverId = 1; document.body.append(el); await settle(); await el.updateComplete;
   return el;
 }
 
 it('never requests diagnostics on entry, all diagnostic tabs, refresh or resource switch with a supported OS and no cache', async () => {
+  history.replaceState({}, '', '/server-detail?id=1&detailTab=logs');
   const el = await mountServer();
+  const root = el.shadowRoot as ShadowRoot;
+  const tabs = [...root.querySelectorAll<HTMLButtonElement>('[role="tab"]')];
+  const selected = () => root.querySelector('[role="tab"][aria-selected="true"]')?.textContent?.trim();
   expect(el.server.os_type).toBe('rhel');
-  for (const tab of ['overview', 'diagnostics', 'network', 'processes', 'services', 'logs']) {
-    el._applyTab(tab); await settle(); await el.refreshCurrentTab();
+  expect(selected()).toBe('日志');
+  const reads = () => authFetch.mock.calls.filter(([url]) => url === '/api/servers/1').length;
+  for (const [key, label] of [
+    ['overview', '概览'], ['diagnostics', '诊断'], ['network', '网络'],
+    ['processes', '进程'], ['services', '服务'], ['logs', '日志'],
+  ]) {
+    tabs.find(tab => tab.textContent?.trim() === label)!.click();
+    await el.updateComplete;
+    expect(selected()).toBe(label);
+    expect(new URLSearchParams(location.search).get('detailTab')).toBe(key);
+
+    const before = reads();
+    root.querySelector<HTMLButtonElement>('.header .btn-refresh')!.click();
+    await settle();
+    await el.updateComplete;
+    expect(reads()).toBe(before + 1);
+    expect(selected()).toBe(label);
   }
-  el.serverId = 2; await settle(); await el.updateComplete;
-  expect(el.diagnostics).toBeNull(); expect(el.shadowRoot.textContent).toContain('当前页面尚未取得诊断证据');
+  const panel = root.querySelector('server-diagnostic-panel')!;
+  expect(panel.shadowRoot?.textContent).toContain('未取得近期系统日志，样本数量未知');
+  history.replaceState({}, '', '/server-detail?id=2');
+  el.serverId = 2;
+  await settle();
+  await el.updateComplete;
+  expect(el.server.id).toBe(2);
+  expect(selected()).toBe('概览');
+  expect(el.diagnostics).toBeNull();
   expect(authFetch.mock.calls.filter(([url]) => /diagnostics/.test(url))).toEqual([]);
 });
 
@@ -87,7 +114,7 @@ it('explicit collection uses the POST evidence once, without a second cache-miss
 
 it.each(['switch', 'revoke', 'disconnect'])('rejects an explicit collection body after %s', async action => {
   const el = await mountServer(); const body = deferred(); const json = vi.fn(() => body.promise);
-  authFetch.mockResolvedValue({ ok: true, status: 200, json });
+  authFetch.mockResolvedValueOnce({ ok: true, status: 200, json });
   const pending = el.collectDiagnostics(); await settle(); expect(json).toHaveBeenCalledOnce();
   if (action === 'switch') { el.serverId = 2; await settle(); }
   if (action === 'revoke') window.dispatchEvent(new CustomEvent('slide-session-expired'));
@@ -96,22 +123,46 @@ it.each(['switch', 'revoke', 'disconnect'])('rejects an explicit collection body
   expect(el.diagnostics).toBeNull(); expect(showToast).not.toHaveBeenCalled();
 });
 
+it.each([
+  { unexpected: 'not a hosted-instance response' },
+  { instances: [{ instanceId: 2, name: '缺少类型的实例' }] },
+])('keeps malformed hosted instances in the local error state and retries', async body => {
+  const el = await mountServer();
+  const root = el.shadowRoot as ShadowRoot;
+  const related = [...root.querySelectorAll<HTMLButtonElement>('[role="tab"]')]
+    .find(tab => tab.textContent?.trim() === '关联资源')!;
+  related.click();
+  authFetch.mockResolvedValueOnce(ok(body));
+  await el.loadHostedInstances(1);
+  await el.updateComplete;
+
+  const error = root.querySelector('.hosted-error');
+  expect(error?.getAttribute('role')).toBe('alert');
+  expect(error?.textContent).toContain('托管数据库实例返回格式异常');
+  expect(root.querySelector('app-empty-state[title="暂无托管实例"]')).toBeNull();
+
+  error!.querySelector('button')!.click();
+  await settle();
+  await el.updateComplete;
+  expect(root.querySelector('.hosted-error')).toBeNull();
+  expect(root.querySelector('app-empty-state[title="暂无托管实例"]')).not.toBeNull();
+});
+
 it('preserves collection denial and never falls back to a view-permission GET', async () => {
   const el = await mountServer(); authFetch.mockClear();
+  el.diagnostics = { serverId: 1, sections: { systemLogs: { items: [{ message: 'old evidence' }] } } };
   authFetch.mockResolvedValue({ ok: false, status: 403, json: async () => ({ error: 'PERMISSION_DENIED' }) });
   await el.collectDiagnostics();
   expect(authFetch).toHaveBeenCalledOnce(); expect(el.diagnostics).toBeNull();
-  expect(showToast).toHaveBeenCalledWith('PERMISSION_DENIED', 'error');
+  expect(showToast).toHaveBeenCalledWith('没有采集诊断证据的权限', 'error');
 });
 
 for (const kind of ['server', 'instances']) {
   it.each(['switch', 'revoke', 'disconnect'])(`rejects a delayed ${kind} body after %s`, async action => {
     const el = await mountServer(); const body = deferred(); const json = vi.fn(() => body.promise);
-    authFetch.mockResolvedValue({ ok: true, status: 200, json });
+    authFetch.mockResolvedValueOnce({ ok: true, status: 200, json });
     const pending = kind === 'server' ? el.loadServer(1) : el.loadHostedInstances(1);
     await settle(); expect(json).toHaveBeenCalledOnce();
-    // Other requests for the replacement resource may finish normally.
-    authFetch.mockResolvedValue(ok(kind === 'server' ? { id: 2 } : { instances: [] }));
     if (action === 'switch') { el.serverId = 2; await settle(); }
     if (action === 'revoke') window.dispatchEvent(new CustomEvent('slide-permissions-loaded'));
     if (action === 'disconnect') el.remove();

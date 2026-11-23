@@ -16,13 +16,29 @@ const inventory = () => Array.from({ length: 25 }, (_, i) => ({
   last_health_check_at: new Date().toISOString(), hasCredential: true, username: 'readonly',
   vendor: 'cisco', snmp_port: 161, ssh_port: 22,
 }));
-async function mount(page: Page, list: typeof lists[number]) {
+async function mount(page: Page, list: typeof lists[number], menu?: string) {
   let entries = inventory();
   let forbidden = false;
-  await page.addInitScript(() => localStorage.setItem('permissions', JSON.stringify(['instance:view', 'servers:view', 'network_devices:view'])));
+  const permissions = ['instance:view', 'servers:view', 'network_devices:view'];
+  await page.addInitScript(({ permissions, menu }) => {
+    localStorage.setItem('permissions', JSON.stringify(permissions));
+    if (menu) {
+      localStorage.setItem('token', 'resource-inventory-fixture');
+      localStorage.setItem('slide.control.session_token.v1', 'resource-inventory-fixture');
+      localStorage.setItem('slide.control.settings.v1:default', JSON.stringify({ locale: 'zh-CN', themeMode: 'light' }));
+    }
+  }, { permissions, menu });
+  if (menu) {
+    await page.route('**/__slide/control-ui-config.json', route => route.fulfill({ json: {} }));
+    await page.routeWebSocket('**/agent-ws', socket => socket.onMessage(message => {
+      if (JSON.parse(String(message)).type === 'auth') socket.send(JSON.stringify({ type: 'auth_ok' }));
+    }));
+  }
   await page.route('**/api/**', async route => {
     const p = new URL(route.request().url()).pathname;
     if (!p.startsWith('/api/')) return route.fallback();
+    if (p === '/api/auth/permissions') return route.fulfill({ json: permissions });
+    if (p === '/api/user/preferences') return route.fulfill({ json: { preferences: { locale: 'zh-CN' } } });
     if (p === list[2]) return route.fulfill({ json: entries });
     if (p === '/api/resources/overview') return route.fulfill({ json: { items: entries.map(e => ({ resource: { type: list[3], id: e.id }, status: e.health_status, gaps: [], unresolvedAlerts: 0, quality: 'good', freshness: 'fresh', observedAt: new Date().toISOString() })) } });
     if (p === '/api/metrics/query') {
@@ -34,8 +50,16 @@ async function mount(page: Page, list: typeof lists[number]) {
     if (p.endsWith('/access')) return route.fulfill({ json: { can_manage: false } });
     return route.fulfill({ json: [] });
   });
-  await page.route('**/resource-search-fixture', route => route.fulfill({ contentType: 'text/html', body: `<!doctype html><html lang="zh-CN"><head><meta name="viewport" content="width=device-width,initial-scale=1"></head><body><${list[0]}></${list[0]}><script type="module">import '/src/app/styles.css';import '/src/app/ui/views/${list[1]}.ts';</script></body></html>` }));
-  await page.goto('/resource-search-fixture');
+  if (menu) {
+    await page.goto('/feedback');
+    const link = page.locator('.shell-nav').getByRole('link', { name: menu, exact: true });
+    const path = await link.getAttribute('href');
+    await link.click();
+    await expect(page).toHaveURL(url => url.pathname === path);
+  } else {
+    await page.route('**/resource-search-fixture', route => route.fulfill({ contentType: 'text/html', body: `<!doctype html><html lang="zh-CN"><head><meta name="viewport" content="width=device-width,initial-scale=1"></head><body><${list[0]}></${list[0]}><script type="module">import '/src/app/styles.css';import '/src/app/ui/views/${list[1]}.ts';</script></body></html>` }));
+    await page.goto('/resource-search-fixture');
+  }
   const host = page.locator(list[0]);
   const input = host.locator('.resource-toolbar input');
   const count = host.locator('.resource-result-count');
@@ -44,6 +68,54 @@ async function mount(page: Page, list: typeof lists[number]) {
   await expect(rows).toHaveCount(20);
   await expect(host.getByRole('button', { name: '刷新', exact: true })).toBeEnabled();
   return { host, input, count, table, rows, setEntries: (next: typeof entries) => { entries = next; }, denyMetrics: () => { forbidden = true; } };
+}
+
+for (const [list, menu, width, height] of [
+  [lists[0], '数据库', 1440, 900],
+  [lists[1], '服务器', 1366, 768],
+  [lists[2], '网络设备', 1440, 900],
+] as const) {
+  test(`MAX-717 ${menu}切换授权范围后拒绝旧清单响应`, async ({ page }, info) => {
+    await page.setViewportSize({ width, height });
+    const { host, input, rows } = await mount(page, list, menu);
+    const [revoked, allowed] = inventory();
+    await input.fill('Alpha');
+    await expect(rows).toHaveCount(3);
+
+    let releaseOld!: () => void;
+    const oldResponse = new Promise<void>(resolve => { releaseOld = resolve; });
+    let reads = 0;
+    await page.route(`**${list[2]}`, async route => {
+      expect(route.request().method()).toBe('GET');
+      if (++reads === 1) {
+        await oldResponse;
+        return route.fulfill({ json: [revoked, allowed] });
+      }
+      return route.fulfill({ json: [allowed] });
+    });
+    try {
+      await host.getByRole('button', { name: '刷新', exact: true }).click();
+      await expect.poll(() => reads).toBe(1);
+      await page.evaluate(permissions => {
+        localStorage.setItem('permissions', JSON.stringify(permissions));
+        window.dispatchEvent(new CustomEvent('slide-permissions-loaded', { detail: { permissions } }));
+      }, ['instance:view', 'servers:view', 'network_devices:view']);
+
+      await expect.poll(() => reads).toBe(2);
+      await expect(rows).toHaveCount(1);
+      const response = page.waitForResponse(`**${list[2]}`);
+      releaseOld();
+      await (await response).finished();
+      await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+      await expect(rows).toHaveCount(1);
+      await expect(rows.first()).toContainText(allowed.name);
+      await expect(host.getByText(revoked.host, { exact: true })).toHaveCount(0);
+      await expect(input).toHaveValue('Alpha');
+      await page.screenshot({ path: info.outputPath('inventory-after-revocation.png') });
+    } finally {
+      releaseOld();
+    }
+  });
 }
 
 for (const list of lists) {

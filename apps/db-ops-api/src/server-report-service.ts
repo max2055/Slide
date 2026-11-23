@@ -123,6 +123,11 @@ export class ServerReportService {
    * Generate a health report for all servers with their latest metrics.
    */
   async generateReport(serverIds?: readonly number[], userActor?: ActorContext): Promise<ReportData> {
+    const { reportData } = await this.collectReport(serverIds, userActor);
+    return reportData;
+  }
+
+  private async collectReport(serverIds?: readonly number[], userActor?: ActorContext) {
     const pool = dbConnection.getPool();
     if (!pool) {
       throw new Error('数据库未连接');
@@ -267,7 +272,7 @@ export class ServerReportService {
       else critical_count++;
     }
 
-    return {
+    const reportData: ReportData = {
       generated_at: new Date().toISOString(),
       server_count: serverEntries.length,
       healthy_count,
@@ -276,6 +281,7 @@ export class ServerReportService {
       unknown_count,
       servers: serverEntries,
     };
+    return { reportData, targetIds: servers.map(server => server.id) };
   }
 
   /**
@@ -285,7 +291,8 @@ export class ServerReportService {
   async generateAndPersist(serverIds?: number[], userActor?: ActorContext): Promise<{ success: boolean; reportId?: number; error?: string }> {
     try {
       assertWorkflowActive();
-      const reportData = await this.generateReport(serverIds, userActor);
+      const { reportData, targetIds } = await this.collectReport(serverIds, userActor);
+      const singleServerId = serverIds && targetIds.length === 1 ? targetIds[0] : undefined;
       const htmlContent = this.generateHtml(reportData);
 
       assertWorkflowActive();
@@ -294,7 +301,8 @@ export class ServerReportService {
         type: 'server_health',
         format: 'html',
         instance_id: null,
-        server_id: serverIds?.length === 1 ? serverIds[0] : null,
+        server_id: singleServerId,
+        server_target_ids: singleServerId === undefined ? targetIds : undefined,
         content: htmlContent,
         data: reportData,
         status: 'completed',

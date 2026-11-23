@@ -239,10 +239,50 @@ function mergeAdjacentTextItems(items: MessageContentItem[]): MessageContentItem
   return merged.filter((item) => item.type !== "text" || Boolean(item.text?.trim()));
 }
 
-function expandTextContent(text: string): {
-  content: MessageContentItem[];
-  replyTarget: NormalizedMessage["replyTarget"];
-} {
+type TextItem = MessageContentItem & { type: "text"; text: string };
+
+function isTextItem(item: MessageContentItem): item is TextItem {
+  return item.type === "text" && typeof item.text === "string";
+}
+
+export function joinMessageText(content: MessageContentItem[]): string {
+  return content.filter(isTextItem).map(item => item.text).join("\n");
+}
+
+function readAssistantReplyTarget(content: MessageContentItem[]): NormalizedMessage["replyTarget"] {
+  const edits: Array<{ start: number; end: number; replacement: string }> = [];
+  const directives = parseInlineDirectives(joinMessageText(content), {
+    onStripReplyTag: (start, end, replacement) => edits.push({ start, end, replacement }),
+  });
+
+  // Map edits on the assembled Markdown back to its text items so their positions
+  // relative to attachments, previews and reasoning are preserved.
+  if (edits.length > 0) {
+    let itemStart = 0;
+    let editIndex = 0;
+    for (const item of content.filter(isTextItem)) {
+      const itemEnd = itemStart + item.text.length;
+      let cursor = itemStart;
+      let cleaned = "";
+      while (editIndex < edits.length && edits[editIndex].start < itemEnd) {
+        const edit = edits[editIndex];
+        if (edit.start >= itemStart) {
+          cleaned += item.text.slice(cursor - itemStart, edit.start - itemStart) + edit.replacement;
+        }
+        cursor = Math.max(cursor, edit.end);
+        if (edit.end > itemEnd) break;
+        editIndex++;
+      }
+      item.text = cleaned + item.text.slice(cursor - itemStart);
+      itemStart = itemEnd + 1; // Newline inserted by joinMessageText.
+    }
+  }
+
+  if (directives.replyToExplicitId) return { kind: "id", id: directives.replyToExplicitId };
+  return directives.replyToCurrent ? { kind: "current" } : null;
+}
+
+function expandTextContent(text: string): MessageContentItem[] {
   const extracted = extractCanvasShortcodes(text);
   // Handle stub return value (array) vs expected object shape
   const extractedText = Array.isArray(extracted) ? '' : (extracted.text ?? '');
@@ -250,7 +290,6 @@ function expandTextContent(text: string): {
 
   const parsed = splitMediaFromOutput(extractedText);
   const parts: MessageContentItem[] = [];
-  let replyTarget: NormalizedMessage["replyTarget"] = null;
   const segments = parsed.segments ?? [{ type: "text" as const, text: parsed.text }];
 
   for (const segment of segments) {
@@ -274,42 +313,19 @@ function expandTextContent(text: string): {
       continue;
     }
 
-    const directives = parseInlineDirectives(segment.text, {
-      stripAudioTag: true,
-      stripReplyTags: true,
-    });
-    if (directives.replyToExplicitId) {
-      replyTarget = { kind: "id", id: directives.replyToExplicitId } as NormalizedMessage;
-    } else if (directives.replyToCurrent && replyTarget === null) {
-      replyTarget = { kind: "current" } as NormalizedMessage;
-    }
-    if (directives.text) {
-      parts.push({ type: "text", text: directives.text });
-    }
+    if (segment.text) parts.push({ type: "text", text: segment.text });
   }
   for (const preview of extractedPreviews) {
     parts.push({ type: "canvas", preview, rawText: null });
   }
 
-  const content = mergeAdjacentTextItems(
-    parts.map((item) => {
-      return item;
-    }),
-  );
-
-  return {
-    content:
-      content.length > 0
-        ? content
-        : (parsed.mediaUrls ?? []).some((url) => shouldPreserveRelativeAssistantAttachment(url))
-          ? (parsed.mediaUrls ?? [])
-              .filter((url) => shouldPreserveRelativeAssistantAttachment(url))
-              .map((url) => ({ type: "text" as const, text: `MEDIA:${url}` }))
-          : replyTarget === null && parsed.text.trim().length > 0
-            ? [{ type: "text", text: parsed.text }]
-            : [],
-    replyTarget,
-  };
+  const content = mergeAdjacentTextItems(parts);
+  if (content.length > 0) return content;
+  const relativeMedia = (parsed.mediaUrls ?? []).filter(shouldPreserveRelativeAssistantAttachment);
+  if (relativeMedia.length > 0) {
+    return relativeMedia.map(url => ({ type: "text", text: `MEDIA:${url}` }));
+  }
+  return parsed.text.trim().length > 0 ? [{ type: "text", text: parsed.text }] : [];
 }
 
 /**
@@ -341,13 +357,10 @@ export function normalizeMessage(message: unknown): NormalizedMessage {
 
   // Extract content
   let content: MessageContentItem[] = [];
-  let replyTarget: NormalizedMessage["replyTarget"] = null;
 
   if (typeof m.content === "string") {
     if (isAssistantMessage) {
-      const expanded = expandTextContent(m.content);
-      content = expanded.content;
-      replyTarget = expanded.replyTarget;
+      content = expandTextContent(m.content);
     } else {
       content = [{ type: "text", text: m.content }];
     }
@@ -406,13 +419,7 @@ export function normalizeMessage(message: unknown): NormalizedMessage {
         ];
       }
       if (item.type === "text" && typeof item.text === "string" && isAssistantMessage) {
-        const expanded = expandTextContent(item.text);
-        if (expanded.replyTarget?.kind === "id") {
-          replyTarget = expanded.replyTarget;
-        } else if (expanded.replyTarget?.kind === "current" && replyTarget === null) {
-          replyTarget = expanded.replyTarget;
-        }
-        return expanded.content;
+        return expandTextContent(item.text);
       }
       if (item.type === 'thinking' && typeof item.thinking === 'string') return [{ type: 'thinking', thinking: item.thinking }];
       return [
@@ -430,12 +437,15 @@ export function normalizeMessage(message: unknown): NormalizedMessage {
     });
   } else if (typeof m.text === "string") {
     if (isAssistantMessage) {
-      const expanded = expandTextContent(m.text);
-      content = expanded.content;
-      replyTarget = expanded.replyTarget;
+      content = expandTextContent(m.text);
     } else {
       content = [{ type: "text", text: m.text }];
     }
+  }
+
+  const replyTarget = isAssistantMessage ? readAssistantReplyTarget(content) : null;
+  if (isAssistantMessage) {
+    content = content.filter(item => !isTextItem(item) || Boolean(item.text.trim()));
   }
 
   const timestamp = typeof m.timestamp === "number" ? m.timestamp : Date.now();

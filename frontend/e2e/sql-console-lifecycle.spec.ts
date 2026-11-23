@@ -58,3 +58,46 @@ for (const [width, height] of [[1440, 900], [1366, 768], [1920, 1080]]) {
     expect(result).toEqual({ firstDestroyed: 1, secondDestroyed: 1 });
   });
 }
+
+test('SQL toolbar exposes busy state and prevents repeated execution or analysis', async ({ page }) => {
+  await page.addInitScript(() => localStorage.setItem('sql-console-tabs', JSON.stringify({
+    tabs: [{ id: 'query', name: '查询', sql: 'SELECT 1' }], activeId: 'query', instanceId: 1,
+  })));
+  await page.route('**/api/database/instances**', route => route.fulfill({
+    json: new URL(route.request().url()).pathname === '/api/database/instances'
+      ? [{ id: 1, name: '隔离样本', db_type: 'mysql' }]
+      : [],
+  }));
+  await page.goto('/e2e/fixtures/sql-console.html');
+  const workbench = page.locator('sql-console-page');
+  await expect(workbench.locator('.cm-content')).toHaveText('SELECT 1');
+
+  for (const { endpoint, name, busyName } of [
+    { endpoint: 'execute', name: /^执行 /, busyName: /^执行中/ },
+    { endpoint: 'explain', name: '分析计划', busyName: '分析中...' },
+  ]) {
+    const response = Promise.withResolvers<void>();
+    let requests = 0;
+    const requestPattern = new RegExp(`/api/database/instances/1/${endpoint}(?:\\?|$)`);
+    await page.route(requestPattern, async route => {
+      requests++;
+      await response.promise;
+      await route.fulfill({ status: 400, json: { error: '受控请求结束' } });
+    });
+    const idle = workbench.getByRole('button', { name });
+    await expect(idle).toHaveAttribute('aria-busy', 'false');
+    try {
+      await idle.click();
+      const busy = workbench.getByRole('button', { name: busyName });
+      await expect(busy).toBeDisabled();
+      await expect(busy).toHaveAttribute('aria-busy', 'true');
+      await busy.evaluate(button => button.dispatchEvent(new MouseEvent('click', { bubbles: true })));
+      await expect.poll(() => requests).toBe(1);
+    } finally {
+      response.resolve();
+    }
+    await expect(idle).toBeEnabled();
+    await expect(idle).toHaveAttribute('aria-busy', 'false');
+    expect(requests).toBe(1);
+  }
+});
