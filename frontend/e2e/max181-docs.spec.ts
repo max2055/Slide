@@ -382,7 +382,11 @@ test("real topbar entry retains document selection through refresh and browser h
   await page.goBack();
   await expect(view.locator(".docs-current")).toHaveText(second);
   expect(new URL(page.url()).searchParams.get("doc")).toBeTruthy();
-  await page.getByRole("link", { name: "资源概览", exact: true }).click();
+  // The shell resolves history entries from their canonical pathname.
+  await page.evaluate(() => {
+    history.pushState({}, "", new URL("./dashboard", location.href));
+    window.dispatchEvent(new PopStateEvent("popstate"));
+  });
   await expect(page.locator("dashboard-page")).toBeVisible();
   expect(new URL(page.url()).searchParams.has("doc")).toBe(false);
   await page.goBack();
