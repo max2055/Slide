@@ -835,8 +835,9 @@ export class PermissionManagementTab extends LitElement {
           ? html`<div class="save-error">${this.saveError}</div>`
           : ""}
         <div class="form-group">
-          <label>权限码</label>
+          <label for="permission-create-code">权限码</label>
           <input
+            id="permission-create-code"
             .value=${this.formCode}
             @input=${this._handleCodeInput}
             placeholder="resource:action（如 instance:list）"
@@ -846,16 +847,18 @@ export class PermissionManagementTab extends LitElement {
             : ""}
         </div>
         <div class="form-group">
-          <label>名称</label>
+          <label for="permission-create-name">名称</label>
           <input
+            id="permission-create-name"
             .value=${this.formName}
             @input=${(e: any) => (this.formName = e.target.value)}
             placeholder="如：查看实例列表"
           />
         </div>
         <div class="form-group">
-          <label>描述</label>
+          <label for="permission-create-description">描述</label>
           <textarea
+            id="permission-create-description"
             .value=${this.formDescription}
             @input=${(e: any) => (this.formDescription = e.target.value)}
             placeholder="可选描述"
