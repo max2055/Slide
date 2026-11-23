@@ -212,7 +212,7 @@ for (const kind of ['role', 'instance'] as const) test(`MAX-354/MAX-356 real ${k
     const firstRead = readResponse();
     await open.click();
     await assertUnavailable(await firstRead);
-    await expect(page.locator('.save-error')).toContainText(role ? '加载权限失败' : '加载实例数据失败');
+    await expect(page.locator('.save-error')).toContainText(role ? '角色授权读取失败' : '加载实例数据失败');
     await expect(page.getByRole('button', { name: '保存权限', exact: true })).toBeDisabled();
     await close();
     await readFault(false);

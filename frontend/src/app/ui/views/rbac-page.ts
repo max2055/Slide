@@ -6,6 +6,7 @@ import { settingsManagementHeaderStyles } from "../../styles/shared-settings-pag
 import { customElement, property, state } from "lit/decorators.js";
 import { apiClient } from '../../../api/index.js';
 import { showToast } from '../components/app-toast-container.ts';
+import { retryReadWithFocus } from '../controllers/retry-read-focus.js';
 import "../components/app-dialog.js";
 import "../components/app-card.js";
 import "../components/app-badge.js";
@@ -197,6 +198,27 @@ export class RbacAdminPage extends LitElement {
 
 /* ───────── RoleManagementTab ───────── */
 
+type PermissionId = Pick<Permission, "id">;
+type PermissionOption = Pick<Permission, "id" | "name" | "code" | "resource">;
+
+function hasPermissionId(value: unknown): value is PermissionId {
+  return typeof value === "object" && value !== null && "id" in value
+    && typeof value.id === "number" && Number.isSafeInteger(value.id) && value.id > 0;
+}
+
+function isPermissionOption(value: unknown): value is PermissionOption {
+  return hasPermissionId(value)
+    && "name" in value && typeof value.name === "string"
+    && "code" in value && typeof value.code === "string"
+    && "resource" in value && typeof value.resource === "string";
+}
+
+class RolePermissionReadError extends Error {
+  constructor(message: string, readonly retryable: boolean) {
+    super(message);
+  }
+}
+
 @customElement("role-management-tab")
 export class RoleManagementTab extends LitElement {
   @state() private roles: Role[] = [];
@@ -215,15 +237,18 @@ export class RoleManagementTab extends LitElement {
   @state() private showPermModal = false;
   @state() private permRoleId: number | null = null;
   @state() private permRoleName = "";
-  @state() private allPermissions: Permission[] = [];
+  @state() private allPermissions: PermissionOption[] = [];
   @state() private checkedPermIds: Set<number> = new Set();
   @state() private savedPermIds: Set<number> = new Set();
   @state() private permLoading = false;
   @state() private permSaving = false;
   @state() private permReady = false;
+  @state() private permReadError: RolePermissionReadError | null = null;
   @state() private permError: string | null = null;
 
-  static styles = RbacAdminPage.styles;
+  static styles = [...RbacAdminPage.styles, css`
+    [data-read-retry] { margin-top: var(--space-md); }
+  `];
 
   override async firstUpdated() {
     await this._loadRoles();
@@ -310,38 +335,85 @@ export class RoleManagementTab extends LitElement {
 
   /* ─── Edit Permissions Modal ─── */
 
-  private permLoadSequence = 0;
+  private permReadController?: AbortController;
 
   private async _openPermModal(role: Role) {
-    const request = ++this.permLoadSequence;
+    if (this.permSaving) return;
     this.permRoleId = role.id;
     this.permRoleName = role.name;
     this.permError = null;
+    this.showPermModal = true;
+    await this._loadPermModal(role.id);
+  }
+
+  private async _readPermissionList<T>(
+    endpoint: string,
+    source: string,
+    isEntry: (value: unknown) => value is T,
+    signal: AbortSignal,
+  ): Promise<T[]> {
+    try {
+      const result = await apiClient.get<unknown>(endpoint, { signal });
+      if (Array.isArray(result) && result.every(isEntry)) return result;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "";
+      if (message.startsWith("HTTP 403:")) {
+        throw new RolePermissionReadError(`无权读取${source}，当前角色的权限尚未完整读取。`, false);
+      }
+      if (message.startsWith("HTTP 401:")) {
+        throw new RolePermissionReadError("登录已失效，请重新登录后读取角色权限。", false);
+      }
+    }
+    throw new RolePermissionReadError(`${source}读取失败，当前角色的权限尚未完整读取。`, true);
+  }
+
+  private async _loadPermModal(roleId: number) {
+    this.permReadController?.abort();
+    const controller = new AbortController();
+    this.permReadController = controller;
+    const { signal } = controller;
+    this.permReadError = null;
     this.permLoading = true;
     this.permReady = false;
-    this.showPermModal = true;
+    this.allPermissions = [];
+    this.checkedPermIds = new Set();
+    this.savedPermIds = new Set();
     try {
       const [allPerms, rolePerms] = await Promise.all([
-        apiClient.get<Permission[]>("/v1/rbac/permissions"),
-        apiClient.get<Permission[]>(`/v1/rbac/roles/${role.id}/permissions`),
+        this._readPermissionList("/v1/rbac/permissions", "权限清单", isPermissionOption, signal),
+        this._readPermissionList(`/v1/rbac/roles/${roleId}/permissions`, "角色授权", hasPermissionId, signal),
       ]);
-      if (request !== this.permLoadSequence) return;
+      if (signal.aborted) return;
       this.allPermissions = allPerms;
       const granted = new Set(rolePerms.map((p) => p.id));
       this.checkedPermIds = new Set(granted);
       this.savedPermIds = new Set(granted);
       this.permReady = true;
-    } catch (e: any) {
-      if (request !== this.permLoadSequence) return;
-      this.permError = `加载权限失败：${e.message}`;
+    } catch (error) {
+      if (signal.aborted) return;
+      this.permReadError = error instanceof RolePermissionReadError
+        ? error
+        : new RolePermissionReadError("加载权限失败，当前角色的权限尚未完整读取。", true);
     } finally {
-      if (request === this.permLoadSequence) this.permLoading = false;
+      if (!signal.aborted) this.permLoading = false;
     }
+  }
+
+  private _retryPermLoad(event: Event) {
+    const roleId = this.permRoleId;
+    if (roleId === null || this.permLoading || this.permSaving || !this.permReadError?.retryable) return;
+    return retryReadWithFocus(this, event, () => this._loadPermModal(roleId), "summary");
+  }
+
+  override disconnectedCallback() {
+    this.permReadController?.abort();
+    super.disconnectedCallback();
   }
 
   private _closePermModal() {
     if (this.permSaving) return;
-    ++this.permLoadSequence;
+    this.permReadController?.abort();
+    this.permReadController = undefined;
     this.permLoading = false;
     this.permReady = false;
     this.showPermModal = false;
@@ -349,6 +421,7 @@ export class RoleManagementTab extends LitElement {
     this.allPermissions = [];
     this.checkedPermIds = new Set();
     this.savedPermIds = new Set();
+    this.permReadError = null;
     this.permError = null;
   }
 
@@ -405,8 +478,8 @@ export class RoleManagementTab extends LitElement {
     }
   }
 
-  private _groupByResource(permissions: Permission[]): Map<string, Permission[]> {
-    const grouped = new Map<string, Permission[]>();
+  private _groupByResource(permissions: PermissionOption[]): Map<string, PermissionOption[]> {
+    const grouped = new Map<string, PermissionOption[]>();
     for (const p of permissions) {
       const list = grouped.get(p.resource) || [];
       list.push(p);
@@ -507,43 +580,18 @@ export class RoleManagementTab extends LitElement {
         ${this.permError
           ? html`<div class="save-error">${this.permError}</div>`
           : ""}
-        ${this.permLoading
-          ? html`<app-empty-state title="加载中..."></app-empty-state>`
-          : this.allPermissions.length === 0
-            ? html`<app-empty-state title="暂无权限数据"></app-empty-state>`
-            : html`
-                ${[...this._groupByResource(this.allPermissions).entries()].map(
-                  ([resource, perms]) => html`
-                    <details class="perm-group">
-                      <summary>
-                        ${resource}
-                        <app-badge variant="muted"
-                          >已选 ${this._permCountForResource(resource)}/${perms.length}</app-badge
-                        >
-                      </summary>
-                      <div class="perm-group-content">
-                        ${perms.map(
-                          (p) => html`
-                            <div class="perm-checkbox">
-                              <input
-                                type="checkbox"
-                                .checked=${this.checkedPermIds.has(p.id)}
-                                ?disabled=${this.permSaving || !this.permReady}
-                                @change=${() => this._togglePerm(p.id)}
-                                id="perm-${p.id}"
-                              />
-                              <label for="perm-${p.id}">
-                                <div>${p.name}</div>
-                                <div class="perm-code">${p.code}</div>
-                              </label>
-                            </div>
-                          `
-                        )}
-                      </div>
-                    </details>
-                  `
-                )}
-              `}
+        <div data-read-results aria-busy=${String(this.permLoading)} tabindex="-1">
+          ${this.permLoading
+            ? html`<app-empty-state role="status" title="正在读取角色权限…"></app-empty-state>`
+            : this.permReadError
+              ? html`
+                  <div class="save-error" role="alert">${this.permReadError.message}</div>
+                  ${this.permReadError.retryable ? html`
+                    <button type="button" class="btn btn-refresh" data-read-retry @click=${this._retryPermLoad}>重试读取</button>
+                  ` : nothing}
+                `
+              : this._renderPermOptions()}
+        </div>
         <div slot="footer">
           <button class="btn" ?disabled=${this.permSaving} @click=${this._closePermModal}>取消</button>
           <button
@@ -555,6 +603,45 @@ export class RoleManagementTab extends LitElement {
           </button>
         </div>
       </app-dialog>
+    `;
+  }
+
+  private _renderPermOptions() {
+    if (this.allPermissions.length === 0) {
+      return html`<app-empty-state title="暂无权限数据"></app-empty-state>`;
+    }
+    return html`
+      ${[...this._groupByResource(this.allPermissions).entries()].map(
+        ([resource, perms]) => html`
+          <details class="perm-group">
+            <summary>
+              ${resource}
+              <app-badge variant="muted"
+                >已选 ${this._permCountForResource(resource)}/${perms.length}</app-badge
+              >
+            </summary>
+            <div class="perm-group-content">
+              ${perms.map(
+                (p) => html`
+                  <div class="perm-checkbox">
+                    <input
+                      type="checkbox"
+                      .checked=${this.checkedPermIds.has(p.id)}
+                      ?disabled=${this.permSaving || !this.permReady}
+                      @change=${() => this._togglePerm(p.id)}
+                      id="perm-${p.id}"
+                    />
+                    <label for="perm-${p.id}">
+                      <div>${p.name}</div>
+                      <div class="perm-code">${p.code}</div>
+                    </label>
+                  </div>
+                `
+              )}
+            </div>
+          </details>
+        `
+      )}
     `;
   }
 }
