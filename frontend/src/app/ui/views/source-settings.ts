@@ -44,6 +44,7 @@ export class SourceSettings extends LitElement {
     .action-row { display:grid; grid-template-columns:minmax(120px, 180px) minmax(0, 1fr); column-gap:var(--space-lg); margin-top:var(--space-md); }
     .action-content { grid-column:2; display:flex; align-items:center; gap:var(--space-sm); flex-wrap:wrap; }
     .action-content .btn, .action-content .btn-primary { min-height:40px; }
+    .action-scope { flex-basis:100%; margin:0; color:var(--muted); font-size:var(--text-sm); }
     .sync-status { color: var(--muted); font-size: var(--text-sm); margin: var(--space-sm) 0 0; }
     source-manifest { margin-top:var(--space-xl); }
     .heading { display:flex; align-items:center; justify-content:space-between; gap:var(--space-lg); }
@@ -141,7 +142,10 @@ export class SourceSettings extends LitElement {
         ${this.config.provider !== 'github' ? html`<app-form-field label="Git 用户名" hint="PAT 留空使用 oauth2；Deploy Token 请填写其用户名。" .inline=${true}><input aria-label="Git 用户名" .value=${this.config.gitUsername ?? ''} .disabled=${!this.editable || this.busy || this.loading} @input=${(e: Event) => { this.config = { ...this.config, gitUsername: (e.target as HTMLInputElement).value || undefined }; }}></app-form-field>` : nothing}
         <app-form-field label="允许的源码路径" hint="留空同步全部源码。疑似敏感内容仅提示并保留；较大文件按片段读取，快照总容量上限为 32MiB。" .inline=${true}><textarea aria-label="允许的源码路径" title="每行一个目录前缀，并以 / 结尾" placeholder="每行一个目录，例如：&#10;apps/db-ops-api/src/&#10;frontend/src/" .disabled=${!this.editable || this.busy || this.loading} .value=${this.config.allowedPaths.join('\n')} @input=${(e: Event) => { this.config = { ...this.config, allowedPaths: (e.target as HTMLTextAreaElement).value.split('\n') }; }}></textarea></app-form-field>
         <app-form-field label="模型读取" hint="开启后，Agent 可读取允许目录内的已同步源码片段，包括带敏感内容提示的原文；Git 访问令牌不会提供给模型。" .inline=${true}><label class="permission-control" for="allow-model-content"><input aria-label="允许模型读取源码内容" id="allow-model-content" type="checkbox" .checked=${this.config.allowModelContent} .disabled=${!this.editable || this.busy || this.loading} @change=${(e: Event) => { this.config = { ...this.config, allowModelContent: (e.target as HTMLInputElement).checked }; }}><strong>允许模型读取源码内容</strong></label></app-form-field>
-        ${this.editable ? html`<div class="action-row"><div class="action-content"><button class="btn-primary" type="submit" .disabled=${this.busy || this.loading}>${icons.save} 保存配置</button></div></div>` : nothing}
+        ${this.editable ? html`<div class="action-row"><div class="action-content">
+          <button class="btn-primary" type="submit" aria-describedby="source-save-scope" .disabled=${this.busy || this.loading}>${icons.save} 保存配置</button>
+          <p id="source-save-scope" class="action-scope">保存仓库、版本、路径和模型读取规则等平台配置。同步需在下方单独启动。</p>
+        </div></div>` : nothing}
       </form>
       ${this.editable ? html`<section class="sync-section">
         <h2>同步源码</h2>
@@ -149,7 +153,11 @@ export class SourceSettings extends LitElement {
         <app-form-field label="保留令牌" .inline=${true}><label class="permission-control"><input aria-label="保留同步令牌" type="checkbox" .checked=${this.retainToken} .disabled=${this.busy || this.loading} @change=${(e: Event) => { this.retainToken = (e.target as HTMLInputElement).checked; }}>保留同步令牌（同步成功后加密保存）</label></app-form-field>
         <div class="action-row"><div class="action-content"><span role="status">${this.configChanged ? '配置已修改，请先保存配置再操作令牌或同步' : this.credential.error ? this.credentialError(this.credential.error) : this.credential.hasSavedToken ? '当前仓库已保存令牌（尚未验证可用）' : this.credential.hasStoredToken ? '其他仓库已保存令牌，当前仓库不会使用；可删除或输入新令牌替换' : '当前仓库未保存令牌'}</span></div></div>
         <div class="action-row"><div class="action-content"><button type="button" class="btn" data-action="save-token" .disabled=${this.busy || this.loading || this.configChanged || !this.token} @click=${() => this.manageCredential()}>${this.credential.hasSavedToken ? '替换已保存令牌' : '保存令牌'}</button><button type="button" class="btn-ghost" data-action="delete-token" .disabled=${this.busy || this.loading || this.configChanged || !(this.credential.hasStoredToken ?? this.credential.hasSavedToken)} @click=${() => this.manageCredential(true)}>删除已保存令牌</button></div></div>
-        <div class="action-row"><div class="action-content"><button type="button" class="btn" data-action="sync" .disabled=${this.busy || this.loading || this.configChanged || (!this.token && !this.credential.hasSavedToken)} @click=${(e: Event) => { e.preventDefault(); void this.sync(); }}>${this.busy ? icons['loader'] : icons['refresh-cw']} ${this.busy ? '同步中…' : '同步源码'}</button>${!this.token && !this.credential.hasSavedToken && !this.busy ? html`<span class="sync-status">请输入令牌后开始同步</span>` : nothing}</div></div>
+        <div class="action-row"><div class="action-content">
+          <button type="button" class="btn" data-action="sync" aria-describedby="source-sync-scope" .disabled=${this.busy || this.loading || this.configChanged || (!this.token && !this.credential.hasSavedToken)} @click=${this.sync}>${this.syncStatus ? icons['loader'] : icons['refresh-cw']} ${this.syncStatus ? '同步中…' : '同步源码'}</button>
+          ${!this.token && !this.credential.hasSavedToken && !this.busy ? html`<span class="sync-status">请输入令牌后开始同步</span>` : nothing}
+          <p id="source-sync-scope" class="action-scope">按已保存的配置连接代码托管平台，读取指定版本并生成平台源码快照。</p>
+        </div></div>
         ${this.syncStatus ? html`<div class="action-row"><p class="action-content sync-status" role="status" aria-live="polite">${this.syncStatus}</p></div>` : nothing}
       </section>` : nothing}
       </details><source-manifest @source-view-change=${this.sourceViewChanged} .revision=${this.revision}></source-manifest>`;

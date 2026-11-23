@@ -587,6 +587,12 @@ export const zh_CN: TranslationMap = {
     zhCN: "简体中文",
   },
   appearance: {
+    groups: {
+      display: "界面显示",
+      navigation: "首页与导航",
+      data: "列表与时间",
+      notifications: "通知与对话",
+    },
     description: "自定义界面主题、颜色、字体密度等视觉设置",
     pageSizeRows: "{count} 条",
     unavailablePage: "原选页面已不可用",

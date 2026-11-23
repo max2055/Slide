@@ -3528,12 +3528,11 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
           enabled: data.enabled !== undefined ? data.enabled : true,
         });
         if (result.success) {
-          reply.send({ id: result.channelId, message: '创建成功' });
-        } else {
-          reply.code(400).send({ error: result.error });
+          return reply.send({ id: result.channelId, message: '创建成功' });
         }
-      } catch (error: any) {
-        reply.code(500).send({ error: error.message });
+        return reply.code(400).send({ error: result.error });
+      } catch {
+        return reply.code(500).send({ error: 'INTERNAL_ERROR' });
       }
     }
   });

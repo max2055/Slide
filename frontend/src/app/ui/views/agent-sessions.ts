@@ -74,8 +74,8 @@ export class AgentSessionsPage extends AgentListPage<Session> {
       if (generation === this.messageGeneration) this.messagesLoading = false;
     }
   }
-  async deleteSession(session: Session) {
-    if (this.deleting || !confirm(`确定删除会话“${title(session)}”？`)) return;
+  async deleteSession(session: Session, trigger: HTMLButtonElement) {
+    if (this.deleting || !confirm(`确定删除会话“${title(session)}”及其消息历史？此操作无法撤销。`)) return;
     const generation = this.generation;
     this.deleting = session.key;
     try {
@@ -88,7 +88,14 @@ export class AgentSessionsPage extends AgentListPage<Session> {
         if (error instanceof AgentListError && [401, 403].includes(error.status)) { this.items = []; this.error = listError(error, this.subject); this.clearDetails(); }
         showToast(listError(error, '删除会话'), 'error');
       }
-    } finally { this.deleting = null; }
+    } finally {
+      this.deleting = null;
+      await this.updateComplete;
+      if (this.isConnected && document.activeElement === document.body) {
+        const target = trigger.isConnected ? trigger : this.renderRoot.querySelector<HTMLButtonElement>('.btn-refresh');
+        target?.focus();
+      }
+    }
   }
   render() {
     const selected = this.selected;
@@ -100,7 +107,10 @@ export class AgentSessionsPage extends AgentListPage<Session> {
         columns: [{ key: 'name', label: '会话与摘要', width: '43%' }, { key: 'status', label: '状态', width: '16%' }, { key: 'updated', label: '最近活跃', width: '22%' }, { key: 'actions', label: '操作', width: '19%' }],
         row: s => ({ name: html`<span class="entity" title=${title(s)}>${title(s)}</span><div class="sub summary">${s.message_count ?? 0} 条消息 · ${s.instance_id == null ? '未关联资源' : `资源 #${s.instance_id}`}</div>`,
           status: html`<app-badge variant=${s.status === 'active' ? 'ok' : s.status === 'failed' ? 'warn' : 'muted'}>${status(s)}</app-badge>`, updated: time(s.updatedAt),
-          actions: html`<div class="actions"><button class="btn btn-ghost" aria-label=${`查看 ${title(s)} 详情`} @click=${() => this.viewMessages(s)}>查看详情</button><button class="btn btn-ghost" ?disabled=${!!this.deleting} aria-label=${`删除 ${title(s)}`} @click=${() => this.deleteSession(s)}>${this.deleting === s.key ? '删除中…' : '删除'}</button></div>` }) })}
+          actions: html`<div class="actions">
+            <button type="button" class="btn-ghost btn-sm" aria-label=${`查看 ${title(s)} 详情`} @click=${() => this.viewMessages(s)}>查看详情</button>
+            <button type="button" class="btn-sm danger" ?disabled=${!!this.deleting} aria-label=${`删除 ${title(s)}`} @click=${(event: Event) => this.deleteSession(s, event.currentTarget as HTMLButtonElement)}>${this.deleting === s.key ? '删除中…' : '删除'}</button>
+          </div>` }) })}
       <app-dialog .open=${!!selected} size="xl" title="会话详情" @app-dialog-close=${this.clearDetails}>
         ${selected ? html`<div class="detail"><h2>${title(selected)}</h2><dl><dt>状态</dt><dd>${status(selected)}</dd><dt>最近活跃</dt><dd>${time(selected.updatedAt)}</dd><dt>完整会话标识</dt><dd>${selected.key}</dd><dt>资源标识</dt><dd>${selected.instance_id ?? '未关联'}</dd></dl><details><summary>完整技术信息</summary><pre>${JSON.stringify(selected, null, 2)}</pre></details>
           <h3>消息历史</h3><p class="caption">已加载 ${this.messages.length} 条${this.nextBefore !== null ? '，还有更早消息' : this.messagesLoading || this.messagesError ? '' : ' · 已加载全部消息'}。</p>

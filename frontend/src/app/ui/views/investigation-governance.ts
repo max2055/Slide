@@ -1,5 +1,5 @@
 import { sharedFieldStyles } from "../../styles/shared-field-styles.ts";
-import { LitElement, html, nothing, type PropertyValues } from 'lit';
+import { LitElement, css, html, nothing, type PropertyValues } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 import { authFetch } from '../../../api/index.ts';
 import type { InvestigationBudgetResponse, InvestigationPoliciesResponse, InvestigationUsageResponse, InvestigationEffectiveBudgetView } from '../../../api/generated/public-api.ts';
@@ -87,6 +87,27 @@ const blockerLabels: Record<PolicyBlocker['code'], string> = {
   BUDGET_QUOTA_REACHED: '当天额度、频次或成本余额不足以容纳下一次自动预留',
   BUDGET_CAPACITY_REACHED: '当前并发快照没有可用槽位（瞬时事实）',
   ENTRY_NOT_OBSERVED: '尚未观察到持久自动入口证据，不能确认已接线',
+};
+const blockerSections: Record<PolicyBlocker['code'], string> = {
+  MASTER_CONFIG_INVALID: 'policy-switches',
+  MASTER_SWITCH_DISABLED: 'policy-switches',
+  INVESTIGATION_SWITCH_DISABLED: 'policy-switches',
+  SERVICE_IDENTITY_NOT_CONFIGURED: 'policy-identity',
+  SERVICE_IDENTITY_NOT_FOUND: 'policy-identity',
+  SERVICE_IDENTITY_INVALID: 'policy-identity',
+  SERVICE_IDENTITY_DISABLED: 'policy-identity',
+  SERVICE_PERMISSIONS_MISSING: 'policy-identity',
+  RESOURCE_SCOPE_NOT_CONFIGURED: 'policy-coverage',
+  RESOURCE_SCOPE_INVALID: 'policy-coverage',
+  RESOURCE_UNAVAILABLE: 'policy-coverage',
+  RESOURCE_PERMISSION_MISSING: 'policy-coverage',
+  RESOURCE_INSTANCE_SCOPE_MISSING: 'policy-identity',
+  BUDGET_UNAVAILABLE: 'policy-budget',
+  BUDGET_UNINITIALIZED: 'policy-budget',
+  BUDGET_CONFLICT: 'policy-budget',
+  BUDGET_QUOTA_REACHED: 'policy-budget',
+  BUDGET_CAPACITY_REACHED: 'policy-budget',
+  ENTRY_NOT_OBSERVED: 'policy-entry',
 };
 const remediationLabels: Record<PolicyBlocker['remediation'], string> = {
   analysis_settings: '前往自动分析设置', budget_settings: '前往有效预算', user_permissions: '前往用户与权限',
@@ -355,7 +376,11 @@ export class InvestigationGovernancePage extends LitElement {
         @input=${(event: Event) => this.updateBudgetField(key, event)} />
     </app-form-field>`;
   }
-  static styles = [sharedFieldStyles, sharedBtnStyles, workspaceStyles, settingsEditorActionsStyles];
+  static styles = [sharedFieldStyles, sharedBtnStyles, workspaceStyles, settingsEditorActionsStyles, css`
+    .policy-location { white-space: normal; text-align: start; }
+    .policy-section-title { scroll-margin-block-start: var(--space-lg); }
+    .policy-section-title:focus { outline: 2px solid var(--accent); outline-offset: 3px; }
+  `];
   render() {
     return html`<div class="page-header"><div><h1>${titles[this.kind]}</h1><p class="muted small">${{policies:'确认配置、接入与自动触发状态。',budget:'核对当前限额与持久冻结配置，不推算剩余额度。',usage:'查看已知结算、保留额度及未知用量。'}[this.kind]}</p></div><button aria-busy=${String(this.loading)} class="btn btn-refresh" ?disabled=${this.loading || this.budgetSaving || !this.allowed} @click=${() => this.load()}>刷新${titles[this.kind]}</button></div>
       ${this.loading ? html`<app-card><div class="state-box" role="status">正在加载调查设置…</div></app-card>`
@@ -376,6 +401,12 @@ export class InvestigationGovernancePage extends LitElement {
       ? html`<button class="link" data-remediation=${blocker.remediation} @click=${() => this.openRemediation(blocker.remediation)}>${label} →</button>`
       : html`<span class="caption">${label}</span>`;
   }
+  private locatePolicySection(id: string) {
+    const heading = this.shadowRoot?.getElementById(id);
+    if (!heading) return;
+    heading.focus({ preventScroll: true });
+    heading.scrollIntoView({ block: 'start' });
+  }
   private renderPolicies(facts: PolicyFacts) {
     const master = facts.masterSwitch, investigation = facts.investigationSwitch, identity = facts.serviceIdentity;
     const available = facts.automaticAnalysisStatus === 'available';
@@ -389,9 +420,18 @@ export class InvestigationGovernancePage extends LitElement {
         ${stat('自动分析', headline, headlineHint)}
       </div>
       ${facts.blockers.length
-        ? html`<div class="notice" role="status"><div><strong>${facts.automaticAnalysisStatus === 'unverified' ? '自动分析待验证入口' : '自动分析尚不可用'}</strong><ul class="rules">${facts.blockers.map(blocker => html`<li data-blocker=${blocker.code}>${blockerLabels[blocker.code]} · ${this.remediationAction(blocker)}</li>`)}</ul></div></div>`
+        ? html`<div class="notice"><div>
+            <strong role="status">${facts.automaticAnalysisStatus === 'unverified' ? '自动分析待验证入口' : '自动分析尚不可用'}</strong>
+            <ul class="rules">${facts.blockers.map(blocker => {
+              const section = blockerSections[blocker.code];
+              return html`<li data-blocker=${blocker.code}>
+                <button type="button" class="btn-ghost btn-sm policy-location" aria-controls=${section}
+                  @click=${() => this.locatePolicySection(section)}>${blockerLabels[blocker.code]} · 定位区段</button>
+                ${this.remediationAction(blocker)}
+              </li>`;
+            })}</ul></div></div>`
         : html`<div class="notice neutral" role="status"><div><strong>${headline}</strong>配置、入口、权限与预算均为当前读取事实；历史回执与曾成功的执行都不代表下次一定成功。</div></div>`}
-      <div class="section-head"><h2>总开关与调查开关</h2><span class="caption">两个开关分别控制不同入口，必须同时开启</span></div>
+      <div class="section-head"><h2 id="policy-switches" class="policy-section-title" tabindex="-1">总开关与调查开关</h2><span class="caption">两个开关分别控制不同入口，必须同时开启</span></div>
       <app-card><div class="definitions-grid">
         <div><h3>AI 总开关</h3>${badge(master.status === 'invalid' ? '配置无效' : master.enabled ? '已开启' : '已关闭', master.status === 'invalid' ? 'danger' : master.enabled ? 'ok' : 'muted')}
           ${pairs([['来源', master.source === 'system_config' ? 'system_config.auto_analysis_config' : '内置默认值（未保存配置）'],
@@ -403,7 +443,7 @@ export class InvestigationGovernancePage extends LitElement {
             ['手动入口', investigation.manualEnabled ? '已开启' : '未开启'], ['遗留桥接', investigation.legacyEnabled ? '已开启' : '未开启']])}
           <p class="caption">由运维环境变量控制，修改后需重启服务；本页不提供写入。</p></div>
       </div></app-card>
-      <div class="section-head"><h2>专用服务身份</h2>${badge(identityLabels[identity.status], identity.status === 'ready' ? 'ok' : identity.status === 'not_configured' ? 'muted' : 'danger')}</div>
+      <div class="section-head"><h2 id="policy-identity" class="policy-section-title" tabindex="-1">专用服务身份</h2>${badge(identityLabels[identity.status], identity.status === 'ready' ? 'ok' : identity.status === 'not_configured' ? 'muted' : 'danger')}</div>
       <app-card><div class="definitions-grid"><div>
           <p class="caption">自动调查以专用只读服务主体执行，不借用当前管理员身份。${identity.status === 'ready' ? '已按当前数据库事实核验。' : '未就绪时不会代替执行。'}</p>
           ${pairs([['状态', identityLabels[identity.status]], ['必需权限', identity.permissionsSufficient ? '已具备' : identity.status === 'ready' ? '缺失' : '未知'],
@@ -412,7 +452,7 @@ export class InvestigationGovernancePage extends LitElement {
         </div><div><h3>处理路径</h3><p class="caption">专用身份与资源范围由部署环境配置；账号状态和权限在用户与权限中核验。</p>
           <button class="link" data-remediation="user_permissions" @click=${() => this.openRemediation('user_permissions')}>前往用户与权限 →</button></div>
       </div></app-card>
-      <div class="section-head"><div><h2>资源覆盖</h2><p class="caption">数据库、服务器、网络设备分别核验；固定策略名不扩展覆盖范围。</p></div></div>
+      <div class="section-head"><div><h2 id="policy-coverage" class="policy-section-title" tabindex="-1">资源覆盖</h2><p class="caption">数据库、服务器、网络设备分别核验；固定策略名不扩展覆盖范围。</p></div></div>
       <app-card .compact=${true}>${table([{ key: 'type', label: '资源类型', width: '18%' }, { key: 'status', label: '覆盖状态', width: '22%' },
         { key: 'configured', label: '已配置', width: '14%' }, { key: 'existing', label: '存在', width: '14%' },
         { key: 'permitted', label: '可授权访问', width: '16%' }, { key: 'permission', label: '类型权限', width: '16%' }],
@@ -420,7 +460,7 @@ export class InvestigationGovernancePage extends LitElement {
           status: badge(coverageStatusLabels[coverage.status], coverage.status === 'covered' ? 'ok' : coverage.status === 'partial' ? 'warn' : coverage.status === 'unavailable' ? 'danger' : 'muted'),
           configured: fmt(coverage.configuredCount), existing: fmt(coverage.existingCount), permitted: fmt(coverage.permittedCount),
           permission: coverage.typePermission ? '已具备' : '缺少' })))}</app-card>
-      <div class="section-head"><h2>自动入口接线</h2><span class="caption">只有当前配置范围内的持久自动接管证据才算接线</span></div>
+      <div class="section-head"><h2 id="policy-entry" class="policy-section-title" tabindex="-1">自动入口接线</h2><span class="caption">只有当前配置范围内的持久自动接管证据才算接线</span></div>
       <app-card><div class="definitions-grid"><div>
           ${badge(entryLabels[facts.entry.status], facts.entry.status === 'connected' ? 'ok' : facts.entry.status === 'unverified' ? 'warn' : 'muted')}
           ${pairs([['入口状态', entryLabels[facts.entry.status]], ['当前范围回执', `${fmt(facts.entry.observedReceiptCount)} 条`],
@@ -444,7 +484,7 @@ export class InvestigationGovernancePage extends LitElement {
           <p class="caption">最近状态 ${facts.execution.lastStatus ? executionLabels[facts.execution.lastStatus] : '无'} · ${facts.execution.lastAt ?? '无时间'}（终结取结束时间；待执行或执行中取受理/开始时间）</p></div>
         <div><h3>口径</h3><p class="caption">终态来自持久的调查 Run，工作流任务完成不代表调查成功；回执观察与执行结果互不替代：入口回执不等于执行，执行成功也不证明此刻的权限与预算仍充足。</p></div>
       </div></app-card>
-      <div class="section-head"><h2>预算与准入</h2>${badge(budgetLabels[facts.budget.status], facts.budget.status === 'matching' ? 'ok' : facts.budget.status === 'conflict' ? 'danger' : facts.budget.status === 'unavailable' ? 'danger' : 'warn')}</div>
+      <div class="section-head"><h2 id="policy-budget" class="policy-section-title" tabindex="-1">预算与准入</h2>${badge(budgetLabels[facts.budget.status], facts.budget.status === 'matching' ? 'ok' : facts.budget.status === 'conflict' ? 'danger' : facts.budget.status === 'unavailable' ? 'danger' : 'warn')}</div>
       <app-card><div class="definitions-grid"><div>${pairs([['冻结策略', budgetLabels[facts.budget.status]],
             ['下一次自动预留', facts.budget.status !== 'matching' ? '无法判断' : facts.budget.quotaReached || facts.budget.capacityReached ? '当前会被拒绝' : '当前可容纳'],
             ['每次预留 Token', fmt(facts.budget.reserveTokens)],

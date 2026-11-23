@@ -52,12 +52,13 @@ export class BrandingSettings extends LitElement {
     .preview p { font-size: 12px; color: var(--muted); }
     .save-footer { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: var(--space-md); width: 100%; }
     .actions { display: flex; flex-wrap: wrap; gap: var(--space-sm); }
+    .reload-action { flex: 0 1 270px; text-align: right; }
     .feedback { margin: 0 0 var(--space-lg); padding: var(--space-md); font-size: 14px; line-height: 1.6; border-radius: var(--radius-sm); overflow-wrap: anywhere; }
     .feedback.error { color: var(--danger); background: var(--danger-subtle); }
     .feedback.success { color: var(--ok); background: var(--ok-subtle); }
     .loading { color: var(--muted); padding: var(--space-lg) 0; }
     @media (max-width: 850px) { .form-group { grid-template-columns: minmax(0, 1fr); gap: var(--space-md); } }
-    @media (max-width: 600px) { .page-header { flex-wrap: wrap; } }
+    @media (max-width: 600px) { .page-header { flex-wrap: wrap; } .reload-action { text-align: left; } }
   `];
 
   override connectedCallback() {
@@ -159,7 +160,10 @@ export class BrandingSettings extends LitElement {
     return html`
       <div class="page-header">
         <div><h1>品牌设置</h1><p>统一产品标识与命令环境，全部修改一起保存。</p></div>
-        <button class="btn" ?disabled=${this.loading || this.saving || (this.dirty && !this.uncertain)} @click=${this._loadFromApi}>${this.loading ? "读取中…" : "重新读取"}</button>
+        <div class="reload-action">
+          <button type="button" class="btn btn-refresh" aria-describedby="branding-reload-scope" ?disabled=${this.loading || this.saving || (this.dirty && !this.uncertain)} @click=${this._loadFromApi}>${this.loading ? "读取中…" : "重新读取"}</button>
+          <p id="branding-reload-scope" class="group-description">${this.uncertain ? "用服务器当前配置替换表单内容，核对上次保存是否生效。" : this.dirty ? "请先保存或撤销修改，再从服务器读取品牌配置。" : "从服务器读取当前平台品牌配置。此操作只更新本页表单。"}</p>
+        </div>
       </div>
       ${this.loadError ? html`<p class="feedback error" role="alert">${this.loadError}</p>` : ""}
       ${this.message ? html`<p class="feedback ${this.messageType}" role=${this.messageType === "error" ? "alert" : "status"}>${this.message}</p>` : ""}
@@ -190,10 +194,10 @@ export class BrandingSettings extends LitElement {
             </div>
           </section>
           <div slot="footer" class="save-footer">
-            <div><div class="draft-status" role="status">${this.uncertain ? "保存结果待核对" : this.dirty ? "有未保存的修改" : "没有未保存的修改"}</div><p class="save-scope">保存范围：产品名称、CLI 名称、环境变量前缀、数据目录。</p></div>
+            <div><div class="draft-status" role="status">${this.uncertain ? "保存结果待核对" : this.dirty ? "有未保存的修改" : "没有未保存的修改"}</div><p id="branding-save-scope" class="save-scope">保存将更新全平台的产品名称、CLI 名称、环境变量前缀和数据目录配置。</p></div>
             <div class="actions">
               <button class="btn" ?disabled=${disabled || !this.dirty} @click=${() => { if (this.saved) this.apply(this.saved); this.message = ""; this.submitted = false; }}>撤销修改</button>
-              <button class="btn-primary" ?disabled=${disabled || !this.dirty} @click=${this._save}>${this.saving ? "保存中…" : "保存品牌"}</button>
+              <button type="button" class="btn-primary" aria-describedby="branding-save-scope" ?disabled=${disabled || !this.dirty} @click=${this._save}>${this.saving ? "保存中…" : "保存品牌"}</button>
             </div>
           </div>
         </app-card>

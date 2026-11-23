@@ -19,6 +19,7 @@ import { databaseLogService } from './database-log-service.js';
 import { dbConnection } from './db-connection.js';
 import { instanceDatabaseService } from './instance-database-service.js';
 import { PlatformUnavailableError } from './lifecycle/platform-unavailable.js';
+import { validateNotificationChannelConfig } from './notification-channel-config.js';
 import { publicLLMProvider } from './llm/public-provider.js';
 import { instanceAccessLifecycle } from './resources/instance-access-lifecycle.js';
 import { registerResourceIdentityRoutes } from './resources/resource-identity-routes.js';
@@ -174,6 +175,46 @@ it.each([
     expect(response.headers.get('content-type')).toMatch(/^application\/json/);
     expect(await response.json()).toEqual(expected);
     expect(send).toHaveBeenCalledExactlyOnceWith(expected);
+  });
+});
+
+it.each([
+  ['created', 200, { id: 42, message: '创建成功' }],
+  ['rejected', 400, { error: 'NOTIFICATION_CHANNEL_CREATE_FAILED' }],
+  ['exception', 500, { error: 'INTERNAL_ERROR' }],
+] as const)('MAX-731 notification creation completes one JSON reply when %s', async (outcome, status, body) => {
+  const { fastify, send } = await setup();
+  fastify.addHook('preSerialization', async (_request, _reply, payload) => {
+    await new Promise<void>(resolve => setImmediate(resolve));
+    return payload;
+  });
+  const createChannel = vi.fn(async () => {
+    if (outcome === 'exception') throw new Error('synthetic private storage diagnostic');
+    return outcome === 'created'
+      ? { success: true, channelId: 42 }
+      : { success: false, error: 'NOTIFICATION_CHANNEL_CREATE_FAILED' };
+  });
+  registerInline({
+    fastify, requirePermission, validateNotificationChannelConfig,
+    notificationDatabaseService: { createChannel },
+    verifyToken: async (request: FastifyRequest) => {
+      Object.assign(request, { user: { ...actor, permissions: ['admin:*'] } });
+    },
+  }, "  fastify.post('/api/notification/channels',");
+  await withBoundedHttp(fastify, async signal => {
+    await fastify.listen({ host: '127.0.0.1', port: 0 });
+    const response = await fetch(fastify.listeningOrigin + '/api/notification/channels', {
+      method: 'POST', signal, headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ name: '邮件告警', type: 'email', config: {
+        smtp_host: 'smtp.example.test', smtp_port: 587, smtp_username: 'fixture',
+        password: randomUUID(), from: 'sender@example.test', to: 'recipient@example.test',
+      } }),
+    });
+    expect(response.status).toBe(status);
+    expect(response.headers.get('content-type')).toMatch(/^application\/json/);
+    expect(await response.json()).toEqual(body);
+    expect(send).toHaveBeenCalledExactlyOnceWith(body);
+    expect(createChannel).toHaveBeenCalledTimes(1);
   });
 });
 
