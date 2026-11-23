@@ -67,6 +67,96 @@ test('MAX-429 newest selection owns detail data with reversed responses', async 
   await expect(h.agent.locator('.dialog-grid')).not.toContainText('stale-detail');
 });
 
+test('MAX-729 opens only the named counterpart outside the list and restores row focus', async ({ page }) => {
+  const h = await fixture(page);
+  const first = { ...toolRecord(1), relatedRecordId: 101 };
+  const counterpart = { ...first, id: 101, phase: 'result', result: { success: false, error: '合成回执' }, relatedRecordId: 1 };
+  const other = { ...first, id: 2, relatedRecordId: null };
+  const trigger = h.agent.getByRole('button', { name: '查看详情' }).first();
+  await trigger.press('Enter');
+  await h.reply('/agent/security/audit/1', 0, { record: first });
+  const dialog = h.agent.locator('app-dialog');
+  await expect(dialog.getByRole('dialog')).toBeVisible();
+  await dialog.getByRole('button', { name: '查看执行结果 #101' }).press('Enter');
+  await h.take('/agent/security/audit/101');
+  await expect(dialog.getByRole('status')).toContainText('#101');
+  await expect(dialog).not.toContainText('合成回执');
+  await h.reply('/agent/security/audit/101', 0, { record: counterpart });
+  await expect(dialog.getByText('#101 · tool-1')).toBeFocused();
+  await expect(dialog.locator('.detail-row').filter({ hasText: '工具回执' })).toContainText('失败');
+  await expect(dialog.locator('.detail-row').filter({ hasText: '授权判定' })).toContainText('允许');
+  await expect(dialog).toContainText('合成回执');
+  await dialog.getByRole('button', { name: '查看权限决策 #1' }).press('Enter');
+  await h.reply('/agent/security/audit/1', 1, { record: first });
+  await expect(dialog).not.toContainText('执行回执（已脱敏）');
+  await page.keyboard.press('Escape');
+  await expect(trigger).toBeFocused();
+  await h.agent.getByRole('button', { name: '查看详情' }).nth(1).click();
+  await h.reply('/agent/security/audit/2', 0, { record: other });
+  await expect(dialog).toContainText('无法确认关联');
+  await expect(dialog.getByRole('button', { name: /查看执行结果/ })).toHaveCount(0);
+});
+
+test('MAX-729 queries result and category together, preserves them on close, and resets to all requests', async ({ page }) => {
+  const h = await fixture(page);
+  const failed = { ...systemRecord(3), result: 'failure', action: 'PATCH /api/example/:id' };
+  const background = { ...systemRecord(4), action: 'POST /api/device/register' };
+  await h.system.getByRole('combobox', { name: '操作结果' }).selectOption('failure');
+  await h.system.getByRole('combobox', { name: '请求类别' }).selectOption('business');
+  await h.system.getByRole('button', { name: '查询', exact: true }).press('Enter');
+  const filtered = await h.take('/audit/logs', 1);
+  expect(Object.fromEntries(filtered.url.searchParams)).toMatchObject({ result: 'failure', requestCategory: 'business', offset: '0' });
+  await h.reply('/audit/logs', 1, { items: [failed], total: 1 });
+  const trigger = h.system.getByRole('button', { name: '查看详情' });
+  await trigger.press('Enter');
+  await expect(h.system.locator('app-dialog .dialog-grid')).toContainText(failed.action);
+  await h.system.getByRole('button', { name: '返回列表' }).press('Enter');
+  await expect(trigger).toBeFocused();
+  await expect(h.system.getByRole('combobox', { name: '操作结果' })).toHaveValue('failure');
+  await expect(h.system.getByRole('combobox', { name: '请求类别' })).toHaveValue('business');
+  await h.system.getByRole('button', { name: '重置' }).press('Enter');
+  const reset = await h.take('/audit/logs', 2);
+  expect(Object.fromEntries(reset.url.searchParams)).toEqual({ limit: '25', offset: '0' });
+  await h.reply('/audit/logs', 2, { items: [background, failed], total: 2 });
+  await expect(h.system.locator('tbody')).toContainText(background.action);
+});
+
+test('MAX-729 pages and refreshes applied filters while edits wait for query', async ({ page }) => {
+  const h = await fixture(page);
+  const result = h.system.getByRole('combobox', { name: '操作结果' });
+  const category = h.system.getByRole('combobox', { name: '请求类别' });
+  const next = h.system.getByRole('button', { name: '下一页' });
+  const query = h.system.getByRole('button', { name: '查询', exact: true });
+  const refresh = h.system.getByRole('button', { name: '刷新', exact: true });
+  const pagination = h.system.locator('.pagination-info');
+
+  await result.selectOption('failure');
+  await next.click();
+  expect(Object.fromEntries((await h.take('/audit/logs', 1)).url.searchParams)).toEqual({ limit: '25', offset: '25' });
+  await h.reply('/audit/logs', 1, { items: [systemRecord(26)], total: 60 });
+  await expect(pagination).toHaveText('26-50 / 60');
+  await query.click();
+  expect(Object.fromEntries((await h.take('/audit/logs', 2)).url.searchParams)).toEqual({ limit: '25', offset: '0', result: 'failure' });
+  await h.reply('/audit/logs', 2, { items: [{ ...systemRecord(1), result: 'failure' }], total: 26 });
+
+  await category.selectOption('background');
+  await next.click();
+  expect(Object.fromEntries((await h.take('/audit/logs', 3)).url.searchParams)).toEqual({ limit: '25', offset: '25', result: 'failure' });
+  await h.reply('/audit/logs', 3, { items: [{ ...systemRecord(26), result: 'failure' }], total: 26 });
+  await expect(pagination).toHaveText('26-26 / 26');
+  await refresh.click();
+  expect(Object.fromEntries((await h.take('/audit/logs', 4)).url.searchParams)).toEqual({ limit: '25', offset: '25', result: 'failure' });
+  await h.reply('/audit/logs', 4, { items: [], total: 25 });
+  expect(Object.fromEntries((await h.take('/audit/logs', 5)).url.searchParams)).toEqual({ limit: '25', offset: '0', result: 'failure' });
+  await h.reply('/audit/logs', 5, { items: [{ ...systemRecord(1), result: 'failure' }], total: 25 });
+  await expect(pagination).toHaveText('1-25 / 25');
+  await query.click();
+  expect(Object.fromEntries((await h.take('/audit/logs', 6)).url.searchParams)).toEqual({ limit: '25', offset: '0', result: 'failure', requestCategory: 'background' });
+  await h.reply('/audit/logs', 6, { items: [{ ...systemRecord(2), result: 'failure' }], total: 1 });
+  await expect(h.system.locator('tbody')).toContainText('action-2');
+  await expect(pagination).toHaveText('1-1 / 1');
+});
+
 for (const agent of [true, false]) test(`${agent ? 'MAX-429' : 'MAX-433'} pagination, filter, stale failure and recovery in one session`, async ({ page }) => {
   const h = await fixture(page); const view = agent ? h.agent : h.system; const path = agent ? '/agent/security/audit' : '/audit/logs';
   const result = (id: number) => agent ? { records: [toolRecord(id)], nextCursor: 50 } : { items: [systemRecord(id)], total: 75 };
@@ -121,11 +211,23 @@ test('MAX-429 stale detail failure preserves the newer loading dialog and retry 
   await expect(h.agent.getByRole('dialog')).toBeVisible();
   await expect(h.agent.locator('.dialog-grid')).toContainText('#2');
   await expect(h.agent.locator('.dialog-grid')).toContainText('加载中');
-  await h.reply('/agent/security/audit/2', 0, { error: 'current' }, 403);
+  await h.reply('/agent/security/audit/2', 0, { error: 'current' }, 503);
   await expect(h.agent.getByRole('dialog')).toBeHidden();
   await h.agent.getByRole('button', { name: '查看详情' }).nth(1).click();
   await h.reply('/agent/security/audit/2', 1, { record: { ...toolRecord(2), args: 'retry-ok' } });
   await expect(h.agent.locator('.dialog-grid')).toContainText('retry-ok');
+});
+
+test('MAX-729 denied Agent detail erases the previously authorized list', async ({ page }) => {
+  const h = await fixture(page);
+  await h.agent.getByRole('button', { name: '查看详情' }).first().click();
+  await h.reply('/agent/security/audit/1', 0, { error: 'forbidden' }, 403);
+  await expect(h.agent.getByRole('dialog')).toBeHidden();
+  await expect(h.agent.getByRole('alert')).toContainText('无权查看 Agent 审计');
+  await expect(h.agent.locator('app-data-table')).toHaveCount(0);
+  await h.agent.getByRole('button', { name: '刷新', exact: true }).click();
+  await h.reply('/agent/security/audit', 1, { records: [], nextCursor: null });
+  await expect(h.agent).toContainText('当前条件下暂无 Agent 审计记录');
 });
 
 test('both audit views ignore success/failure after unload and accept reconnect in the same session', async ({ page }) => {

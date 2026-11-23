@@ -97,6 +97,7 @@ export async function registerSystemAuditRoutes(
   }, async (request, reply) => {
     const query = request.query as Record<string, unknown>;
     const eventType = query.eventType;
+    const { result, requestCategory } = query;
     const startTime = parseTimestamp(query.startTime);
     const endTime = parseTimestamp(query.endTime);
     const limit = parseInteger(query.limit, 25, 1, 200);
@@ -104,6 +105,8 @@ export async function registerSystemAuditRoutes(
     const keyword = typeof query.keyword === 'string' ? query.keyword.trim() : '';
 
     if ((eventType !== undefined && (typeof eventType !== 'string' || !QUERYABLE_EVENT_TYPES.has(eventType as AuditEventType)))
+      || (result !== undefined && result !== 'success' && result !== 'failure' && result !== 'pending')
+      || (requestCategory !== undefined && requestCategory !== 'business' && requestCategory !== 'background')
       || Number.isNaN(startTime) || Number.isNaN(endTime) || Number.isNaN(limit) || Number.isNaN(offset)
       || keyword.length > 200 || (startTime !== undefined && endTime !== undefined && startTime > endTime)) {
       return reply.code(400).send({ error: '审计查询参数无效' });
@@ -121,14 +124,16 @@ export async function registerSystemAuditRoutes(
     const filters: AuditLogQuery = {
       ...(resource?{resourceType:resource.type,resourceId:String(resource.id)}:{}),
       eventType: eventType as AuditEventType | undefined,
+      result: result as AuditLogQuery['result'],
+      requestCategory: requestCategory as AuditLogQuery['requestCategory'],
       startTime,
       endTime,
       search: keyword || undefined,
       limit,
       offset,
     };
-    const result = await manager.query(filters);
+    const { entries, total } = await manager.query(filters);
     if(resource){const actor=await actorContextService.revalidateActor((request as any).user,request.id);if(!hasPermission(new Set(actor.permissions),'audit:view')||!canReadResource(actor,resource))return reply.code(403).send({error:'无权访问该资源审计'});}
-    return reply.send({ items: result.entries, total: result.total, limit, offset });
+    return reply.send({ items: entries, total, limit, offset });
   });
 }

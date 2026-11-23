@@ -252,6 +252,17 @@ export class TemplateLibraryPage extends LitElement {
     });
   }
 
+  private async openNaming(action: 'create' | 'copy') {
+    this.naming = action;
+    this.newName = action === 'copy' ? `${this.editor!.template.name} 副本`.slice(0, 128) : '';
+    this.error = '';
+    if (action === 'create') this.notice = '';
+    await this.updateComplete;
+    const dialog = this.renderRoot.querySelector<AppDialog>('#template-naming');
+    await dialog?.updateComplete;
+    if (dialog?.open) dialog.querySelector('input')?.focus();
+  }
+
   private async showPicker() {
     this.adding = true;
     if (!this.capabilities) {
@@ -475,16 +486,18 @@ export class TemplateLibraryPage extends LitElement {
     return html`<div class="page">
       ${this.editor ? this.renderDetail() : this.renderList()}
     </div>
-    <app-dialog .open=${!!this.naming} .title=${this.naming === 'copy' ? '克隆模板' : '新建模板'}
+    <app-dialog id="template-naming" .open=${!!this.naming} .title=${this.naming === 'copy' ? '克隆模板' : '新建模板'}
       .closable=${!this.busy && !this.retry} @app-dialog-close=${() => { this.naming = null; this.error = ''; }}>
-      ${this.naming ? html`<form class="panel" @submit=${(event: SubmitEvent) => { event.preventDefault(); void this.submitName(); }}>
-        <app-form-field label="模板名称"><input autofocus required maxlength="128" aria-label="新模板名称" .value=${this.newName}
+      ${this.naming ? html`<form id="template-name-form" class="panel" @submit=${(event: SubmitEvent) => { event.preventDefault(); void this.submitName(); }}>
+        <app-form-field label="模板名称"><input required maxlength="128" aria-label="新模板名称" .value=${this.newName}
           ?disabled=${this.busy || !!this.retry} @input=${(event: Event) => this.newName = (event.target as HTMLInputElement).value}></app-form-field>
         ${this.renderFeedback()}
-        <div class="actions"><button class="btn-primary" type="submit" ?disabled=${this.busy || !!this.retry || !this.newName.trim()}>
+      </form>
+      <div class="actions" slot="footer">
+        <button class="btn" type="button" ?disabled=${this.busy || !!this.retry} @click=${() => { this.naming = null; this.error = ''; }}>取消</button>
+        <button class="btn-primary" type="submit" form="template-name-form" ?disabled=${this.busy || !!this.retry || !this.newName.trim()} aria-busy=${this.busy}>
           ${this.naming === 'copy' ? '创建副本' : '创建模板'}</button>
-          <button class="btn" type="button" ?disabled=${this.busy || !!this.retry} @click=${() => { this.naming = null; this.error = ''; }}>取消</button></div>
-      </form>` : nothing}
+      </div>` : nothing}
     </app-dialog>
     <app-dialog .open=${this.discard} title="放弃未保存修改？" @app-dialog-close=${() => this.discard = false}>
       <div class="actions"><button class="btn-primary" @click=${() => this.discard = false}>继续编辑</button>
@@ -510,7 +523,7 @@ export class TemplateLibraryPage extends LitElement {
       && (!this.origin || (this.origin === 'builtin') === row.builtin) && row.template.name.toLowerCase().includes(keyword)) ?? [];
     return html`<header class="page-head"><h1 tabindex="-1">监控模板</h1>
       ${library?.can_manage ? html`<button class="btn-primary" ?disabled=${this.busy || !!this.retry}
-        @click=${() => { this.naming = 'create'; this.newName = ''; this.notice = ''; this.error = ''; }}>新建模板</button>` : nothing}</header>
+        @click=${() => this.openNaming('create')}>新建模板</button>` : nothing}</header>
       <div class="filters">
         <app-form-field label="搜索模板"><input aria-label="搜索模板" type="search" placeholder="输入模板名称" .value=${this.search}
           @input=${(e: Event) => this.search = (e.target as HTMLInputElement).value}></app-form-field>
@@ -556,7 +569,7 @@ export class TemplateLibraryPage extends LitElement {
         <div class="title-meta"><app-badge>${editor.builtin ? '内置' : '自定义'}</app-badge>
           <span class="muted">${this.editing ? '编辑模板' : editor.current ? '已发布' : '草稿'}</span></div></div>
         ${!this.editing && !this.triggerEditing && editor.can_manage ? html`<div class="actions">
-          <button class="btn" ?disabled=${blocked} @click=${() => { this.naming = 'copy'; this.newName = `${editor.template.name} 副本`.slice(0, 128); this.error = ''; this.notice = ''; }}>克隆</button>
+          <button class="btn" ?disabled=${blocked} @click=${() => this.openNaming('copy')}>克隆</button>
           ${!editor.builtin ? html`<button class="btn-primary" ?disabled=${blocked}
             @click=${() => this.open(editor.template.template_id, true, this.section)}>编辑</button>` : nothing}</div>` : nothing}
       </header>

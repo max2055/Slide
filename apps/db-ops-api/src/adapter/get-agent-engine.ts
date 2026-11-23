@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { checkChatExecution } from '../auth/chat-execution.js';
 import { actorContextService } from '../auth/actor-context.js';
 /**
@@ -192,11 +193,12 @@ export async function createCronToolRegistry(authority: CronToolAuthority): Prom
         const actor = await authority.refreshActor();
         if (context?.signal?.aborted) throw new Error('TOOL_EXECUTION_CANCELLED');
         if (isCompletion) {
+          const invocationId = randomUUID();
           const decision = { allow: true, reasonCode: 'ALLOW' as const, actor: { userId: actor.userId, username: actor.username, roles: actor.roles },
             tool: anyTool.name, resource: { type: 'cron' as const }, requestId: actor.requestId };
-          await audit.record({ phase: 'decision', actor, decision, args: params });
+          await audit.record({ phase: 'decision', actor, decision, args: params, invocationId });
           const result = normalizeToolResult(await anyTool.handler(params, { actor, userId: actor.userId }), anyTool.name);
-          await audit.record({ phase: 'result', actor, decision, args: params, result });
+          await audit.record({ phase: 'result', actor, decision, args: params, result, invocationId });
           return result;
         }
         const { resolveToolResource } = await import('../tools/resource-resolver.js');
@@ -216,6 +218,7 @@ export async function createCronToolRegistry(authority: CronToolAuthority): Prom
           });
           const decision = decideToolPolicy(current, anyTool, args, await resolveResource(anyTool.name, args, current), true, false);
           if (!decision.allow) {
+            // The authority recheck is independent of the decision/result pair recorded by the policy executor.
             await audit.record({ phase: 'decision', actor: current, decision, args });
             throw new ToolPolicyDeniedError(current, decision);
           }

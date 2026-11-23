@@ -35,6 +35,52 @@ async function setup(page: Page) {
   });
 }
 
+test('template creation and copy share footer order, validation and focus recovery', async ({ page }) => {
+  await setup(page);
+  let writes = 0;
+  page.on('request', request => {
+    if (request.method() === 'POST' && new URL(request.url()).pathname.includes('/templates')) writes++;
+  });
+  await page.goto('/settings/monitoring/metrics');
+  const templates = page.locator('template-library');
+  for (const [triggerName, dialogName, submitName] of [
+    ['新建模板', '新建模板', '创建模板'],
+    ['克隆', '克隆模板', '创建副本'],
+  ]) {
+    if (triggerName === '克隆') await templates.getByRole('button', { name: 'Linux 服务器 自动发现' }).click();
+    const trigger = templates.getByRole('button', { name: triggerName, exact: true });
+    const modal = templates.getByRole('dialog', { name: dialogName, exact: true });
+    const dialog = templates.locator('app-dialog').filter({ has: page.getByRole('dialog', { name: dialogName, exact: true }) });
+    const field = dialog.getByRole('textbox', { name: '新模板名称' });
+    const cancel = dialog.getByRole('button', { name: '取消', exact: true });
+    const submit = dialog.getByRole('button', { name: submitName, exact: true });
+
+    await trigger.click();
+    await expect(field).toBeFocused();
+    await field.fill('   ');
+    await expect(submit).toBeDisabled();
+    await field.press('Enter');
+    await expect(modal).toBeVisible();
+    await field.fill('验收模板');
+    await expect(submit).toBeEnabled();
+    await page.keyboard.press('Tab');
+    await expect(cancel).toBeFocused();
+    await page.keyboard.press('Tab');
+    await expect(submit).toBeFocused();
+    expect((await cancel.boundingBox())!.x).toBeLessThan((await submit.boundingBox())!.x);
+    expect(await submit.evaluate(button => (button as HTMLButtonElement).form?.id)).toBe('template-name-form');
+    await page.keyboard.press('Escape');
+    await expect(modal).toBeHidden();
+    await expect(trigger).toBeFocused();
+
+    await trigger.press('Enter');
+    await cancel.click();
+    await expect(modal).toBeHidden();
+    await expect(trigger).toBeFocused();
+  }
+  expect(writes).toBe(0);
+});
+
 for (const [width,height] of [[1366,768],[1440,900],[1920,1080]]) {
   test(`template list and detail at ${width} × ${height}`, async ({page}) => {
     await page.setViewportSize({width,height});

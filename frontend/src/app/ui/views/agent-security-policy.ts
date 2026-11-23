@@ -4,6 +4,7 @@ import { customElement, state } from 'lit/decorators.js';
 import { apiClient } from '../../../api/index.js';
 import { icons } from '../../../icons.js';
 import { sharedBtnStyles } from '../../styles/shared-btn-styles.js';
+import { settingsEditorActionsStyles } from '../../styles/shared-settings-page-styles.js';
 import { showToast } from '../components/app-toast-container.js';
 import '../components/app-badge.js';
 import '../components/app-card.js';
@@ -73,10 +74,10 @@ function hasPermission(required: string): boolean {
   return separator > 0 && (current.has(`${required.slice(0, separator)}:*`) || current.has(`*:${required.slice(separator + 1)}`));
 }
 
-function parseIds(value: string): number[] | null {
-  const trimmed = value.trim();
-  if (!trimmed) return [];
-  const ids = trimmed.split(',').map((item) => Number(item.trim()));
+function parseIds(value: string | null): number[] | null {
+  if (value === null) return null;
+  if (!value) return [];
+  const ids = value.split(',').map((item) => Number(item.trim()));
   if (ids.some((id) => !Number.isSafeInteger(id) || id <= 0)) throw new Error('ID_INVALID');
   return [...new Set(ids)].sort((a, b) => a - b);
 }
@@ -98,6 +99,8 @@ export class AgentSecurityPolicyPage extends LitElement {
   @state() private serverIds = '';
   @state() private networkDeviceIds = '';
   @state() private changeNote = '';
+  @state() private saveError = '';
+  private savedPolicyDraft = '';
   @state() private history: PolicyHistoryRecord[] = [];
   @state() private historyLoading = false;
   @state() private historyError = '';
@@ -107,7 +110,7 @@ export class AgentSecurityPolicyPage extends LitElement {
   @state() private loading = true;
   @state() private saving = false;
 
-  static styles = [sharedFieldStyles, sharedBtnStyles, css`
+  static styles = [sharedFieldStyles, sharedBtnStyles, settingsEditorActionsStyles, css`
     :host { display: block; color: var(--text); }
     .page-header, .header-actions, .row-between, .choice-grid, .mode-control, .effect-list {
       display: flex;
@@ -140,7 +143,7 @@ export class AgentSecurityPolicyPage extends LitElement {
     input[type='text'], textarea, select { box-sizing: border-box; width: 100%; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--card); color: var(--text); padding: var(--space-sm) var(--space-md); font: inherit; }
     textarea { resize: vertical; min-height: 5rem; }
     input:focus, textarea:focus, select:focus { outline: 2px solid var(--accent-subtle); border-color: var(--accent); }
-    .footer-actions { display: flex; justify-content: flex-end; align-items: center; gap: var(--space-md); }
+    fieldset { min-inline-size: 0; padding: 0; margin: 0; border: 0; }
     .empty-block { padding: var(--space-lg); border: 1px dashed var(--border); border-radius: var(--radius-sm); color: var(--muted); font-size: var(--text-sm); }
     .control-list { display: grid; gap: var(--space-md); }
     .control-row { display: flex; align-items: center; justify-content: space-between; gap: var(--space-lg); padding: var(--space-md) 0; border-bottom: 1px solid var(--border); }
@@ -175,7 +178,7 @@ export class AgentSecurityPolicyPage extends LitElement {
       this.catalog = await apiClient.get<SecurityCatalogResponse>('/agent/security/policies');
       this.selectedAgentId = this.selectedAgentId || this.catalog.agents[0]?.id || '';
       this.applyPolicy();
-      await this.loadHistory();
+      void this.loadHistory();
       await this.loadExecutionConfig();
     } catch {
       showToast('加载 Agent 安全策略失败', 'error');
@@ -228,6 +231,7 @@ export class AgentSecurityPolicyPage extends LitElement {
   private applyPolicy(): void {
     const policy = this.catalog?.policies.find((item) => item.agentId === this.selectedAgentId) ?? null;
     this.policy = policy;
+    this.saveError = '';
     if (!policy) return;
     this.toolMode = policy.toolAllowlist === null ? 'inherit' : 'custom';
     this.skillMode = policy.skillAllowlist === null ? 'inherit' : 'custom';
@@ -241,6 +245,7 @@ export class AgentSecurityPolicyPage extends LitElement {
     this.serverIds = policy.resourceScope.serverIds?.join(', ') ?? '';
     this.networkDeviceIds = policy.resourceScope.networkDeviceIds?.join(', ') ?? '';
     this.changeNote = '';
+    this.savedPolicyDraft = JSON.stringify(this.policyDraft());
   }
 
   private async loadHistory(): Promise<void> {
@@ -272,37 +277,51 @@ export class AgentSecurityPolicyPage extends LitElement {
     return next;
   }
 
+  private policyDraft() {
+    return {
+      toolAllowlist: this.toolMode === 'inherit' ? null : [...this.selectedTools].sort(),
+      skillAllowlist: this.skillMode === 'inherit' ? null : [...this.selectedSkills].sort(),
+      allowedEffects: EFFECTS.map((effect) => effect.id).filter((effect) => this.selectedEffects.has(effect)),
+      resourceScope: {
+        instanceIds: this.instanceMode === 'inherit' ? null : this.instanceIds.trim(),
+        serverIds: this.serverMode === 'inherit' ? null : this.serverIds.trim(),
+        networkDeviceIds: this.networkDeviceMode === 'inherit' ? null : this.networkDeviceIds.trim(),
+      },
+      changeNote: this.changeNote.trim(),
+    };
+  }
+
   private async save(): Promise<void> {
-    if (!this.policy || !this.changeNote.trim()) {
-      showToast('请填写变更说明', 'warning');
+    if (!this.policy || this.saving) return;
+    const draft = this.policyDraft();
+    this.saveError = '';
+    if (!draft.changeNote) {
+      this.saveError = '请填写变更说明';
       return;
     }
-    if (this.selectedEffects.size === 0) {
-      showToast('至少保留一种允许的操作级别', 'warning');
+    if (draft.allowedEffects.length === 0) {
+      this.saveError = '至少保留一种允许的操作级别';
       return;
     }
     this.saving = true;
     try {
       const response = await apiClient.put<{ policy: AgentSecurityPolicy }>(`/agent/security/policies/${encodeURIComponent(this.selectedAgentId)}`, {
-        toolAllowlist: this.toolMode === 'inherit' ? null : [...this.selectedTools].sort(),
-        skillAllowlist: this.skillMode === 'inherit' ? null : [...this.selectedSkills].sort(),
-        allowedEffects: EFFECTS.map((effect) => effect.id).filter((effect) => this.selectedEffects.has(effect)),
+        ...draft,
         resourceScope: {
-          instanceIds: this.instanceMode === 'inherit' ? null : parseIds(this.instanceIds),
-          serverIds: this.serverMode === 'inherit' ? null : parseIds(this.serverIds),
-          networkDeviceIds: this.networkDeviceMode === 'inherit' ? null : parseIds(this.networkDeviceIds),
+          instanceIds: parseIds(draft.resourceScope.instanceIds),
+          serverIds: parseIds(draft.resourceScope.serverIds),
+          networkDeviceIds: parseIds(draft.resourceScope.networkDeviceIds),
         },
-        changeNote: this.changeNote.trim(),
       });
       this.policy = response.policy;
       if (this.catalog) {
         this.catalog = { ...this.catalog, policies: this.catalog.policies.map((item) => item.agentId === response.policy.agentId ? response.policy : item) };
       }
       this.applyPolicy();
-      await this.loadHistory();
+      void this.loadHistory();
       showToast('Agent 安全策略已更新', 'success');
     } catch (error) {
-      showToast(error instanceof Error && error.message === 'ID_INVALID' ? '资源范围只能填写正整数 ID' : '更新 Agent 安全策略失败', 'error');
+      this.saveError = error instanceof Error && error.message === 'ID_INVALID' ? '资源范围只能填写正整数 ID' : '更新 Agent 安全策略失败';
     } finally {
       this.saving = false;
     }
@@ -327,14 +346,15 @@ export class AgentSecurityPolicyPage extends LitElement {
 
   override render() {
     const isAdmin = hasPermission('admin:*');
+    const dirty = isAdmin && this.policy && JSON.stringify(this.policyDraft()) !== this.savedPolicyDraft;
     return html`
       <div class="page-header">
         <div><h1>Agent 安全</h1><p>在平台 Tool 目录、Skill 环境策略与用户 RBAC 基础上进一步收窄 Agent 权限</p></div>
         <div class="header-actions">
-          <select aria-label="Agent" .value=${this.selectedAgentId} @change=${this.selectAgent}>
+          <select aria-label="Agent" .value=${this.selectedAgentId} ?disabled=${this.loading || this.saving} @change=${this.selectAgent}>
             ${(this.catalog?.agents ?? []).map((agent) => html`<option value=${agent.id}>${agent.name} (${agent.id})</option>`)}
           </select>
-          <button aria-busy=${String(this.loading)} class="btn btn-refresh" title="刷新" aria-label="刷新" @click=${this.load} .disabled=${this.loading}>刷新</button>
+          <button aria-busy=${String(this.loading)} class="btn btn-refresh" title="刷新" aria-label="刷新" @click=${this.load} .disabled=${this.loading || this.saving}>刷新</button>
         </div>
       </div>
       ${this.loading || !this.policy || !this.catalog ? html`<div class="skeleton"></div>` : html`
@@ -358,34 +378,48 @@ export class AgentSecurityPolicyPage extends LitElement {
               </div>
             </div>` : html`<div class="empty-block">执行控制配置不可用，系统按安全默认值运行。</div>`}
           </app-card>` : nothing}
-          <app-card>
-            <span slot="header" class="card-title">${icons.shield} 权限边界 <app-badge variant="info">v${this.policy.version}</app-badge></span>
-            <section class="section">
-              <div class="row-between"><div><h2 class="section-title">Tool 白名单</h2><p class="subtle">自定义模式只能从平台已注册目录中选择</p></div>${this.renderMode(this.toolMode, (value) => { this.toolMode = value; })}</div>
-              ${this.toolMode === 'custom' ? html`<div class="choice-grid">${this.catalog.tools.map((tool) => html`
-                <label class="choice"><input type="checkbox" .checked=${this.selectedTools.has(tool.name)} .disabled=${!isAdmin} @change=${(event: Event) => { this.selectedTools = this.toggleSet(this.selectedTools, tool.name, (event.target as HTMLInputElement).checked); }}><span><strong>${tool.name}</strong><span>${tool.description || '无描述'} · ${tool.security?.effect ?? '未分类'}</span></span></label>
-              `)}</div>` : html`<div class="empty-block">继承平台 Tool 目录；实际执行仍受操作级别、资源范围和用户 RBAC 限制。</div>`}
-            </section>
-            <section class="section">
-              <div class="row-between"><div><h2 class="section-title">Skill 白名单</h2><p class="subtle">只会加载同时满足环境策略与 Agent 策略的 Skill</p></div>${this.renderMode(this.skillMode, (value) => { this.skillMode = value; })}</div>
-              ${this.skillMode === 'custom' ? html`<div class="choice-grid">${this.catalog.skills.map((skill) => html`
-                <label class="choice"><input type="checkbox" .checked=${this.selectedSkills.has(skill.name)} .disabled=${!isAdmin} @change=${(event: Event) => { this.selectedSkills = this.toggleSet(this.selectedSkills, skill.name, (event.target as HTMLInputElement).checked); }}><span><strong>${skill.name}</strong><span>${skill.description || '无描述'} · ${skill.enabled ? '环境启用' : '环境禁用'} · ${skill.trusted ? '可信' : '未信任'}</span></span></label>
-              `)}</div>` : html`<div class="empty-block">继承部署环境的 Skill allowlist 和可信校验结果。</div>`}
-            </section>
-            <section class="section">
-              <div class="row-between"><div><h2 class="section-title">允许的操作级别</h2><p class="subtle">未勾选的 effect 不会暴露给模型，也无法在执行阶段绕过</p></div></div>
-              <div class="effect-list">${EFFECTS.map((effect) => html`<label><input type="checkbox" .checked=${this.selectedEffects.has(effect.id)} .disabled=${!isAdmin} @change=${(event: Event) => { this.selectedEffects = this.toggleSet(this.selectedEffects, effect.id, (event.target as HTMLInputElement).checked); }}> ${effect.label}</label>`)}</div>
-            </section>
-            <section class="section">
-              <div class="scope-grid">
-                <div><div class="row-between"><h2 class="section-title">实例范围</h2>${this.renderMode(this.instanceMode, (value) => { this.instanceMode = value; })}</div>${this.instanceMode === 'custom' ? html`<app-form-field label="实例 ID" hint="多个 ID 使用英文逗号分隔；留空表示拒绝所有实例"><input type="text" .value=${this.instanceIds} .disabled=${!isAdmin} @input=${(event: Event) => { this.instanceIds = (event.target as HTMLInputElement).value; }}></app-form-field>` : html`<p class="subtle">继承用户实例 RBAC 范围</p>`}</div>
-                <div><div class="row-between"><h2 class="section-title">服务器范围</h2>${this.renderMode(this.serverMode, (value) => { this.serverMode = value; })}</div>${this.serverMode === 'custom' ? html`<app-form-field label="服务器 ID" hint="多个 ID 使用英文逗号分隔；留空表示拒绝所有服务器"><input type="text" .value=${this.serverIds} .disabled=${!isAdmin} @input=${(event: Event) => { this.serverIds = (event.target as HTMLInputElement).value; }}></app-form-field>` : html`<p class="subtle">继承用户服务器 RBAC 范围</p>`}</div>
-                <div><div class="row-between"><h2 class="section-title">网络设备范围</h2>${this.renderMode(this.networkDeviceMode, (value) => { this.networkDeviceMode = value; })}</div>${this.networkDeviceMode === 'custom' ? html`<app-form-field label="网络设备 ID" hint="多个 ID 使用英文逗号分隔；留空表示拒绝所有网络设备"><input type="text" .value=${this.networkDeviceIds} .disabled=${!isAdmin} @input=${(event: Event) => { this.networkDeviceIds = (event.target as HTMLInputElement).value; }}></app-form-field>` : html`<p class="subtle">继承用户网络设备 RBAC 范围</p>`}</div>
+          <div class="settings-editor">
+            ${isAdmin ? html`<div class="settings-editor-actions" role="group" aria-label="策略保存">
+              <div class="settings-editor-status">
+                <span role="status">${this.saving ? '正在保存策略…' : dirty
+                  ? (this.changeNote.trim() ? '有未保存的修改' : '有未保存的修改，请填写变更说明')
+                  : '无未保存的修改'}</span>
+                ${this.saveError ? html`<div role="alert">${this.saveError}</div>` : nothing}
               </div>
-            </section>
-            ${isAdmin ? html`<section class="section"><app-form-field label="变更说明" hint="将写入不可变策略历史" required><textarea maxlength="500" .value=${this.changeNote} @input=${(event: Event) => { this.changeNote = (event.target as HTMLTextAreaElement).value; }}></textarea></app-form-field><div class="footer-actions"><button class="btn-primary" @click=${this.save} .disabled=${this.saving || !this.changeNote.trim()}>${icons.save} ${this.saving ? '保存中' : '保存策略'}</button></div></section>` : html`<section class="section"><app-badge variant="muted">只读</app-badge> <span class="subtle">仅管理员可修改策略</span></section>`}
-          </app-card>
-          ${hasPermission('audit:view') ? html`<app-card><span slot="header" class="card-title">${icons.activity} 策略变更记录</span>${this.historyError ? html`<div role="alert">${this.historyError}</div><button class="btn" @click=${() => this.loadHistory()}>重试加载变更记录</button>` : html`${this.historyLoading ? html`<p role="status">正在加载策略变更记录…</p>` : nothing}<app-data-table .columns=${[{ key: 'version', label: '版本' }, { key: 'changeNote', label: '变更说明' }, { key: 'actor', label: '操作者' }, { key: 'createdAt', label: '时间' }]} .rows=${this.historyRows()} .loading=${this.historyLoading} emptyMessage="暂无策略变更"></app-data-table>`}</app-card>` : nothing}
+              <button type="button" class="btn-primary" @click=${this.save} ?disabled=${this.saving || !this.changeNote.trim()}
+                aria-busy=${this.saving}>${icons.save} 保存策略</button>
+            </div>` : nothing}
+            <app-card>
+              <span slot="header" class="card-title">${icons.shield} 权限边界 <app-badge variant="info">v${this.policy.version}</app-badge></span>
+              <fieldset aria-label="Agent 权限边界" ?disabled=${this.saving}>
+                <section class="section">
+                  <div class="row-between"><div><h2 class="section-title">Tool 白名单</h2><p class="subtle">自定义模式只能从平台已注册目录中选择</p></div>${this.renderMode(this.toolMode, (value) => { this.toolMode = value; })}</div>
+                  ${this.toolMode === 'custom' ? html`<div class="choice-grid">${this.catalog.tools.map((tool) => html`
+                    <label class="choice"><input type="checkbox" .checked=${this.selectedTools.has(tool.name)} .disabled=${!isAdmin} @change=${(event: Event) => { this.selectedTools = this.toggleSet(this.selectedTools, tool.name, (event.target as HTMLInputElement).checked); }}><span><strong>${tool.name}</strong><span>${tool.description || '无描述'} · ${tool.security?.effect ?? '未分类'}</span></span></label>
+                  `)}</div>` : html`<div class="empty-block">继承平台 Tool 目录；实际执行仍受操作级别、资源范围和用户 RBAC 限制。</div>`}
+                </section>
+                <section class="section">
+                  <div class="row-between"><div><h2 class="section-title">Skill 白名单</h2><p class="subtle">只会加载同时满足环境策略与 Agent 策略的 Skill</p></div>${this.renderMode(this.skillMode, (value) => { this.skillMode = value; })}</div>
+                  ${this.skillMode === 'custom' ? html`<div class="choice-grid">${this.catalog.skills.map((skill) => html`
+                    <label class="choice"><input type="checkbox" .checked=${this.selectedSkills.has(skill.name)} .disabled=${!isAdmin} @change=${(event: Event) => { this.selectedSkills = this.toggleSet(this.selectedSkills, skill.name, (event.target as HTMLInputElement).checked); }}><span><strong>${skill.name}</strong><span>${skill.description || '无描述'} · ${skill.enabled ? '环境启用' : '环境禁用'} · ${skill.trusted ? '可信' : '未信任'}</span></span></label>
+                  `)}</div>` : html`<div class="empty-block">继承部署环境的 Skill allowlist 和可信校验结果。</div>`}
+                </section>
+                <section class="section">
+                  <div class="row-between"><div><h2 class="section-title">允许的操作级别</h2><p class="subtle">未勾选的 effect 不会暴露给模型，也无法在执行阶段绕过</p></div></div>
+                  <div class="effect-list">${EFFECTS.map((effect) => html`<label><input type="checkbox" .checked=${this.selectedEffects.has(effect.id)} .disabled=${!isAdmin} @change=${(event: Event) => { this.selectedEffects = this.toggleSet(this.selectedEffects, effect.id, (event.target as HTMLInputElement).checked); }}> ${effect.label}</label>`)}</div>
+                </section>
+                <section class="section">
+                  <div class="scope-grid">
+                    <div><div class="row-between"><h2 class="section-title">实例范围</h2>${this.renderMode(this.instanceMode, (value) => { this.instanceMode = value; })}</div>${this.instanceMode === 'custom' ? html`<app-form-field label="实例 ID" hint="多个 ID 使用英文逗号分隔；留空表示拒绝所有实例"><input type="text" .value=${this.instanceIds} .disabled=${!isAdmin} @input=${(event: Event) => { this.instanceIds = (event.target as HTMLInputElement).value; }}></app-form-field>` : html`<p class="subtle">继承用户实例 RBAC 范围</p>`}</div>
+                    <div><div class="row-between"><h2 class="section-title">服务器范围</h2>${this.renderMode(this.serverMode, (value) => { this.serverMode = value; })}</div>${this.serverMode === 'custom' ? html`<app-form-field label="服务器 ID" hint="多个 ID 使用英文逗号分隔；留空表示拒绝所有服务器"><input type="text" .value=${this.serverIds} .disabled=${!isAdmin} @input=${(event: Event) => { this.serverIds = (event.target as HTMLInputElement).value; }}></app-form-field>` : html`<p class="subtle">继承用户服务器 RBAC 范围</p>`}</div>
+                    <div><div class="row-between"><h2 class="section-title">网络设备范围</h2>${this.renderMode(this.networkDeviceMode, (value) => { this.networkDeviceMode = value; })}</div>${this.networkDeviceMode === 'custom' ? html`<app-form-field label="网络设备 ID" hint="多个 ID 使用英文逗号分隔；留空表示拒绝所有网络设备"><input type="text" .value=${this.networkDeviceIds} .disabled=${!isAdmin} @input=${(event: Event) => { this.networkDeviceIds = (event.target as HTMLInputElement).value; }}></app-form-field>` : html`<p class="subtle">继承用户网络设备 RBAC 范围</p>`}</div>
+                  </div>
+                </section>
+                ${isAdmin ? html`<section class="section"><app-form-field label="变更说明" hint="将写入不可变策略历史" required><textarea maxlength="500" .value=${this.changeNote} @input=${(event: Event) => { this.changeNote = (event.target as HTMLTextAreaElement).value; }}></textarea></app-form-field></section>` : html`<section class="section"><app-badge variant="muted">只读</app-badge> <span class="subtle">仅管理员可修改策略</span></section>`}
+              </fieldset>
+            </app-card>
+          </div>
+          ${hasPermission('audit:view') ? html`<app-card role="region" aria-labelledby="agent-policy-history-title"><span slot="header" id="agent-policy-history-title" class="card-title">${icons.activity} 策略变更记录</span>${this.historyError ? html`<div role="alert">${this.historyError}</div><button class="btn" @click=${() => this.loadHistory()}>重试加载变更记录</button>` : html`${this.historyLoading ? html`<p role="status">正在加载策略变更记录…</p>` : nothing}<app-data-table .columns=${[{ key: 'version', label: '版本' }, { key: 'changeNote', label: '变更说明' }, { key: 'actor', label: '操作者' }, { key: 'createdAt', label: '时间' }]} .rows=${this.historyRows()} .loading=${this.historyLoading} emptyMessage="暂无策略变更"></app-data-table>`}</app-card>` : nothing}
         </div>
       `}
     `;

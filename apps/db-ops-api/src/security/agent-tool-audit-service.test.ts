@@ -60,12 +60,13 @@ describe('Agent tool audit persistence', () => {
     expect(page.records).toHaveLength(1);
     expect(page.nextCursor).toBe(9);
     expect(page.records[0]).not.toHaveProperty('args');
+    expect(page.records[0]).not.toHaveProperty('relatedRecordId');
     expect(calls[0].sql).toContain('a.agent_id = ?');
     expect(calls[0].values).toEqual(['slide-db-ops', true]);
     expect(calls[0].sql).toContain('LIMIT 2');
 
     const detail = await service.detail(9);
-    expect(detail).toMatchObject({ id: 9, args: { password: '[REDACTED]' }, result: { success: true } });
+    expect(detail).toMatchObject({ id: 9, relatedRecordId: null, args: { password: '[REDACTED]' }, result: { success: true } });
   });
 
   it('never persists execute_code source, supporting content, or raw output', async () => {

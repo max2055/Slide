@@ -103,8 +103,9 @@ export class FeishuNotificationSettings extends LitElement {
     .status { display: flex; flex-wrap: wrap; gap: var(--space-sm); align-items: center; margin-bottom: var(--space-lg); }
     .switch { display: flex; gap: var(--space-sm); align-items: center; color: var(--text); font-size: var(--text-base); cursor: pointer; }
     .switch input { accent-color: var(--accent); }
+    fieldset { min-inline-size: 0; padding: 0; margin: 0; border: 0; }
     .hint { margin: var(--space-xs) 0 0; color: var(--muted); font-size: var(--text-xs); line-height: 1.5; }
-    .actions { display: flex; flex-wrap: wrap; gap: var(--space-sm); padding-top: var(--space-md); }
+    .actions { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: var(--space-sm); padding-top: var(--space-md); }
     .error { margin: 0 0 var(--space-md); color: var(--danger); font-size: var(--text-sm); }
     .loading { color: var(--muted); padding: var(--space-xl); }
     .email-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 var(--space-md); }
@@ -181,6 +182,7 @@ export class FeishuNotificationSettings extends LitElement {
   }
 
   async save() {
+    if (this.saving || this.testing) return;
     if (this.selectedType === 'email') {
       await this.saveEmail();
       return;
@@ -343,7 +345,7 @@ export class FeishuNotificationSettings extends LitElement {
   }
 
   async test() {
-    if (!this.channelId) return;
+    if (!this.channelId || this.saving || this.testing) return;
     this.testing = true;
     this.error = '';
     try {
@@ -364,17 +366,21 @@ export class FeishuNotificationSettings extends LitElement {
       <h1>通知配置</h1>
       <p class="intro">配置告警通知渠道。Webhook 地址、SMTP 密码、OAuth2 刷新令牌和飞书签名密钥只会通过受保护接口提交，保存后不会回显。</p>
       <div class="channel-tabs" role="tablist" aria-label="通知渠道">
-        <button class="channel-tab ${this.selectedType === 'feishu' ? 'active' : ''}" role="tab" aria-selected=${this.selectedType === 'feishu'} @click=${() => this.selectType('feishu')}>飞书</button>
-        <button class="channel-tab ${this.selectedType === 'email' ? 'active' : ''}" role="tab" aria-selected=${this.selectedType === 'email'} @click=${() => this.selectType('email')}>邮件</button>
+        <button class="channel-tab ${this.selectedType === 'feishu' ? 'active' : ''}" role="tab" aria-selected=${this.selectedType === 'feishu'} ?disabled=${this.saving || this.testing} @click=${() => this.selectType('feishu')}>飞书</button>
+        <button class="channel-tab ${this.selectedType === 'email' ? 'active' : ''}" role="tab" aria-selected=${this.selectedType === 'email'} ?disabled=${this.saving || this.testing} @click=${() => this.selectType('email')}>邮件</button>
       </div>
       <app-card>
         ${this.error ? html`<p class="error" role="alert">${this.error}</p>` : ''}
-        ${this.selectedType === 'email' ? this.renderEmailForm() : this.renderFeishuForm()}
-        <label class="switch"><input type="checkbox" .checked=${this.enabled} @change=${(event: Event) => { this.enabled = (event.target as HTMLInputElement).checked; }}> 启用告警通知</label>
-        <p class="hint">建议先保存为禁用状态并点击“发送测试消息”。确认收到后，再启用真实告警通知。</p>
+        <fieldset aria-label="通道配置" ?disabled=${this.saving}>
+          ${this.selectedType === 'email' ? this.renderEmailForm() : this.renderFeishuForm()}
+          <label class="switch"><input type="checkbox" .checked=${this.enabled} @change=${(event: Event) => { this.enabled = (event.target as HTMLInputElement).checked; }}> 启用告警通知</label>
+        </fieldset>
+        <p class="hint" id="notification-test-hint">测试使用已保存的配置。建议先关闭告警通知并保存，再发送测试消息。确认收到后可启用告警通知。</p>
         <div class="actions">
-          <button class="btn btn-primary" ?disabled=${this.saving} @click=${this.save}>${this.saving ? '保存中…' : '保存配置'}</button>
-          <button class="btn" ?disabled=${!this.channelId || this.testing} @click=${this.test}>${this.testing ? '发送中…' : '发送测试消息'}</button>
+          <button type="button" class="btn" aria-describedby="notification-test-hint" aria-busy=${this.testing}
+            ?disabled=${!this.channelId || this.saving || this.testing} @click=${this.test}>${this.testing ? '发送中…' : '发送测试消息'}</button>
+          <button type="button" class="btn-primary" aria-busy=${this.saving}
+            ?disabled=${this.saving || this.testing} @click=${this.save}>${this.saving ? '保存中…' : '保存配置'}</button>
         </div>
       </app-card>
     `;

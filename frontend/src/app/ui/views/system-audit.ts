@@ -1,6 +1,6 @@
 import { readResourceContext } from '../components/resource-scope-context.js';
 import { sharedFieldStyles } from "../../styles/shared-field-styles.ts";
-import { LitElement, css, html } from 'lit';
+import { LitElement, css, html, nothing } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
 import { apiClient } from '../../../api/index.js';
 import { icons } from '../../../icons.js';
@@ -10,6 +10,7 @@ import '../components/app-badge.js';
 import '../components/app-card.js';
 import '../components/app-data-table.js';
 import '../components/app-dialog.js';
+import '../components/app-empty-state.js';
 import '../components/app-form-field.js';
 
 interface SystemAuditRecord {
@@ -50,17 +51,28 @@ const EVENT_LABELS = new Map<string, string>(EVENT_TYPES.filter(([value]) => val
 @customElement('system-audit-page')
 export class SystemAuditPage extends LitElement {
   @state() private records: SystemAuditRecord[] = [];
-  @state() private loadError='';
-  private generation=0;
-  private accessChanged=()=>{this.generation++;this.records=[];this.total=0;this.loading=false;this.loadError='权限已变更，请重新打开审计。';};
+  @state() private loadError = '';
+  private generation = 0;
+  private accessChanged = () => {
+    this.generation++;
+    this.records = [];
+    this.selected = null;
+    this.total = 0;
+    this.offset = 0;
+    this.loading = false;
+    this.loadError = '权限已变更，请刷新系统审计。';
+  };
   @state() private loading = true;
   @state() private selected: SystemAuditRecord | null = null;
   @state() private total = 0;
   @state() private offset = 0;
   @state() private keyword = '';
   @state() private eventType = '';
+  @state() private result = '';
+  @state() private requestCategory = '';
   @state() private startTime = '';
   @state() private endTime = '';
+  private appliedFilters: Partial<Record<'keyword' | 'eventType' | 'result' | 'requestCategory' | 'startTime' | 'endTime', string>> = {};
   private readonly limit = 25;
 
   static styles = [sharedFieldStyles, sharedBtnStyles, css`
@@ -97,39 +109,71 @@ export class SystemAuditPage extends LitElement {
     void this.load(true);
   }
 
-  disconnectedCallback(){this.accessChanged();window.removeEventListener('slide-permissions-loaded',this.accessChanged);window.removeEventListener('slide-session-expired',this.accessChanged);super.disconnectedCallback();}
+  override disconnectedCallback(): void {
+    this.accessChanged();
+    window.removeEventListener('slide-permissions-loaded', this.accessChanged);
+    window.removeEventListener('slide-session-expired', this.accessChanged);
+    super.disconnectedCallback();
+  }
+
   private async load(reset = false): Promise<void> {
-    const generation=++this.generation;this.records=[];this.loadError='';
-    if (reset) this.offset = 0;
+    const generation = ++this.generation;
+    this.records = [];
+    this.selected = null;
+    this.total = 0;
+    this.loadError = '';
+    if (reset) {
+      this.offset = 0;
+      this.appliedFilters = {
+        keyword: this.keyword.trim() || undefined,
+        eventType: this.eventType || undefined,
+        result: this.result || undefined,
+        requestCategory: this.requestCategory || undefined,
+        startTime: this.startTime || undefined,
+        endTime: this.endTime || undefined,
+      };
+    }
     this.loading = true;
     try {
       const scope=readResourceContext();
       if(new URLSearchParams(location.search).has('resource')&&!scope)throw new Error('无效资源观察范围');
+      const { startTime, endTime, ...filters } = this.appliedFilters;
       const response = await apiClient.get<{ items: SystemAuditRecord[]; total: number }>('/audit/logs', {
         params: {
           limit: this.limit,
           offset: this.offset,
-          keyword: this.keyword.trim() || undefined,
+          ...filters,
           ...(scope?{resource:`${scope.resource.type}:${scope.resource.id}`}:{}),
-          eventType: this.eventType || undefined,
-          startTime: scope?.from ?? (this.startTime ? new Date(this.startTime).toISOString() : undefined),
-          endTime: scope?.to ?? (this.endTime ? new Date(this.endTime).toISOString() : undefined),
+          startTime: scope?.from ?? (startTime ? new Date(startTime).toISOString() : undefined),
+          endTime: scope?.to ?? (endTime ? new Date(endTime).toISOString() : undefined),
         },
       });
-      if(generation!==this.generation)return;
+      if (generation !== this.generation) return;
+      if (!Array.isArray(response?.items) || !Number.isSafeInteger(response.total) || response.total < 0) {
+        throw new Error('审计查询响应无效');
+      }
+      if (this.offset > 0 && this.offset >= response.total) {
+        this.offset = Math.max(0, Math.floor((response.total - 1) / this.limit) * this.limit);
+        await this.load();
+        return;
+      }
       this.records = response.items;
       this.total = response.total;
-    } catch {
-      if(generation!==this.generation)return;this.loadError='系统审计读取失败或没有权限，不能据此判断没有记录。';
-      showToast('加载系统审计记录失败', 'error');
+    } catch (error) {
+      if (generation !== this.generation) return;
+      const forbidden = error instanceof Error && /^HTTP (401|403):/.test(error.message);
+      this.loadError = forbidden ? '当前会话无权查看此范围的系统审计。' : '系统审计读取失败，请刷新重试。';
+      showToast(this.loadError, 'error');
     } finally {
-      if(generation===this.generation)this.loading = false;
+      if (generation === this.generation) this.loading = false;
     }
   }
 
   private resetFilters(): void {
     this.keyword = '';
     this.eventType = '';
+    this.result = '';
+    this.requestCategory = '';
     this.startTime = '';
     this.endTime = '';
     void this.load(true);
@@ -164,7 +208,6 @@ export class SystemAuditPage extends LitElement {
     const pageStart = this.total === 0 ? 0 : this.offset + 1;
     const pageEnd = Math.min(this.offset + this.limit, this.total);
     return html`
-      ${this.loadError?html`<p role="alert">${this.loadError}</p>`:''}
       ${scope?html`<p>资源 ${scope.resource.type}:${scope.resource.id} · ${scope.from} → ${scope.to}。仅匹配结构化资源审计；旧的未标资源记录不推断为空。</p><a class="btn" href=${scope.returnTo}>返回资源详情</a>`:''}
       <div class="page-header">
         <h1>系统审计</h1>
@@ -175,12 +218,22 @@ export class SystemAuditPage extends LitElement {
         <div class="filters">
           <app-form-field label="关键字"><input type="search" placeholder="操作者、操作、资源或 IP" .value=${this.keyword} @input=${(event: Event) => { this.keyword = (event.target as HTMLInputElement).value; }} @keydown=${(event: KeyboardEvent) => { if (event.key === 'Enter') void this.load(true); }}></app-form-field>
           <app-form-field label="操作类型"><select .value=${this.eventType} @change=${(event: Event) => { this.eventType = (event.target as HTMLSelectElement).value; }}>${EVENT_TYPES.map(([value, label]) => html`<option value=${value}>${label}</option>`)}</select></app-form-field>
+          <app-form-field label="操作结果">
+            <select .value=${this.result} @change=${(event: Event) => { this.result = (event.target as HTMLSelectElement).value; }}>
+              <option value="">全部结果</option><option value="success">成功</option><option value="failure">失败</option><option value="pending">处理中</option>
+            </select>
+          </app-form-field>
+          <app-form-field label="请求类别">
+            <select .value=${this.requestCategory} @change=${(event: Event) => { this.requestCategory = (event.target as HTMLSelectElement).value; }}>
+              <option value="">全部请求</option><option value="business">业务操作</option><option value="background">后台请求</option>
+            </select>
+          </app-form-field>
           <app-form-field label="开始时间"><input type="datetime-local" .value=${this.startTime} @input=${(event: Event) => { this.startTime = (event.target as HTMLInputElement).value; }}></app-form-field>
           <app-form-field label="结束时间"><input type="datetime-local" .value=${this.endTime} @input=${(event: Event) => { this.endTime = (event.target as HTMLInputElement).value; }}></app-form-field>
           <button class="btn" type="button" @click=${this.resetFilters}>重置</button>
           <button class="btn-primary" type="button" @click=${() => this.load(true)}>${icons.search} 查询</button>
         </div>
-        <div class="table-wrap"><app-data-table .columns=${[
+        ${this.loadError ? html`<p role="alert">${this.loadError}</p>` : html`<div class="table-wrap" aria-busy=${this.loading}><app-data-table .columns=${[
           { key: 'timestamp', label: '时间' },
           { key: 'eventType', label: '操作类型' },
           { key: 'action', label: '操作' },
@@ -189,12 +242,12 @@ export class SystemAuditPage extends LitElement {
           { key: 'result', label: '结果' },
           { key: 'clientIp', label: '客户端 IP' },
           { key: 'actions', label: '' },
-        ]} .rows=${this.rows()} .loading=${this.loading} .dense=${true} emptyMessage="暂无系统审计记录"></app-data-table></div>
+        ]} .rows=${this.rows()} .loading=${this.loading} .dense=${true} emptyMessage="当前条件下暂无系统审计记录"></app-data-table></div>
         <div class="pagination">
-          <span class="pagination-info">${pageStart}-${pageEnd} / ${this.total}</span>
+          <span class="pagination-info" role="status">${this.loading ? '正在读取系统审计…' : `${pageStart}-${pageEnd} / ${this.total}`}</span>
           <button class="btn" type="button" @click=${() => { this.offset = Math.max(0, this.offset - this.limit); void this.load(); }} .disabled=${this.offset === 0 || this.loading}>上一页</button>
           <button class="btn" type="button" @click=${() => { this.offset += this.limit; void this.load(); }} .disabled=${this.offset + this.limit >= this.total || this.loading}>下一页</button>
-        </div>
+        </div>`}
       </app-card>
       <app-dialog size="lg" title="系统审计详情" .open=${this.selected !== null} @app-dialog-close=${() => { this.selected = null; }}>
         ${this.selected ? html`<div class="dialog-grid">
@@ -202,10 +255,12 @@ export class SystemAuditPage extends LitElement {
           <div class="detail-row"><span>时间</span><span>${this.formatTime(this.selected.timestamp)}</span></div>
           <div class="detail-row"><span>操作者</span><span>${this.selected.username ?? '-'}${this.selected.userId ? ` (#${this.selected.userId})` : ''}</span></div>
           <div class="detail-row"><span>操作</span><span class="mono">${this.selected.action}</span></div>
+          <div class="detail-row"><span>资源</span><span>${this.selected.resourceType ?? '-'}${this.selected.resourceId ? ` · ${this.selected.resourceId}` : ''}</span></div>
           <div class="detail-row"><span>结果</span><span>${this.resultBadge(this.selected)} ${this.selected.errorMessage ?? ''}</span></div>
           <div class="detail-row"><span>客户端</span><span class="mono">${this.selected.clientIp ?? '-'} · ${this.selected.userAgent ?? '-'}</span></div>
           <div><strong>操作详情</strong><pre>${JSON.stringify(this.selected.details ?? {}, null, 2)}</pre></div>
-        </div>` : ''}
+        </div>` : nothing}
+        <button slot="footer" type="button" class="btn" @click=${() => { this.selected = null; }}>返回列表</button>
       </app-dialog>
     `;
   }

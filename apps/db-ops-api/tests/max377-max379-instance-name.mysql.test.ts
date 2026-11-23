@@ -1,4 +1,5 @@
 import { randomBytes } from 'node:crypto';
+import { readFile } from 'node:fs/promises';
 import mysql from 'mysql2/promise';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { signAccessToken, actorContextService, type ActorContext } from '../src/auth/actor-context.js';
@@ -278,6 +279,7 @@ describe.skipIf(!acceptanceEnabled())('MAX-377/MAX-379 name identity on isolated
     for (const statement of tableSql.split(';').map((part) => part.trim()).filter(Boolean)) {
       await pool.query(statement);
     }
+    await pool.query(await readFile(new URL('../sql/migrations/167_agent_tool_audit_invocation.sql', import.meta.url), 'utf8'));
     await pool.query(
       `INSERT INTO roles (id, name) VALUES (1, 'dba'), (2, 'operator'), (3, 'viewer')`,
     );
