@@ -994,6 +994,19 @@ for (const item of detailLocationCases) {
     await expect(metrics).toHaveAttribute('aria-selected', 'true');
     expect(new URL(copy.url()).searchParams.get('metricFrom')).toBe(legacy.searchParams.get('metricFrom'));
     expect(new URL(copy.url()).searchParams.get('metricTo')).toBe(legacy.searchParams.get('metricTo'));
+
+    const legacyEntry = new URL(legacy);
+    legacyEntry.pathname = '/';
+    legacyEntry.searchParams.set('tab', item.route);
+    await copy.goto(legacyEntry.href);
+    await expect(metrics).toHaveAttribute('aria-selected', 'true');
+    await expect(copyDetail.getByRole('heading', { name: fixtureEntries[20].name })).toBeVisible();
+    const restored = new URL(copy.url());
+    expect(restored.pathname).toBe(legacy.pathname);
+    for (const key of [item.idKey, 'metricResource', 'metricFrom', 'metricTo']) {
+      expect(restored.searchParams.get(key)).toBe(legacy.searchParams.get(key));
+    }
+
     legacy.searchParams.set('detailTab', 'unrecognized');
     await copy.goto(legacy.href);
     await expect(copyDetail.getByRole('tab', { name: '概览', exact: true })).toHaveAttribute('aria-selected', 'true');

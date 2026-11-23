@@ -334,6 +334,10 @@ export class InstanceDetailPage extends LitElement {
 
   private _goBack() { if (returnToResourceList('instance')) return; if (returnToDashboard()) return; const u = new URL(window.location.href); u.searchParams.set("tab", "instances-db"); u.searchParams.delete("id"); window.history.pushState({}, "", u); window.dispatchEvent(new CustomEvent("slide-navigate", { detail: { tab: "instances-db" } })); }
   private _setTab(tab: string, fromHistory = false) {
+    if (tab === this.activeTab) {
+      if (!fromHistory) void this.loadTabData();
+      return;
+    }
     selectDetailTab(this, this.activeTab, tab, () => {
       this.activeTab = tab;
       void this.loadTabData();
