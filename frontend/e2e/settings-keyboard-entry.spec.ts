@@ -28,23 +28,31 @@ function observeWrites(page: Page, paths: RegExp) {
   return requests;
 }
 
-test.beforeEach(async ({ page }) => {
+let sessionState: { token: string; refreshToken: string; user: unknown; permissions: string[] };
+
+test.beforeAll(async ({ request }) => {
   const password = process.env.QUALIFICATION_ADMIN_PASSWORD;
   if (!password) throw new Error('QUALIFICATION_ADMIN_PASSWORD is required for isolated settings qualification');
-  const login = await page.request.post('/api/auth/login', { data: { username: 'admin', password } });
-  expect(login.ok()).toBe(true);
-  const session = await login.json();
-  const permissions = await page.request.get('/api/auth/permissions', { headers: { Authorization: `Bearer ${session.token}` } });
-  expect(permissions.ok()).toBe(true);
-  await page.addInitScript(({ session, permissions }) => {
-    localStorage.setItem('token', session.token);
-    localStorage.setItem('refreshToken', session.refreshToken);
-    localStorage.setItem('user', JSON.stringify(session.user));
+  const login = await request.post('/api/auth/login', { data: { username: 'admin', password } });
+  expect(login.status()).toBe(200);
+  const { token, refreshToken, user } = await login.json();
+  const permissions = await request.get('/api/auth/permissions', { headers: { Authorization: `Bearer ${token}` } });
+  expect(permissions.status()).toBe(200);
+  sessionState = { token, refreshToken, user, permissions: await permissions.json() };
+});
+
+test.beforeEach(async ({ page }) => {
+  await page.addInitScript(({ token, refreshToken, user, permissions }) => {
+    localStorage.setItem('token', token);
+    localStorage.setItem('refreshToken', refreshToken);
+    localStorage.setItem('user', JSON.stringify(user));
     localStorage.setItem('permissions', JSON.stringify(permissions));
     localStorage.setItem('slide.i18n.locale', 'zh-CN');
-  }, { session, permissions: await permissions.json() });
+  }, sessionState);
   await page.goto('/dashboard');
   await page.locator('.sidebar-utility-group').getByRole('link', { name: '设置', exact: true }).click();
+  const navigation = page.getByRole('navigation', { name: '设置导航' });
+  await expect(navigation.getByRole('button', { name: '用户与权限', exact: true })).toBeVisible();
 });
 
 test('提示词类型支持展开、版本编辑取消与收起回焦', async ({ page }, info) => {
