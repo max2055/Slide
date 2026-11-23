@@ -82,6 +82,21 @@ async function reserve(state: 'reserved' | 'sent' | 'unknown' | 'settled' | 'can
 test('real unconfigured policies, uninitialized effective budget and empty persistent usage are read-only', async ({ page }) => {
   const before = await snapshot(); await login(page);
   await read(page, 'policies'); await expect(view(page)).toContainText('尚未配置'); await expect(view(page)).toContainText('尚未接入');
+  const policyUrl = page.url();
+  for (const [blocker, section] of [
+    ['INVESTIGATION_SWITCH_DISABLED', '总开关与调查开关'],
+    ['SERVICE_IDENTITY_NOT_CONFIGURED', '专用服务身份'],
+    ['RESOURCE_SCOPE_NOT_CONFIGURED', '资源覆盖'],
+    ['BUDGET_UNINITIALIZED', '预算与准入'],
+  ]) {
+    const locate = view(page).locator(`[data-blocker="${blocker}"]`).getByRole('button', { name: /定位区段/ });
+    await locate.focus();
+    await page.keyboard.press('Enter');
+    const heading = view(page).getByRole('heading', { name: section, exact: true });
+    await expect(heading).toBeFocused();
+    await expect(heading).toBeInViewport();
+    await expect(page).toHaveURL(policyUrl);
+  }
   await read(page, 'budget'); await expect(view(page)).toContainText('尚未初始化冻结预算');
   await expect(view(page)).toContainText('有效预算（可编辑）');
   await expect(view(page)).toContainText('当前默认值');

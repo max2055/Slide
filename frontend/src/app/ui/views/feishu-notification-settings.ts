@@ -105,7 +105,8 @@ export class FeishuNotificationSettings extends LitElement {
     .switch input { accent-color: var(--accent); }
     fieldset { min-inline-size: 0; padding: 0; margin: 0; border: 0; }
     .hint { margin: var(--space-xs) 0 0; color: var(--muted); font-size: var(--text-xs); line-height: 1.5; }
-    .actions { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: var(--space-sm); padding-top: var(--space-md); }
+    .actions { display: flex; flex-wrap: wrap; gap: var(--space-lg); margin-top: var(--space-md); padding-top: var(--space-md); border-top: 1px solid var(--border); }
+    .action { flex: 1 1 200px; }
     .error { margin: 0 0 var(--space-md); color: var(--danger); font-size: var(--text-sm); }
     .loading { color: var(--muted); padding: var(--space-xl); }
     .email-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 var(--space-md); }
@@ -375,12 +376,19 @@ export class FeishuNotificationSettings extends LitElement {
           ${this.selectedType === 'email' ? this.renderEmailForm() : this.renderFeishuForm()}
           <label class="switch"><input type="checkbox" .checked=${this.enabled} @change=${(event: Event) => { this.enabled = (event.target as HTMLInputElement).checked; }}> 启用告警通知</label>
         </fieldset>
-        <p class="hint" id="notification-test-hint">测试使用已保存的配置。建议先关闭告警通知并保存，再发送测试消息。确认收到后可启用告警通知。</p>
         <div class="actions">
-          <button type="button" class="btn" aria-describedby="notification-test-hint" aria-busy=${this.testing}
-            ?disabled=${!this.channelId || this.saving || this.testing} @click=${this.test}>${this.testing ? '发送中…' : '发送测试消息'}</button>
-          <button type="button" class="btn-primary" aria-busy=${this.saving}
-            ?disabled=${this.saving || this.testing} @click=${this.save}>${this.saving ? '保存中…' : '保存配置'}</button>
+          <div class="action">
+            <button type="button" class="btn" aria-describedby="notification-test-hint" aria-busy=${this.testing}
+              ?disabled=${!this.channelId || this.saving || this.testing} @click=${this.test}>${this.testing ? '发送中…' : '发送测试消息'}</button>
+            <p class="hint" id="notification-test-hint">${this.channelId
+              ? `测试使用已保存的配置，${this.selectedType === 'email' ? '向已保存的收件人发送测试邮件' : '向机器人所在飞书群发送测试消息'}。关闭告警通知时也可测试。`
+              : '先保存当前通道配置，再发送测试消息。'}</p>
+          </div>
+          <div class="action">
+            <button type="button" class="btn-primary" aria-describedby="notification-save-hint" aria-busy=${this.saving}
+              ?disabled=${this.saving || this.testing} @click=${this.save}>${this.saving ? '保存中…' : '保存配置'}</button>
+            <p class="hint" id="notification-save-hint">保存当前通道的配置和告警启用状态。测试消息需单独发送。</p>
+          </div>
         </div>
       </app-card>
     `;
