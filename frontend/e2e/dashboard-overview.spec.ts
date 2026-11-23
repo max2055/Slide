@@ -299,3 +299,47 @@ test('R1.1 typography and user density across the viewport and theme matrix', as
   }
   await writeFile(testInfo.outputPath('layout-measurements.json'), JSON.stringify(measurements, null, 2));
 });
+
+test('MAX-726 resource overview links the risk queue and type-specific management', async ({ page }) => {
+  const control = await fixture(page);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto('/workbench');
+  await page.getByRole('navigation').getByText('资源概览', { exact: true }).click();
+  const view = page.locator('dashboard-page');
+  await expect(view.getByRole('heading', { name: '资源概览', exact: true })).toBeVisible({ timeout: 5_000 });
+  await expect(view.locator('.risk-row')).toHaveCount(5);
+  await expect(view).toContainText('显示前 5 项 / 共 6 项');
+  await view.getByRole('button', { name: '查看全部', exact: true }).click();
+  await expect(view.locator('#resource-details').locator('tbody tr')).toHaveCount(6);
+  const scroller = page.locator('main.content');
+  const link = view.locator('#resource-details').getByRole('link', { name: 'Payments host', exact: true });
+  await link.scrollIntoViewIfNeeded();
+  const top = await scroller.evaluate(el => el.scrollTop);
+  expect(top).toBeGreaterThan(0);
+  await link.click();
+  await page.locator('server-detail').getByRole('button', { name: '返回列表', exact: true }).click();
+  await expect(page).toHaveURL(/scope=all.*state=risk/);
+  await expect(view.locator('#resource-details').locator('tbody tr')).toHaveCount(6);
+  await expect.poll(() => scroller.evaluate(el => el.scrollTop)).toBe(top);
+  for (const [scope, label, url] of [
+    ['数据库', '数据库管理', '/instances-db'],
+    ['服务器', '服务器管理', '/servers'],
+    ['网络设备', '网络设备管理', '/network-devices'],
+  ]) {
+    await view.getByRole('tab', { name: scope, exact: true }).click();
+    await expect(view.getByRole('link', { name: label, exact: true })).toHaveAttribute('href', url);
+    const summary = view.locator(scope === '数据库' ? '.capacity-panel' : '.main-panels');
+    await expect(summary).toBeVisible();
+    expect((await summary.boundingBox())!.y).toBeLessThan((await view.locator('#resource-details').boundingBox())!.y);
+    if (scope === '数据库') {
+      await scroller.evaluate(el => { el.scrollTop = 0; });
+      const heading = summary.getByRole('heading', { name: '总数据量趋势', exact: true });
+      expect((await heading.boundingBox())!.y).toBeLessThan(900);
+      await expect(summary).toContainText('最近采样覆盖: 2/2');
+    }
+  }
+  await view.getByRole('link', { name: '网络设备管理', exact: true }).click();
+  await expect(page).toHaveURL(/\/network-devices/);
+  expect(control.posts()).toBe(0);
+
+});

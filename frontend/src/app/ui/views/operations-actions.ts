@@ -50,8 +50,6 @@ export class OperationsActions extends LitElement {
     .list-layout > section > app-card { margin-top:var(--space-lg); }
     .plan-list-filters { margin:0; padding:var(--space-md); border-bottom:1px solid var(--border); }
     .plan-list-filters label { max-width:240px; }
-    .plan-list-filters details { flex:0 1 250px; margin:0; }
-    .plan-list-filters details label { margin-top:var(--space-xs); }
     .plan-list-table { overflow:auto; }
     .plan-list-table table { min-width:760px; table-layout:fixed; }
     .plan-list-table th { background:var(--bg-muted); border-bottom-width:1px; }
@@ -203,21 +201,27 @@ export class OperationsActions extends LitElement {
         <option value="" .selected=${!this.stateFilter}>全部状态</option>
         ${['draft', 'pending_approval', 'approved', 'rejected', 'expired'].map(state => html`<option value=${state} .selected=${state === this.stateFilter}>${operationLabels[state]}</option>`)}
       </select></label>
-      <details><summary>按调查标识筛选（高级）</summary><label>来源调查<input aria-label="计划来源调查" .value=${this.investigation} @input=${(e:Event)=>{this.investigation=(e.target as HTMLInputElement).value;this.source.reset();this.draftResult=0;}}></label></details>
       <button class="btn btn-refresh" ?disabled=${d.locked} @click=${()=>this.discover()}>查找计划</button></div>
-      ${d.loading?html`<p class="plan-list-message" role="status">正在查找计划…</p>`:nothing}${d.error?html`<p class="plan-list-message" role="alert">${d.error}</p>`:nothing}
+      ${this.source.data ? html`<p class="plan-list-message">来源调查：${this.source.data.title}</p>` : nothing}
+      ${d.loading ? html`<p class="plan-list-message" role="status">正在查找计划…</p>` : nothing}
+      ${d.error ? html`<p class="plan-list-message" role="alert">行动计划列表读取失败。${d.error}</p>` : nothing}
       <app-data-table class="plan-list-table" tabindex="0" role="region" aria-label="行动计划表"
         .striped=${false} .loading=${d.loading} .emptyMessage=${d.error ? '行动列表暂不可用' : d.data ? '没有匹配计划' : '等待读取计划'} .columns=${[
           {key:'plan',label:'行动计划与资源',width:'24%'}, {key:'owner',label:'处理角色 / 提交者',width:'16%'},
           {key:'phase',label:'行动阶段',width:'18%'}, {key:'impact',label:'影响或验证要求',width:'26%'}, {key:'open',label:'操作',width:'16%'}
         ]} .rows=${(d.data?.items ?? []).map(plan => this.discoveryRow(plan))}></app-data-table>
+      ${d.data?.items?.length === 0 && !d.data.partial && !d.loading && hasSlidePermission(this.permissions, 'chat:view') ? html`
+        <div class="plan-list-footer">${this.source.data
+          ? html`<a href=${`/workbench?investigation=${encodeURIComponent(this.source.data.id)}`}>返回来源调查</a>`
+          : html`<a href="/workbench?workspaceTab=investigations">在调查列表定位来源</a>`}</div>` : nothing}
       ${d.data?.partial || d.data?.nextCursor ? html`<div class="plan-list-footer">
         ${d.data.partial?html`<p>本页 ${d.data.authorizedCounts.total} 条可见计划，可继续翻页。</p>`:nothing}
         ${d.data.nextCursor?html`<button class="btn" ?disabled=${d.locked} @click=${()=>this.discover(d.data!.nextCursor!)}>下一页计划</button>`:nothing}
       </div>`:nothing}
-    </app-card>${this.can('propose')&&hasSlidePermission(this.permissions,'chat:view')?html`<details><summary>从当前调查创建草案</summary><app-card><span slot="header">创建可信来源草案</span><p>服务器解析已注册工具、策略和验证器；创建草案后仍需独立审批与显式执行。</p>
+    </app-card>${this.can('propose')&&hasSlidePermission(this.permissions,'chat:view')?html`<details ?open=${new URLSearchParams(location.search).has('resultVersion')}><summary>从当前调查创建草案</summary><app-card><span slot="header">创建可信来源草案</span><p>服务器解析已注册工具、策略和验证器；创建草案后仍需独立审批与显式执行。</p>
       ${this.source.loading?html`<p role="status">正在读取来源结果与授权目标…</p>`:nothing}
-      ${this.source.error?html`<p role="alert">${this.source.error}</p>`:nothing}
+      ${this.source.error ? html`<p role="alert">来源调查读取失败。${this.source.error}</p>` : nothing}
+      ${this.sources.error && !this.investigation ? html`<p role="alert">可选调查列表读取失败。${this.sources.error}</p>` : nothing}
       ${!this.investigation?html`<app-form-field label="来源调查"><select aria-label="草案来源调查" @change=${(e:Event)=>{this.investigation=(e.target as HTMLSelectElement).value;this.draftResult=0;void this.loadSource();void this.discover();}}><option value="">请选择已有调查</option>${this.sources.data?.items.map(i=>html`<option value=${i.id}>${i.title}</option>`)}</select></app-form-field>`:nothing}
       ${this.source.data?html`<p>来源：${this.source.data.title} · 结果 V${this.draftResult}</p><p>${this.source.data.latestResult?.result.summary??'尚无结果，先完成只读调查。'}</p>
         ${this.source.data.latestResult?.version!==this.draftResult?html`<p role="alert">来源结果已变化，请返回调查核对当前结果后重新创建草案。</p>`:nothing}
@@ -299,14 +303,20 @@ export class OperationsActions extends LitElement {
     const p=this.plans, bindings=this.approvals.data?.items.filter(row=>row.kind==='agent').map(approvalPlanBinding).filter(b=>b!==null) ?? [];
     return html`
       ${canReturn?html`<a href=${returnTo!} @click=${(e:MouseEvent)=>returnToWorkbench(e,returnTo!)}>返回来源页面</a>`:params.has("returnTo")?html`<p role="status">来源位置无效或当前无权访问。<a href="/workbench?workspaceTab=actions">返回授权行动计划列表</a></p>`:nothing}
-      <details><summary>按计划标识打开（高级）</summary><form class="toolbar" @submit=${(e:Event)=>{e.preventDefault();if(this.planId.trim())void this.open(this.planId.trim());}}><label>打开计划<input aria-label="打开计划" placeholder="输入计划标识" required maxlength="128" .value=${this.planId} @input=${(e:Event)=>this.planId=(e.target as HTMLInputElement).value}></label><button class="btn" ?disabled=${p.loading||p.writing||p.accessInvalidated}>读取计划</button></form></details>${p.data?html`<button class="btn btn-refresh" type="button" ?disabled=${p.loading||p.writing||p.accessInvalidated} @click=${()=>void this.open(p.data!.plan.id,false)}>刷新原计划</button>`:nothing}
+      ${p.data?html`<button class="btn btn-refresh" type="button" ?disabled=${p.loading||p.writing||p.accessInvalidated} @click=${()=>void this.open(p.data!.plan.id,false)}>刷新原计划</button>`:nothing}
       ${p.error?html`<p role="alert">${p.error}</p>`:nothing}${p.mutationUnknown?html`<p class="notice warn" role="status">操作接受结果未知。仅可只读刷新核对原计划，当前页面不会重发。</p>`:nothing}${p.loading?html`<div class="skeleton" role="status">正在读取计划…</div>`:nothing}
       ${stale?html`<p role="alert">提醒引用的计划版本已变化，操作暂不可用。<a href=${`/workbench?workspaceTab=actions&plan=${encodeURIComponent(p.data!.plan.id)}${params.has("attentionExecution")?`&attentionExecution=${encodeURIComponent(params.get("attentionExecution")!)}`:""}`}>打开当前原计划并重新确认</a></p>`:p.data?this.renderPlan(p.data.plan):html`<div class="list-layout"><section>${this.discoveryView()}<details><summary>统一审批记录</summary><app-card><span slot="header">审批历史</span><p class="muted">审批记录保留审核历史；计划与执行请使用上方授权列表。</p>
         ${hasSlidePermission(this.permissions,'approval:view')?html`<div class="toolbar"><label>审批状态<select aria-label="行动审批状态" .value=${this.filter} ?disabled=${this.approvals.loading||this.approvals.accessInvalidated} @change=${(e:Event)=>{this.filter=(e.target as HTMLSelectElement).value;void this.loadApprovals();}}><option value="pending">待审批</option><option value="processed">已处理</option></select></label><button class="btn btn-refresh" ?disabled=${this.approvals.loading||this.approvals.accessInvalidated} @click=${this.loadApprovals}>刷新已提交计划</button></div>`:html`<p>需要审批查看权限才能发现已提交记录；仍可按计划标识读取授权内容。</p>`}
-        ${this.approvals.loading?html`<p role="status">正在读取审批记录…</p>`:nothing}${this.approvals.error?html`<p role="alert">${this.approvals.error}</p>`:nothing}
+        ${this.approvals.loading?html`<p role="status">正在读取审批记录…</p>`:nothing}${this.approvals.error ? html`<p role="alert">审批记录列表读取失败。${this.approvals.error}</p>` : nothing}
         ${bindings.map(b=>html`<div class="row"><button class="btn-ghost" @click=${()=>void this.open(b.planId)}>审批记录 ${b.approvalId} · 计划 ${b.planId} · v${b.version}</button><span class="muted">${operationLabels[b.status]??b.status} · 打开后核对当前版本</span></div>`)}
         ${this.approvals.data&&!bindings.length?html`<app-empty-state title="没有可见的已提交计划" description="此结果不包含未提交草稿，也不代表没有在途执行。"></app-empty-state>`:nothing}
       </app-card></details></section><aside><app-card><span slot="header">行动边界</span><p>仅支持专用演练服务；计划变更后旧批准失效。未知回执需核对原动作，不提供执行重试。</p>${hasSlidePermission(this.permissions,'chat:view') ? html`<a href=${this.investigation ? `/workbench?investigation=${encodeURIComponent(this.investigation)}` : '/workbench'}>返回 AI 工作台</a>` : nothing}</app-card></aside></div>`}
+      <details><summary>按计划标识打开（高级）</summary>
+        ${!p.data ? html`<form class="toolbar" @submit=${(e:Event) => { e.preventDefault(); void this.loadSource(); void this.discover(); }}>
+          <label>来源调查<input aria-label="计划来源调查" .value=${this.investigation} @input=${(e:Event) => {
+            this.investigation = (e.target as HTMLInputElement).value; this.source.reset(); this.draftResult = 0;
+          }}></label><button class="btn" ?disabled=${this.discovery.locked}>按调查筛选</button></form>` : nothing}
+        <form class="toolbar" @submit=${(e:Event)=>{e.preventDefault();if(this.planId.trim())void this.open(this.planId.trim());}}><label>打开计划<input aria-label="打开计划" placeholder="输入计划标识" required maxlength="128" .value=${this.planId} @input=${(e:Event)=>this.planId=(e.target as HTMLInputElement).value}></label><button class="btn" ?disabled=${p.loading||p.writing||p.accessInvalidated}>读取计划</button></form></details>
       <app-dialog .open=${!!this.confirmAction} title="确认当前计划审批" @app-dialog-close=${()=>this.confirmAction=''}><p>目标：${p.data?resourceLabel(p.data.plan.content.target):''} · 版本 ${p.data?.plan.version}</p><p class="notice warn">${p.data?.plan.content.rollback.description}</p><p>此批准不执行动作；更改版本后需重新审批。</p>${p.data ? approvalConditions(p.data.plan) : nothing}<div slot="footer"><button class="btn" @click=${()=>this.confirmAction=''}>取消</button><button class="btn-primary" ?disabled=${p.locked} @click=${this.review}>确认${this.confirmAction==='approve'?'批准':'驳回'}当前版本</button></div></app-dialog>`;
   }
 }

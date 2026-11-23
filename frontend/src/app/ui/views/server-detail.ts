@@ -1,4 +1,4 @@
-import { detailTabKeydown, returnToResourceList } from '../components/resource-detail-context.js';
+import { detailResourceId, detailTabKeydown, readDetailTab, returnToResourceList, selectDetailTab } from '../components/resource-detail-context.js';
 import { hasListPermission } from '../components/resource-list-access.js';
 import "../components/investigation-operation-context.ts";
 import '../components/resource-investigation-links.js';
@@ -16,7 +16,7 @@ import { showToast } from "../components/app-toast-container.js";
 import { authFetch } from "../../../api/index.js";
 import { sharedBtnStyles } from "../../styles/shared-btn-styles.js";
 import type { HostedInstance, HostedInstancesResponse } from "../../../api/generated/public-api.js";
-import type { ServerDiagnosticEvidence } from "../components/server-diagnostic-panel.js";
+import type { ServerDiagnosticEvidence, ServerDiagnosticGroup } from "../components/server-diagnostic-panel.js";
 
 interface ServerDetail {
   id: number;
@@ -32,6 +32,20 @@ interface ServerDetail {
   created_at: string;
   updated_at: string;
 }
+
+const serverDetailTabs = [
+  { key: "overview", label: "概览" },
+  { key: "collection", label: "监控配置" },
+  { key: "metrics", label: "指标与趋势" },
+  { key: "config", label: "配置" },
+  { key: "diagnostics", label: "诊断" },
+  { key: "network", label: "网络" },
+  { key: "processes", label: "进程" },
+  { key: "services", label: "服务" },
+  { key: "logs", label: "日志" },
+  { key: "related", label: "关联资源" },
+];
+const serverDetailTabKeys = serverDetailTabs.map(tab => tab.key);
 
 @customElement("server-detail")
 export class ServerDetailPage extends LitElement {
@@ -149,7 +163,7 @@ export class ServerDetailPage extends LitElement {
   @state() private server: ServerDetail | null = null;
   @state() private loading = true;
   @state() private error: string | null = null;
-  @state() private activeTab: string = new URL(location.href).searchParams.get('metricResource')?.startsWith('server:') ? 'metrics' : 'overview' ;
+  @state() private activeTab = 'overview';
   @state() private lastUpdated: Date | null = null;
   @state() private detailReadError = '';
   @state() private isRefreshing = false;
@@ -196,19 +210,21 @@ export class ServerDetailPage extends LitElement {
     this._navHandler = (e: any) => {
       if (e.detail.tab === "server-detail" && e.detail.serverId != null) {
         this.serverId = Number(e.detail.serverId);
-        this.activeTab = "overview";
       }
     };
     window.addEventListener("slide-navigate", this._navHandler);
     window.addEventListener('slide-permissions-loaded', this.onPermissionsChanged);
     window.addEventListener('slide-session-expired', this.onPermissionsChanged);
-    this.loadFromUrl();
+    window.addEventListener("popstate", this.onPopState);
+    const id = detailResourceId("server");
+    if (id !== null) this.serverId = id;
   }
 
   override willUpdate(changed: Map<string, unknown>): void {
     if (changed.has("serverId")) {
       const id = this.serverId;
       if (id != null && Number.isInteger(id) && id > 0) {
+        this.activeTab = readDetailTab("server", id, serverDetailTabKeys);
         void this.loadServerContext(id);
       } else { this.onPermissionsChanged(); this.error = '服务器 ID 无效'; }
     }
@@ -219,6 +235,7 @@ export class ServerDetailPage extends LitElement {
     ++this.contextVersion; ++this.overviewRequest;
     window.removeEventListener('slide-permissions-loaded', this.onPermissionsChanged);
     window.removeEventListener('slide-session-expired', this.onPermissionsChanged);
+    window.removeEventListener('popstate', this.onPopState);
     super.disconnectedCallback();
     if (this._navHandler) {
       window.removeEventListener("slide-navigate", this._navHandler);
@@ -226,14 +243,12 @@ export class ServerDetailPage extends LitElement {
     }
   }
 
-  private loadFromUrl() {
-    const params = new URLSearchParams(window.location.search);
-    const id = params.get("id");
-    const tab = params.get("tab");
-    if (id && (tab === "server-detail" || location.pathname === "/server-detail") && /^[1-9]\d*$/.test(id) && Number.isSafeInteger(Number(id))) {
-      this.serverId = Number(id);
+  private onPopState = () => {
+    const id = detailResourceId('server');
+    if (id !== null && id === this.serverId) {
+      this._setTab(readDetailTab('server', id, serverDetailTabKeys), true);
     }
-  }
+  };
 
   private async loadServerContext(id: number): Promise<void> {
     const version = ++this.contextVersion;
@@ -281,8 +296,13 @@ export class ServerDetailPage extends LitElement {
           ? "没有权限查看该服务器托管的数据库实例"
           : "托管数据库实例加载失败");
       }
-      const data = await response.json() as HostedInstancesResponse;
-      if (current()) this.hostedInstances = data.instances;
+      const data: HostedInstancesResponse | null = await response.json();
+      if (!current()) return;
+      if (!Array.isArray(data?.instances) || data.instances.some(instance =>
+        !instance || !Number.isSafeInteger(instance.instanceId) || instance.instanceId <= 0
+        || typeof instance.name !== "string" || typeof instance.dbType !== "string"
+      )) throw new Error("托管数据库实例返回格式异常");
+      this.hostedInstances = data.instances;
     } catch (error) {
       if (current()) {
         this.hostedInstancesError = error instanceof Error ? error.message : "托管数据库实例加载失败";
@@ -293,7 +313,7 @@ export class ServerDetailPage extends LitElement {
   }
 
   private async collectDiagnostics() {
-    if (!this.serverId || this.diagnosticsCollecting) return;
+    if (!this.serverId || !this.server || this.diagnosticsCollecting || !hasListPermission('servers:manage')) return;
     const id = this.serverId, version = this.contextVersion;
     const current = () => version === this.contextVersion && id === this.serverId;
     this.diagnosticsCollecting = true;
@@ -304,6 +324,10 @@ export class ServerDetailPage extends LitElement {
       const body = await response.json().catch(() => ({}));
       if (!current()) return;
       if (!response.ok) {
+        if (response.status === 401 || response.status === 403) {
+          this.diagnostics = null;
+          throw new Error(response.status === 403 ? '没有采集诊断证据的权限' : '登录已失效');
+        }
         throw new Error(body.error || "诊断采集失败");
       }
       // POST already returns the collected evidence. The legacy GET may collect
@@ -334,7 +358,10 @@ export class ServerDetailPage extends LitElement {
       if (!current()) return;
       if (!serverRes.ok) {
         this.detailReadError = serverRes.status === 401 || serverRes.status === 403 ? '无权读取服务器详情' : '服务器详情读取失败';
-        if (serverRes.status === 401 || serverRes.status === 403) { this.server=null;this.overview=null;this.hostedInstances=[];this.diagnostics=null;this.error = this.detailReadError; }
+        if (serverRes.status === 401 || serverRes.status === 403) {
+          this.onPermissionsChanged();
+          this.error = this.detailReadError;
+        }
         return;
       }
       const server = await serverRes.json();
@@ -397,13 +424,14 @@ export class ServerDetailPage extends LitElement {
     }));
   }
 
-  private _setTab(tab: string) {
-    const configuration = this.renderRoot.querySelector('resource-collection-section') as import('../components/resource-collection-section.js').ResourceCollectionSection | null;
-    if (configuration) { configuration.confirmDiscard(() => this._applyTab(tab)); return; }
-    this._applyTab(tab);
+  private _setTab(tab: string, fromHistory = false) {
+    selectDetailTab(this, this.activeTab, tab, () => { this.activeTab = tab; }, fromHistory);
   }
-  private _applyTab(tab: string) {
-    this.activeTab = tab;
+
+  private async openDiagnosticsTab() {
+    this._setTab('diagnostics');
+    await this.updateComplete;
+    this.renderRoot.querySelector<HTMLButtonElement>('[role="tab"][aria-selected="true"]')?.focus();
   }
 
   private _formatTimeAgo(date: Date | null): string {
@@ -456,7 +484,7 @@ export class ServerDetailPage extends LitElement {
               ${this.overview ? ({normal:'当前观测未提示异常',abnormal:'异常',unavailable:'不可用',unknown:'待确认'})[runState(this.overview)] : '待确认'}
             </app-badge>
           </div>
-          <div class="header-right"><button class="btn" @click=${() => this._setTab('collection')}>监控配置</button>
+          <div class="header-right">
             <span class="last-updated">详情成功读取：${this._formatTimeAgo(this.lastUpdated)}（非资源观测）</span>
             ${this.detailReadError ? html`<span role="alert">${this.detailReadError}，成功读取时间未更新</span>` : nothing}
             <button class="btn" aria-busy=${String(this.isInspecting)} @click=${() => this._oneClickInspection()} .disabled=${this.isInspecting}>${icons['clipboard']} ${this.isInspecting ? '巡检中…' : '一键巡检'}</button>
@@ -469,18 +497,7 @@ export class ServerDetailPage extends LitElement {
 
         <resource-investigation-links resourceType="server" .resourceId=${this.serverId ?? this.server.id}></resource-investigation-links>
         <div class="tabs" @keydown=${detailTabKeydown} role="tablist" aria-label="服务器详情页签">
-          ${[
-            { key: "overview", label: "概览" },
-            { key: "collection", label: "监控配置" },
-            { key: "metrics", label: "指标与趋势" },
-            { key: "config", label: "配置" },
-            { key: "diagnostics", label: "诊断" },
-            { key: "network", label: "网络" },
-            { key: "processes", label: "进程" },
-            { key: "services", label: "服务" },
-            { key: "logs", label: "日志" },
-            { key: "related", label: "关联资源" },
-          ].map(t => html`
+          ${serverDetailTabs.map(t => html`
             <button role="tab" aria-selected=${String(this.activeTab === t.key)} class="tab ${this.activeTab === t.key ? "active" : ""}" @click=${() => this._setTab(t.key)}>
               ${t.label}
             </button>
@@ -508,20 +525,20 @@ export class ServerDetailPage extends LitElement {
     }
   }
 
-  private _renderDiagnosticSection(section: string | null) {
+  private _renderDiagnosticSection(section: ServerDiagnosticGroup | null) {
+    const canCollect = hasListPermission('servers:manage');
     return html`
-      <p role="status">本次诊断快照 · 采集于 ${this.diagnostics?.collectedAt || '尚未取得诊断证据'} · 来源 SSH；切换页签不刷新快照。</p>
       <app-card>
         <span slot="header">${section === "network" ? "网络证据" : section === "processes" ? "进程证据" : section === "services" ? "服务证据" : section === "logs" ? "系统日志" : "服务器诊断证据"}</span>
-        ${!this.diagnostics && !this.diagnosticsCollecting && !this.diagnosticsError ? html`<p role="status">当前页面尚未取得诊断证据，无法据此判断运行状态。页面切换和刷新不会自动采集；点击“采集诊断证据”将从服务器采集，需要服务器管理权限。</p>` : nothing}
         <server-diagnostic-panel
           .evidence=${this.diagnostics}
           .loading=${this.diagnosticsCollecting}
           .error=${this.diagnosticsError}
           .sectionFilter=${section}
+          .canCollect=${canCollect}
         ></server-diagnostic-panel>
         <div slot="footer">
-          ${section ? html`<button class="btn" @click=${() => this._setTab('diagnostics')}>去诊断页签采集</button>` : html`<button class="btn" type="button" @click=${this.collectDiagnostics} .disabled=${this.diagnosticsCollecting || !hasListPermission('servers:manage')} title=${hasListPermission('servers:manage') ? '主动采集诊断证据' : '需要 servers:manage 权限'}>
+          ${section ? canCollect ? html`<button class="btn" type="button" @click=${this.openDiagnosticsTab}>去诊断页签采集</button>` : nothing : html`<button class="btn" type="button" @click=${this.collectDiagnostics} .disabled=${this.diagnosticsCollecting || !canCollect} title=${canCollect ? '主动采集诊断证据' : '需要服务器管理权限'}>
             ${this.diagnosticsCollecting ? "采集中…" : "采集诊断证据"}
           </button>`}
         </div>

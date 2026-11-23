@@ -13,6 +13,7 @@ export type ChatQueueItem = {
   localCommandArgs?: string;
   localCommandName?: string;
   pendingRunId?: string;
+  unconfirmedMessageId?: string;
 };
 
 export const CRON_CHANNEL_LAST = "last";

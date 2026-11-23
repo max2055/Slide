@@ -30,7 +30,7 @@ test.beforeEach(async ({ page }) => {
   await page.addStyleTag({ content: '* { transition: none !important; animation: none !important; }' });
   await expect(page.locator('html')).toHaveAttribute('data-theme-mode', 'light');
   await expect(page.locator('.topbar')).toBeVisible();
-  await expect(page.locator('.topbar-search__label')).toHaveText('搜索');
+  await expect(page.locator('.topbar-search__label')).toHaveText('跳转到页面');
 });
 
 for (const [width, height] of [[1440, 900], [1366, 768], [1920, 1080]]) {
@@ -71,7 +71,7 @@ test('#636 preserves the existing narrow-screen auto minimum', async ({ page }) 
 });
 
 test('#706 disabled export keeps its colors on hover; enabled ghost still responds', async ({ page }, info) => {
-  const button = page.getByRole('button', { name: 'Export chat', exact: true });
+  const button = page.getByRole('button', { name: '导出对话', exact: true });
   const colors = (node: Locator) => node.evaluate(el => {
     const style = getComputedStyle(el);
     return { background: style.backgroundColor, color: style.color, border: style.borderColor };

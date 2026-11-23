@@ -168,21 +168,27 @@ export class InvestigationCreate extends LitElement {
       investigation-create summary { cursor:pointer; font-size:14px; margin:var(--space-md) 0; }
       investigation-create .selected-resource { display:flex; align-items:center; gap:var(--space-sm); overflow-wrap:anywhere; margin:var(--space-xs) 0; font-size:12px; }
       @media(max-width:600px) { investigation-create .create-times { grid-template-columns:minmax(0,1fr); } }
-      investigation-create .create-footer { display:flex; gap:var(--space-sm); flex-wrap:wrap; }
+      investigation-create .create-footer-actions { display:flex; justify-content:flex-end; gap:var(--space-sm); flex-wrap:wrap; }
+      investigation-create .create-footer p { margin:0 0 var(--space-sm); }
+      investigation-create .create-section + .create-section { border-top:1px solid var(--border); margin-top:var(--space-lg); }
+      investigation-create .create-section:first-child h3 { margin-top:0; }
       investigation-create [role=alert] { color:var(--danger); overflow-wrap:anywhere; }
     </style>
     <app-dialog size="xl" .open=${this.open} .closeOnOverlay=${false} .closable=${!this.controller.busy} title=${this.sessionId ? '将对话转为调查' : '创建手动调查'} @app-dialog-close=${this.close}>
-      <p>调查只读取所选边界内的数据。${this.sessionId ? '关联原 Session，不复制历史消息。' : ''}</p>
       ${this.validation || this.controller.error ? html`<p role="alert">${this.validation || this.controller.error}</p>` : ''}
       <fieldset ?disabled=${this.controller.busy || this.controller.acceptanceUnknown}>
+      <section class="create-section" aria-label="调查场景">
+      <h3>调查场景</h3>
       <app-form-field label="常见场景"><select aria-label="常见场景" .value=${this.scenario} @change=${(e:Event)=>{this.scenario=(e.target as HTMLSelectElement).value;this.goal='';}}>
         <option value="fault">异常现象排查</option><option value="availability">服务不可用排查</option><option value="custom">自定义问题</option></select></app-form-field>
-      <p>常见场景自动生成标题与只读目标；按下方选择确认对象及窗口，点击“提交调查”将显式发起只读分析；打开表单不会调用模型。</p>
       <details .open=${this.scenario==='custom'}><summary>${this.scenario==='custom'?'描述自定义问题':'补充描述（选填）'}</summary>
       <app-form-field label="调查目标" .required=${this.scenario==='custom'}><textarea aria-label="调查目标" maxlength="2000" rows="3" .value=${this.goal} @input=${(e: Event) => this.goal = (e.target as HTMLTextAreaElement).value}></textarea></app-form-field></details>
       <details><summary>自定义标题（选填）</summary>${field('调查标题', this.investigationTitle, v => this.investigationTitle = v)}</details>
+      </section>
+      <section class="create-section" aria-label="资源范围">
+      <h3>资源范围</h3>
       <app-form-field label="调查 Profile"><select aria-label="调查 Profile" .value=${this.profile} @change=${(e: Event) => { this.profile = (e.target as HTMLSelectElement).value as 'ops' | 'system'; this.selected = []; this.resourceNames = {}; this.ids = ''; this.advancedRefs = ''; this.validation = ''; }}><option value="ops">Ops（资源只读调查）</option><option value="system">System（平台只读调查）</option></select></app-form-field>
-      ${this.profile === 'ops' ? html`<h3>资源范围</h3><p>按名称选择，不默认包含其他资源。首个所选资源为主资源，其余为关联资源。</p>
+      ${this.profile === 'ops' ? html`<p>按名称选择，不默认包含其他资源。首个所选资源为主资源，其余为关联资源。</p>
         ${this.open ? html`<investigation-resource-picker .value=${this.selected} @resource-list-unavailable=${() => this.advancedOpen = true} .disabled=${this.controller.busy || this.controller.acceptanceUnknown} @resource-selection-change=${(e: CustomEvent<{ value: string[]; names: Record<string, string> }>) => { this.selected = e.detail.value; this.resourceNames = e.detail.names; }}></investigation-resource-picker>` : nothing}
         ${this.selected.map((ref, index) => html`<div class="selected-resource"><span>${index ? '关联资源' : '主资源'} · ${this.resourceNames[ref] || ref}</span>${index ? html`<button type="button" class="btn-ghost" @click=${() => this.selected = [ref, ...this.selected.filter(value => value !== ref)]}>设为主资源</button>` : nothing}<button type="button" class="btn-ghost" aria-label=${`移除 ${ref}`} @click=${() => this.selected = this.selected.filter(value => value !== ref)}>移除</button></div>`)}
         <details .open=${this.advancedOpen} @toggle=${(e: Event) => this.advancedOpen = (e.target as HTMLDetailsElement).open}><summary>高级：按资源标识补充</summary>
@@ -190,11 +196,18 @@ export class InvestigationCreate extends LitElement {
           <app-form-field label="资源类型"><select aria-label="资源类型" .value=${this.resource} @change=${(e: Event) => this.resource = (e.target as HTMLSelectElement).value}>${Object.entries(workspaceResourceLabels).map(([key, label]) => html`<option value=${key}>${label}</option>`)}</select></app-form-field>
           <app-form-field label="资源 ID" hint="兼容入口；多个 ID 用逗号分隔，全部资源均需当前访问权限。"><input aria-label="资源 ID" .value=${this.ids} @input=${(e: Event) => this.ids = (e.target as HTMLInputElement).value}></app-form-field>
         </details>` : html`<p role="status">System 仅调查平台，已清除资源选择；不会把资源范围带入平台调查。</p>`}
+      </section>
+      <section class="create-section" aria-label="观察时段">
+      <h3>观察时段</h3>
       <app-form-field label="观察窗口"><select aria-label="观察窗口" .value=${String(this.windowMinutes)} @change=${(e:Event)=>{this.windowMinutes=Number((e.target as HTMLSelectElement).value);this.from='';this.to='';}}><option value="30">最近 30 分钟</option><option value="60">最近 1 小时</option><option value="360">最近 6 小时</option></select></app-form-field><details><summary>指定绝对窗口（可选）</summary><div class="create-times">${field('观察开始时间', this.from, v => this.from = v, 'datetime-local')}${field('观察结束时间', this.to, v => this.to = v, 'datetime-local')}</div></details>
+      </section>
       </fieldset>
       ${this.controller.acceptanceUnknown ? html`<p role="status">提交结果未知，已锁定本次输入。请核对原请求，避免重复创建。</p>` : nothing}
-      <div class="create-footer" slot="footer"><button class="btn" ?disabled=${this.controller.busy} @click=${this.close}>取消</button>
-        <button class="btn-primary" ?disabled=${this.controller.busy} @click=${this.submit}>${this.controller.busy ? '正在提交…' : this.controller.acceptanceUnknown ? '核对原请求' : '提交调查'}</button></div>
+      <div class="create-footer" slot="footer">
+        <p>${this.sessionId ? '提交后将原对话关联到调查并保留历史消息。' : '提交后启动所选范围内的只读分析，可能调用模型。'}</p>
+        <div class="create-footer-actions"><button class="btn" ?disabled=${this.controller.busy} @click=${this.close}>取消</button>
+          <button class="btn-primary" ?disabled=${this.controller.busy} @click=${this.submit}>${this.controller.busy ? '正在提交…' : this.controller.acceptanceUnknown ? '核对原请求' : '提交调查'}</button></div>
+      </div>
     </app-dialog>`;
   }
 }

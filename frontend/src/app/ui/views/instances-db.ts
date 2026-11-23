@@ -297,12 +297,9 @@ export class InstancesPage extends LitElement {
       text-align: right;
     }
 
-    .actions {
-      display: flex;
-      gap: var(--space-sm);
-    }
-
     /* 加载和空状态 */
+    resource-metrics-table[hidden] { display: none; }
+
     .loading, .empty {
       display: flex;
       align-items: center;
@@ -484,10 +481,11 @@ export class InstancesPage extends LitElement {
     .confirm-text {
       font-size: var(--text-md);
       color: var(--muted);
+      overflow-wrap: anywhere;
     }
   `];
 
-  @state() private searchResultCount = 0;
+  @state() private searchResultCount: number | null = null;
   @state() private instances: DatabaseInstance[] = [];
   @state() private loading = true;
   @state() private refreshing = false;
@@ -530,10 +528,20 @@ export class InstancesPage extends LitElement {
   @state() private hostRelationError: string | null = null;
   @state() private pendingCreatedInstanceId: number | null = null;
   private hostRelationRequestVersion = 0;
-  private readonly handlePermissionsLoaded = () => {
-    this.requestUpdate();
-    if (this.editingInstance && this.canViewHostRelations) {
-      void this._loadInstanceHosts(this.editingInstance.id);
+  private readonly handlePermissionsLoaded = (event: Event) => {
+    this.instancesRequest++;
+    this.instances = [];
+    this.healthEvidence = [];
+    this.healthEvidenceReady = false;
+    this.metricsLoading = false;
+    this.searchResultCount = null;
+    this.refreshing = false;
+    if (this.editingInstance || this.testingInstance || this.deletingInstance) this._resetDialogs();
+    if (event.type === 'slide-permissions-loaded' && hasListPermission('instance:view')) {
+      void this.loadInstances();
+    } else {
+      this.loading = false;
+      this.error = '无法读取数据库实例清单，请确认登录和查看权限';
     }
   };
 
@@ -556,6 +564,7 @@ export class InstancesPage extends LitElement {
   }
 
   override disconnectedCallback(): void {
+    this.instancesRequest++;
     clearInterval(this.ageTimer);
     window.removeEventListener("slide-permissions-loaded", this.handlePermissionsLoaded);
     window.removeEventListener("slide-session-expired", this.handlePermissionsLoaded);
@@ -577,6 +586,7 @@ export class InstancesPage extends LitElement {
   }
 
   @state() private healthEvidence: OverviewItem[] = [];
+  @state() private healthEvidenceReady = false;
   private currentEvidence(instance: DatabaseInstance) {
     return this.healthEvidence.find(item => item?.resource?.type === 'instance' && item.resource.id === instance.id);
   }
@@ -593,38 +603,61 @@ export class InstancesPage extends LitElement {
   }
 
 
-  private async loadInstances() {
-    this.healthEvidence = [];
+  private instancesRequest = 0;
+
+  private async loadInstances(refresh = false) {
+    const request = ++this.instancesRequest;
+    this.loading = true;
+    this.refreshing = refresh;
+    this.error = "";
+    let failure = '数据库实例清单读取失败';
     try {
-      const res = await authFetch("/api/database/instances");
-      if (!res.ok) throw new Error("Failed to load instances");
-      this.instances = await res.json();
-      this.error = '';
-      try {
-        const overview = await authFetch('/api/resources/overview');
-        if (overview.ok) { const body = await overview.json(); this.healthEvidence = Array.isArray(body.items) ? body.items : []; }
-      } catch { this.healthEvidence = []; }
-      this.metricRefreshVersion++;
+      const res = await authFetch("/api/database/instances", { signal: AbortSignal.timeout(15000) });
+      if (request !== this.instancesRequest) return;
+      if (!res.ok) {
+        if ([401, 403].includes(res.status)) failure = '无法读取数据库实例清单，请确认登录和查看权限';
+        throw new Error();
+      }
+      const instances = await res.json();
+      if (!Array.isArray(instances)) throw new Error();
+      if (request !== this.instancesRequest) return;
+      this.instances = instances;
+      this.healthEvidenceReady = false;
       this.loading = false;
+      this.metricRefreshVersion++;
       const url = new URL(window.location.href), editId = Number(url.searchParams.get('edit'));
       const edit = this.instances.find(i => i.id === editId);
       if (edit && !this.showEditDialog) {
         this._editInstance(edit); this.editorTab = 'collection';
         url.searchParams.delete('edit'); window.history.replaceState({}, '', url);
       }
-    } catch (err: any) {
-      this.error = err.message;
+    } catch {
+      if (request !== this.instancesRequest) return;
+      this.instances = [];
+      this.healthEvidence = [];
+      this.healthEvidenceReady = false;
+      this.error = failure;
       this.loading = false;
+      this.refreshing = false;
+      return;
+    }
+    this.healthEvidence = [];
+    try {
+      const overview = await authFetch('/api/resources/overview', { signal: AbortSignal.timeout(15000) });
+      if (request !== this.instancesRequest || !overview.ok) return;
+      const body = await overview.json();
+      if (request === this.instancesRequest && Array.isArray(body?.items)) {
+        this.healthEvidence = body.items;
+        this.healthEvidenceReady = true;
+      }
+    } catch { /* Unavailable health evidence stays unknown. */ }
+    finally {
+      if (request === this.instancesRequest) this.refreshing = false;
     }
   }
 
   private async refreshInstances() {
-    this.refreshing = true;
-    try {
-      await this.loadInstances();
-    } finally {
-      this.refreshing = false;
-    }
+    await this.loadInstances(true);
   }
 
   async refreshReadData() { await this.loadInstances(); }
@@ -688,15 +721,9 @@ export class InstancesPage extends LitElement {
   }
 
   override render() {
-    if (this.showAddDialog || this.showEditDialog) return this._renderFormDialog(this.showEditDialog ? '编辑资源' : '添加资源', this.showEditDialog);
-    if (this.loading) {
-      return html`<header class="resource-page-header"><h1>数据库实例</h1></header><div class="loading">加载中...</div>`;
-    }
-
-    if (this.error) {
-      return html`<header class="resource-page-header"><h1>数据库实例</h1></header><div class="loading" role="alert" style="color: var(--danger);">${this.error}</div>`;
-    }
-
+    if (this.showAddDialog || this.showEditDialog) return this._renderFormDialog(this.showEditDialog ? '编辑数据库实例' : '添加数据库实例', this.showEditDialog);
+    const listReady = !this.loading && !this.error;
+    const showCount = listReady && (this.filter === "all" || this.healthEvidenceReady) && (!this.searchQuery.trim() || !this.metricsLoading);
     const filtered = this.filteredInstances;
 
     return html`
@@ -722,27 +749,27 @@ export class InstancesPage extends LitElement {
 
             <div class="filter-group">
               <button class="filter-btn ${this.filter === "all" ? "active" : ""}" @click=${() => (this.filter = "all")}>
-                全部 (${this.instances.length})
+                全部${listReady ? ` (${this.instances.length})` : ""}
               </button>
               <button class="filter-btn ${this.filter === "healthy" ? "active" : ""}" @click=${() => (this.filter = "healthy")}>
-                <span class="status-dot status-dot-ok"></span> 健康 (${this.stats.healthy})
+                <span class="status-dot status-dot-ok"></span> 健康${listReady && this.healthEvidenceReady ? ` (${this.stats.healthy})` : ""}
               </button>
               <button class="filter-btn ${this.filter === "warning" ? "active" : ""}" @click=${() => (this.filter = "warning")}>
-                <span class="status-dot status-dot-warn"></span> 警告 (${this.stats.warning})
+                <span class="status-dot status-dot-warn"></span> 警告${listReady && this.healthEvidenceReady ? ` (${this.stats.warning})` : ""}
               </button>
               <button class="filter-btn ${this.filter === "critical" ? "active" : ""}" @click=${() => (this.filter = "critical")}>
-                <span class="status-dot status-dot-danger"></span> 异常 (${this.stats.critical})
+                <span class="status-dot status-dot-danger"></span> 异常${listReady && this.healthEvidenceReady ? ` (${this.stats.critical})` : ""}
               </button>
               <button class="filter-btn ${this.filter === "unknown" ? "active" : ""}" @click=${() => (this.filter = "unknown")}>
-                未知 (${this.stats.unknown})
+                未知${listReady && this.healthEvidenceReady ? ` (${this.stats.unknown})` : ""}
               </button>
             </div>
             <div class="toolbar-actions">
-              <button class="btn resource-action" type="button" aria-haspopup="dialog" @click=${this.openColumnSettings} .disabled=${filtered.length === 0}>列设置</button>
+              <button class="btn resource-action" type="button" aria-haspopup="dialog" @click=${this.openColumnSettings} .disabled=${!listReady || filtered.length === 0}>列设置</button>
               ${this.activeFilterCount > 0
                 ? html`<button class="btn-ghost resource-filter-reset" @click=${this.resetFilters}>重置筛选</button>`
                 : nothing}
-              <button aria-busy=${String(this.refreshing || this.metricsLoading)} class="btn btn-refresh resource-action resource-action--refresh" type="button" .disabled=${this.refreshing || this.metricsLoading} @click=${this.refreshInstances}>
+              <button aria-busy=${String(this.loading || this.refreshing || this.metricsLoading)} class="btn btn-refresh resource-action resource-action--refresh" type="button" .disabled=${this.loading || this.refreshing || this.metricsLoading} @click=${this.refreshInstances}>
                  刷新
               </button>
               <button class="btn-primary resource-action resource-action--add" type="button" @click=${() => this._addInstance()}>
@@ -752,20 +779,27 @@ export class InstancesPage extends LitElement {
           </div>
 
           <div class="resource-toolbar-meta" aria-live="polite">
-            <span class="resource-result-count">共 ${filtered.length ? this.searchResultCount : 0} 个数据库实例</span>
+            ${showCount && (this.searchResultCount !== null || !filtered.length) ? html`<span class="resource-result-count">共 ${filtered.length ? this.searchResultCount : 0} 个数据库实例</span>` : nothing}
             <span id="instance-search-help">支持名称、主机、类型、版本、状态；空格组合搜索</span>
             ${this.activeFilterCount > 0
               ? html`<span class="resource-filter-state">已启用 ${this.activeFilterCount} 项筛选</span>`
               : nothing}
           </div>
 
-          <resource-metrics-table resourceType="instance" @resource-results-changed=${(e: CustomEvent<number>) => { this.searchResultCount = e.detail; }} .refreshVersion=${this.metricRefreshVersion} @resource-metrics-loading=${(e: CustomEvent<boolean>) => { this.metricsLoading = e.detail; }} .search=${this.searchQuery}
-            .columns=${[{ key: 'name', label: '实例' }, { key: 'address', label: '地址' }, { key: 'version', label: '版本' }, { key: 'health', label: '观测健康' }, { key: 'actions', label: '操作', width: '14rem' }]}
+          ${this.loading ? html`<div class="loading" role="status">正在读取数据库实例清单…</div>` :
+            this.error ? html`<div class="loading" role="alert">${this.error} <button class="btn btn-refresh" @click=${this.refreshInstances}>重试读取清单</button></div>` : nothing}
+          <resource-metrics-table resourceType="instance" ?hidden=${!listReady} @resource-results-changed=${(e: CustomEvent<number>) => { this.searchResultCount = e.detail; }} .refreshVersion=${this.metricRefreshVersion} @resource-metrics-loading=${(e: CustomEvent<boolean>) => { this.metricsLoading = e.detail; }} .search=${this.searchQuery}
+            .columns=${[{ key: 'name', label: '实例' }, { key: 'address', label: '地址' }, { key: 'version', label: '版本' }, { key: 'health', label: '观测健康' }, { key: 'actions', label: '操作', width: '15rem' }]}
             .entries=${filtered.map(inst => ({ id: inst.id, type: inst.db_type, version: inst.db_version,
               searchValues: [inst.name, inst.host, this.currentStatus(inst), ({ healthy: "健康", warning: "警告", critical: "异常", error: "异常" } as Record<string, string>)[this.currentStatus(inst)] ?? "未知"],
               name: html`<span class="resource-name"><button class="btn-ghost" title=${inst.name} @click=${() => this._viewDetail(inst)}>${inst.name}</button><span class="full-value" aria-hidden="true">${inst.name}</span></span>`,
               address: `${inst.host}:${inst.port}`, health: this.renderHealthEvidence(inst),
-              actions: html`<div class="actions"><button class="btn-sm" data-resource-detail-id=${inst.id} @click=${() => this._viewDetail(inst)}>详情</button><button class="btn-sm" title=${hasListPermission("instance:update") ? "编辑实例" : "需要实例修改权限"} .disabled=${!hasListPermission("instance:update")} data-resource-edit-id=${inst.id} @click=${() => this._editInstance(inst)}>编辑</button><button class="btn-sm" @click=${() => this._testConnection(inst)} .disabled=${!hasListPermission("instance:manage") || this.listTestStatus === "testing"} title=${hasListPermission("instance:manage") ? "输入密码进行连接测试" : "需要实例管理权限"}>测试</button><button class="btn-sm danger" title=${hasListPermission("instance:delete") ? "删除实例" : "需要实例删除权限"} .disabled=${!hasListPermission("instance:delete")} @click=${() => this._deleteInstance(inst)}>删除</button></div>`
+              actions: html`<div class="actions instance-actions">
+                <button type="button" class="btn-ghost" data-resource-detail-id=${inst.id} @click=${() => this._viewDetail(inst)}>详情</button>
+                <button type="button" class="btn-sm" title=${hasListPermission("instance:update") ? "编辑实例" : "需要实例修改权限"} .disabled=${!hasListPermission("instance:update")} data-resource-edit-id=${inst.id} @click=${() => this._editInstance(inst)}>编辑</button>
+                <button type="button" class="btn-sm" @click=${() => this._testConnection(inst)} .disabled=${!hasListPermission("instance:manage") || this.listTestStatus === "testing"} title=${hasListPermission("instance:manage") ? "输入密码进行连接测试" : "需要实例管理权限"}>测试</button>
+                <button type="button" class="btn-sm danger" title=${hasListPermission("instance:delete") ? "删除实例" : "需要实例删除权限"} .disabled=${!hasListPermission("instance:delete")} @click=${() => this._deleteInstance(inst)}>删除</button>
+              </div>`
             }))}
             @resource-metric-open=${(e: CustomEvent<{ id: number }>) => { const inst = this.instances.find(i => i.id === e.detail.id); if (inst) this._viewDetail(inst); }}
           ></resource-metrics-table>
@@ -801,13 +835,6 @@ export class InstancesPage extends LitElement {
 
   private _viewDetail(inst: DatabaseInstance) {
     captureListReturn(this, 'instance', inst.id, { search: this.searchQuery, filter: this.filter });
-    // Update URL with instance ID
-    const url = new URL(window.location.href);
-    url.searchParams.set("id", String(inst.id));
-    url.searchParams.set("tab", "instance-detail");
-    window.history.pushState({}, "", url);
-
-    // Dispatch navigation event
     window.dispatchEvent(new CustomEvent("slide-navigate", {
       detail: { tab: "instance-detail", id: inst.id }
     }));
@@ -1236,6 +1263,9 @@ export class InstancesPage extends LitElement {
     const canManageHostRelations = this.canManageHostRelations;
     const relationUnavailable = canManageHostRelations
       && (this.hostRelationLoading || this.instanceHosts === null);
+    const { name, db_type, host, port } = this.formData;
+    const address = host.trim() && (port ? `${host.trim()}:${port}` : host.trim());
+    const identity = [name.trim(), db_type, address].filter(Boolean).join(' · ');
     return html`
       <section aria-label="资源编辑" class="resource-editor" aria-busy=${String(this.isSubmitting)}>
         <style>
@@ -1250,7 +1280,7 @@ export class InstancesPage extends LitElement {
           @media(max-width:700px){.resource-editor .editor-head{align-items:flex-start;flex-direction:column}}
         </style>
         <button class="btn btn-ghost" .disabled=${this.isSubmitting} @click=${this._closeDialogs}>返回资源列表</button>
-        <div class="editor-head"><div><h1 tabindex="-1">${title}</h1><p>${this.formData.name || '新资源'} · ${this.formData.db_type} · ${this.formData.host}:${this.formData.port}</p></div>
+        <div class="editor-head"><div><h1 tabindex="-1">${title}</h1>${identity ? html`<p>${identity}</p>` : nothing}</div>
           ${this.editingInstance ? html`<button class="btn btn-ghost" .disabled=${this.isSubmitting} @click=${() => this._confirmEditorLeave(() => this._viewDetail(this.editingInstance!))}>查看资源详情 ↗</button>` : nothing}</div>
         <div class="editor-tabs" role="tablist" aria-label="资源编辑页签">
           ${['basic', 'collection'].map((tab, index) => html`<button id=${`resource-edit-tab-${tab}`} role="tab" aria-selected=${this.editorTab === tab} aria-controls=${`resource-edit-panel-${tab}`} tabindex=${this.editorTab === tab ? 0 : -1} @keydown=${(e: KeyboardEvent) => { if (['ArrowLeft','ArrowRight','Home','End'].includes(e.key)) { e.preventDefault(); const next = e.key === 'Home' ? 'basic' : e.key === 'End' ? 'collection' : index ? 'basic' : 'collection'; this.editorTab = next; void this.updateComplete.then(() => this.renderRoot.querySelector<HTMLButtonElement>(`#resource-edit-tab-${next}`)?.focus()); } }} @click=${() => { this.editorTab = tab; }}>${index ? '监控与采集' : '基本信息'}</button>`)}

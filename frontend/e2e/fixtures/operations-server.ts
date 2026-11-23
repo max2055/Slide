@@ -37,6 +37,7 @@ export async function startOperationsServer() {
   const realNow=Date.now;
   const ssh=await startHelperSshFixture(501);
   let vite: Awaited<ReturnType<typeof createServer>> | undefined;
+  let closeSockets = () => {};
   try {
     const codes=['operations:cases:view','operations:cases:manage','operations:cases:review','instance:manage','network_devices:view','network_devices:manage','servers:view','servers:manage','operations:context:view','operations:context:manage','operations:actions:view','operations:actions:propose','operations:actions:approve','operations:actions:execute','approval:view'];
     for(const code of codes)await f.rows('INSERT IGNORE INTO permissions(code,description) VALUES(?,?)',[code,'MAX202 synthetic UI identity']);
@@ -115,6 +116,7 @@ export async function startOperationsServer() {
     // domain. This is not formal DirectAdapter/server-worker composition.
     const {WebSocketServer}=createRequire(new URL('../../../apps/db-ops-api/package.json',import.meta.url))('ws');
     const wss=new WebSocketServer({noServer:true});
+    closeSockets = () => { for (const client of wss.clients) client.terminate(); };
     f.app.server.on('upgrade',(req,socket,head)=>{if(req.url?.startsWith('/agent-ws'))wss.handleUpgrade(req,socket,head,(ws:any)=>wss.emit('connection',ws,req));else socket.destroy();});
     wss.on('connection',(ws:any)=>{let actor:any;let id='';let timer:ReturnType<typeof setTimeout>|undefined;let closed=false;
       const refresh=async()=>{if(closed||!actor||!id)return;try{const snapshot=await f.bridge.observationServices().stream.snapshot(actor,id);if(!closed)ws.send(JSON.stringify({...snapshot,type:'investigation.snapshot'}));}catch{if(!closed)ws.send(JSON.stringify({type:'investigation.error',investigationId:id,code:'INVESTIGATION_NOT_FOUND'}));}if(!closed)timer=setTimeout(()=>void refresh(),1000);};
@@ -126,6 +128,6 @@ export async function startOperationsServer() {
     vite=await createServer({root:resolve('.'),configFile:resolve('vite.config.js'),define:{'import.meta.env.VITE_AGENT_WS_URL':'""'},server:{host:'127.0.0.1',port:0,strictPort:false,proxy:{'/api':{target:apiUrl,changeOrigin:true},'/__slide':{target:apiUrl,changeOrigin:true},'/agent-ws':{target:apiUrl,ws:true,changeOrigin:true}}}});
     await vite.listen();
     const url=`http://127.0.0.1:${(vite.httpServer!.address() as {port:number}).port}`;
-    return {...f,author,reviewer,source,actionSource,knowledge,plan,plans,ui,executions,reports,verification,sends:()=>sends,helperRestarts:()=>ssh.restartCount(),dispatchUnknown:async(id:string)=>{await ssh.reset();await f.rows("UPDATE workflow_jobs SET available_at=TIMESTAMPADD(SECOND,-1,UTC_TIMESTAMP(3)) WHERE job_type='operations.action.execute'");loseReceipt=true;try{await verification.prepare(author,id);for(let i=0;i<5;i++){await worker.runOnce();if((await executions.get(author,id)).state==='outcome_unknown')break;}}finally{loseReceipt=false;}},resetClock:()=>{Date.now=realNow;},runAction:async(id:string)=>{await ssh.reset();await f.rows("UPDATE workflow_jobs SET available_at=TIMESTAMPADD(SECOND,-1,UTC_TIMESTAMP(3)) WHERE job_type='operations.action.execute'");for(let i=0;i<5;i++){await worker.runOnce();if((await executions.get(author,id)).state==='succeeded')break;}const report=await reports.get(author,id);Date.now=()=>Math.max(realNow(),clock);return report;},url,apiUrl,token:(actor=author)=>signAccessToken(actor,f.secret),close:async()=>{Date.now=realNow;await vite?.close();await worker.shutdown();await ssh.close();await f.close();}};
-  } catch(error) {Date.now=realNow;await vite?.close();await ssh.close();await f.close();throw error;}
+    return {...f,author,reviewer,source,actionSource,knowledge,plan,plans,ui,executions,reports,verification,sends:()=>sends,helperRestarts:()=>ssh.restartCount(),dispatchUnknown:async(id:string)=>{await ssh.reset();await f.rows("UPDATE workflow_jobs SET available_at=TIMESTAMPADD(SECOND,-1,UTC_TIMESTAMP(3)) WHERE job_type='operations.action.execute'");loseReceipt=true;try{await verification.prepare(author,id);for(let i=0;i<5;i++){await worker.runOnce();if((await executions.get(author,id)).state==='outcome_unknown')break;}}finally{loseReceipt=false;}},resetClock:()=>{Date.now=realNow;},runAction:async(id:string)=>{await ssh.reset();await f.rows("UPDATE workflow_jobs SET available_at=TIMESTAMPADD(SECOND,-1,UTC_TIMESTAMP(3)) WHERE job_type='operations.action.execute'");for(let i=0;i<5;i++){await worker.runOnce();if((await executions.get(author,id)).state==='succeeded')break;}const report=await reports.get(author,id);Date.now=()=>Math.max(realNow(),clock);return report;},url,apiUrl,token:(actor=author)=>signAccessToken(actor,f.secret),close:async()=>{Date.now=realNow;closeSockets();await vite?.close();await worker.shutdown();await ssh.close();await f.close();}};
+  } catch(error) {Date.now=realNow;closeSockets();await vite?.close();await ssh.close();await f.close();throw error;}
 }
