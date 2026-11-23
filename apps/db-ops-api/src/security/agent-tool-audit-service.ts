@@ -108,6 +108,7 @@ export interface AgentToolAuditRecord {
   result?: ToolResult;
   agentId?: string;
   agentPolicy?: AgentSecurityPolicy;
+  invocationId?: string;
 }
 
 export class AgentToolAuditService {
@@ -128,8 +129,8 @@ export class AgentToolAuditService {
     const [result] = await executor.execute(
       `INSERT INTO agent_tool_audit
        (phase, actor_id, agent_id, request_id, tool_name, allowed, reason_code, resource_json,
-        policy_snapshot, args_redacted, result_redacted, approval_id)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        policy_snapshot, args_redacted, result_redacted, approval_id, invocation_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         record.phase,
         record.actor.userId,
@@ -154,6 +155,7 @@ export class AgentToolAuditService {
         JSON.stringify(auditArgs),
         auditResult === null ? null : JSON.stringify(auditResult),
         record.decision.approvalId ?? null,
+        record.invocationId ?? null,
       ],
     );
     if (!result?.insertId && Number(result?.affectedRows) !== 1) {
@@ -195,17 +197,27 @@ export class AgentToolAuditService {
     };
   }
 
-  async detail(id: number): Promise<Record<string, unknown> | null> {
+  async detail(id: number): Promise<(Record<string, unknown> & { relatedRecordId: number | null }) | null> {
     const executor = this.executorProvider();
     if (!executor) throw new Error('AGENT_TOOL_AUDIT_STORE_UNAVAILABLE');
     if (!Number.isSafeInteger(id) || id <= 0) return null;
     const [rows] = await executor.execute(
-      `SELECT a.*, u.username AS actor_username
-       FROM agent_tool_audit a LEFT JOIN users u ON u.id = a.actor_id WHERE a.id = ? LIMIT 1`,
+      `SELECT a.*, u.username AS actor_username, related.id AS related_record_id
+       FROM agent_tool_audit a
+       LEFT JOIN users u ON u.id = a.actor_id
+       LEFT JOIN agent_tool_audit related ON related.invocation_id = a.invocation_id
+         AND related.phase = CASE a.phase WHEN 'decision' THEN 'result' WHEN 'result' THEN 'decision' END
+         AND related.actor_id = a.actor_id AND related.agent_id = a.agent_id AND related.tool_name = a.tool_name
+       WHERE a.id = ?`,
       [id],
     );
-    const row = (rows as AuditRow[])[0];
-    return row ? publicRow(row, true) : null;
+    const row = (rows as Array<AuditRow & { related_record_id: number | string | null }>)[0];
+    if (!row) return null;
+    const relatedRecordId = Number(row.related_record_id);
+    return {
+      ...publicRow(row, true),
+      relatedRecordId: Number.isSafeInteger(relatedRecordId) && relatedRecordId > 0 ? relatedRecordId : null,
+    };
   }
 }
 

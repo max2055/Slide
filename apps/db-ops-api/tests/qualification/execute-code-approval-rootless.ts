@@ -57,6 +57,7 @@ try {
     await pool.query(await readFile(new URL(`../../sql/migrations/${name}.sql`, import.meta.url), 'utf8'));
   }
   await pool.query("ALTER TABLE agent_tool_audit ADD agent_id VARCHAR(128) NOT NULL DEFAULT 'slide-db-ops'");
+  await pool.query(await readFile(new URL('../../sql/migrations/167_agent_tool_audit_invocation.sql', import.meta.url), 'utf8'));
   await pool.query('CREATE TABLE system_config (config_key VARCHAR(128) PRIMARY KEY, config_value TEXT)');
   await pool.query("INSERT INTO system_config VALUES ('agent_tool_approval_enabled','true'),('agent_sandbox_network_enabled','false'),('agent_sandbox_enabled','true')");
   const actor = { userId: 7, username: 'fixture', roles: ['admin'], permissions: ['ai:execute'], instanceScopes: {}, sessionVersion: 1, requestId: randomUUID() };
