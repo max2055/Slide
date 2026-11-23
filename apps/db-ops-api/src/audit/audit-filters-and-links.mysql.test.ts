@@ -162,14 +162,15 @@ describe.skipIf(process.env.AUDIT_BOUNDARY_MYSQL !== '1')('MAX-729 audit HTTP ro
   it('links only exact invocation pairs, including exceptions, under the existing detail permission', async () => {
     const actor = await actorContextService.loadActiveActor(readerId, undefined, 'shared-request');
     const tool = (await getPlatformTool('get_instance_summary'))!;
+    const [argumentSecret, resultSecret, handlerSecret] = Array.from({ length: 3 }, () => randomUUID());
     const handler = vi.spyOn(tool, 'handler').mockImplementation(async args => {
-      if (args.label === 'exception') throw new Error('handler-secret');
-      return { success: true, data: { apiToken: 'result-secret' } };
+      if (args.label === 'exception') throw new Error(handlerSecret);
+      return { success: true, data: { apiToken: resultSecret } };
     });
     try {
       const registry = createActorBoundToolRegistry(actor);
       const results = await Promise.all(['success', 'exception'].map(label =>
-        registry.execute(tool.name, { instance_id: instanceId, label, password: 'argument-secret' })));
+        registry.execute(tool.name, { instance_id: instanceId, label, password: argumentSecret })));
       expect(results).toMatchObject([{ success: true }, { success: false, errorCode: 'TOOL_EXECUTION_FAILED' }]);
       expect(await registry.execute(tool.name, { instance_id: 502, label: 'denied' }))
         .toMatchObject({ success: false, errorCode: 'INSTANCE_SCOPE_DENIED' });
@@ -194,7 +195,8 @@ describe.skipIf(process.env.AUDIT_BOUNDARY_MYSQL !== '1')('MAX-729 audit HTTP ro
       expect(forward.json().record).toMatchObject({ relatedRecordId: result.id, args: { password: '[REDACTED]' } });
       expect(backward.json().record).toMatchObject({ relatedRecordId: decision.id, result: { success: label === 'success' } });
       expect(forward.json().record).not.toHaveProperty('invocation_id');
-      expect(forward.body + backward.body).not.toMatch(/argument-secret|result-secret|handler-secret/);
+      const evidence = forward.body + backward.body;
+      for (const original of [argumentSecret, resultSecret, handlerSecret]) expect(evidence).not.toContain(original);
     }
     expect(new Set(rows.filter(row => row.label === 'success' || row.label === 'exception').map(row => row.invocation_id)).size).toBe(2);
     for (const row of rows.filter(row => row.label === null || row.label === 'denied')) {

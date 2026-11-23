@@ -328,8 +328,8 @@ describe.skipIf(!port)('Cron API + isolated MySQL security', () => {
       import { dbConnection } from './src/db-connection.ts';
       import { CronRunStore } from './src/cron/cron-run-store.ts';
       (async () => {
-        const pool = mysql.createPool({ host: '127.0.0.1', port: ${port}, user: 'root',
-          password: process.env.CRON_TEST_MYSQL_PASSWORD ?? '', database: ${JSON.stringify(database)} });
+        const password = process.env.CRON_TEST_MYSQL_PASSWORD ?? '';
+        const pool = mysql.createPool({ host: '127.0.0.1', port: ${port}, user: 'root', password, database: ${JSON.stringify(database)} });
         dbConnection.getPool = () => pool;
         try {
           const store = new CronRunStore(); await store.recover();
