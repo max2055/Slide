@@ -216,7 +216,7 @@ export class AgentSandboxStatusPage extends LitElement {
   private refresh(): void {
     if (!this.canView || this.loading) return;
     void this.loadStatus();
-    if (!this.configLoading && !this.saving) void this.reloadPermissions();
+    if (!this.saving) void this.reloadPermissions();
   }
 
   private onToggle(event: Event): void {

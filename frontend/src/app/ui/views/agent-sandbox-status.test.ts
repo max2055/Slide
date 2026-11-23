@@ -74,20 +74,28 @@ describe('Agent Sandbox global setting', () => {
   });
 
   it('requires confirmation before enabling and persists a strict boolean', async () => {
-    mocks.put.mockResolvedValue({ enabled: true, reasonCode: 'SANDBOX_ENABLED' });
+    let releaseSave!: () => void;
+    mocks.put.mockImplementation(() => new Promise(resolve => {
+      releaseSave = () => resolve({ enabled: true, reasonCode: 'SANDBOX_ENABLED' });
+    }));
     const page = await render(false);
-    const toggle = page.shadowRoot!.querySelector<HTMLInputElement>('[data-action="sandbox-toggle"]')!;
+    const root = page.shadowRoot!;
+    const toggle = root.querySelector<HTMLInputElement>('[data-action="sandbox-toggle"]')!;
 
     toggle.click();
     await page.updateComplete;
     expect(mocks.put).not.toHaveBeenCalled();
-    expect(page.shadowRoot?.querySelector<HTMLElement & { open: boolean }>('app-dialog')?.open).toBe(true);
+    expect(root.querySelector<HTMLElement & { open: boolean }>('app-dialog')?.open).toBe(true);
 
-    page.shadowRoot?.querySelector<HTMLButtonElement>('[data-action="confirm-enable"]')?.click();
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    await page.updateComplete;
-    expect(mocks.put).toHaveBeenCalledWith('/agent/security/sandbox/config', { enabled: true });
-    expect(toggle.checked).toBe(true);
+    const confirm = root.querySelector<HTMLButtonElement>('[data-action="confirm-enable"]')!;
+    confirm.click();
+    root.querySelector<HTMLButtonElement>('.btn-refresh')!.click();
+    confirm.click();
+    expect(mocks.put).toHaveBeenCalledExactlyOnceWith('/agent/security/sandbox/config', { enabled: true });
+    expect(mocks.get.mock.calls.filter(([path]) => path === '/agent/security/sandbox')).toHaveLength(2);
+    expect(mocks.permissions).toHaveBeenCalledTimes(1);
+    releaseSave();
+    await vi.waitFor(() => expect(toggle.checked).toBe(true));
   });
 
   it('disables immediately without an enable confirmation', async () => {
@@ -162,6 +170,37 @@ describe('Agent Sandbox global setting', () => {
     expect(root.textContent).toContain('执行环境');
     expect(mocks.permissions).toHaveBeenCalledTimes(3);
     expect(mocks.get).not.toHaveBeenCalledWith('/agent/security/sandbox/config');
+    expect(mocks.put).not.toHaveBeenCalled();
+  });
+
+  it('MAX-732 refreshes permissions and discards a pending configuration read after revocation', async () => {
+    let releaseConfig!: () => void;
+    const page = await render();
+    const root = page.shadowRoot!;
+    const refresh = root.querySelector<HTMLButtonElement>('.btn-refresh')!;
+    mocks.get.mockImplementation(async (path: string) => {
+      if (path === '/auth/permissions') return mocks.permissions();
+      if (path.endsWith('/config')) return new Promise(resolve => {
+        releaseConfig = () => resolve({ enabled: false, reasonCode: 'SANDBOX_DISABLED' });
+      });
+      return statusResponse();
+    });
+    refresh.click();
+    await vi.waitFor(() => expect(root.textContent).toContain('正在读取全局设置'));
+
+    mocks.permissions.mockResolvedValue(['audit:view']);
+    refresh.click();
+    await vi.waitFor(() => expect(mocks.permissions).toHaveBeenCalledTimes(3));
+    expect(root.querySelector('.config-card')).toBeNull();
+    releaseConfig();
+    await new Promise(resolve => setTimeout(resolve, 0));
+    await page.updateComplete;
+
+    expect(root.querySelector('.config-card')).toBeNull();
+    expect(root.querySelector('[data-action="sandbox-toggle"]')).toBeNull();
+    expect(root.querySelector('app-dialog')).toBeNull();
+    expect(root.textContent).toContain('运行状态');
+    expect(mocks.get.mock.calls.filter(([path]) => path === '/agent/security/sandbox')).toHaveLength(3);
     expect(mocks.put).not.toHaveBeenCalled();
   });
 
