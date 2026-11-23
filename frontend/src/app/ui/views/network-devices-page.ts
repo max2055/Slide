@@ -67,8 +67,8 @@ export class NetworkDevicesPage extends LitElement {
   @state() private error: string | null = null;
   private inventoryRequest = 0;
   @state() private search = restoredListState('network_device')?.state.search ?? "";
-  @state() private siteFilter = "all";
-  @state() private statusFilter = "all";
+  @state() private siteFilter = restoredListState('network_device')?.state.site ?? "all";
+  @state() private statusFilter = restoredListState('network_device')?.state.status ?? "all";
   @state() private showDialog = false;
   @state() private editingId: number | null = null;
   @state() private saving = false;
@@ -475,7 +475,7 @@ export class NetworkDevicesPage extends LitElement {
   }
 
   private navigate(deviceId: number) {
-    captureListReturn(this, 'network_device', deviceId, { search: this.search });
+    captureListReturn(this, 'network_device', deviceId, { search: this.search, site: this.siteFilter, status: this.statusFilter });
     window.dispatchEvent(new CustomEvent("slide-navigate", { detail: { tab: "network-device-detail", networkDeviceId: deviceId } }));
   }
 
@@ -633,7 +633,7 @@ export class NetworkDevicesPage extends LitElement {
             <span class="search-icon">${icons.search}</span>
             <input class="resource-search-input" aria-label="搜索网络设备" placeholder="搜索名称、主机、站点、类型、型号、版本、状态（空格组合）" .value=${this.search} @input=${(e: Event) => (this.search = (e.target as HTMLInputElement).value)}>
           </div>
-          <select class="resource-filter" aria-label="站点筛选" .value=${this.siteFilter} @change=${(e: Event) => (this.siteFilter = (e.target as HTMLSelectElement).value)}><option value="all">全部站点</option>${sites.map((site) => html`<option value=${site}>${site}</option>`)}</select>
+          <select class="resource-filter" aria-label="站点筛选" .value=${this.siteFilter} @change=${(e: Event) => (this.siteFilter = (e.target as HTMLSelectElement).value)}><option value="all" .selected=${this.siteFilter === "all"}>全部站点</option>${sites.map((site) => html`<option value=${site} .selected=${this.siteFilter === site}>${site}</option>`)}</select>
           <select class="resource-filter" aria-label="状态筛选" .value=${this.statusFilter} @change=${(e: Event) => (this.statusFilter = (e.target as HTMLSelectElement).value)}><option value="all">全部状态</option><option value="online">在线</option><option value="offline">离线</option><option value="unreachable">不可达</option><option value="error">异常</option></select>
           <div class="toolbar-actions">
               <button class="btn resource-action" type="button" aria-haspopup="dialog" @click=${this.openColumnSettings} .disabled=${filtered.length === 0}>列设置</button>

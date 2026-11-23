@@ -48,7 +48,7 @@ import { exportChatMarkdown } from "./chat/export.ts";
 import type { ChatSideResult } from "./chat/side-result.ts";
 import type { DirectGatewayClient } from "./direct-gateway.ts";
 import type { ExecApprovalRequest } from "./controllers/exec-approval.ts";
-import { pathForTab, type Tab } from "./navigation.ts";
+import { pathForTab, tabFromPath, type Tab } from "./navigation.ts";
 import type { SidebarContent } from "./sidebar-content.ts";
 import { loadSettings, type UiSettings } from "./storage.ts";
 import { VALID_THEME_NAMES, type ResolvedTheme, type ThemeMode, type ThemeName } from "./theme.ts";
@@ -135,7 +135,7 @@ export class SlideApp extends LitElement {
   private globalKeydownHandler: ((e: KeyboardEvent) => void) | null = null;
   readonly popStateHandler = () => {
     const params = new URLSearchParams(window.location.search);
-    const tab = params.get("tab");
+    const tab = tabFromPath(location.pathname, this.basePath) ?? params.get("tab");
     const id = params.get("id");
     const networkId = params.get("networkDeviceId") ?? (tab === "network-device-detail" ? id : null);
     if (tab === "server-detail") (this as any).serverId = id ? Number(id) : undefined;
@@ -556,7 +556,12 @@ export class SlideApp extends LitElement {
       const initialNetworkId = urlParams.get("networkDeviceId") ?? (tabParam === "network-device-detail" ? initialId : null);
       if (tabParam === "server-detail" && initialId) (this as any).serverId = Number(initialId);
       if (tabParam === "network-device-detail" && initialNetworkId) (this as any).networkDeviceId = Number(initialNetworkId);
-      this.setTab(tabParam as Tab, true);
+      if (tabParam === "instance-detail" || tabParam === "server-detail" || tabParam === "network-device-detail") {
+        const url = new URL(location.href);
+        url.pathname = pathForTab(tabParam, this.basePath);
+        if (url.href !== location.href) history.replaceState(history.state, "", url);
+        onPopStateInternal(this as unknown as Parameters<typeof onPopStateInternal>[0]);
+      } else this.setTab(tabParam as Tab, true);
     }
   }
 
