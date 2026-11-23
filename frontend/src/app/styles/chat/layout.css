@@ -1094,9 +1094,14 @@
     border-color 0.15s;
 }
 
-.agent-chat__suggestion:hover {
+.agent-chat__suggestion:enabled:hover {
   background: var(--panel-strong);
   border-color: var(--accent);
+}
+
+.agent-chat__suggestion:disabled {
+  color: var(--muted);
+  cursor: default;
 }
 
 /* Mobile dropdown toggle — hidden on desktop */

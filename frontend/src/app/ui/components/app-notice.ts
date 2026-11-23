@@ -2,10 +2,10 @@ import { sharedBtnStyles } from '../../styles/shared-btn-styles.ts';
 import { LitElement, html, nothing } from 'lit';
 import { customElement, property } from 'lit/decorators.js';
 
-/** Inline actionable notice shared by chat and login. The caller owns its live region. */
+/** Inline actionable notice shared across views. The caller owns its live region. */
 @customElement('app-notice')
 export class AppNotice extends LitElement {
-  @property({ reflect: true }) severity: 'error' | 'warning' | 'info' = 'error';
+  @property({ reflect: true }) severity: 'error' | 'warning' | 'info' | 'success' = 'error';
   @property({ type: Boolean }) dismissible = false;
   render() {
     return html`
@@ -14,6 +14,7 @@ export class AppNotice extends LitElement {
         :host { display: block; --notice-color: var(--danger); }
         :host([severity="warning"]) { --notice-color: var(--warn); }
         :host([severity="info"]) { --notice-color: var(--accent); }
+        :host([severity="success"]) { --notice-color: var(--ok); }
         div { display: flex; align-items: flex-start; gap: var(--space-sm); padding: var(--space-sm) var(--space-md); margin-block: var(--space-sm);
           border: 1px solid color-mix(in srgb, var(--notice-color) 35%, var(--border));
           background: color-mix(in srgb, var(--notice-color) 8%, var(--card));

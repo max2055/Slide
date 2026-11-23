@@ -96,7 +96,6 @@ export class EventCenterPage extends LitElement {
     if (this.activeView === 'aggregate' && this.permissions === null) return html`<p role="status">正在确认访问权限</p>`;
     if (this.activeView === 'aggregate' && !hasSlidePermission(this.permissions, 'alert:view')) return html`<app-empty-state title="无访问权限"></app-empty-state>`;
     return html`
-      ${this.eventId ? '' : html`<p>触发条件在资源的固定版本模板中配置。<a href="/?tab=instances-db">前往资源配置模板触发器</a></p>`}
       <div class="tabs" role="tablist" aria-label="事件中心">
         ${EVENT_VIEWS.map((view) => html`
           <button

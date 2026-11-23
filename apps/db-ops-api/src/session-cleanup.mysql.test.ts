@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import mysql, { type Pool, type RowDataPacket } from 'mysql2/promise';
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ChatDatabaseService } from './chat-database-service.js';
 import { runCleanup } from './session-cleanup.js';
 import { MigrationRunner } from './migrations/runner.js';
@@ -45,11 +45,11 @@ describe.skipIf(!port)('MAX-623/#381/#592 maintenance with production MySQL sche
     await pool.query('DELETE FROM chat_messages');
     await pool.query('DELETE FROM chat_sessions');
   });
-  const seed = async (ids: string[]) => {
+  const seed = async (ids: string[], messageCount = 3) => {
     await pool.query('INSERT INTO chat_sessions (session_id, user_id, title, last_message_at) VALUES ?',
       [ids.map(id => [id, 1, id, new Date()])]);
     await pool.query('INSERT INTO chat_messages (session_id, message_id, role, content) VALUES ?',
-      [ids.flatMap(id => [0, 1, 2].map(i => [id, `${id}-${i}`, 'user', 'fixture']))]);
+      [ids.flatMap(id => Array.from({ length: messageCount }, (_, i) => [id, `${id}-${i}`, 'user', 'fixture']))]);
   };
   const count = async (id: string) => {
     const [rows] = await pool.query<RowDataPacket[]>('SELECT COUNT(*) AS cnt FROM chat_messages WHERE session_id = ?', [id]);
@@ -80,7 +80,7 @@ describe.skipIf(!port)('MAX-623/#381/#592 maintenance with production MySQL sche
       VALUES (?, 'Protected', 'Fixture', 'ops', 1, 'investigation', 'user', 1, ?)`, [randomUUID(), 'a'.repeat(64)]);
     await fact('pending');
     await fact('ordinary-0');
-    expect(await runCleanup(30, 2, { store: service })).toEqual({ processed: 1001, skipped: 4, deletedMessages: 1001 });
+    expect(await runCleanup(30, 2, { store: service })).toEqual({ processed: 1001, skipped: 4, failed: 0, deletedMessages: 1001 });
     const [rows] = await pool.query<RowDataPacket[]>('SELECT session_id, COUNT(*) AS cnt FROM chat_messages GROUP BY session_id');
     for (const row of rows) expect(Number(row.cnt)).toBe(ordinary.includes(row.session_id) ? 2 : 3);
     expect(rows).toHaveLength(1005);
@@ -89,7 +89,7 @@ describe.skipIf(!port)('MAX-623/#381/#592 maintenance with production MySQL sche
     expect((await metadata('ordinary-0')).canonicalRetentionBoundaries).toHaveLength(1);
     const [facts] = await pool.query<RowDataPacket[]>('SELECT session_id FROM agent_canonical_facts');
     expect(facts.map(row => row.session_id)).toEqual(['pending']);
-    expect(await runCleanup(30, 2, { store: service })).toEqual({ processed: 1001, skipped: 4, deletedMessages: 0 });
+    expect(await runCleanup(30, 2, { store: service })).toEqual({ processed: 1001, skipped: 4, failed: 0, deletedMessages: 0 });
     expect((await metadata('ordinary-0')).canonicalRetentionBoundaries).toHaveLength(1);
   }, 30_000);
 
@@ -103,14 +103,64 @@ describe.skipIf(!port)('MAX-623/#381/#592 maintenance with production MySQL sche
         return service.enforceMessageCapForMaintenance(id, max);
       },
     };
-    expect(await runCleanup(30, 2, { store, batchSize: 1 })).toEqual({ processed: 1, skipped: 1, deletedMessages: 1 });
+    expect(await runCleanup(30, 2, { store, batchSize: 1 })).toEqual({ processed: 1, skipped: 1, failed: 0, deletedMessages: 1 });
     expect(await count('eligible')).toBe(2);
   });
+
+  it('rolls back a single deadlock and caps the rest of the current and next pages (#1017)', async () => {
+    await seed(['next-page', 'same-page']);
+    await seed(['deadlocked'], 20);
+    await fact('deadlocked');
+    const blocker = await pool.getConnection();
+    let competingLock: Promise<unknown> | undefined;
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      await blocker.query('SET SESSION innodb_lock_wait_timeout = 5');
+      await blocker.beginTransaction();
+      const contended = new ChatDatabaseService(() => ({
+        query: pool.query.bind(pool),
+        getConnection: async () => {
+          const connection = await pool.getConnection();
+          const query = connection.query.bind(connection);
+          vi.spyOn(connection, 'query').mockImplementation((async (sql: string, values?: unknown[]) => {
+            if (!competingLock && sql.includes('DELETE cm FROM chat_messages')) {
+              // The cap holds the session lock and has already updated audit metadata and deleted the fact.
+              // Modify more rows than the cap so InnoDB chooses the cap as the victim.
+              await blocker.query('UPDATE chat_messages SET content = ? WHERE session_id = ?', ['competing', 'deadlocked']);
+              competingLock = blocker.query('SELECT id FROM chat_sessions WHERE session_id = ? FOR UPDATE', ['deadlocked'])
+                .finally(() => blocker.rollback());
+              void competingLock.catch(() => {});
+            }
+            return query(sql, values);
+          }) as typeof connection.query);
+          return connection;
+        },
+      }));
+      expect(await runCleanup(30, 2, { store: contended, batchSize: 2 }))
+        .toEqual({ processed: 2, skipped: 0, failed: 1, deletedMessages: 2 });
+      await competingLock;
+      expect(warn).toHaveBeenCalledExactlyOnceWith('[SessionCleanup] Message cap failed for session', {
+        sessionId: 'deadlocked', code: 'CHAT_MAINTENANCE_CAP_DEADLOCK',
+      });
+      expect(await count('deadlocked')).toBe(20);
+      expect(await metadata('deadlocked')).toBeNull();
+      const [facts] = await pool.query<RowDataPacket[]>('SELECT session_id FROM agent_canonical_facts');
+      expect(facts.map(row => row.session_id)).toEqual(['deadlocked']);
+      expect(await count('same-page')).toBe(2);
+      expect(await count('next-page')).toBe(2);
+      expect(await runCleanup(30, 2, { store: service, batchSize: 2 }))
+        .toEqual({ processed: 3, skipped: 0, failed: 0, deletedMessages: 18 });
+    } finally {
+      warn.mockRestore();
+      await competingLock?.catch(() => {});
+      blocker.destroy();
+    }
+  }, 10_000);
 
   it('rolls back audit, facts and messages on storage failure and stops the traversal', async () => {
     await seed(['later', 'broken']);
     await fact('broken');
-    const failure = new Error('injected storage failure before message deletion');
+    const failure = Object.assign(new Error('injected connection loss before message deletion'), { code: 'PROTOCOL_CONNECTION_LOST' });
     const failing = new ChatDatabaseService(() => ({
       query: pool.query.bind(pool),
       getConnection: async () => {
@@ -118,7 +168,7 @@ describe.skipIf(!port)('MAX-623/#381/#592 maintenance with production MySQL sche
         return {
           beginTransaction: connection.beginTransaction.bind(connection),
           commit: connection.commit.bind(connection), rollback: connection.rollback.bind(connection),
-          release: connection.release.bind(connection),
+          release: connection.release.bind(connection), destroy: connection.destroy.bind(connection),
           query: (async (sql: string, values?: unknown[]) => {
             if (sql.includes('DELETE cm FROM chat_messages')) throw failure;
             return connection.query(sql, values);
@@ -145,7 +195,7 @@ describe.skipIf(!port)('MAX-623/#381/#592 maintenance with production MySQL sche
       await connection.query('UPDATE chat_sessions SET metadata = ? WHERE session_id = ?',
         [JSON.stringify({ canonicalRuntimeCheckpoint: { pending_tool_calls: [{ id: 'intent' }] } }), 'locked']);
       await connection.commit();
-      expect(await cleanup).toEqual({ processed: 0, skipped: 1, deletedMessages: 0 });
+      expect(await cleanup).toEqual({ processed: 0, skipped: 1, failed: 0, deletedMessages: 0 });
       expect(await count('locked')).toBe(3);
     } finally {
       await connection.rollback();

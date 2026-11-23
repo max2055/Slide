@@ -16,10 +16,10 @@ for (const scenario of ['recovery', 'length', 'reject'] as const) {
     const accessToken = (await (await login).json()).token;
     expect(typeof accessToken).toBe('string');
     await expect(page.locator('.login-gate')).toBeHidden({ timeout: 15_000 });
-    const input = page.getByRole('textbox', { name: /Message .*Enter to send/ });
+    const input = page.getByRole('textbox', { name: '对话消息', exact: true });
     await expect(input).toBeEnabled();
     const prompt = `runtime-qualification:${scenario}:${process.env.RUNTIME_CLAIM_NONCE}:${randomUUID()} 检查数据库`;
-    await input.fill(prompt); await page.getByRole('button', { name: 'Send message' }).click();
+    await input.fill(prompt); await page.getByRole('button', { name: '发送消息' }).click();
     expect(await dbConnection.initialize({ host: process.env.DB_HOST ?? '127.0.0.1', port: Number(process.env.DB_PORT ?? 3306), user: process.env.DB_USER ?? 'root', password: process.env.DB_PASSWORD, database: 'db_ops_ai_qualification' })).toBe(true);
     try {
       const pool = dbConnection.getPool()!;

@@ -1,4 +1,6 @@
 import { normalizeOptionalString } from "../shared/string-coerce.js";
+import { findMarkdownCodeRegions } from "../markdown/code-regions.js";
+import { prepareAssistantMarkdown } from "../shared/text/reasoning-tags.js";
 
 export type InlineDirectiveParseResult = {
   text: string;
@@ -13,24 +15,20 @@ type InlineDirectiveParseOptions = {
   currentMessageId?: string;
   stripAudioTag?: boolean;
   stripReplyTags?: boolean;
+  onStripReplyTag?: (start: number, end: number, replacement: string) => void;
 };
 
 const REPLY_TAG_RE = /\[\[\s*(?:reply_to_current|reply_to\s*:\s*([^\]\n]+))\s*\]\]/gi;
 const INLINE_DIRECTIVE_TAG_WITH_PADDING_RE =
   /\s*\[\[\s*(?:reply_to_current|reply_to\s*:\s*[^\]\n]+)\s*\]\]\s*/gi;
+// Only tidy whitespace touching a removed directive.
+const REPLY_TAG_REMOVAL_RE =
+  /^[ \t]*\[\[\s*(?:reply_to_current|reply_to\s*:\s*[^\]\n]+)\s*\]\][ \t]*(?:\r?\n|$)|[ \t]*\[\[\s*(?:reply_to_current|reply_to\s*:\s*[^\]\n]+)\s*\]\][ \t]*/gim;
 
 function replacementPreservesWordBoundary(source: string, offset: number, length: number): string {
   const before = source[offset - 1];
   const after = source[offset + length];
   return before && after && !/\s/u.test(before) && !/\s/u.test(after) ? " " : "";
-}
-
-// Only tidy whitespace touching a removed directive. Never normalize the message body.
-function removeReplyTags(text: string): string {
-  return text.replace(
-    /^[ \t]*\[\[\s*(?:reply_to_current|reply_to\s*:\s*[^\]\n]+)\s*\]\][ \t]*(?:\r?\n|$)|[ \t]*\[\[\s*(?:reply_to_current|reply_to\s*:\s*[^\]\n]+)\s*\]\][ \t]*/gim,
-    (match, offset, source) => replacementPreservesWordBoundary(source, offset, match.length),
-  );
 }
 
 type StripInlineDirectiveTagsResult = {
@@ -106,7 +104,7 @@ export function parseInlineDirectives(
   text?: string,
   options: InlineDirectiveParseOptions = {},
 ): InlineDirectiveParseResult {
-  const { currentMessageId, stripReplyTags = true } = options;
+  const { currentMessageId, stripReplyTags = true, onStripReplyTag } = options;
   if (!text) {
     return {
       text: "",
@@ -124,15 +122,31 @@ export function parseInlineDirectives(
     };
   }
 
-  let hasAudioTag = false;
-  let hasReplyTag = false;
+  const deletions: Array<{ start: number; length: number }> = [];
+  const markdown = prepareAssistantMarkdown(text, (start, end) => {
+    deletions.push({ start, length: end - start });
+  });
+  const codeRegions = findMarkdownCodeRegions(markdown);
+  const sourceOffset = (offset: number) => {
+    // Undo trimming and scaffolding removals in reverse order.
+    for (let index = deletions.length - 1; index >= 0; index--) {
+      const { start, length } = deletions[index];
+      if (offset >= start) offset += length;
+    }
+    return offset;
+  };
+
+  const directiveStarts = new Set<number>();
   let sawCurrent = false;
   let lastExplicitId: string | undefined;
-
-
-  for (const match of text.matchAll(REPLY_TAG_RE)) {
+  for (const match of markdown.matchAll(REPLY_TAG_RE)) {
+    const end = match.index + match[0].length;
+    if (codeRegions.some(region => match.index < region.end && end > region.start)) continue;
+    const start = sourceOffset(match.index);
+    // Only remove complete directives present in the source text.
+    if (sourceOffset(end - 1) - start + 1 !== match[0].length) continue;
+    directiveStarts.add(start);
     const idRaw = match[1];
-    hasReplyTag = true;
     if (idRaw === undefined) {
       sawCurrent = true;
     } else {
@@ -143,7 +157,15 @@ export function parseInlineDirectives(
     }
   }
 
-  const cleaned = stripReplyTags ? removeReplyTags(text) : text;
+  const hasReplyTag = directiveStarts.size > 0;
+  const cleaned = stripReplyTags && hasReplyTag
+    ? text.replace(REPLY_TAG_REMOVAL_RE, (match, offset: number) => {
+        if (!directiveStarts.has(offset + match.indexOf("[["))) return match;
+        const replacement = replacementPreservesWordBoundary(text, offset, match.length);
+        onStripReplyTag?.(offset, offset + match.length, replacement);
+        return replacement;
+      })
+    : text;
 
   const replyToId =
     lastExplicitId ?? (sawCurrent ? normalizeOptionalString(currentMessageId) : undefined);
@@ -153,7 +175,7 @@ export function parseInlineDirectives(
     replyToId,
     replyToExplicitId: lastExplicitId,
     replyToCurrent: sawCurrent,
-    hasAudioTag,
+    hasAudioTag: false,
     hasReplyTag,
   };
 }

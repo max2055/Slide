@@ -1,5 +1,5 @@
 import DOMPurify from "dompurify";
-import MarkdownIt from "markdown-it";
+import { createChatMarkdownParser } from "../src/markdown/parser.js";
 import markdownItTaskLists from "markdown-it-task-lists";
 import { truncateText } from "./format.ts";
 import { normalizeLowercaseStringOrEmpty } from "./string-coerce.ts";
@@ -155,15 +155,7 @@ function normalizeMarkdownImageLabel(text?: string | null): string {
   return trimmed ? trimmed : "image";
 }
 
-export const md = new MarkdownIt({
-  html: true, // Enable HTML recognition so html_block/html_inline overrides can escape it
-  breaks: true,
-  linkify: true,
-});
-
-// Enable GFM strikethrough (~~text~~) to match original marked.js behavior.
-// markdown-it uses <s> tags; we added "s" to allowedTags for DOMPurify.
-md.enable("strikethrough");
+export const md = createChatMarkdownParser();
 
 // Disable fuzzy link detection to prevent bare filenames like "README.md"
 // from being auto-linked as "http://README.md". URLs with explicit protocol

@@ -133,7 +133,7 @@ describe('health-score-tab stale score handling', () => {
     await settle(element);
 
     expect(element.shadowRoot?.querySelector('.score-number')?.textContent).toBe('未知');
-    expect(element.shadowRoot?.textContent).not.toContain('100');
+    expect(element.shadowRoot?.querySelector('metric-chart')).toBeNull();
   });
 
   it('does not retain a healthy score when the instance response is malformed', async () => {
@@ -152,9 +152,11 @@ describe('health-score-tab stale score handling', () => {
     await (element as any)._loadData();
     await settle(element);
 
-    expect(element.shadowRoot?.textContent).toContain('invalid instance payload');
+    expect(element.shadowRoot?.textContent).toContain('当前评分证据读取失败或无权查看');
+    expect(element.shadowRoot?.textContent).not.toContain('invalid instance payload');
+    expect(element.shadowRoot?.querySelector('metric-chart')).toBeTruthy();
     expect((element as any)._getLatestScore()).toBeNull();
-    expect(element.shadowRoot?.textContent).not.toContain('100');
+    expect(element.shadowRoot?.querySelector('.score-number')?.textContent).toBe('未知');
   });
 
   it('does not show stale check scores when the current instance is unknown', async () => {

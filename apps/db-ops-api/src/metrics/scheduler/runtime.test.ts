@@ -9,7 +9,9 @@ describe('MAX-521 scheduler startup schema gate', () => {
   it('checks the runtime tables and their key columns, including previously omitted dependencies', async () => {
     const sql = (await schedulerSchemaProbes()).join('\n');
     for (const table of ['metric_schedule_events', 'metric_attempts', 'metric_rollout_resources', 'metric_policy_lock',
-      'metric_policy_groups', 'metric_source_checks', 'metric_source_acceptance', 'workflow_jobs']) {
+      'metric_policy_groups', 'metric_source_checks', 'metric_source_acceptance', 'workflow_jobs',
+      'alerts', 'alert_events', 'alert_event_members', 'alert_event_logs', 'maintenance_interval_history',
+      'maintenance_event_links', 'notification_channels', 'notification_delivery_states']) {
       expect(sql).toContain(`FROM ${table} LIMIT 0`);
     }
     for (const column of ['next_due_ms', 'job_id', 'capabilities', 'generation', 'package_pin', 'fencing_token', 'logical_reads']) {

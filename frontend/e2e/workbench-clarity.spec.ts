@@ -9,7 +9,7 @@ const diagnosticEvidence = process.env.SLIDE_DIAGNOSTIC_EVIDENCE ? JSON.parse(re
 async function capture(page: Page, name: string) {
   if (process.env.SLIDE_EVIDENCE_DIR) {
     await page.screenshot({ path: join(process.env.SLIDE_EVIDENCE_DIR, `${name}.png`), fullPage: name.startsWith('diagnostics'), animations: 'disabled' });
-    if (name.startsWith('palette-')) writeFileSync(join(process.env.SLIDE_EVIDENCE_DIR, `${name}.json`), JSON.stringify(await page.getByRole('dialog', { name: '全局搜索' }).evaluate(dialog => {
+    if (name.startsWith('palette-')) writeFileSync(join(process.env.SLIDE_EVIDENCE_DIR, `${name}.json`), JSON.stringify(await page.getByRole('dialog', { name: '跳转到页面' }).evaluate(dialog => {
       const input = dialog.querySelector('input')!;
       return { source: 'Controlled component fixture; production locale/theme helpers and styles', viewport: { width: innerWidth, height: innerHeight }, theme: document.documentElement.dataset.theme, themeMode: document.documentElement.dataset.themeMode, colorScheme: document.documentElement.style.colorScheme, locale: localStorage.getItem('slide.i18n.locale'), placeholder: input.placeholder, focused: document.activeElement === input, activeOption: input.getAttribute('aria-activedescendant'), background: getComputedStyle(dialog).backgroundColor, opacity: getComputedStyle(dialog).opacity, overlayOpacity: getComputedStyle(dialog.parentElement!).opacity, bounds: dialog.getBoundingClientRect().toJSON(), at: new Date().toISOString() };
     }), null, 2));
@@ -62,11 +62,11 @@ for (const width of [1440, 375]) for (const theme of ['light', 'dark']) {
     await expect(page.locator('event-management-page .event-item')).toHaveCount(1);
     await page.getByLabel('本页严重度', { exact: true }).selectOption('critical');
     await expect(page.getByText('暂无匹配的事件')).toBeVisible();
-    await page.getByRole('button', { name: '全局搜索' }).click();
-    const dialog = page.getByRole('dialog', { name: '全局搜索' });
+    await page.getByRole('button', { name: '跳转到页面' }).click();
+    const dialog = page.getByRole('dialog', { name: '跳转到页面' });
     const input = page.getByRole('combobox', { name: '搜索产品入口' });
     await expect(dialog).toBeVisible(); await expect(input).toBeFocused();
-    await expect(input).toHaveAttribute('placeholder', '搜索命令和页面');
+    await expect(input).toHaveAttribute('placeholder', '输入页面名称');
     await dialog.evaluate(async element => { await Promise.all(element.parentElement!.getAnimations({ subtree: true }).map(animation => animation.finished)); });
     await expect(dialog).toHaveCSS('opacity', '1');
     await expect(page.locator('.cmd-palette-overlay')).toHaveCSS('opacity', '1');
@@ -76,10 +76,14 @@ for (const width of [1440, 375]) for (const theme of ['light', 'dark']) {
     const bounds = await dialog.boundingBox();
     expect(bounds!.x).toBeGreaterThanOrEqual(0); expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(width);
     await capture(page, `palette-${width}-${theme}`);
+    await input.fill('事件 #72101');
+    await expect(dialog).toContainText('没有匹配的页面，请尝试其他页面名称。');
+    await page.keyboard.press('Enter');
+    await expect(dialog).toBeVisible();
     await page.getByRole('combobox', { name: '搜索产品入口' }).fill('服务器');
     await expect(page.getByRole('listbox').getByRole('option')).toHaveCount(1); await page.keyboard.press('Enter');
     await expect.poll(() => page.evaluate(() => (window as any).selectedTab)).toBe('servers');
-    await expect(page.getByRole('button', { name: '全局搜索' })).toBeFocused();
+    await expect(page.getByRole('button', { name: '跳转到页面' })).toBeFocused();
     const panel = page.locator('server-diagnostic-panel');
     await expect(panel.locator('.evidence-section')).toHaveCount(5);
     await expect(panel.getByText('最近五分钟未取得警告及以上系统日志', { exact: false }).first()).toBeVisible();

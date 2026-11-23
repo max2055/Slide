@@ -46,8 +46,13 @@ export const diagnosisGaps: Record<string, [string, string]> = {
   STATISTICAL_COMPARISON_NOT_BUSINESS_CONSTRAINT: ['仅与历史统计基线比较', '结合业务阈值人工确认；统计偏离不等于故障'],
 };
 export const gapExplanation = (code: string): [string, string] => diagnosisGaps[code] ?? ['部分证据无法确认', '查看技术详情，核对采集状态和访问权限'];
-export const displayTime = (value?: string | null) => value && Number.isFinite(Date.parse(value))
-  ? new Date(value).toLocaleString('zh-CN', { hour12: false }) : '时间未知';
+export function displayTime(value?: string | null, precision?: 'milliseconds') {
+  if (!value || !Number.isFinite(Date.parse(value))) return '时间未知';
+  const options: Intl.DateTimeFormatOptions = precision === 'milliseconds'
+    ? { year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric', minute: '2-digit', second: '2-digit', fractionalSecondDigits: 3, hour12: false }
+    : { hour12: false };
+  return new Date(value).toLocaleString('zh-CN', options);
+}
 export function evidenceFreshness(item: { observedAt: string | null; validUntil: string | null }, now = Date.now()) {
   const observed = Date.parse(item.observedAt ?? '');
   const expiry = Date.parse(item.validUntil ?? '');
