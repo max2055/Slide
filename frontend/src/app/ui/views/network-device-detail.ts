@@ -1,4 +1,4 @@
-import { detailTabKeydown, returnToResourceList } from '../components/resource-detail-context.js';
+import { detailResourceId, detailTabKeydown, readDetailTab, returnToResourceList, selectDetailTab } from '../components/resource-detail-context.js';
 import { hasListPermission } from '../components/resource-list-access.js';
 import "../components/investigation-operation-context.ts";
 import '../components/resource-investigation-links.js';
@@ -13,6 +13,7 @@ import type {
   ConfigBackupDetail,
   ConfigBackupSchedule as BackupSchedule,
   ConfigBackupSummary,
+  ConfigBackupSummariesResponse,
   NetworkDevice,
   NetworkDeviceRelation,
   NetworkDeviceInterface,
@@ -26,7 +27,17 @@ import "../components/app-dialog.js";
 import "../components/app-empty-state.js";
 import "../components/app-form-field.js";
 
-type DetailTab = "metrics" | "overview" | "interfaces" | "relations" | "backups" | "collection";
+const networkDetailTabs = ["overview", "metrics", "interfaces", "relations", "backups", "collection"] as const;
+type DetailTab = (typeof networkDetailTabs)[number];
+
+const backupTimeZone = '北京时间（UTC+8）';
+const backupTimeFormat = new Intl.DateTimeFormat('zh-CN', {
+  timeZone: 'Asia/Shanghai', dateStyle: 'short', timeStyle: 'medium', hourCycle: 'h23',
+});
+function formatBackupTime(value: string) {
+  const time = Date.parse(value);
+  return Number.isFinite(time) ? backupTimeFormat.format(time) : '未知';
+}
 
 function bodyOf(response: Response): Promise<Record<string, unknown>> {
   return response.json().catch(() => ({}));
@@ -49,7 +60,9 @@ export class NetworkDeviceDetail extends LitElement {
   @state() private backupsError = '';
   @state() private relations: NetworkDeviceRelation[] = [];
   @state() private backups: ConfigBackupSummary[] = [];
-  @state() private activeTab: DetailTab = new URL(location.href).searchParams.get('metricResource')?.startsWith('network_device:') ? 'metrics' : 'overview' ;
+  @state() private backupsLoading = false;
+  @state() private scheduleLoading = false;
+  @state() private activeTab: DetailTab = 'overview';
   @state() private loading = true;
   @state() private error: string | null = null;
   @state() private backupLoading = false;
@@ -60,6 +73,7 @@ export class NetworkDeviceDetail extends LitElement {
   @state() private scheduleSaving = false;
 
   private contextVersion = 0;
+  private backupListRequest = 0;
   private interfaceRequest = 0;
   private overviewRequest = 0;
   @state() private interfaces: NetworkDeviceInterface[] = [];
@@ -80,22 +94,46 @@ export class NetworkDeviceDetail extends LitElement {
   override firstUpdated() {
     window.addEventListener('slide-permissions-loaded', this.onAccessChanged);
     window.addEventListener('slide-session-expired', this.onAccessChanged);
+    window.addEventListener('popstate', this.onPopState);
+    this.syncDetailTab();
     void this.loadContext();
   }
   override disconnectedCallback() {
     this.onAccessChanged();
     window.removeEventListener('slide-permissions-loaded', this.onAccessChanged);
     window.removeEventListener('slide-session-expired', this.onAccessChanged);
+    window.removeEventListener('popstate', this.onPopState);
     super.disconnectedCallback();
   }
 
   override willUpdate(changed: Map<string, unknown>) {
-    if (changed.has("deviceId") && changed.get("deviceId") !== undefined) void this.loadContext();
+    if (changed.has("deviceId") && changed.get("deviceId") !== undefined) {
+      this.syncDetailTab();
+      void this.loadContext();
+    }
+  }
+
+  private syncDetailTab() {
+    const id = this.validId();
+    this.activeTab = id === null ? 'overview' : readDetailTab('network_device', id, networkDetailTabs);
+  }
+
+  private onPopState = () => {
+    const id = detailResourceId('network_device');
+    if (id !== null && id === this.validId()) {
+      this.setDetailTab(readDetailTab('network_device', id, networkDetailTabs), true);
+    }
+  };
+
+  private setDetailTab(tab: DetailTab, fromHistory = false) {
+    selectDetailTab(this, this.activeTab, tab, () => {
+      this.activeTab = tab;
+      if (tab === 'interfaces') void this.loadInterfaces();
+    }, fromHistory);
   }
 
   private validId(): number | null {
-    const raw = location.pathname === "/network-device-detail" ? new URL(location.href).searchParams.get("networkDeviceId") : null;
-    const id = this.deviceId ?? (raw && /^[1-9]\d*$/.test(raw) ? Number(raw) : null);
+    const id = this.deviceId ?? detailResourceId('network_device');
     return id != null && Number.isSafeInteger(id) && id > 0 ? id : null;
   }
 
@@ -127,15 +165,14 @@ export class NetworkDeviceDetail extends LitElement {
       const device = await this.json<NetworkDevice>(`/api/network-devices/${id}`);
       if (version !== this.contextVersion || id !== this.validId()) return;
       this.device = device; this.lastRead = new Date().toISOString();
-      const [relations,backups]=await Promise.allSettled([
+      const [relations] = await Promise.allSettled([
         this.json<{relations:NetworkDeviceRelation[]}>(`/api/network-devices/${id}/relations`),
-        this.json<{backups:ConfigBackupSummary[]}>(`/api/network-devices/${id}/config-backups`)]);
+        this.loadBackupList(),
+        this.loadBackupSchedule(id),
+      ]);
       if (version !== this.contextVersion || id !== this.validId()) return;
       this.relationsError=relations.status==='rejected'?networkDeviceError(relations.reason,'关联资源读取失败'):'';
-      this.backupsError=backups.status==='rejected'?networkDeviceError(backups.reason,'配置备份读取失败'):'';
       this.relations=relations.status==='fulfilled'&&Array.isArray(relations.value.relations)?relations.value.relations:[];
-      this.backups=backups.status==='fulfilled'&&Array.isArray(backups.value.backups)?backups.value.backups:[];
-      await this.loadBackupSchedule(id);
     } catch (error) {
       if (version === this.contextVersion) this.error = networkDeviceError(error, '无法加载网络设备');
     } finally {
@@ -163,11 +200,20 @@ export class NetworkDeviceDetail extends LitElement {
     const current = () => version === this.contextVersion && id === this.validId() && request === this.interfaceRequest;
     this.interfaces = []; this.interfacesLoading = true; this.interfacesError = '';
     try {
-      const body = await this.json<{interfaces: NetworkDeviceInterface[]}>(`/api/network-devices/${id}/interfaces`);
+      const response = await authFetch(`/api/network-devices/${id}/interfaces`, { signal: AbortSignal.timeout(15000) });
       if (!current()) return;
-      if (!Array.isArray(body.interfaces)) throw new Error('接口列表格式异常');
+      if (!response.ok) {
+        if ([401, 403, 404].includes(response.status)) {
+          this.interfacesError = '无法访问此设备的接口记录，请确认登录和查看权限';
+          return;
+        }
+        throw new Error();
+      }
+      const body = await response.json();
+      if (!current()) return;
+      if (!Array.isArray(body?.interfaces)) throw new Error();
       this.interfaces = body.interfaces;
-    } catch (error) { if (current()) this.interfacesError = networkDeviceError(error, '接口读取失败'); }
+    } catch { if (current()) this.interfacesError = '接口记录读取失败'; }
     finally { if (current()) this.interfacesLoading = false; }
   }
   private renderInterfaces() {
@@ -175,11 +221,11 @@ export class NetworkDeviceDetail extends LitElement {
     const status = (value: string) => ({up:'已启用',down:'已停用',testing:'测试中',unknown:'未知',notPresent:'不存在',lowerLayerDown:'下层链路中断',dormant:'休眠'}[value] ?? value);
     return html`<app-card><h2 slot="header">网络接口</h2><div class="interface-filters">
       <label>名称或别名 <input aria-label="接口名称或别名" .value=${this.interfaceSearch} @input=${(e:Event)=>this.interfaceSearch=(e.target as HTMLInputElement).value}></label>
-      <label>运行状态 <select aria-label="接口运行状态" .value=${this.interfaceStatus} @change=${(e:Event)=>this.interfaceStatus=(e.target as HTMLSelectElement).value}><option value="">全部状态</option>${[...new Set(this.interfaces.map(row=>row.operStatus))].map(value=>html`<option value=${value}>${status(value)}</option>`)}</select></label>
-      <button aria-busy=${String(this.interfacesLoading)} class="btn btn-refresh" ?disabled=${this.interfacesLoading} @click=${()=>this.loadInterfaces()}>刷新接口</button>
-    </div><p class="meta">显示 ${rows.length} / ${this.interfaces.length} 个已保存接口。速率为接口标称容量，不代表实测流量；最后发现时间不代表当前在线。</p>
+      <label>运行状态 <select aria-label="接口运行状态" .value=${this.interfaceStatus} @change=${(e:Event)=>this.interfaceStatus=(e.target as HTMLSelectElement).value}><option value="">全部状态</option>${[...new Set([...this.interfaces.map(row=>row.operStatus), this.interfaceStatus].filter(Boolean))].map(value=>html`<option value=${value}>${status(value)}</option>`)}</select></label>
+      <button aria-busy=${String(this.interfacesLoading)} class="btn btn-refresh" ?disabled=${this.interfacesLoading} @click=${()=>this.loadInterfaces()}>${this.interfacesError ? "重试读取接口" : "刷新接口"}</button>
+    </div>${!this.interfacesLoading && !this.interfacesError ? html`<p class="meta">显示 ${rows.length} / ${this.interfaces.length} 个已保存接口。速率为接口标称容量，不代表实测流量；最后发现时间不代表当前在线。</p>` : nothing}
       ${this.interfacesError ? html`<p role="alert" class="error">${this.interfacesError}</p>` : this.interfacesLoading ? html`<p role="status">正在读取接口…</p>` : rows.length ? html`<app-data-table tabindex="0" role="region" aria-label="接口列表，可横向滚动" .dense=${true} .columns=${[{key:'name',label:'接口 / 别名'},{key:'status',label:'管理 / 运行状态'},{key:'speed',label:'标称容量'},{key:'seen',label:'最后发现'}]}
-        .rows=${rows.map(row=>({name:html`<strong>${row.ifName}</strong><div>${row.ifAlias || '无别名'} · #${row.ifIndex}</div>`,status:`${status(row.adminStatus)} / ${status(row.operStatus)}`,speed:row.speedBps === null ? '未知' : `${row.speedBps} bit/s`,seen:row.lastSeenAt ? new Date(row.lastSeenAt).toLocaleString('zh-CN') : '未知'}))}></app-data-table>` : html`<app-empty-state title=${this.interfaces.length ? '没有匹配的接口' : '尚未取得接口记录'} description="接口记录缺失不代表设备没有接口，也不能推断设备健康。"></app-empty-state>`}
+        .rows=${rows.map(row=>({name:html`<strong>${row.ifName}</strong><div>${row.ifAlias || '无别名'} · #${row.ifIndex}</div>`,status:`${status(row.adminStatus)} / ${status(row.operStatus)}`,speed:row.speedBps === null ? '未知' : `${row.speedBps} bit/s`,seen:row.lastSeenAt ? new Date(row.lastSeenAt).toLocaleString('zh-CN') : '未知'}))}></app-data-table>` : html`<app-empty-state title=${this.interfaces.length ? '没有匹配的接口' : '设备没有已保存的接口记录'} description="接口记录缺失不代表设备没有接口，也不能推断设备健康。"></app-empty-state>`}
     </app-card>`;
   }
   private renderOverview() {
@@ -188,17 +234,60 @@ export class NetworkDeviceDetail extends LitElement {
       ${this.overviewLoading ? html`<p role="status">正在读取资源状态与证据…</p>` : nothing}${this.overviewError ? html`<p role="alert">${this.overviewError}</p>` : nothing}
       <h3>${({normal:'当前观测未提示运行异常',abnormal:'存在需要核对的异常',unavailable:'资源当前不可用',unknown:'当前证据不足以判断运行状态'})[state]}</h3>
       <p>${item && !item.gaps.includes('ALERTS_UNAVAILABLE') ? `未解决告警 ${item.alertsTruncated ? '至少 ' : ''}${item.unresolvedAlerts} 项。` : '告警证据尚不可用。'} 状态只反映已有观测。</p>
-      <button class="btn" @click=${()=>this.activeTab='metrics'}>核对指标与时间范围</button><button class="btn" @click=${()=>{this.activeTab='interfaces';void this.loadInterfaces();}}>查看接口维度</button>
+      <button class="btn" @click=${()=>this.setDetailTab('metrics')}>核对指标与时间范围</button><button class="btn" @click=${()=>this.setDetailTab('interfaces')}>查看接口维度</button>
       <section><h3>证据缺口</h3><p>${!item ? '尚未取得此资源的证据快照。' : freshness(item)!=='fresh' ? '观测缺失、过期或读取失败，请核对观测时间与监控配置。' : item.quality!=='good' || item.gaps.length ? '当前证据不完整，请核对指标能力、告警与关联关系。' : '当前快照未报告缺口；不代表已覆盖全部信号。'}</p>
-      <button class="btn" @click=${()=>this.activeTab='collection'}>查看监控配置</button>${item?.gaps.length ? html`<details><summary>查看缺口原始标识</summary>${item.gaps.join(' · ')}</details>` : nothing}</section>
+      <button class="btn" @click=${()=>this.setDetailTab('collection')}>查看监控配置</button>${item?.gaps.length ? html`<details><summary>查看缺口原始标识</summary>${item.gaps.join(' · ')}</details>` : nothing}</section>
     </app-card><app-card><h2 slot="header">资源与能力</h2><dl><dt>设备</dt><dd>${this.device!.host}:${this.device!.snmp_port}</dd><dt>型号</dt><dd>${this.device!.model || '未知'}</dd><dt>最近状态检查（含失败尝试）</dt><dd>${this.device!.last_check_at ? new Date(this.device!.last_check_at).toLocaleString('zh-CN') : '未知'}</dd><dt>可用证据</dt><dd>指标、接口、关联关系、配置备份；以各页实际读取结果为准。</dd></dl></app-card></div>`;
+  }
+
+  private async loadBackupList() {
+    const id = this.validId();
+    if (id === null) return;
+    const version = this.contextVersion;
+    const request = ++this.backupListRequest;
+    const current = () => version === this.contextVersion && id === this.validId() && request === this.backupListRequest;
+    this.backupsLoading = true;
+    this.backupsError = '';
+    try {
+      const body = await this.json<ConfigBackupSummariesResponse>(`/api/network-devices/${id}/config-backups`);
+      if (!current()) return;
+      if (!Array.isArray(body?.backups) || body.backups.some(backup => backup?.deviceId !== id
+        || !Number.isSafeInteger(backup.id) || !Number.isSafeInteger(backup.versionNo)
+        || typeof backup.contentSha256 !== 'string')) {
+        throw new Error('配置备份列表返回格式异常');
+      }
+      this.backups = body.backups;
+    } catch (error) {
+      if (!current()) return;
+      this.backups = [];
+      this.backupsError = networkDeviceError(error, '配置备份读取失败');
+    } finally {
+      if (current()) this.backupsLoading = false;
+    }
   }
 
   private async loadBackupSchedule(id: number) {
     const version = this.contextVersion;
+    const current = () => version === this.contextVersion && id === this.validId();
+    this.scheduleLoading = true;
     this.scheduleError = '';
-    try { const schedule = await this.json<BackupSchedule>(`/api/network-devices/${id}/backup-schedule`); if (version === this.contextVersion && id === this.validId()) this.backupSchedule = schedule; }
-    catch (error) { if (version === this.contextVersion) { this.backupSchedule = null; this.scheduleError = networkDeviceError(error, '无法加载定时备份设置'); } }
+    try {
+      const schedule = await this.json<BackupSchedule>(`/api/network-devices/${id}/backup-schedule`);
+      if (!current()) return;
+      const run = schedule?.lastRun;
+      if (typeof schedule?.enabled !== 'boolean' || typeof schedule.dailyTime !== 'string'
+        || schedule.timeZone !== 'Asia/Shanghai' || (run !== null &&
+          (!run || typeof run.date !== 'string' || !['running', 'success', 'failed'].includes(run.status)))) {
+        throw new Error('定时备份设置返回格式异常');
+      }
+      this.backupSchedule = schedule;
+    } catch (error) {
+      if (!current()) return;
+      this.backupSchedule = null;
+      this.scheduleError = networkDeviceError(error, '无法加载定时备份设置');
+    } finally {
+      if (current()) this.scheduleLoading = false;
+    }
   }
 
   private async saveBackupSchedule() {
@@ -226,18 +315,30 @@ export class NetworkDeviceDetail extends LitElement {
     window.dispatchEvent(new CustomEvent("slide-navigate", { detail: { tab: "network-devices" } }));
   }
 
+  private editSshConnection() {
+    const id = this.validId();
+    if (id === null || this.device?.hasSshCredential !== false || !hasListPermission('network_devices:manage')) return;
+    returnToResourceList('network_device', { id, section: 'ssh' });
+  }
+
   private async captureBackup() {
     const id = this.validId();
-    if (!hasListPermission('network_devices:backup') || id === null || this.backupLoading) return;
+    if (!hasListPermission('network_devices:backup') || id === null || !this.device
+      || this.device.hasSshCredential === false || this.backupLoading) return;
     const version = this.contextVersion;
     this.backupLoading = true;
     try {
       const body = await this.json<ConfigBackupSummary>(`/api/network-devices/${id}/config-backups`, { method: "POST" });
       if (version !== this.contextVersion || id !== this.validId()) return;
       showToast(`配置备份 v${body.versionNo ?? "?"} 已完成`, "success");
-      await this.loadContext();
+      await this.loadBackupList();
     } catch (error) {
-      if (version === this.contextVersion) showToast(networkDeviceError(error, '配置备份失败'), 'error');
+      if (version !== this.contextVersion || id !== this.validId()) return;
+      if (this.device && error instanceof Error && error.message === 'SSH_CREDENTIAL_REQUIRED') {
+        this.device = { ...this.device, hasSshCredential: false };
+      }
+      showToast(networkDeviceError(error, '配置备份失败'), 'error');
+      if (error instanceof Error && error.message === 'CONFIG_BACKUP_SAVED_AUDIT_FAILED') await this.loadBackupList();
     } finally {
       if (version === this.contextVersion) this.backupLoading = false;
     }
@@ -276,36 +377,67 @@ export class NetworkDeviceDetail extends LitElement {
   }
 
   private renderBackups() {
-    if(this.backupsError)return html`<app-card><p role="alert">${this.backupsError}</p><button class="btn btn-refresh" @click=${this.loadContext}>重试备份列表</button></app-card>`;
-    const columns = [{ key: "version", label: "版本" }, { key: "collected", label: "备份时间" }, { key: "size", label: "大小" }, { key: "hash", label: "SHA-256" }, { key: "redaction", label: "脱敏状态" }, { key: "action", label: "操作", textAlign: "center" }];
+    const latest = this.backups[0];
+    const columns = [{ key: "version", label: "版本" }, { key: "collected", label: `备份时间 · ${backupTimeZone}` }, { key: "size", label: "大小" }, { key: "hash", label: "SHA-256" }, { key: "redaction", label: "脱敏状态" }, { key: "action", label: "操作", textAlign: "center" }];
     const rows = this.backups.map((backup) => ({
       version: `v${backup.versionNo}`,
-      collected: new Date(backup.collectedAt).toLocaleString(),
-      size: `${Math.max(0, Number(backup.sizeBytes || 0) / 1024).toFixed(1)} KB`,
+      collected: formatBackupTime(backup.collectedAt),
+      size: Number.isFinite(backup.sizeBytes) ? `${(backup.sizeBytes / 1024).toFixed(1)} KB` : '未知',
       hash: `${backup.contentSha256.slice(0, 12)}…`,
       redaction: html`<app-badge variant=${backup.redactionStatus === "redacted" ? "ok" : "warn"}>${networkDeviceLabel(backup.redactionStatus)}</app-badge>`,
       action: html`<button class="btn" type="button" @click=${() => this.openBackup(backup)}>查看摘要</button>`,
     }));
-    return html`<app-card><span slot="header">加密配置备份</span><div class="backup-note">备份内容加密保存，预览已脱敏。</div>${rows.length ? html`<app-data-table .columns=${columns} .rows=${rows} dense></app-data-table>` : html`<app-empty-state title="暂无配置备份" description="配置 SSH 凭据后可定时备份，也可点击立即备份。" icon="archive"></app-empty-state>`}</app-card>`;
+    return html`<app-card>
+      <span slot="header" tabindex="-1" id="backup-list-heading">加密配置备份</span>
+      ${this.backupsLoading ? html`<p role="status">正在读取配置备份…</p>` : this.backupsError ? html`
+        <p role="alert">最近保存的版本未知。 ${this.backupsError}</p>
+        <button class="btn btn-refresh" type="button" @click=${() => {
+          this.querySelector<HTMLElement>('#backup-list-heading')?.focus();
+          void this.loadBackupList();
+        }}>重试备份列表</button>
+      ` : latest ? html`
+        <p class="meta">最近保存的版本：v${latest.versionNo} · ${formatBackupTime(latest.collectedAt)} ${backupTimeZone}</p>
+        <p class="backup-note">备份内容加密保存，预览已脱敏。</p>
+        <app-data-table .columns=${columns} .rows=${rows} dense></app-data-table>
+      ` : html`<app-empty-state title="暂无配置备份" icon="archive"></app-empty-state>`}
+    </app-card>`;
   }
 
   private renderBackupSchedule() {
     const schedule = this.backupSchedule;
-    return html`<app-card><span slot="header">每日定时备份</span>
+    let lastRunSummary = schedule ? '暂无运行记录' : '结果与时间未知';
+    if (schedule?.lastRun) {
+      const { date, status, errorCode } = schedule.lastRun;
+      const outcome = errorCode === 'CONFIG_BACKUP_RESULT_UNCONFIRMED'
+        ? networkDeviceError(errorCode)
+        : [networkDeviceLabel(status), errorCode && networkDeviceError(errorCode)].filter(Boolean).join(' · ');
+      lastRunSummary = `${date} ${backupTimeZone} · ${outcome}`;
+    }
+    const canManage = hasListPermission('network_devices:manage');
+    return html`<app-card><span slot="header" tabindex="-1" id="backup-schedule-heading">每日定时备份</span>
+      ${this.scheduleLoading ? html`<p role="status">正在读取定时备份设置…</p>` : html`<p class="meta">最近自动备份：${lastRunSummary}</p>`}
       <p class="backup-note">默认每天 00:00（北京时间）执行。服务恢复时补做当天到期任务；当天已执行过则不重复，修改时间从下次未执行的日期生效。</p>
-      ${!this.device?.hasSshCredential ? html`<p class="backup-note">尚未配置 SSH 凭据，自动备份暂不执行。请先编辑网络设备，配置 SSH 用户名和密码或私钥。</p>` : nothing}
+      ${this.device?.hasSshCredential === false ? html`<p class="backup-note">尚未配置 SSH 凭据，配置备份暂不可用。
+        ${canManage ? html`<button class="btn" type="button" @click=${this.editSshConnection}>配置 SSH 连接</button>`
+          : '请联系有网络设备管理权限的人员配置。'}</p>` : nothing}
       ${schedule ? html`<form @submit=${(event: SubmitEvent) => { event.preventDefault(); void this.saveBackupSchedule(); }}>
         <app-form-field label="自动备份"><input aria-label="启用每日定时备份" type="checkbox" .checked=${schedule.enabled} .disabled=${this.scheduleSaving || !hasListPermission('network_devices:backup')} title=${hasListPermission('network_devices:backup') ? '保存定时设置' : '需要 network_devices:backup 权限'} @change=${(event: Event) => { this.backupSchedule = { ...schedule, enabled: (event.target as HTMLInputElement).checked }; }}></app-form-field>
-        <app-form-field label="每日执行时间" hint="北京时间（UTC+8）" .required=${true}><input aria-label="每日执行时间" type="time" step="60" required .value=${schedule.dailyTime} .disabled=${this.scheduleSaving || !hasListPermission('network_devices:backup')} title=${hasListPermission('network_devices:backup') ? '保存定时设置' : '需要 network_devices:backup 权限'} @input=${(event: Event) => { this.backupSchedule = { ...this.backupSchedule!, dailyTime: (event.target as HTMLInputElement).value }; }}></app-form-field>
+        <app-form-field label="每日执行时间" hint=${backupTimeZone} .required=${true}><input aria-label="每日执行时间" type="time" step="60" required .value=${schedule.dailyTime} .disabled=${this.scheduleSaving || !hasListPermission('network_devices:backup')} title=${hasListPermission('network_devices:backup') ? '保存定时设置' : '需要 network_devices:backup 权限'} @input=${(event: Event) => { this.backupSchedule = { ...this.backupSchedule!, dailyTime: (event.target as HTMLInputElement).value }; }}></app-form-field>
         <button type="submit" class="btn-primary" .disabled=${this.scheduleSaving || !hasListPermission('network_devices:backup')} title=${hasListPermission('network_devices:backup') ? '保存定时设置' : '需要 network_devices:backup 权限'}>${this.scheduleSaving ? '保存中…' : '保存定时设置'}</button>
-      </form>
-      <p class="meta">最近自动备份：${schedule.lastRun ? `${schedule.lastRun.date} · ${networkDeviceLabel(schedule.lastRun.status)}${schedule.lastRun.errorCode ? ` · ${networkDeviceError(schedule.lastRun.errorCode)}` : ''}` : '尚未执行'}</p>` : nothing}
-      ${this.scheduleError ? html`<p role="alert" class="error">${this.scheduleError}</p>${!schedule ? html`<button class="btn" @click=${() => this.loadBackupSchedule(this.validId()!)}>重新加载定时设置</button>` : nothing}` : nothing}
+      </form>` : nothing}
+      ${this.scheduleError ? html`<p role="alert" class="error">${this.scheduleError}</p>${!schedule ? html`<button class="btn btn-refresh" type="button" @click=${() => {
+        const id = this.validId();
+        if (id === null) return;
+        this.querySelector<HTMLElement>('#backup-schedule-heading')?.focus();
+        void this.loadBackupSchedule(id);
+      }}>重新加载定时设置</button>` : nothing}` : nothing}
     </app-card>`;
   }
 
   render() {
     const id = this.validId();
+    const backupDisabledReason = !hasListPermission('network_devices:backup') ? '需要 network_devices:backup 权限'
+      : this.device?.hasSshCredential === false ? '请在配置备份页签查看 SSH 配置要求' : '';
     return html`<style>
       network-device-detail { display:block; min-width:0; }
       network-device-detail .overview-grid { display:grid;grid-template-columns:2fr 1fr;gap:var(--space-md); }
@@ -353,11 +485,11 @@ export class NetworkDeviceDetail extends LitElement {
       network-device-detail .header-actions .btn, network-device-detail .header-actions .btn-primary { flex:1; justify-content:center; } }
     </style>
     ${id === null ? html`<div class="error">网络设备 ID 无效</div>` : this.loading ? html`<div class="loading" role="status">正在加载设备数据…</div>` : this.error ? html`<div class="error" role="alert">${this.error}<br><button class="btn" @click=${this.navigateBack}>返回列表</button><button class="btn" type="button" @click=${this.loadContext}>重试</button></div>` : this.device ? html`<div class="page">
-      <div class="header"><div class="title"><button class="btn-ghost" type="button" @click=${this.navigateBack}>${icons["chevron-left"]} 网络设备</button><h1>${this.device.label || this.device.name}</h1><div class="meta">${this.device.host}:${this.device.snmp_port} · ${this.device.vendor === "cisco" ? "Cisco" : "Huawei"} ${this.device.model || "型号未知"} · ${this.device.os_version || "版本未知"} · 观测于 ${this.overview?.observedAt ? new Date(this.overview.observedAt).toLocaleString('zh-CN') : '未知'}</div><div class="meta">详情成功读取：${this.lastRead ? new Date(this.lastRead).toLocaleString('zh-CN') : '未知'}（非资源观测）</div></div><div class="header-actions"><button class="btn" @click=${() => this.activeTab='collection'}>监控配置</button><app-badge variant=${this.overview && ['abnormal','unavailable'].includes(runState(this.overview)) ? 'warn' : 'muted'}>${this.overview ? ({normal:'当前观测未提示异常',abnormal:'异常',unavailable:'不可用',unknown:'待确认'})[runState(this.overview)] : '待确认'}</app-badge><button class="btn btn-refresh" type="button" @click=${this.loadContext}>刷新</button><button class="btn-primary" type="button" @click=${this.captureBackup} .disabled=${this.backupLoading || !hasListPermission('network_devices:backup')} title=${hasListPermission('network_devices:backup') ? '立即备份' : '需要 network_devices:backup 权限'}>${icons.save} ${this.backupLoading ? "备份中…" : "立即备份"}</button></div></div>
+      <div class="header"><div class="title"><button class="btn-ghost" type="button" @click=${this.navigateBack}>${icons["chevron-left"]} 网络设备</button><h1>${this.device.label || this.device.name}</h1><div class="meta">${this.device.host}:${this.device.snmp_port} · ${this.device.vendor === "cisco" ? "Cisco" : "Huawei"} ${this.device.model || "型号未知"} · ${this.device.os_version || "版本未知"} · 观测于 ${this.overview?.observedAt ? new Date(this.overview.observedAt).toLocaleString('zh-CN') : '未知'}</div><div class="meta">详情成功读取：${this.lastRead ? new Date(this.lastRead).toLocaleString('zh-CN') : '未知'}（非资源观测）</div></div><div class="header-actions"><app-badge variant=${this.overview && ['abnormal','unavailable'].includes(runState(this.overview)) ? 'warn' : 'muted'}>${this.overview ? ({normal:'当前观测未提示异常',abnormal:'异常',unavailable:'不可用',unknown:'待确认'})[runState(this.overview)] : '待确认'}</app-badge><button class="btn btn-refresh" type="button" @click=${this.loadContext} .disabled=${this.backupLoading || this.scheduleSaving}>刷新</button><button class="btn-primary" type="button" @click=${this.captureBackup} .disabled=${this.backupLoading || Boolean(backupDisabledReason)} title=${backupDisabledReason || '立即备份'}>${icons.save} ${this.backupLoading ? "备份中…" : "立即备份"}</button></div></div>
       <resource-investigation-links resourceType="network_device" .resourceId=${id}></resource-investigation-links>
-      <div class="tabs" @keydown=${detailTabKeydown} role="tablist" aria-label="网络设备详情页签">${(["overview", "metrics", "interfaces", "relations", "backups", "collection"] as DetailTab[]).map((tab) => html`<button role="tab" aria-selected=${String(this.activeTab === tab)} class="tab ${this.activeTab === tab ? "active" : ""}" type="button" @click=${() => { const config = this.renderRoot.querySelector("resource-collection-section") as import("../components/resource-collection-section.js").ResourceCollectionSection | null; if (config) config.confirmDiscard(() => { this.activeTab = tab; if(tab === 'interfaces') void this.loadInterfaces(); }); else { this.activeTab = tab; if(tab === 'interfaces') void this.loadInterfaces(); } }}>${tab === "metrics" ? "指标与趋势" : tab === "collection" ? "监控配置" : tab === "overview" ? "概览" : tab === "interfaces" ? "接口" : tab === "relations" ? "关联资源" : "配置备份"}</button>`)}</div>
+      <div class="tabs" @keydown=${detailTabKeydown} role="tablist" aria-label="网络设备详情页签">${networkDetailTabs.map((tab) => html`<button role="tab" aria-selected=${String(this.activeTab === tab)} class="tab ${this.activeTab === tab ? "active" : ""}" type="button" @click=${() => this.setDetailTab(tab)}>${tab === "metrics" ? "指标与趋势" : tab === "collection" ? "监控配置" : tab === "overview" ? "概览" : tab === "interfaces" ? "接口" : tab === "relations" ? "关联资源" : "配置备份"}</button>`)}</div>
       ${this.activeTab === "collection" ? html`<resource-collection-section resourceType="network_device" .resourceId=${this.validId()}></resource-collection-section>` : this.activeTab === 'overview' ? this.renderOverview() : this.activeTab === 'interfaces' ? this.renderInterfaces() : this.activeTab === 'metrics' ? html`<resource-metric-browser resourceType="network_device" .resourceId=${this.validId()}></resource-metric-browser>` : this.activeTab === "relations" ? this.renderRelations() : html`${this.renderBackupSchedule()}${this.renderBackups()}`}
     </div>` : nothing}
-    ${this.selectedBackup ? html`<app-dialog .open=${true} size="xl" title=${`配置备份 v${this.selectedBackup.versionNo}`} @app-dialog-close=${() => (this.selectedBackup = null)}><p class="meta">备份时间 ${new Date(this.selectedBackup.collectedAt).toLocaleString()} · SHA-256 ${this.selectedBackup.contentSha256}</p><pre class="preview">${this.selectedBackup.preview}</pre><div slot="footer"><button class="btn" type="button" @click=${() => (this.selectedBackup = null)}>关闭</button></div></app-dialog>` : nothing}`;
+    ${this.selectedBackup ? html`<app-dialog .open=${true} size="xl" title=${`配置备份 v${this.selectedBackup.versionNo}`} @app-dialog-close=${() => (this.selectedBackup = null)}><p class="meta">备份时间 ${formatBackupTime(this.selectedBackup.collectedAt)} ${backupTimeZone} · SHA-256 ${this.selectedBackup.contentSha256}</p><pre class="preview">${this.selectedBackup.preview}</pre><div slot="footer"><button class="btn" type="button" @click=${() => (this.selectedBackup = null)}>关闭</button></div></app-dialog>` : nothing}`;
   }
 }

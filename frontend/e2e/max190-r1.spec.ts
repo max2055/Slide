@@ -45,7 +45,7 @@ for (const width of [390, 1440]) for (const theme of ['light', 'dark']) test(`R1
   const errors: string[] = []; page.on('pageerror', e => errors.push(e.message));
   const writes = await setup(page, theme);
   await page.getByRole('button', { name: '编辑', exact: true }).click();
-  await expect(page.getByRole('heading', { name: '编辑资源', exact: true })).toBeFocused();
+  await expect(page.getByRole('heading', { name: '编辑数据库实例', exact: true })).toBeFocused();
   await page.getByRole('tab', { name: '监控与采集', exact: true }).click();
   const editor = page.locator('metric-configuration');
   await expect(editor.getByLabel('采集包 / 模板版本')).toHaveValue('mysql96');

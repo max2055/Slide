@@ -3,7 +3,7 @@
  */
 import { databaseService } from './database-service.js';
 import { instanceDatabaseService } from './instance-database-service.js';
-import { schemaDatabaseService, type SchemaChange } from './schema-database-service.js';
+import { schemaDatabaseService, type SchemaChange, type TableSchemaRow } from './schema-database-service.js';
 import { decryptData } from './db-connection.js';
 
 class SchemaService {
@@ -510,27 +510,13 @@ class SchemaService {
   /**
    * 变更检测：对比最近两次快照
    */
-  async detectChanges(instanceId: number): Promise<SchemaChange[] | { error: string }> {
-    try {
-      // 获取快照时间列表
-      const snapshotTimes = await schemaDatabaseService.getSnapshotTimes(instanceId, 2);
-      if (snapshotTimes.length < 2) {
-        return { hint: '需要至少两次快照才能进行变更检测' } as any;
-      }
-
-      const [latest, previous] = snapshotTimes;
-
-      // 对比两次快照
-      const changes = await schemaDatabaseService.compareWithSnapshot(
-        instanceId,
-        previous.snapshot_time
-      );
-
-      return changes;
-    } catch (error: any) {
-      console.error('变更检测失败:', error);
-      return { error: error.message || '变更检测时发生未知错误' };
+  async detectChanges(instanceId: number): Promise<SchemaChange[] | { hint: string }> {
+    const snapshots = await schemaDatabaseService.getSnapshotTimes(instanceId, 2);
+    const previous = snapshots[1];
+    if (!previous) {
+      return { hint: '需要至少两次快照才能进行变更检测' };
     }
+    return schemaDatabaseService.compareWithSnapshot(instanceId, previous.snapshot_time);
   }
 
   /**
@@ -552,17 +538,9 @@ class SchemaService {
   /**
    * 获取指定表的完整列信息
    */
-  async getTableDetail(instanceId: number, tableName: string): Promise<any[] | { error: string }> {
-    try {
-      const detail = await schemaDatabaseService.getTableDetail(instanceId, tableName);
-      if (detail.length === 0) {
-        return { error: '表不存在或暂无快照数据' };
-      }
-      return detail;
-    } catch (error: any) {
-      console.error('获取表详情失败:', error);
-      return { error: error.message || '获取表详情时发生未知错误' };
-    }
+  async getTableDetail(instanceId: number, tableName: string): Promise<TableSchemaRow[] | { error: string }> {
+    const detail = await schemaDatabaseService.getTableDetail(instanceId, tableName);
+    return detail.length ? detail : { error: '表不存在或暂无快照数据' };
   }
 }
 

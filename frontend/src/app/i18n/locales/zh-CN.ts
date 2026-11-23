@@ -559,8 +559,9 @@ export const zh_CN: TranslationMap = {
   },
   overview: {
     palette: {
-      placeholder: "搜索命令和页面",
-      noResults: "没有匹配的命令",
+      label: "跳转到页面",
+      placeholder: "输入页面名称",
+      noResults: "没有匹配的页面，请尝试其他页面名称。",
     },
   },
   chat: {

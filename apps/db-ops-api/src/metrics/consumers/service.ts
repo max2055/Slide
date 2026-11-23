@@ -196,6 +196,7 @@ export class MetricConsumerService {
       const state = collectionState(active.get(key), settings?.enabled,
         metricAttempt(definition, effective?.resolved, effective?.published_revision, ref, attempts));
       const series = (byMetric.get(key) ?? []).map(point => ({
+        observation_id: point.id,
         dimensions: point.dimensions, observed_at: point.observed_at, value: point.value, unit: point.unit,
         quality: point.quality, accuracy: point.accuracy,
         freshness: point.versions.config_revision === effective?.published_revision && timing

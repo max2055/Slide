@@ -16,7 +16,7 @@ import {
 } from "./app-settings.ts";
 import type { AppViewState } from "./app-view-state.ts";
 import { loadAgents, saveAgentsConfig } from "./controllers/agents.ts";
-import { loadChatHistory } from "./controllers/chat.ts";
+import { loadChatHistory, updateChatDraft } from "./controllers/chat.ts";
 import { loadSessions } from "./controllers/sessions.ts";
 import "./components/dashboard-header.ts";
 import "./components/app-toggle.ts";
@@ -359,7 +359,7 @@ export function renderApp(state: AppViewState) {
       },
       onSlashCommand: (cmd) => {
         state.setTab("chat" as import("./navigation.ts").Tab);
-        state.chatMessage = cmd.endsWith(" ") ? cmd : `${cmd} `;
+        updateChatDraft(chatSessionHost(state), cmd.endsWith(" ") ? cmd : `${cmd} `);
       },
     })}
     <div
@@ -390,14 +390,15 @@ export function renderApp(state: AppViewState) {
           </div>
           <div class="topnav-shell__actions">
             <button
+              type="button"
               class="topbar-search"
               @click=${() => {
                 state.paletteOpen = !state.paletteOpen;
               }}
-              title="Search or jump to… (⌘K)"
-              aria-label="Open command palette"
+              title=${`${t("overview.palette.label")} (⌘K)`}
+              aria-label=${t("overview.palette.label")}
             >
-              <span class="topbar-search__label">${t("common.search")}</span>
+              <span class="topbar-search__label">${t("overview.palette.label")}</span>
               <kbd class="topbar-search__kbd">⌘K</kbd>
             </button>
             <div class="topbar-status">
@@ -923,6 +924,7 @@ export function renderApp(state: AppViewState) {
               canSend: state.connected,
               error: state.lastError,
               lastError: null,
+              receiptNotice: state.chatReceiptNotice,
               recoveryNotice: state.chatRecoveryNotice,
               onDismissRecoveryNotice: () => dismissChatRecoveryNotice(state),
               sessions: (state.sessionsResult as any) ?? null,
@@ -947,10 +949,10 @@ export function renderApp(state: AppViewState) {
               },
               readAttachments: () => chatReceiver.chatAttachments,
               onAttachmentsChange: (attachments) => {
-                chatReceiver.chatAttachments = attachments;
+                updateChatDraft(chatReceiver, chatReceiver.chatMessage, attachments);
               },
               onDraftChange: (next) => {
-                state.chatMessage = next;
+                updateChatDraft(chatReceiver, next);
               },
               onRequestUpdate: requestHostUpdate,
               onSend: () => state.handleSendChat(),

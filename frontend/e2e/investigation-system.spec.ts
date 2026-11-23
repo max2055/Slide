@@ -24,6 +24,7 @@ test('durable 5xx → official composition/admission/executor/source → WS Work
   await expect.poll(async () => {const [rows]=await env.pool.query('SELECT COUNT(*) n FROM investigation_results WHERE investigation_id=?',[id]);return Number(rows[0].n);}).toBe(1);
   await page.goto(`${env.url}/events?view=system`);
   await expect(page.getByRole('heading',{name:'平台异常'})).toBeVisible();
+  await expect(page.locator('system-events-page').getByText('已启用', { exact: true })).toBeVisible();
   await expect(page.getByText('api: HTTP_503',{exact:true})).toBeVisible();
   expect(await page.getByRole('link',{name:'打开调查'}).count()).toBe(0);
   await env.pool.query("INSERT INTO investigation_members (investigation_id,user_id,role,granted_by) VALUES (?,101,'operator',?)",[id,env.systemServiceId]);

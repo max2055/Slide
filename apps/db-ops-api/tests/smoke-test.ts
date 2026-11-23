@@ -4,6 +4,7 @@
  * Usage:
  *   npx tsx tests/smoke-test.ts [--base-url=http://localhost:3000]
  *
+ * Use a disposable test target. The route catalog sends write requests.
  * Requires the backend to be running: cd apps/db-ops-api && npx tsx server.ts
  */
 
@@ -15,6 +16,8 @@ const CREDS = {
   username: process.env.SMOKE_USER || "admin",
   password: process.env.SMOKE_PASS,
 };
+// MAX-681: use a fresh password for the synthetic account on each run.
+const SMOKE_USER_BODY = { username: "smoke_test_user", password: randomBytes(24).toString("hex") };
 
 interface TestCase {
   method: "GET" | "POST" | "PUT" | "DELETE";
@@ -27,8 +30,6 @@ interface TestCase {
   expect?: number[];
   /** Set to false to skip token (public routes) */
   auth?: boolean;
-  /** Pre-flight: true means test this endpoint needs a token and returns 401 without one */
-  requireAuth?: boolean;
 }
 
 interface TestResult {
@@ -355,18 +356,19 @@ const ROUTES: TestCase[] = [
     body: { start_time: new Date(0).toISOString(), end_time: new Date().toISOString() },
     expect: [200],
   },
+];
 
-  // ── Auth guard checks (require 401 without token) ──
-  { method: "POST", path: "/api/database/instances", name: "[AUTH] Create instance no-token", auth: false, expect: [401, 400], requireAuth: true },
-  { method: "POST", path: "/api/users", name: "[AUTH] Create user no-token", auth: false, expect: [401, 400], requireAuth: true },
+const AUTH_GUARD_CHECKS: TestCase[] = [
+  { method: "POST", path: "/api/database/instances", name: "[AUTH] Create instance no-token", auth: false, body: "auto", expect: [401] },
+  // The user creation API rejects the legacy role field used in the catalog.
+  { method: "POST", path: "/api/users", name: "[AUTH] Create user no-token", auth: false, body: SMOKE_USER_BODY, expect: [401] },
 ];
 
 // ---------------------------------------------------------------------------
 // Auto bodies for POST/PUT routes that accept minimal valid data
 // ---------------------------------------------------------------------------
 const AUTO_BODIES: Record<string, Record<string, unknown>> = {
-  // MAX-681: this request may create a real account on the selected target.
-  "/api/users": { username: "smoke_test_user", password: randomBytes(24).toString("hex"), role: "viewer" },
+  "/api/users": { ...SMOKE_USER_BODY, role: "viewer" },
   "/api/database/instances": { name: "smoke-test", db_type: "mysql", host: "127.0.0.1", port: 3306, database_name: "test", username: "root", password: "x", environment: "test" },
   "/api/database/instances/1": { name: "updated-smoke", db_type: "mysql" },
   "/api/database/instances/test-connection": { db_type: "mysql", host: "127.0.0.1", port: 3306, username: "root", password: "x" },
@@ -409,7 +411,7 @@ function getBody(tc: TestCase): string | undefined {
   return JSON.stringify(tc.body);
 }
 
-async function runOne(tc: TestCase): Promise<TestResult> {
+async function runOne(tc: TestCase, redirect?: RequestRedirect): Promise<TestResult> {
   const start = Date.now();
   const headers: Record<string, string> = { "Content-Type": "application/json" };
   if (tc.auth && token) headers["Authorization"] = `Bearer ${token}`;
@@ -419,6 +421,7 @@ async function runOne(tc: TestCase): Promise<TestResult> {
       method: tc.method,
       headers,
       body: tc.method === "GET" ? undefined : getBody(tc),
+      redirect,
     });
 
     const durationMs = Date.now() - start;
@@ -446,13 +449,12 @@ async function runOne(tc: TestCase): Promise<TestResult> {
   } catch (err: unknown) {
     const durationMs = Date.now() - start;
     const msg = err instanceof Error ? err.message : String(err);
-    const expectedStatus: number[] = tc.expect || (tc.method === "GET" ? [200] : [200, 201]);
     return {
       name: tc.name,
       method: tc.method,
       path: tc.path,
       status: 0,
-      passed: expectedStatus.includes(0),
+      passed: false,
       durationMs,
       error: `Fetch error: ${msg}`,
     };
@@ -495,18 +497,15 @@ async function main() {
 
   // Step 3: Auth guard checks
   console.log("\n🔒 Auth guard checks (expect 401 without token):");
-  token = null;
-  for (const tc of ROUTES.filter((r) => r.requireAuth)) {
+  for (const tc of AUTH_GUARD_CHECKS) {
     process.stdout.write(`  ${tc.method.padEnd(6)} ${tc.path.padEnd(45)}`);
-    const r = await runOne(tc);
-    if (r.status === 401) {
+    const r = await runOne(tc, "manual");
+    if (r.passed) {
       console.log(`✅ 401 as expected`);
-    } else if (r.status === 400) {
-      console.log(`⚠️  400 (Fastify body validation before auth) — preHandler exists, auth OK`);
     } else {
-      console.log(`❌ got ${r.status}, expected 401 — UNPROTECTED`);
-      r.passed = false;
-      r.error = `Expected 401/400 without token, got ${r.status} — UNPROTECTED`;
+      const allowed = r.status >= 200 && r.status < 300;
+      r.error = `${allowed ? "UNPROTECTED" : "Auth not verified"} — ${r.error}`;
+      console.log(`❌ ${r.error}`);
     }
     results.push(r);
   }

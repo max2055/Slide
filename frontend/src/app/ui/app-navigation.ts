@@ -17,6 +17,16 @@ export function buildNavigationUrl(currentUrl: URL | string, tab: Tab, context: 
   const effectiveInstanceId = tab === "instance-detail" ? id : undefined;
   const url = new URL(currentUrl.toString());
 
+  const targetId = effectiveNetworkDeviceId ?? effectiveServerId ?? effectiveInstanceId;
+  if (targetId) {
+    const sourceId = url.searchParams.get("networkDeviceId") ?? url.searchParams.get("id");
+    if (sourceId !== String(targetId)) url.searchParams.delete("detailTab");
+    url.searchParams.delete("restoreList");
+  } else {
+    url.searchParams.delete("detailTab");
+    url.searchParams.delete("listReturn");
+  }
+
   url.searchParams.set("tab", tab);
   if (['instances-db', 'servers', 'network-devices'].includes(tab) && Number.isSafeInteger(editResourceId) && Number(editResourceId) > 0) {
     url.searchParams.set('edit', String(editResourceId));

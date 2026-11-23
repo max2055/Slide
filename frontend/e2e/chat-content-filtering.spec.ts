@@ -35,7 +35,7 @@ for (const width of [1366, 1440, 1920]) {
     await expect(thread.locator('img[src="https://example.com/literal.png"]')).toHaveCount(0);
     expect(await page.evaluate(() => (window as any).historyFixture.props.messages)).toEqual(messages);
     const downloadEvent = page.waitForEvent('download');
-    await page.getByRole('button', { name: 'Export chat', exact: true }).click();
+    await page.getByRole('button', { name: '导出对话', exact: true }).click();
     const download = await downloadEvent;
     const exportPath = test.info().outputPath('chat-export.md');
     await download.saveAs(exportPath);

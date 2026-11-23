@@ -120,7 +120,7 @@ export async function registerNetworkDeviceRoutes(
         const port = validatePort(body.sshPort ?? body.ssh_port, 'ssh_port', 22);
         const ssh = validateSshCredential(body.ssh);
         if (ssh.credentialType === 'key') await recordSshTrustRequest(Number((request as any).user?.userId), 'network_probe', host, ssh.sshTrustMode);
-        await sshProbe({
+        const result = await sshProbe({
           host,
           port,
           username: ssh.username,
@@ -128,7 +128,7 @@ export async function registerNetworkDeviceRoutes(
           credentialValue: ssh.credentialValue,
           sshTrustMode: ssh.sshTrustMode, hostKeyFingerprint: ssh.hostKeyFingerprint,
         });
-        return reply.send({ success: true, ssh: { verified: ssh.credentialType === 'password' || Boolean(ssh.hostKeyFingerprint) } });
+        return reply.send({ success: true, ssh: result });
       }
       if (body.vendor !== undefined && body.vendor !== 'huawei' && body.vendor !== 'cisco') return reply.code(400).send({ success: false, error: 'NETWORK_DEVICE_VENDOR_UNSUPPORTED' });
       if (body.version !== undefined && body.version !== 2 && body.version !== 3) return reply.code(400).send({ success: false, error: 'SNMP_UNSUPPORTED_SECURITY' });
@@ -140,12 +140,12 @@ export async function registerNetworkDeviceRoutes(
       const probe = await snmpAdapter.probe(version === 2
         ? { version: 2, host: target.address, port, community: credential.community }
         : { host: target.address, port, username: credential.username, securityLevel: credential.securityLevel, authProtocol: credential.authProtocol as any, authSecret: credential.authSecret, privacyProtocol: credential.privacyProtocol as any, privacySecret: credential.privacySecret });
-      let sshVerified = false;
+      let sshResult: Awaited<ReturnType<typeof sshProbe>> | undefined;
       if (body.ssh !== undefined) {
         const ssh = validateSshCredential(body.ssh);
         const sshPort = validatePort(body.sshPort ?? body.ssh_port, 'ssh_port', 22);
         if (ssh.credentialType === 'key') await recordSshTrustRequest(Number((request as any).user?.userId), 'network_probe', host, ssh.sshTrustMode);
-        await sshProbe({
+        sshResult = await sshProbe({
           host,
           port: sshPort,
           username: ssh.username,
@@ -153,9 +153,8 @@ export async function registerNetworkDeviceRoutes(
           credentialValue: ssh.credentialValue,
           sshTrustMode: ssh.sshTrustMode, hostKeyFingerprint: ssh.hostKeyFingerprint,
         });
-        sshVerified = ssh.credentialType === 'password' || Boolean(ssh.hostKeyFingerprint);
       }
-      return reply.send({ success: Boolean(probe.reachable), probe: { reachable: Boolean(probe.reachable), quality: probe.quality, reason: probe.reason, observedAt: probe.observedAt.toISOString(), sysName: probe.sysName, uptimeSeconds: probe.uptimeSeconds }, ...(body.ssh !== undefined ? { ssh: { verified: sshVerified } } : {}) });
+      return reply.send({ success: Boolean(probe.reachable), probe: { reachable: Boolean(probe.reachable), quality: probe.quality, reason: probe.reason, observedAt: probe.observedAt.toISOString(), sysName: probe.sysName, uptimeSeconds: probe.uptimeSeconds }, ...(sshResult ? { ssh: sshResult } : {}) });
     } catch (error) {
       const failure = safeNetworkError(error);
       return reply.code(failure.status === 500 ? 502 : failure.status).send({ success: false, error: failure.error });

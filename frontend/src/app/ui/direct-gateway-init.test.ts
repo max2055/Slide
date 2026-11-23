@@ -194,6 +194,26 @@ describe('initChatClient', () => {
     expect(host.lastError).toBe('模型 API 认证失败，请检查 API Key');
     (host.client as any).disconnect();
   });
+
+  it('MAX-723 idle reconnect reports transport loss without a send receipt', async () => {
+    localStorage.setItem('permissions', '["chat:read"]');
+    vi.spyOn(api, 'authFetch').mockResolvedValue(Response.json({ agents: [], sessions: [] }));
+    vi.spyOn(appSettings, 'refreshActiveTab').mockResolvedValue(undefined);
+    const host: Record<string, unknown> = { client: null, connected: false, chatMessage: '保留草稿' };
+    initChatClient(host);
+    const client = host.client as import('./direct-gateway.ts').DirectGatewayClient;
+    try {
+      await vi.waitFor(() => expect(MockWebSocket.latest?.frames.length).toBeGreaterThan(0));
+      MockWebSocket.latest?.receive({ type: 'auth_ok' });
+      MockWebSocket.latest?.closeWith(1006, 'fixture');
+      expect(host.connected).toBe(false);
+      expect(host.connectionError).toBe('连接已中断，正在重新连接');
+      expect(host.chatMessage).toBe('保留草稿');
+      expect(MockWebSocket.latest?.frames.map(frame => JSON.parse(frame).type)).not.toContain('chat.send');
+    } finally {
+      client.disconnect();
+    }
+  });
   it('replaces a corrupt initialization cache with validated permissions', async () => {
     localStorage.setItem('permissions', '{"error":"old failure"}');
     vi.spyOn(api.apiClient, 'fetchResponseWithAuth').mockImplementation((url) => Promise.resolve(

@@ -42,7 +42,7 @@ for (const width of [1366, 1440, 1920]) test(`last tab remains hidden across reo
   await page.screenshot({ animations: 'disabled', path: info.outputPath(`hidden-${width}.png`) });
   await page.goto('/feedback');
   // Existing search remains an accessible recovery path when every sidebar tab is hidden.
-  await page.getByRole('button', { name: 'Open command palette' }).click();
+  await page.getByRole('button', { name: '跳转到页面' }).click();
   await page.getByText('个人设置', { exact: true }).click();
   await expect(page.locator('settings-shell')).toBeVisible();
   await page.goto('/settings/platform/appearance');

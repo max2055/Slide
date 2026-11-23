@@ -61,7 +61,7 @@ it('separates the summary homepage from the full investigation list',async()=>{
 });
 
 it('renders investigation list subjects and outcome states from the authorized list payload', async () => {
-  const base = { lifecycle: 'open', updatedAt: '2026-11-20T01:00:00Z', resources: [{ type: 'server', id: 9, role: 'primary' }] };
+  const base = { lifecycle: 'open', createdAt: '2026-11-20T00:00:00Z', updatedAt: '2026-11-20T01:00:00Z', resources: [{ type: 'server', id: 9, role: 'primary' }] };
   const items = [
     { ...base, id: 'active', title: '检查磁盘', activeRequestId: 'request', context: { entry: { sourceEventIds: [22899] } },
       latestOutcome: { summary: '历史观测显示使用量回落。', gaps: ['当前采集样本缺失'] } },
@@ -77,13 +77,14 @@ it('renders investigation list subjects and outcome states from the authorized l
     await vi.waitFor(() => expect(row('active')).toBeTruthy());
     expect(row('active')?.cells[0].textContent).toContain('事件 #22899');
     expect(row('active')?.cells[0].textContent).toContain('服务器 #9');
-    expect(row('active')?.cells[1].textContent).toContain('调查中');
-    expect(row('active')?.cells[2].textContent).toContain('上次保存的结果');
-    expect(row('active')?.cells[2].textContent).toContain('当前采集样本缺失');
-    expect(row('failed')?.cells[1].textContent).toContain('执行失败');
-    expect(row('failed')?.cells[3].textContent).toContain('停止原因');
-    expect(row('missing')?.cells[1].textContent).toContain('执行状态未提供');
-    expect(row('missing')?.cells[2].textContent).toContain('暂无可用调查结论');
+    expect(row('active')?.cells[1].textContent).toMatch(/创建.+更新/s);
+    expect(row('active')?.cells[2].textContent).toContain('调查中');
+    expect(row('active')?.cells[3].textContent).toContain('来自上次已保存结果');
+    expect(row('active')?.cells[3].textContent).toContain('当前采集样本缺失');
+    expect(row('active')?.textContent).not.toContain('历史观测显示使用量回落。');
+    expect(row('failed')?.cells[2].textContent).toContain('执行失败');
+    expect(row('missing')?.cells[2].textContent).toContain('执行状态未提供');
+    expect(row('missing')?.cells[3].textContent).toContain('暂无已保存结果');
     expect(vi.mocked(authFetch).mock.calls.map(([url]) => String(url))).toEqual(['/api/investigations?limit=20']);
     page.permissions = new Set(['chat:view']);
     await vi.waitFor(() => {

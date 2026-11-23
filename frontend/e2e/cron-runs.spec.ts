@@ -1,4 +1,7 @@
 import { expect, test } from '@playwright/test';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 test('tracks concurrent exact Cron runs, keeps queued distinct from legacy success, restores after refresh and cleans up on navigation', async ({ page }, testInfo) => {
   const errors: string[] = []; page.on('pageerror', error => errors.push(error.message));
@@ -58,8 +61,10 @@ test('aborts a pending trigger without cancelling server execution and reconcile
   const posts: string[] = []; const gets: string[] = [];
   let postDisconnected = false;
   const pendingResponses = new Set<import('node:http').ServerResponse>();
+  // This fixture uses a different Vite config from the audit shard.
+  const cacheDir = await mkdtemp(join(tmpdir(), 'slide-cron-ownership-vite-'));
   const server = await createServer({
-    configFile: false, root: process.cwd(), logLevel: 'error',
+    configFile: false, root: process.cwd(), cacheDir, logLevel: 'error',
     server: { host: '127.0.0.1', port: 0 },
     plugins: [{ name: 'cron-ownership-endpoint', configureServer(vite) {
       vite.middlewares.use((req, res, next) => {
@@ -78,6 +83,9 @@ test('aborts a pending trigger without cancelling server execution and reconcile
         } else next();
       });
     } }],
+  }).catch(async error => {
+    await rm(cacheDir, { recursive: true, force: true });
+    throw error;
   });
   try {
     await server.listen();
@@ -107,7 +115,8 @@ test('aborts a pending trigger without cancelling server execution and reconcile
     try { await page.close(); }
     finally {
       for (const res of pendingResponses) res.destroy();
-      await server.close();
+      try { await server.close(); }
+      finally { await rm(cacheDir, { recursive: true, force: true }); }
     }
   }
 });

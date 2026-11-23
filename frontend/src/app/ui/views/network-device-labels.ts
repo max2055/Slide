@@ -19,6 +19,8 @@ const errors: Record<string, string> = {
   CONFIG_BACKUP_VENDOR_UNSUPPORTED: '暂不支持此厂商的配置备份', CONFIG_OUTPUT_LIMIT: '配置内容超过大小限制', CONFIG_EMPTY: '设备返回的配置为空',
   CONFIG_BACKUP_NOT_FOUND: '配置备份不存在', CONFIG_BACKUP_STORE_UNAVAILABLE: '配置备份存储暂不可用',
   CONFIG_BACKUP_FAILED: '配置备份失败', CONFIG_BACKUP_INTERRUPTED: '备份执行中断，请检查后手动重试',
+  CONFIG_BACKUP_RESULT_UNCONFIRMED: '备份结果未确认。备份可能已保存，请先核对备份记录或审计日志。',
+  CONFIG_BACKUP_SAVED_AUDIT_FAILED: '备份已保存，审计记录写入失败。请先核对备份记录。',
   NETWORK_DEVICE_NOT_FOUND: '网络设备不存在', NETWORK_DEVICE_OPERATION_FAILED: '网络设备操作失败',
   SNMP_AUTH_FAILED: 'SNMP 认证失败，请检查凭据', SNMP_TIMEOUT: 'SNMP 请求超时', SNMP_RESPONSE_INVALID: 'SNMP 返回的数据无效',
   SNMP_TARGET_DENIED: 'SNMP 目标不在允许的访问范围内', SNMP_TARGET_POLICY_NOT_CONFIGURED: '尚未配置 SNMP 目标访问策略',

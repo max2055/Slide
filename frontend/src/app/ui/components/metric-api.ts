@@ -92,7 +92,7 @@ export async function metricRequest<T>(path: string, body?: unknown, signal?: Ab
     ...(body === undefined ? {} : { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }),
   });
   if (!response.ok) {
-    const body = await response.json().catch(() => null);
+    const body = await Promise.resolve().then(() => response.json()).catch(() => null);
     const { error, ...details } = body && typeof body === 'object' ? body as Record<string, unknown> : {} as Record<string, unknown>;
     throw new MetricRequestError(response.status, typeof error === 'string' ? error : undefined, details);
   }
@@ -110,6 +110,25 @@ export async function metricRequest<T>(path: string, body?: unknown, signal?: Ab
   }
   return data;
 }
+export const isMetricAccessError = (error: unknown) =>
+  error instanceof MetricRequestError && [401, 403, 404].includes(error.status);
+
+export function metricReadError(error: unknown, subject: string): string {
+  if (error instanceof MetricRequestError) {
+    if (error.status === 401) return '登录已失效';
+    if (error.status === 403) return '没有此资源的查看权限';
+    if (error.status === 404) return '资源不存在或已不可读；受保护结果已清除。';
+    if (error.status === 503) return `${subject}服务暂不可用（503），请稍后重试。`;
+    if (error.status === 504) return `${subject}读取超时，请重试。`;
+    if (error.code === 'QUERY_LIMIT_EXCEEDED') return '所选范围内的数据过多，请缩短时间范围。';
+    if ([400, 422].includes(error.status)) return `${subject}查询参数未通过校验，请检查时间范围和采样设置。`;
+  }
+  if (error && typeof error === 'object' && 'name' in error && error.name === 'TimeoutError') {
+    return `${subject}读取超时，请重试。`;
+  }
+  return `${subject}读取失败，请重试。`;
+}
+
 export const metricError = (error: unknown) => ({
   '401': '登录已失效，请重新登录', '403': '没有此资源的操作权限', '404': '配置或资源不存在',
   '422': '配置或试采未通过，请检查兼容性和采集证据后重试',

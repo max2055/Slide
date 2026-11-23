@@ -158,13 +158,43 @@ describe('failure and truncation regressions', () => {
     expect(resource.unresolvedAlerts).toBe(1); expect(runState(resource)).toBe('unknown'); expect(isRisk(resource)).toBe(true);
     expect(summarize([resource]).alertsUnavailable).toBe(true);
   });
-  it('does not report unmanaged when the global bound omitted a type', async () => {
+  it.each([
+    { scenario: 'a truncated sample omitted servers', truncated: true, view: true, manage: true, onboard: false, title: /当前样本未包含服务器|No Servers? in the current sample/i },
+    { scenario: 'a complete server inventory is empty', truncated: false, view: true, manage: true, onboard: true, title: /尚未纳管 服务器|No managed Servers?/i },
+    { scenario: 'a read-only server inventory is empty', truncated: false, view: true, manage: false, onboard: false, title: /尚未纳管 服务器|No managed Servers?/i },
+    { scenario: 'a truncated sample with no server access', truncated: true, view: false, manage: false, onboard: false, title: /当前账号无此类资源查看权限|You do not have permission to view this resource type/ },
+  ])('separates the inventory link from onboarding when $scenario', async ({ truncated, view, manage, onboard, title }) => {
+    const permissions = [...(view ? ['servers:view'] : []), ...(manage ? ['servers:manage'] : [])];
+    localStorage.setItem('permissions', JSON.stringify(permissions));
     history.replaceState({}, '', '/dashboard?scope=server');
-    authFetch.mockResolvedValue({ ok: true, json: async () => ({ truncated: true, items: [item({ resource: { type: 'instance', id: 1 } })] }) });
+    const items = truncated ? [item({ resource: { type: 'instance', id: 1 } })] : [];
+    authFetch.mockResolvedValue({ ok: true, json: async () => ({ truncated, items }) });
     const dashboard = document.createElement('dashboard-page') as any;
-    document.body.append(dashboard); await new Promise(done => setTimeout(done, 0)); await dashboard.updateComplete;
-    expect(dashboard.shadowRoot.querySelector('app-empty-state').title).not.toMatch(/尚未纳管|No managed/);
-    expect(dashboard.shadowRoot.querySelector('a[href="/servers"]')).toBeNull();
+    document.body.append(dashboard);
+    await new Promise(done => setTimeout(done, 0));
+    await dashboard.updateComplete;
+
+    const root = dashboard.shadowRoot as ShadowRoot;
+    expect(root.querySelector('app-empty-state')?.getAttribute('title')).toMatch(title);
+    expect(root.querySelector('.notice')?.textContent ?? '').toMatch(truncated ? /数据不完整|Incomplete bounded snapshot/ : /^$/);
+    const list = root.querySelector('.scope-toolbar a[href="/servers"]');
+    const onboarding = root.querySelector('.inventory-empty a[href="/servers"]');
+    if (view) expect(list?.textContent?.trim()).toMatch(/^服务器管理$|^Manage servers$/);
+    else expect(list).toBeNull();
+    if (onboard) expect(onboarding?.textContent?.trim()).toMatch(/^纳管资源$|^Manage resources$/);
+    else expect(onboarding).toBeNull();
+  });
+
+  it('bounds a filter miss to the current sample when the global snapshot was truncated', async () => {
+    history.replaceState({}, '', '/dashboard?scope=server&q=does-not-match');
+    authFetch.mockResolvedValue({ ok: true, json: async () => ({ truncated: true, items: [item()] }) });
+    const dashboard = document.createElement('dashboard-page') as any;
+    document.body.append(dashboard);
+    await new Promise(done => setTimeout(done, 0));
+    await dashboard.updateComplete;
+    const root = dashboard.shadowRoot as ShadowRoot;
+    expect(root.querySelector('app-empty-state')?.getAttribute('title')).toMatch(/当前样本中无筛选结果|No matches in the current sample/);
+    expect(root.querySelector('.scope-toolbar a[href="/servers"]')).not.toBeNull();
   });
 });
 
