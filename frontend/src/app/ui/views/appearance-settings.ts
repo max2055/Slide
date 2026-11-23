@@ -120,8 +120,24 @@ export class AppearanceSettings extends LitElement {
   @state() private btnPalGhostColor: string = DEFAULT_PALETTE.ghostColor;
 
   static styles = [sharedFieldStyles, sharedBtnStyles, sharedSettingsPageStyles, css`
-    :host > app-card { display: block; }
-    :host > app-card + app-card { margin-top: var(--space-sm); }
+    .preference-section + .preference-section { margin-top: var(--space-xl); }
+    .preference-section h2 {
+      margin: 0 0 var(--space-sm);
+      font-size: var(--text-lg);
+      color: var(--text-strong);
+    }
+    .preference-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(min(100%, max(290px, calc((100% - var(--space-sm)) / 2))), 1fr));
+      gap: var(--space-sm);
+      align-items: start;
+    }
+    .preference-grid > .wide { grid-column: 1 / -1; }
+    .sidebar-tab-options {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(min(100%, 210px), 1fr));
+      gap: var(--space-xs) var(--space-md);
+    }
     .color-grid { display: flex; gap: var(--space-sm); flex-wrap: wrap; }
     .color-swatch {
       padding: 0;
@@ -271,245 +287,243 @@ export class AppearanceSettings extends LitElement {
         <p>${t("appearance.description")}</p>
       </div>
 
-      <!-- Accent Color -->
-      <app-card>
-        <div slot="header">${t("appearance.accentColor")}</div>
-        <p class="desc">${t("appearance.accentColorDesc")}</p>
-        <div class="color-grid">
-          ${ACCENT_PRESETS.map((c) => html`
-            <button type="button"
-              class="color-swatch ${this.accent === c.hex ? "active" : ""}"
-              style="background:${c.hex}"
-              title=${t(`appearance.colors.${c.name}`)}
-              aria-label=${t(`appearance.colors.${c.name}`)}
-              aria-pressed=${this.accent === c.hex}
-              @click=${() => this._setAccent(c.hex)}
-            ></button>
-          `)}
-        </div>
-        <div class="custom-color-row">
-          <input class="color-input" type="color" .value=${this.accent} aria-label=${t("appearance.customColor")} @input=${(e: Event) => this._setAccent((e.target as HTMLInputElement).value)} />
-          <span class="hint">${t("appearance.customColor")}</span>
-          <code>${this.accent}</code>
-        </div>
-      </app-card>
-
-      <!-- Border Radius -->
-      <app-card>
-        <div slot="header">${t("appearance.borderRadius")}</div>
-        <p class="desc">${t("appearance.borderRadiusDesc")}</p>
-        <app-option-group
-          .value=${this.radius}
-          .options=${radiusOpts}
-          @change=${(e: CustomEvent) => this._setRadius(e.detail as number)}
-        ></app-option-group>
-      </app-card>
-
-      <!-- Font Density -->
-      <app-card>
-        <div slot="header">${t("appearance.fontDensity")}</div>
-        <p class="desc">${t("appearance.fontDensityDesc")}</p>
-        <app-option-group
-          .value=${this.density}
-          .options=${densityOpts}
-          @change=${(e: CustomEvent) => this._setDensity(e.detail as Density)}
-        ></app-option-group>
-      </app-card>
-
-      <!-- Sidebar Position -->
-      <app-card>
-        <div slot="header">${t("appearance.sidebarPosition")}</div>
-        <p class="desc">${t("appearance.sidebarPositionDesc")}</p>
-        <app-option-group
-          .value=${this.sidebarPos}
-          .options=${sidebarOpts}
-          @change=${(e: CustomEvent) => this._setSidebarPos(e.detail as "left" | "right")}
-        ></app-option-group>
-      </app-card>
-
-      <!-- Language -->
-      <app-card>
-        <div slot="header">${t("appearance.language")}</div>
-        <p class="desc">${t("appearance.languageDesc")}</p>
-        <app-select-field
-          aria-label=${t("appearance.language")}
-          .value=${live(i18n.getLocale())}
-          .options=${LANG_OPTIONS.map(l => ({ value: l.value, label: l.label }))}
-          @change=${(e: CustomEvent) => this._setLocale(e.detail as string)}
-        ></app-select-field>
-      </app-card>
-
-      <!-- Reduce Animations -->
-      <app-card>
-        <div slot="header">${t("appearance.reduceAnimations")}</div>
-        <app-toggle
-          .checked=${this.reduceMotion}
-          @change=${(e: CustomEvent) => this._setReduceMotion(e.detail)}
-        >${t("appearance.reduceAnimations")}</app-toggle>
-        <p class="desc">${t("appearance.reduceAnimationsDesc")}</p>
-      </app-card>
-
-      <!-- Default Page -->
-      <app-card>
-        <div slot="header">${t("appearance.defaultPage")}</div>
-        <p class="desc">${t("appearance.defaultPageDesc")}</p>
-        <app-select-field
-          aria-label=${t("appearance.defaultPage")}
-          .value=${this.defaultTab}
-          .options=${defaultTabOpts}
-          @change=${(e: CustomEvent) => this._setDefaultTab(e.detail as string)}
-        ></app-select-field>
-      </app-card>
-
-      <!-- Sidebar Width -->
-      <app-card>
-        <div slot="header" id="appearance-sidebar-width">${t("appearance.sidebarWidth")}</div>
-        <p class="desc">${t("appearance.sidebarWidthDesc")} (${this.navWidth}px)</p>
-        <input type="range" min="200" max="400" step="10"
-          class="range-input"
-          aria-labelledby="appearance-sidebar-width"
-          .value=${String(this.navWidth)}
-          @input=${(e: Event) => this._setNavWidth(Number((e.target as HTMLInputElement).value))} />
-      </app-card>
-
-      <!-- Sidebar Tabs -->
-      <app-card>
-        <div slot="header">${t("appearance.sidebarTabs")}</div>
-        <p class="desc">${t("appearance.sidebarTabsDesc")}</p>
-        ${ALL_TABS.map((tab) => html`
-          <app-toggle
-            .checked=${this._isTabVisible(tab)}
-            @change=${() => this._toggleTab(tab)}
-          >${titleForTab(tab)}</app-toggle>
-        `)}
-      </app-card>
-
-      <!-- Data Display -->
-      <app-card>
-        <div slot="header">${t("appearance.dataDisplay")}</div>
-        <div class="field-group">
-          <app-select-field
-            label=${t("appearance.defaultPageSize")}
-            .value=${this.pageSize}
-            .options=${pageSizeOpts}
-            @change=${(e: CustomEvent) => this._setPageSize(e.detail as number)}
-          ></app-select-field>
-          <app-select-field
-            label=${t("appearance.dateFormat")}
-            .value=${this.dateFormat}
-            .options=${dateFormatOpts}
-            @change=${(e: CustomEvent) => this._setDateFormat(e.detail as string)}
-          ></app-select-field>
-          <app-select-field
-            label=${t("appearance.timezone")}
-            .value=${this.timezone}
-            .options=${tzOpts}
-            @change=${(e: CustomEvent) => this._setTimezone(e.detail as string)}
-          ></app-select-field>
-        </div>
-      </app-card>
-
-      <!-- Auto Refresh -->
-      <app-card>
-        <div slot="header">${t("appearance.autoRefresh")}</div>
-        <div class="field-group">
-          <app-toggle
-            .checked=${this.autoRefresh}
-            @change=${(e: CustomEvent) => this._setAutoRefresh(e.detail)}
-          >${t("appearance.enableAutoRefresh")}</app-toggle>
-          ${this.autoRefresh ? html`
+      <section class="preference-section" aria-labelledby="preferences-display">
+        <h2 id="preferences-display">${t("appearance.groups.display")}</h2>
+        <div class="preference-grid">
+          <app-card class="wide">
+            <div slot="header">${t("appearance.accentColor")}</div>
+            <p class="desc">${t("appearance.accentColorDesc")}</p>
+            <div class="color-grid">
+              ${ACCENT_PRESETS.map((c) => html`
+                <button type="button"
+                  class="color-swatch ${this.accent === c.hex ? "active" : ""}"
+                  style="background:${c.hex}"
+                  title=${t(`appearance.colors.${c.name}`)}
+                  aria-label=${t(`appearance.colors.${c.name}`)}
+                  aria-pressed=${this.accent === c.hex}
+                  @click=${() => this._setAccent(c.hex)}
+                ></button>
+              `)}
+            </div>
+            <div class="custom-color-row">
+              <input class="color-input" type="color" .value=${this.accent} aria-label=${t("appearance.customColor")} @input=${(e: Event) => this._setAccent((e.target as HTMLInputElement).value)} />
+              <span class="hint">${t("appearance.customColor")}</span>
+              <code>${this.accent}</code>
+            </div>
+          </app-card>
+          <app-card>
+            <div slot="header">${t("appearance.borderRadius")}</div>
+            <p class="desc">${t("appearance.borderRadiusDesc")}</p>
+            <app-option-group
+              .value=${this.radius}
+              .options=${radiusOpts}
+              @change=${(e: CustomEvent) => this._setRadius(e.detail as number)}
+            ></app-option-group>
+          </app-card>
+          <app-card>
+            <div slot="header">${t("appearance.fontDensity")}</div>
+            <p class="desc">${t("appearance.fontDensityDesc")}</p>
+            <app-option-group
+              .value=${this.density}
+              .options=${densityOpts}
+              @change=${(e: CustomEvent) => this._setDensity(e.detail as Density)}
+            ></app-option-group>
+          </app-card>
+          <app-card>
+            <div slot="header">${t("appearance.language")}</div>
+            <p class="desc">${t("appearance.languageDesc")}</p>
             <app-select-field
-              aria-label=${t("appearance.refreshInterval")}
-              .value=${this.refreshInterval}
-              .options=${refreshOpts}
-              @change=${(e: CustomEvent) => this._setRefreshInterval(e.detail as number)}
+              aria-label=${t("appearance.language")}
+              .value=${live(i18n.getLocale())}
+              .options=${LANG_OPTIONS.map(l => ({ value: l.value, label: l.label }))}
+              @change=${(e: CustomEvent) => this._setLocale(e.detail as string)}
             ></app-select-field>
-          ` : nothing}
+          </app-card>
+          <app-card>
+            <div slot="header">${t("appearance.reduceAnimations")}</div>
+            <app-toggle
+              .checked=${this.reduceMotion}
+              @change=${(e: CustomEvent) => this._setReduceMotion(e.detail)}
+            >${t("appearance.reduceAnimations")}</app-toggle>
+            <p class="desc">${t("appearance.reduceAnimationsDesc")}</p>
+          </app-card>
+          <app-card class="wide">
+            <div slot="header">${t("appearance.buttonColors")}</div>
+            <p class="desc">${t("appearance.buttonColorsDesc")}</p>
+            <div class="field-group">
+              <div class="color-setting-group">
+                <span class="field-hint">${t("appearance.primaryAction")}</span>
+                <div class="color-setting-row">
+                  <input class="color-input" type="color" .value=${this.btnPalPrimaryBg} aria-label=${t("appearance.primaryFill")} @input=${(e: Event) => this._setBtnColor("primary", "bg", (e.target as HTMLInputElement).value)} />
+                  <input class="color-input" type="color" .value=${this.btnPalPrimaryColor} aria-label=${t("appearance.primaryText")} @input=${(e: Event) => this._setBtnColor("primary", "color", (e.target as HTMLInputElement).value)} />
+                  <span class="hint">${t("appearance.fillAndText")}</span>
+                  <code>${this.btnPalPrimaryBg}</code>
+                </div>
+              </div>
+              <div class="color-setting-group">
+                <span class="field-hint">${t("appearance.secondaryAction")}</span>
+                <div class="color-setting-row">
+                  <input class="color-input" type="color" .value=${this.btnPalSecondaryBg} aria-label=${t("appearance.secondaryBackground")} @input=${(e: Event) => this._setBtnColor("secondary", "bg", (e.target as HTMLInputElement).value)} />
+                  <span class="hint">${t("appearance.backgroundColor")}</span>
+                  <code>${this.btnPalSecondaryBg}</code>
+                </div>
+              </div>
+              <div class="color-setting-group">
+                <span class="field-hint">${t("appearance.inlineAction")}</span>
+                <div class="color-setting-row">
+                  <input class="color-input" type="color" .value=${this.btnPalGhostColor} aria-label=${t("appearance.inlineText")} @input=${(e: Event) => this._setBtnColor("ghost", "color", (e.target as HTMLInputElement).value)} />
+                  <span class="hint">${t("appearance.textColor")}</span>
+                  <code>${this.btnPalGhostColor}</code>
+                </div>
+              </div>
+              <div class="color-setting-group">
+                <span class="field-hint">${t("appearance.dangerAction")}</span>
+                <div class="color-setting-row">
+                  <input class="color-input" type="color" .value=${this.btnPalDangerBg} aria-label=${t("appearance.dangerBackground")} @input=${(e: Event) => this._setBtnColor("danger", "bg", (e.target as HTMLInputElement).value)} />
+                  <span class="hint">${t("appearance.backgroundColor")}</span>
+                  <code>${this.btnPalDangerBg}</code>
+                </div>
+              </div>
+              <div class="button-preview-row" aria-label=${t("appearance.buttonPreview")}>
+                <button class="btn-primary button-preview" type="button">${t("appearance.primary")}</button>
+                <button class="btn button-preview" type="button">${t("appearance.secondary")}</button>
+                <button class="btn btn-refresh button-preview" type="button">${t("common.refresh")}</button>
+                <button class="btn-ghost button-preview" type="button">${t("appearance.inline")}</button>
+                <button class="btn-primary btn-danger button-preview" type="button">${t("appearance.danger")}</button>
+              </div>
+            </div>
+          </app-card>
         </div>
-      </app-card>
+      </section>
 
-      <!-- Notifications -->
-      <app-card>
-        <div slot="header">${t("appearance.notifications")}</div>
-        <div class="field-group">
-          <app-toggle
-            .checked=${this.notifyEnabled}
-            @change=${(e: CustomEvent) => this._setNotifications(e.detail)}
-          >${t("appearance.enableNotifications")}</app-toggle>
-          ${this.notifyEnabled ? html`
-            <div>
-              <span class="field-hint">${t("appearance.minimumSeverity")}</span>
-              <app-option-group
-                .multi=${true}
-                .selected=${this.notifySeverity}
-                .options=${severityOpts}
-                @change=${(e: CustomEvent) => this._setNotifySeverity(e.detail as string[])}
-                style="margin-top:4px"
-              ></app-option-group>
+      <section class="preference-section" aria-labelledby="preferences-navigation">
+        <h2 id="preferences-navigation">${t("appearance.groups.navigation")}</h2>
+        <div class="preference-grid">
+          <app-card>
+            <div slot="header">${t("appearance.sidebarPosition")}</div>
+            <p class="desc">${t("appearance.sidebarPositionDesc")}</p>
+            <app-option-group
+              .value=${this.sidebarPos}
+              .options=${sidebarOpts}
+              @change=${(e: CustomEvent) => this._setSidebarPos(e.detail as "left" | "right")}
+            ></app-option-group>
+          </app-card>
+          <app-card>
+            <div slot="header">${t("appearance.defaultPage")}</div>
+            <p class="desc">${t("appearance.defaultPageDesc")}</p>
+            <app-select-field
+              aria-label=${t("appearance.defaultPage")}
+              .value=${this.defaultTab}
+              .options=${defaultTabOpts}
+              @change=${(e: CustomEvent) => this._setDefaultTab(e.detail as string)}
+            ></app-select-field>
+          </app-card>
+          <app-card>
+            <div slot="header" id="appearance-sidebar-width">${t("appearance.sidebarWidth")}</div>
+            <p class="desc">${t("appearance.sidebarWidthDesc")} (${this.navWidth}px)</p>
+            <input type="range" min="200" max="400" step="10"
+              class="range-input"
+              aria-labelledby="appearance-sidebar-width"
+              .value=${String(this.navWidth)}
+              @input=${(e: Event) => this._setNavWidth(Number((e.target as HTMLInputElement).value))} />
+          </app-card>
+          <app-card class="wide">
+            <div slot="header">${t("appearance.sidebarTabs")}</div>
+            <p class="desc">${t("appearance.sidebarTabsDesc")}</p>
+            <div class="sidebar-tab-options">
+              ${ALL_TABS.map((tab) => html`
+                <app-toggle
+                  .checked=${this._isTabVisible(tab)}
+                  @change=${() => this._toggleTab(tab)}
+                >${titleForTab(tab)}</app-toggle>
+              `)}
             </div>
-          ` : nothing}
+          </app-card>
         </div>
-      </app-card>
+      </section>
 
-      <!-- Button Colors -->
-      <app-card>
-        <div slot="header">${t("appearance.buttonColors")}</div>
-        <p class="desc">${t("appearance.buttonColorsDesc")}</p>
-        <div class="field-group">
-          <div class="color-setting-group">
-            <span class="field-hint">${t("appearance.primaryAction")}</span>
-            <div class="color-setting-row">
-              <input class="color-input" type="color" .value=${this.btnPalPrimaryBg} aria-label=${t("appearance.primaryFill")} @input=${(e: Event) => this._setBtnColor("primary", "bg", (e.target as HTMLInputElement).value)} />
-              <input class="color-input" type="color" .value=${this.btnPalPrimaryColor} aria-label=${t("appearance.primaryText")} @input=${(e: Event) => this._setBtnColor("primary", "color", (e.target as HTMLInputElement).value)} />
-              <span class="hint">${t("appearance.fillAndText")}</span>
-              <code>${this.btnPalPrimaryBg}</code>
+      <section class="preference-section" aria-labelledby="preferences-data">
+        <h2 id="preferences-data">${t("appearance.groups.data")}</h2>
+        <div class="preference-grid">
+          <app-card>
+            <div slot="header">${t("appearance.dataDisplay")}</div>
+            <div class="field-group">
+              <app-select-field
+                label=${t("appearance.defaultPageSize")}
+                .value=${this.pageSize}
+                .options=${pageSizeOpts}
+                @change=${(e: CustomEvent) => this._setPageSize(e.detail as number)}
+              ></app-select-field>
+              <app-select-field
+                label=${t("appearance.dateFormat")}
+                .value=${this.dateFormat}
+                .options=${dateFormatOpts}
+                @change=${(e: CustomEvent) => this._setDateFormat(e.detail as string)}
+              ></app-select-field>
+              <app-select-field
+                label=${t("appearance.timezone")}
+                .value=${this.timezone}
+                .options=${tzOpts}
+                @change=${(e: CustomEvent) => this._setTimezone(e.detail as string)}
+              ></app-select-field>
             </div>
-          </div>
-          <div class="color-setting-group">
-            <span class="field-hint">${t("appearance.secondaryAction")}</span>
-            <div class="color-setting-row">
-              <input class="color-input" type="color" .value=${this.btnPalSecondaryBg} aria-label=${t("appearance.secondaryBackground")} @input=${(e: Event) => this._setBtnColor("secondary", "bg", (e.target as HTMLInputElement).value)} />
-              <span class="hint">${t("appearance.backgroundColor")}</span>
-              <code>${this.btnPalSecondaryBg}</code>
+          </app-card>
+          <app-card>
+            <div slot="header">${t("appearance.autoRefresh")}</div>
+            <div class="field-group">
+              <app-toggle
+                .checked=${this.autoRefresh}
+                @change=${(e: CustomEvent) => this._setAutoRefresh(e.detail)}
+              >${t("appearance.enableAutoRefresh")}</app-toggle>
+              ${this.autoRefresh ? html`
+                <app-select-field
+                  aria-label=${t("appearance.refreshInterval")}
+                  .value=${this.refreshInterval}
+                  .options=${refreshOpts}
+                  @change=${(e: CustomEvent) => this._setRefreshInterval(e.detail as number)}
+                ></app-select-field>
+              ` : nothing}
             </div>
-          </div>
-          <div class="color-setting-group">
-            <span class="field-hint">${t("appearance.inlineAction")}</span>
-            <div class="color-setting-row">
-              <input class="color-input" type="color" .value=${this.btnPalGhostColor} aria-label=${t("appearance.inlineText")} @input=${(e: Event) => this._setBtnColor("ghost", "color", (e.target as HTMLInputElement).value)} />
-              <span class="hint">${t("appearance.textColor")}</span>
-              <code>${this.btnPalGhostColor}</code>
-            </div>
-          </div>
-          <div class="color-setting-group">
-            <span class="field-hint">${t("appearance.dangerAction")}</span>
-            <div class="color-setting-row">
-              <input class="color-input" type="color" .value=${this.btnPalDangerBg} aria-label=${t("appearance.dangerBackground")} @input=${(e: Event) => this._setBtnColor("danger", "bg", (e.target as HTMLInputElement).value)} />
-              <span class="hint">${t("appearance.backgroundColor")}</span>
-              <code>${this.btnPalDangerBg}</code>
-            </div>
-          </div>
-          <div class="button-preview-row" aria-label=${t("appearance.buttonPreview")}>
-            <button class="btn-primary button-preview" type="button">${t("appearance.primary")}</button>
-            <button class="btn button-preview" type="button">${t("appearance.secondary")}</button>
-            <button class="btn btn-refresh button-preview" type="button">${t("common.refresh")}</button>
-            <button class="btn-ghost button-preview" type="button">${t("appearance.inline")}</button>
-            <button class="btn-primary btn-danger button-preview" type="button">${t("appearance.danger")}</button>
-          </div>
+          </app-card>
         </div>
-      </app-card>
+      </section>
 
-      <!-- Default Model -->
-      <app-card>
-        <div slot="header" id="appearance-default-model">${t("appearance.defaultModel")}</div>
-        <p class="desc">${t("appearance.defaultModelDesc")}</p>
-        <input type="text"
-          class="text-input"
-          aria-labelledby="appearance-default-model"
-          .value=${this.defaultModel}
-          @input=${(e: Event) => this._setDefaultModel((e.target as HTMLInputElement).value)}
-          placeholder=${t("appearance.modelPlaceholder")} />
-      </app-card>
+      <section class="preference-section" aria-labelledby="preferences-notifications">
+        <h2 id="preferences-notifications">${t("appearance.groups.notifications")}</h2>
+        <div class="preference-grid">
+          <app-card>
+            <div slot="header">${t("appearance.notifications")}</div>
+            <div class="field-group">
+              <app-toggle
+                .checked=${this.notifyEnabled}
+                @change=${(e: CustomEvent) => this._setNotifications(e.detail)}
+              >${t("appearance.enableNotifications")}</app-toggle>
+              ${this.notifyEnabled ? html`
+                <div>
+                  <span class="field-hint">${t("appearance.minimumSeverity")}</span>
+                  <app-option-group
+                    .multi=${true}
+                    .selected=${this.notifySeverity}
+                    .options=${severityOpts}
+                    @change=${(e: CustomEvent) => this._setNotifySeverity(e.detail as string[])}
+                    style="margin-top:4px"
+                  ></app-option-group>
+                </div>
+              ` : nothing}
+            </div>
+          </app-card>
+          <app-card>
+            <div slot="header" id="appearance-default-model">${t("appearance.defaultModel")}</div>
+            <p class="desc">${t("appearance.defaultModelDesc")}</p>
+            <input type="text"
+              class="text-input"
+              aria-labelledby="appearance-default-model"
+              .value=${this.defaultModel}
+              @input=${(e: Event) => this._setDefaultModel((e.target as HTMLInputElement).value)}
+              placeholder=${t("appearance.modelPlaceholder")} />
+          </app-card>
+        </div>
+      </section>
     `;
   }
 

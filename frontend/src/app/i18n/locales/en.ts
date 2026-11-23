@@ -574,6 +574,12 @@ export const en: TranslationMap = {
     zhCN: "简体中文 (Simplified Chinese)",
   },
   appearance: {
+    groups: {
+      display: "Interface",
+      navigation: "Home and navigation",
+      data: "Lists and time",
+      notifications: "Notifications and conversations",
+    },
     description: "Customize the interface theme, colors, and text density.",
     pageSizeRows: "{count} rows",
     unavailablePage: "Previously selected page is unavailable",
