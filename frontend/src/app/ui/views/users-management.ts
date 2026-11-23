@@ -1,6 +1,7 @@
 import { sharedFieldStyles } from "../../styles/shared-field-styles.ts";
 import { LitElement, html, css } from "lit";
 import { sharedBtnStyles } from "../../styles/shared-btn-styles.ts";
+import { settingsManagementHeaderStyles } from "../../styles/shared-settings-page-styles.ts";
 import { customElement, state } from "lit/decorators.js";
 import "../components/app-dialog.js";
 import "../components/app-card.js";
@@ -52,7 +53,7 @@ const STATUS_LABELS: Record<string, string> = {
 
 @customElement("users-management")
 export class UsersManagement extends LitElement {
-  static styles = [sharedFieldStyles, sharedBtnStyles, css`
+  static styles = [sharedFieldStyles, sharedBtnStyles, settingsManagementHeaderStyles, css`
     :host {
       display: block;
       animation: fade-in 0.25s var(--ease-out);
@@ -66,11 +67,6 @@ export class UsersManagement extends LitElement {
     .page {
       padding: 0;
     }
-
-    .page-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 24px; }
-    .page-header h1 { font-size: 22px; font-weight: 700; margin: 0 0 4px; color: var(--text-strong); }
-    .page-header p { font-size: 13px; color: var(--muted); margin: 0; }
-
 
     .table-container {
       overflow-x: auto;
@@ -626,7 +622,7 @@ export class UsersManagement extends LitElement {
       <div class="page">
         <div class="page-header">
           <h1>用户管理</h1>
-          <button class="btn-primary" @click=${this._openCreateModal}>
+          <button class="btn-primary" type="button" @click=${this._openCreateModal}>
             新建用户
           </button>
         </div>

@@ -2,6 +2,7 @@ import { ListBrowser, renderListBrowser, listBrowserStyles } from '../components
 import { sharedFieldStyles } from "../../styles/shared-field-styles.ts";
 import { LitElement, html, css, nothing } from "lit";
 import { sharedBtnStyles } from "../../styles/shared-btn-styles.ts";
+import { settingsManagementHeaderStyles } from "../../styles/shared-settings-page-styles.ts";
 import { customElement, property, state } from "lit/decorators.js";
 import { apiClient } from '../../../api/index.js';
 import { showToast } from '../components/app-toast-container.ts';
@@ -53,7 +54,7 @@ export class RbacAdminPage extends LitElement {
   @state() private error: string | null = null;
   @state() private hasAccess = false;
 
-  static styles = [sharedFieldStyles, sharedBtnStyles, css`
+  static styles = [sharedFieldStyles, sharedBtnStyles, settingsManagementHeaderStyles, css`
     :host { display: block; animation: fade-in 0.25s var(--ease-out); }
     @keyframes fade-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
 
@@ -95,10 +96,6 @@ export class RbacAdminPage extends LitElement {
       height: 2px;
       background: var(--accent);
     }
-
-    .page-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 24px; }
-    .page-header h1 { font-size: 22px; font-weight: 700; margin: 0 0 4px; color: var(--text-strong); }
-    .page-header p { font-size: 13px; color: var(--muted); margin: 0; }
 
     .page { padding: 0; }
 
@@ -157,16 +154,6 @@ export class RbacAdminPage extends LitElement {
     this.activeSubTab = tab;
   }
 
-  private _openCreateInActiveTab() {
-    const tabElement = this.activeSubTab === "roles"
-      ? this.shadowRoot?.querySelector("role-management-tab")
-      : this.shadowRoot?.querySelector("permission-management-tab");
-
-    if (tabElement) {
-      tabElement.dispatchEvent(new CustomEvent("open-create-modal", { bubbles: true, composed: true }));
-    }
-  }
-
   override render() {
     if (this.loading) {
       return html`<div class="loading">加载中...</div>`;
@@ -182,9 +169,6 @@ export class RbacAdminPage extends LitElement {
 
     return html`
       <div class="page">
-        <div class="page-header">
-          <h1>权限管理</h1>
-        </div>
         ${this.embedded ? nothing : html`
           <div class="sub-tabs">
             ${subTabs.map(
@@ -243,7 +227,6 @@ export class RoleManagementTab extends LitElement {
 
   override async firstUpdated() {
     await this._loadRoles();
-    this.addEventListener("open-create-modal", () => this._openCreateModal());
   }
 
   private async _loadRoles() {
@@ -443,10 +426,12 @@ export class RoleManagementTab extends LitElement {
     if (this.error) return html`<div class="error-msg">${this.error}</div>`;
 
     return html`
+      <div class="page-header">
+        <h1>角色管理</h1>
+        <button class="btn-primary" type="button" @click=${this._openCreateModal}>新建角色</button>
+      </div>
       <app-card>
-        <span slot="header">角色列表
-          <button class="btn-primary" @click=${this._openCreateModal}>+ 新建角色</button>
-        </span>
+        <span slot="header">角色列表</span>
         ${this._renderFormModal()}
         ${this._renderPermModal()}
         ${this.roles.length === 0
@@ -598,7 +583,6 @@ export class PermissionManagementTab extends LitElement {
 
   override async firstUpdated() {
     await this._loadPermissions();
-    this.addEventListener("open-create-modal", () => this._openCreateModal());
   }
 
   private async _loadPermissions() {
@@ -708,10 +692,12 @@ export class PermissionManagementTab extends LitElement {
 
     const page = this.browser.select(this.permissions, row => `${row.code} ${row.name} ${row.resource} ${row.action} ${row.description || ''}`, row => `${row.code} ${row.id}`);
     return html`
+      <div class="page-header">
+        <h1>权限管理</h1>
+        <button class="btn-primary" type="button" @click=${this._openCreateModal}>新建权限</button>
+      </div>
       <app-card>
-        <span slot="header">权限列表
-          <button class="btn-primary" @click=${this._openCreateModal}>+ 新建权限</button>
-        </span>
+        <span slot="header">权限列表</span>
         ${this._renderModal()}
         ${renderListBrowser(this.browser, page.total, this.permissions.length, "权限", () => this.requestUpdate())}
         ${this.permissions.length === 0
