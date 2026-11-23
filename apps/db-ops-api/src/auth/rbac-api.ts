@@ -228,9 +228,9 @@ export async function rbacApiRoutes(fastify: FastifyInstance, _options: any) {
         if (!result.success) {
           return reply.code(400).send({ error: result.error });
         }
-        reply.code(201).send(result);
+        return reply.code(201).send(result);
       } catch (error: any) {
-        reply.code(500).send({ error: error.message });
+        return reply.code(500).send({ error: error.message });
       }
     });
 
@@ -244,9 +244,9 @@ export async function rbacApiRoutes(fastify: FastifyInstance, _options: any) {
         if (!result.success) {
           return reply.code(400).send({ error: result.error });
         }
-        reply.send(result);
+        return reply.send(result);
       } catch (error: any) {
-        reply.code(500).send({ error: error.message });
+        return reply.code(500).send({ error: error.message });
       }
     });
 
@@ -257,9 +257,9 @@ export async function rbacApiRoutes(fastify: FastifyInstance, _options: any) {
       try {
         const { roleId } = request.params as any;
         const permissions = await rbacService.getRolePermissions(Number(roleId), { strict: true });
-        reply.send(permissions);
+        return reply.send(permissions);
       } catch {
-        reply.code(503).send({ error: "角色权限读取失败，请稍后重试" });
+        return reply.code(503).send({ error: "角色权限读取失败，请稍后重试" });
       }
     });
 
@@ -351,9 +351,9 @@ export async function rbacApiRoutes(fastify: FastifyInstance, _options: any) {
         if (!result.success) {
           return reply.code(400).send({ error: result.error });
         }
-        reply.code(201).send(result);
+        return reply.code(201).send(result);
       } catch (error: any) {
-        reply.code(500).send({ error: error.message });
+        return reply.code(500).send({ error: error.message });
       }
     });
 
@@ -367,9 +367,9 @@ export async function rbacApiRoutes(fastify: FastifyInstance, _options: any) {
         if (!result.success) {
           return reply.code(400).send({ error: result.error });
         }
-        reply.send(result);
+        return reply.send(result);
       } catch (error: any) {
-        reply.code(500).send({ error: error.message });
+        return reply.code(500).send({ error: error.message });
       }
     });
 
@@ -380,9 +380,9 @@ export async function rbacApiRoutes(fastify: FastifyInstance, _options: any) {
       try {
         const { userId } = request.params as any;
         const instances = await rbacService.getUserInstanceAccess(Number(userId), { strict: true });
-        reply.send(instances);
+        return reply.send(instances);
       } catch {
-        reply.code(503).send({ error: "用户实例权限读取失败，请稍后重试" });
+        return reply.code(503).send({ error: "用户实例权限读取失败，请稍后重试" });
       }
     });
 
