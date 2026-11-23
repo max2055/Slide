@@ -178,7 +178,7 @@ export class AgentSecurityPolicyPage extends LitElement {
       this.catalog = await apiClient.get<SecurityCatalogResponse>('/agent/security/policies');
       this.selectedAgentId = this.selectedAgentId || this.catalog.agents[0]?.id || '';
       this.applyPolicy();
-      await this.loadHistory();
+      void this.loadHistory();
       await this.loadExecutionConfig();
     } catch {
       showToast('加载 Agent 安全策略失败', 'error');
@@ -318,7 +318,7 @@ export class AgentSecurityPolicyPage extends LitElement {
         this.catalog = { ...this.catalog, policies: this.catalog.policies.map((item) => item.agentId === response.policy.agentId ? response.policy : item) };
       }
       this.applyPolicy();
-      await this.loadHistory();
+      void this.loadHistory();
       showToast('Agent 安全策略已更新', 'success');
     } catch (error) {
       this.saveError = error instanceof Error && error.message === 'ID_INVALID' ? '资源范围只能填写正整数 ID' : '更新 Agent 安全策略失败';
@@ -379,7 +379,7 @@ export class AgentSecurityPolicyPage extends LitElement {
             </div>` : html`<div class="empty-block">执行控制配置不可用，系统按安全默认值运行。</div>`}
           </app-card>` : nothing}
           <div class="settings-editor">
-            ${isAdmin ? html`<div class="settings-editor-actions">
+            ${isAdmin ? html`<div class="settings-editor-actions" role="group" aria-label="策略保存">
               <div class="settings-editor-status">
                 <span role="status">${this.saving ? '正在保存策略…' : dirty
                   ? (this.changeNote.trim() ? '有未保存的修改' : '有未保存的修改，请填写变更说明')
@@ -419,7 +419,7 @@ export class AgentSecurityPolicyPage extends LitElement {
               </fieldset>
             </app-card>
           </div>
-          ${hasPermission('audit:view') ? html`<app-card><span slot="header" class="card-title">${icons.activity} 策略变更记录</span>${this.historyError ? html`<div role="alert">${this.historyError}</div><button class="btn" @click=${() => this.loadHistory()}>重试加载变更记录</button>` : html`${this.historyLoading ? html`<p role="status">正在加载策略变更记录…</p>` : nothing}<app-data-table .columns=${[{ key: 'version', label: '版本' }, { key: 'changeNote', label: '变更说明' }, { key: 'actor', label: '操作者' }, { key: 'createdAt', label: '时间' }]} .rows=${this.historyRows()} .loading=${this.historyLoading} emptyMessage="暂无策略变更"></app-data-table>`}</app-card>` : nothing}
+          ${hasPermission('audit:view') ? html`<app-card role="region" aria-labelledby="agent-policy-history-title"><span slot="header" id="agent-policy-history-title" class="card-title">${icons.activity} 策略变更记录</span>${this.historyError ? html`<div role="alert">${this.historyError}</div><button class="btn" @click=${() => this.loadHistory()}>重试加载变更记录</button>` : html`${this.historyLoading ? html`<p role="status">正在加载策略变更记录…</p>` : nothing}<app-data-table .columns=${[{ key: 'version', label: '版本' }, { key: 'changeNote', label: '变更说明' }, { key: 'actor', label: '操作者' }, { key: 'createdAt', label: '时间' }]} .rows=${this.historyRows()} .loading=${this.historyLoading} emptyMessage="暂无策略变更"></app-data-table>`}</app-card>` : nothing}
         </div>
       `}
     `;
