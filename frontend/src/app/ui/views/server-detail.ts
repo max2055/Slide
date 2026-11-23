@@ -296,8 +296,13 @@ export class ServerDetailPage extends LitElement {
           ? "没有权限查看该服务器托管的数据库实例"
           : "托管数据库实例加载失败");
       }
-      const data = await response.json() as HostedInstancesResponse;
-      if (current()) this.hostedInstances = data.instances;
+      const data: HostedInstancesResponse | null = await response.json();
+      if (!current()) return;
+      if (!Array.isArray(data?.instances) || data.instances.some(instance =>
+        !instance || !Number.isSafeInteger(instance.instanceId) || instance.instanceId <= 0
+        || typeof instance.name !== "string" || typeof instance.dbType !== "string"
+      )) throw new Error("托管数据库实例返回格式异常");
+      this.hostedInstances = data.instances;
     } catch (error) {
       if (current()) {
         this.hostedInstancesError = error instanceof Error ? error.message : "托管数据库实例加载失败";
