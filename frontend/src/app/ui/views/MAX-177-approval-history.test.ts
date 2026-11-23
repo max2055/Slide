@@ -75,7 +75,7 @@ describe('MAX-177 result evidence', () => {
   it('retains complete SQL/analysis/error originals in the evidence dialog and exposes partial events', async () => {
     const source = { ...row(1, 'execution_failed', 'raw-error'.repeat(1000)), sql_text: 'SELECT 1;\n'.repeat(1000), ai_recommendation: '{"reasoning":"full-reason"}' };
     const subject = await history([source]);
-    authFetch.mockImplementation(async (url: string) => url.endsWith('/events') ? response({}, 403) : response(source));
+    authFetch.mockImplementation(async (url: string) => url.endsWith('/events') ? response({}, 503) : response(source));
     (subject as any).openDetail(source); await flush(subject);
     const dialog = subject.shadowRoot!.querySelector('app-dialog')!;
     expect(dialog.textContent).toContain(source.sql_text); expect(dialog.textContent).toContain(source.execution_result);
@@ -106,6 +106,49 @@ describe('MAX-177 result evidence', () => {
     expect(raw.open).toBe(false);
     expect(raw.textContent).toContain('"execution_result": ' + (receipt ? '{' : 'null'));
     expect(raw.textContent).toContain(source.ai_recommendation);
+  });
+  it.each([
+    ['matching', [{ request_id: 1, created_by: 2 }], '未执行'],
+    ['another request', [{ request_id: 3, created_by: 2 }], '结果待确认'],
+    ['another reviewer', [{ request_id: 1, created_by: 3 }], '结果待确认'],
+    ['contradictory execution', [{ request_id: 1, created_by: 2 }, { request_id: 1, event_type: 'executed' }], '结果待确认'],
+  ])('uses only consistent approved-only detail evidence (%s)', async (_case, events, label) => {
+    const source = { ...row(1), reviewed_by: 2 };
+    const subject = await history([source]);
+    authFetch.mockImplementation(async (url: string) => response(url.endsWith('/events')
+      ? events.map(event => ({ event_type: 'approved', event_data: { execute_after_approve: false }, ...event }))
+      : source));
+    subject.shadowRoot!.querySelector<HTMLButtonElement>('.history-detail')!.click();
+    await flush(subject);
+    expect(subject.shadowRoot!.querySelector('.evidence-meta')!.textContent).toContain(label);
+    expect(subject.shadowRoot!.querySelector('tbody')!.textContent).toContain('结果待确认');
+  });
+  it.each(['/api/approval/1', '/api/approval/1/events'])('clears old approvals as soon as %s is denied and rereads on retry', async (deniedPath) => {
+    const source = row(1);
+    const subject = await history([source]);
+    let releaseList!: (value: unknown) => void;
+    let releaseDetail!: (value: unknown) => void;
+    const lateList = new Promise(resolve => { releaseList = resolve; });
+    const lateDetail = new Promise(resolve => { releaseDetail = resolve; });
+    authFetch.mockImplementation((url: string) => {
+      if (url === deniedPath) return Promise.resolve(response({}, 403));
+      return url.includes('/unified') ? lateList : lateDetail;
+    });
+    void (subject as any).loadRequests();
+    subject.shadowRoot!.querySelector<HTMLButtonElement>('.history-detail')!.click();
+    await flush(subject);
+    expect(subject.shadowRoot!.querySelector('[role="alert"]')!.textContent).toContain('无权查看审批');
+    expect(subject.shadowRoot!.querySelector('app-data-table, app-dialog')).toBeNull();
+    releaseList(response({ items: [source] }));
+    releaseDetail(response(deniedPath.endsWith('/events') ? source : []));
+    await flush(subject);
+    expect(subject.shadowRoot!.querySelector('app-data-table, app-dialog')).toBeNull();
+    authFetch.mockResolvedValue(response({ items: [row(2)] }));
+    subject.shadowRoot!.querySelector<HTMLButtonElement>('[data-read-retry]')!.click();
+    await flush(subject);
+    expect(authFetch.mock.calls.at(-1)?.[0]).toBe('/api/approval/unified?status=processed');
+    expect(subject.shadowRoot!.querySelector('tbody')!.textContent).toContain('SELECT 2');
+    expect(subject.shadowRoot!.textContent).not.toContain('SELECT 1');
   });
   it('rejects a stale list response after switching tabs', async () => {
     let release!: (value: unknown) => void;

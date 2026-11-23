@@ -121,6 +121,42 @@ test('MAX-729 queries result and category together, preserves them on close, and
   await expect(h.system.locator('tbody')).toContainText(background.action);
 });
 
+test('MAX-729 pages and refreshes applied filters while edits wait for query', async ({ page }) => {
+  const h = await fixture(page);
+  const result = h.system.getByRole('combobox', { name: '操作结果' });
+  const category = h.system.getByRole('combobox', { name: '请求类别' });
+  const next = h.system.getByRole('button', { name: '下一页' });
+  const query = h.system.getByRole('button', { name: '查询', exact: true });
+  const refresh = h.system.getByRole('button', { name: '刷新', exact: true });
+  const pagination = h.system.locator('.pagination-info');
+
+  await result.selectOption('failure');
+  await next.click();
+  expect(Object.fromEntries((await h.take('/audit/logs', 1)).url.searchParams)).toEqual({ limit: '25', offset: '25' });
+  await h.reply('/audit/logs', 1, { items: [systemRecord(26)], total: 60 });
+  await expect(pagination).toHaveText('26-50 / 60');
+  await query.click();
+  expect(Object.fromEntries((await h.take('/audit/logs', 2)).url.searchParams)).toEqual({ limit: '25', offset: '0', result: 'failure' });
+  await h.reply('/audit/logs', 2, { items: [{ ...systemRecord(1), result: 'failure' }], total: 26 });
+
+  await category.selectOption('background');
+  await next.click();
+  expect(Object.fromEntries((await h.take('/audit/logs', 3)).url.searchParams)).toEqual({ limit: '25', offset: '25', result: 'failure' });
+  await h.reply('/audit/logs', 3, { items: [{ ...systemRecord(26), result: 'failure' }], total: 26 });
+  await expect(pagination).toHaveText('26-26 / 26');
+  await refresh.click();
+  expect(Object.fromEntries((await h.take('/audit/logs', 4)).url.searchParams)).toEqual({ limit: '25', offset: '25', result: 'failure' });
+  await h.reply('/audit/logs', 4, { items: [], total: 25 });
+  expect(Object.fromEntries((await h.take('/audit/logs', 5)).url.searchParams)).toEqual({ limit: '25', offset: '0', result: 'failure' });
+  await h.reply('/audit/logs', 5, { items: [{ ...systemRecord(1), result: 'failure' }], total: 25 });
+  await expect(pagination).toHaveText('1-25 / 25');
+  await query.click();
+  expect(Object.fromEntries((await h.take('/audit/logs', 6)).url.searchParams)).toEqual({ limit: '25', offset: '0', result: 'failure', requestCategory: 'background' });
+  await h.reply('/audit/logs', 6, { items: [{ ...systemRecord(2), result: 'failure' }], total: 1 });
+  await expect(h.system.locator('tbody')).toContainText('action-2');
+  await expect(pagination).toHaveText('1-1 / 1');
+});
+
 for (const agent of [true, false]) test(`${agent ? 'MAX-429' : 'MAX-433'} pagination, filter, stale failure and recovery in one session`, async ({ page }) => {
   const h = await fixture(page); const view = agent ? h.agent : h.system; const path = agent ? '/agent/security/audit' : '/audit/logs';
   const result = (id: number) => agent ? { records: [toolRecord(id)], nextCursor: 50 } : { items: [systemRecord(id)], total: 75 };

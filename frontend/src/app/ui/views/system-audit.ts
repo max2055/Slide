@@ -72,6 +72,7 @@ export class SystemAuditPage extends LitElement {
   @state() private requestCategory = '';
   @state() private startTime = '';
   @state() private endTime = '';
+  private appliedFilters: Partial<Record<'keyword' | 'eventType' | 'result' | 'requestCategory' | 'startTime' | 'endTime', string>> = {};
   private readonly limit = 25;
 
   static styles = [sharedFieldStyles, sharedBtnStyles, css`
@@ -121,27 +122,40 @@ export class SystemAuditPage extends LitElement {
     this.selected = null;
     this.total = 0;
     this.loadError = '';
-    if (reset) this.offset = 0;
+    if (reset) {
+      this.offset = 0;
+      this.appliedFilters = {
+        keyword: this.keyword.trim() || undefined,
+        eventType: this.eventType || undefined,
+        result: this.result || undefined,
+        requestCategory: this.requestCategory || undefined,
+        startTime: this.startTime || undefined,
+        endTime: this.endTime || undefined,
+      };
+    }
     this.loading = true;
     try {
       const scope=readResourceContext();
       if(new URLSearchParams(location.search).has('resource')&&!scope)throw new Error('无效资源观察范围');
+      const { startTime, endTime, ...filters } = this.appliedFilters;
       const response = await apiClient.get<{ items: SystemAuditRecord[]; total: number }>('/audit/logs', {
         params: {
           limit: this.limit,
           offset: this.offset,
-          keyword: this.keyword.trim() || undefined,
+          ...filters,
           ...(scope?{resource:`${scope.resource.type}:${scope.resource.id}`}:{}),
-          eventType: this.eventType || undefined,
-          result: this.result || undefined,
-          requestCategory: this.requestCategory || undefined,
-          startTime: scope?.from ?? (this.startTime ? new Date(this.startTime).toISOString() : undefined),
-          endTime: scope?.to ?? (this.endTime ? new Date(this.endTime).toISOString() : undefined),
+          startTime: scope?.from ?? (startTime ? new Date(startTime).toISOString() : undefined),
+          endTime: scope?.to ?? (endTime ? new Date(endTime).toISOString() : undefined),
         },
       });
       if (generation !== this.generation) return;
       if (!Array.isArray(response?.items) || !Number.isSafeInteger(response.total) || response.total < 0) {
         throw new Error('审计查询响应无效');
+      }
+      if (this.offset > 0 && this.offset >= response.total) {
+        this.offset = Math.max(0, Math.floor((response.total - 1) / this.limit) * this.limit);
+        await this.load();
+        return;
       }
       this.records = response.items;
       this.total = response.total;

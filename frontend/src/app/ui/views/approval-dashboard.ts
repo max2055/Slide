@@ -102,7 +102,7 @@ export function agentApprovalsLoadError(status: number): string {
 interface ApprovalEvent {
   id: number;
   request_id: number;
-  event_type: 'submitted' | 'ai_reviewed' | 'approved' | 'rejected' | 'executed' | 'execution_failed' | 'notified';
+  event_type: 'submitted' | 'ai_reviewed' | 'claimed' | 'approved' | 'rejected' | 'executed' | 'execution_failed' | 'reconciliation_required' | 'notified';
   event_data: any;
   created_by: number | null;
   created_at: string;
@@ -231,14 +231,21 @@ export class ApprovalDashboard extends LitElement {
   private listGeneration = 0;
   private detailGeneration = 0;
   private detailTrigger: HTMLElement | null = null;
-  private accessChanged = () => {
+  private accessChanged = () => this.clearApprovalReads('权限已变更，请重新读取审批列表。');
+
+  private clearApprovalReads(message: string) {
     this.listGeneration++;
     this.requests = [];
     this.agentApprovals = [];
+    this.agentApprovalsError = null;
+    this.clearSelection();
+    this._closeBatchDialog();
+    this.executeAfterApprove = {};
     this.loading = false;
-    this.listError = '权限已变更，请重新读取审批列表。';
+    this.listError = message;
+    this.detailTrigger = null;
     void this.backToList();
-  };
+  }
   private get historyContextKey() {
     try { return `slide.approval-history.v1:${JSON.parse(localStorage.getItem('user') ?? 'null')?.id ?? 'default'}`; }
     catch { return 'slide.approval-history.v1:default'; }
@@ -312,10 +319,13 @@ export class ApprovalDashboard extends LitElement {
           this.executeAfterApprove = Object.fromEntries(this.requests.map(r => [r.id, true]));
         }
       } else {
+        if (res.status === 401 || res.status === 403) {
+          this.clearApprovalReads(agentApprovalsLoadError(res.status));
+          return;
+        }
         this.requests = [];
         this.agentApprovals = [];
         this.listError = agentApprovalsLoadError(res.status);
-        if (res.status === 401 || res.status === 403) void this.backToList();
       }
     } catch {
       if (generation !== this.listGeneration) return;
@@ -388,7 +398,9 @@ export class ApprovalDashboard extends LitElement {
   }
 
   private async backToList() {
-    this.detailGeneration++;
+    const generation = ++this.detailGeneration;
+    const trigger = this.detailTrigger;
+    this.detailTrigger = null;
     this.selectedAgent = null;
     this._destroyCodeMirror();
     this.events = [];
@@ -396,13 +408,22 @@ export class ApprovalDashboard extends LitElement {
     this.operationState = null;
     this.operationDetail = null;
     this.detailError = null;
+    this.evidenceWarning = '';
     this.detailLoading = false;
     this.view = "list";
     this.selectedRequest = null;
     await this.updateComplete;
-    if (this.detailTrigger?.isConnected) this.detailTrigger.focus();
-    else if (this.filter === 'pending') this.shadowRoot?.querySelector<HTMLButtonElement>(`[data-request-id="${this.detailTrigger?.dataset.requestId}"]`)?.focus();
-    this.detailTrigger = null;
+    if (generation !== this.detailGeneration) return;
+    if (trigger?.isConnected) trigger.focus();
+    else if (trigger && this.filter === 'pending') this.shadowRoot?.querySelector<HTMLButtonElement>(`[data-request-id="${trigger.dataset.requestId}"]`)?.focus();
+  }
+
+  private async readApprovalDetail(path: string, generation: number): Promise<Response> {
+    const response = await authFetch(path);
+    if (generation === this.detailGeneration && (response.status === 401 || response.status === 403)) {
+      this.clearApprovalReads('当前会话无权查看审批，请重新读取审批列表。');
+    }
+    return response;
   }
 
   private async _loadDetail(requestId: number) {
@@ -417,21 +438,21 @@ export class ApprovalDashboard extends LitElement {
     this._destroyCodeMirror();
     try {
       const [detailRes, eventsRes] = await Promise.all([
-        authFetch(`/api/approval/${requestId}`),
-        authFetch(`/api/approval/${requestId}/events`),
+        this.readApprovalDetail(`/api/approval/${requestId}`, generation),
+        this.readApprovalDetail(`/api/approval/${requestId}/events`, generation),
       ]);
       if (generation !== this.detailGeneration) return;
       if (!detailRes.ok) {
-        this.detailError = [401, 403, 404].includes(detailRes.status) ? '当前会话无法查看此审批' : '加载失败，请重试';
+        this.detailError = detailRes.status === 404 ? '当前会话无法查看此审批' : '加载失败，请重试';
         this.detailLoading = false;
         return;
       }
       const detail = await detailRes.json() as ApprovalRequest;
-      const events = eventsRes.ok ? await eventsRes.json() as ApprovalEvent[] : [];
+      const events = eventsRes.ok ? await eventsRes.json() as ApprovalEvent[] : null;
       if (generation !== this.detailGeneration) return;
       this.selectedRequest = detail;
-      this.events = events;
-      if (!eventsRes.ok) this.evidenceWarning = '审批事件读取失败，当前详情的证据不完整';
+      this.events = Array.isArray(events) ? events : [];
+      if (!Array.isArray(events)) this.evidenceWarning = '审批事件读取失败，当前详情的证据不完整';
       if (detail.operation_id) {
         const [operationRes, operationEventsRes] = await Promise.all([
           authFetch(`/api/operations/${detail.operation_id}`),
@@ -788,8 +809,19 @@ export class ApprovalDashboard extends LitElement {
     return shortText(resource?.name || resource?.label || (resource?.type ? `${resource.type}${resource.id != null ? ` #${resource.id}` : ''}` : '未提供目标资源'));
   }
 
-  private executionBadge(item: HistoryItem) {
-    const state = approvalExecution(item.record, item.kind === 'agent');
+  private sqlEvidenceExecution(record: ApprovalRequest): ExecutionState {
+    const state = approvalExecution(record);
+    if (state !== 'unconfirmed' || record.status !== 'approved' || approvalValue(record.execution_result) != null) return state;
+    const events = this.events.filter(event => event?.request_id === record.id);
+    const executionEvidence = events.some(event =>
+      ['executed', 'execution_failed', 'reconciliation_required'].includes(event.event_type)
+      || (['approved', 'claimed'].includes(event.event_type) && approvalValue(event.event_data)?.execute_after_approve === true));
+    if (executionEvidence) return state;
+    return events.some(event => event.event_type === 'approved' && event.created_by === record.reviewed_by
+      && approvalValue(event.event_data)?.execute_after_approve === false) ? 'none' : state;
+  }
+
+  private executionBadge(item: HistoryItem, state = approvalExecution(item.record, item.kind === 'agent')) {
     const variants: Record<ExecutionState, string> = {
       none: 'muted', success: 'ok', failed: 'danger', running: 'warn', unconfirmed: 'warn', unknown: 'warn', conflict: 'danger',
     };
@@ -882,10 +914,11 @@ export class ApprovalDashboard extends LitElement {
     const record = this.selectedAgent ?? this.selectedRequest;
     if (!record) return nothing;
     const item: HistoryItem = this.selectedAgent ? { kind: 'agent', record: this.selectedAgent } : { kind: 'sql', record: this.selectedRequest! };
+    const state = item.kind === 'sql' ? this.sqlEvidenceExecution(item.record) : undefined;
     return html`<app-dialog .open=${true} size="xl" title="审批与执行详情" @app-dialog-close=${this.backToList}>
       ${this.detailLoading ? html`<p role="status">正在读取完整证据…</p>` : this.detailError ? html`<div role="alert" class="error-box">${this.detailError}</div><button class="btn" @click=${() => this._loadDetail(this.selectedRequest!.id)}>重试</button>` : html`
         <p><strong>${this.historyTarget(item)}</strong> <span class="caption">· ${new Date(record.created_at).toLocaleString('zh-CN')}</span></p>
-        <div class="evidence-meta"><span>审批</span><app-badge variant="muted">${this._statusLabel(approvalDecision(record.status))}</app-badge><span>执行</span>${this.executionBadge(item)}${this._riskBadge(record.risk_level || 'unknown')}</div>
+        <div class="evidence-meta"><span>审批</span><app-badge variant="muted">${this._statusLabel(approvalDecision(record.status))}</app-badge><span>执行</span>${this.executionBadge(item, state)}${this._riskBadge(record.risk_level || 'unknown')}</div>
         ${item.kind === 'sql' && approvalValue(item.record.execution_result)?.executionState === 'unknown'
           ? html`<p class="history-notice" role="status">后端执行结果未知：SQL 可能已提交。请勿重试；先核对持久化执行意图与目标数据库，完成对账。</p>` : nothing}
         ${this.evidenceWarning ? html`<p class="history-notice" role="status">${this.evidenceWarning}</p>` : nothing}
