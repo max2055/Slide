@@ -147,3 +147,39 @@ test('提供商模板可逐卡聚焦且键盘和鼠标带入相同配置', async
   await expectFocusRing(choices.nth(count - 2));
   expect(requests).toEqual([]);
 });
+
+test('新建权限标签聚焦对应字段并保留校验与取消回焦', async ({ page }, info) => {
+  const requests = observeWrites(page, /^\/api\/v1\/rbac\/permissions\b/);
+  await page.getByRole('navigation', { name: '设置导航' }).getByRole('button', { name: '用户与权限', exact: true }).click();
+  const read = page.waitForResponse(response => new URL(response.url()).pathname === '/api/v1/rbac/permissions');
+  await page.getByRole('tab', { name: '权限', exact: true }).click();
+  expect((await read).ok()).toBe(true);
+
+  const view = page.locator('permission-management-tab');
+  await expect(view.getByRole('heading', { name: '权限管理', exact: true })).toBeVisible();
+  const open = view.getByRole('button', { name: /新建权限/ });
+  await tabTo(page, open);
+  await page.keyboard.press('Enter');
+  const dialog = page.getByRole('dialog', { name: '新建权限', exact: true });
+  const form = view.locator('app-dialog[title="新建权限"]');
+  await expect(dialog).toBeVisible();
+  await form.getByRole('button', { name: '保存', exact: true }).click();
+  await expect(form.getByText('权限码不能为空', { exact: true })).toBeVisible();
+  for (const [label, value] of [['权限码', 'invalid'], ['名称', '浏览器验收'], ['描述', '取消后丢弃本次草稿']]) {
+    const field = form.getByRole('textbox', { name: label, exact: true });
+    await form.locator('label').and(form.getByText(label, { exact: true })).click();
+    await expect(field).toBeFocused();
+    await page.keyboard.insertText(value);
+    await expect(field).toHaveValue(value);
+    await expect(field).toHaveAccessibleName(label);
+  }
+  await expect(form.getByText(/权限码格式错误/)).toBeVisible();
+  const cancel = form.getByRole('button', { name: '取消', exact: true });
+  await tabTo(page, cancel);
+  await expectFocusRing(cancel);
+  await page.screenshot({ path: info.outputPath('permission-cancel-focus.png') });
+  await page.keyboard.press('Space');
+  await expect(dialog).toBeHidden();
+  await expect(open).toBeFocused();
+  expect(requests).toEqual([]);
+});
