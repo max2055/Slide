@@ -213,7 +213,7 @@ test.afterAll(async () => {
   expect(modelCalls).toBe(0);
 });
 
-async function login(page: Page) {
+async function login(page: Page, { fromMenu = false, advanced = true } = {}) {
   await page.addInitScript(() => {
     localStorage.setItem('slide.i18n.locale', 'zh-CN');
     localStorage.setItem('app-theme-mode', 'light');
@@ -230,8 +230,12 @@ async function login(page: Page) {
   await expect(page.locator('.login-gate')).toHaveCount(0);
   // Open the resource only after permissions are loaded; the detail page invalidates
   // evidence that was mounted before the permission event.
-  await page.goto(`${origin}/instance-detail?id=${RESOURCE_ID}`);
+  if (fromMenu) {
+    await page.getByRole('link', { name: '数据库', exact: true }).click();
+    await page.locator(`button[data-resource-detail-id="${RESOURCE_ID}"]`).click();
+  } else await page.goto(`${origin}/instance-detail?id=${RESOURCE_ID}`);
   await page.getByRole('tab', { name: '指标与趋势' }).click();
+  if (advanced) await page.getByText('进阶分析与采集证据', { exact: true }).click();
   browserState = await page.evaluate(() => Object.fromEntries(Object.entries(localStorage)));
 }
 
@@ -244,6 +248,57 @@ const chooseWindow = async (page: Page, value: string) => {
   const select = page.locator('semantic-metrics select[aria-label="时间范围"]');
   await select.selectOption(value);
 };
+
+test('published observations share the same series and absolute window from latest through chart and history', async ({ page }) => {
+  const latestResponse = page.waitForResponse(r => r.url().endsWith('/api/metrics/latest') && r.status() === 200);
+  await login(page, { fromMenu: true, advanced: false });
+  const latest = await (await latestResponse).json();
+  const uptime = latest.metrics.find((entry: any) => entry.definition.id === 'db.uptime_seconds');
+  const point = uptime.series[0];
+  const scope = { metric: { id: uptime.definition.id, semantic_version: uptime.definition.semantic_version }, dimensions: point.dimensions };
+  expect(latest.resource).toEqual({ type: 'instance', id: RESOURCE_ID });
+  expect(point.value).not.toBeNull();
+  const browser = page.locator('resource-metric-browser');
+  const row = browser.getByRole('row').filter({ hasText: '数据库运行时长' });
+  await expect(row.locator('time')).toHaveAttribute('datetime', point.observed_at);
+  const latestReading = await row.locator('.number').textContent();
+
+  const chartResponse = queryResponse(page, body => Boolean(body.series));
+  await row.getByRole('button').click();
+  const chart = await chartResponse;
+  const { from: start, to: end } = chart.request().postDataJSON();
+  expect(chart.request().postDataJSON()).toMatchObject({ resource: latest.resource, series: scope });
+  const chartData = await chart.json();
+  expect(chartData.window).toEqual({ from: start, to: end });
+  const buckets = chartData.metrics.find((entry: any) => entry.definition.id === scope.metric.id).series[0].buckets;
+  expect(buckets.some((bucket: any) => bucket.observed_at === point.observed_at && bucket.value?.value === point.value.value)).toBe(true);
+  await expect(browser.locator('metric-chart canvas').first()).toBeVisible();
+  expect(await browser.locator('metric-chart').evaluate((element: any, value) =>
+    element._chart.getOption().tooltip[0].valueFormatter(value), point.value.value)).toBe(latestReading);
+
+  let read = page.waitForResponse(r => r.url().endsWith('/api/metrics/observations') && r.status() === 200);
+  await browser.getByRole('button', { name: '查看采集详情' }).click();
+  let found: any;
+  for (let index = 0; index < 5; index++) {
+    const response = await read;
+    expect(response.request().postDataJSON()).toMatchObject({ resource: latest.resource, ...scope, from: start, to: end });
+    const history = await response.json();
+    expect(history.window).toEqual({ from: start, to: end });
+    found = history.observations.find((sample: any) => sample.observed_at === point.observed_at);
+    if (found || !history.has_more) break;
+    read = page.waitForResponse(r => r.url().endsWith('/api/metrics/observations') && r.status() === 200);
+    await browser.getByRole('button', { name: '下一页' }).click();
+  }
+  expect(found).toMatchObject({ value: point.value, unit: point.unit, quality: point.quality });
+  expect(found.sources.length).toBeGreaterThan(0);
+  const historicalRow = browser.getByRole('row').filter({ has: page.locator(`time[datetime="${point.observed_at}"]`) });
+  await expect(historicalRow.locator('.number')).toHaveText(latestReading!);
+  await historicalRow.getByText('原始值与来源', { exact: true }).click();
+  const evidence = JSON.parse(await historicalRow.locator('pre').textContent() ?? '{}');
+  expect(evidence).toMatchObject({ metric: scope.metric.id, semantic_version: scope.metric.semantic_version,
+    dimensions: scope.dimensions, value: point.value, sources: found.sources });
+  await page.screenshot({ path: `${output}/max719-formal-observation.png`, animations: 'disabled' });
+});
 
 test('24h, 7d and custom windows share one number/chart context with gaps, peaks and stale-good history', async ({ page }) => {
   await login(page);
@@ -369,7 +424,7 @@ test('failed collection keeps the old usable value beside the real status, last 
   const value = metrics.locator('.latest-value').first();
   await expect(value.locator('.old-value')).not.toHaveCount(0);
   await expect(value).toContainText('旧值，不代表当前健康');
-  await expect(value).toContainText('窗口内最近可用值');
+  await expect(metrics.getByRole('region', { name: '窗口内最近可用值' })).toBeVisible();
   await expect(metrics).not.toContainText('全局最近成功值');
   // The historical curve and its exact bucket count survive the current failure.
   const chartData = await metrics.locator('metric-chart').first().evaluate((element: any) => ({ time: element.timeData, series: element.series }));
@@ -518,6 +573,7 @@ test('maintenance revisions from real HTTP remain half-open and visible in the s
   const windowEnd = new Date().toISOString();
   const returned = `/instance-detail?id=${RESOURCE_ID}&tab=metrics&metricResource=instance:${RESOURCE_ID}&metricFrom=${encodeURIComponent(iso(from))}&metricTo=${encodeURIComponent(windowEnd)}`;
   await page.goto(origin+returned); await page.getByRole('tab',{name:'指标与趋势'}).click();
+  await page.getByText('进阶分析与采集证据', { exact: true }).click();
   const section=page.locator('semantic-metrics').getByRole('region',{name:'维护历史'});
   await expect(section).toContainText('原维护原因'); await expect(section).toContainText('修订维护原因');
   await expect(section).toContainText('旧周期维护历史未覆盖');
@@ -528,15 +584,16 @@ test('maintenance revisions from real HTTP remain half-open and visible in the s
   const after=await read(); expect(after.intervals[0]).toEqual(before.intervals[0]);
   expect(Date.parse(after.intervals[1].effective_to)).toBeLessThan(Date.parse(end));
   await page.reload(); await page.getByRole('tab',{name:'指标与趋势'}).click();
+  await page.getByText('进阶分析与采集证据', { exact: true }).click();
   await expect(page.locator('semantic-metrics').getByRole('region',{name:'维护历史'})).toContainText('修订维护原因');
   // Real storage failure, not a mocked empty maintenance response.
   await pool.query('RENAME TABLE maintenance_interval_history TO maintenance_interval_history_unavailable');
   try {
     await page.locator('semantic-metrics').getByRole('button',{name:'刷新标准指标'}).click();
-    await expect(page.locator('semantic-metrics').getByRole('region',{name:'维护历史'})).toContainText('维护历史查询失败，状态未知');
+    await expect(page.locator('semantic-metrics').getByRole('region',{name:'维护历史'})).toContainText('维护历史服务暂不可用（503）');
     await expect(page.locator('semantic-metrics').getByRole('region',{name:'维护历史'})).not.toContainText('没有已记录');
   } finally { await pool.query('RENAME TABLE maintenance_interval_history_unavailable TO maintenance_interval_history'); }
-  await page.locator('semantic-metrics').getByRole('button',{name:'刷新标准指标'}).click();
+  await page.locator('semantic-metrics').getByRole('button',{name:'重试维护历史'}).click();
   await expect(page.locator('semantic-metrics').getByRole('region',{name:'维护历史'})).toContainText('修订维护原因');
   for (const [width,height] of [[1440,900],[1366,768],[1920,1080]]) {
     await page.setViewportSize({width,height});

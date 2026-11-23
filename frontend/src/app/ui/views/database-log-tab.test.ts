@@ -140,3 +140,31 @@ it.each([['pending', '等待中'], ['running', '进行中'], ['completed', '已�
     expect(span.getAttribute('style')).toContain(status === 'completed' ? 'var(--ok)' : 'var(--danger)');
   }
 });
+
+it('MAX-717 shows only confirmed log counts and retries the failing read with the same filters', async () => {
+  view.filterKeyword = 'marker';
+  view.filterLevel = 'error';
+  fetchMock.mockResolvedValueOnce(response({}, 503)).mockResolvedValueOnce(response({
+    total: 4, by_level: { info: '1', warning: '1', error: '2', critical: '0' },
+  }));
+  await Promise.all([view.loadLogs(), view.loadStats()]);
+  await view.updateComplete;
+  expect(view.shadowRoot.querySelector('.stats-row').textContent).toContain('总计 4');
+  expect(view.shadowRoot.textContent).not.toContain('范围内共');
+  expect(view.shadowRoot.textContent).not.toContain('当前范围没有日志记录');
+  const failedListUrl = fetchMock.mock.calls[0][0];
+
+  fetchMock.mockClear();
+  fetchMock.mockResolvedValueOnce(response({ logs: [], total: 0 }));
+  view.shadowRoot.querySelector('p.error button').click();
+  await vi.advanceTimersByTimeAsync(0);
+  expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([failedListUrl]);
+  expect(view.filterKeyword).toBe('marker');
+  expect(view.shadowRoot.querySelector('.scope-note').textContent).toContain('范围内共 0 条（所选级别）');
+
+  fetchMock.mockResolvedValueOnce(response({}, 503));
+  await view.loadStats();
+  await view.updateComplete;
+  expect(view.shadowRoot.querySelector('.stats-row')).toBeNull();
+  expect(view.shadowRoot.textContent).toContain('范围内共 0 条（所选级别）');
+});

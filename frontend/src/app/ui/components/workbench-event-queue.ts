@@ -9,7 +9,7 @@ import {
   type QueueEvent, type LinkedInvestigation,
 } from '../controllers/event-investigation-api.ts';
 import { displayTime } from '../views/diagnosis-presentation.ts';
-import { restoreWorkbenchPosition } from '../workbench-position.ts';
+import { openWorkbenchRecord, restoreWorkbenchPosition } from '../workbench-position.ts';
 import './event-investigation-record.ts';
 import './app-badge.ts';
 
@@ -50,13 +50,22 @@ export class WorkbenchEventQueue extends LitElement {
     h2 { font-size:var(--text-lg); color:var(--text-strong); margin:0; }
     .count { color:var(--muted); font-size:var(--text-sm); }
     .search { position:relative; display:block; margin-top:var(--space-sm); }
-    .search svg { position:absolute; color:var(--muted); top:var(--space-md); left:var(--space-sm); width:15px; height:15px; pointer-events:none; }
-    .search input { width:100%; padding-left:calc(var(--space-xl) + var(--space-xs)); }
-    .filters { display:flex; align-items:center; flex-wrap:wrap; gap:var(--space-xs); margin-top:var(--space-sm); }
-    .filters button { padding:var(--space-xs) var(--space-sm); font:inherit; font-size:var(--text-sm); color:var(--muted);
+    .search-icon, .clear-query { position:absolute; top:50%; transform:translateY(-50%); }
+    .search-icon { display:flex; inset-inline-start:var(--space-sm); color:var(--muted); pointer-events:none; }
+    .search-icon svg { width:15px; height:15px; }
+    .clear-query { inset-inline-end:var(--space-xs); }
+    .search input { display:block; box-sizing:border-box; width:100%; height:var(--control-height);
+      padding-inline:calc(var(--space-xl) + var(--space-xs)) calc(var(--control-height-sm) + var(--space-sm));
+      border:1px solid var(--border); border-radius:var(--radius-sm); background:var(--card); color:var(--text); font:inherit; }
+    .search input:focus { border-color:var(--accent); outline:none; box-shadow:var(--focus-ring); }
+    .search input::-webkit-search-cancel-button { appearance:none; }
+    .filter-label { margin:var(--space-sm) 0 var(--space-xs); color:var(--muted); font-size:var(--text-sm); }
+    .filters { display:flex; align-items:center; flex-wrap:wrap; gap:var(--space-xs); }
+    .filters button { min-height:var(--control-height-sm); padding:var(--space-xs) var(--space-sm); font:inherit; font-size:var(--text-sm); color:var(--muted);
       border:1px solid transparent; border-radius:var(--radius-sm); background:transparent; cursor:pointer; }
     .filters button[aria-pressed=true] { color:var(--accent-text); background:var(--accent-subtle); font-weight:600; }
     .filters button:hover { border-color:var(--border); }
+    .filters button:focus-visible { outline:2px solid var(--ring); outline-offset:2px; }
     .rows { border-top:1px solid var(--border); max-height:500px; overflow:auto; }
     .row { display:block; width:100%; padding:var(--space-sm) var(--space-md); text-align:left; background:var(--card); color:var(--text); cursor:pointer; font:inherit;
       border:0; border-left:3px solid transparent; border-bottom:1px solid var(--border); }
@@ -93,8 +102,13 @@ export class WorkbenchEventQueue extends LitElement {
   protected firstUpdated() {
     const params = new URLSearchParams(location.search);
     const event = readEventId(params.get('eventId'));
-    if (event) {
-      this.selection = event;
+    this.selection = event;
+    const page = readEventId(params.get('queuePage'));
+    if (page && page <= Math.floor(Number.MAX_SAFE_INTEGER / PAGE_SIZE)) {
+      this.page = page - 1;
+      this.filter = filters.find(filter => filter.id === params.get('queueFilter'))?.id ?? 'all';
+      this.query = this.appliedQuery = (params.get('queueQuery') ?? '').slice(0, 100);
+    } else if (event) {
       this.query = this.appliedQuery = `#${event}`;
     }
     void this.load();
@@ -148,7 +162,9 @@ export class WorkbenchEventQueue extends LitElement {
       if (!abort.signal.aborted) {
         this.loading = false;
         await this.updateComplete;
-        if (!abort.signal.aborted && this.selection) void restoreWorkbenchPosition(this.renderRoot);
+        if (!abort.signal.aborted && this.selection) {
+          void restoreWorkbenchPosition(this.renderRoot, this.renderRoot.querySelector<HTMLElement>('.rows'));
+        }
       }
     }
   }
@@ -192,6 +208,10 @@ export class WorkbenchEventQueue extends LitElement {
     this.page = 0;
     void this.load();
   }
+  private selectFilter(filter: Filter) {
+    this.filter = filter;
+    this.reconcileSelection();
+  }
   private select(id: number) { this.selection = id; }
   private onRowKeys(event: KeyboardEvent) {
     if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return;
@@ -203,9 +223,20 @@ export class WorkbenchEventQueue extends LitElement {
     next.click();
   }
   private selectionUrl() {
-    const query = new URLSearchParams({workspaceTab:'home',eventId:String(this.selection)});
+    const query = new URLSearchParams({
+      workspaceTab: 'home',
+      eventId: String(this.selection),
+      queuePage: String(this.page + 1),
+      queueFilter: this.filter,
+    });
+    if (this.appliedQuery) query.set('queueQuery', this.appliedQuery);
     return '/workbench?' + query;
   }
+  private openRecord = (event: MouseEvent, destination: string) => {
+    const queueRows = this.renderRoot.querySelector<HTMLElement>('.rows');
+    if (!queueRows || !this.closest('main.content')) return;
+    openWorkbenchRecord(event, destination, `source-event-${this.selection}`, { url: this.selectionUrl(), queueRows });
+  };
   private row(event: QueueEvent) {
     const id = readEventId(event.id);
     const link = this.investigations.get(id);
@@ -227,24 +258,37 @@ export class WorkbenchEventQueue extends LitElement {
       <section class="queue" aria-label="事件队列">
         <div class="header"><div class="heading"><h2>事件队列</h2><span class="count" aria-live="polite">${!this.loading && !this.error ? `本页 ${rows.length} 条` : ''}</span></div>
           <form class="search" @submit=${(e:SubmitEvent) => {e.preventDefault(); this.applyQuery();}}>
-            ${icons.search}<input type="search" maxlength="100" aria-label="搜索事件" placeholder="搜索名称或事件编号" .value=${this.query}
+            <span class="search-icon" aria-hidden="true">${icons.search}</span>
+            <input type="search" maxlength="100" aria-label="搜索事件" placeholder="搜索名称或事件编号" .value=${this.query}
               @input=${(e:Event) => {
                 this.query = (e.target as HTMLInputElement).value;
                 clearTimeout(this.queryTimer);
                 this.queryTimer = setTimeout(() => this.applyQuery(),250);
               }}>
+            ${this.query ? html`<button class="btn-icon clear-query" type="button" aria-label="清除事件搜索"
+              @click=${() => {
+                this.query = '';
+                this.applyQuery();
+                this.renderRoot.querySelector<HTMLInputElement>('.search input')?.focus();
+              }}><span aria-hidden="true">${icons.x}</span></button>` : nothing}
           </form>
-          <div class="filters" aria-label="本页事件筛选">
-          ${filters.map(item => html`<button type="button" aria-pressed=${String(this.filter === item.id)} @click=${() => {
-            this.filter = item.id; this.reconcileSelection();
-          }}>${item.label}</button>`)}</div>
+          <p id="event-status-filter" class="filter-label">本页状态</p>
+          <div class="filters" role="group" aria-labelledby="event-status-filter">
+          ${filters.map(item => html`<button type="button" data-filter=${item.id} aria-pressed=${String(this.filter === item.id)}
+            @click=${() => this.selectFilter(item.id)}>${item.label}</button>`)}</div>
         </div>
         <div class="rows">
           ${this.loading ? html`<p class="message" role="status">正在读取事件…</p>` : this.error ? html`<p class="message" role="alert">${this.error}</p>`
-              : rows.length ? rows.map(event => this.row(event)) : html`<p class="message">本页没有匹配的可见事件。</p>`}
+              : rows.length ? rows.map(event => this.row(event)) : html`<p class="message">${this.filter === 'all'
+                ? '本页没有匹配的可见事件。' : '本页没有符合所选状态的事件。'}</p>`}
         </div>
         ${this.associationsError ? html`<p class="message" role="status">${this.associationsError}</p>` : nothing}
         <div class="footer">
+          ${!this.loading && !this.error && !rows.length && this.filter !== 'all' ? html`<button class="btn btn-sm" type="button"
+            @click=${() => {
+              this.selectFilter('all');
+              this.renderRoot.querySelector<HTMLButtonElement>('[data-filter="all"]')?.focus();
+            }}>清除状态筛选</button>` : nothing}
           ${this.page ? html`<button class="btn btn-sm" type="button" ?disabled=${this.loading} @click=${() => {this.page--;void this.load();}}>上一页</button>` : nothing}
           ${this.more ? html`<button class="btn btn-sm" type="button" ?disabled=${this.loading} @click=${() => {this.page++;void this.load();}}>下一页</button>` : nothing}
           <button class="btn btn-sm btn-refresh" type="button" ?disabled=${this.loading || this.invalidated} @click=${() => void this.load()}>刷新</button>
@@ -252,7 +296,8 @@ export class WorkbenchEventQueue extends LitElement {
       </section>
       <section class="record" aria-label="所选事件">
       ${selected ? keyed(this.selection, html`<event-investigation-record .event=${selected}
-        .link=${this.investigations.get(this.selection)} .source=${this.selectionUrl()} .allowStart=${true}></event-investigation-record>`)
+        .link=${this.investigations.get(this.selection)} .source=${this.selectionUrl()} .openFromQueue=${this.openRecord}
+        .allowStart=${true}></event-investigation-record>`)
         : html`<p class="message">${this.loading ? '正在准备调查详情…' : '选择一个事件，查看调查结论、处理建议与证据。'}</p>`}
       </section>
     </div>`;

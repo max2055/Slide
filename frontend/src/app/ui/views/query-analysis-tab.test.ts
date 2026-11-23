@@ -59,3 +59,19 @@ describe('MAX-537 / #434 #668 #669 execution plan ownership', () => {
     await el._selectQuery(row('B')); expect(el.explainPlan).toBeNull(); expect(await content(el)).toContain('执行计划加载失败'); expect(el.explainLoading).toBe(false);
   });
 });
+
+it('MAX-717 offers plan selection only after a successful read produces rows', async () => {
+  const el = await page();
+  const prompt = '选择左侧查询查看执行计划';
+  expect(await content(el)).toContain('没有已记录的查询指纹');
+  expect(await content(el)).not.toContain(prompt);
+
+  fetchMock.mockResolvedValueOnce(new Response('{}', { status: 503 }));
+  await el.loadQanData();
+  expect(await content(el)).not.toContain('没有已记录的查询指纹');
+  expect(await content(el)).not.toContain(prompt);
+  fetchMock.mockResolvedValueOnce(Response.json([row('Recovered')]));
+  el.shadowRoot.querySelector('[role="alert"] button').click();
+  await vi.waitFor(() => expect(el.shadowRoot.querySelector('tbody tr')).toBeTruthy());
+  expect(await content(el)).toContain(prompt);
+});

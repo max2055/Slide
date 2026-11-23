@@ -12,7 +12,7 @@ test.beforeAll(async () => {
 test.afterAll(async () => {
   if (env) try { expect(env.counts()).toEqual({toolCalls:0,providerCalls:0}); } finally { await env.close(); }
 });
-for (const context of ['', '?investigation=exact&version=7', '?entry=exact']) test(`first password login and uncached refresh with delayed authority ${context || 'plain'}`, async ({page}) => {
+for (const context of ['', '?investigation=exact&version=7', '?entry=exact', '?workspaceTab=home&eventId=72101']) test(`first password login and uncached refresh with delayed authority ${context || 'plain'}`, async ({page}) => {
   await page.addInitScript(() => {
     localStorage.setItem('slide.i18n.locale','zh-CN');
     localStorage.setItem('slide.control.settings.v1:default',JSON.stringify({locale:'zh-CN',defaultHomeTab:'investigations'}));
@@ -50,6 +50,14 @@ for (const context of ['', '?investigation=exact&version=7', '?entry=exact']) te
         await expect(page.locator('operations-actions')).toBeVisible();
         await expect(page).toHaveURL(/\/workbench\?workspaceTab=actions$/);
       }
+    }
+    if (!context) {
+      await page.goto(`${env.url}/feedback`);
+      await page.locator('.shell-nav').getByRole('link', { name: 'AI 工作台', exact: true }).click();
+      await expect(page).toHaveURL(/\/workbench\?workspaceTab=actions$/);
+      await expect(page.locator('operations-actions')).toBeVisible();
+      await page.goBack();
+      await expect(page).toHaveURL(`${env.url}/feedback`);
     }
     expect(writes).toEqual([]);
   } finally { release(); }

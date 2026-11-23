@@ -13,6 +13,44 @@ export const listTabs = {
   server: "servers",
   network_device: "network-devices",
 };
+export function detailResourceId(type: DetailResourceType): number | null {
+  const { pathname, searchParams } = new URL(location.href);
+  if (!pathname.replace(/\/$/, "").endsWith(`/${detailTabs[type]}`)) return null;
+  const raw = type === "network_device" ? searchParams.get("networkDeviceId") ?? searchParams.get("id") : searchParams.get("id");
+  const id = Number(raw);
+  return raw && /^[1-9]\d*$/.test(raw) && Number.isSafeInteger(id) ? id : null;
+}
+
+export function readDetailTab<T extends string>(type: DetailResourceType, id: number, tabs: readonly T[]): T {
+  if (detailResourceId(type) !== id) return tabs[0];
+  const p = new URLSearchParams(location.search);
+  const explicit = p.get("detailTab");
+  const selected = explicit ?? (p.get("metricResource") === `${type}:${id}` ? "metrics" : null);
+  return tabs.find(tab => tab === selected) ?? tabs[0];
+}
+
+export function selectDetailTab(host: HTMLElement, active: string, tab: string, apply: () => void, fromHistory = false) {
+  if (tab === active) return;
+  const destination = new URL(location.href);
+  if (!fromHistory) destination.searchParams.set("detailTab", tab);
+  const config = (host.shadowRoot ?? host).querySelector("resource-collection-section") as
+    import("./resource-collection-section.js").ResourceCollectionSection | null;
+  let applied = false;
+  const select = () => {
+    if (fromHistory) history.replaceState(history.state, "", destination);
+    else history.pushState(history.state, "", destination);
+    applied = true;
+    apply();
+  };
+  if (config) config.confirmDiscard(select);
+  else select();
+  if (fromHistory && !applied) {
+    const current = new URL(location.href);
+    current.searchParams.set("detailTab", active);
+    history.replaceState(history.state, "", current);
+  }
+}
+
 const windows = new Map<string, DetailWindow>();
 /** Freeze a default window once per resource entry; never borrow another resource's window. */
 export function detailWindow(type: string, id: number): DetailWindow {
@@ -52,6 +90,9 @@ export function detailReturnUrl(
   p.set("metricResource", `${type}:${id}`);
   p.set("metricFrom", range.from);
   p.set("metricTo", range.to);
+  if (!p.has("detailTab") && new URLSearchParams(location.search).get("metricResource") !== `${type}:${id}`) {
+    p.set("detailTab", "overview");
+  }
   return `/${detailTabs[type]}?${p}`;
 }
 export function resourceContextUrl(
@@ -138,13 +179,18 @@ export function captureListReturn(
   );
   const url = new URL(location.href);
   url.searchParams.delete("restoreList");
+  url.searchParams.delete("listReturn");
+  url.searchParams.delete("detailTab");
   url.searchParams.delete("metricResource");
   url.searchParams.delete("metric");
   url.searchParams.delete("metricFrom");
   url.searchParams.delete("metricTo");
   url.searchParams.delete("returnTo");
-  if (token) url.searchParams.set("listReturn", token);
-  history.replaceState({}, "", url);
+  if (token) {
+    url.searchParams.set("listReturn", token);
+    url.searchParams.set("restoreList", token);
+  }
+  history.replaceState(history.state, "", url);
   windows.delete(`${type}:${id}`);
 }
 export function returnToResourceList(type: DetailResourceType): boolean {
@@ -152,7 +198,7 @@ export function returnToResourceList(type: DetailResourceType): boolean {
   if (!token || !/^[a-f0-9-]{36}$/.test(token)) return false;
   try {
     const r = JSON.parse(sessionStorage.getItem(`resource-return:${token}`) || "null");
-    if (r?.type !== type) return false;
+    if (r?.type !== type || r.id !== detailResourceId(type)) return false;
     const url = new URL(r.url, location.origin);
     if (
       url.origin !== location.origin ||
@@ -160,8 +206,9 @@ export function returnToResourceList(type: DetailResourceType): boolean {
       url.searchParams.get("tab") !== listTabs[type]
     )
       return false;
+    url.pathname = `/${listTabs[type]}`;
     history.pushState({}, "", url);
-    window.dispatchEvent(new CustomEvent("slide-navigate", { detail: { tab: listTabs[type] } }));
+    window.dispatchEvent(new PopStateEvent("popstate"));
     return true;
   } catch {
     return false;
