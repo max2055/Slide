@@ -207,7 +207,7 @@ it.each([
       method: 'POST', signal, headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ name: '邮件告警', type: 'email', config: {
         smtp_host: 'smtp.example.test', smtp_port: 587, smtp_username: 'fixture',
-        password: 'synthetic password', from: 'sender@example.test', to: 'recipient@example.test',
+        password: randomUUID(), from: 'sender@example.test', to: 'recipient@example.test',
       } }),
     });
     expect(response.status).toBe(status);
