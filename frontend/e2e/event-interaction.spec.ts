@@ -444,3 +444,62 @@ test('#1038 saved appearance is applied on reload', async ({ page }) => {
   await page.reload();
   await expect(root).toHaveCSS('--accent', '#6366f1');
 });
+
+test('#1069 opening an aggregate record restores the second page, visible row and focus', async ({ page }) => {
+  const events = Array.from({ length: 110 }, (_, index) => ({
+    ...sampleEvent, id: String(index + 1), title: `连接数告警 ${index + 1}`, status: 'resolved',
+  }));
+  await setupAggregate(page, (route, query) => {
+    if (query.get('status') !== resolvedScope) return route.fulfill({ json: emptyList });
+    const offset = Number(query.get('offset'));
+    return route.fulfill({ json: { items: events.slice(offset, offset + 50), total: events.length } });
+  });
+  await page.route('**/api/alerts/events/stats', route => route.fulfill({
+    json: { total: events.length, open: 0, investigating: 0, handled: 0, resolved: events.length, closed: 0 },
+  }));
+  await page.route(/\/api\/alerts\/events\/\d+(?:\/logs)?$/, route => {
+    const path = new URL(route.request().url()).pathname;
+    if (path.endsWith('/logs')) return route.fulfill({ json: [] });
+    const event = events.find(event => path.endsWith('/' + event.id));
+    return route.fulfill({ json: { ...event, alerts: [] } });
+  });
+  await page.goto('/');
+  await page.getByRole('link', { name: '事件中心', exact: true }).click();
+  await page.getByRole('tab', { name: '聚合事件', exact: true }).click();
+  const list = page.locator('event-management-page');
+  const main = page.locator('main.content');
+  const group = list.getByRole('button', { name: /^已解决 \/ 已关闭/ });
+  await group.click();
+  const search = list.getByRole('textbox', { name: '搜索本页事件' });
+  const severity = list.getByRole('combobox', { name: '本页严重度' });
+  const pageTwo = list.getByText('第 2/3 页', { exact: true });
+  await search.fill('连接数');
+  await severity.selectOption('warning');
+  await list.getByRole('button', { name: /下一页/ }).press('Enter');
+  await expect(pageTwo).toBeVisible();
+
+  const visibleRows = () => list.evaluate(el => {
+    const main = (el.getRootNode() as ShadowRoot).host.closest('main.content')!;
+    const viewport = main.getBoundingClientRect();
+    return [...el.shadowRoot!.querySelectorAll<HTMLElement>('button[data-event-id]')].filter(row => {
+      const rect = row.getBoundingClientRect();
+      return rect.bottom > viewport.top && rect.top < viewport.bottom;
+    }).map(row => row.dataset.eventId);
+  });
+  await main.evaluate(el => { el.scrollTop = 960; });
+  const before = await visibleRows();
+  expect(before.length).toBeGreaterThan(3);
+  const targetId = before[2];
+  const target = list.getByRole('button', { name: `查看事件 #${targetId} 详情`, exact: true });
+  await target.evaluate(element => element.focus({ preventScroll: true }));
+  await page.keyboard.press('Enter');
+  await expect(page).toHaveURL(new RegExp(`eventId=${targetId}$`));
+  await list.getByRole('button', { name: '返回事件列表', exact: true }).press('Enter');
+  await expect(pageTwo).toBeVisible();
+  await expect(target).toBeFocused();
+  await expect(group).toHaveAttribute('aria-pressed', 'true');
+  await expect(search).toHaveValue('连接数');
+  await expect(severity).toHaveValue('warning');
+  await expect.poll(() => main.evaluate(el => el.scrollTop)).toBe(960);
+  expect(await visibleRows()).toEqual(before);
+});
