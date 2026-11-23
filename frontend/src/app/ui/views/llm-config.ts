@@ -131,6 +131,7 @@ export class LLMConfigPage extends LitElement {
   @state() private discardOpen = false;
   @state() private advancedOpen = false;
   private pendingNavigation: (() => void) | null = null;
+  private selectedTemplateId = 'custom';
   private savedForm = '';
   private _modelRequestVersion = 0;
   private _loadRequestVersion = 0;
@@ -196,8 +197,9 @@ export class LLMConfigPage extends LitElement {
     /* Template picker */
     .picker-section-label { font-size: 10px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.07em; margin-bottom: 8px; margin-top: 4px; }
     .template-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 10px; }
-    .template-card { display: flex; flex-direction: column; align-items: center; gap: var(--space-sm); padding: 16px 12px; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--card); cursor: pointer; text-align: center; transition: border-color 0.12s, background 0.12s; }
+    .template-card { display: flex; flex-direction: column; align-items: center; gap: var(--space-sm); padding: 16px 12px; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--card); font: inherit; cursor: pointer; text-align: center; transition: border-color 0.12s, background 0.12s; }
     .template-card:hover { border-color: var(--accent); background: var(--bg-accent); }
+    .template-card:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
     .template-card .t-circle { width: 36px; height: 36px; border-radius: var(--radius-lg); display: flex; align-items: center; justify-content: center; font-size: 14px; font-weight: 700; }
     .template-card .t-name { font-size: 12px; font-weight: 600; color: var(--text); }
     .template-card .t-desc { font-size: 10px; color: var(--muted); line-height: 1.3; }
@@ -372,6 +374,18 @@ export class LLMConfigPage extends LitElement {
     this.testResult = null;
   }
 
+  private async _returnToPicker() {
+    this._openAddPicker();
+    await this.updateComplete;
+    this.renderRoot.querySelector<HTMLButtonElement>(`#provider-template-${this.selectedTemplateId}`)?.focus();
+  }
+
+  private async _focusNewProviderName(templateId: string) {
+    this.selectedTemplateId = templateId;
+    await this.updateComplete;
+    this.renderRoot.querySelector<HTMLInputElement>('#provider-name')?.focus();
+  }
+
   _selectTemplate(tpl: ProviderTemplate) {
     this._beginMutation();
     this._resetTest();
@@ -390,6 +404,7 @@ export class LLMConfigPage extends LitElement {
     this.formMsg = null;
     this.testResult = null;
     this.showKey = false;
+    void this._focusNewProviderName(tpl.id);
   }
 
   _openCustomForm() {
@@ -401,6 +416,7 @@ export class LLMConfigPage extends LitElement {
     this.formMsg = null;
     this.testResult = null;
     this.showKey = false;
+    void this._focusNewProviderName('custom');
   }
 
   // ── CRUD ─────────────────────────────────────────────────────────────────
@@ -877,22 +893,22 @@ export class LLMConfigPage extends LitElement {
       <!-- 自定义 — 放最前面，和 pi-web 一致 -->
       <div class="picker-section-label">自定义</div>
       <div class="template-grid" style="margin-bottom:18px">
-        <div class="template-card custom" @click=${this._openCustomForm}>
-          <div class="t-circle" style="font-size:16px;font-weight:300">+</div>
-          <div class="t-name">OpenAI / Anthropic 兼容</div>
-          <div class="t-desc">自定义 API 端点 · 手动填写</div>
-        </div>
+        <button type="button" class="template-card custom" id="provider-template-custom" @click=${this._openCustomForm}>
+          <span class="t-circle" aria-hidden="true" style="font-size:16px;font-weight:300">+</span>
+          <span class="t-name">OpenAI / Anthropic 兼容</span>
+          <span class="t-desc">自定义 API 端点 · 手动填写</span>
+        </button>
       </div>
 
       <!-- 预置模板 -->
       <div class="picker-section-label">预置提供商</div>
       <div class="template-grid" style="margin-bottom:20px">
         ${PROVIDER_TEMPLATES.map(tpl => html`
-          <div class="template-card" @click=${() => this._selectTemplate(tpl)}>
-            <div class="t-circle" style="background:${tpl.bg};color:${tpl.color}">${tpl.displayName.charAt(0)}</div>
-            <div class="t-name">${tpl.displayName}</div>
-            <div class="t-desc">${tpl.description}</div>
-          </div>
+          <button type="button" class="template-card" id=${`provider-template-${tpl.id}`} @click=${() => this._selectTemplate(tpl)}>
+            <span class="t-circle" aria-hidden="true" style="background:${tpl.bg};color:${tpl.color}">${tpl.displayName.charAt(0)}</span>
+            <span class="t-name">${tpl.displayName}</span>
+            <span class="t-desc">${tpl.description}</span>
+          </button>
         `)}
       </div>
     `;
@@ -1064,7 +1080,7 @@ export class LLMConfigPage extends LitElement {
         ${isEdit ? html`
           <button class="btn-danger-outline" @click=${() => this._delete(this.editing!)}>删除</button>
         ` : html`
-          <button class="btn" @click=${() => { this._navigate(() => this._openAddPicker()); }}>返回模板</button>
+          <button class="btn" @click=${() => this._navigate(() => void this._returnToPicker())}>返回模板</button>
         `}
       </div>
       ${isEdit ? html`

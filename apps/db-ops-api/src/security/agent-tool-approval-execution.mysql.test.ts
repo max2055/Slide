@@ -45,12 +45,13 @@ describe.skipIf(!port)('approval dispatch: real MySQL transactions', () => {
     created = true;
     await pool.end();
     pool = mysql.createPool({ ...connectionOptions, database });
-    await pool.query('CREATE TABLE IF NOT EXISTS users (id INT UNSIGNED PRIMARY KEY)');
-    await pool.query('INSERT IGNORE INTO users VALUES (7)');
+    await pool.query('CREATE TABLE IF NOT EXISTS users (id INT UNSIGNED PRIMARY KEY, username VARCHAR(100))');
+    await pool.query("INSERT IGNORE INTO users VALUES (7, 'admin')");
     for (const name of ['054_agent_tool_approvals', '055_agent_tool_audit', '068_agent_tool_approval_scopes', '094_agent_tool_execution_intents']) {
       await pool.query(await readFile(new URL(`../../sql/migrations/${name}.sql`, import.meta.url), 'utf8'));
     }
     await pool.query("ALTER TABLE agent_tool_audit ADD agent_id VARCHAR(128) NOT NULL DEFAULT 'slide-db-ops'");
+    await pool.query(await readFile(new URL('../../sql/migrations/167_agent_tool_audit_invocation.sql', import.meta.url), 'utf8'));
     service = new AgentToolApprovalService(() => store, key);
     audit = new AgentToolAuditService(() => store);
   });
@@ -90,8 +91,14 @@ describe.skipIf(!port)('approval dispatch: real MySQL transactions', () => {
     expect(results.filter(r => r.result.success)).toHaveLength(1);
     expect(handler).toHaveBeenCalledTimes(1);
     expect(await state()).toEqual({ status: 'consumed', used_count: 0, intents: ['finished'] });
-    const [rows] = await pool.query<any[]>("SELECT allowed FROM agent_tool_audit WHERE phase = 'decision'");
-    expect(rows.map(r => r.allowed).sort()).toEqual([0, 1]);
+    const [audits] = await pool.query<any[]>('SELECT id, phase, allowed FROM agent_tool_audit');
+    expect(audits.filter(row => row.phase === 'decision').map(row => row.allowed).sort()).toEqual([0, 1]);
+    const allowed = audits.find(row => row.phase === 'decision' && row.allowed);
+    const rejected = audits.find(row => row.phase === 'decision' && !row.allowed);
+    const result = audits.find(row => row.phase === 'result');
+    expect(await audit.detail(allowed.id)).toMatchObject({ relatedRecordId: result.id });
+    expect(await audit.detail(result.id)).toMatchObject({ relatedRecordId: allowed.id });
+    expect(await audit.detail(rejected.id)).toMatchObject({ relatedRecordId: null });
   });
 
   it('GitHub #621: preserves the call request ID through approval submission, retry and audit', async () => {

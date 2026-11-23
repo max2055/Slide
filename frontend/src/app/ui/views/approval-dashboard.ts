@@ -41,7 +41,7 @@ interface AgentApproval {
 }
 
 type HistoryItem = { kind: 'sql'; record: ApprovalRequest } | { kind: 'agent'; record: AgentApproval };
-type ExecutionState = 'none' | 'success' | 'failed' | 'running' | 'unknown' | 'conflict';
+type ExecutionState = 'none' | 'success' | 'failed' | 'running' | 'unconfirmed' | 'unknown' | 'conflict';
 
 export function approvalValue(value: unknown): any {
   if (typeof value !== 'string') return value;
@@ -54,28 +54,35 @@ export function approvalDecision(status: string): string {
 }
 
 // Presentation only: approval and consumption do not prove execution success.
-export function approvalExecution(record: { status: string; execution_result?: unknown }, agent = false): ExecutionState {
+export function approvalExecution(record: { status: string; execution_result?: unknown; used_count?: number }, agent = false): ExecutionState {
   const result = approvalValue(record.execution_result);
-  const hasResult = record.execution_result != null && record.execution_result !== '';
+  const hasResult = result != null && result !== '';
+  if (agent && (record.status === 'consumed' || Number(record.used_count ?? 0) > 0)) return 'unconfirmed';
   if (record.status === 'rejected' || record.status === 'cancelled' || record.status === 'expired') {
     return hasResult ? 'conflict' : 'none';
   }
-  if (agent) return record.status === 'consumed' ? 'unknown' : 'none';
+  if (agent) return record.status === 'pending' ? 'none' : 'unconfirmed';
   // A failed SQL/audit acknowledgement can follow a commit; it is not a known failure.
   if (result?.executionState === 'unknown') {
     return record.status === 'executed' || record.status === 'execution_failed' || result?.success === true ? 'conflict' : 'unknown';
   }
+  if (result?.executionState === 'not_started') {
+    return record.status === 'executed' || result.success === true ? 'conflict' : 'none';
+  }
+  if (!hasResult && record.status !== 'executing') return record.status === 'pending' ? 'none' : 'unconfirmed';
   if (result?.success === false || result?.error || record.status === 'execution_failed') {
     return record.status === 'executed' || result?.success === true ? 'conflict' : 'failed';
   }
   if (record.status === 'executing') return result?.success === true ? 'conflict' : 'running';
   if (record.status === 'executed' || result?.success === true) return 'success';
-  return hasResult || !['pending', 'approved'].includes(record.status) ? 'unknown' : 'none';
+  return 'unconfirmed';
 }
 
 const executionLabels: Record<ExecutionState, string> = {
-  none: '未执行', success: '执行成功', failed: '执行失败', running: '执行中', unknown: '结果未知', conflict: '证据冲突',
+  none: '未执行', success: '执行成功', failed: '执行失败', running: '执行中',
+  unconfirmed: '结果待确认', unknown: '结果未知', conflict: '证据冲突',
 };
+const readableText = (value: unknown) => typeof value === 'string' ? value.trim() : '';
 const shortText = (value: string, length = 90) => {
   const text = value.replace(/\s+/g, ' ').trim();
   return text.length > length ? text.slice(0, length) + '…' : text;
@@ -95,7 +102,7 @@ export function agentApprovalsLoadError(status: number): string {
 interface ApprovalEvent {
   id: number;
   request_id: number;
-  event_type: 'submitted' | 'ai_reviewed' | 'approved' | 'rejected' | 'executed' | 'execution_failed' | 'notified';
+  event_type: 'submitted' | 'ai_reviewed' | 'claimed' | 'approved' | 'rejected' | 'executed' | 'execution_failed' | 'reconciliation_required' | 'notified';
   event_data: any;
   created_by: number | null;
   created_at: string;
@@ -129,6 +136,9 @@ export class ApprovalDashboard extends LitElement {
     .evidence-section h3 { font-size: 16px; margin: 0 0 var(--space-sm); }
     .evidence-section pre { white-space: pre-wrap; overflow-wrap: anywhere; font-family: var(--mono); font-size: 12px; background: var(--bg-elevated); padding: var(--space-md); border-radius: var(--radius-sm); max-height: 400px; overflow: auto; }
     .evidence-meta { display: flex; gap: var(--space-sm); flex-wrap: wrap; align-items: center; margin-bottom: var(--space-md); }
+    .evidence-facts { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: var(--space-sm) var(--space-lg); margin: var(--space-lg) 0; }
+    .evidence-facts dt { color: var(--muted); }
+    .evidence-facts dd { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
     .pending-preview { max-height: none !important; overflow-wrap: anywhere; }
     .pending-detail { margin-top: var(--space-sm); }
     .meta-value, .timeline-detail { overflow-wrap: anywhere; min-width: 0; }
@@ -221,6 +231,21 @@ export class ApprovalDashboard extends LitElement {
   private listGeneration = 0;
   private detailGeneration = 0;
   private detailTrigger: HTMLElement | null = null;
+  private accessChanged = () => this.clearApprovalReads('权限已变更，请重新读取审批列表。');
+
+  private clearApprovalReads(message: string) {
+    this.listGeneration++;
+    this.requests = [];
+    this.agentApprovals = [];
+    this.agentApprovalsError = null;
+    this.clearSelection();
+    this._closeBatchDialog();
+    this.executeAfterApprove = {};
+    this.loading = false;
+    this.listError = message;
+    this.detailTrigger = null;
+    void this.backToList();
+  }
   private get historyContextKey() {
     try { return `slide.approval-history.v1:${JSON.parse(localStorage.getItem('user') ?? 'null')?.id ?? 'default'}`; }
     catch { return 'slide.approval-history.v1:default'; }
@@ -249,6 +274,8 @@ export class ApprovalDashboard extends LitElement {
 
   override connectedCallback() {
     super.connectedCallback();
+    window.addEventListener('slide-permissions-loaded', this.accessChanged);
+    window.addEventListener('slide-session-expired', this.accessChanged);
     try {
       const context = JSON.parse(sessionStorage.getItem(this.historyContextKey) ?? 'null');
       if (context) {
@@ -264,6 +291,8 @@ export class ApprovalDashboard extends LitElement {
 
   override disconnectedCallback() {
     super.disconnectedCallback();
+    window.removeEventListener('slide-permissions-loaded', this.accessChanged);
+    window.removeEventListener('slide-session-expired', this.accessChanged);
     this.listGeneration++;
     this.detailGeneration++;
     this._destroyCodeMirror();
@@ -290,6 +319,10 @@ export class ApprovalDashboard extends LitElement {
           this.executeAfterApprove = Object.fromEntries(this.requests.map(r => [r.id, true]));
         }
       } else {
+        if (res.status === 401 || res.status === 403) {
+          this.clearApprovalReads(agentApprovalsLoadError(res.status));
+          return;
+        }
         this.requests = [];
         this.agentApprovals = [];
         this.listError = agentApprovalsLoadError(res.status);
@@ -365,7 +398,9 @@ export class ApprovalDashboard extends LitElement {
   }
 
   private async backToList() {
-    this.detailGeneration++;
+    const generation = ++this.detailGeneration;
+    const trigger = this.detailTrigger;
+    this.detailTrigger = null;
     this.selectedAgent = null;
     this._destroyCodeMirror();
     this.events = [];
@@ -373,13 +408,22 @@ export class ApprovalDashboard extends LitElement {
     this.operationState = null;
     this.operationDetail = null;
     this.detailError = null;
+    this.evidenceWarning = '';
     this.detailLoading = false;
     this.view = "list";
     this.selectedRequest = null;
     await this.updateComplete;
-    if (this.detailTrigger?.isConnected) this.detailTrigger.focus();
-    else if (this.filter === 'pending') this.shadowRoot?.querySelector<HTMLButtonElement>(`[data-request-id="${this.detailTrigger?.dataset.requestId}"]`)?.focus();
-    this.detailTrigger = null;
+    if (generation !== this.detailGeneration) return;
+    if (trigger?.isConnected) trigger.focus();
+    else if (trigger && this.filter === 'pending') this.shadowRoot?.querySelector<HTMLButtonElement>(`[data-request-id="${trigger.dataset.requestId}"]`)?.focus();
+  }
+
+  private async readApprovalDetail(path: string, generation: number): Promise<Response> {
+    const response = await authFetch(path);
+    if (generation === this.detailGeneration && (response.status === 401 || response.status === 403)) {
+      this.clearApprovalReads('当前会话无权查看审批，请重新读取审批列表。');
+    }
+    return response;
   }
 
   private async _loadDetail(requestId: number) {
@@ -388,30 +432,39 @@ export class ApprovalDashboard extends LitElement {
     this.detailError = null;
     this.evidenceWarning = '';
     this.events = [];
+    this.operationDetail = null;
+    this.operationEvents = [];
+    this.operationState = null;
     this._destroyCodeMirror();
     try {
       const [detailRes, eventsRes] = await Promise.all([
-        authFetch(`/api/approval/${requestId}`),
-        authFetch(`/api/approval/${requestId}/events`),
+        this.readApprovalDetail(`/api/approval/${requestId}`, generation),
+        this.readApprovalDetail(`/api/approval/${requestId}/events`, generation),
       ]);
       if (generation !== this.detailGeneration) return;
-      if (!detailRes.ok) { this.detailError = detailRes.status === 403 ? '当前用户没有此审批的查看权限' : '加载失败，请重试'; this.detailLoading = false; return; }
+      if (!detailRes.ok) {
+        this.detailError = detailRes.status === 404 ? '当前会话无法查看此审批' : '加载失败，请重试';
+        this.detailLoading = false;
+        return;
+      }
       const detail = await detailRes.json() as ApprovalRequest;
+      const events = eventsRes.ok ? await eventsRes.json() as ApprovalEvent[] : null;
       if (generation !== this.detailGeneration) return;
       this.selectedRequest = detail;
-      if (eventsRes.ok) {
-        this.events = await eventsRes.json() as ApprovalEvent[];
-      }
-      else this.evidenceWarning = '审批事件读取失败，当前详情的证据不完整';
+      this.events = Array.isArray(events) ? events : [];
+      if (!Array.isArray(events)) this.evidenceWarning = '审批事件读取失败，当前详情的证据不完整';
       if (detail.operation_id) {
         const [operationRes, operationEventsRes] = await Promise.all([
           authFetch(`/api/operations/${detail.operation_id}`),
           authFetch(`/api/operations/${detail.operation_id}/events`),
         ]);
+        const operation = operationRes.ok ? await operationRes.json() : null;
+        const operationEvents = operationEventsRes.ok ? (await operationEventsRes.json()).events ?? [] : [];
         if (generation !== this.detailGeneration) return;
         if (!operationRes.ok || !operationEventsRes.ok) this.evidenceWarning = 'Operation 证据读取失败，不能据此推断执行状态';
-        if (operationRes.ok) { const operation = await operationRes.json(); this.operationDetail = operation; this.operationState = operation.state ?? null; }
-        if (operationEventsRes.ok) this.operationEvents = (await operationEventsRes.json()).events ?? [];
+        this.operationDetail = operation;
+        this.operationState = operation?.state ?? null;
+        this.operationEvents = operationEvents;
       }
       if (generation !== this.detailGeneration) return;
       this.detailLoading = false;
@@ -756,9 +809,23 @@ export class ApprovalDashboard extends LitElement {
     return shortText(resource?.name || resource?.label || (resource?.type ? `${resource.type}${resource.id != null ? ` #${resource.id}` : ''}` : '未提供目标资源'));
   }
 
-  private executionBadge(item: HistoryItem) {
-    const state = approvalExecution(item.record, item.kind === 'agent');
-    return html`<app-badge variant=${state === 'failed' || state === 'conflict' ? 'danger' : state === 'unknown' || state === 'running' ? 'warn' : 'muted'}>${executionLabels[state]}</app-badge>`;
+  private sqlEvidenceExecution(record: ApprovalRequest): ExecutionState {
+    const state = approvalExecution(record);
+    if (state !== 'unconfirmed' || record.status !== 'approved' || approvalValue(record.execution_result) != null) return state;
+    const events = this.events.filter(event => event?.request_id === record.id);
+    const executionEvidence = events.some(event =>
+      ['executed', 'execution_failed', 'reconciliation_required'].includes(event.event_type)
+      || (['approved', 'claimed'].includes(event.event_type) && approvalValue(event.event_data)?.execute_after_approve === true));
+    if (executionEvidence) return state;
+    return events.some(event => event.event_type === 'approved' && event.created_by === record.reviewed_by
+      && approvalValue(event.event_data)?.execute_after_approve === false) ? 'none' : state;
+  }
+
+  private executionBadge(item: HistoryItem, state = approvalExecution(item.record, item.kind === 'agent')) {
+    const variants: Record<ExecutionState, string> = {
+      none: 'muted', success: 'ok', failed: 'danger', running: 'warn', unconfirmed: 'warn', unknown: 'warn', conflict: 'danger',
+    };
+    return html`<app-badge variant=${variants[state]}>${executionLabels[state]}</app-badge>`;
   }
 
   private changeHistoryFilter(field: 'historyQuery' | 'decisionFilter' | 'executionFilter', value: string) {
@@ -807,7 +874,7 @@ export class ApprovalDashboard extends LitElement {
           <option value="all">全部执行结果</option>${Object.entries(executionLabels).map(([value, label]) => html`<option value=${value}>${label}</option>`)}
         </select></label>
       </div>
-      <div class="history-notice"><strong>审批结果与执行结果分开核对</strong>批准不表示已经执行。待审批页面仍直接展示 SQL、目标资源、风险与关键证据。<br>仅筛选本次已读取记录：SQL 与 Agent 各最多 100 条，不代表全部历史。Agent 授权已使用也不代表工具执行成功。</div>
+      <p class="history-notice">仅筛选本次已读取记录：SQL 与 Agent 各最多 100 条，不代表全部历史。</p>
       ${this.listError ? nothing : html`<app-card class="history-card" .compact=${true}>
         <div class="table-scroll" role="region" aria-label="审批历史，可横向滚动" tabindex="0"><app-data-table .columns=${[
           { key: 'summary', label: '建议摘要' }, { key: 'target', label: '目标资源' }, { key: 'risk', label: '风险' },
@@ -827,28 +894,49 @@ export class ApprovalDashboard extends LitElement {
     return html`<section class="evidence-section"><h3>${title}</h3><pre>${evidenceText(value)}</pre></section>`;
   }
 
+  private renderSqlEvidenceFacts(record: ApprovalRequest) {
+    const result = approvalValue(record.execution_result);
+    const recommendation = approvalValue(record.ai_recommendation);
+    const receiptFacts = [
+      Number.isFinite(result?.rowCount) ? `影响 ${result.rowCount} 行` : '',
+      Number.isFinite(result?.duration_ms) ? `耗时 ${result.duration_ms} ms` : '',
+    ].filter(Boolean).join(' · ');
+    const error = readableText(result?.error);
+    return html`<dl class="evidence-facts">
+      <dt>审批备注</dt><dd>${readableText(record.review_notes) || '未填写'}</dd>
+      <dt>AI 理由</dt><dd>${readableText(recommendation?.reasoning) || '未提供理由'}</dd>
+      ${receiptFacts ? html`<dt>执行回执</dt><dd>${receiptFacts}</dd>` : nothing}
+      ${error ? html`<dt>执行说明</dt><dd>${error}</dd>` : nothing}
+    </dl>`;
+  }
+
   private renderEvidenceDialog() {
     const record = this.selectedAgent ?? this.selectedRequest;
     if (!record) return nothing;
     const item: HistoryItem = this.selectedAgent ? { kind: 'agent', record: this.selectedAgent } : { kind: 'sql', record: this.selectedRequest! };
+    const state = item.kind === 'sql' ? this.sqlEvidenceExecution(item.record) : undefined;
     return html`<app-dialog .open=${true} size="xl" title="审批与执行详情" @app-dialog-close=${this.backToList}>
       ${this.detailLoading ? html`<p role="status">正在读取完整证据…</p>` : this.detailError ? html`<div role="alert" class="error-box">${this.detailError}</div><button class="btn" @click=${() => this._loadDetail(this.selectedRequest!.id)}>重试</button>` : html`
-        <p class="caption">${this.historyTarget(item)} · ${new Date(record.created_at).toLocaleString('zh-CN')}</p>
-        <div class="evidence-meta">${this._riskBadge(record.risk_level || 'unknown')}<app-badge variant="muted">${this._statusLabel(approvalDecision(record.status))}</app-badge>${this.executionBadge(item)}</div>
+        <p><strong>${this.historyTarget(item)}</strong> <span class="caption">· ${new Date(record.created_at).toLocaleString('zh-CN')}</span></p>
+        <div class="evidence-meta"><span>审批</span><app-badge variant="muted">${this._statusLabel(approvalDecision(record.status))}</app-badge><span>执行</span>${this.executionBadge(item, state)}${this._riskBadge(record.risk_level || 'unknown')}</div>
         ${item.kind === 'sql' && approvalValue(item.record.execution_result)?.executionState === 'unknown'
           ? html`<p class="history-notice" role="status">后端执行结果未知：SQL 可能已提交。请勿重试；先核对持久化执行意图与目标数据库，完成对账。</p>` : nothing}
         ${this.evidenceWarning ? html`<p class="history-notice" role="status">${this.evidenceWarning}</p>` : nothing}
         ${item.kind === 'sql' ? html`
+          ${this.renderSqlEvidenceFacts(item.record)}
           ${this.evidenceSection('完整 SQL', item.record.sql_text)}
-          ${this.evidenceSection('完整 AI 分析', item.record.ai_recommendation)}
-          ${this.evidenceSection('审批备注', item.record.review_notes)}
-          ${this.evidenceSection('完整执行结果 / 错误', item.record.execution_result)}
-          <details><summary>原始审批与事件证据</summary>${this.evidenceSection('审批原值', item.record)}${this.evidenceSection('审批事件', this.events)}${item.record.operation_id ? this.evidenceSection('Operation 证据', { operation: this.operationDetail, events: this.operationEvents }) : nothing}</details>
+          <details><summary>原始审批与事件证据</summary>
+            ${this.evidenceSection('完整 AI 分析', item.record.ai_recommendation)}
+            ${this.evidenceSection('完整执行结果 / 错误', item.record.execution_result)}
+            ${this.evidenceSection('审批原值', item.record)}${this.evidenceSection('审批事件', this.events)}
+            ${item.record.operation_id ? this.evidenceSection('Operation 证据', { operation: this.operationDetail, events: this.operationEvents }) : nothing}
+          </details>
         ` : html`
-          <p class="history-notice">当前接口仅提供审批授权记录，未提供工具执行回执。以下证据来自本次读取，参数沿用服务端脱敏值。</p>
-          ${this.evidenceSection('工具与参数', { tool: item.record.tool_name, args: item.record.args_redacted })}
-          ${this.evidenceSection('目标资源与范围', item.record.resource_json)}
-          <details><summary>完整审批记录</summary>${this.evidenceSection('审批原值', item.record)}</details>
+          <dl class="evidence-facts">
+            <dt>工具</dt><dd>${item.record.tool_name}</dd>
+            <dt>授权使用次数</dt><dd>${item.record.used_count ?? '未提供'}</dd>
+          </dl>
+          <details><summary>原始审批证据</summary>${this.evidenceSection('审批原值（参数已脱敏）', item.record)}</details>
         `}
       `}
       <button slot="footer" class="btn" @click=${this.backToList}>关闭</button>

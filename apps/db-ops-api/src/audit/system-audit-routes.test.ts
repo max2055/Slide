@@ -56,17 +56,27 @@ describe('system audit routes', () => {
     await app.inject({ method: 'PATCH', url: '/api/users/42', payload: { status: 'active' } });
     const response = await app.inject({
       method: 'GET',
-      url: `/api/audit/logs?eventType=system_operation&keyword=alice&startTime=${encodeURIComponent(new Date(0).toISOString())}`,
+      url: `/api/audit/logs?eventType=system_operation&result=success&requestCategory=business&keyword=alice&startTime=${encodeURIComponent(new Date(0).toISOString())}`,
     });
 
     expect(response.statusCode).toBe(200);
     expect(response.json()).toMatchObject({ total: 1, limit: 25, offset: 0 });
+    expect((await app.inject('/api/audit/logs?result=failure')).json()).toMatchObject({ total: 0, items: [] });
+    expect((await app.inject('/api/audit/logs?requestCategory=background')).json()).toMatchObject({ total: 0, items: [] });
   });
 
   it('rejects invalid query parameters', async () => {
     const response = await app.inject({ method: 'GET', url: '/api/audit/logs?eventType=unknown&limit=0' });
     expect(response.statusCode).toBe(400);
   });
+
+  it.each(['result=unknown', 'result=', 'result=success&result=failure', 'requestCategory=Background', 'requestCategory='])(
+    'rejects invalid audit filter %s',
+    async query => {
+      const response = await app.inject({ method: 'GET', url: `/api/audit/logs?${query}` });
+      expect(response.statusCode).toBe(400);
+    },
+  );
 
   it('requires audit view permission', async () => {
     const restricted = Fastify();
