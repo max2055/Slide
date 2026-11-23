@@ -214,26 +214,36 @@ export function captureListReturn(
   history.replaceState(history.state, "", url);
   windows.delete(`${type}:${id}`);
 }
-export function returnToResourceList(type: DetailResourceType): boolean {
+function savedListUrl(type: DetailResourceType): URL | null {
   const token = new URL(location.href).searchParams.get("listReturn");
-  if (!token || !/^[a-f0-9-]{36}$/.test(token)) return false;
+  if (!token || !/^[a-f0-9-]{36}$/.test(token)) return null;
   try {
     const r = JSON.parse(sessionStorage.getItem(`resource-return:${token}`) || "null");
-    if (r?.type !== type || r.id !== detailResourceId(type)) return false;
+    if (r?.type !== type || r.id !== detailResourceId(type)) return null;
     const url = new URL(r.url, location.origin);
     if (
       url.origin !== location.origin ||
       url.pathname !== "/" ||
       url.searchParams.get("tab") !== listTabs[type]
     )
-      return false;
-    url.pathname = `/${listTabs[type]}`;
-    history.pushState({}, "", url);
-    window.dispatchEvent(new PopStateEvent("popstate"));
-    return true;
+      return null;
+    return url;
   } catch {
-    return false;
+    return null;
   }
+}
+
+export function returnToResourceList(type: DetailResourceType, edit?: { id: number; section: 'ssh' }): boolean {
+  const url = savedListUrl(type) ?? (edit ? new URL(`/?tab=${listTabs[type]}`, location.origin) : null);
+  if (!url) return false;
+  url.pathname = `/${listTabs[type]}`;
+  if (edit) {
+    url.searchParams.set('edit', String(edit.id));
+    url.searchParams.set('editSection', edit.section);
+  }
+  history.pushState({}, "", url);
+  window.dispatchEvent(new PopStateEvent("popstate"));
+  return true;
 }
 /** Session-local navigation history must not survive account/authority changes. */
 function eraseListHistory() {
