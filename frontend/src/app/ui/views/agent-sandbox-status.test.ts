@@ -31,11 +31,12 @@ function statusResponse() {
   };
 }
 
-async function render(enabled = false): Promise<Page> {
+async function render(enabled = false, statusOnly = false, configReason?: string): Promise<Page> {
   mocks.get.mockImplementation(async (path: string) => path.endsWith('/config')
-    ? { enabled, reasonCode: enabled ? 'SANDBOX_ENABLED' : 'SANDBOX_DISABLED' }
+    ? { enabled, reasonCode: configReason ?? (enabled ? 'SANDBOX_ENABLED' : 'SANDBOX_DISABLED') }
     : statusResponse());
   const page = document.createElement('agent-sandbox-status-page') as Page;
+  page.toggleAttribute('status-only', statusOnly);
   document.body.append(page);
   await page.updateComplete;
   await new Promise((resolve) => setTimeout(resolve, 0));
@@ -48,6 +49,7 @@ describe('Agent Sandbox global setting', () => {
     mocks.get.mockReset();
     mocks.put.mockReset();
     mocks.toast.mockReset();
+    localStorage.setItem('permissions', JSON.stringify(['*']));
   });
 
   afterEach(() => {
@@ -125,5 +127,56 @@ describe('Agent Sandbox global setting', () => {
 
     expect(mocks.get).not.toHaveBeenCalledWith('/agent/security/sandbox/config');
     expect(page.shadowRoot?.querySelector('[data-action="sandbox-toggle"]')).toBeNull();
+  });
+
+  it('links from status to the existing configuration route without loading the global switch', async () => {
+    const page = await render(false, true);
+    const root = page.shadowRoot!;
+    expect(root.querySelector('a')?.getAttribute('href')).toBe('/settings/ai/security?view=sandbox');
+    expect(mocks.get).not.toHaveBeenCalledWith('/agent/security/sandbox/config');
+    window.dispatchEvent(new CustomEvent('slide-permissions-loaded', { detail: { permissions: ['audit:view'] } }));
+    await page.updateComplete;
+    expect(root.querySelector('a')).toBeNull();
+    expect(root.textContent).toContain('执行环境');
+    expect(mocks.get).toHaveBeenCalledTimes(1);
+  });
+
+  it('distinguishes unreadable status from confirmed missing configuration on retry', async () => {
+    const page = await render(false, true);
+    const root = page.shadowRoot!;
+    const refresh = root.querySelector<HTMLButtonElement>('.btn-refresh')!;
+    expect(root.querySelector('.metric')?.textContent).toContain('就绪');
+    mocks.get.mockRejectedValueOnce(new Error('HTTP 503: unavailable'));
+    refresh.click();
+    await vi.waitFor(() => expect(root.querySelector('app-empty-state')?.getAttribute('title')).toBe('暂时无法读取沙箱状态'));
+    expect(root.textContent).not.toContain('Controller 未配置');
+    mocks.get.mockResolvedValueOnce({ configured: true, reachable: false });
+    refresh.click();
+    await vi.waitFor(() => expect(root.querySelector('app-empty-state')?.getAttribute('title')).toBe('Sandbox Controller 不可达'));
+    mocks.get.mockResolvedValueOnce({ configured: false, reachable: false });
+    refresh.click();
+    await vi.waitFor(() => expect(root.querySelector('app-empty-state')?.getAttribute('title')).toBe('Sandbox Controller 未配置'));
+  });
+
+  it('leaves runtime evidence visible when the global setting cannot be read', async () => {
+    const page = await render(false, false, 'SANDBOX_CONFIG_UNAVAILABLE');
+    expect(page.shadowRoot?.textContent).toContain('暂时无法读取全局设置');
+    expect(page.shadowRoot?.textContent).toContain('运行状态');
+    expect(page.shadowRoot?.querySelector('[data-action="sandbox-toggle"]')).toBeNull();
+  });
+
+  it('dismisses the configuration dialog on revocation while retaining audit-only status', async () => {
+    const page = await render();
+    const root = page.shadowRoot!;
+    root.querySelector<HTMLInputElement>('[data-action="sandbox-toggle"]')!.click();
+    await page.updateComplete;
+    const confirm = root.querySelector<HTMLButtonElement>('[data-action="confirm-enable"]')!;
+    window.dispatchEvent(new CustomEvent('slide-permissions-loaded', { detail: { permissions: ['audit:view'] } }));
+    confirm.click();
+    await page.updateComplete;
+    expect(mocks.put).not.toHaveBeenCalled();
+    expect(root.querySelector('app-dialog')).toBeNull();
+    expect(root.querySelector('[data-action="sandbox-toggle"]')).toBeNull();
+    expect(root.textContent).toContain('执行环境');
   });
 });

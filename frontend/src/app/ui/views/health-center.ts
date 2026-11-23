@@ -68,15 +68,16 @@ const CATEGORY_LABELS: Record<string, string> = {
 @customElement("health-center-page")
 export class HealthCenterPage extends LitElement {
   @state() private loading = true;
-  @state() private refreshing = false;
   @state() private error: string | null = null;
   @state() private data: HealthOverview | null = null;
   @state() private truth: HealthTruth | null = null;
   @state() private expandedChecks = new Set<string>();
   @state() private showNormalChecks = false;
   @state() private readAt: string | null = null;
+  @state() private lastCheckedAt: string | null = null;
   @state() private denied = false;
   private requestId = 0;
+  private retryRefresh = false;
   private permissionsChanged = (event: Event) => {
     const permissions = (event as CustomEvent<{ permissions?: string[] }>).detail?.permissions;
     if (!Array.isArray(permissions) || !permissions.some(p => ['*', 'config:*', 'config:view', '*:view'].includes(p))) this.invalidate('权限已撤回，自检证据已清理。');
@@ -225,22 +226,24 @@ export class HealthCenterPage extends LitElement {
     void this._load();
   }
   override disconnectedCallback() {
-    this.requestId++; this.data = null; this.truth = null; this.readAt = null;
+    this.requestId++; this.data = null; this.truth = null; this.readAt = null; this.lastCheckedAt = null;
     window.removeEventListener('slide-permissions-loaded', this.permissionsChanged);
     window.removeEventListener('slide-session-expired', this.expired);
     super.disconnectedCallback();
   }
   private invalidate(message: string) {
-    this.requestId++; this.data = null; this.truth = null; this.readAt = null;
+    this.requestId++; this.data = null; this.truth = null; this.readAt = null; this.lastCheckedAt = null;
     this.expandedChecks = new Set(); this.showNormalChecks = false;
-    this.denied = true; this.loading = false; this.refreshing = false; this.error = message;
+    this.denied = true; this.loading = false; this.error = message;
   }
   private _load() { return this.read(false); }
-  private _refresh() { return this.read(true); }
+  private _refresh() {
+    if (!this.loading) return this.read(this.error ? this.retryRefresh : true);
+  }
   private async read(refresh: boolean) {
     if (this.denied) return;
     const id = ++this.requestId;
-    this.loading = true; this.refreshing = refresh; this.error = null;
+    this.loading = true; this.retryRefresh = refresh; this.error = null;
     this.data = null; this.truth = null; this.readAt = null;
     this.expandedChecks = new Set(); this.showNormalChecks = false;
     try {
@@ -250,22 +253,44 @@ export class HealthCenterPage extends LitElement {
           if (id === this.requestId) this.invalidate('无权读取平台自检，证据已清理。');
           return;
         }
-        throw new Error(`自检读取失败（HTTP ${response.status}）`);
+        if (id === this.requestId) this.error = `暂时无法读取自检（HTTP ${response.status}）。`;
+        return;
       }
       const data: HealthOverview = await response.json();
-      if (!data || !Array.isArray(data.checks)) throw new Error('自检响应不完整，无法判断当前状态。');
+      if (!data || !Array.isArray(data.checks)) throw new Error('Invalid overview');
       if (id !== this.requestId) return;
-      this.data = data; this.truth = data.truth ?? null; this.readAt = new Date().toISOString();
-    } catch (error) {
-      if (id === this.requestId) this.error = error instanceof Error ? error.message : '自检读取失败，请重试。';
-    } finally { if (id === this.requestId) { this.loading = false; this.refreshing = false; } }
+      this.data = data;
+      this.truth = data.truth ?? null;
+      if (data.timestamp && Number.isFinite(Date.parse(data.timestamp))) this.lastCheckedAt = data.timestamp;
+    } catch {
+      if (id === this.requestId) this.error = '暂时无法读取自检，请重试。';
+    } finally {
+      if (id === this.requestId) {
+        this.readAt = new Date().toISOString();
+        this.loading = false;
+      }
+    }
   }
   private formatTime(value?: string | null) {
     return value && Number.isFinite(Date.parse(value)) ? new Date(value).toLocaleString('zh-CN') : '未知';
   }
+  private renderHeaderTime(value: string | null) {
+    if (!value) return '未知';
+    return html`<time datetime=${value}>${new Date(value).toLocaleString('zh-CN', { timeZoneName: 'short' })}</time>`;
+  }
   private renderHeader() {
-    return html`<div class="page-header"><div><h1>系统自检</h1><p>平台数据一致性检查；通过不等于运行观测健康。</p><p>自检时间 ${this.formatTime(this.data?.timestamp)} · 页面读取 ${this.formatTime(this.readAt)}</p></div>
-      <button aria-busy=${String(this.loading || this.refreshing)} class="btn btn-refresh refresh-btn" @click=${this._refresh} ?disabled=${this.loading || this.refreshing || this.denied}>${this.loading || this.refreshing ? '检查中…' : '刷新'}</button></div>`;
+    return html`<div class="page-header">
+      <div>
+        <h1>平台自检</h1>
+        <p>检查平台数据一致性。页面可读取服务端已有的检查结果。</p>
+        <p>本次读取（浏览器） ${this.loading ? '进行中' : this.renderHeaderTime(this.readAt)}</p>
+        <p>最近成功检查（服务端） ${this.renderHeaderTime(this.lastCheckedAt)}</p>
+      </div>
+      <button type="button" class="btn btn-refresh refresh-btn" aria-busy=${String(this.loading)}
+        aria-disabled=${String(this.loading)} ?disabled=${this.denied} @click=${this._refresh}>
+        ${this.loading ? '读取中…' : this.error && !this.denied ? '重试读取' : '刷新'}
+      </button>
+    </div>`;
   }
 
   private _sv(status: string) { return { pass:'ok',warn:'warn',fail:'danger',deferred:'muted' }[status] || 'muted'; }
@@ -425,9 +450,13 @@ export class HealthCenterPage extends LitElement {
   }
 
   override render() {
-    if (this.loading) return html`${this.renderHeader()}<div class="loading" role="status">正在读取自检…</div>`;
-    if (this.error) return html`${this.renderHeader()}<div class="error-state" role="alert"><p>${this.error}</p>${this.denied ? html`<p>请重新登录或联系管理员核对权限。</p>` : html`<button class="btn" @click=${this._load}>重试</button>`}</div>`;
-    if (!this.data) return html`<div class="loading">无数据</div>`;
+    return html`${this.renderHeader()}${this.renderResult()}`;
+  }
+
+  private renderResult() {
+    if (this.loading) return html`<div class="loading" role="status">正在读取自检…</div>`;
+    if (this.error) return html`<div class="error-state" role="alert"><p>${this.error}</p>${this.denied ? html`<p>请重新登录或联系管理员核对权限。</p>` : nothing}</div>`;
+    if (!this.data) return nothing;
 
     const d = this.data;
     const items = this._readinessItems();
@@ -441,7 +470,6 @@ export class HealthCenterPage extends LitElement {
     const normalChecks = d.checks.filter(c => c.status === 'pass' || c.status === 'deferred');
 
     return html`
-      ${this.renderHeader()}
       <div class="scope-note"><strong>自检与平台观测分开判断</strong>下方通过率只描述本次有效一致性检查。运行日志、信号覆盖和版本部署缺口请在平台观测核对；资源健康沿用接口给出的独立维度。</div>
 
       <!-- Unified health bar: score + stats in one row -->
