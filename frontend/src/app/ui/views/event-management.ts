@@ -13,8 +13,9 @@ import { icons, renderIcon } from "../../../icons.js";
 import { authFetch } from "../../../api/index.js";
 import { showToast } from "../components/app-toast-container.js";
 import { workspaceReturnTo } from '../workbench-routing.ts';
+import { generateUUID } from '../uuid.ts';
 import { returnToWorkbench } from '../workbench-position.ts';
-import { eventDisplayTitle } from '../controllers/event-investigation-api.ts';
+import { eventDetailUrl, eventDisplayTitle, readEventId } from '../controllers/event-investigation-api.ts';
 import { ALERT_LEVELS, alertLevelLabel, alertLevelVariant } from '../alert-levels.js';
 
 const API_BASE = "/api";
@@ -28,8 +29,28 @@ type EventListPosition = {
   key: string;
   mainTop: number;
   listTop: number;
+  focusId?: string;
   row?: { id: string; viewportTop: number; listOffset: number };
 };
+
+type EventListReturn = {
+  token: string;
+  eventId: number;
+  group: EventGroup;
+  page: number;
+  severity: string;
+  search: string;
+  position: EventListPosition;
+};
+
+// The history entries hold only the token. Filters and focus belong to the
+// current document session and become invalid when its authority changes.
+let eventListReturn: EventListReturn | undefined;
+function clearEventListReturn() { eventListReturn = undefined; }
+if (typeof window !== 'undefined') {
+  window.addEventListener('slide-permissions-loaded', clearEventListReturn);
+  window.addEventListener('slide-session-expired', clearEventListReturn);
+}
 
 class EventListAccessError extends Error {}
 
@@ -110,9 +131,10 @@ export class EventManagementPage extends LitElement {
       animation: fade-in 0.25s var(--ease-out);
     }
 
+    /* Keep row geometry stable while preserving the entrance fade. */
     @keyframes fade-in {
-      from { opacity: 0; transform: translateY(8px); }
-      to { opacity: 1; transform: translateY(0); }
+      from { opacity: 0; }
+      to { opacity: 1; }
     }
 
     .page {
@@ -510,24 +532,30 @@ export class EventManagementPage extends LitElement {
   @state() private eventsPage = 0;
   @state() private eventsTotal: number | null = null;
   private readonly eventsPageSize = 50;
-  private closeDetail = (event?: KeyboardEvent) => {
+  private returnToList = (event?: KeyboardEvent) => {
     if (event && (event.key !== 'Escape' || event.defaultPrevented
       || event.composedPath().some(target => target instanceof HTMLDialogElement))) return;
+    if (this.canReturnToList) {
+      event?.preventDefault();
+      history.back();
+      return;
+    }
     if (this.eventId) return;
     const id = this.selectedEvent?.id;
     this._clearDetail();
-    if (id !== undefined) void this.updateComplete.then(() =>
-      Array.from(this.renderRoot.querySelectorAll<HTMLButtonElement>('button[data-event-id]')).find(row => row.dataset.eventId === String(id))?.focus());
+    if (id !== undefined) void this.updateComplete.then(() => {
+      if (!this.selectedEvent && !this.eventId) this._eventRow(String(id))?.focus({ preventScroll: true });
+    });
   };
   override disconnectedCallback() {
     this.listRequest++; this.detailRequest++;
-    window.removeEventListener('keydown', this.closeDetail);
+    window.removeEventListener('keydown', this.returnToList);
     super.disconnectedCallback();
   }
 
   override connectedCallback() {
     super.connectedCallback();
-    window.addEventListener('keydown', this.closeDetail);
+    window.addEventListener('keydown', this.returnToList);
     // Restore persisted RCA result
     try {
       const saved = localStorage.getItem('event_rca_result');
@@ -541,13 +569,31 @@ export class EventManagementPage extends LitElement {
     }
   }
 
+  protected override willUpdate(changes: Map<string, unknown>) {
+    if (!changes.has('eventId')) return;
+    if (this.eventId) {
+      this._clearDetail();
+      this.detailLoading = true;
+      return;
+    }
+    const saved = history.state?.aggregateListReturn === eventListReturn?.token ? eventListReturn : undefined;
+    if (!saved && !changes.get('eventId')) return;
+    this._clearDetail();
+    this.activeListTab = saved?.group ?? 'active';
+    this.eventsPage = saved?.page ?? 0;
+    this.filterSeverity = saved?.severity ?? 'all';
+    this.filterSearch = saved?.search ?? '';
+    this.listPosition = saved?.position;
+    this.loadedListScope = '';
+    this.loading = true;
+  }
+
   protected override updated(changes: Map<string, unknown>) {
     if (!changes.has('eventId')) return;
-    if (this.eventId) void this._readDetail(this.eventId);
-    else {
-      if (changes.get('eventId')) this.closeDetail();
-      void this._loadEvents();
-    }
+    if (this.eventId) {
+      this.listRequest++;
+      void this._readDetail(this.eventId);
+    } else void this._loadEvents();
   }
 
   private _validRCAResult(value: any): value is NonNullable<typeof this.rcaResult> {
@@ -584,7 +630,17 @@ export class EventManagementPage extends LitElement {
     return host.closest('main.content') ?? document.scrollingElement;
   }
 
-  private _rememberListPosition(key: string) {
+  private get canReturnToList() {
+    return eventListReturn?.eventId === this.eventId
+      && history.state?.aggregateEventReturn === eventListReturn.token;
+  }
+
+  private _eventRow(id: string) {
+    return Array.from(this.renderRoot.querySelectorAll<HTMLButtonElement>('button[data-event-id]'))
+      .find(row => row.dataset.eventId === id);
+  }
+
+  private _captureListPosition(key: string): EventListPosition | undefined {
     const main = this._listScroller();
     const list = this.renderRoot?.querySelector<HTMLElement>('.event-list');
     if (!main || !list) return;
@@ -597,7 +653,7 @@ export class EventManagementPage extends LitElement {
       return rect.bottom > top && rect.top < bottom;
     });
     const rect = row?.getBoundingClientRect();
-    this.listPosition = {
+    return {
       key, mainTop: main.scrollTop, listTop: list.scrollTop,
       ...(rect && row?.dataset.eventId ? {
         row: { id: row.dataset.eventId, viewportTop: rect.top, listOffset: rect.top - listRect.top },
@@ -610,8 +666,7 @@ export class EventManagementPage extends LitElement {
     const list = this.renderRoot.querySelector<HTMLElement>('.event-list');
     if (!main || !list) return;
     const anchor = position.row;
-    const row = anchor && Array.from(list.querySelectorAll<HTMLButtonElement>('button[data-event-id]'))
-      .find(button => button.dataset.eventId === anchor.id);
+    const row = anchor && this._eventRow(anchor.id);
     if (row && anchor) {
       list.scrollTop += row.getBoundingClientRect().top - list.getBoundingClientRect().top - anchor.listOffset;
       main.scrollTop += row.getBoundingClientRect().top - anchor.viewportTop;
@@ -619,6 +674,7 @@ export class EventManagementPage extends LitElement {
       list.scrollTop = position.listTop;
       main.scrollTop = position.mainTop;
     }
+    if (position.focusId) this._eventRow(position.focusId)?.focus({ preventScroll: true });
   }
 
   private async _readEventList() {
@@ -659,6 +715,7 @@ export class EventManagementPage extends LitElement {
       if (request === this.listRequest && error instanceof EventListAccessError) {
         this.listRequest++;
         this.listPosition = undefined;
+        clearEventListReturn();
         this.loadedListScope = '';
         this.events = [];
         this.eventsPage = 0;
@@ -666,7 +723,7 @@ export class EventManagementPage extends LitElement {
         this.stats = null;
         this.statsError = false;
         this.mttr = null;
-        this.closeDetail();
+        this._clearDetail();
         this.loadError = error.message;
         this.loading = false;
         this.retryLoading = false;
@@ -680,11 +737,11 @@ export class EventManagementPage extends LitElement {
     ]);
     if (request !== this.listRequest) return;
     const key = this.listPositionKey;
-    if (this.loadedListScope === scope) this._rememberListPosition(key);
+    if (this.loadedListScope === scope) this.listPosition = this._captureListPosition(key) ?? this.listPosition;
     const readable = list.status === 'fulfilled';
     this.loadError = readable ? null
       : list.reason instanceof Error ? list.reason.message : '事件暂不可读';
-    if (this.loadError) this.closeDetail();
+    if (this.loadError) this._clearDetail();
     this.events = readable ? list.value.items : [];
     this.eventsTotal = readable ? list.value.total : null;
     this.loadedListScope = readable ? scope : '';
@@ -733,6 +790,23 @@ export class EventManagementPage extends LitElement {
     this._resetDrafts();
   }
 
+  private _openListEvent(event: AlertEvent) {
+    const eventId = readEventId(event.id);
+    const position = this._captureListPosition(this.listPositionKey);
+    const url = new URL(location.href);
+    if (eventId && position && url.pathname === '/events' && ['aggregate', 'rules'].includes(url.searchParams.get('view') ?? '')) {
+      const token = generateUUID();
+      eventListReturn = {
+        token, eventId, group: this.activeListTab, page: this.eventsPage,
+        severity: this.filterSeverity, search: this.filterSearch,
+        position: { ...position, focusId: String(eventId) },
+      };
+      history.replaceState({ ...history.state, aggregateListReturn: token }, '', url);
+      history.pushState({ aggregateEventReturn: token }, '', eventDetailUrl(eventId));
+      window.dispatchEvent(new PopStateEvent('popstate'));
+    } else void this._selectEvent(event);
+  }
+
   private async _selectEvent(event: AlertEvent) {
     const read = this._readDetail(event.id, event);
     if (this.isConnected) {
@@ -748,6 +822,11 @@ export class EventManagementPage extends LitElement {
     else this.renderRoot.querySelector<HTMLElement>('.record h3')?.focus({preventScroll:true});
   }
 
+  private _denyDetail() {
+    if (this.canReturnToList) clearEventListReturn();
+    this._clearDetail('事件不可访问或已不存在。');
+  }
+
   private async _readDetail(id: string | number, event?: AlertEvent) {
     const request = ++this.detailRequest;
     if (this.detailKey !== String(id)) { this._resetDrafts(); this.recordMore = false; }
@@ -760,7 +839,7 @@ export class EventManagementPage extends LitElement {
     const detailRead = authFetch(`${API_BASE}/alerts/events/${id}`);
     const accessDenied = (response: Response) => {
       if (![401, 403, 404].includes(response.status)) return false;
-      if (request === this.detailRequest) this._clearDetail('事件不可访问或已不存在。');
+      if (request === this.detailRequest) this._denyDetail();
       return true;
     };
     const logsRead = authFetch(`${API_BASE}/alerts/events/${id}/logs`)
@@ -1093,7 +1172,7 @@ export class EventManagementPage extends LitElement {
                           <button type="button" data-event-id=${event.id} aria-label=${`查看事件 #${event.id} 详情`} aria-description=${event.title}
                             aria-disabled=${this.retryLoading}
                             class="event-item ${this.selectedEvent?.id === event.id ? "selected" : ""}"
-                            @click=${() => { if (!this.retryLoading) this._selectEvent(event); }}
+                            @click=${() => { if (!this.retryLoading) this._openListEvent(event); }}
                           >
                             <div class="event-title">
                               <span class="event-number">#${event.id}</span>
@@ -1127,8 +1206,9 @@ export class EventManagementPage extends LitElement {
     const template = !historical && event?.source_type === 'template-trigger';
     return html`<section class="record" aria-label="事件详情">
       <nav class="record-nav" aria-label="返回">
-        ${this.eventId ? html`<a class="btn" href="/events?view=aggregate">返回事件列表</a>`
-          : html`<button class="btn" @click=${() => this.closeDetail()}>返回事件列表</button>`}
+        ${!this.eventId || this.canReturnToList
+          ? html`<button class="btn" @click=${() => this.returnToList()}>返回事件列表</button>`
+          : html`<a class="btn" href="/events?view=aggregate">返回事件列表</a>`}
         ${workspace ? html`<a class="btn" href=${workspace} @click=${(e: MouseEvent) => returnToWorkbench(e, workspace)}>${returnLabel}</a>` : nothing}
       </nav>
       ${this.detailLoading && !event ? html`<p role="status">正在读取事件 #${this.eventId}…</p>` : nothing}
@@ -1138,7 +1218,7 @@ export class EventManagementPage extends LitElement {
       ${event ? html`${this.canViewInvestigations && !historical ? keyed(event.id,html`<div class="record-overview">
         <event-investigation-record .event=${event} .lookup=${true} .full=${true} .allowStart=${true}
           @template-event-closed=${() => void this._action(async () => {})}
-          @event-investigation-denied=${() => this._clearDetail('事件不可访问或已不存在。')}></event-investigation-record>
+          @event-investigation-denied=${() => this._denyDetail()}></event-investigation-record>
       </div>`) : html`<app-card><span slot="header">事件详情</span>
         <h3 tabindex="-1">事件 #${event.id}：${eventDisplayTitle(event)}</h3>
         <div class="record-status">
