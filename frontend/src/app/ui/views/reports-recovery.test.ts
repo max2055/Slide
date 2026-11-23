@@ -6,7 +6,6 @@ afterEach(() => { document.body.replaceChildren(); vi.resetAllMocks(); });
 async function page() {
   const element = new ReportsPage();
   vi.spyOn(element, 'firstUpdated').mockImplementation(() => {});
-  (element as any).loading = false;
   document.body.append(element); await element.updateComplete;
   return element as any;
 }
@@ -57,5 +56,6 @@ it('keeps a healthy empty list distinct from failure', async () => {
   await element.loadConfigs(); await element.updateComplete;
   expect(element.shadowRoot.querySelector('app-empty-state[title="暂无定时报表"]')).not.toBeNull();
   expect(element.shadowRoot.querySelector('[role="alert"]')).toBeNull();
-  expect(element.shadowRoot.querySelector('button.btn-primary').disabled).toBe(false);
+  const create = [...element.shadowRoot.querySelectorAll('button')].find((button: any) => button.textContent.includes('新建计划')) as HTMLButtonElement;
+  expect(create.disabled).toBe(false);
 });

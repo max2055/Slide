@@ -52,6 +52,13 @@ const SECTION_LABELS: Record<string, string> = {
   processes: '进程样本', topProcesses: 'CPU 占用前 20 个进程',
   services: '运行中的服务', serviceStatus: '运行中的服务', logs: '系统日志', systemLogs: '系统日志', recentSystemLogs: '系统日志',
 };
+const SNAPSHOT_GROUPS = {
+  network: { label: '网卡流量、错误与丢包和监听端口', sections: ['interfaceErrors', 'listeningPorts'] },
+  processes: { label: 'CPU 占用较高的进程样本', sections: ['topProcesses'] },
+  services: { label: '运行中的服务状态', sections: ['services'] },
+  logs: { label: '近期系统日志', sections: ['systemLogs'] },
+};
+export type ServerDiagnosticGroup = keyof typeof SNAPSHOT_GROUPS;
 const FIELDS: Record<string, string> = {
   interface: '网卡', rxBytes: '接收字节', txBytes: '发送字节', rxErrors: '接收错误数', txErrors: '发送错误数', rxDrops: '接收丢包数', txDrops: '发送丢包数',
   protocol: '协议', address: '监听地址', port: '端口', process: '进程', pid: '进程号', command: '命令', cpuPercent: 'CPU (%)', memoryPercent: '内存 (%)',
@@ -90,7 +97,8 @@ export class ServerDiagnosticPanel extends LitElement {
   @property({ attribute: false }) evidence: ServerDiagnosticEvidence | null = null;
   @property({ type: Boolean }) loading = false;
   @property() error: string | null = null;
-  @property({ attribute: false }) sectionFilter: string | null = null;
+  @property({ attribute: false }) sectionFilter: ServerDiagnosticGroup | null = null;
+  @property({ type: Boolean }) canCollect = false;
 
   private sections(): Array<[string, ServerDiagnosticSection]> {
     if (!this.evidence) return [];
@@ -117,21 +125,34 @@ export class ServerDiagnosticPanel extends LitElement {
   }
 
   private renderSection(key: string, section: ServerDiagnosticSection) {
-    const items = Array.isArray(section.items) ? section.items : [];
+    const items = Array.isArray(section.items) ? section.items.filter(item => item && typeof item === 'object') : [];
     const sources = sourceList(section.source);
     const fieldKeys = Object.keys(FIELDS).filter(field => items.some(item => field in item));
     const reason = section.reason ? gapExplanation(section.reason) : ['本次没有可展示的观测', '核对采集来源、时间与权限后重新采集'];
+    const count = items.length && fieldKeys.length
+      ? `已显示 ${Math.min(items.length, 100)} 条样本`
+      : Array.isArray(section.items) && section.items.length === 0 && section.quality === 'good' && !section.reason && !section.truncated
+        ? '本次采集 0 条样本' : '样本数量未知';
     return html`<app-card class="evidence-section">
       <span slot="header" class="section-header"><span>${SECTION_LABELS[key] ?? '其他诊断证据'}</span><app-badge variant=${this.qualityVariant(section.quality)}>${qualityLabel(section.quality)}</app-badge></span>
-      <div class="section-meta"><span>来源：${sources.length ? sources.join('、') : '来源未知'}</span><span>采集于：${displayTime(section.collectedAt)}</span>
+      <div class="section-meta"><span>来源：${sources.length ? sources.join('、') : '来源未知'}</span><span>采集于：${displayTime(section.collectedAt)}</span><span>${count}</span>
         ${section.truncated || items.length > 100 ? html`<app-badge variant="warn">仅展示部分结果</app-badge>` : nothing}</div>
-      ${section.reason ? html`<p class="reason">${reason[0]}。下一步：${reason[1]}。</p>` : nothing}
+      ${section.reason && items.length && fieldKeys.length ? html`<p class="reason">${reason[0]}。下一步：${reason[1]}。</p>` : nothing}
       ${items.length && fieldKeys.length ? html`<div class="table-scroll" tabindex="0" role="region" aria-label=${`${SECTION_LABELS[key] ?? '诊断'}数据，可横向滚动`}>
         <app-data-table .dense=${true} .columns=${fieldKeys.map(field => ({ key: field, label: FIELDS[field] }))}
           .rows=${items.slice(0, 100).map(item => Object.fromEntries(fieldKeys.map(field => [field, fieldValue(field, item[field])]))) }></app-data-table></div>`
         : html`<app-empty-state title="暂无可展示的观测" description=${`${reason[0]}。下一步：${reason[1]}。`} icon="search"></app-empty-state>`}
       <details><summary>技术详情（原始字段与标识）</summary><pre>${JSON.stringify({ section: key, ...section }, null, 2)}</pre></details>
     </app-card>`;
+  }
+
+  private missingEvidence(sections: Array<[string, ServerDiagnosticSection]>): string | null {
+    const group = this.sectionFilter;
+    if (!group) return this.evidence ? null : '服务器诊断证据';
+    if (!sections.length) return SNAPSHOT_GROUPS[group].label;
+    if (sections.some(([key]) => key === group)) return null;
+    const missing = SNAPSHOT_GROUPS[group].sections.filter(key => !sections.some(([present]) => present === key));
+    return missing.length ? missing.map(key => SECTION_LABELS[key]).join('、') : null;
   }
 
   private qualityVariant(quality: DiagnosticQuality | undefined): "ok" | "warn" | "danger" | "muted" {
@@ -142,6 +163,12 @@ export class ServerDiagnosticPanel extends LitElement {
   }
 
   render() {
+    const sections = this.sections();
+    const missing = this.missingEvidence(sections);
+    const collectHelp = this.canCollect
+      ? '在「诊断」页签点击「采集诊断证据」，通过 SSH 获取。'
+      : '请联系有服务器管理权限的人员，通过「诊断」页签采集。';
+    const missingHelp = `未取得${missing}，样本数量未知。${collectHelp}`;
     return html`
       <style>
         :host { display: block; min-width:0; }
@@ -162,19 +189,17 @@ export class ServerDiagnosticPanel extends LitElement {
         .gaps { margin-top:var(--space-md); display:grid; gap:var(--space-xs); }
         .gap { color:var(--warn); font-size:var(--text-sm); overflow-wrap:anywhere; }
       </style>
-      ${this.loading
-        ? html`<div class="loading" role="status">正在读取诊断证据…</div>`
-        : this.error
-          ? html`<div class="error" role="alert">${this.error}</div>`
-          : !this.evidence
-            ? html`<app-empty-state title="尚无诊断证据" description="请采集只读诊断证据后核对服务器；缺少证据不能判断正常。" icon="activity"></app-empty-state>`
-            : html`
+      ${this.loading ? html`<div class="loading" role="status">正在采集诊断证据…</div>` : nothing}
+      ${this.error ? html`<div class="error" role="alert">${this.error}${this.evidence ? '。仍显示上次采集的快照。' : ''}</div>` : nothing}
+      ${missing ? this.evidence ? html`<p class="reason" role="status">${missingHelp}</p>` : !this.loading
+        ? html`<app-empty-state title="尚无诊断证据" description=${missingHelp} icon="activity"></app-empty-state>` : nothing : nothing}
+      ${this.evidence ? html`
                 <div class="summary">
                   <app-badge variant=${this.qualityVariant(this.evidence.quality)}>${qualityLabel(this.evidence.quality)}</app-badge>
                   ${this.evidence.truncated ? html`<app-badge variant="warn">仅展示部分结果</app-badge>` : nothing}
                   <span class="freshness">采集于：${displayTime(this.evidence.collectedAt)} · 有效期截止：${displayTime(this.evidence.expiresAt)}</span>
                 </div>
-                <div class="sections">${this.sections().map(([key, section]) => this.renderSection(key, section))}</div>
+                <div class="sections">${sections.map(([key, section]) => this.renderSection(key, section))}</div>
                 ${this.evidence.gaps?.length
                   ? html`<div class="gaps" role="list" aria-label="证据缺口">
                       ${this.evidence.gaps.filter(gap => !this.sectionFilter || (SECTION_ALIASES[this.sectionFilter] ?? [this.sectionFilter]).includes(gap.section ?? '')).map(gap => {
@@ -183,7 +208,7 @@ export class ServerDiagnosticPanel extends LitElement {
                       })}
                     </div>`
                   : nothing}
-              `}
+              ` : nothing}
     `;
   }
 }

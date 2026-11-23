@@ -42,7 +42,7 @@ describe("event center navigation", () => {
     const element=await renderAt('/events?view=rules');
     expect(element.shadowRoot!.querySelector('event-management-page')).not.toBeNull();
     expect(element.shadowRoot!.querySelector('alerts-page[mode="rules"]')).toBeNull();
-    expect(element.shadowRoot!.querySelector('a')?.getAttribute('href')).toBe('/?tab=instances-db');
+    expect(element.shadowRoot!.querySelector('a[href="/?tab=instances-db"]')).toBeNull();
   });
   it("writes tab changes to the URL and responds to popstate", async () => {
     const element = await renderAt("/events?view=active");

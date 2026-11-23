@@ -175,9 +175,15 @@ export const NetworkDeviceProbeResultSchema = Type.Object({
 export const NetworkDeviceTestConnectionResponseSchema = Type.Object({
   success: Type.Boolean(),
   probe: Type.Optional(NetworkDeviceProbeResultSchema),
-  ssh: Type.Optional(Type.Object({ verified: Type.Boolean() }, { additionalProperties: false })),
+  ssh: Type.Optional(Type.Object({
+    verified: Type.Boolean({ description: 'Whether the SSH handshake verified the remote host key against the configured fingerprint. A successful handshake without a fingerprint returns false.' }),
+  }, { additionalProperties: false })),
   error: Type.Optional(Type.String()),
 }, { $id: 'NetworkDeviceTestConnectionResponse', additionalProperties: false });
+export const NetworkDeviceTestConnectionBadRequestSchema = Type.Object({
+  ...ErrorResponseSchema.properties,
+  success: Type.Optional(Type.Literal(false)),
+}, { $id: 'NetworkDeviceTestConnectionBadRequest', additionalProperties: false });
 export const NetworkDeviceProbeResponseSchema = Type.Object({
   success: Type.Boolean(),
   observations: Type.Optional(Type.Integer({ minimum: 0 })),
@@ -752,6 +758,7 @@ export const PublicApiSchemas = {
   NetworkDeviceTestConnectionRequest: NetworkDeviceTestConnectionRequestSchema,
   NetworkDeviceProbeResult: NetworkDeviceProbeResultSchema,
   NetworkDeviceTestConnectionResponse: NetworkDeviceTestConnectionResponseSchema,
+  NetworkDeviceTestConnectionBadRequest: NetworkDeviceTestConnectionBadRequestSchema,
   NetworkDeviceProbeResponse: NetworkDeviceProbeResponseSchema,
   NetworkDeviceCapability: NetworkDeviceCapabilitySchema,
   NetworkDeviceCapabilitiesResponse: NetworkDeviceCapabilitiesResponseSchema,

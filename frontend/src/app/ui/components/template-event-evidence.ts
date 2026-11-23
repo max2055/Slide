@@ -13,6 +13,7 @@ const condition = (n: any, operands: Map<string, string>): string =>
 @customElement("template-event-evidence")
 export class TemplateEventEvidence extends LitElement {
   @property({ type: Number }) eventId = 0;
+  @property({ type: Number }) alertId = 0;
   @property({ type: Boolean }) compact = false;
   @property({ type: Boolean }) allowClose = false;
   @state() private data: any = null;
@@ -62,14 +63,20 @@ export class TemplateEventEvidence extends LitElement {
     `,
   ];
   protected updated(changes: Map<string, unknown>) {
-    if (changes.has("eventId")) void this.load();
+    if (changes.has("eventId") || changes.has("alertId")) void this.load();
   }
   override disconnectedCallback() {
     this.generation++;
     super.disconnectedCallback();
   }
+  private openingRule(data: any) {
+    const episode = data?.episode;
+    return data?.snapshot?.configuration?.rules?.find((rule: any) => rule.rule_id === episode?.rule_id
+      && (!this.alertId || rule.version === episode.version && rule.scope === episode.scope && rule.body_hash === episode.body_hash));
+  }
   private async load(ack = false) {
     const id = this.eventId,
+      alertId = this.alertId,
       g = ++this.generation;
     if (!id) return;
     this.busy = true;
@@ -82,31 +89,47 @@ export class TemplateEventEvidence extends LitElement {
       );
       // Event facts are optional on legacy events; a successful but incompatible
       // response is unavailable evidence, never a render-time exception.
-      const rule = data?.snapshot?.configuration?.rules?.find((v: any) => v.rule_id === data?.episode?.rule_id);
+      const rule = this.openingRule(data);
       if (!data?.episode?.last || !rule?.item || !data.snapshot.configuration.templates?.some((v: any) => v.template_id === rule.item.template_id))
+        throw new Error('EVENT_EVIDENCE_INVALID');
+      if (alertId && (Number(data.event_id) !== id || Number(data.alert_id) !== alertId))
         throw new Error('EVENT_EVIDENCE_INVALID');
       if (g === this.generation) this.data = data;
     } catch (e) {
-      if (g === this.generation && !(e instanceof MetricRequestError && e.status === 404))
-        this.error = metricError(e);
+      if (g === this.generation && (alertId || !(e instanceof MetricRequestError && e.status === 404)))
+        this.error = alertId ? '暂不可读取告警发生时的触发器。' : metricError(e);
     } finally {
       if (g === this.generation) this.busy = false;
     }
   }
   render() {
     const d = this.data;
+    if (this.alertId && !d) return this.busy ? html`<span role="status">正在读取规则来源…</span>`
+      : this.error ? html`<span role="alert" class="error">${this.error}</span>
+        <button class="btn btn-refresh" @click=${() => this.load()}>重试读取规则来源</button>` : nothing;
     if (!d) {
       if (this.error) return html`<p role="alert" class="error">${this.error}</p>`;
       return this.compact ? html`<p role="status">${this.busy ? '正在读取监控恢复证据…' : '当前无法确认监控恢复证据。'}</p>` : nothing;
     }
     const e = d.episode,
       s = d.snapshot.configuration,
-      r = s.rules.find((v: any) => v.rule_id === e.rule_id),
+      r = this.openingRule(d),
       p = s.templates.find((v: any) => v.template_id === r.item.template_id);
-    const resourceUrl = `/?tab=${e.resource.type === "instance" ? "instance-detail" : e.resource.type === "server" ? "server-detail" : "network-device-detail"}&${e.resource.type === "network_device" ? "networkDeviceId" : "id"}=${e.resource.id}`;
-    const evidenceQuality = e.last.quality === 'unknown' ? '证据未知' : e.last.quality === 'partial' ? '部分证据有效' : '证据有效';
     const operands = new Map<string, string>([r, ...(r.inputs ?? [])].map(input =>
       [input.item.item_id, metricDisplayName(input.metric.id)]));
+    if (this.alertId) return html`
+      <span>模板 ${r.item.template_id} v${p.version} · 触发器 ${r.rule_id} v${r.version}</span>
+      <details class="event-evidence">
+        <summary>查看触发器</summary>
+        <dl>
+          <dt>发生时配置</dt><dd>r${s.config_revision}</dd>
+          <dt>指标</dt><dd>${metricDisplayName(r.metric.id)} · ${r.unit}</dd>
+          <dt>触发条件</dt><dd>${condition(r.problem, operands)}</dd>
+        </dl>
+        <pre>${JSON.stringify(r, null, 2)}</pre>
+      </details>`;
+    const resourceUrl = `/?tab=${e.resource.type === "instance" ? "instance-detail" : e.resource.type === "server" ? "server-detail" : "network-device-detail"}&${e.resource.type === "network_device" ? "networkDeviceId" : "id"}=${e.resource.id}`;
+    const evidenceQuality = e.last.quality === 'unknown' ? '证据未知' : e.last.quality === 'partial' ? '部分证据有效' : '证据有效';
     const manuallyClosed = e.state === 'closed' && !!e.manual_close;
     const recovered = e.state === 'closed' && !manuallyClosed && Number.isFinite(Date.parse(e.closed_at));
     const mode = (r.recovery_mode ?? 'recovery_expression') as TriggerRecoveryMode;

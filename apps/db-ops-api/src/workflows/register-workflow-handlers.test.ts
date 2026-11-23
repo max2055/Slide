@@ -5,7 +5,7 @@ import { JobRegistry } from './job-registry.js';
 import { registerWorkflowHandlers } from './register-workflow-handlers.js';
 
 const keys = [
-  'fault.diagnose-unhealthy', 'capacity.collect', 'baseline.cleanup', 'alert.evaluate',
+  'fault.diagnose-unhealthy', 'database.logs.collect', 'capacity.collect', 'baseline.cleanup', 'alert.evaluate',
   'capacity.consistency', 'report.schedule', 'report.occurrence', 'notification.dispatch', 'notification.deliver', 'report.notify',
 ];
 function setup() {
@@ -18,12 +18,14 @@ function setup() {
   });
   const actions = {
     fault: step('fault'), collect: step('collect'), cleanup: step('cleanup'), evaluate: step('evaluate'),
+    logCollection: vi.fn(async (_signal?: AbortSignal) => ({ succeeded: 1, unavailable: 0, failed: 0 })),
     capacityEnqueue: step('capacityEnqueue'), consistency: step('consistency'),
     pending: step('pending'), dispatchEnqueue: step('dispatchEnqueue'), reportEnqueue: step('reportEnqueue'),
   };
   const occurrences = { lastOccurrence: vi.fn(async () => null), schedule: vi.fn(async () => true), savedReport: vi.fn(), createReport: vi.fn(), updateReport: vi.fn(), claim: vi.fn(), complete: vi.fn(), fail: vi.fn() };
   const deps = {
     faultDiagnosisService: { diagnoseUnhealthyInstances: actions.fault },
+    databaseLogService: { collectLogs: actions.logCollection },
     monitorCollector: { collectCapacityNow: actions.collect },
     baselineCalculator: { cleanupOldBaselines: actions.cleanup },
     alertEngine: { triggerEvaluation: actions.evaluate },
@@ -48,6 +50,22 @@ function setup() {
   return { events, controller, context, actions, deps, occurrences, registry, register, run };
 }
 afterEach(() => { vi.restoreAllMocks(); vi.useRealTimers(); });
+
+it.each([
+  ['success', 1, 0, 0],
+  ['partial', 1, 1, 1],
+  ['failure', 0, 1, 0],
+  ['failure', 0, 0, 1],
+] as const)('records %s business evidence for database log collection', async (status, succeeded, unavailable, failed) => {
+  const h = setup();
+  const data = { succeeded, unavailable, failed };
+  h.actions.logCollection.mockResolvedValueOnce(data);
+  const type = 'database.logs.collect';
+  expect(await h.registry.executeWithResult({ id: 'run', type, payload: {}, attempts: 1, maxAttempts: 1, fencingToken: 7 }, h.context))
+    .toMatchObject({ status, result: { handler: type, data } });
+  expect(h.actions.logCollection).toHaveBeenCalledExactlyOnceWith(h.context.signal);
+  expect(h.actions.capacityEnqueue).not.toHaveBeenCalled();
+});
 
 it('registers exactly the ordered keys without executing handlers, querying stores or creating occurrence stores', () => {
   const h = setup();

@@ -26,7 +26,7 @@ describe('notification recovery reads', () => {
   it.each([503, 403, 401])('HTTP %s remains visible without relying on a toast', async status => {
     readFetch.mockResolvedValue(json({}, status));
     const element = await view();
-    await vi.waitFor(() => expect(text(element)).toContain(status === 403 ? '无权查看通知投递记录' : status === 401 ? '登录已失效' : 'HTTP 503'));
+    await vi.waitFor(() => expect(text(element)).toContain(status === 403 ? '无权查看通知死信' : status === 401 ? '登录已失效' : 'HTTP 503'));
     expect(element.shadowRoot!.querySelector('app-empty-state[title="没有待重放的通知"]')).toBeNull();
     expect(text(element)).toContain('重试');
   });
@@ -43,7 +43,7 @@ describe('notification recovery reads', () => {
   });
   it.each([{}, null, [{ ...job, payload: null }]])('invalid response %j is a persistent failure, not empty/success', async body => {
     readFetch.mockResolvedValue(json(body)); const element = await view();
-    await vi.waitFor(() => expect(text(element)).toContain('通知投递记录格式异常'));
+    await vi.waitFor(() => expect(text(element)).toContain('通知死信格式异常'));
     expect(element.shadowRoot!.querySelector('table')).toBeNull();
   });
   it('refresh hides old rows while loading and clears them on failure', async () => {
@@ -52,7 +52,7 @@ describe('notification recovery reads', () => {
     let resolve!: (r: Response) => void;
     readFetch.mockImplementation(() => new Promise(r => resolve = r));
     const pending = (element as any).loadNotificationDeadLetters(); await element.updateComplete;
-    expect(text(element)).toContain('加载通知投递记录'); expect(element.shadowRoot!.querySelector('table')).toBeNull();
+    expect(text(element)).toContain('加载通知死信'); expect(element.shadowRoot!.querySelector('table')).toBeNull();
     resolve(json({}, 403)); await pending; await element.updateComplete;
     expect(text(element)).toContain('无权查看'); expect(text(element)).not.toContain(job.id);
   });
@@ -63,7 +63,7 @@ describe('notification recovery reads', () => {
     }));
     const element = await view();
     await vi.advanceTimersByTimeAsync(15_001); await element.updateComplete;
-    expect(text(element)).toContain('加载通知投递记录超时'); expect(text(element)).toContain('重试');
+    expect(text(element)).toContain('加载通知死信超时'); expect(text(element)).toContain('重试');
   });
   it('a disconnected read cannot publish late data', async () => {
     let resolve!: (r: Response) => void;
@@ -76,7 +76,7 @@ describe('notification recovery reads', () => {
     readFetch.mockRejectedValue(new TypeError('Failed to fetch'));
     const element = await view();
     await vi.waitFor(() => expect(text(element)).toContain('网络异常'));
-    expect(element.shadowRoot!.querySelector('app-empty-state')?.getAttribute('title')).toBe('无法加载通知投递记录');
+    expect(element.shadowRoot!.querySelector('app-empty-state')?.getAttribute('title')).toBe('无法加载通知死信');
   });
   it('after successful replay, a failed queue refresh stays visibly failed', async () => {
     readFetch.mockResolvedValue(json([job])); const element = await view();

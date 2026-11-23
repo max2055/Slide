@@ -92,7 +92,7 @@ test('trusted HTTPS same-origin WSS authenticates, resumes without replay and wi
     }
     await page.goto(`${env.url}/chat?session=${session.session_id}`);
     await page.locator('.agent-chat__input textarea').fill('验证可信 WSS 普通对话');
-    await page.getByRole('button', { name: 'Send message', exact: true }).click();
+    await page.getByRole('button', { name: '发送消息', exact: true }).click();
     await expect(page.getByRole('log')).toContainText('普通对话合成回答');
     await page.goto(`${env.url}/investigations`);
     expect(await page.evaluate(() => isSecureContext)).toBe(true);
