@@ -246,6 +246,7 @@ export class SystemAuditPage extends LitElement {
           <div class="detail-row"><span>客户端</span><span class="mono">${this.selected.clientIp ?? '-'} · ${this.selected.userAgent ?? '-'}</span></div>
           <div><strong>操作详情</strong><pre>${JSON.stringify(this.selected.details ?? {}, null, 2)}</pre></div>
         </div>` : nothing}
+        <button slot="footer" type="button" class="btn" @click=${() => { this.selected = null; }}>返回列表</button>
       </app-dialog>
     `;
   }

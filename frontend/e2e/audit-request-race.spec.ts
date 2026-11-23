@@ -108,7 +108,7 @@ test('MAX-729 queries result and category together, preserves them on close, and
   const trigger = h.system.getByRole('button', { name: '查看详情' });
   await trigger.press('Enter');
   await expect(h.system.locator('app-dialog .dialog-grid')).toContainText(failed.action);
-  await page.keyboard.press('Escape');
+  await h.system.getByRole('button', { name: '返回列表' }).press('Enter');
   await expect(trigger).toBeFocused();
   await expect(h.system.getByRole('combobox', { name: '操作结果' })).toHaveValue('failure');
   await expect(h.system.getByRole('combobox', { name: '请求类别' })).toHaveValue('business');
