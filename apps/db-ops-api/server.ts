@@ -1944,7 +1944,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
       const user = (request as any).user;
       const uniqueIds = [...new Set(ids as number[])];
       for (const approvalId of uniqueIds) {
-        if (!await requireApprovalAccess(request, reply, approvalId, 'read-write')) return;
+        if (!await requireApprovalAccess(request, reply, approvalId, 'read-write')) return reply;
       }
       if (execute_ids !== undefined && (!Array.isArray(execute_ids)
         || !execute_ids.every((id) => uniqueIds.includes(id)))) {
@@ -1998,9 +1998,9 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
         }
       }
 
-      reply.send(results);
+      return reply.send(results);
     } catch (error: any) {
-      reply.code(500).send({ error: error.message });
+      return reply.code(500).send({ error: error.message });
     }
   });
 

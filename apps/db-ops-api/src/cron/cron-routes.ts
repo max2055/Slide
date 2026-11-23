@@ -357,7 +357,7 @@ export function registerCronRoutes(fastify: FastifyInstance, verifyToken: preHan
     handler: async (request, reply) => {
       try {
         const { id } = request.params as any;
-        if (!await requireCronJobAccess(request, reply, Number(id))) return;
+        if (!await requireCronJobAccess(request, reply, Number(id))) return reply;
         const query = request.query as any;
         if (query.limit === '' || query.offset === '') throw new Error('CRON_INVALID_PAGINATION');
         const limit = query.limit === undefined ? 20 : Number(query.limit);
@@ -365,9 +365,9 @@ export function registerCronRoutes(fastify: FastifyInstance, verifyToken: preHan
         validateCronPagination(limit, offset);
 
         const result = await cronJobService.getLogs(Number(id), limit, offset);
-        reply.send(result);
+        return reply.send(result);
       } catch (error: any) {
-        reply.code(cronErrorStatus(error)).send({ error: error.message });
+        return reply.code(cronErrorStatus(error)).send({ error: error.message });
       }
     }
   });

@@ -101,9 +101,15 @@ test('real history representative: compact long data, independent filters, evide
   await expect(view.locator('tbody')).not.toContainText('执行成功'); await expect(view.locator('tbody')).toContainText('证据冲突');
   await capture(page, 'conflict');
   await view.getByRole('combobox', { name: '审批结果', exact: true }).selectOption('all');
-  await view.getByRole('combobox', { name: '执行结果', exact: true }).selectOption('unknown');
-  await expect(view.locator('tbody')).toContainText('MAX177_agent');
-  await view.getByRole('button', { name: /^查看证据/ }).click(); await expect(dialog).toContainText('未提供工具执行回执');
+  await view.getByRole('combobox', { name: '执行结果', exact: true }).selectOption('unconfirmed');
+  const consumedAgent = view.getByRole('row').filter({ hasText: 'MAX177_agent' });
+  await expect(consumedAgent).toContainText('结果待确认');
+  await consumedAgent.getByRole('button', { name: '查看证据：MAX177_agent', exact: true }).click();
+  await expect(dialog.getByText('结果待确认', { exact: true })).toBeVisible();
+  await dialog.getByText('原始审批证据', { exact: true }).click();
+  const agentEvidence = JSON.parse(await dialog.locator('pre').innerText());
+  expect(agentEvidence).toMatchObject({ tool_name: 'MAX177_agent', status: 'consumed', used_count: 1 });
+  expect(agentEvidence).not.toHaveProperty('execution_result');
   await page.keyboard.press('Escape');
   expect(errors).toEqual([]);
 });

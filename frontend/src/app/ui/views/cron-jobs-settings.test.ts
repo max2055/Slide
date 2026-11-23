@@ -93,6 +93,36 @@ describe('Cron exact run tracking', () => {
     await page.openLogViewer(job); await page.updateComplete;
     expect(page.shadowRoot!.textContent).toContain('旧成功（仅 runner 结束）');
   });
+  it('MAX-715 retries only the same paginated read in the existing execution record dialog', async () => {
+    const page = await mount();
+    authFetch.mockClear().mockResolvedValueOnce(response({}, 503));
+    await page.openLogViewer(job);
+    await page.updateComplete;
+    const dialog = page.shadowRoot!.querySelector('app-dialog')!;
+    expect(dialog.querySelector('[role="alert"]')?.textContent).toContain('加载日志失败');
+    expect(dialog.textContent).not.toContain('暂无执行记录');
+
+    authFetch.mockResolvedValueOnce(response({ logs: [] }));
+    dialog.querySelector<HTMLButtonElement>('button')!.click();
+    await vi.waitFor(() => expect(dialog.textContent).toContain('暂无执行记录'));
+    expect(page.shadowRoot!.querySelector('app-dialog')).toBe(dialog);
+    expect(authFetch.mock.calls).toEqual([['/api/cron/jobs/42/logs?limit=100'], ['/api/cron/jobs/42/logs?limit=100']]);
+  });
+  it('MAX-715 ignores a late response after the viewer opens another job', async () => {
+    const page = await mount();
+    let release!: (value: unknown) => void;
+    authFetch.mockImplementationOnce(() => new Promise(resolve => { release = resolve; }));
+    const first = page.openLogViewer(job);
+    page.closeLogViewer();
+    authFetch.mockResolvedValueOnce(response({ logs: [{ id: 2, result_summary: '第二项的记录' }] }));
+    await page.openLogViewer({ ...job, id: 43, name: '第二项' });
+    release(response({ logs: [{ id: 1, result_summary: '第一项的记录' }] }));
+    await first;
+    await page.updateComplete;
+    const dialog = page.shadowRoot!.querySelector('app-dialog')!;
+    expect(dialog.textContent).toContain('第二项的记录');
+    expect(dialog.textContent).not.toContain('第一项的记录');
+  });
   it('does not trigger without a selected job', async () => {
     const page = await mount(); authFetch.mockClear(); await page.confirmTrigger();
     expect(authFetch).not.toHaveBeenCalled();
