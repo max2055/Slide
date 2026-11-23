@@ -23,6 +23,7 @@ import { publicLLMProvider } from './llm/public-provider.js';
 import { instanceAccessLifecycle } from './resources/instance-access-lifecycle.js';
 import { registerResourceIdentityRoutes } from './resources/resource-identity-routes.js';
 import { getReportAccessScope } from './report-access.js';
+import { reportDatabaseService } from './report-database-service.js';
 import { schemaDatabaseService, type TableSchemaRow } from './schema-database-service.js';
 import { schemaService } from './schema-service.js';
 import { registerHttpSecurity, sensitiveOperationRateLimitConfig } from './security/http-security.js';
@@ -173,6 +174,57 @@ it.each([
     expect(response.headers.get('content-type')).toMatch(/^application\/json/);
     expect(await response.json()).toEqual(expected);
     expect(send).toHaveBeenCalledExactlyOnceWith(expected);
+  });
+});
+
+it.each(['pool unavailable', 'SELECT failure'])('MAX-718 reports recover from %s without false empty results', async failure => {
+  const { fastify, send } = await setup();
+  registerInline({
+    fastify, requirePermission, getReportAccessScope, reportDatabaseService,
+    verifyToken: async (request: FastifyRequest) => {
+      Object.assign(request, { user: { ...actor, permissions: ['report:view'] } });
+    },
+  }, "  fastify.get('/api/reports',", "  fastify.get('/api/reports/:id',");
+  const report = {
+    id: 718, instance_id: 25, name: '合成数据库报告', status: 'completed',
+    format: 'html', content: '<p>合成报表正文</p>', data: null,
+  };
+  const pool = {
+    query: vi.fn().mockResolvedValue([[]]),
+    execute: vi.fn()
+      .mockResolvedValueOnce([[report]])
+      .mockResolvedValueOnce([[{ ...report, content: null }]])
+      .mockResolvedValueOnce([[]]),
+  } as unknown as NonNullable<ReturnType<typeof dbConnection.getPool>>;
+  const getPool = vi.spyOn(dbConnection, 'getPool').mockReturnValue(failure === 'pool unavailable' ? null : {
+    query: async () => { throw Error('private SQL diagnostics'); },
+    execute: async () => { throw Error('private SQL diagnostics'); },
+  } as unknown as typeof pool);
+
+  await withBoundedHttp(fastify, async signal => {
+    await fastify.listen({ host: '127.0.0.1', port: 0 });
+    const get = (path: string) => fetch(fastify.listeningOrigin + path, { signal });
+    const listFailure = await get('/api/reports');
+    expect(listFailure.status).toBe(503);
+    expect(await listFailure.json()).toEqual({ error: 'REPORT_LIST_UNAVAILABLE' });
+    const detailFailure = await get('/api/reports/718');
+    expect(detailFailure.status).toBe(503);
+    expect(await detailFailure.json()).toEqual({ error: 'REPORT_DETAIL_UNAVAILABLE' });
+
+    getPool.mockReturnValue(pool);
+    const detail = await get('/api/reports/718');
+    expect(detail.status).toBe(200);
+    expect(await detail.json()).toEqual(report);
+    const noContent = await get('/api/reports/718');
+    expect(noContent.status).toBe(200);
+    expect(await noContent.json()).toEqual({ ...report, content: null });
+    const invisible = await get('/api/reports/718');
+    expect(invisible.status).toBe(404);
+    expect(await invisible.json()).toEqual({ error: '报表不存在' });
+    const empty = await get('/api/reports');
+    expect(empty.status).toBe(200);
+    expect(await empty.json()).toEqual([]);
+    expect(send).toHaveBeenCalledTimes(6);
   });
 });
 

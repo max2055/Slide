@@ -54,10 +54,25 @@ describe('list failure and compatibility', () => {
   });
   it('reads subsequent report batches and invalidates the loaded history on failure', async () => {
     const view = new ReportsPage() as any;
-    authFetch.mockResolvedValueOnce(response([{ id: 1, name: 'first' }])).mockResolvedValueOnce(response([{ id: 2, name: 'second' }])).mockResolvedValueOnce(response({}, 403));
-    await view.loadReports(); await view.loadReports(true);
-    expect(authFetch.mock.calls.map(c => c[0])).toEqual(['/api/reports?page=1&limit=100', '/api/reports?page=2&limit=100']);
-    expect(view.reports).toHaveLength(2); await view.loadReports(true); expect(view.reports).toEqual([]); expect(view.error).toContain('无权限');
+    vi.spyOn(view, 'firstUpdated').mockImplementation(() => {});
+    document.body.append(view);
+    try {
+      authFetch.mockResolvedValueOnce(response([{ id: 1, name: 'first' }]))
+        .mockResolvedValueOnce(response({ total: 3 }))
+        .mockResolvedValueOnce(response([{ id: 2, name: 'second' }]))
+        .mockResolvedValueOnce(response({}, 403));
+      await view.refreshReadData();
+      await view.loadHistory(true);
+      expect(authFetch.mock.calls.map(c => c[0])).toEqual([
+        '/api/reports?page=1&limit=100', '/api/reports/stats', '/api/reports?page=2&limit=100',
+      ]);
+      expect(view.reports).toHaveLength(2);
+      await view.loadHistory(true);
+      expect(view.reports).toEqual([]);
+      expect(view.historyError.message).toContain('无权限');
+    } finally {
+      view.remove();
+    }
   });
   it('keeps searching available after data shrink and clamps an obsolete page', () => {
     const browser = new ListBrowser(); browser.page = 5;

@@ -2734,8 +2734,9 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
         };
         const reports = await reportDatabaseService.getReportsByFilters(filters, getReportAccessScope((request as any).user));
         return reply.send(reports);
-      } catch (error: any) {
-        return reply.code(500).send({ error: error.message });
+      } catch {
+        request.log.warn('REPORT_LIST_UNAVAILABLE');
+        return reply.code(503).send({ error: 'REPORT_LIST_UNAVAILABLE' });
       }
     }
   });
@@ -2945,15 +2946,20 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
   fastify.get('/api/reports/:id', {
     preHandler: [verifyToken, requirePermission('report:view')],
     handler: async (request, reply) => {
+      const { id } = request.params as { id: string };
+      const reportId = Number(id);
+      if (!Number.isSafeInteger(reportId) || reportId <= 0) {
+        return reply.code(404).send({ error: '报表不存在' });
+      }
       try {
-        const { id } = request.params as any;
-        const report = await reportDatabaseService.getReportById(Number(id), getReportAccessScope((request as any).user));
+        const report = await reportDatabaseService.getReportById(reportId, getReportAccessScope((request as any).user));
         if (!report) {
           return reply.code(404).send({ error: '报表不存在' });
         }
         return reply.send(report);
-      } catch (error: any) {
-        reply.code(500).send({ error: error.message });
+      } catch {
+        request.log.warn('REPORT_DETAIL_UNAVAILABLE');
+        return reply.code(503).send({ error: 'REPORT_DETAIL_UNAVAILABLE' });
       }
     }
   });
@@ -3029,8 +3035,8 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
           .header('Content-Type', mimeType)
           .header('Content-Disposition', reportAttachmentDisposition(report.name, reportExporter.getExtension(exportFormat), Number(id)))
           .send(content);
-      } catch (error: any) {
-        reply.code(500).send({ error: error.message });
+      } catch {
+        return reply.code(500).send({ error: 'INTERNAL_ERROR' });
       }
     }
   });

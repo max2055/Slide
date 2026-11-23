@@ -104,11 +104,12 @@ class ReportDatabaseService {
   }
 
   /**
-   * 根据 ID 查询报表
+   * 根据 ID 查询报表。带权限范围的读取必须区分查询失败与不可见记录。
    */
   async getReportById(id: number, scope?: ReportAccessScope): Promise<Report | null> {
     const pool = this.getPool();
     if (!pool) {
+      if (scope) throw new Error('REPORT_DETAIL_UNAVAILABLE');
       return null;
     }
 
@@ -135,6 +136,7 @@ class ReportDatabaseService {
       }
       return null;
     } catch (error) {
+      if (scope) throw new Error('REPORT_DETAIL_UNAVAILABLE', { cause: error });
       console.error('查询报表失败:', error);
       return null;
     }
@@ -146,7 +148,7 @@ class ReportDatabaseService {
   async getReportsByFilters(filters: ReportFilters = {}, scope?: ReportAccessScope): Promise<Report[]> {
     const pool = this.getPool();
     if (!pool) {
-      return [];
+      throw new Error('REPORT_LIST_UNAVAILABLE');
     }
 
     try {
@@ -214,8 +216,7 @@ class ReportDatabaseService {
         return row as Report;
       });
     } catch (error) {
-      console.error('查询报表列表失败:', error);
-      return [];
+      throw new Error('REPORT_LIST_UNAVAILABLE', { cause: error });
     }
   }
 
