@@ -2,12 +2,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
   get: vi.fn(),
+  permissions: vi.fn(),
   put: vi.fn(),
   toast: vi.fn(),
 }));
 
 vi.mock('../../../api/index.js', () => ({
-  apiClient: { get: mocks.get, put: mocks.put },
+  apiClient: { get: mocks.get, put: mocks.put, getToken: () => localStorage.getItem('token'), getSessionContext: () => 1 },
 }));
 vi.mock('../components/app-toast-container.js', () => ({ showToast: mocks.toast }));
 
@@ -32,9 +33,11 @@ function statusResponse() {
 }
 
 async function render(enabled = false, statusOnly = false, configReason?: string): Promise<Page> {
-  mocks.get.mockImplementation(async (path: string) => path.endsWith('/config')
-    ? { enabled, reasonCode: configReason ?? (enabled ? 'SANDBOX_ENABLED' : 'SANDBOX_DISABLED') }
-    : statusResponse());
+  mocks.get.mockImplementation(async (path: string) => {
+    if (path === '/auth/permissions') return mocks.permissions();
+    if (path.endsWith('/config')) return { enabled, reasonCode: configReason ?? (enabled ? 'SANDBOX_ENABLED' : 'SANDBOX_DISABLED') };
+    return statusResponse();
+  });
   const page = document.createElement('agent-sandbox-status-page') as Page;
   page.toggleAttribute('status-only', statusOnly);
   document.body.append(page);
@@ -47,9 +50,11 @@ async function render(enabled = false, statusOnly = false, configReason?: string
 describe('Agent Sandbox global setting', () => {
   beforeEach(() => {
     mocks.get.mockReset();
+    mocks.permissions.mockReset().mockImplementation(async () => JSON.parse(localStorage.getItem('permissions') ?? '[]'));
     mocks.put.mockReset();
     mocks.toast.mockReset();
     localStorage.setItem('permissions', JSON.stringify(['*']));
+    localStorage.setItem('token', 'sandbox-test-session');
   });
 
   afterEach(() => {
@@ -138,7 +143,42 @@ describe('Agent Sandbox global setting', () => {
     await page.updateComplete;
     expect(root.querySelector('a')).toBeNull();
     expect(root.textContent).toContain('执行环境');
-    expect(mocks.get).toHaveBeenCalledTimes(1);
+    expect(mocks.get).toHaveBeenCalledTimes(2);
+  });
+
+  it('uses current grants on entry and refresh even if cached management rights remain', async () => {
+    mocks.permissions.mockResolvedValue(['audit:view']);
+    const page = await render(false, true);
+    const root = page.shadowRoot!;
+    const refresh = root.querySelector<HTMLButtonElement>('.btn-refresh')!;
+    expect(root.querySelector('a')).toBeNull();
+    expect(root.textContent).toContain('执行环境');
+
+    mocks.permissions.mockResolvedValueOnce(['audit:view', 'admin:*']);
+    refresh.click();
+    await vi.waitFor(() => expect(root.querySelector('a')).not.toBeNull());
+    refresh.click();
+    await vi.waitFor(() => expect(root.querySelector('a')).toBeNull());
+    expect(root.textContent).toContain('执行环境');
+    expect(mocks.permissions).toHaveBeenCalledTimes(3);
+    expect(mocks.get).not.toHaveBeenCalledWith('/agent/security/sandbox/config');
+    expect(mocks.put).not.toHaveBeenCalled();
+  });
+
+  it('hides management when permission reread fails and ignores an older grant', async () => {
+    let releaseGrant!: (value: string[]) => void;
+    mocks.permissions.mockImplementationOnce(() => new Promise(resolve => { releaseGrant = resolve; }));
+    const page = await render(false, true);
+    const root = page.shadowRoot!;
+    expect(root.querySelector('a')).toBeNull();
+    mocks.permissions.mockRejectedValueOnce(new Error('HTTP 503: unavailable'));
+    root.querySelector<HTMLButtonElement>('.btn-refresh')!.click();
+    await vi.waitFor(() => expect(mocks.permissions).toHaveBeenCalledTimes(2));
+    releaseGrant(['audit:view', 'admin:*']);
+    await new Promise(resolve => setTimeout(resolve, 0));
+    await page.updateComplete;
+    expect(root.querySelector('a')).toBeNull();
+    expect(root.textContent).toContain('执行环境');
   });
 
   it('distinguishes unreadable status from confirmed missing configuration on retry', async () => {

@@ -18,7 +18,7 @@ test.beforeEach(async ({ page }) => {
       : path === '/api/agent/security/audit' ? { records: [{ id: 1, phase: 'decision', actorId: 1, agentId: 'sample', requestId: 'req-111-WWW', toolName: 'sql_query', allowed: true, reasonCode: 'policy_allowed', createdAt: '2026-11-13T00:00:00Z' }], nextCursor: null }
       : path === '/api/audit/logs' ? { items: [{ id: 'audit-111-WWW', eventType: 'login', level: 'info', action: 'login_success', result: 'success', timestamp: 1794528000000 }], total: 1 }
       : path === '/api/agent/security/sandbox' ? { configured: true, reachable: true, status: {
-        activeJobs: 0, maxConcurrentJobs: 1, daemon: { reachable: true, rootless: true },
+        status: 'ok', activeJobs: 0, maxConcurrentJobs: 1, daemon: { reachable: true, rootless: true },
         policy: { network: 'none', rootFilesystem: 'readonly', user: '1000', capabilities: 'none', noNewPrivileges: true, runtimes: ['node'], limits: {} },
         recentJobs: [{ jobId: 'job-111-WWW', runtime: 'node', status: 'succeeded', exitCode: 0, createdAt: '2026-11-13T00:00:00Z', durationMs: 1 }],
       } }

@@ -56,11 +56,16 @@ export class AgentSandboxStatusPage extends LitElement {
   @state() private confirmEnable = false;
   private statusRequest = 0;
   private configRequest = 0;
+  private permissionsRequest = 0;
 
   private readonly permissionsChanged = (event: Event) => {
+    this.permissionsRequest++;
     this.syncPermissions((event as CustomEvent<{ permissions?: string[] }>).detail?.permissions);
   };
-  private readonly sessionExpired = () => this.syncPermissions([]);
+  private readonly clearPermissions = () => {
+    this.permissionsRequest++;
+    this.syncPermissions([]);
+  };
 
   static styles = [sharedFieldStyles, sharedBtnStyles, css`
     :host { display: block; color: var(--text); }
@@ -103,23 +108,24 @@ export class AgentSandboxStatusPage extends LitElement {
   override connectedCallback(): void {
     super.connectedCallback();
     window.addEventListener('slide-permissions-loaded', this.permissionsChanged);
-    window.addEventListener('slide-session-expired', this.sessionExpired);
+    window.addEventListener('slide-session-expired', this.clearPermissions);
     let permissions: unknown;
     try { permissions = JSON.parse(localStorage.getItem('permissions') ?? 'null'); } catch { /* Fail closed. */ }
-    this.syncPermissions(permissions);
+    this.syncPermissions(permissions, false);
+    void this.reloadPermissions();
   }
 
   override disconnectedCallback(): void {
     window.removeEventListener('slide-permissions-loaded', this.permissionsChanged);
-    window.removeEventListener('slide-session-expired', this.sessionExpired);
-    this.sessionExpired();
+    window.removeEventListener('slide-session-expired', this.clearPermissions);
+    this.clearPermissions();
     super.disconnectedCallback();
   }
 
-  private syncPermissions(values: unknown): void {
-    const permissions = new Set<string>(Array.isArray(values) ? values : []);
+  private syncPermissions(values: unknown, managementVerified = true): void {
+    const permissions = new Set<string>(Array.isArray(values) && values.every(value => typeof value === 'string') ? values : []);
     const canView = permissionMatches(permissions, 'audit:view');
-    const canManage = canView && permissionMatches(permissions, 'admin:*');
+    const canManage = managementVerified && canView && permissionMatches(permissions, 'admin:*');
     if (canView !== this.canView) {
       this.canView = canView;
       if (canView) void this.loadStatus();
@@ -133,6 +139,22 @@ export class AgentSandboxStatusPage extends LitElement {
       this.canManage = canManage;
       if (canManage && !this.statusOnly) void this.loadConfig();
       else if (!canManage) this.clearConfig();
+    }
+  }
+
+  private async reloadPermissions(): Promise<void> {
+    const request = ++this.permissionsRequest;
+    this.canManage = false;
+    this.clearConfig();
+    if (!apiClient.getToken()) return;
+    const session = apiClient.getSessionContext();
+    try {
+      const permissions = await apiClient.get<unknown>('/auth/permissions');
+      if (request === this.permissionsRequest && session === apiClient.getSessionContext()) {
+        this.syncPermissions(permissions);
+      }
+    } catch {
+      // The separate sandbox status read still enforces audit:view.
     }
   }
 
@@ -158,7 +180,7 @@ export class AgentSandboxStatusPage extends LitElement {
         ? response : null;
     } catch (error) {
       if (request !== this.statusRequest) return;
-      if (error instanceof Error && /^HTTP 40[13]:/.test(error.message)) this.syncPermissions([]);
+      if (error instanceof Error && /^HTTP 40[13]:/.test(error.message)) this.clearPermissions();
       else this.response = null;
     } finally {
       if (request === this.statusRequest) this.loading = false;
@@ -194,7 +216,7 @@ export class AgentSandboxStatusPage extends LitElement {
   private refresh(): void {
     if (!this.canView || this.loading) return;
     void this.loadStatus();
-    if (this.canManage && !this.statusOnly && !this.configLoading && !this.saving) void this.loadConfig();
+    if (!this.configLoading && !this.saving) void this.reloadPermissions();
   }
 
   private onToggle(event: Event): void {
