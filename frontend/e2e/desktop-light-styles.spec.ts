@@ -13,7 +13,8 @@ test.beforeEach(async ({ page }) => {
   await page.route('**/api/**', route => {
     const path = new URL(route.request().url()).pathname;
     if (!path.startsWith('/api/')) return route.fallback();
-    const body = path === '/api/docs/list' ? { docs: [{ file: 'sample.md', title: '字体验收样本' }] }
+    const body = path === '/api/auth/permissions' ? ['*']
+      : path === '/api/docs/list' ? { docs: [{ file: 'sample.md', title: '字体验收样本' }] }
       : path.startsWith('/api/docs/files/') ? { content: '<pre><code>SELECT 111, WWW;</code></pre>' }
       : path === '/api/agent/security/audit' ? { records: [{ id: 1, phase: 'decision', actorId: 1, agentId: 'sample', requestId: 'req-111-WWW', toolName: 'sql_query', allowed: true, reasonCode: 'policy_allowed', createdAt: '2026-11-13T00:00:00Z' }], nextCursor: null }
       : path === '/api/audit/logs' ? { items: [{ id: 'audit-111-WWW', eventType: 'login', level: 'info', action: 'login_success', result: 'success', timestamp: 1794528000000 }], total: 1 }
