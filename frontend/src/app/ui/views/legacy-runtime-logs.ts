@@ -1,6 +1,7 @@
 import { html, LitElement } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 import { apiClient } from '../../../api/index.ts';
+import { publishPermissions } from '../permissions.ts';
 import { permissionMatches } from '../settings-navigation.ts';
 import '../components/app-empty-state.ts';
 
@@ -34,6 +35,7 @@ export class LegacyRuntimeLogs extends LitElement {
         this.access = 'unavailable';
         return;
       }
+      publishPermissions(permissions);
       this.access = permissionMatches(new Set(permissions), 'config:view') ? 'allowed' : 'denied';
     } catch {
       if (isCurrent()) this.access = 'unavailable';

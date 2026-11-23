@@ -11,6 +11,11 @@ function isPermissions(value: unknown): value is string[] {
   return Array.isArray(value) && value.every((entry) => typeof entry === 'string');
 }
 
+export function publishPermissions(permissions: string[]) {
+  localStorage.setItem('permissions', JSON.stringify(permissions));
+  window.dispatchEvent(new CustomEvent('slide-permissions-loaded', { detail: { permissions } }));
+}
+
 export function readCachedPermissions(): Set<string> | null {
   const stored = localStorage.getItem('permissions');
   if (stored === null) return null;
@@ -34,10 +39,9 @@ export async function loadPermissions(state: PermissionsState): Promise<void> {
     const permissions: unknown = await response.json();
     if (!isPermissions(permissions)) throw new Error('invalid permissions');
     if (!isCurrentSession()) return;
-    localStorage.setItem('permissions', JSON.stringify(permissions));
     state.userPermissions = new Set(permissions);
     state.permissionsError = null;
-    window.dispatchEvent(new CustomEvent('slide-permissions-loaded', { detail: { permissions } }));
+    publishPermissions(permissions);
   } catch {
     if (isCurrentSession()) {
       state.permissionsError = '权限加载失败，部分功能暂不可用。请重试。';

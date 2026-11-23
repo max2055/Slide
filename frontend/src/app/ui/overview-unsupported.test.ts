@@ -12,6 +12,7 @@ it.each([
 ])('preserves the legacy /overview URL and respects platform observation access ($href)', async ({ permissions, href }) => {
   let release!: (permissions: string[]) => void;
   const get = vi.spyOn(apiClient, 'get').mockImplementation(() => new Promise(resolve => { release = resolve; }));
+  const oldPermissions = localStorage.getItem('permissions');
   const app = new SlideApp();
   app.connected = true;
   app.basePath = '/slide';
@@ -30,6 +31,7 @@ it.each([
     expect(get).toHaveBeenCalledExactlyOnceWith('/auth/permissions');
     release(permissions);
     await vi.waitFor(() => expect(section.textContent).not.toContain('正在确认平台观测权限'));
+    expect(JSON.parse(localStorage.getItem('permissions')!)).toEqual(permissions);
     const emptyState = container.querySelector('app-empty-state') as any;
     expect(emptyState).not.toBeNull();
     await emptyState.updateComplete;
@@ -41,5 +43,7 @@ it.each([
     render(null, container);
     container.remove();
     get.mockRestore();
+    if (oldPermissions === null) localStorage.removeItem('permissions');
+    else localStorage.setItem('permissions', oldPermissions);
   }
 });
