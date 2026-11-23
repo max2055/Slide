@@ -13,7 +13,7 @@ function deferred() {
   const promise = new Promise<any>(done => { resolve = done; });
   return { promise, resolve };
 }
-afterEach(() => { document.body.replaceChildren(); history.replaceState({}, '', '/'); vi.resetAllMocks(); });
+afterEach(() => { document.body.replaceChildren(); history.replaceState({}, '', '/'); localStorage.removeItem('permissions'); vi.resetAllMocks(); });
 
 for (const boundary of ['capacity', 'history']) {
   it.each(['switch', 'revoke', 'disconnect'])(`rejects ${boundary} body after headers, then %s`, async action => {
@@ -52,6 +52,7 @@ it('commits current capacity and history after both bodies finish', async () => 
 });
 
 async function mountServer() {
+  localStorage.setItem('permissions', '["servers:manage"]');
   // Supported OS, empty diagnostics cache. Calling the legacy GET would collect.
   authFetch.mockImplementation(async (url: string) => {
     if (url.endsWith('/diagnostics')) throw new Error('Implicit cache-miss collection');
@@ -89,7 +90,8 @@ it('never requests diagnostics on entry, all diagnostic tabs, refresh or resourc
     expect(reads()).toBe(before + 1);
     expect(selected()).toBe(label);
   }
-  expect(root.textContent).toContain('当前页面尚未取得诊断证据');
+  const panel = root.querySelector('server-diagnostic-panel')!;
+  expect(panel.shadowRoot?.textContent).toContain('未取得近期系统日志，样本数量未知');
   history.replaceState({}, '', '/server-detail?id=2');
   el.serverId = 2;
   await settle();
@@ -148,10 +150,11 @@ it.each([
 
 it('preserves collection denial and never falls back to a view-permission GET', async () => {
   const el = await mountServer(); authFetch.mockClear();
+  el.diagnostics = { serverId: 1, sections: { systemLogs: { items: [{ message: 'old evidence' }] } } };
   authFetch.mockResolvedValue({ ok: false, status: 403, json: async () => ({ error: 'PERMISSION_DENIED' }) });
   await el.collectDiagnostics();
   expect(authFetch).toHaveBeenCalledOnce(); expect(el.diagnostics).toBeNull();
-  expect(showToast).toHaveBeenCalledWith('PERMISSION_DENIED', 'error');
+  expect(showToast).toHaveBeenCalledWith('没有采集诊断证据的权限', 'error');
 });
 
 for (const kind of ['server', 'instances']) {

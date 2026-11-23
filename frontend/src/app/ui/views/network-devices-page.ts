@@ -138,13 +138,26 @@ export class NetworkDevicesPage extends LitElement {
       const value = await response.json();
       if (request !== this.inventoryRequest) return;
       this.devices = Array.isArray(value) ? value as NetworkDevice[] : [];
-      const url = new URL(location.href), editId = Number(url.searchParams.get('edit'));
-      const edit = this.devices.find(device => device.id === editId);
-      if (edit && !this.showDialog) {
-        await this.openEdit(edit);
-        if (request !== this.inventoryRequest) return;
-        this.editorTab = 'collection';
-        url.searchParams.delete('edit'); history.replaceState({}, '', url);
+      const url = new URL(location.href);
+      if (url.searchParams.has('edit') && !this.showDialog) {
+        const editId = Number(url.searchParams.get('edit'));
+        const editSsh = url.searchParams.get('editSection') === 'ssh';
+        const edit = this.devices.find(device => device.id === editId);
+        url.searchParams.delete('edit');
+        url.searchParams.delete('editSection');
+        history.replaceState(history.state, '', url);
+        if (edit && hasListPermission('network_devices:manage')) {
+          this.openEdit(edit);
+          if (editSsh) {
+            await this.updateComplete;
+            const editor = this.renderRoot.querySelector<LitElement>('resource-editor-shell');
+            await editor?.updateComplete;
+            if (request !== this.inventoryRequest) return;
+            this.renderRoot.querySelector<HTMLElement>('.credential-section h3')?.focus();
+          } else {
+            this.editorTab = 'collection';
+          }
+        }
       }
       this.metricRefreshVersion++;
     } catch (error) {
@@ -196,7 +209,7 @@ export class NetworkDevicesPage extends LitElement {
     this.showDialog = true;
   }
 
-  private async openEdit(device: NetworkDevice) {
+  private openEdit(device: NetworkDevice) {
     this.showSshPrivateKey = false;
     this.editorTab = "basic";
     this.editingId = device.id;
@@ -539,7 +552,7 @@ export class NetworkDevicesPage extends LitElement {
         </section>
         <section class="device-form-section device-form-section--ssh credential-section">
           <div class="section-heading">
-            <h3>SSH 凭据</h3>
+            <h3 tabindex="-1">SSH 凭据</h3>
             <span>监控可选；加密配置备份需要填写</span>
           </div>
           ${this.form.sshCredentialType === "key" ? html`

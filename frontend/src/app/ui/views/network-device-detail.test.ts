@@ -77,7 +77,7 @@ describe("network-device-detail", () => {
 
     const summary = Array.from(element.querySelectorAll('p.meta'))
       .find(paragraph => paragraph.textContent?.startsWith('最近自动备份：'));
-    expect(summary?.textContent).toBe(`最近自动备份：${date} · ${expected}`);
+    expect(summary?.textContent).toBe(`最近自动备份：${date} 北京时间（UTC+8） · ${expected}`);
   });
 
   it('keeps unsaved schedule edits and shows a Chinese error when saving is forbidden', async () => {
@@ -158,9 +158,9 @@ describe("network-device-detail", () => {
     expect(element.textContent).toContain("username <redacted>");
   });
 
-  it("explains how to configure SSH credentials when backup capture is unavailable", async () => {
+  it("shows the SSH configuration action when explicit backup confirms a missing credential", async () => {
     authFetch.mockImplementation(async (url: string, init?: RequestInit) => {
-      if (url === "/api/network-devices/4") return response(device);
+      if (url === "/api/network-devices/4") return response({ ...device, hasSshCredential: true });
       if (url.endsWith("/metrics")) return response({ deviceId: 4, metrics: [] });
       if (url.endsWith("/interfaces")) return response({ interfaces: [] });
       if (url.endsWith("/capabilities")) return response({ capabilities: [] });
@@ -183,6 +183,32 @@ describe("network-device-detail", () => {
     await settle(element);
 
     expect(showToast).toHaveBeenCalledWith("请先编辑网络设备并配置 SSH 用户名和密码或私钥", "error");
+    expect(button?.disabled).toBe(true);
+    Array.from(element.querySelectorAll('button[role="tab"]') as NodeListOf<HTMLButtonElement>)
+      .find(tab => tab.textContent?.trim() === '配置备份')?.click();
+    await settle(element);
+    expect(element.textContent).toContain('配置 SSH 连接');
+  });
+
+  it('rereads saved versions after an audit write failure without repeating capture', async () => {
+    const original = authFetch.getMockImplementation()!;
+    authFetch.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (url === '/api/network-devices/4') return response({ ...device, hasSshCredential: true });
+      if (url.endsWith('/config-backups') && init?.method === 'POST') {
+        return response({ error: 'CONFIG_BACKUP_SAVED_AUDIT_FAILED', backupSaved: true, retryable: false }, false, 409);
+      }
+      return original(url, init);
+    });
+    const element = new NetworkDeviceDetail();
+    element.deviceId = 4; document.body.append(element); await settle(element);
+    authFetch.mockClear();
+    Array.from(element.querySelectorAll('button')).find(button => button.textContent?.trim() === '立即备份')?.click();
+    await settle(element);
+    expect(authFetch.mock.calls).toEqual([
+      ['/api/network-devices/4/config-backups', { method: 'POST' }],
+      ['/api/network-devices/4/config-backups', undefined],
+    ]);
+    expect(showToast).toHaveBeenCalledWith('备份已保存，审计记录写入失败。请先核对备份记录。', 'error');
   });
 
   it("binds the interface inventory to the selected network device", async () => {

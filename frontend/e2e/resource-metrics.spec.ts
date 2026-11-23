@@ -1091,3 +1091,191 @@ for (const item of detailLocationCases) {
     }, null, 2)) });
   });
 }
+
+async function openSnapshotResource(page: Page, type: 'server' | 'network_device', readOnly: boolean) {
+  await listResponses(page, readOnly);
+  const permissions = readOnly ? ['servers:view', 'network_devices:view'] : ['*'];
+  await page.addInitScript(() => localStorage.setItem('slide.i18n.locale', 'zh-CN'));
+  await page.route('**/api/auth/permissions', route => route.fulfill({ json: permissions }));
+  await page.route('**/api/investigations?resource=**', route => route.fulfill({ json: { items: [] } }));
+  await page.routeWebSocket('**/agent-ws', socket => socket.onMessage(message => {
+    if (JSON.parse(String(message)).type === 'auth') socket.send(JSON.stringify({ type: 'auth_ok' }));
+  }));
+  return async () => {
+    await page.goto('/');
+    await page.getByRole('link', { name: type === 'server' ? '服务器' : '网络设备', exact: true }).click();
+    await page.locator('button[data-resource-detail-id="1002"]').click();
+  };
+}
+
+for (const readOnly of [false, true]) {
+  test(`MAX-734 server snapshot ${readOnly ? 'read-only' : 'explicit collection'}`, async ({ page }, info) => {
+    await page.setViewportSize(readOnly ? { width: 1920, height: 1080 } : { width: 1440, height: 900 });
+    const open = await openSnapshotResource(page, 'server', readOnly);
+    const server = fixtureEntries[1];
+    const requests: string[] = [];
+    page.on('request', request => {
+      const path = new URL(request.url()).pathname;
+      if (path.startsWith('/api/servers/') && (/diagnostics/.test(path) || request.method() !== 'GET')) {
+        requests.push(`${request.method()} ${path}`);
+      }
+    });
+    await page.route('**/api/servers/1002', route => route.fulfill({ json: server }));
+    await page.route('**/api/servers/1002/instances', route => route.fulfill({ json: { instances: [] } }));
+    let collectCount = 0;
+    const collectedAt = '2026-11-22T17:12:13Z';
+    const sample = { collectedAt, quality: 'good', source: ['ss'], items: [{ port: 443 }] };
+    await page.route('**/api/servers/1002/collect-diagnostics', route => {
+      ++collectCount;
+      if (collectCount !== 2) return route.fulfill({ status: 503, json: { error: '测试诊断采集失败' } });
+      return route.fulfill({ json: { success: true, diagnostics: {
+        serverId: server.id, collectedAt, expiresAt: '2026-11-22T17:17:13Z', quality: 'partial',
+        sections: { listeningPorts: sample, systemLogs: { ...sample, quality: 'unknown', items: [], reason: 'SYSTEM_LOGS_UNAVAILABLE' } },
+      } } });
+    });
+    await open();
+    const detail = page.locator('server-detail');
+    const panel = detail.locator('server-diagnostic-panel');
+    const tab = (name: string) => detail.getByRole('tab', { name, exact: true });
+    const refresh = detail.getByRole('button', { name: '刷新', exact: true });
+    for (const [name, evidence] of [
+      ['网络', '网卡流量、错误与丢包和监听端口'], ['进程', 'CPU 占用较高的进程样本'],
+      ['服务', '运行中的服务状态'], ['日志', '近期系统日志'],
+    ]) {
+      await tab(name).click();
+      await expect(panel.getByText(new RegExp(`未取得${evidence}，样本数量未知`))).toBeVisible();
+      const read = page.waitForResponse(response => new URL(response.url()).pathname === '/api/servers/1002');
+      await refresh.click();
+      await read;
+      await expect(tab(name)).toHaveAttribute('aria-selected', 'true');
+    }
+    expect(requests).toEqual([]);
+    await page.screenshot({ path: info.outputPath('server-no-snapshot.png') });
+    const collect = detail.getByRole('button', { name: '采集诊断证据', exact: true });
+    if (readOnly) {
+      await expect(panel.getByText(/请联系有服务器管理权限/)).toBeVisible();
+      await expect(detail.getByRole('button', { name: '去诊断页签采集' })).toHaveCount(0);
+      await tab('诊断').click();
+      await expect(collect).toBeDisabled();
+      expect(requests).toEqual([]);
+      return;
+    }
+    const move = detail.getByRole('button', { name: '去诊断页签采集' });
+    await move.focus();
+    await page.keyboard.press('Enter');
+    await expect(tab('诊断')).toBeFocused();
+    expect(requests).toEqual([]);
+    await collect.click();
+    await expect(panel.getByRole('alert')).toContainText('测试诊断采集失败');
+    await collect.click();
+    await expect(panel.getByText('已显示 1 条样本', { exact: true })).toBeVisible();
+    await tab('网络').click();
+    await expect(panel.getByText(/未取得网卡流量与丢包，样本数量未知/)).toBeVisible();
+    await expect(panel.getByRole('cell', { name: '443', exact: true })).toBeVisible();
+    await expect(panel.getByText('已显示 1 条样本', { exact: true })).toBeVisible();
+    await page.screenshot({ path: info.outputPath('server-partial-snapshot.png') });
+    await tab('日志').click();
+    await expect(panel.getByText('样本数量未知', { exact: true })).toBeVisible();
+    await refresh.click();
+    await expect(tab('日志')).toHaveAttribute('aria-selected', 'true');
+    await tab('诊断').click();
+    await collect.click();
+    await expect(panel.getByRole('alert')).toContainText('仍显示上次采集的快照');
+    await expect(panel.getByRole('cell', { name: '443', exact: true })).toBeVisible();
+    expect(requests).toEqual(Array(3).fill('POST /api/servers/1002/collect-diagnostics'));
+    await writeFile(info.outputPath('requests.json'), JSON.stringify(requests));
+  });
+}
+
+for (const readOnly of [false, true]) {
+  test(`MAX-734 network backup ${readOnly ? 'read-only' : 'results, retries and SSH editor'}`, async ({ page }, info) => {
+    await page.setViewportSize(readOnly ? { width: 1366, height: 768 } : { width: 1440, height: 900 });
+    const open = await openSnapshotResource(page, 'network_device', readOnly);
+    let credential: boolean | undefined = readOnly ? false : undefined;
+    let listState = readOnly ? 'empty' : 'malformed';
+    let scheduleState = readOnly ? 'empty' : 'failedRead';
+    const requests: string[] = [];
+    page.on('request', request => {
+      const path = new URL(request.url()).pathname;
+      if (path.startsWith('/api/network-devices/')) requests.push(`${request.method()} ${path}`);
+    });
+    const device = fixtureEntries[1];
+    const schedule = { enabled: true, dailyTime: '03:45', timeZone: 'Asia/Shanghai', lastRun: null };
+    const backup = { id: 8, deviceId: device.id, versionNo: 2, contentSha256: 'a'.repeat(64),
+      sourceProtocol: 'ssh', collectedAt: '2026-11-22T17:12:13Z', sizeBytes: 1024, redactionStatus: 'redacted' };
+    await page.route('**/api/network-devices/1002', route => route.fulfill({ json: { ...device, hasSshCredential: credential } }));
+    await page.route('**/api/network-devices/1002/relations', route => route.fulfill({ json: { relations: [] } }));
+    await page.route('**/api/network-devices/1002/config-backups', route => {
+      if (route.request().method() === 'POST') return route.fulfill({ status: 201, json: backup });
+      if (listState === 'malformed') return route.fulfill({ json: {} });
+      return route.fulfill({ json: { backups: listState === 'empty' ? [] : [backup] } });
+    });
+    await page.route('**/api/network-devices/1002/config-backups/8', route => route.fulfill({ json: { ...backup, preview: 'sysname test-edge' } }));
+    await page.route('**/api/network-devices/1002/backup-schedule', route => {
+      if (scheduleState === 'failedRead') return route.fulfill({ status: 503, json: {} });
+      return route.fulfill({ json: scheduleState === 'empty' ? schedule : {
+        ...schedule, lastRun: { date: '2026-11-23', status: 'failed', errorCode: 'CONFIG_BACKUP_RESULT_UNCONFIRMED' },
+      } });
+    });
+    await open();
+    const detail = page.locator('network-device-detail');
+    await detail.getByRole('tab', { name: '配置备份' }).click();
+    const capture = detail.getByRole('button', { name: '立即备份' });
+    const ssh = detail.getByRole('button', { name: '配置 SSH 连接' });
+    if (readOnly) {
+      await expect(ssh).toHaveCount(0);
+      await expect(detail.getByText(/请联系有网络设备管理权限/)).toBeVisible();
+      await expect(detail.getByText('最近自动备份：暂无运行记录')).toBeVisible();
+      await expect(detail.getByText('暂无配置备份')).toBeVisible();
+      await expect(capture).toBeDisabled();
+      await expect(detail.getByRole('button', { name: '保存定时设置' })).toBeDisabled();
+      expect(requests.filter(request => !request.startsWith('GET'))).toEqual([]);
+      await page.screenshot({ path: info.outputPath('backup-read-only.png') });
+      await page.goto('/network-devices?edit=1002&editSection=ssh');
+      await expect(page.locator('button[data-resource-detail-id="1002"]')).toBeVisible();
+      await expect(page.locator('resource-editor-shell')).toHaveCount(0);
+      return;
+    }
+    await expect(detail.getByText(/最近保存的版本未知/)).toBeVisible();
+    await expect(detail.getByText('最近自动备份：结果与时间未知')).toBeVisible();
+    await expect(detail.getByText('尚未配置 SSH 凭据', { exact: false })).toHaveCount(0);
+    await expect(ssh).toHaveCount(0);
+    const beforeRetry = requests.length;
+    listState = 'empty';
+    const retry = detail.getByRole('button', { name: '重试备份列表' });
+    await retry.focus();
+    await page.keyboard.press('Enter');
+    await expect(detail.getByText('暂无配置备份')).toBeVisible();
+    await expect(detail.getByText('加密配置备份', { exact: true })).toBeFocused();
+    expect(requests.slice(beforeRetry)).toEqual(['GET /api/network-devices/1002/config-backups']);
+    scheduleState = 'existing';
+    await detail.getByRole('button', { name: '重新加载定时设置' }).click();
+    await expect(detail.getByText(/2026-11-23 北京时间（UTC\+8） · 备份结果未确认/)).toBeVisible();
+    expect(requests.filter(request => !request.startsWith('GET'))).toEqual([]);
+    listState = 'existing';
+    await capture.click();
+    await expect(detail.getByText(/最近保存的版本：v2 · 2026\/11\/23 01:12:13 北京时间（UTC\+8）/)).toBeVisible();
+    await detail.getByRole('button', { name: '查看摘要' }).click();
+    await expect(page.getByRole('dialog', { name: '配置备份 v2' })).toBeVisible();
+    await expect(detail.getByText(/备份时间 .*01:12:13 北京时间（UTC\+8）/)).toBeVisible();
+    await detail.getByRole('button', { name: '关闭', exact: true }).click();
+    credential = false;
+    await detail.getByRole('button', { name: '刷新', exact: true }).click();
+    await expect(ssh).toBeVisible();
+    await expect(capture).toBeDisabled();
+    await page.screenshot({ path: info.outputPath('backup-saved-and-schedule.png') });
+    await ssh.focus();
+    await page.keyboard.press('Enter');
+    const editor = page.locator('resource-editor-shell');
+    await expect(editor.getByRole('heading', { name: 'SSH 凭据', exact: true })).toBeFocused();
+    await expect(editor.getByRole('heading', { name: '编辑网络设备', exact: true })).toBeVisible();
+    await expect(editor.getByRole('tab', { name: '基本信息' })).toHaveAttribute('aria-selected', 'true');
+    await expect(editor.getByLabel('名称', { exact: true })).toHaveValue(device.name);
+    await expect(page).toHaveURL(/restoreList=/);
+    expect(requests.filter(request => !request.startsWith('GET'))).toEqual(['POST /api/network-devices/1002/config-backups']);
+    await page.screenshot({ path: info.outputPath('backup-ssh-editor.png') });
+    await editor.getByRole('button', { name: '返回资源列表' }).click();
+    await expect(page.locator('button[data-resource-edit-id="1002"]')).toBeFocused();
+    await writeFile(info.outputPath('requests.json'), JSON.stringify(requests));
+  });
+}
