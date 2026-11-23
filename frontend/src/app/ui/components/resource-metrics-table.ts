@@ -49,15 +49,38 @@ export class ResourceMetricsTable extends LitElement {
     return { type: this.resourceType as BulkResource['type'], id: entry.id,
       label: String(entry.searchValues?.find(value => typeof value === 'string' && value.length) ?? `${this.resourceType} #${entry.id}`) };
   }
-  capturePosition() { const scroll=this.renderRoot.querySelector<HTMLElement>('.scroll');return {page:this.page,left:scroll?.scrollLeft??0,top:window.scrollY}; }
-  private positionRestored=false;
+  @state() private hasHorizontalOverflow = false;
+  private readonly overflowObserver = typeof ResizeObserver === 'undefined' ? undefined : new ResizeObserver(() => {
+    const scroll = this.renderRoot.querySelector<HTMLElement>('.scroll');
+    this.hasHorizontalOverflow = !!scroll?.clientWidth && scroll.scrollWidth > scroll.clientWidth;
+  });
+  private listScroller() {
+    let element: Element | null = this;
+    while (element) {
+      const scroller = element.closest('main.content');
+      if (scroller) return scroller;
+      const root = element.getRootNode();
+      element = root instanceof ShadowRoot ? root.host : null;
+    }
+    return document.scrollingElement;
+  }
+  capturePosition() {
+    const scroll = this.renderRoot.querySelector<HTMLElement>('.scroll');
+    return { page: this.page, left: scroll?.scrollLeft ?? 0, top: this.listScroller()?.scrollTop ?? 0 };
+  }
+  private positionRestored = false;
   private async restorePosition() {
-    const saved=restoredListState(this.resourceType);if(!saved||this.positionRestored||!this.entries.length)return;
-    this.positionRestored=true;await this.updateComplete;
-    await Promise.all([...this.renderRoot.querySelectorAll<LitElement>('app-data-table')].map(t=>t.updateComplete));
-    const scroll=this.renderRoot.querySelector<HTMLElement>('.scroll');if(scroll)scroll.scrollLeft=saved.position.left;
-    this.renderRoot.querySelector<HTMLButtonElement>(`[data-resource-detail-id="${saved.id}"]`)?.focus({preventScroll:true});
-    window.scrollTo?.({top:saved.position.top});
+    const saved = restoredListState(this.resourceType);
+    if (!saved || this.positionRestored || !this.entries.length || this.searchesCollection && this.pending) return;
+    this.positionRestored = true;
+    await this.updateComplete;
+    await this.renderRoot.querySelector<LitElement>('app-data-table')?.updateComplete;
+    if (!this.isConnected || !restoredListState(this.resourceType)) return;
+    const scroll = this.renderRoot.querySelector<HTMLElement>('.scroll');
+    if (scroll) scroll.scrollLeft = saved.position.left;
+    const scroller = this.listScroller();
+    if (scroller) scroller.scrollTop = saved.position.top;
+    this.renderRoot.querySelector<HTMLButtonElement>(`[data-resource-detail-id="${saved.id}"]`)?.focus({ preventScroll: true });
   }
   private restoredType = '';
   private readonly accessChanged = () => {
@@ -74,11 +97,17 @@ export class ResourceMetricsTable extends LitElement {
     window.addEventListener('keydown', this.fullValueKeydown);
     window.addEventListener('resize', this.positionFullValue);
     window.addEventListener('scroll', this.positionFullValue, true);
+    this.requestUpdate();
   }
   private restorePreferences() {
     if (this.restoredType === this.resourceType) return;
+    const returned = restoredListState(this.resourceType);
+    if (returned && !this.entries.length) return;
     this.restoredType = this.resourceType;
-    const returned=restoredListState(this.resourceType);if(returned){this.page=returned.position.page;this.previousSearch=this.search;}
+    if (returned) {
+      this.page = returned.position.page;
+      this.previousSearch = this.search;
+    }
     try {
       const saved = JSON.parse(sessionStorage.getItem(`resource-list:${this.resourceType}`) ?? 'null');
       if (saved) { if(!returned)this.page = Math.max(1, Number(saved.page) || 1); this.hiddenColumns = Array.isArray(saved.hiddenColumns) && saved.densityVersion === 2 ? saved.hiddenColumns : this.defaultHiddenColumns; }
@@ -88,9 +117,16 @@ export class ResourceMetricsTable extends LitElement {
   @state() private hiddenColumns: string[] = this.defaultHiddenColumns;
   override updated(changed: PropertyValues) {
     if (!this.isConnected) return;
+    const scroll = this.renderRoot.querySelector('.scroll');
+    const table = scroll?.querySelector('app-data-table');
+    if (scroll && table) {
+      this.overflowObserver?.observe(scroll);
+      this.overflowObserver?.observe(table);
+    }
     this.restorePreferences();
-    void this.restorePosition();
-    try { sessionStorage.setItem(`resource-list:${this.resourceType}`, JSON.stringify({ page: this.page, hiddenColumns: this.hiddenColumns, densityVersion: 2 })); } catch { /* Optional preference storage. */ }
+    if (this.restoredType === this.resourceType) {
+      try { sessionStorage.setItem(`resource-list:${this.resourceType}`, JSON.stringify({ page: this.page, hiddenColumns: this.hiddenColumns, densityVersion: 2 })); } catch { /* Optional preference storage. */ }
+    }
     const identity = `${this.resourceType}:${this.entries.map(e => [e.id, e.type, e.version, e.model].join(':')).join(',')}`;
     const entriesChanged = identity !== this.identity;
     const searchChanged = this.search !== this.previousSearch;
@@ -99,6 +135,7 @@ export class ResourceMetricsTable extends LitElement {
     if (entriesChanged) { this.identity = identity; this.rows = new Map(); }
     if (entriesChanged || changed.has('refreshVersion')) void this.loadObservations();
     if (entriesChanged || searchChanged || changed.has('refreshVersion')) void this.load(changed.has('refreshVersion'));
+    void this.restorePosition();
     // Report the complete filtered collection, before pagination, including
     // asynchronous collection-state matches. Pages must not duplicate this filter.
     const count = this.filtered.length;
@@ -108,6 +145,7 @@ export class ResourceMetricsTable extends LitElement {
     }
   }
   override disconnectedCallback() {
+    this.overflowObserver?.disconnect();
     this.generation++; this.observationGeneration++; this.setPending(false);
     window.removeEventListener('slide-permissions-loaded', this.accessChanged);
     window.removeEventListener('slide-session-expired', this.accessChanged);
@@ -221,7 +259,7 @@ export class ResourceMetricsTable extends LitElement {
     const generation = ++this.generation;
     const type = this.resourceType;
     const targets = this.searchesCollection ? this.candidates : this.visible;
-    this.page = Math.min(this.page, Math.max(1, Math.ceil(this.filtered.length / this.pageSize)));
+    if (!this.searchesCollection) this.clampPage();
     const queue = targets.filter(entry => {
       const row = this.rows.get(entry.id);
       return force || !row || this.collectionPending.has(entry.id)
@@ -254,7 +292,13 @@ export class ResourceMetricsTable extends LitElement {
       }
     };
     await Promise.all(Array.from({ length: Math.min(4, queue.length) }, worker));
-    if (generation === this.generation) this.setPending(false);
+    if (generation === this.generation) {
+      if (this.searchesCollection) this.clampPage();
+      this.setPending(false);
+    }
+  }
+  private clampPage() {
+    this.page = Math.min(this.page, Math.max(1, Math.ceil(this.filtered.length / this.pageSize)));
   }
   private finishCollectionRead(id: number) {
     const pending = new Set(this.collectionPending);
@@ -387,7 +431,7 @@ export class ResourceMetricsTable extends LitElement {
     ${this.bulkResources ? html`<app-dialog open size="lg" title="批量绑定监控模板" @app-dialog-close=${() => { this.bulkResources = null; }}>
       <template-governance .initialResources=${this.bulkResources}></template-governance>
     </app-dialog>` : nothing}
-    <div class="desktop-resources"><p class="scroll-hint" id="resource-scroll-help">左右滚动查看全部列；也可聚焦表格后按左右方向键。聚焦截断内容可查看全文。</p><div class="scroll" @scroll=${this.positionFullValue} @focusin=${this.showFullValue} @focusout=${this.leaveFullValue} @mouseover=${this.showFullValue} @mouseout=${this.leaveFullValue} role="region" tabindex="0" aria-label="资源表格，可横向滚动" aria-describedby="resource-scroll-help"><app-data-table style=${`min-width:${(this.resourceType === 'instance' ? 72 : 68) + extraColumns.length * 12}rem`} @app-table-column-help=${() => { this.sizeHelpOpen = true; }} .striped=${false} .dense=${true} .columns=${columns} .rows=${rows} emptyMessage="没有符合条件的资源"></app-data-table></div></div>
+    <div class="desktop-resources">${this.hasHorizontalOverflow ? html`<p class="scroll-hint" id="resource-scroll-help">左右滚动查看全部列；也可聚焦表格后按左右方向键。聚焦截断内容可查看全文。</p>` : nothing}<div class="scroll" @scroll=${this.positionFullValue} @focusin=${this.showFullValue} @focusout=${this.leaveFullValue} @mouseover=${this.showFullValue} @mouseout=${this.leaveFullValue} role="region" tabindex="0" aria-label=${this.hasHorizontalOverflow ? '资源表格，可横向滚动' : '资源表格'} aria-describedby=${this.hasHorizontalOverflow ? 'resource-scroll-help' : nothing}><app-data-table style=${`min-width:${(this.resourceType === 'instance' ? 72 : 68) + extraColumns.length * 12}rem`} @app-table-column-help=${() => { this.sizeHelpOpen = true; }} .striped=${false} .dense=${true} .columns=${columns} .rows=${rows} emptyMessage="没有符合条件的资源"></app-data-table></div></div>
     <div class="pages"><span>筛选结果 ${this.filtered.length} / ${this.entries.length}</span><button class="btn" .disabled=${this.page <= 1} @click=${() => { this.page--; void this.load(); }}>上一页</button><span>第 ${Math.min(this.page, Math.max(1, Math.ceil(this.filtered.length / this.pageSize)))} 页</span><button class="btn" .disabled=${this.page * this.pageSize >= this.filtered.length} @click=${() => { this.page++; void this.load(); }}>下一页</button></div>`;
   }
 }

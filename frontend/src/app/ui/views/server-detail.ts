@@ -1,4 +1,4 @@
-import { detailTabKeydown, returnToResourceList } from '../components/resource-detail-context.js';
+import { detailResourceId, detailTabKeydown, readDetailTab, returnToResourceList, selectDetailTab } from '../components/resource-detail-context.js';
 import { hasListPermission } from '../components/resource-list-access.js';
 import "../components/investigation-operation-context.ts";
 import '../components/resource-investigation-links.js';
@@ -32,6 +32,20 @@ interface ServerDetail {
   created_at: string;
   updated_at: string;
 }
+
+const serverDetailTabs = [
+  { key: "overview", label: "概览" },
+  { key: "collection", label: "监控配置" },
+  { key: "metrics", label: "指标与趋势" },
+  { key: "config", label: "配置" },
+  { key: "diagnostics", label: "诊断" },
+  { key: "network", label: "网络" },
+  { key: "processes", label: "进程" },
+  { key: "services", label: "服务" },
+  { key: "logs", label: "日志" },
+  { key: "related", label: "关联资源" },
+];
+const serverDetailTabKeys = serverDetailTabs.map(tab => tab.key);
 
 @customElement("server-detail")
 export class ServerDetailPage extends LitElement {
@@ -149,7 +163,7 @@ export class ServerDetailPage extends LitElement {
   @state() private server: ServerDetail | null = null;
   @state() private loading = true;
   @state() private error: string | null = null;
-  @state() private activeTab: string = new URL(location.href).searchParams.get('metricResource')?.startsWith('server:') ? 'metrics' : 'overview' ;
+  @state() private activeTab = 'overview';
   @state() private lastUpdated: Date | null = null;
   @state() private detailReadError = '';
   @state() private isRefreshing = false;
@@ -196,19 +210,21 @@ export class ServerDetailPage extends LitElement {
     this._navHandler = (e: any) => {
       if (e.detail.tab === "server-detail" && e.detail.serverId != null) {
         this.serverId = Number(e.detail.serverId);
-        this.activeTab = "overview";
       }
     };
     window.addEventListener("slide-navigate", this._navHandler);
     window.addEventListener('slide-permissions-loaded', this.onPermissionsChanged);
     window.addEventListener('slide-session-expired', this.onPermissionsChanged);
-    this.loadFromUrl();
+    window.addEventListener("popstate", this.onPopState);
+    const id = detailResourceId("server");
+    if (id !== null) this.serverId = id;
   }
 
   override willUpdate(changed: Map<string, unknown>): void {
     if (changed.has("serverId")) {
       const id = this.serverId;
       if (id != null && Number.isInteger(id) && id > 0) {
+        this.activeTab = readDetailTab("server", id, serverDetailTabKeys);
         void this.loadServerContext(id);
       } else { this.onPermissionsChanged(); this.error = '服务器 ID 无效'; }
     }
@@ -219,6 +235,7 @@ export class ServerDetailPage extends LitElement {
     ++this.contextVersion; ++this.overviewRequest;
     window.removeEventListener('slide-permissions-loaded', this.onPermissionsChanged);
     window.removeEventListener('slide-session-expired', this.onPermissionsChanged);
+    window.removeEventListener('popstate', this.onPopState);
     super.disconnectedCallback();
     if (this._navHandler) {
       window.removeEventListener("slide-navigate", this._navHandler);
@@ -226,14 +243,12 @@ export class ServerDetailPage extends LitElement {
     }
   }
 
-  private loadFromUrl() {
-    const params = new URLSearchParams(window.location.search);
-    const id = params.get("id");
-    const tab = params.get("tab");
-    if (id && (tab === "server-detail" || location.pathname === "/server-detail") && /^[1-9]\d*$/.test(id) && Number.isSafeInteger(Number(id))) {
-      this.serverId = Number(id);
+  private onPopState = () => {
+    const id = detailResourceId('server');
+    if (id !== null && id === this.serverId) {
+      this._setTab(readDetailTab('server', id, serverDetailTabKeys), true);
     }
-  }
+  };
 
   private async loadServerContext(id: number): Promise<void> {
     const version = ++this.contextVersion;
@@ -397,13 +412,8 @@ export class ServerDetailPage extends LitElement {
     }));
   }
 
-  private _setTab(tab: string) {
-    const configuration = this.renderRoot.querySelector('resource-collection-section') as import('../components/resource-collection-section.js').ResourceCollectionSection | null;
-    if (configuration) { configuration.confirmDiscard(() => this._applyTab(tab)); return; }
-    this._applyTab(tab);
-  }
-  private _applyTab(tab: string) {
-    this.activeTab = tab;
+  private _setTab(tab: string, fromHistory = false) {
+    selectDetailTab(this, this.activeTab, tab, () => { this.activeTab = tab; }, fromHistory);
   }
 
   private _formatTimeAgo(date: Date | null): string {
@@ -456,7 +466,7 @@ export class ServerDetailPage extends LitElement {
               ${this.overview ? ({normal:'当前观测未提示异常',abnormal:'异常',unavailable:'不可用',unknown:'待确认'})[runState(this.overview)] : '待确认'}
             </app-badge>
           </div>
-          <div class="header-right"><button class="btn" @click=${() => this._setTab('collection')}>监控配置</button>
+          <div class="header-right">
             <span class="last-updated">详情成功读取：${this._formatTimeAgo(this.lastUpdated)}（非资源观测）</span>
             ${this.detailReadError ? html`<span role="alert">${this.detailReadError}，成功读取时间未更新</span>` : nothing}
             <button class="btn" aria-busy=${String(this.isInspecting)} @click=${() => this._oneClickInspection()} .disabled=${this.isInspecting}>${icons['clipboard']} ${this.isInspecting ? '巡检中…' : '一键巡检'}</button>
@@ -469,18 +479,7 @@ export class ServerDetailPage extends LitElement {
 
         <resource-investigation-links resourceType="server" .resourceId=${this.serverId ?? this.server.id}></resource-investigation-links>
         <div class="tabs" @keydown=${detailTabKeydown} role="tablist" aria-label="服务器详情页签">
-          ${[
-            { key: "overview", label: "概览" },
-            { key: "collection", label: "监控配置" },
-            { key: "metrics", label: "指标与趋势" },
-            { key: "config", label: "配置" },
-            { key: "diagnostics", label: "诊断" },
-            { key: "network", label: "网络" },
-            { key: "processes", label: "进程" },
-            { key: "services", label: "服务" },
-            { key: "logs", label: "日志" },
-            { key: "related", label: "关联资源" },
-          ].map(t => html`
+          ${serverDetailTabs.map(t => html`
             <button role="tab" aria-selected=${String(this.activeTab === t.key)} class="tab ${this.activeTab === t.key ? "active" : ""}" @click=${() => this._setTab(t.key)}>
               ${t.label}
             </button>

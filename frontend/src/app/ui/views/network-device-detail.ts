@@ -1,4 +1,4 @@
-import { detailTabKeydown, returnToResourceList } from '../components/resource-detail-context.js';
+import { detailResourceId, detailTabKeydown, readDetailTab, returnToResourceList, selectDetailTab } from '../components/resource-detail-context.js';
 import { hasListPermission } from '../components/resource-list-access.js';
 import "../components/investigation-operation-context.ts";
 import '../components/resource-investigation-links.js';
@@ -26,7 +26,8 @@ import "../components/app-dialog.js";
 import "../components/app-empty-state.js";
 import "../components/app-form-field.js";
 
-type DetailTab = "metrics" | "overview" | "interfaces" | "relations" | "backups" | "collection";
+const networkDetailTabs = ["overview", "metrics", "interfaces", "relations", "backups", "collection"] as const;
+type DetailTab = (typeof networkDetailTabs)[number];
 
 function bodyOf(response: Response): Promise<Record<string, unknown>> {
   return response.json().catch(() => ({}));
@@ -49,7 +50,7 @@ export class NetworkDeviceDetail extends LitElement {
   @state() private backupsError = '';
   @state() private relations: NetworkDeviceRelation[] = [];
   @state() private backups: ConfigBackupSummary[] = [];
-  @state() private activeTab: DetailTab = new URL(location.href).searchParams.get('metricResource')?.startsWith('network_device:') ? 'metrics' : 'overview' ;
+  @state() private activeTab: DetailTab = 'overview';
   @state() private loading = true;
   @state() private error: string | null = null;
   @state() private backupLoading = false;
@@ -80,22 +81,46 @@ export class NetworkDeviceDetail extends LitElement {
   override firstUpdated() {
     window.addEventListener('slide-permissions-loaded', this.onAccessChanged);
     window.addEventListener('slide-session-expired', this.onAccessChanged);
+    window.addEventListener('popstate', this.onPopState);
+    this.syncDetailTab();
     void this.loadContext();
   }
   override disconnectedCallback() {
     this.onAccessChanged();
     window.removeEventListener('slide-permissions-loaded', this.onAccessChanged);
     window.removeEventListener('slide-session-expired', this.onAccessChanged);
+    window.removeEventListener('popstate', this.onPopState);
     super.disconnectedCallback();
   }
 
   override willUpdate(changed: Map<string, unknown>) {
-    if (changed.has("deviceId") && changed.get("deviceId") !== undefined) void this.loadContext();
+    if (changed.has("deviceId") && changed.get("deviceId") !== undefined) {
+      this.syncDetailTab();
+      void this.loadContext();
+    }
+  }
+
+  private syncDetailTab() {
+    const id = this.validId();
+    this.activeTab = id === null ? 'overview' : readDetailTab('network_device', id, networkDetailTabs);
+  }
+
+  private onPopState = () => {
+    const id = detailResourceId('network_device');
+    if (id !== null && id === this.validId()) {
+      this.setDetailTab(readDetailTab('network_device', id, networkDetailTabs), true);
+    }
+  };
+
+  private setDetailTab(tab: DetailTab, fromHistory = false) {
+    selectDetailTab(this, this.activeTab, tab, () => {
+      this.activeTab = tab;
+      if (tab === 'interfaces') void this.loadInterfaces();
+    }, fromHistory);
   }
 
   private validId(): number | null {
-    const raw = location.pathname === "/network-device-detail" ? new URL(location.href).searchParams.get("networkDeviceId") : null;
-    const id = this.deviceId ?? (raw && /^[1-9]\d*$/.test(raw) ? Number(raw) : null);
+    const id = this.deviceId ?? detailResourceId('network_device');
     return id != null && Number.isSafeInteger(id) && id > 0 ? id : null;
   }
 
@@ -197,9 +222,9 @@ export class NetworkDeviceDetail extends LitElement {
       ${this.overviewLoading ? html`<p role="status">正在读取资源状态与证据…</p>` : nothing}${this.overviewError ? html`<p role="alert">${this.overviewError}</p>` : nothing}
       <h3>${({normal:'当前观测未提示运行异常',abnormal:'存在需要核对的异常',unavailable:'资源当前不可用',unknown:'当前证据不足以判断运行状态'})[state]}</h3>
       <p>${item && !item.gaps.includes('ALERTS_UNAVAILABLE') ? `未解决告警 ${item.alertsTruncated ? '至少 ' : ''}${item.unresolvedAlerts} 项。` : '告警证据尚不可用。'} 状态只反映已有观测。</p>
-      <button class="btn" @click=${()=>this.activeTab='metrics'}>核对指标与时间范围</button><button class="btn" @click=${()=>{this.activeTab='interfaces';void this.loadInterfaces();}}>查看接口维度</button>
+      <button class="btn" @click=${()=>this.setDetailTab('metrics')}>核对指标与时间范围</button><button class="btn" @click=${()=>this.setDetailTab('interfaces')}>查看接口维度</button>
       <section><h3>证据缺口</h3><p>${!item ? '尚未取得此资源的证据快照。' : freshness(item)!=='fresh' ? '观测缺失、过期或读取失败，请核对观测时间与监控配置。' : item.quality!=='good' || item.gaps.length ? '当前证据不完整，请核对指标能力、告警与关联关系。' : '当前快照未报告缺口；不代表已覆盖全部信号。'}</p>
-      <button class="btn" @click=${()=>this.activeTab='collection'}>查看监控配置</button>${item?.gaps.length ? html`<details><summary>查看缺口原始标识</summary>${item.gaps.join(' · ')}</details>` : nothing}</section>
+      <button class="btn" @click=${()=>this.setDetailTab('collection')}>查看监控配置</button>${item?.gaps.length ? html`<details><summary>查看缺口原始标识</summary>${item.gaps.join(' · ')}</details>` : nothing}</section>
     </app-card><app-card><h2 slot="header">资源与能力</h2><dl><dt>设备</dt><dd>${this.device!.host}:${this.device!.snmp_port}</dd><dt>型号</dt><dd>${this.device!.model || '未知'}</dd><dt>最近状态检查（含失败尝试）</dt><dd>${this.device!.last_check_at ? new Date(this.device!.last_check_at).toLocaleString('zh-CN') : '未知'}</dd><dt>可用证据</dt><dd>指标、接口、关联关系、配置备份；以各页实际读取结果为准。</dd></dl></app-card></div>`;
   }
 
@@ -370,9 +395,9 @@ export class NetworkDeviceDetail extends LitElement {
       network-device-detail .header-actions .btn, network-device-detail .header-actions .btn-primary { flex:1; justify-content:center; } }
     </style>
     ${id === null ? html`<div class="error">网络设备 ID 无效</div>` : this.loading ? html`<div class="loading" role="status">正在加载设备数据…</div>` : this.error ? html`<div class="error" role="alert">${this.error}<br><button class="btn" @click=${this.navigateBack}>返回列表</button><button class="btn" type="button" @click=${this.loadContext}>重试</button></div>` : this.device ? html`<div class="page">
-      <div class="header"><div class="title"><button class="btn-ghost" type="button" @click=${this.navigateBack}>${icons["chevron-left"]} 网络设备</button><h1>${this.device.label || this.device.name}</h1><div class="meta">${this.device.host}:${this.device.snmp_port} · ${this.device.vendor === "cisco" ? "Cisco" : "Huawei"} ${this.device.model || "型号未知"} · ${this.device.os_version || "版本未知"} · 观测于 ${this.overview?.observedAt ? new Date(this.overview.observedAt).toLocaleString('zh-CN') : '未知'}</div><div class="meta">详情成功读取：${this.lastRead ? new Date(this.lastRead).toLocaleString('zh-CN') : '未知'}（非资源观测）</div></div><div class="header-actions"><button class="btn" @click=${() => this.activeTab='collection'}>监控配置</button><app-badge variant=${this.overview && ['abnormal','unavailable'].includes(runState(this.overview)) ? 'warn' : 'muted'}>${this.overview ? ({normal:'当前观测未提示异常',abnormal:'异常',unavailable:'不可用',unknown:'待确认'})[runState(this.overview)] : '待确认'}</app-badge><button class="btn btn-refresh" type="button" @click=${this.loadContext}>刷新</button><button class="btn-primary" type="button" @click=${this.captureBackup} .disabled=${this.backupLoading || !hasListPermission('network_devices:backup')} title=${hasListPermission('network_devices:backup') ? '立即备份' : '需要 network_devices:backup 权限'}>${icons.save} ${this.backupLoading ? "备份中…" : "立即备份"}</button></div></div>
+      <div class="header"><div class="title"><button class="btn-ghost" type="button" @click=${this.navigateBack}>${icons["chevron-left"]} 网络设备</button><h1>${this.device.label || this.device.name}</h1><div class="meta">${this.device.host}:${this.device.snmp_port} · ${this.device.vendor === "cisco" ? "Cisco" : "Huawei"} ${this.device.model || "型号未知"} · ${this.device.os_version || "版本未知"} · 观测于 ${this.overview?.observedAt ? new Date(this.overview.observedAt).toLocaleString('zh-CN') : '未知'}</div><div class="meta">详情成功读取：${this.lastRead ? new Date(this.lastRead).toLocaleString('zh-CN') : '未知'}（非资源观测）</div></div><div class="header-actions"><app-badge variant=${this.overview && ['abnormal','unavailable'].includes(runState(this.overview)) ? 'warn' : 'muted'}>${this.overview ? ({normal:'当前观测未提示异常',abnormal:'异常',unavailable:'不可用',unknown:'待确认'})[runState(this.overview)] : '待确认'}</app-badge><button class="btn btn-refresh" type="button" @click=${this.loadContext}>刷新</button><button class="btn-primary" type="button" @click=${this.captureBackup} .disabled=${this.backupLoading || !hasListPermission('network_devices:backup')} title=${hasListPermission('network_devices:backup') ? '立即备份' : '需要 network_devices:backup 权限'}>${icons.save} ${this.backupLoading ? "备份中…" : "立即备份"}</button></div></div>
       <resource-investigation-links resourceType="network_device" .resourceId=${id}></resource-investigation-links>
-      <div class="tabs" @keydown=${detailTabKeydown} role="tablist" aria-label="网络设备详情页签">${(["overview", "metrics", "interfaces", "relations", "backups", "collection"] as DetailTab[]).map((tab) => html`<button role="tab" aria-selected=${String(this.activeTab === tab)} class="tab ${this.activeTab === tab ? "active" : ""}" type="button" @click=${() => { const config = this.renderRoot.querySelector("resource-collection-section") as import("../components/resource-collection-section.js").ResourceCollectionSection | null; if (config) config.confirmDiscard(() => { this.activeTab = tab; if(tab === 'interfaces') void this.loadInterfaces(); }); else { this.activeTab = tab; if(tab === 'interfaces') void this.loadInterfaces(); } }}>${tab === "metrics" ? "指标与趋势" : tab === "collection" ? "监控配置" : tab === "overview" ? "概览" : tab === "interfaces" ? "接口" : tab === "relations" ? "关联资源" : "配置备份"}</button>`)}</div>
+      <div class="tabs" @keydown=${detailTabKeydown} role="tablist" aria-label="网络设备详情页签">${networkDetailTabs.map((tab) => html`<button role="tab" aria-selected=${String(this.activeTab === tab)} class="tab ${this.activeTab === tab ? "active" : ""}" type="button" @click=${() => this.setDetailTab(tab)}>${tab === "metrics" ? "指标与趋势" : tab === "collection" ? "监控配置" : tab === "overview" ? "概览" : tab === "interfaces" ? "接口" : tab === "relations" ? "关联资源" : "配置备份"}</button>`)}</div>
       ${this.activeTab === "collection" ? html`<resource-collection-section resourceType="network_device" .resourceId=${this.validId()}></resource-collection-section>` : this.activeTab === 'overview' ? this.renderOverview() : this.activeTab === 'interfaces' ? this.renderInterfaces() : this.activeTab === 'metrics' ? html`<resource-metric-browser resourceType="network_device" .resourceId=${this.validId()}></resource-metric-browser>` : this.activeTab === "relations" ? this.renderRelations() : html`${this.renderBackupSchedule()}${this.renderBackups()}`}
     </div>` : nothing}
     ${this.selectedBackup ? html`<app-dialog .open=${true} size="xl" title=${`配置备份 v${this.selectedBackup.versionNo}`} @app-dialog-close=${() => (this.selectedBackup = null)}><p class="meta">备份时间 ${new Date(this.selectedBackup.collectedAt).toLocaleString()} · SHA-256 ${this.selectedBackup.contentSha256}</p><pre class="preview">${this.selectedBackup.preview}</pre><div slot="footer"><button class="btn" type="button" @click=${() => (this.selectedBackup = null)}>关闭</button></div></app-dialog>` : nothing}`;

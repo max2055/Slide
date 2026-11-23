@@ -721,7 +721,7 @@ export class InstancesPage extends LitElement {
   }
 
   override render() {
-    if (this.showAddDialog || this.showEditDialog) return this._renderFormDialog(this.showEditDialog ? '编辑资源' : '添加资源', this.showEditDialog);
+    if (this.showAddDialog || this.showEditDialog) return this._renderFormDialog(this.showEditDialog ? '编辑数据库实例' : '添加数据库实例', this.showEditDialog);
     const listReady = !this.loading && !this.error;
     const showCount = listReady && (this.filter === "all" || this.healthEvidenceReady) && (!this.searchQuery.trim() || !this.metricsLoading);
     const filtered = this.filteredInstances;
@@ -835,13 +835,6 @@ export class InstancesPage extends LitElement {
 
   private _viewDetail(inst: DatabaseInstance) {
     captureListReturn(this, 'instance', inst.id, { search: this.searchQuery, filter: this.filter });
-    // Update URL with instance ID
-    const url = new URL(window.location.href);
-    url.searchParams.set("id", String(inst.id));
-    url.searchParams.set("tab", "instance-detail");
-    window.history.pushState({}, "", url);
-
-    // Dispatch navigation event
     window.dispatchEvent(new CustomEvent("slide-navigate", {
       detail: { tab: "instance-detail", id: inst.id }
     }));
@@ -1270,6 +1263,9 @@ export class InstancesPage extends LitElement {
     const canManageHostRelations = this.canManageHostRelations;
     const relationUnavailable = canManageHostRelations
       && (this.hostRelationLoading || this.instanceHosts === null);
+    const { name, db_type, host, port } = this.formData;
+    const address = host.trim() && (port ? `${host.trim()}:${port}` : host.trim());
+    const identity = [name.trim(), db_type, address].filter(Boolean).join(' · ');
     return html`
       <section aria-label="资源编辑" class="resource-editor" aria-busy=${String(this.isSubmitting)}>
         <style>
@@ -1284,7 +1280,7 @@ export class InstancesPage extends LitElement {
           @media(max-width:700px){.resource-editor .editor-head{align-items:flex-start;flex-direction:column}}
         </style>
         <button class="btn btn-ghost" .disabled=${this.isSubmitting} @click=${this._closeDialogs}>返回资源列表</button>
-        <div class="editor-head"><div><h1 tabindex="-1">${title}</h1><p>${this.formData.name || '新资源'} · ${this.formData.db_type} · ${this.formData.host}:${this.formData.port}</p></div>
+        <div class="editor-head"><div><h1 tabindex="-1">${title}</h1>${identity ? html`<p>${identity}</p>` : nothing}</div>
           ${this.editingInstance ? html`<button class="btn btn-ghost" .disabled=${this.isSubmitting} @click=${() => this._confirmEditorLeave(() => this._viewDetail(this.editingInstance!))}>查看资源详情 ↗</button>` : nothing}</div>
         <div class="editor-tabs" role="tablist" aria-label="资源编辑页签">
           ${['basic', 'collection'].map((tab, index) => html`<button id=${`resource-edit-tab-${tab}`} role="tab" aria-selected=${this.editorTab === tab} aria-controls=${`resource-edit-panel-${tab}`} tabindex=${this.editorTab === tab ? 0 : -1} @keydown=${(e: KeyboardEvent) => { if (['ArrowLeft','ArrowRight','Home','End'].includes(e.key)) { e.preventDefault(); const next = e.key === 'Home' ? 'basic' : e.key === 'End' ? 'collection' : index ? 'basic' : 'collection'; this.editorTab = next; void this.updateComplete.then(() => this.renderRoot.querySelector<HTMLButtonElement>(`#resource-edit-tab-${next}`)?.focus()); } }} @click=${() => { this.editorTab = tab; }}>${index ? '监控与采集' : '基本信息'}</button>`)}

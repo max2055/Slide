@@ -124,6 +124,13 @@ for (const width of [375, 768, 1440]) for (const theme of ['light', 'dark']) {
     await page.evaluate(theme => { document.documentElement.dataset.themeMode = theme; }, theme);
     const table = page.locator('resource-metrics-table');
     await expect(table.locator('tbody tr')).toHaveCount(3);
+    if (width === 1440) {
+      await page.getByRole('button', { name: '列设置', exact: true }).click();
+      const columns = table.locator('app-dialog[title="列设置"]');
+      await expect(columns.getByRole('dialog', { name: '列设置', exact: true })).toBeVisible();
+      for (const option of await columns.getByRole('checkbox').all()) await option.check();
+      await columns.getByRole('button', { name: '完成', exact: true }).click();
+    }
     for (const index of [0, 2]) {
       const row = table.locator('tbody tr').nth(index);
       const name = row.locator('.resource-name');
@@ -217,7 +224,7 @@ for (const width of [375, 768, 1440]) for (const theme of ['light', 'dark']) tes
     expect(new Set(ys).size).toBe(1);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     await page.screenshot({ path: info.outputPath(`${file}-${width}-${theme}-isolated.png`), fullPage: true });
-    const scroll = table.getByRole('region', { name: '资源表格，可横向滚动' });
+    const scroll = table.getByRole('region', { name: /^资源表格/ });
     await scroll.focus(); await page.keyboard.press('ArrowRight');
     if (width < 1440) await expect.poll(() => scroll.evaluate(el => el.scrollLeft)).toBeGreaterThan(0);
     // Full text is available on focus, and long strings do not increase row height.
@@ -266,7 +273,7 @@ for (const [tag, file, , type] of lists) test(`${type} four direct actions and p
   const navigation = await page.evaluate(() => (window as any).navigationEvents.at(-1));
   expect(navigation[type === 'network_device' ? 'networkDeviceId' : type === 'server' ? 'serverId' : 'id']).toBe(1001);
   await actions().getByRole('button', { name: '编辑', exact: true }).click();
-  await expect(page.getByRole('heading', { name: type === 'instance' ? '编辑资源' : type === 'server' ? '编辑服务器' : '编辑网络设备', exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { name: type === 'instance' ? '编辑数据库实例' : type === 'server' ? '编辑服务器' : '编辑网络设备', exact: true })).toBeVisible();
   await page.getByRole('button', { name: '返回资源列表', exact: true }).click();
   await expect(actions().getByRole('button', { name: '编辑', exact: true })).toBeFocused();
   await actions().getByRole('button', { name: '删除', exact: true }).click();
@@ -854,5 +861,179 @@ for (const outcome of ['503', 'late success'] as const) {
     } finally {
       releaseFirst();
     }
+  });
+}
+
+const detailLocationCases = [
+  { menu: '数据库', type: 'instance', view: 'instance-detail-page', route: 'instance-detail', idKey: 'id',
+    api: '/api/database/instances', label: '日志', key: 'logs', filter: 'mysql', width: 1440, height: 900 },
+  { menu: '服务器', type: 'server', view: 'server-detail', route: 'server-detail', idKey: 'id',
+    api: '/api/servers', label: '关联资源', key: 'related', filter: 'linux', width: 1920, height: 1080 },
+  { menu: '网络设备', type: 'network_device', view: 'network-device-detail', route: 'network-device-detail', idKey: 'networkDeviceId',
+    api: '/api/network-devices', label: '配置备份', key: 'backups', filter: '测试站点', width: 1366, height: 768 },
+] as const;
+
+for (const item of detailLocationCases) {
+  test(`MAX-726 ${item.type} restores inventory and shares the detail tab`, async ({ page, context }, info) => {
+    await page.setViewportSize({ width: item.width, height: item.height });
+    const writes: string[] = [];
+    context.on('request', request => {
+      const path = new URL(request.url()).pathname;
+      if (/^\/api\/(database|servers|network-devices|resources|investigations|diagnosis|metrics)\//.test(path)
+        && request.method() !== 'GET' && !['/api/metrics/query', '/api/metrics/latest'].includes(path)) {
+        writes.push(`${request.method()} ${path}`);
+      }
+    });
+    const inventory = [...fixtureEntries, ...fixtureEntries.slice(0, 20).map((entry, index) => ({
+      ...entry, id: 1026 + index, name: `补充资源 ${index + 1}`, label: `补充资源 ${index + 1}`,
+    }))];
+    const seed = async (tab: Page) => {
+      await listResponses(tab);
+      await tab.addInitScript(() => localStorage.setItem('slide.i18n.locale', 'zh-CN'));
+      await tab.route('**/api/auth/permissions', route => route.fulfill({ json: ['*'] }));
+      await tab.routeWebSocket('**/agent-ws', socket => socket.onMessage(message => {
+        if (JSON.parse(String(message)).type === 'auth') socket.send(JSON.stringify({ type: 'auth_ok' }));
+      }));
+      await tab.route(`**${item.api}`, route => route.fulfill({ json: inventory }));
+      await tab.route(`**${item.api}/1021`, route => route.fulfill({ json: fixtureEntries[20] }));
+      if (item.type === 'server') {
+        await tab.route('**/api/servers/1021/instances', route => route.fulfill({ json: { instances: [] } }));
+      }
+    };
+    await seed(page);
+    await page.goto('/workbench');
+    await page.getByRole('navigation').getByRole('link', { name: item.menu, exact: true }).click();
+    const toolbar = page.locator('.resource-toolbar');
+    const search = toolbar.locator('input');
+    const table = page.locator('resource-metrics-table');
+    const scroll = table.locator('.scroll');
+    const pageScroller = page.locator('main.content');
+    const row = table.locator('[data-resource-detail-id="1021"]');
+    await expect(toolbar.getByRole('button', { name: /^添加/ })).toBeVisible();
+    await expect(toolbar.getByRole('button', { name: '刷新', exact: true })).toBeVisible();
+    await expect(page.locator('.resource-result-count')).toContainText('45');
+    await expect(table.getByRole('button', { name: fixtureEntries[0].name, exact: true })).toBeVisible();
+    const checkOverflow = async () => {
+      const overflow = await scroll.evaluate(el => el.scrollWidth > el.clientWidth);
+      await expect(table.locator('.scroll-hint')).toHaveCount(overflow ? 1 : 0);
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+      return overflow;
+    };
+    const defaultOverflow = await checkOverflow();
+    await search.fill('资源-25');
+    await expect(table.locator('tbody tr')).toHaveCount(1);
+    const narrowOverflow = await checkOverflow();
+    if (item.width >= 1920) expect(narrowOverflow).toBe(false);
+    await search.fill(item.filter);
+    await toolbar.getByRole('button', { name: '列设置', exact: true }).click();
+    const columns = table.locator('app-dialog[title="列设置"]');
+    await expect(columns.getByRole('dialog', { name: '列设置', exact: true })).toBeVisible();
+    const options = await columns.getByRole('checkbox').all();
+    for (const option of options) await option.check();
+    await columns.getByRole('button', { name: '完成', exact: true }).click();
+    expect(await checkOverflow()).toBe(true);
+    if (item.type === 'network_device') {
+      await toolbar.getByLabel('站点筛选').selectOption('测试站点');
+      await toolbar.getByLabel('状态筛选').selectOption('online');
+    }
+    const next = table.getByRole('button', { name: '下一页', exact: true });
+    await expect(next).toBeEnabled();
+    await next.click();
+    await expect(row).toBeVisible();
+    await row.scrollIntoViewIfNeeded();
+    await row.focus();
+    await scroll.evaluate(el => { el.scrollLeft = 93; });
+    await pageScroller.evaluate(el => { el.scrollTop = Math.min(160, el.scrollHeight - el.clientHeight); });
+    const position = { left: await scroll.evaluate(el => el.scrollLeft), top: await pageScroller.evaluate(el => el.scrollTop) };
+    expect(position.left).toBeGreaterThan(0);
+    expect(position.top).toBeGreaterThan(0);
+    const detail = page.locator(item.view);
+    await page.keyboard.press('Enter');
+    const selected = detail.getByRole('tab', { name: item.label, exact: true });
+    const overview = detail.getByRole('tab', { name: '概览', exact: true });
+    await expect(overview).toHaveAttribute('aria-selected', 'true');
+    await expect(detail.getByRole('heading', { name: fixtureEntries[20].name })).toBeVisible();
+    await expect(detail.getByRole('button', { name: '监控配置', exact: true })).toHaveCount(0);
+    const config = detail.getByRole('tab', { name: '监控配置', exact: true });
+    await detail.getByRole('button', { name: '查看监控配置', exact: true }).click();
+    await expect(config).toHaveAttribute('aria-selected', 'true');
+    await expect(detail.locator('resource-collection-section')).toHaveJSProperty('resourceId', 1021);
+    await overview.click();
+    await selected.focus();
+    await page.keyboard.press('Enter');
+    await expect(selected).toHaveAttribute('aria-selected', 'true');
+    const share = new URL(page.url());
+    expect(share.pathname).toBe(`/${item.route}`);
+    expect(share.searchParams.get(item.idKey)).toBe('1021');
+    expect(share.searchParams.get('detailTab')).toBe(item.key);
+    await page.goBack();
+    await expect(overview).toHaveAttribute('aria-selected', 'true');
+    await page.goForward();
+    await expect(selected).toHaveAttribute('aria-selected', 'true');
+    const copy = await context.newPage();
+    await seed(copy);
+    await copy.goto(share.href);
+    const copyDetail = copy.locator(item.view);
+    const copyTab = copyDetail.getByRole('tab', { name: item.label, exact: true });
+    await expect(copyTab).toHaveAttribute('aria-selected', 'true');
+    await expect(copyDetail.getByRole('heading', { name: fixtureEntries[20].name })).toBeVisible();
+    await copy.reload();
+    await expect(copyTab).toHaveAttribute('aria-selected', 'true');
+
+    const legacy = new URL(share);
+    legacy.searchParams.delete('detailTab');
+    legacy.searchParams.delete('tab');
+    legacy.searchParams.set('metricResource', `${item.type}:1021`);
+    legacy.searchParams.set('metricFrom', '2026-11-01T01:00:00.000Z');
+    legacy.searchParams.set('metricTo', '2026-11-01T02:00:00.000Z');
+    await copy.goto(legacy.href);
+    const metrics = copyDetail.getByRole('tab', { name: '指标与趋势', exact: true });
+    await expect(metrics).toHaveAttribute('aria-selected', 'true');
+    await copyTab.click();
+    await copy.goBack();
+    await expect(metrics).toHaveAttribute('aria-selected', 'true');
+    expect(new URL(copy.url()).searchParams.get('metricFrom')).toBe(legacy.searchParams.get('metricFrom'));
+    expect(new URL(copy.url()).searchParams.get('metricTo')).toBe(legacy.searchParams.get('metricTo'));
+    legacy.searchParams.set('detailTab', 'unrecognized');
+    await copy.goto(legacy.href);
+    await expect(copyDetail.getByRole('tab', { name: '概览', exact: true })).toHaveAttribute('aria-selected', 'true');
+    const forbidden = () => copy.locator(item.view).getByRole('tab');
+    await copy.route(`**${item.api}/1021`, route => route.fulfill({ status: 403, json: {} }));
+    const denial = copy.waitForResponse(response => response.url().endsWith(`${item.api}/1021`) && response.status() === 403);
+    await copy.goto(share.href);
+    await denial;
+    await expect(forbidden()).toHaveCount(0);
+    await expect(copyDetail.getByRole('heading', { name: fixtureEntries[20].name })).toHaveCount(0);
+    await copy.close();
+
+    await detail.getByRole('button', { name: item.type === 'network_device' ? '网络设备' : '返回列表', exact: true }).click();
+    await expect(search).toHaveValue(item.filter);
+    if (item.type === 'network_device') {
+      await expect(toolbar.getByLabel('站点筛选')).toHaveValue('测试站点');
+      await expect(toolbar.getByLabel('状态筛选')).toHaveValue('online');
+    }
+    await expect(table).toContainText('第 2 页');
+    await expect(row).toBeFocused();
+    await expect.poll(() => scroll.evaluate(el => el.scrollLeft)).toBe(position.left);
+    await expect.poll(() => pageScroller.evaluate(el => el.scrollTop)).toBe(position.top);
+    await row.press('Enter');
+    await expect(overview).toHaveAttribute('aria-selected', 'true');
+    await page.goBack();
+    await expect(search).toHaveValue(item.filter);
+    await expect(table).toContainText('第 2 页');
+    await expect(row).toBeFocused();
+    if (item.type === 'instance') {
+      await toolbar.getByRole('button', { name: '添加实例', exact: true }).click();
+      await expect(page.getByRole('heading', { name: '添加数据库实例', exact: true })).toBeVisible();
+      const caption = page.locator('.editor-head p');
+      await expect(caption).toHaveText('mysql');
+      await page.locator('input[name="name"]').fill('独占测试数据库');
+      await expect(caption).toHaveText('独占测试数据库 · mysql');
+    }
+    expect(writes).toEqual([]);
+    await info.attach('MAX-726 result', { contentType: 'application/json', body: Buffer.from(JSON.stringify({
+      resource: item.type, browser: page.context().browser()?.version(), viewport: page.viewportSize(),
+      detailTab: item.key, defaultOverflow, narrowOverflow, position, writes,
+    }, null, 2)) });
   });
 }
