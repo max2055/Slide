@@ -222,6 +222,16 @@ export class AgentToolAuditPage extends LitElement {
     </div></div>`;
   }
 
+  private renderExecutionOutcome(record: AuditRecord) {
+    const result = record.result;
+    const success = result && typeof result === 'object' && 'success' in result ? result.success : undefined;
+    const variant = success === true ? 'ok' : success === false ? 'danger' : 'warn';
+    const label = success === true ? '成功' : success === false ? '失败' : '结果待确认';
+    return html`<div class="detail-row"><span>工具回执</span><span>
+      ${this.detailLoading ? '加载中' : html`<app-badge variant=${variant}>${label}</app-badge>`}
+    </span></div>`;
+  }
+
   override render() {
     return html`
       <div class="page-header"><div><h1>Agent 审计</h1><p>查看模型工具发现、执行决策和脱敏后的结果记录</p></div><button aria-busy=${String(this.loading)} class="btn btn-refresh" title="刷新" aria-label="刷新" @click=${() => this.load()} .disabled=${this.loading}>刷新</button></div>
@@ -249,6 +259,7 @@ export class AgentToolAuditPage extends LitElement {
           <div class="detail-row"><span>Agent</span><span>${this.selected.agentId}</span></div>
           <div class="detail-row"><span>阶段</span><strong>${phaseLabels[this.selected.phase]}</strong></div>
           <div class="detail-row"><span>授权判定</span><span><app-badge variant=${this.selected.allowed ? 'ok' : 'danger'}>${this.selected.allowed ? '允许' : '拒绝'}</app-badge> <span class="mono">${this.selected.reasonCode}</span></span></div>
+          ${this.selected.phase === 'result' ? this.renderExecutionOutcome(this.selected) : nothing}
           ${this.renderRelatedRecord(this.selected)}
           <div><strong>资源</strong><pre>${this.json(this.selected.resource)}</pre></div>
           <div><strong>策略快照</strong><pre>${this.detailLoading ? '加载中' : this.json(this.selected.policySnapshot)}</pre></div>

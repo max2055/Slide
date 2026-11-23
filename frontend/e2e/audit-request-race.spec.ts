@@ -83,6 +83,8 @@ test('MAX-729 opens only the named counterpart outside the list and restores row
   await expect(dialog).not.toContainText('合成回执');
   await h.reply('/agent/security/audit/101', 0, { record: counterpart });
   await expect(dialog.getByText('#101 · tool-1')).toBeFocused();
+  await expect(dialog.locator('.detail-row').filter({ hasText: '工具回执' })).toContainText('失败');
+  await expect(dialog.locator('.detail-row').filter({ hasText: '授权判定' })).toContainText('允许');
   await expect(dialog).toContainText('合成回执');
   await dialog.getByRole('button', { name: '查看权限决策 #1' }).press('Enter');
   await h.reply('/agent/security/audit/1', 1, { record: first });
