@@ -218,10 +218,10 @@ describe('database instance host relation form', () => {
     expect(authFetch.mock.calls.filter(([url, options]) => url === '/api/database/instances/41/hosts')).toHaveLength(0);
   });
 
-  it('reveals host relations when permissions arrive after mount and removes the listener on disconnect', async () => {
+  it('reloads the authorized inventory when permissions arrive and removes the listener on disconnect', async () => {
     localStorage.removeItem('permissions');
     authFetch.mockImplementation(async (url: string, options?: RequestInit) => {
-      if (url === '/api/database/instances' && !options?.method) return response([]);
+      if (url === '/api/database/instances' && !options?.method) return response([instance]);
       if (url === '/api/servers') return response([]);
       if (url === '/api/database/instances/41/hosts' && !options?.method) return response({ hosts: [{ serverId: 7, role: 'primary' }] });
       throw new Error(`unexpected request: ${options?.method ?? 'GET'} ${url}`);
@@ -232,9 +232,12 @@ describe('database instance host relation form', () => {
     await settle(page);
     expect(page.shadowRoot.querySelector('instance-host-field')).toBeNull();
 
-    const permissions = ['instance:manage', 'servers:view', 'servers:manage'];
+    const permissions = ['instance:view', 'instance:manage', 'servers:view', 'servers:manage'];
     localStorage.setItem('permissions', JSON.stringify(permissions));
     window.dispatchEvent(new CustomEvent('slide-permissions-loaded', { detail: { permissions } }));
+    await settle(page);
+    expect(page.editingInstance).toBeNull();
+    page._editInstance(page.instances[0]);
     await settle(page);
 
     const field = page.shadowRoot.querySelector('instance-host-field') as any;
@@ -242,11 +245,35 @@ describe('database instance host relation form', () => {
     expect(field.disabled).toBe(false);
     expect(authFetch.mock.calls.filter(([url, options]) => url === '/api/database/instances/41/hosts' && !options?.method)).toHaveLength(1);
 
-    const requestUpdate = vi.spyOn(page, 'requestUpdate');
     page.remove();
-    requestUpdate.mockClear();
+    authFetch.mockClear();
     window.dispatchEvent(new CustomEvent('slide-permissions-loaded', { detail: { permissions } }));
-    expect(requestUpdate).not.toHaveBeenCalled();
+    expect(authFetch).not.toHaveBeenCalled();
+  });
+
+  it('MAX-717 discards an overview from the previous inventory authority', async () => {
+    let readOverview = 0;
+    let finishOldOverview!: (result: ReturnType<typeof response>) => void;
+    const oldOverview = new Promise<ReturnType<typeof response>>(resolve => { finishOldOverview = resolve; });
+    const currentEvidence = { resource: { type: 'instance', id: instance.id }, status: 'healthy' };
+    authFetch.mockImplementation(async (url: string) => {
+      if (url === '/api/database/instances') return response([instance]);
+      if (url !== '/api/resources/overview') return response([]);
+      if (++readOverview === 2) return oldOverview;
+      return response({ items: [currentEvidence] });
+    });
+    const page = await mountPage();
+    const oldRead = page.loadInstances();
+    await vi.waitFor(() => expect(readOverview).toBe(2));
+    localStorage.setItem('permissions', JSON.stringify(['instance:view']));
+    window.dispatchEvent(new Event('slide-permissions-loaded'));
+    expect(page.instances).toEqual([]);
+    expect(page.healthEvidence).toEqual([]);
+    await vi.waitFor(() => expect(readOverview).toBe(3));
+    finishOldOverview(response({ items: [{ ...currentEvidence, status: 'critical' }] }));
+    await oldRead;
+    await settle(page);
+    expect(page.healthEvidence).toEqual([currentEvidence]);
   });
 
   it('renders host relations read-only and saves only the base edit with view permission', async () => {

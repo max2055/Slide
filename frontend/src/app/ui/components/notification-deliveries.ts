@@ -29,7 +29,7 @@ export class NotificationDeliveries extends LitElement {
     `,
   ];
   @state() private rows: any[] = [];
-  @state() private busy = false;
+  @state() private busy = true;
   @state() private error = "";
   private epoch = 0;
   private onStorage = (e: StorageEvent) => {
@@ -52,14 +52,15 @@ export class NotificationDeliveries extends LitElement {
     this.busy = true;
     this.error = "";
     try {
-      const r = await authFetch("/api/notification/deliveries"),
-        v = await r.json();
+      const r = await authFetch("/api/notification/deliveries", { cache: "no-store" });
+      if (!r.ok) throw Error(r.status === 403 ? "无权查看投递回执" : "投递回执暂时无法查询");
+      const v = await r.json();
       if (!this.isConnected || g !== this.epoch || s !== localStorage.getItem("token")) return;
-      if (!r.ok) throw Error("投递回执暂时无法查询，请重试");
+      if (!Array.isArray(v) || v.some(row => !row || typeof row !== "object")) throw Error("投递回执格式异常");
       this.rows = v;
     } catch (e) {
       if (this.isConnected && g === this.epoch && s === localStorage.getItem("token"))
-        this.error = (e as Error).message;
+        this.error = e instanceof SyntaxError || e instanceof TypeError ? "投递回执暂时无法查询" : (e as Error).message;
     } finally {
       if (this.isConnected && g === this.epoch && s === localStorage.getItem("token"))
         this.busy = false;
@@ -85,11 +86,11 @@ export class NotificationDeliveries extends LitElement {
       DELIVERY_OUTCOME_UNCERTAIN: "投递结果未知",
       LEGACY_DELIVERY: "已有投递记录，未重复发送",
     };
-    return html`<h3>问题、恢复与升级投递</h3>
+    return html`<h3>投递回执</h3>
       <button class="btn btn-refresh" .disabled=${this.busy} @click=${this.load}>
         刷新投递回执
       </button>
-      ${this.busy ? html`<p role="status">加载投递回执…</p>` : this.error ? html`<p role="alert" class="error">${this.error}</p>` : !this.rows.length ? html`<p>暂无可查看的投递记录</p>` : ""}
+      ${this.busy ? html`<p role="status">加载投递回执…</p>` : this.error ? html`<p role="alert" class="error">${this.error}</p>` : !this.rows.length ? html`<p>暂无可查看的投递回执</p>` : ""}
       <p>未知结果需先核对原投递。重放沿用原投递身份；维护抑制的历史消息不补发。</p>
       <div class="scroll">
         <table>

@@ -6,6 +6,31 @@ import "./event-investigation-record.js";
 
 afterEach(() => { document.body.replaceChildren(); authFetch.mockReset(); });
 
+it('matches the exact opening trigger and withholds a snapshot linked to another alert', async () => {
+  const rule = { rule_id: 'rule', version: 2, scope: 'scope', body_hash: 'opening-hash',
+    item: { template_id: 'tpl', item_version: 1 }, metric: { id: 'fixture.metric' }, unit: 'count',
+    problem: { node: 'compare', select: { aggregation: 'last' }, operator: '>', threshold: { value: 90 } } };
+  const detail = {
+    event_id: 7, alert_id: 8, episode: { ...rule, last: {} },
+    snapshot: { configuration: { config_revision: 3, rules: [{ ...rule, version: 1 }, rule],
+      templates: [{ template_id: 'tpl', version: 4 }] } },
+  };
+  const evidence = document.createElement('template-event-evidence') as any;
+  evidence.eventId = 7;
+  evidence.alertId = 8;
+  authFetch.mockResolvedValueOnce(Response.json({ ...detail, alert_id: 9 }));
+  document.body.append(evidence);
+  const root = evidence.shadowRoot!;
+  await vi.waitFor(() => expect(root.textContent).toContain('暂不可读取告警发生时的触发器'));
+  expect(root.querySelector('summary')).toBeNull();
+  authFetch.mockResolvedValueOnce(Response.json(detail));
+  root.querySelector('button')!.click();
+  await vi.waitFor(() => expect(root.querySelector('summary')?.textContent).toBe('查看触发器'));
+  expect(root.textContent).toContain('模板 tpl v4 · 触发器 rule v2');
+  expect(JSON.parse(root.querySelector('pre')!.textContent!)).toEqual(rule);
+  expect(root.querySelector('button')).toBeNull();
+});
+
 it.each([
   ["instance", "/?tab=instance-detail&id=7"],
   ["server", "/?tab=server-detail&id=7"],

@@ -36,7 +36,7 @@ try {
   const backupTable = splitSqlStatements(foundation).find(sql => sql.startsWith('CREATE TABLE IF NOT EXISTS `network_device_config_backups`'));
   assert.ok(backupTable);
   await pool.query(backupTable);
-  for (const file of ['065_persistent_audit_log.sql', '091_network_config_backup_schedule.sql']) {
+  for (const file of ['065_persistent_audit_log.sql', '091_network_config_backup_schedule.sql', '166_network_config_backup_run_receipts.sql']) {
     const sql = await readFile(new URL(`../sql/migrations/${file}`, import.meta.url), 'utf8');
     for (const statement of splitSqlStatements(sql)) await pool.query(statement);
   }
@@ -96,6 +96,7 @@ try {
 
   const base = new MysqlBackupScheduleStore(() => pool!);
   let finalizationFailures = 1;
+  let checkpointFailures = 0;
   let lostCheckpointResponses = 0;
   let lostFinalizationResponses = 0;
   let checkpointWrites = 0;
@@ -108,6 +109,9 @@ try {
         rollback: () => connection.rollback(),
         release: () => connection.release(),
         execute: async (sql: string, values?: unknown[]) => {
+          if (sql.includes("SET status = 'running', error_code") && checkpointFailures > 0) {
+            checkpointFailures--; throw new Error('injected checkpoint write failure');
+          }
           const result = await connection.execute(sql, values);
           if (sql.includes("SET status = 'running', error_code")) checkpointWrites++;
           return result;
@@ -130,7 +134,7 @@ try {
       return result;
     },
   } as any));
-  const run = (store = base) => new ConfigBackupScheduler(store, id => service.collect(id), () => new Date('2026-11-12T16:00:00Z'));
+  const run = (store = base) => new ConfigBackupScheduler(store, (id, date) => service.collect(id, null, date), () => new Date('2026-11-12T16:00:00Z'));
   let before = captures;
   await run(faulty).tick();
   assert.equal(captures, before + 1);
@@ -163,20 +167,66 @@ try {
   await run().tick();
   assert.equal((await base.get(7)).lastRun?.status, 'success'); assert.equal(captures, before + 1);
   console.log('PASS #536: new scheduler recovers durable success after exhausted retries without SSH replay');
+
+  await pool.query('DELETE FROM network_config_backup_runs');
+  content += '\n description checkpoint-outage';
+  checkpointFailures = 6;
+  before = captures;
+  const sameWorker = run(faulty);
+  await sameWorker.tick();
+  const [savedRun] = await pool.query<mysql.RowDataPacket[]>('SELECT backup_id, backup_audit_id, finished_at FROM network_config_backup_runs');
+  assert.equal(savedRun[0].backup_id, (await service.list(7))[0].id);
+  assert.ok(savedRun[0].backup_audit_id);
+  assert.equal(savedRun[0].finished_at, null);
+  await pool.query('UPDATE network_config_backup_runs SET started_at = DATE_SUB(CURRENT_TIMESTAMP, INTERVAL 11 MINUTE)');
+  await sameWorker.tick();
+  assert.equal(checkpointFailures, 0);
+  assert.equal((await base.get(7)).lastRun?.status, 'success');
+  assert.equal(captures, before + 1);
+  console.log('PASS #1015: newly saved backup recovers on expiry while checkpoint writes fail');
+
+  await pool.query('DELETE FROM network_config_backup_runs');
+  checkpointFailures = 3;
+  before = captures;
+  await run(faulty).tick();
+  const [reusedRun] = await pool.query<mysql.RowDataPacket[]>('SELECT backup_id, backup_audit_id, finished_at FROM network_config_backup_runs');
+  assert.equal(reusedRun[0].backup_id, savedRun[0].backup_id);
+  assert.notEqual(reusedRun[0].backup_audit_id, savedRun[0].backup_audit_id);
+  assert.equal(reusedRun[0].finished_at, null);
+  assert.equal(checkpointFailures, 0);
+  assert.equal((await base.get(7)).lastRun?.status, 'running');
+  await run().tick();
+  assert.equal((await base.get(7)).lastRun?.status, 'success');
+  assert.equal(captures, before + 1);
+  console.log('PASS #1015: reused backup recovers after restart without its first checkpoint or another SSH capture');
+
   await pool.query('DELETE FROM network_config_backup_runs');
   assert.equal(await base.claim({ deviceId: 7, enabled: true, dailyTime: '00:00' }, '2026-11-13'), true);
   await pool.query('UPDATE network_config_backup_runs SET started_at = DATE_SUB(CURRENT_TIMESTAMP, INTERVAL 11 MINUTE)');
   await base.expire();
-  assert.equal((await base.get(7)).lastRun?.errorCode, 'CONFIG_BACKUP_INTERRUPTED');
+  assert.equal((await base.get(7)).lastRun?.errorCode, 'CONFIG_BACKUP_RESULT_UNCONFIRMED');
   // Another worker can expire a row before a known result's checkpoint becomes writable.
   await base.finish(7, '2026-11-13', null);
   assert.equal((await base.get(7)).lastRun?.status, 'success');
   await base.finish(7, '2026-11-13', 'CONFIG_BACKUP_FAILED');
   assert.equal((await base.get(7)).lastRun?.status, 'success');
-  console.log('PASS #536: late known result corrects inferred interruption; finalized results remain immutable');
+  console.log('PASS #1015: absent evidence expires as unconfirmed; late known result corrects it; finalized results remain immutable');
 
   await pool.query('DELETE FROM network_config_backup_runs');
   await pool.query("CREATE TRIGGER max600_audit_fail BEFORE INSERT ON audit_log_entries FOR EACH ROW SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'injected audit outage'");
+  before = captures;
+  checkpointFailures = 3;
+  await run(faulty).tick();
+  const [unauditedRun] = await pool.query<mysql.RowDataPacket[]>('SELECT backup_id FROM network_config_backup_runs');
+  assert.equal(unauditedRun[0].backup_id, savedRun[0].backup_id);
+  assert.equal(checkpointFailures, 0);
+  await pool.query('UPDATE network_config_backup_runs SET started_at = DATE_SUB(CURRENT_TIMESTAMP, INTERVAL 11 MINUTE)');
+  await run().tick();
+  assert.deepEqual((await base.get(7)).lastRun, { date: '2026-11-13', status: 'failed', errorCode: 'CONFIG_BACKUP_RESULT_UNCONFIRMED' });
+  assert.equal(captures, before + 1);
+  console.log('PASS #1015: prior audits for a reused backup do not confirm the current run when its audit and checkpoint both fail');
+
+  await pool.query('DELETE FROM network_config_backup_runs');
   content += '\n description audit-outage';
   before = captures;
   const failed = await service.capture(7);

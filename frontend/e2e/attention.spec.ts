@@ -24,6 +24,230 @@ async function capture(page: Page, name: string) {
 }
 async function noEmpty(page: Page) { await expect(page.locator('event-management-page .empty-state')).toHaveCount(0); }
 
+test('workbench home, exact records and page-local queue filters on real HTTP', async ({ page }) => {
+  const investigation = (await env.bridge.create(env.owner, {
+    title: '工作台深链验收调查', goal: '核对原调查记录', profileId: 'ops', profileVersion: 1,
+    resources: [{ type: 'instance', id: 101, role: 'primary' }],
+    context: { subject: { kind: 'resource', resource: { type: 'instance', id: 101 } } },
+    idempotencyKey: crypto.randomUUID(),
+  })).investigation;
+  await env.pool.query(`INSERT INTO alert_events (id,event_id,instance_id,title,severity,status,created_at) VALUES
+    (72101,UUID(),101,'第二页待跟进事件','warning','open','2026-11-20 00:00:00'),
+    ${Array.from({ length: 15 }, (_, i) => `(${72102 + i},UUID(),101,'首页已解决事件','warning','resolved','2026-11-21 00:00:00')`).join(',')}`);
+  const writes: string[] = [];
+  page.on('request', request => {
+    if (request.method() !== 'GET' && /\/api\/(alerts|investigations|operations)\b/.test(request.url())) writes.push(request.url());
+  });
+  const workbench = page.locator('workbench-page');
+  const sidebar = page.locator('.shell-nav');
+  const entry = sidebar.getByRole('link', { name: 'AI 工作台', exact: true });
+  const queue = workbench.getByRole('region', { name: '事件队列' });
+  const input = queue.getByRole('searchbox', { name: '搜索事件' });
+  const home = workbench.getByRole('heading', { name: '运维工作台', exact: true });
+  const exactEvent = workbench.getByRole('button', { name: /#72101/ });
+  const url = `${env.url}/workbench`;
+  await page.goto(url);
+  await expect(home).toBeVisible();
+  await workbench.getByRole('button', { name: '调查列表', exact: true }).click();
+  await entry.click();
+  await expect(page).toHaveURL(url);
+  await expect(home).toBeVisible();
+  await sidebar.getByRole('link', { name: '问题反馈', exact: true }).click();
+  await expect(page).toHaveURL(/\/feedback/);
+  await entry.click();
+  await expect(page).toHaveURL(url);
+  await expect(home).toBeVisible();
+
+  const deepEvent = `${url}?workspaceTab=home&eventId=72101`;
+  await page.goto(deepEvent);
+  await page.reload();
+  await expect(exactEvent).toHaveAttribute('aria-pressed', 'true');
+  await entry.click();
+  await expect(input).toHaveValue('');
+  await expect(exactEvent).toHaveCount(0);
+  await page.goBack();
+  await expect(page).toHaveURL(deepEvent);
+  await expect(exactEvent).toHaveAttribute('aria-pressed', 'true');
+  await page.goForward();
+  await expect(page).toHaveURL(url);
+  await expect(input).toHaveValue('');
+
+  await page.goto(`${env.url}/investigations?investigation=${investigation.id}`);
+  const investigationUrl = `${url}?investigation=${investigation.id}`;
+  const title = workbench.locator('.investigation-detail-title');
+  await expect(page).toHaveURL(investigationUrl);
+  await page.reload();
+  await expect(title).toContainText('工作台深链验收调查');
+  await entry.click();
+  await expect(home).toBeVisible();
+  await page.goBack();
+  await expect(title).toContainText('工作台深链验收调查');
+  await page.goForward();
+  await expect(home).toBeVisible();
+
+  for (const [width, height] of [[1366, 768], [1440, 900], [1920, 1080]]) {
+    await page.setViewportSize({ width, height });
+    await input.focus();
+    await expect(input).toBeFocused();
+    await expect(input).not.toHaveCSS('box-shadow', 'none');
+    await page.keyboard.type('#72101');
+    await page.keyboard.press('Enter');
+    await expect(exactEvent).toHaveAttribute('aria-pressed', 'true');
+    const clear = queue.getByRole('button', { name: '清除事件搜索' });
+    const field = (await input.boundingBox())!;
+    const icon = (await queue.locator('.search-icon').boundingBox())!;
+    const button = (await clear.boundingBox())!;
+    for (const control of [icon, button]) {
+      expect(control.y).toBeGreaterThan(field.y);
+      expect(control.y + control.height).toBeLessThan(field.y + field.height);
+      expect(control.y + control.height / 2).toBeCloseTo(field.y + field.height / 2);
+    }
+    expect(icon.x).toBeGreaterThan(field.x);
+    expect(button.x + button.width).toBeLessThan(field.x + field.width);
+    await capture(page, `max721-search-${width}`);
+    await page.keyboard.press('Tab');
+    await expect(clear).toBeFocused();
+    await page.keyboard.press('Enter');
+    await expect(input).toBeFocused();
+    await expect(input).toHaveValue('');
+    await expect(queue).toContainText('本页 15 条');
+  }
+
+  await input.fill('第二页待跟进事件');
+  await input.press('Enter');
+  await expect(exactEvent).toHaveAttribute('aria-pressed', 'true');
+  await expect(queue).toContainText('本页 1 条');
+  await queue.getByRole('button', { name: '清除事件搜索' }).click();
+  await expect(queue).toContainText('本页 15 条');
+
+  const filter = queue.getByRole('group', { name: '本页状态' });
+  await filter.getByRole('button', { name: '待跟进' }).click();
+  await expect(queue).toContainText('本页没有符合所选状态的事件。');
+  await expect(queue).toContainText('本页 0 条');
+  await capture(page, 'max721-local-empty');
+  await queue.getByRole('button', { name: '下一页' }).click();
+  await expect(exactEvent).toBeVisible();
+  await expect(filter.getByRole('button', { name: '待跟进' })).toHaveAttribute('aria-pressed', 'true');
+  await queue.getByRole('button', { name: '上一页' }).click();
+  await queue.getByRole('button', { name: '清除状态筛选' }).click();
+  await expect(filter.getByRole('button', { name: '全部' })).toBeFocused();
+  await expect(queue).toContainText('本页 15 条');
+  expect(writes).toEqual([]);
+});
+
+async function seedEventInvestigation(eventId: number, title: string) {
+  const resources = [{ type: 'instance' as const, id: 101, role: 'primary' as const }];
+  const subject = { kind: 'resource' as const, resource: { type: 'instance' as const, id: 101 } };
+  const from = '2026-11-19T00:00:00.000Z', to = '2026-11-19T00:05:00.000Z';
+  const { investigation } = await env.bridge.create(env.owner, {
+    title, goal: '核对已保存的事件调查', profileId: 'ops', profileVersion: 1,
+    resources, context: { subject, from, to, entry: { schemaVersion: 1, resourceRefs: resources, from, to, sourceEventIds: [eventId], returnTo: '/events' } },
+    idempotencyKey: crypto.randomUUID(),
+  });
+  return investigation;
+}
+
+test('MAX-720 distinguishes same-name investigations at the same second and timestamp', async ({ page }) => {
+  const [inserted] = await env.pool.query(
+    "INSERT INTO alert_events(event_id,instance_id,title,severity,status) VALUES(UUID(),101,'合成同秒事件','warning','open')");
+  const eventId = inserted.insertId;
+  const title = '同一事件的合成调查';
+  const samples = [];
+  for (const fraction of ['100', '800', '800']) {
+    const { id } = await seedEventInvestigation(eventId, title);
+    const timestamp = `2026-11-19 00:00:00.${fraction}`;
+    await env.pool.query('UPDATE investigations SET created_at=?, updated_at=? WHERE id=?', [timestamp, timestamp, id]);
+    samples.push({ id, fraction });
+  }
+  const writes: string[] = [];
+  page.on('request', request => {
+    if (request.method() !== 'GET' && /\/api\/(alerts|investigations|operations)\b/.test(new URL(request.url()).pathname)) writes.push(request.url());
+  });
+  await page.goto(`${env.url}/feedback`);
+  await page.locator('.shell-nav').getByRole('link', { name: 'AI 工作台', exact: true }).click();
+  await page.getByRole('button', { name: '调查列表', exact: true }).click();
+  const table = page.getByRole('region', { name: '调查记录表' });
+  const rows = table.getByRole('row').filter({ hasText: `事件 #${eventId}` });
+  await expect(rows).toHaveCount(3);
+  for (const { id, fraction } of samples) {
+    const row = rows.filter({ hasText: id });
+    await expect(row.getByText(title, { exact: true })).toBeVisible();
+    await expect(row).toContainText(`记录 ID ${id}`);
+    await expect(row).toContainText(`.${fraction}`);
+    const open = row.getByRole('button', { name: `查看调查 ${id}`, exact: true });
+    await open.focus();
+    await page.keyboard.press('Enter');
+    await expect(page).toHaveURL(new RegExp(`investigation=${id}`));
+    await expect(page.locator('.investigation-detail-title')).toContainText(title);
+    await page.getByRole('link', { name: '返回来源页面', exact: true }).click();
+    await expect(open).toBeFocused();
+  }
+  expect(writes).toEqual([]);
+  expect(env.counts()).toEqual({ toolCalls: 0, providerCalls: 0 });
+});
+
+for (const throughInvestigation of [false, true]) {
+  test(`MAX-720 returns to the original queue row on page two ${throughInvestigation ? 'through investigation detail' : 'directly'}`, async ({ page }) => {
+    await page.setViewportSize({ width: 1366, height: 768 });
+    const eventId = throughInvestigation ? 72031 : 72001;
+    await env.pool.query(`INSERT INTO alert_events (id,event_id,instance_id,title,severity,status,created_at) VALUES
+      ${Array.from({ length: 30 }, (_, i) => `(${eventId + i},UUID(),101,'合成队列定位事件 ${eventId + i}','warning','open','2026-11-${i < 15 ? 19 : 20} 00:00:${String(i).padStart(2, '0')}')`).join(',')}`);
+    const investigation = throughInvestigation ? await seedEventInvestigation(eventId, '合成队列来源调查') : undefined;
+    const writes: string[] = [];
+    page.on('request', request => {
+      if (request.method() !== 'GET' && /\/api\/(alerts|investigations|operations)\b/.test(new URL(request.url()).pathname)) writes.push(request.url());
+    });
+
+    await page.goto(`${env.url}/feedback`);
+    await page.locator('.shell-nav').getByRole('link', { name: 'AI 工作台', exact: true }).click();
+    const workbench = page.locator('workbench-page');
+    const queue = workbench.getByRole('region', { name: '事件队列' });
+    const input = queue.getByRole('searchbox', { name: '搜索事件' });
+    await input.fill('合成队列定位事件');
+    await input.press('Enter');
+    await expect(queue).toContainText('本页 15 条');
+    const filter = queue.getByRole('button', { name: '待跟进', exact: true });
+    await filter.click();
+    await queue.getByRole('button', { name: '下一页' }).click();
+    const row = queue.getByRole('button', { name: new RegExp(`#${eventId}`) });
+    await row.click();
+    await expect(row).toHaveAttribute('aria-pressed', 'true');
+    const open = workbench.getByRole('link', { name: '打开事件详情', exact: true });
+    const rows = queue.locator('.rows');
+    const main = page.locator('main.content');
+    await open.focus();
+    await main.evaluate(el => { el.scrollTop = 80; });
+    const [listY, mainY] = await Promise.all([rows.evaluate(el => el.scrollTop), main.evaluate(el => el.scrollTop)]);
+    expect(listY).toBeGreaterThan(0);
+    expect(mainY).toBeGreaterThan(0);
+    await page.keyboard.press('Enter');
+    const record = page.getByRole('region', { name: '事件详情', exact: true });
+    await expect(record).toContainText(`事件 #${eventId}`);
+    if (investigation) {
+      const linked = record.getByRole('link', { name: '打开原调查', exact: true });
+      await linked.focus();
+      await page.keyboard.press('Enter');
+      await expect(page).toHaveURL(new RegExp(`investigation=${investigation.id}`));
+      await page.getByRole('link', { name: '返回来源页面', exact: true }).click();
+      await expect(record).toContainText(`事件 #${eventId}`);
+    }
+    const back = record.getByRole('link', { name: '返回工作台', exact: true });
+    await expect(back).toBeVisible();
+    await back.click();
+    await expect(workbench.getByRole('button', { name: '工作台', exact: true })).toHaveAttribute('aria-pressed', 'true');
+    await expect(input).toHaveValue('合成队列定位事件');
+    await expect(filter).toHaveAttribute('aria-pressed', 'true');
+    await expect(queue.getByRole('button', { name: '上一页' })).toBeEnabled();
+    await expect(queue.getByRole('button', { name: new RegExp(`#${eventId + 29}`) })).toHaveCount(0);
+    await expect(row).toHaveAttribute('aria-pressed', 'true');
+    await expect(row).toBeFocused();
+    expect(await rows.evaluate(el => el.scrollTop)).toBe(listY);
+    expect(await main.evaluate(el => el.scrollTop)).toBe(mainY);
+    expect(writes).toEqual([]);
+    expect(env.counts()).toEqual({ toolCalls: 0, providerCalls: 0 });
+  });
+}
+
 test('legacy attention opens active event center with numeric identities, refresh and keyboard details', async ({ page }) => {
   await env.pool.query(`INSERT INTO alert_events (id,event_id,instance_id,title,severity,status,updated_at) VALUES
     (202,UUID(),101,'同时间事项 B','critical','open','2026-10-15 00:00:00'),

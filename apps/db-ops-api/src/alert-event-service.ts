@@ -156,88 +156,78 @@ class AlertEventService {
     offset?: number;
   }): Promise<{ items: any[]; total: number }> {
     const pool = this.getPool();
-    if (!pool) return { items: [], total: 0 };
+    if (!pool) {
+      if (options?.strict) throw new Error('EVENT_STORE_UNAVAILABLE');
+      return { items: [], total: 0 };
+    }
 
     try {
+      let where = 'WHERE 1=1';
+      const params: any[] = [];
+      if(options?.resource){const ref=options.resource;
+        const column={instance:'instance_id',server:'server_id',network_device:'network_device_id'}[ref.type];
+        where+=` AND (e.${column}=? OR EXISTS(SELECT 1 FROM metric_trigger_episodes te WHERE te.event_id=e.id AND te.resource_key=?))`;
+        params.push(ref.id,`${ref.type}:${ref.id}`);
+      }
+      if (options?.from && options?.to) {
+        where += ' AND e.created_at < ? AND (e.resolved_at IS NULL OR e.resolved_at > ?)';
+        params.push(new Date(options.to), new Date(options.from));
+      }
+      if (typeof options?.keyword === 'string' && options.keyword.trim()) {
+        // LIKE text uses an explicit escape so percent and underscore in metric IDs remain literal.
+        const pattern = '%' + options.keyword.trim().slice(0, 100).replace(/[!%_]/g, char => '!' + char) + '%';
+        where += " AND (e.title LIKE ? ESCAPE '!' OR e.description LIKE ? ESCAPE '!' OR EXISTS(SELECT 1 FROM database_instances di WHERE di.id=e.instance_id AND di.name LIKE ? ESCAPE '!'))";
+        params.push(pattern, pattern, pattern);
+      }
+
+      if (options?.instance_id !== undefined) {
+        where += ' AND e.instance_id = ?';
+        params.push(options.instance_id);
+      }
+      const listScope = this.instanceScope('e.instance_id', options?.allowed_instance_ids, options?.allowed_event_ids);
+      where += listScope.sql;
+      params.push(...listScope.params);
+      if (options?.status) {
+        const statuses = options.status.split(',').map(s => s.trim()).filter(Boolean);
+        const exactStatuses = statuses.filter(status => status !== 'other');
+        const predicates: string[] = [];
+        if (exactStatuses.length === 1) predicates.push('e.status = ?');
+        else if (exactStatuses.length > 1) predicates.push(`e.status IN (${exactStatuses.map(() => '?').join(',')})`);
+        if (statuses.includes('other')) {
+          predicates.push("e.status IS NULL OR e.status NOT IN ('open','investigating','handled','resolved','closed')");
+        }
+        if (predicates.length) where += ` AND (${predicates.join(' OR ')})`;
+        params.push(...exactStatuses);
+      }
+      if (options?.severity) {
+        where += ' AND e.severity = ?';
+        params.push(options.severity);
+      }
+
       let sql = `
         SELECT e.*, COUNT(DISTINCT m.alert_id) AS alert_count,
                d.name AS instance_name
         FROM alert_events e
         LEFT JOIN alert_event_members m ON e.id = m.event_id
         LEFT JOIN database_instances d ON e.instance_id = d.id
-        WHERE 1=1
+        ${where}
+        GROUP BY e.id ORDER BY e.created_at DESC, e.id DESC
+        LIMIT ?
       `;
-      const params: any[] = [];
-      let resourceSql=''; const resourceParams:unknown[]=[];
-      if(options?.resource){const ref=options.resource;
-        const column={instance:'instance_id',server:'server_id',network_device:'network_device_id'}[ref.type];
-        resourceSql+=` AND (e.${column}=? OR EXISTS(SELECT 1 FROM metric_trigger_episodes te WHERE te.event_id=e.id AND te.resource_key=?))`;
-        resourceParams.push(ref.id,`${ref.type}:${ref.id}`);
-      }
-      if(options?.from&&options?.to){resourceSql+=' AND e.created_at < ? AND (e.resolved_at IS NULL OR e.resolved_at > ?)';resourceParams.push(new Date(options.to),new Date(options.from));}
-      if (typeof options?.keyword === 'string' && options.keyword.trim()) {
-        // LIKE text uses an explicit escape so percent and underscore in metric IDs remain literal.
-        const pattern = '%' + options.keyword.trim().slice(0, 100).replace(/[!%_]/g, char => '!' + char) + '%';
-        resourceSql += " AND (e.title LIKE ? ESCAPE '!' OR e.description LIKE ? ESCAPE '!' OR EXISTS(SELECT 1 FROM database_instances di WHERE di.id=e.instance_id AND di.name LIKE ? ESCAPE '!'))";
-        resourceParams.push(pattern, pattern, pattern);
-      }
-      sql+=resourceSql;params.push(...resourceParams);
-
-      if (options?.instance_id !== undefined) {
-        sql += ' AND e.instance_id = ?';
-        params.push(options.instance_id);
-      }
-      const listScope = this.instanceScope('e.instance_id', options?.allowed_instance_ids, options?.allowed_event_ids);
-      sql += listScope.sql;
-      params.push(...listScope.params);
-      if (options?.status) {
-        const statuses = options.status.split(',').map(s => s.trim()).filter(Boolean);
-        if (statuses.length === 1) {
-          sql += ' AND e.status = ?';
-          params.push(statuses[0]);
-        } else if (statuses.length > 1) {
-          sql += ` AND e.status IN (${statuses.map(() => '?').join(',')})`;
-          params.push(...statuses);
-        }
-      }
-      if (options?.severity) {
-        sql += ' AND e.severity = ?';
-        params.push(options.severity);
-      }
-
-      sql += ' GROUP BY e.id ORDER BY e.created_at DESC, e.id DESC';
-
-      // Default LIMIT 50 to prevent returning entire table (22k+ rows)
-      const limit = Number(options?.limit ?? 50);
-      sql += ' LIMIT ?';
-      params.push(limit);
+      const pageParams = [...params, Number(options?.limit ?? 50)];
       if (options?.offset !== undefined) {
         sql += ' OFFSET ?';
-        params.push(Number(options.offset));
+        pageParams.push(Number(options.offset));
       }
 
       // Use pool.query() instead of pool.execute() — mysql2 prepared statements
       // have issues with LIMIT/OFFSET parameters in some MySQL versions.
-      const [rows] = await pool.query(sql, params) as any;
+      const [rows] = await pool.query(sql, pageParams) as any;
 
       // Get total count for pagination (always needed since we apply default limit)
-      let countSql = 'SELECT COUNT(DISTINCT e.id) AS total FROM alert_events e WHERE 1=1';
-      const countParams: any[] = [...resourceParams];countSql+=resourceSql;
-      if (options?.instance_id !== undefined) { countSql += ' AND e.instance_id = ?'; countParams.push(options.instance_id); }
-      const countScope = this.instanceScope('e.instance_id', options?.allowed_instance_ids, options?.allowed_event_ids);
-      countSql += countScope.sql;
-      countParams.push(...countScope.params);
-      if (options?.status) {
-        const statuses = options.status.split(',').map(s => s.trim()).filter(Boolean);
-        if (statuses.length === 1) {
-          countSql += ' AND e.status = ?'; countParams.push(statuses[0]);
-        } else if (statuses.length > 1) {
-          countSql += ` AND e.status IN (${statuses.map(() => '?').join(',')})`;
-          countParams.push(...statuses);
-        }
-      }
-      if (options?.severity) { countSql += ' AND e.severity = ?'; countParams.push(options.severity); }
-      const [countRows] = await pool.query(countSql, countParams) as any;
+      const [countRows] = await pool.query(
+        `SELECT COUNT(DISTINCT e.id) AS total FROM alert_events e ${where}`, params,
+      ) as any;
       const total = countRows[0]?.total ?? 0;
 
       return { items: rows, total };
@@ -768,12 +758,17 @@ class AlertEventService {
   /**
    * 事件统计
    */
-  async getEventStats(allowedInstanceIds: readonly number[] | null = null, allowedEventIds?: readonly number[]): Promise<{
+  async getEventStats(
+    allowedInstanceIds: readonly number[] | null = null,
+    allowedEventIds?: readonly number[],
+    options?: { strict?: boolean },
+  ): Promise<{
     total: number; open: number; investigating: number;
     handled: number; resolved: number; closed: number;
   }> {
     const pool = this.getPool();
     if (!pool) {
+      if (options?.strict) throw new Error('EVENT_STORE_UNAVAILABLE');
       return { total: 0, open: 0, investigating: 0, handled: 0, resolved: 0, closed: 0 };
     }
 
@@ -794,6 +789,7 @@ class AlertEventService {
 
       return rows[0] || { total: 0, open: 0, investigating: 0, handled: 0, resolved: 0, closed: 0 };
     } catch (error) {
+      if (options?.strict) throw error;
       console.error('获取事件统计失败:', error);
       return { total: 0, open: 0, investigating: 0, handled: 0, resolved: 0, closed: 0 };
     }

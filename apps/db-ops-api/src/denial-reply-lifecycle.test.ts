@@ -12,15 +12,19 @@ import { createVerifyToken } from './auth-middleware.js';
 import { ActorAuthenticationError, actorContextService, type ActorContext } from './auth/actor-context.js';
 import { rbacApiRoutes } from './auth/rbac-api.js';
 import { RbacService } from './auth/rbac-service.js';
-import { filterByInstanceAccess, getAccessibleInstanceIds, hasInstanceAccess, requireInstanceAccess } from './auth/require-instance-access.js';
+import { getAccessibleInstanceIds, hasInstanceAccess, requireInstanceAccess } from './auth/require-instance-access.js';
 import { requirePermission } from './auth/require-permission.js';
 import { registerChatRoutes } from './chat-routes.js';
+import { databaseLogService } from './database-log-service.js';
+import { dbConnection } from './db-connection.js';
 import { instanceDatabaseService } from './instance-database-service.js';
 import { PlatformUnavailableError } from './lifecycle/platform-unavailable.js';
 import { publicLLMProvider } from './llm/public-provider.js';
 import { instanceAccessLifecycle } from './resources/instance-access-lifecycle.js';
 import { registerResourceIdentityRoutes } from './resources/resource-identity-routes.js';
-import { canReadResource } from './resources/resource-service.js';
+import { getReportAccessScope } from './report-access.js';
+import { schemaDatabaseService, type TableSchemaRow } from './schema-database-service.js';
+import { schemaService } from './schema-service.js';
 import { registerHttpSecurity, sensitiveOperationRateLimitConfig } from './security/http-security.js';
 import * as publicDto from './security/public-dto.js';
 import { serverDatabaseService, type ServerRow } from './server-database-service.js';
@@ -107,6 +111,8 @@ it.each([
   ['/api/v1/rbac/roles', []],
   ['/api/llm/configs', []],
   ['/api/alerts', alertPage],
+  ['/api/logs', { logs: [{ id: 9, source: 'mysql_error', message: 'fixture log' }], total: 1 }, '/api/logs?instanceId=25'],
+  ['/api/logs/stats', { total: 1 }, '/api/logs/stats?instanceId=25'],
   ['/api/ai/analysis', [{ id: 1, related_id: 2, status: 'completed', trigger_type: 'manual' }], '/api/ai/analysis?analysis_type=alert_rca&limit=500'],
   ['/api/models', [{ id: 'fixture-model', name: 'fixture-model', provider: 'fixture', reasoning: false }]],
   ['/api/schema/snapshots/:instanceId', [], '/api/schema/snapshots/25'],
@@ -129,14 +135,19 @@ it.each([
       await fastify.register(rbacApiRoutes);
     } else if (path === '/api/alerts') {
       vi.spyOn(alertDatabaseService, 'getAlerts').mockResolvedValue(alertPage);
+      vi.spyOn(actorContextService, 'revalidateActor').mockResolvedValue({ ...actor, permissions: ['*'] });
       await registerAlertListRoute(fastify, verifyAdmin);
     } else {
       registerInline({
-        fastify, verifyToken: verifyAdmin, requirePermission, filterByInstanceAccess,
-        getAccessibleInstanceIds, requireInstanceAccess, canReadResource, publicLLMProvider,
+        fastify, verifyToken: verifyAdmin, requirePermission, getReportAccessScope,
+        getAccessibleInstanceIds, requireInstanceAccess, hasInstanceAccess, publicLLMProvider,
         publicNotificationDto: publicDto.publicNotificationDto,
         dbConnection: { getPool: () => ({ query: async () => [[{ config_key: 'slide_version', config_value: 'test-version' }]] }) },
         brandingConfigService: { getBranding: async () => ({ cli_name: 'slide' }) },
+        databaseLogService: {
+          getLogs: async () => ({ logs: [{ id: 9, source: 'mysql_error', message: 'fixture log' }], total: 1 }),
+          getLogsStats: async () => ({ total: 1 }),
+        },
         userPreferenceService: { getPreferences: async () => ({ theme: 'light' }) },
         getAgentEngine: async () => ({ capabilities: () => ({ features: {} }) }),
         reportDatabaseService: { getReportsByFilters: async () => [], getReportStats: async () => ({ total: 0 }) },
@@ -162,6 +173,130 @@ it.each([
     expect(response.headers.get('content-type')).toMatch(/^application\/json/);
     expect(await response.json()).toEqual(expected);
     expect(send).toHaveBeenCalledExactlyOnceWith(expected);
+  });
+});
+
+it('MAX-717 separates log list and statistics failures from success and recovers on the same routes', async () => {
+  const { fastify } = await setup();
+  registerInline({
+    fastify, requirePermission, hasInstanceAccess, databaseLogService,
+    verifyToken: async (request: FastifyRequest) => {
+      Object.assign(request, { user: { ...actor, permissions: ['log:view'] } });
+    },
+  }, "  fastify.get('/api/logs',", "  fastify.get('/api/logs/stats',");
+  vi.spyOn(console, 'error').mockImplementation(() => {});
+  const execute = vi.fn();
+  const pool = { execute } as unknown as NonNullable<ReturnType<typeof dbConnection.getPool>>;
+  const getPool = vi.spyOn(dbConnection, 'getPool').mockReturnValue(pool);
+  const log = { id: 1, log_level: 'error', message: '合成日志' };
+  const stats = (total: number) => ({
+    total, by_level: { info: 0, warning: 0, error: total, critical: 0 }, by_pattern: [], trend: [],
+  });
+  await withBoundedHttp(fastify, async signal => {
+    await fastify.listen({ host: '127.0.0.1', port: 0 });
+    const list = () => fetch(fastify.listeningOrigin + '/api/logs?instanceId=25', { signal });
+    const readStats = () => fetch(fastify.listeningOrigin + '/api/logs/stats?instanceId=25', { signal });
+    getPool.mockReturnValue(null);
+    const unavailable = await list();
+    const failed = [500, { error: 'INTERNAL_ERROR' }];
+    expect([unavailable.status, await unavailable.json()]).toEqual(failed);
+
+    getPool.mockReturnValue(pool);
+    execute.mockResolvedValueOnce([[{ cnt: 2 }]]).mockRejectedValueOnce(new Error('private SQL diagnostics'));
+    const failure = await list();
+    expect([failure.status, await failure.json()]).toEqual(failed);
+    execute.mockResolvedValueOnce([[{ total: 9, error: 9 }]]).mockResolvedValueOnce([[]]).mockResolvedValueOnce([[]]);
+    const availableStats = await readStats();
+    expect([availableStats.status, await availableStats.json()]).toEqual([200, stats(9)]);
+
+    execute.mockRejectedValueOnce(new Error('private SQL diagnostics'));
+    const statsFailure = await readStats();
+    expect([statsFailure.status, await statsFailure.json()]).toEqual(failed);
+    execute.mockResolvedValueOnce([[{ cnt: 1 }]]).mockResolvedValueOnce([[log]]);
+    const restored = await list();
+    expect([restored.status, await restored.json()]).toEqual([200, { logs: [log], total: 1 }]);
+
+    execute.mockResolvedValueOnce([[{ cnt: 0 }]]).mockResolvedValueOnce([[]]);
+    const emptyList = await list();
+    expect([emptyList.status, await emptyList.json()]).toEqual([200, { logs: [], total: 0 }]);
+    execute.mockResolvedValueOnce([[{ total: 0 }]]).mockResolvedValueOnce([[]]).mockResolvedValueOnce([[]]);
+    const emptyStats = await readStats();
+    expect([emptyStats.status, await emptyStats.json()]).toEqual([200, stats(0)]);
+  });
+});
+
+it('MAX-717 schema reads distinguish failure, insufficient history, and completed comparisons', async () => {
+  const { fastify } = await setup();
+  registerInline({
+    fastify, requirePermission, requireInstanceAccess, schemaDatabaseService, schemaService,
+    verifyToken: async (request: FastifyRequest) => {
+      Object.assign(request, { user: { ...actor, permissions: ['schema:view', 'schema:manage'] } });
+    },
+  }, "  fastify.get('/api/schema/snapshots/:instanceId',", "  fastify.get('/api/schema/snapshot/:instanceId',",
+  "  fastify.get('/api/schema/changes/:instanceId',", "  fastify.post('/api/schema/changes/:instanceId',",
+  "  fastify.get('/api/schema/table/:instanceId/:tableName',");
+  vi.spyOn(console, 'error').mockImplementation(() => {});
+  const older = { snapshot_time: new Date('2026-11-20T00:00:00Z'), tables: 1, columns: 1 };
+  const newer = { ...older, snapshot_time: new Date('2026-11-21T00:00:00Z') };
+  const column: TableSchemaRow = {
+    table_name: 'items', column_name: 'id', column_type: 'int', is_nullable: 'NO',
+    column_default: null, column_key: 'PRI', extra: '', column_comment: null,
+    table_comment: null, table_rows: 0, data_length: null,
+  };
+  const execute = vi.fn();
+  const pool = { execute } as unknown as NonNullable<ReturnType<typeof dbConnection.getPool>>;
+  const getPool = vi.spyOn(dbConnection, 'getPool').mockReturnValue(null);
+  const hint = '需要至少两次快照才能进行变更检测';
+  await withBoundedHttp(fastify, async signal => {
+    await fastify.listen({ host: '127.0.0.1', port: 0 });
+    const read = async (path: string, method = 'GET') => {
+      const response = await fetch(fastify.listeningOrigin + '/api/schema/' + path, { method, signal });
+      return [response.status, await response.json()];
+    };
+    const failed = [500, { error: 'INTERNAL_ERROR' }];
+    expect(await read('snapshots/25')).toEqual(failed);
+    getPool.mockReturnValue(pool);
+    execute.mockRejectedValue(new Error('private SQL diagnostics'));
+    for (const path of ['snapshots/25', 'snapshot/25', 'changes/25', 'table/25/items']) {
+      expect(await read(path)).toEqual(failed);
+    }
+    expect(await read('changes/25', 'POST')).toEqual(failed);
+
+    execute.mockResolvedValue([[]]);
+    expect(await read('snapshots/25')).toEqual([200, []]);
+    expect(await read('snapshot/25')).toEqual([200, { tables: [] }]);
+    expect(await read('table/25/items')).toEqual([404, { error: '表不存在或暂无快照数据' }]);
+    expect(await read('changes/25')).toEqual([200, { changes: [], hint }]);
+    execute.mockResolvedValueOnce([[newer]]);
+    expect(await read('changes/25')).toEqual([200, { changes: [], hint }]);
+    execute.mockResolvedValueOnce([[newer]]);
+    expect(await read('changes/25', 'POST')).toEqual([200, { success: true, changes: [], hint }]);
+
+    execute.mockResolvedValueOnce([[newer, older]]).mockResolvedValueOnce([[column]])
+      .mockRejectedValueOnce(new Error('private SQL diagnostics'));
+    expect(await read('changes/25')).toEqual(failed);
+    execute.mockResolvedValueOnce([[newer, older]]).mockResolvedValueOnce([[]]).mockResolvedValueOnce([[column]]);
+    expect(await read('changes/25')).toEqual(failed);
+    execute.mockResolvedValueOnce([[newer, older]]).mockResolvedValueOnce([[column]]).mockResolvedValueOnce([[column]]);
+    expect(await read('changes/25')).toEqual([200, { changes: [] }]);
+    execute.mockResolvedValueOnce([[newer, older]]).mockResolvedValueOnce([[column]])
+      .mockResolvedValueOnce([[column, { ...column, column_name: 'new_column' }]]);
+    expect(await read('changes/25')).toEqual([200, { changes: [expect.objectContaining({
+      type: 'added', target: 'column', table_name: 'items', column_name: 'new_column',
+    })] }]);
+    execute.mockResolvedValueOnce([[newer, older]]);
+    expect(await read('snapshots/25')).toEqual([200, [newer, older].map(row => ({
+      ...row, snapshot_time: row.snapshot_time.toISOString(),
+    }))]);
+    execute.mockResolvedValueOnce([[{
+      table_name: 'items', table_comment: null, table_rows: 0, data_length: null,
+      column_count: 2, snapshot_time: newer.snapshot_time,
+    }]]);
+    expect(await read('snapshot/25')).toEqual([200, { tables: [expect.objectContaining({
+      table_name: 'items', column_count: 2, data_length: null,
+    })] }]);
+    execute.mockResolvedValueOnce([[column]]);
+    expect(await read('table/25/items')).toEqual([200, [column]]);
   });
 });
 
