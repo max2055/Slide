@@ -116,7 +116,7 @@ describe('initChatClient', () => {
       } else {
         expect(error).toBeNull();
         expect(loader === 'agents' ? host.agentsList : host.sessionsResult)
-          .toEqual(loader === 'agents' ? agents : sessions);
+          .toEqual(loader === 'agents' ? agents : { ...sessions, queriedActiveMinutes: 120 });
       }
     }
 

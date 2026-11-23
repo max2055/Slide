@@ -252,7 +252,7 @@ export function renderSessions(props: SessionsProps) {
                       >
                         ${props.loading ? "正在读取会话…" : !props.result
                           ? "尚未读取会话，请刷新。"
-                          : props.searchQuery.trim() || Number(props.activeMinutes) > 0
+                          : props.searchQuery.trim() || props.result.queriedActiveMinutes
                             ? "没有符合筛选条件的会话。"
                             : "暂无会话。"}
                       </td>

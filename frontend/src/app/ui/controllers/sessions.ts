@@ -43,7 +43,7 @@ export async function loadSessions(
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
     if (!data.ok || !Array.isArray(data.sessions)) throw new Error("Invalid sessions response");
-    state.sessionsResult = data;
+    state.sessionsResult = { ...data, queriedActiveMinutes: activeMinutes > 0 ? activeMinutes : undefined };
   } catch {
     state.sessionsError = "无法读取会话列表，请刷新重试。";
   } finally {
