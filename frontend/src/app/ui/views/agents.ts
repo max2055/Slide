@@ -1,5 +1,6 @@
 import { html, nothing } from "lit";
 import { t } from "../../i18n/index.ts";
+import "../components/app-empty-state.js";
 import type {
   AgentIdentityResult,
   AgentUiCapabilities,
@@ -132,7 +133,7 @@ export function visibleAgentPanels(capabilities?: AgentUiCapabilities): AgentsPa
 }
 
 export function renderAgents(props: AgentsProps) {
-  const agents = props.agentsList?.agents ?? [];
+  const agents = props.loading || props.error ? [] : props.agentsList?.agents ?? [];
   const defaultId = props.agentsList?.defaultId ?? null;
   const selectedId = props.selectedAgentId ?? defaultId ?? agents[0]?.id ?? null;
   const selectedAgent = selectedId
@@ -166,12 +167,13 @@ export function renderAgents(props: AgentsProps) {
           <div class="agents-control-select">
             <select
               class="agents-select"
+              aria-label="选择 Agent"
               .value=${selectedId ?? ""}
               ?disabled=${props.loading || agents.length === 0}
               @change=${(e: Event) => props.onSelectAgent((e.target as HTMLSelectElement).value)}
             >
               ${agents.length === 0
-                ? html` <option value="">No agents</option> `
+                ? html`<option value="">选择 Agent</option>`
                 : agents.map(
                     (agent) => html`
                       <option value=${agent.id} ?selected=${agent.id === selectedId}>
@@ -217,17 +219,16 @@ export function renderAgents(props: AgentsProps) {
           </div>
         </div>
         ${props.error
-          ? html`<div class="callout danger" style="margin-top: 8px;">${props.error}</div>`
+          ? html`<div class="callout danger" role="alert" style="margin-top: 8px;">${props.error}</div>`
           : nothing}
       </section>
-      <section class="agents-main">
+      <section class="agents-main" aria-label="Agent" aria-busy=${props.loading}>
         ${!selectedAgent
-          ? html`
-              <div class="card">
-                <div class="card-title">Select an agent</div>
-                <div class="card-sub">Pick an agent to inspect its workspace and tools.</div>
-              </div>
-            `
+          ? props.error
+            ? nothing
+            : props.loading
+              ? html`<p role="status">正在读取 Agent 列表…</p>`
+              : html`<app-empty-state title=${agents.length ? "请选择 Agent" : props.agentsList ? "暂无 Agent" : "尚未读取 Agent 列表"}></app-empty-state>`
           : html`
               ${renderAgentTabs(
                 activePanel,

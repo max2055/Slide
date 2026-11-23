@@ -271,6 +271,7 @@ export const en: TranslationMap = {
     system: "System",
     settings: "Settings",
     docs: "Docs",
+    overview: "Legacy runtime logs",
     users: "Users",
     "llm-config": "LLM Config",
     schema: "Schema",

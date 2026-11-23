@@ -302,11 +302,16 @@ for (const width of [390, 768, 1280])
         r.fulfill({ status: 500, json: { error: "controlled list failure" } }),
       );
       await page.reload();
-      await expect(view.getByRole("alert")).toContainText("无法加载文档列表");
+      const directory = width <= 768 ? view.locator("app-dialog") : view.locator(".docs-sidebar");
+      if (width <= 768) await view.getByRole("button", { name: "打开文档目录" }).click();
+      await expect(directory.getByRole("alert")).toContainText("无法加载文档列表");
+      await expect(view.locator(".docs-content").getByRole("alert")).toHaveCount(0);
       await capture(page, `controlled-list-error-${width}-${theme}`);
       await page.unroute("**/api/docs/list");
-      await view.getByRole("button", { name: "重试", exact: true }).click();
+      await directory.getByRole("button", { name: "重试", exact: true }).press("Enter");
       await expect(view.locator("h1").first()).toBeVisible();
+      await expect(width <= 768 ? view.getByRole("button", { name: "打开文档目录" })
+        : directory.locator('[aria-current="page"]')).toBeFocused();
     });
 
 test("controlled out-of-order reads retain the final document and its anchors", async ({
@@ -377,13 +382,16 @@ test("real topbar entry retains document selection through refresh and browser h
   await page.goBack();
   await expect(view.locator(".docs-current")).toHaveText(second);
   expect(new URL(page.url()).searchParams.get("doc")).toBeTruthy();
-  // Controlled popstate to another tab exercises the live shell and viewer listeners together.
+  // The shell resolves history entries from their canonical pathname.
   await page.evaluate(() => {
-    const url = new URL(location.href);
-    url.search = "?tab=dashboard";
-    history.pushState({}, "", url);
-    dispatchEvent(new PopStateEvent("popstate"));
+    history.pushState({}, "", new URL("./dashboard", location.href));
+    window.dispatchEvent(new PopStateEvent("popstate"));
   });
+  await expect(page.locator("dashboard-page")).toBeVisible();
+  expect(new URL(page.url()).searchParams.has("doc")).toBe(false);
+  await page.goBack();
+  await expect(view.locator(".docs-current")).toHaveText(second);
+  await page.goForward();
   await expect(page.locator("dashboard-page")).toBeVisible();
   expect(new URL(page.url()).searchParams.has("doc")).toBe(false);
 });

@@ -449,7 +449,9 @@ export type GatewaySessionRow = {
   latestCompactionCheckpoint?: SessionCompactionCheckpoint;
 };
 
-export type SessionsListResult = SessionsListResultBase<GatewaySessionsDefaults, GatewaySessionRow>;
+export type SessionsListResult = SessionsListResultBase<GatewaySessionsDefaults, GatewaySessionRow> & {
+  queriedActiveMinutes?: number;
+};
 
 export type SessionsCompactionListResult = {
   ok: true;

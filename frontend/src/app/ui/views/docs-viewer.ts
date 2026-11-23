@@ -44,6 +44,8 @@ export class DocsViewerPage extends LitElement {
     .docs-current { min-width: 0; overflow-wrap: anywhere; font-size: 12px; color: var(--muted); }
     .docs-open { display: none; flex-shrink: 0; }
     .docs-directory { display: grid; gap: var(--space-xs); }
+    .docs-directory__status { padding: var(--space-xs) var(--space-lg); }
+    .docs-directory__status p { margin: 0 0 var(--space-sm); }
     button:focus-visible, [tabindex]:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
     .docs-sidebar {
       width: 240px; flex-shrink: 0; border-right: 1px solid var(--border);
@@ -163,10 +165,12 @@ export class DocsViewerPage extends LitElement {
   @state() private activeDoc: string | null = null;
   @state() private content = "";
   @state() private loading = false;
-  @state() private listing = true;
+  @state() private listing = false;
   @state() private directoryOpen = false;
-  @state() private error: string | null = null;
+  @state() private directoryError: string | null = null;
+  @state() private articleError: string | null = null;
   private pendingHash: string | null = null;
+  private directoryVersion = 0;
   private requestVersion = 0;
   private positions = new Map<string, number>();
   private readonly layoutObserver = new ResizeObserver((entries) => {
@@ -196,39 +200,54 @@ export class DocsViewerPage extends LitElement {
   disconnectedCallback() {
     this.rememberPosition();
     this.layoutObserver.disconnect();
+    this.directoryVersion++;
+    this.listing = false;
     this.requestVersion++;
+    this.loading = false;
     window.removeEventListener("popstate", this.onHistory, true);
     super.disconnectedCallback();
   }
 
   private rememberPosition() {
-    if (this.activeDoc && !this.loading && this.contentEl) {
+    if (this.activeDoc && !this.loading && this.content && this.contentEl) {
       this.positions.set(this.activeDoc, this.contentEl.scrollTop);
     }
   }
 
-  private async loadDocList() {
+  private async loadDocList(trigger?: HTMLButtonElement) {
+    if (this.listing) return;
+    const version = ++this.directoryVersion;
     this.listing = true;
-    this.error = null;
     try {
       const res = await authFetch("/api/docs/list");
-      if (!res.ok) throw new Error(res.status === 403 ? "无权读取文档" : `HTTP ${res.status}`);
+      if (!res.ok) throw new Error(res.status === 403 ? "无权读取文档目录" : "无法加载文档列表");
       const data = await res.json();
-      if (!this.isConnected) return;
-      this.docs = data.docs || [];
+      if (version !== this.directoryVersion) return;
+      if (!Array.isArray(data.docs)) throw new Error("无法加载文档列表");
+      const restoreFocus = !!trigger && this.shadowRoot?.activeElement === trigger;
+      this.directoryError = null;
+      this.docs = data.docs;
       let selected = new URL(window.location.href).searchParams.get("doc");
       // The shell clears query parameters at bootstrap for legacy ?tab=docs URLs.
       try { selected ??= sessionStorage.getItem("slide.docs.selected.v1"); } catch { /* Storage is optional. */ }
       const file = this.docs.find((doc) => doc.file === selected)?.file ?? this.docs[0]?.file;
       if (file) void this.selectDoc(file, null, false);
+      else this.directoryOpen = false;
+      if (restoreFocus) {
+        void this.updateComplete.then(() => {
+          if (version !== this.directoryVersion || this.shadowRoot?.activeElement) return;
+          const selector = file ? ".docs-sidebar [aria-current]" : ".docs-sidebar nav";
+          this.renderRoot.querySelector<HTMLElement>(selector)?.focus();
+        });
+      }
     } catch (error) {
-      if (this.isConnected)
-        this.error =
-          error instanceof Error && error.message === "无权读取文档"
+      if (version === this.directoryVersion)
+        this.directoryError =
+          error instanceof Error && error.message === "无权读取文档目录"
             ? error.message
             : "无法加载文档列表";
     } finally {
-      this.listing = false;
+      if (version === this.directoryVersion) this.listing = false;
     }
   }
 
@@ -240,25 +259,27 @@ export class DocsViewerPage extends LitElement {
     if (navigate && previous !== file) window.history.pushState(window.history.state, "", url);
     else if (previous !== file) window.history.replaceState(window.history.state, "", url);
     try { sessionStorage.setItem("slide.docs.selected.v1", file); } catch { /* Storage is optional. */ }
-    if (file === this.activeDoc && !this.loading && !this.error && this.content) {
+    if (file === this.activeDoc && !this.loading && !this.articleError && this.content) {
       if (hash) this.scrollToHash(hash);
       return;
     }
     this.rememberPosition();
     this.activeDoc = file;
+    this.content = "";
     this.pendingHash = hash;
     const version = ++this.requestVersion;
     this.loading = true;
-    this.error = null;
+    this.articleError = null;
     try {
       const res = await authFetch(`/api/docs/files/${encodeURIComponent(file)}`);
       if (!res.ok) throw new Error(res.status === 403 ? "无权读取文档" : `HTTP ${res.status}`);
       const data = await res.json();
       if (version !== this.requestVersion) return;
-      this.content = data.content || "";
+      if (typeof data.content !== "string") throw new Error("无法加载文档内容");
+      this.content = data.content;
     } catch (error) {
       if (version !== this.requestVersion) return;
-      this.error =
+      this.articleError =
         error instanceof Error && error.message === "无权读取文档"
           ? error.message
           : "无法加载文档内容";
@@ -273,7 +294,7 @@ export class DocsViewerPage extends LitElement {
       (changed.has("content") || changed.has("loading")) &&
       this.content &&
       !this.loading &&
-      !this.error
+      !this.articleError
     ) {
       this.addHeadingIds();
       this.prepareScrollRegions();
@@ -374,7 +395,7 @@ export class DocsViewerPage extends LitElement {
   }
 
   private renderDirectory() {
-    return html`<nav class="docs-directory" aria-label="文档目录">
+    return html`<nav class="docs-directory" aria-label="文档目录" tabindex="-1" aria-busy=${this.listing}>
       ${this.docs.map(
         (doc) => html`<button
           type="button"
@@ -385,8 +406,17 @@ export class DocsViewerPage extends LitElement {
           ${doc.title}
         </button>`,
       )}
-      ${this.listing ? html`<p role="status">加载目录中…</p>` : nothing}
-      ${!this.listing && !this.docs.length ? html`<p>${this.error ?? "暂无可用文档"}</p>` : nothing}
+      ${this.directoryError
+        ? html`<div class="docs-directory__status">
+            <p role=${this.listing ? "status" : "alert"}>${this.listing ? "正在重试目录…" : this.directoryError}</p>
+            <button type="button" class="btn" aria-disabled=${this.listing}
+              @click=${(event: Event) => this.loadDocList(event.currentTarget as HTMLButtonElement)}>重试</button>
+          </div>`
+        : this.listing
+          ? html`<p class="docs-directory__status" role="status">加载目录中…</p>`
+          : !this.docs.length
+            ? html`<p class="docs-directory__status">暂无可用文档</p>`
+            : nothing}
     </nav>`;
   }
 
@@ -416,28 +446,38 @@ export class DocsViewerPage extends LitElement {
           <div
             class="docs-content"
             aria-label="文档正文"
-            aria-busy=${this.loading || this.listing}
+            aria-busy=${this.loading}
+            tabindex="-1"
             @click=${this.handleContentClick}
           >
             ${
-              this.error
-                ? html`<div class="docs-empty" role="alert">
-                    ${this.error}<button
+              this.articleError
+                ? html`<div class="docs-empty">
+                    <span role="alert">${this.articleError}</span><button
                       class="btn"
                       type="button"
-                      @click=${() => (this.activeDoc ? this.selectDoc(this.activeDoc) : this.loadDocList())}
+                      @click=${() => {
+                        if (!this.activeDoc) return;
+                        const restoreFocus = this.shadowRoot?.activeElement?.closest(".docs-empty");
+                        void this.selectDoc(this.activeDoc, this.pendingHash, false);
+                        if (restoreFocus) this.contentEl.focus({ preventScroll: true });
+                      }}
                     >
                       重试
                     </button>
                   </div>`
-                : this.loading || this.listing
-                  ? html`<div class="docs-loading" role="status">加载中...</div>`
+                : this.loading
+                  ? html`<div class="docs-loading" role="status">正文加载中…</div>`
                   : this.content
                     ? html`<article class="docs-article">
                         ${unsafeHTML(toSanitizedDocumentHtml(this.content))}
                       </article>`
                     : html`<div class="docs-empty">
-                        ${this.docs.length ? "当前文档暂无内容" : "暂无可用文档"}
+                        ${this.directoryError
+                          ? "请在文档目录重试。"
+                          : this.listing
+                            ? nothing
+                            : this.docs.length ? "当前文档暂无内容" : "暂无可用文档"}
                       </div>`
             }
           </div>

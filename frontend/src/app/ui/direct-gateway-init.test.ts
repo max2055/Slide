@@ -62,6 +62,8 @@ describe('initChatClient', () => {
   it.each([
     ['agents', 'network'], ['agents', 'http'], ['agents', 'json'],
     ['sessions', 'network'], ['sessions', 'http'], ['sessions', 'json'],
+    ['agents', 'forbidden'], ['sessions', 'forbidden'],
+    ['agents', 'shape'], ['sessions', 'shape'],
     ['both', 'network'],
   ])('continues initialization and recovers after %s %s failure', async (failedLoader, failure) => {
     const agents = { agents: [{ id: 'agent-1' }], defaultId: 'agent-1' };
@@ -72,6 +74,8 @@ describe('initChatClient', () => {
       if (failing && (failedLoader === 'both' || failedLoader === (isAgents ? 'agents' : 'sessions'))) {
         if (failure === 'network') throw new Error('offline');
         if (failure === 'http') return new Response('', { status: 503 });
+        if (failure === 'forbidden') return new Response('', { status: 403 });
+        if (failure === 'shape') return Response.json({});
         return new Response('{invalid json');
       }
       return new Response(JSON.stringify(isAgents ? agents : sessions));
@@ -105,11 +109,14 @@ describe('initChatClient', () => {
     for (const loader of ['agents', 'sessions'] as const) {
       const error = host[`${loader}Error`];
       if (failedLoader === loader || failedLoader === 'both') {
-        expect(error).toMatch(failure === 'http' ? /HTTP 503/ : failure === 'network' ? /offline/ : /SyntaxError/);
+        expect(error).toBe(failure === 'forbidden'
+          ? loader === 'agents' ? '无权读取 Agent 列表，请联系管理员。' : '无权读取会话，请联系管理员。'
+          : loader === 'agents' ? '无法读取 Agent 列表，请刷新重试。' : '无法读取会话列表，请刷新重试。');
+        expect(loader === 'agents' ? host.agentsList : host.sessionsResult).toBeNull();
       } else {
         expect(error).toBeNull();
         expect(loader === 'agents' ? host.agentsList : host.sessionsResult)
-          .toEqual(loader === 'agents' ? agents : sessions);
+          .toEqual(loader === 'agents' ? agents : { ...sessions, queriedActiveMinutes: 120 });
       }
     }
 
