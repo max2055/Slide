@@ -183,6 +183,7 @@ export class SettingsShell extends LitElement {
       min-width: 0;
       overflow-y: auto;
       padding: var(--space-xl);
+      --settings-editor-sticky-top: calc(-1 * var(--space-xl));
     }
 
     /* Models own a single document flow; avoid a full-height nested scroller. */

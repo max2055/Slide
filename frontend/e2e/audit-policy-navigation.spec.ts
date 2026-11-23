@@ -61,17 +61,18 @@ for (const [width, height] of [[1440, 900], [1366, 768], [1920, 1080]]) {
     await page.goForward();
     await expect(agent).toHaveAttribute('aria-selected', 'true');
     const security = page.locator('agent-security-policy-page');
-    const retry = security.getByRole('button', { name: '重试加载变更记录' });
+    const history = security.getByRole('region', { name: '策略变更记录', exact: true });
+    const retry = history.getByRole('button', { name: '重试加载变更记录' });
     for (const failure of ['403', '500', 'network'] as const) {
       h.fail(failure);
       if (failure !== '403') await retry.click();
-      await expect(security.getByRole('alert')).toContainText('策略变更记录加载失败');
-      await expect(security.getByText('暂无策略变更', { exact: true })).toHaveCount(0);
+      await expect(history.getByRole('alert')).toContainText('策略变更记录加载失败');
+      await expect(history.getByText('暂无策略变更', { exact: true })).toHaveCount(0);
       await page.screenshot({ path: info.outputPath(`history-${failure}.png`), fullPage: true });
     }
     h.fail('empty'); await retry.focus(); await page.keyboard.press('Enter');
-    await expect(security.getByText('暂无策略变更', { exact: true })).toBeVisible();
-    await expect(security.getByRole('alert')).toHaveCount(0);
+    await expect(history.getByText('暂无策略变更', { exact: true })).toBeVisible();
+    await expect(history.getByRole('alert')).toHaveCount(0);
     await page.screenshot({ path: info.outputPath('recovered.png'), fullPage: true });
   });
 }
@@ -79,7 +80,9 @@ for (const [width, height] of [[1440, 900], [1366, 768], [1920, 1080]]) {
 test('MAX-446 loading and Agent selection reject stale history responses', async ({ page }) => {
   await fixture(page);
   const security = page.locator('agent-security-policy-page');
-  await expect(security.getByRole('alert')).toBeVisible();
+  const history = security.getByRole('region', { name: '策略变更记录', exact: true });
+  const saveStatus = security.getByRole('group', { name: '策略保存', exact: true }).getByRole('status');
+  await expect(history.getByRole('alert')).toBeVisible();
   let finish!: () => void;
   const waiting = new Promise<void>(resolve => { finish = resolve; });
   await page.route('**/api/agent/security/policies/a/history', async route => {
@@ -88,15 +91,107 @@ test('MAX-446 loading and Agent selection reject stale history responses', async
   });
   await page.route('**/api/agent/security/policies/b/history', route => route.fulfill({ json: { records: [{ version: 7, changeNote: 'Agent B 当前变更', changedBy: 1, createdAt: '2026-11-13T00:00:00Z' }] } }));
   try {
-    await security.getByRole('button', { name: '重试加载变更记录' }).click();
-    await expect(security.getByRole('status')).toHaveText('正在加载策略变更记录…');
-    await expect(security.getByText('暂无策略变更', { exact: true })).toHaveCount(0);
+    await history.getByRole('button', { name: '重试加载变更记录' }).click();
+    await expect(saveStatus).toHaveText('无未保存的修改');
+    await expect(history.getByRole('status')).toHaveText('正在加载策略变更记录…');
+    await expect(history.getByText('暂无策略变更', { exact: true })).toHaveCount(0);
     await security.getByLabel('Agent', { exact: true }).selectOption('b');
-    await expect(security.getByText('Agent B 当前变更', { exact: true })).toBeVisible();
-    finish(); await page.unrouteAll({ behavior: 'wait' });
-    await expect(security.getByRole('alert')).toHaveCount(0);
-    await expect(security.getByText('Agent B 当前变更', { exact: true })).toBeVisible();
+    await expect(history.getByText('Agent B 当前变更', { exact: true })).toBeVisible();
+    const staleResponse = page.waitForResponse(response => response.url().endsWith('/a/history') && response.status() === 500);
+    finish();
+    await (await staleResponse).finished();
+    await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => resolve())));
+    await expect(history.getByRole('alert')).toHaveCount(0);
+    await expect(history.getByText('Agent B 当前变更', { exact: true })).toBeVisible();
   } finally {
     finish(); await page.goto('about:blank'); await page.unrouteAll({ behavior: 'wait' });
+  }
+});
+
+test('MAX-727 a completed policy save unlocks editing while history is pending', async ({ page }) => {
+  await fixture(page);
+  const security = page.locator('agent-security-policy-page');
+  const saveArea = security.getByRole('group', { name: '策略保存', exact: true });
+  const history = security.getByRole('region', { name: '策略变更记录', exact: true });
+  const save = saveArea.getByRole('button', { name: '保存策略', exact: true });
+  const note = security.locator('textarea');
+  const agent = security.getByLabel('Agent', { exact: true });
+  const refresh = security.getByRole('button', { name: '刷新', exact: true });
+  await expect(history.getByRole('alert')).toBeVisible();
+
+  const firstPut = Promise.withResolvers<void>();
+  const oldHistory = Promise.withResolvers<void>();
+  const submitted: string[] = [];
+  let historyReads = 0;
+  const putUrl = '**/api/agent/security/policies/a';
+  const historyUrl = putUrl + '/history';
+  const historyRow = (version: number, changeNote: string) => ({
+    id: version, version, changeNote, changedBy: 1, createdAt: '2026-11-13T00:00:00Z',
+  });
+
+  await page.route(putUrl, async route => {
+    expect(route.request().method()).toBe('PUT');
+    submitted.push(route.request().postDataJSON().changeNote);
+    const version = submitted.length + 1;
+    if (version === 2) await firstPut.promise;
+    await route.fulfill({ json: { policy: { ...policy('a'), version } } });
+  });
+  await page.route(historyUrl, async route => {
+    switch (++historyReads) {
+      case 1:
+        await oldHistory.promise;
+        await route.fulfill({ json: { records: [historyRow(2, '较早的变更')] } });
+        break;
+      case 2:
+        await route.fulfill({ status: 500, json: { error: 'test history failure' } });
+        break;
+      default:
+        await route.fulfill({ json: { records: [historyRow(3, '最新变更')] } });
+    }
+  });
+
+  try {
+    await note.fill('第一份变更说明');
+    await save.evaluate((button: HTMLButtonElement) => { button.click(); button.click(); });
+    await expect.poll(() => submitted).toEqual(['第一份变更说明']);
+    await expect(saveArea.getByRole('status')).toHaveText('正在保存策略…');
+    await expect(save).toBeDisabled();
+    await expect(note).toBeDisabled();
+    await expect(agent).toBeDisabled();
+    await expect(refresh).toBeDisabled();
+
+    firstPut.resolve();
+    await expect(history.getByRole('status')).toHaveText('正在加载策略变更记录…');
+    await expect(history.getByText('暂无策略变更', { exact: true })).toHaveCount(0);
+    await expect(saveArea.getByRole('status')).toHaveText('无未保存的修改');
+    await expect(note).toBeEnabled();
+    await expect(note).toHaveValue('');
+    await expect(agent).toBeEnabled();
+    await expect(refresh).toBeEnabled();
+
+    await note.fill('第二份变更说明');
+    await expect(save).toBeEnabled();
+    await save.click();
+    await expect(history.getByRole('alert')).toHaveText('策略变更记录加载失败，请重试');
+    await expect(saveArea.getByRole('status')).toHaveText('无未保存的修改');
+    await expect(note).toBeEnabled();
+    await note.fill('尚未提交的第三份草稿');
+    await history.getByRole('button', { name: '重试加载变更记录' }).click();
+    await expect(history.getByText('最新变更', { exact: true })).toBeVisible();
+
+    const staleResponse = page.waitForResponse(response => response.url().endsWith('/history') && response.ok());
+    oldHistory.resolve();
+    await (await staleResponse).finished();
+    await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => resolve())));
+    await expect(history.getByText('最新变更', { exact: true })).toBeVisible();
+    await expect(history.getByText('较早的变更', { exact: true })).toHaveCount(0);
+    await expect(history.getByRole('alert')).toHaveCount(0);
+    await expect(note).toHaveValue('尚未提交的第三份草稿');
+    await expect(saveArea.getByRole('status')).toHaveText('有未保存的修改');
+    expect(submitted).toEqual(['第一份变更说明', '第二份变更说明']);
+  } finally {
+    firstPut.resolve();
+    oldHistory.resolve();
+    await page.unrouteAll({ behavior: 'wait' });
   }
 });

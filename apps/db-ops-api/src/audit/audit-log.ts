@@ -94,6 +94,7 @@ export interface AuditLogQuery {
   endTime?: number;
   /** 结果过滤 */
   result?: 'success' | 'failure' | 'pending';
+  requestCategory?: 'business' | 'background';
   /** 资源 ID 过滤（用于 query-history 的 instance 过滤） */
   resourceId?: string;
   /** 搜索文本（用于 SQL 文本模糊搜索） */
@@ -103,6 +104,12 @@ export interface AuditLogQuery {
   /** 分页偏移 */
   offset?: number;
 }
+
+const BACKGROUND_REQUEST_ACTIONS = [
+  'POST /api/device/register',
+  'POST /api/device/challenge',
+  'PUT /api/user/preferences',
+];
 
 /**
  * 审计日志处理器
@@ -173,6 +180,12 @@ export class MemoryAuditLogStore implements AuditLogHandler {
 
     if (params.result) {
       filtered = filtered.filter(log => log.result === params.result);
+    }
+
+    if (params.requestCategory) {
+      const selectBackground = params.requestCategory === 'background';
+      filtered = filtered.filter(log =>
+        (log.eventType === 'system_operation' && BACKGROUND_REQUEST_ACTIONS.includes(log.action)) === selectBackground);
     }
 
     if (params.search) {
@@ -293,6 +306,7 @@ export class DatabaseAuditLogStore implements AuditLogHandler {
 
   async query(filter: AuditLogQuery): Promise<{ entries: AuditLogEntry[]; total: number }> {
     if (filter.eventType !== 'sql_execution') return await this.queryAuditEntries(filter);
+    if (filter.requestCategory === 'background') return { entries: [], total: 0 };
     const conditions: string[] = [];
     const params: any[] = [];
 
@@ -393,6 +407,13 @@ export class DatabaseAuditLogStore implements AuditLogHandler {
     if (filter.resourceType) add('resource_type = ?', filter.resourceType);
     if (filter.resourceId) add('resource_id = ?', filter.resourceId);
     if (filter.result) add('result = ?', filter.result);
+    if (filter.requestCategory) {
+      // Use byte comparisons to match the exact method and route even in a case-insensitive schema.
+      const actions = BACKGROUND_REQUEST_ACTIONS.map(() => '?').join(', ');
+      const background = `(CAST(event_type AS BINARY) = 'system_operation' AND CAST(action AS BINARY) IN (${actions}))`;
+      conditions.push(filter.requestCategory === 'background' ? background : `NOT ${background}`);
+      params.push(...BACKGROUND_REQUEST_ACTIONS);
+    }
     if (filter.startTime !== undefined) add('timestamp_ms >= ?', filter.startTime);
     if (filter.endTime !== undefined) add('timestamp_ms <= ?', filter.endTime);
     if (filter.search) {

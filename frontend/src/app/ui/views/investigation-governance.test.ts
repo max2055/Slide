@@ -250,6 +250,22 @@ it('surfaces a version conflict without overwriting the local draft', async () =
   expect((element as any).budgetError).toContain('已被他人修改');
   expect((element as any).budget.effective.version).toBe(3);
 });
+it('ignores duplicate saves and discards a late save response after session expiry', async () => {
+  const element = await mountedBudget();
+  let finish!: (response: Response) => void;
+  vi.mocked(authFetch).mockImplementation(() => new Promise(resolve => { finish = resolve; }));
+  const saving = (element as any).saveBudget();
+  await (element as any).saveBudget();
+  expect(vi.mocked(authFetch)).toHaveBeenCalledTimes(3);
+
+  window.dispatchEvent(new Event('slide-session-expired'));
+  finish(new Response(JSON.stringify(effectiveView)));
+  await saving;
+  await element.updateComplete;
+  expect(element.shadowRoot!.querySelector('[data-budget="editor"]')).toBeNull();
+  expect((element as any).budget).toBeNull();
+  expect(showToast).not.toHaveBeenCalled();
+});
 it.each(['slide-session-expired', 'slide-permissions-loaded', 'disconnect', 'kind', 'refresh'] as const)('%s rejects a delayed successful read', async boundary => {
   const deliveries: Array<(response: Response) => void> = [];
   vi.mocked(authFetch).mockImplementation(() => new Promise(resolve => deliveries.push(resolve)));
