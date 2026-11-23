@@ -58,11 +58,12 @@ export class PromptSettingsPage extends LitElement {
 
     .type-card { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius-md); margin-bottom: var(--space-md); overflow: hidden; transition: box-shadow 0.2s; }
     .type-card:hover { box-shadow: 0 1px 4px rgba(0,0,0,0.06); }
-    .type-header { display: flex; align-items: center; justify-content: space-between; padding: var(--space-md) var(--space-lg); cursor: pointer; gap: var(--space-md); }
+    .type-header { display: flex; align-items: center; justify-content: space-between; width: 100%; padding: var(--space-md) var(--space-lg); border: 0; background: transparent; font: inherit; text-align: start; cursor: pointer; gap: var(--space-md); }
     .type-header:hover { background: var(--bg-elevated); }
+    .type-header:focus-visible { outline: 2px solid var(--ring); outline-offset: -3px; border-radius: var(--radius-md); }
     .type-info { flex: 1; min-width: 0; }
-    .type-name { font-size: 14px; font-weight: 600; color: var(--text-strong); }
-    .type-desc { font-size: 12px; color: var(--muted); margin-top: 2px; }
+    .type-name { display: block; font-size: 14px; font-weight: 600; color: var(--text-strong); }
+    .type-desc { display: block; font-size: 12px; color: var(--muted); margin-top: 2px; }
     .type-meta { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
     .expand-arrow { transition: transform 0.2s; color: var(--muted); }
     .expand-arrow.open { transform: rotate(180deg); }
@@ -266,6 +267,9 @@ export class PromptSettingsPage extends LitElement {
       ${this.types.map(type => {
         const activeV = this.activeVersionOf(type);
         const isExpanded = this._expandedTypes?.has(type.type) ?? false;
+        const typeId = encodeURIComponent(type.type);
+        const titleId = `prompt-title-${typeId}`;
+        const versionsId = `prompt-versions-${typeId}`;
         const toggleExpand = () => {
           if (!this._expandedTypes) this._expandedTypes = new Set();
           if (this._expandedTypes.has(type.type)) this._expandedTypes.delete(type.type);
@@ -275,22 +279,22 @@ export class PromptSettingsPage extends LitElement {
 
         return html`
           <div class="type-card">
-            <div class="type-header" @click=${toggleExpand}>
-              <div class="type-info">
-                <div class="type-name">${TYPE_LABELS[type.type] || type.type}</div>
-                <div class="type-desc">${TYPE_DESCS[type.type] || ''}</div>
-              </div>
-              <div class="type-meta">
+            <button type="button" class="type-header" aria-labelledby=${titleId} aria-expanded=${isExpanded} aria-controls=${versionsId} @click=${toggleExpand}>
+              <span class="type-info">
+                <span class="type-name" id=${titleId}>${TYPE_LABELS[type.type] || type.type}</span>
+                <span class="type-desc">${TYPE_DESCS[type.type] || ''}</span>
+              </span>
+              <span class="type-meta">
                 <app-badge variant="info">${type.versions.length} 个版本</app-badge>
                 ${activeV ? html`<app-badge variant="ok">v${activeV.version} 使用中</app-badge>` : ''}
-                <span class="expand-arrow ${isExpanded ? 'open' : ''}">
+                <span class="expand-arrow ${isExpanded ? 'open' : ''}" aria-hidden="true">
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
                 </span>
-              </div>
-            </div>
+              </span>
+            </button>
 
-            ${isExpanded ? html`
-              <div class="version-list">
+            <div class="version-list" id=${versionsId} ?hidden=${!isExpanded}>
+              ${isExpanded ? html`
                 ${type.versions.sort((a, b) => b.version - a.version).map(v => html`
                   <div class="version-item ${v.version === type.activeVersion ? 'active' : ''}">
                     <div class="version-badge">
@@ -312,8 +316,8 @@ export class PromptSettingsPage extends LitElement {
                   <button class="btn" @click=${() => this.createNewVersion(type)}>+ 新建版本</button>
                   <button class="btn" @click=${() => this.openOptimize(type)} title="使用 AI 分析并优化当前提示词">AI 优化</button>
                 </div>
-              </div>
-            ` : ''}
+              ` : ''}
+            </div>
           </div>
         `;
       })}
@@ -325,7 +329,7 @@ export class PromptSettingsPage extends LitElement {
               <span class="editor-title">${this.selectedVersion!.fileName}</span>
               <span class="editor-info">${this.editorContent.length} 字符</span>
             </div>
-            <textarea class="editor" .value=${this.editorContent} @input=${(e: InputEvent) => { this.editorContent = (e.target as HTMLTextAreaElement).value; }}></textarea>
+            <textarea class="editor" aria-label="提示词内容" .value=${this.editorContent} @input=${(e: InputEvent) => { this.editorContent = (e.target as HTMLTextAreaElement).value; }}></textarea>
           </div>
           <div slot="footer">
             <button class="btn" @click=${this.closeEditor} ?disabled=${this.editorSaving}>取消</button>
