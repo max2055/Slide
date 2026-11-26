@@ -11,23 +11,24 @@ export interface VendorCounterState { epoch?: string; firstObservedAt?: string }
 
 /** The state belongs to one live asset connection, never to a credential string.
  * A collector-process restart deliberately establishes a fresh baseline. */
-export function vendorCounterTransport(engine: 'oracle' | 'dameng',
+export function vendorCounterTransport(variant: keyof typeof vendorLifecycleSql,
   execute: (sql: string, timeout: number) => Promise<{ rows?: unknown }>, state: VendorCounterState = {},
   clock = () => new Date().toISOString()): Extract<Transport, { method: 'sql' }> {
   const ordinary = bindDatabaseDriver(execute) as Extract<Transport, { method: 'sql' }>;
+  const engine = variant === 'dameng' ? 'dameng' : 'oracle';
   const read = databaseReads.find(r => r.engine === engine && r.name === 'transactions')!;
   return { ...ordinary, counterQuery: async ({ sql, timeout }) => {
     if (sql !== read.sql) throw new AdapterError('parse_error');
     const observed_at = clock();
-    const { rows } = await execute(engine === 'oracle' ? ORACLE_COUNTER_SQL : DAMENG_COUNTER_SQL, timeout);
+    const { rows } = await execute(vendorLifecycleSql[variant], timeout);
     if (!Array.isArray(rows) || rows.length !== 1 || !Array.isArray(rows[0]) || rows[0].length !== (engine === 'oracle' ? 4 : 3)) throw new AdapterError('parse_error');
-    const [value, startup, instance, container] = rows[0];
+    const [value, startup, instance, databaseIdentity] = rows[0];
     if (typeof startup !== 'string' || !/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(startup)
       || !Number.isFinite(Date.parse(startup.replace(' ', 'T') + 'Z'))
       || typeof instance !== 'string' || !instance || instance.length > 128
-      || engine === 'oracle' && (typeof container !== 'string' || !container || container.length > 128)
+      || engine === 'oracle' && (typeof databaseIdentity !== 'string' || !databaseIdentity || databaseIdentity.length > 128)
       || typeof value !== 'string' || !/^(0|[1-9]\d*)$/.test(value) || BigInt(value) >= 1n << 64n) throw new AdapterError('parse_error');
-    const epoch = createHash('sha256').update(JSON.stringify([engine, startup, instance, container ?? null])).digest('hex');
+    const epoch = createHash('sha256').update(JSON.stringify([variant, startup, instance, databaseIdentity ?? null])).digest('hex');
     if (state.epoch !== epoch) { state.epoch = epoch; state.firstObservedAt = observed_at; }
     return { rows: [[value]], observed_at, counter: { bits: '64', discontinuity: {
       epoch, observed_at: state.firstObservedAt!, reason: 'initial',

@@ -122,6 +122,10 @@ export const vendorLifecycleSql = {
   TO_CHAR(i.STARTUP_TIME, 'YYYY-MM-DD HH24:MI:SS'), i.INSTANCE_NAME,
   SYS_CONTEXT('USERENV','CON_NAME')
   FROM V$SYSSTAT s CROSS JOIN V$INSTANCE i WHERE s.NAME = 'user commits'`,
+  'oracle-11.2': `SELECT TO_CHAR(s.VALUE, 'FM99999999999999999999'),
+  TO_CHAR(i.STARTUP_TIME, 'YYYY-MM-DD HH24:MI:SS'), i.INSTANCE_NAME,
+  SYS_CONTEXT('USERENV','DB_UNIQUE_NAME')
+  FROM V$SYSSTAT s CROSS JOIN V$INSTANCE i WHERE s.NAME = 'user commits'`,
   dameng: `SELECT CAST(s.STAT_VAL AS VARCHAR(20)),
   TO_CHAR(i.START_TIME, 'YYYY-MM-DD HH24:MI:SS'), i.INSTANCE_NAME
   FROM V$SYSSTAT s CROSS JOIN V$INSTANCE i WHERE s.NAME = 'transaction commit count'`,
@@ -144,6 +148,22 @@ export function vendorLifecycleReleases(): PackageRelease[] {
       documentation: base.documentation.map((d, i) => ({ ...d, permissions: specs[i].permissions, discovery: specs[i].discovery })) });
   });
 }
+const oracle112Applicability = [{ attribute: 'db.engine', values: ['oracle'] }, { attribute: 'db.version', values: ['11.2'] }];
+const oracleLifecycleReads = vendorLifecycleReads.filter(read => read.engine === 'oracle');
+export const oracle112Reads: DatabaseRead[] = oracleLifecycleReads.map(read => ({
+  ...read, name: read.name.replace('_lifecycle_v2', '_11_2'),
+}));
+export const oracle112Specs: ImplementationSpec[] = oracle112Reads.map((read, index) => ({
+  ...vendorLifecycleSpecs.find(spec => spec.id === implementationId(oracleLifecycleReads[index]))!,
+  id: implementationId(read), applicability: oracle112Applicability,
+  discovery: `Bound instance only; fixed SELECT: ${read.name === 'transactions_11_2' ? vendorLifecycleSql['oracle-11.2'] : read.sql}`,
+}));
+export function oracle112Release(): PackageRelease {
+  const base = oracle1919Release();
+  return sealRelease({ ...base, package: { ...base.package, version: '1.4.0', applicability: oracle112Applicability,
+    collectors: base.package.collectors.map((collector, i) => ({ ...collector, implementation_ref: oracle112Specs[i].id })) },
+    documentation: base.documentation.map((doc, i) => ({ ...doc, permissions: oracle112Specs[i].permissions, discovery: oracle112Specs[i].discovery })) });
+}
 /** Opt-in registry for the existing PolicyService/MetricScheduler. Old package pins remain immutable. */
 export function capacityReleases(): PackageRelease[] {
   const bases = [builtinReleases()[0], ...databaseReleases().filter(r => ['oracle-representative', 'dameng-representative'].includes(r.package.id))];
@@ -159,7 +179,7 @@ export function capacityReleases(): PackageRelease[] {
   });
 }
 export function createDatabaseRegistry(): PackageRegistry {
-  const registry = new PackageRegistry(canonicalDefinitions, [...implementationSpecs, ...databaseSpecs, ...capacitySpecs, ...postgres1616Specs, ...oracle1919Specs, ...vendorLifecycleSpecs]);
-  [...builtinReleases(), ...databaseReleases(), ...capacityReleases(), postgres1616Release(), oracle1919Release(), ...vendorLifecycleReleases()].forEach(r => registry.install(r));
+  const registry = new PackageRegistry(canonicalDefinitions, [...implementationSpecs, ...databaseSpecs, ...capacitySpecs, ...postgres1616Specs, ...oracle1919Specs, ...vendorLifecycleSpecs, ...oracle112Specs]);
+  [...builtinReleases(), ...databaseReleases(), ...capacityReleases(), postgres1616Release(), oracle1919Release(), ...vendorLifecycleReleases(), oracle112Release()].forEach(r => registry.install(r));
   return registry;
 }

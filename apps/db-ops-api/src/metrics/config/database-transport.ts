@@ -73,7 +73,8 @@ export function trialDatabaseTransport(connection: DatabaseConnection, mysqlCoun
   if (connection.db_type === 'oracle' || connection.db_type === 'dameng') {
     let state = vendorCounters.get(connection);
     if (!state) { state = {}; vendorCounters.set(connection, state); }
-    return vendorCounterTransport(connection.db_type, execute, state);
+    const isOracle112 = connection.db_type === 'oracle' && /^11\.2(?:\.\d+)*$/.test(connection.oracleConnection?.oracleServerVersionString ?? '');
+    return vendorCounterTransport(isOracle112 ? 'oracle-11.2' : connection.db_type, execute, state);
   }
   return bindDatabaseDriver(execute);
 }
