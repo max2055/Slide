@@ -1,3 +1,5 @@
+import { generateUUID } from "../uuid.ts";
+
 export type DetailResourceType = "instance" | "server" | "network_device";
 export interface DetailWindow {
   from: string;
@@ -162,7 +164,7 @@ export function saveListReturn(
   state: Record<string, string>,
   position: ListReturn["position"],
 ) {
-  const token = crypto.randomUUID();
+  const token = generateUUID();
   const p = new URLSearchParams({ tab: listTabs[type], restoreList: token });
   const record: ListReturn = { type, id, state, position, url: `/?${p}` };
   try {
