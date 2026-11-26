@@ -342,11 +342,36 @@ test('controlled expired session and late data cannot display an empty result or
 });
 
 test('controlled permission hydration and denial show explicit states', async ({ page }) => {
-  await page.goto(`${env.url}/attention`); const view = page.locator('event-center-page');
-  await expect(view.locator('.empty-state')).toBeVisible();
-  await view.evaluate((element: any) => { element.permissions = null; });
+  const context = `${env.url}/events?view=aggregate`;
+  const reads: string[] = [];
+  await page.route(eventsPath, route => {
+    reads.push(route.request().method());
+    return route.fulfill({ json: { items: [], total: 0 } });
+  });
+  // The application shell owns its permission hydration. Mount this controlled
+  // component directly so an unrelated shell refresh cannot replace the test state.
+  await page.route(context, route => route.fulfill({
+    contentType: 'text/html',
+    body: `<!doctype html><html lang="zh-CN"><body>
+      <event-center-page></event-center-page>
+      <script type="module">import '/src/app/ui/views/event-center.ts';</script>
+    </body></html>`,
+  }));
+  const applyPermissions = (permissions: string[]) => page.evaluate(values => {
+    window.dispatchEvent(new CustomEvent('slide-permissions-loaded', { detail: { permissions: values } }));
+  }, permissions);
+  await page.goto(context); const view = page.locator('event-center-page');
   await expect(view.getByRole('status')).toContainText('正在确认访问权限'); await noEmpty(page);
-  await view.evaluate((element: any) => { element.permissions = new Set(); });
+  expect(reads).toEqual([]);
+  await applyPermissions([]);
   await expect(view.locator('app-empty-state[title="无访问权限"]')).toBeVisible(); await noEmpty(page);
+  expect(reads).toEqual([]);
+
+  await applyPermissions(['alert:view']);
+  await expect(view.locator('event-management-page .empty-state')).toBeVisible();
+  expect(reads).toEqual(['GET']);
+  await applyPermissions([]);
+  await expect(view.locator('app-empty-state[title="无访问权限"]')).toBeVisible(); await noEmpty(page);
+  expect(reads).toEqual(['GET']);
   await capture(page, 'permission-denied-controlled');
 });
