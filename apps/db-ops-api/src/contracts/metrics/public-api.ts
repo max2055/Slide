@@ -73,6 +73,7 @@ export const MetricOperationStateSchema = z.strictObject({
   operation: z.strictObject({ resource: RefSchema, target_revision: z.number().int().positive(),
     configuration_digest: z.string().regex(/^sha256:[a-f0-9]{64}$/).nullable(), committed_at: z.iso.datetime().nullable() }).nullable(),
 });
+const TriggerSourceAvailabilitySchema = z.enum(['available', 'expired', 'unknown']);
 export const metricPublicSchemas = {
  ...studySchemas,
  ...discoverySchemas,
@@ -84,6 +85,7 @@ export const metricPublicSchemas = {
   TemplateEventEvidence:z.strictObject({event_id:z.number().int().positive(),alert_id:z.number().int().positive(),
     can_manual_close:z.boolean().optional(),
     episode:TemplateTriggerEpisodeSchema,snapshot:z.strictObject({configuration:TriggerResourceSnapshotSchema,opening:TemplateTriggerOpeningSchema}),
+    source_availability:z.strictObject({opening:TriggerSourceAvailabilitySchema,recovery:TriggerSourceAvailabilitySchema.optional()}).optional(),
     evaluation:z.strictObject({state:z.enum(['active','pending','stopped','unknown']),reason:z.string()}),
     current:ResourceBindingCandidateSchema.nullable(),processing:z.strictObject({status:z.string(),acknowledged_at:z.iso.datetime().nullable()}),
     deliveries:z.array(z.strictObject({job_id:z.string(),job_state:z.string(),channel_id:z.string().nullable(),state:z.string().nullable(),error_code:z.string().nullable(),attempt_id:z.string().nullable(),updated_at:z.iso.datetime().nullable()})),
@@ -186,7 +188,7 @@ export const metricPublicPaths = {
     requestBody:{required:true,content:{'application/json':{schema:schema('TemplateTriggerPublish')}}},responses:{'200':response('TemplateTriggerPublication'),...errors,'409':{description:'Version or draft conflict'},'422':{description:'Restricted rule refused'}}}},
   '/api/metrics/templates/{templateId}/versions/{version}/triggers': {get:{operationId:'getTemplateTriggerVersion',security:[{bearerAuth:[]}],parameters:[...triggerTemplateParameters,{name:'version',in:'path',required:true,schema:{type:'integer',minimum:1}}],
     description:'Read exact immutable rule versions referenced by this published template; live metric:view before and after the query, private/no-store.',responses:{'200':response('TemplateTriggerRules'),...errors}}},
-  ...Object.fromEntries([false,true].map(ack=>[`/api/metrics/template-events/{eventId}${ack?'/acknowledge':''}`,{[ack?'post':'get']:{operationId:ack?'acknowledgeTemplateEvent':'getTemplateEventEvidence',security:[{bearerAuth:[]}],parameters:[{name:'eventId',in:'path',required:true,schema:{type:'integer',minimum:1}}],description:'Live alert:view and resource read authority before and after the query. Returns existing event/alert ids, episode opening/latest evidence, immutable configuration/rule/template/sample/attempt snapshot, separate current binding revision, processing status and existing workflow delivery/receipt facts. No channel credentials. Acknowledgement additionally requires alert:manage and resource management; only processing status changes, never recovery, execution or notification admission. Private/no-store.',responses:{'200':response('TemplateEventEvidence'),...errors}}} ])),
+  ...Object.fromEntries([false,true].map(ack=>[`/api/metrics/template-events/{eventId}${ack?'/acknowledge':''}`,{[ack?'post':'get']:{operationId:ack?'acknowledgeTemplateEvent':'getTemplateEventEvidence',security:[{bearerAuth:[]}],parameters:[{name:'eventId',in:'path',required:true,schema:{type:'integer',minimum:1}}],description:'Live alert:view and resource read authority before and after the query. Returns existing event/alert ids, episode opening/latest evidence, immutable configuration/rule/template/sample/attempt snapshot, separate current binding revision, processing status and existing workflow delivery/receipt facts. The current availability of raw sampling sources is separate from the snapshot. No raw payloads or channel credentials. Acknowledgement additionally requires alert:manage and resource management; only processing status changes, never recovery, execution or notification admission. Private/no-store.',responses:{'200':response('TemplateEventEvidence'),...errors}}} ])),
   '/api/metrics/template-events/{eventId}/close': {post:{operationId:'closeTemplateEvent',security:[{bearerAuth:[]}],
     parameters:[{name:'eventId',in:'path',required:true,schema:{type:'integer',minimum:1}}],
     requestBody:{content:{'application/json':{schema:{type:'object',additionalProperties:false}}}},

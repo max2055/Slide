@@ -436,7 +436,7 @@ test('failed collection keeps the old usable value beside the real status, last 
 test('reads frozen thresholds and same-window events after controlled unbinding and renaming', async ({ page }) => {
   const [bindings] = await pool.query('SELECT * FROM metric_policy_bindings WHERE resource_key=?', [`instance:${RESOURCE_ID}`]);
   const [rollouts] = await pool.query("SELECT * FROM metric_rollout WHERE resource_type='instance' AND resource_id=?", [String(RESOURCE_ID)]);
-  await pool.execute('INSERT INTO metric_source_acceptance(resource_key,revision,generation,evidence) VALUES(?,1,1,?)',
+  const [acceptance] = await pool.execute('INSERT IGNORE INTO metric_source_acceptance(resource_key,revision,generation,evidence) VALUES(?,1,1,?)',
     [`instance:${RESOURCE_ID}`, JSON.stringify({ validation: 'controlled_read_fixture' })]);
   try {
     await pool.execute('DELETE FROM metric_policy_bindings WHERE resource_key=?', [`instance:${RESOURCE_ID}`]);
@@ -459,7 +459,9 @@ test('reads frozen thresholds and same-window events after controlled unbinding 
     await expect(metrics.locator('template-event-evidence')).toContainText('max240-uptime');
     await page.screenshot({ path: `${output}/unbound-threshold-event.png`, fullPage: true, animations: 'disabled' });
   } finally {
-    await pool.execute('DELETE FROM metric_source_acceptance WHERE resource_key=?', [`instance:${RESOURCE_ID}`]);
+    if (acceptance.affectedRows === 1) {
+      await pool.execute('DELETE FROM metric_source_acceptance WHERE resource_key=? AND revision=1', [`instance:${RESOURCE_ID}`]);
+    }
     await pool.execute('INSERT INTO metric_policy_bindings(resource_key,group_id,payload,capabilities) VALUES(?,?,?,?)',
       [bindings[0].resource_key,bindings[0].group_id,JSON.stringify(bindings[0].payload),JSON.stringify(bindings[0].capabilities)]);
     for (const r of rollouts) await pool.execute('UPDATE metric_rollout SET source=?,read_mode=?,generation=?,published_revision=?,applied_revision=? WHERE series_hash=?',
@@ -475,6 +477,55 @@ async function authenticatedToken(request: APIRequestContext) {
   }
   return apiToken!;
 }
+
+test('frozen thresholds replay and capacity preview keep formal events and observations intact', async ({ request }) => {
+  const api = `http://127.0.0.1:${process.env.MAX240_TEST_API_PORT}`;
+  const headers = { Authorization: `Bearer ${await authenticatedToken(request)}` };
+  const resource = { type: 'instance', id: RESOURCE_ID };
+  const window = { from: iso(from), to: iso(to) };
+  const post = (name: string, data: object) => request.post(`${api}/api/metrics/study/${name}`, { headers, data });
+  const read = async (name: string, data: object) => {
+    const response = await post(name, data);
+    expect(response.status(), await response.text()).toBe(200);
+    return response.json();
+  };
+  const counts = async () => (await pool.query(`SELECT
+    (SELECT COUNT(*) FROM metric_observations) observations,
+    (SELECT COUNT(*) FROM metric_trigger_episodes) episodes,
+    (SELECT COUNT(*) FROM alert_events) events,
+    (SELECT COUNT(*) FROM workflow_jobs WHERE job_type LIKE 'notification.%') notifications`))[0][0];
+  const before = await counts();
+  const catalog = await read('catalog', { resource, ...window });
+  const snapshot = catalog.snapshots.find((item: any) => item.rules.some((rule: any) => rule.rule_id === 'max240-uptime'));
+  expect(snapshot?.config_revision).toBe(1);
+  const rule = snapshot.rules.find((item: any) => item.rule_id === 'max240-uptime');
+  const replayWindow = { from: iso(from + 11 * HOUR), to: iso(from + 13 * HOUR) };
+  const replayInput = { resource, ...replayWindow, revision: 1, snapshot_hash: snapshot.snapshot_hash,
+    rule_id: rule.rule_id, scope: rule.scope };
+  const replay = await read('replay', replayInput);
+  expect(replay).toMatchObject({ isolated: true, revision: 1, snapshot_hash: snapshot.snapshot_hash,
+    rule: { rule_id: 'max240-uptime', version: 1 } });
+  expect(replay.evidence_count).toBeGreaterThan(0);
+  expect(replay.formal_events.map((item: any) => item.event_id)).toContain(eventId);
+  const wrongSnapshot = await post('replay', { ...replayInput, snapshot_hash: `sha256:${'f'.repeat(64)}` });
+  expect(wrongSnapshot.status()).toBe(404);
+  expect(await wrongSnapshot.json()).toEqual({ error: 'HISTORY_SNAPSHOT_MISSING' });
+  const trend = await read('trend', { resource, ...window, metric: rule.metric, dimensions: {}, tier: '1h' });
+  const stats = trend.buckets.filter((bucket: any) => bucket.numeric_count);
+  expect(stats.reduce((sum: number, bucket: any) => sum + bucket.numeric_count, 0)).toBe(1438 * 3);
+  expect(stats.some((bucket: any) => bucket.max.numerator === '999999')).toBe(true);
+  for (const bucket of stats) expect(BigInt(bucket.avg.numerator) * BigInt(bucket.sum.denominator) * BigInt(bucket.numeric_count))
+    .toBe(BigInt(bucket.sum.numerator) * BigInt(bucket.avg.denominator));
+  const capacity = await read('capacity', { resource, assumptions: { numeric_days: 30, series_per_resource: 2, interval_ms: MINUTE } });
+  expect(capacity).toMatchObject({ resource, preview_only: true,
+    assumptions: { resources: { server: 500, instance: 100, network_device: 50 } } });
+  expect(await counts()).toEqual(before);
+  const [audit] = await pool.query("SELECT action FROM metric_history_study_audit WHERE resource_key=? ORDER BY id",
+    [`instance:${RESOURCE_ID}`]);
+  expect(audit.map((entry: any) => entry.action)).toEqual(expect.arrayContaining(['history.replay', 'history.cleanup_preview']));
+  await writeFile(`${output}/study-canonical.json`, JSON.stringify({ replayEvidence: replay.evidence_count, chartRows: 1438 * 3,
+    exactWeightedAverage: true, immutableRule: true, formalEvent: eventId, previewOnly: true, countsUnchanged: true, modelCalls }));
+});
 
 test('a selected history series opens an authorized workspace draft with the same immutable context', async ({ page }) => {
   if (!browserState) await login(page);
@@ -640,7 +691,9 @@ test('revoking resource permission clears protected history immediately and reje
   const metrics = page.locator('semantic-metrics');
   await expect(metrics).toContainText('最近时间桶');
   await pool.query('DELETE FROM role_permissions WHERE role_id = 8401');
-  const denied = page.waitForResponse(r => r.url().endsWith('/api/metrics/query') && r.status() === 403);
+  // The first rejected query, collection-state or history read may clear the
+  // view while the other requests are still in flight.
+  const denied = page.waitForResponse(r => new URL(r.url()).pathname.startsWith('/api/metrics/') && r.status() === 403);
   await metrics.getByRole('button', { name: '刷新标准指标' }).click();
   await denied;
   await expect(metrics).toContainText('没有此资源的查看权限');

@@ -85,6 +85,23 @@ export function databaseReleases(): PackageRelease[] {
       documentation: [...(engine === 'mysql' ? base.documentation : []), ...reads.map((r, i) => ({ collector_id: `${engine}-${r.name}`, permissions: specs[i].permissions, discovery: specs[i].discovery }))] });
   });
 }
+// Qualify the fixed representative reads for the observed 16.16 family.
+const postgresReads = databaseReads.filter(read => read.engine === 'postgresql');
+export const postgres1616Reads = postgresReads.map(read => ({ ...read, name: `${read.name}_16_16` }));
+const postgres1616Applicability = [
+  { attribute: 'db.engine', values: ['postgresql'] },
+  { attribute: 'db.version', values: ['16.16'] },
+];
+export const postgres1616Specs = postgresReads.map((read, index) => ({
+  ...databaseSpecs.find(spec => spec.id === implementationId(read))!,
+  id: implementationId(postgres1616Reads[index]),
+  applicability: postgres1616Applicability,
+}));
+export function postgres1616Release(): PackageRelease {
+  const base = databaseReleases().find(release => release.package.id === 'postgresql-representative')!;
+  return sealRelease({ ...base, package: { ...base.package, version: '1.1.0', applicability: postgres1616Applicability,
+    collectors: base.package.collectors.map((collector, index) => ({ ...collector, implementation_ref: postgres1616Specs[index].id })) } });
+}
 // The authorized 19c target reports 19.19, not 19.3. Add explicit identities;
 // never broaden the applicability/digests of already published package pins.
 export const oracle1919Reads: DatabaseRead[] = databaseReads.filter(r => r.engine === 'oracle')
@@ -142,7 +159,7 @@ export function capacityReleases(): PackageRelease[] {
   });
 }
 export function createDatabaseRegistry(): PackageRegistry {
-  const registry = new PackageRegistry(canonicalDefinitions, [...implementationSpecs, ...databaseSpecs, ...capacitySpecs, ...oracle1919Specs, ...vendorLifecycleSpecs]);
-  [...builtinReleases(), ...databaseReleases(), ...capacityReleases(), oracle1919Release(), ...vendorLifecycleReleases()].forEach(r => registry.install(r));
+  const registry = new PackageRegistry(canonicalDefinitions, [...implementationSpecs, ...databaseSpecs, ...capacitySpecs, ...postgres1616Specs, ...oracle1919Specs, ...vendorLifecycleSpecs]);
+  [...builtinReleases(), ...databaseReleases(), ...capacityReleases(), postgres1616Release(), oracle1919Release(), ...vendorLifecycleReleases()].forEach(r => registry.install(r));
   return registry;
 }

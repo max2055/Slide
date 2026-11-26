@@ -27,9 +27,12 @@ export function parseEntryContext(value: unknown, now = Date.now()): Investigati
     || new Set(c.resourceRefs.map(r => `${r.type}:${r.id}`)).size !== c.resourceRefs.length
     || c.resourceRefs.filter(r => r.role === 'primary').length !== 1
     || c.dimensions !== undefined && !c.metric || c.metric && c.resourceRefs.length !== 1) return invalid();
-  // Strict same-origin application destination, including encoded redirect tricks.
-  if (!/^\/(?:[a-zA-Z0-9_-]+\/)*(?:instances(?:-db)?|instance-detail|servers|server-detail|network-devices|network-device-detail|alerts|events|investigations)(?:[/?#]|$)/.test(c.returnTo)
-    || /[\\\u0000-\u0020]/.test(c.returnTo) || /%(?:2f|5c|0[0-9a-f]|1[0-9a-f])/i.test(c.returnTo)) return invalid();
+  // The overview has one canonical path; its encoded search is query text.
+  const overviewReturn = c.returnTo.split(/[?#]/, 1)[0] === '/dashboard';
+  const resourceReturn = /^\/(?:[a-zA-Z0-9_-]+\/)*(?:instances(?:-db)?|instance-detail|servers|server-detail|network-devices|network-device-detail|alerts|events|investigations)(?:[/?#]|$)/.test(c.returnTo)
+    && !/%(?:2f|5c)/i.test(c.returnTo);
+  if ((!overviewReturn && !resourceReturn) || /[\\\u0000-\u0020]/.test(c.returnTo)
+    || /%(?:0[0-9a-f]|1[0-9a-f])/i.test(c.returnTo)) return invalid();
   return structuredClone(c);
 }
 

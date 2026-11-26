@@ -1,6 +1,7 @@
 import Fastify from 'fastify';
 import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import type { ActorContext } from './auth/actor-context.js';
+import { ChatForbiddenError } from './auth/chat-authorization.js';
 import { registerChatRoutes, type ChatRouteDependencies } from './chat-routes.js';
 
 const actor: ActorContext = {
@@ -9,7 +10,7 @@ const actor: ActorContext = {
 };
 const now = Date.parse('2026-11-11T00:00:00Z');
 
-async function setup() {
+async function setup(overrides: Pick<ChatRouteDependencies, 'getModelDefaults' | 'authorizeChat'> = {}) {
   const app = Fastify();
   const getSessions = vi.fn<ChatRouteDependencies['service']['getSessions']>()
     .mockResolvedValue([
@@ -27,6 +28,7 @@ async function setup() {
       deleteSession: vi.fn(), enforceMessageCap: vi.fn(),
     },
     handleChatSend: vi.fn(),
+    ...overrides,
   };
   await registerChatRoutes(app, deps);
   vi.spyOn(Date, 'now').mockReturnValue(now);
@@ -90,5 +92,44 @@ describe('GET /api/sessions activeMinutes (#503)', () => {
       expect((await app.inject('/api/sessions?activeMinutes=abc')).statusCode).toBe(401);
       expect(getSessions).not.toHaveBeenCalled();
     } finally { await app.close(); }
+  });
+});
+
+describe('GET /api/sessions chat model defaults', () => {
+  it('returns the effective model and provider even before a visible session exists', async () => {
+    const getModelDefaults = vi.fn()
+      .mockResolvedValueOnce({ model: 'scene-specific-model', modelProvider: 'configured-provider' })
+      .mockResolvedValueOnce({ model: 'new-default', modelProvider: 'other-provider' });
+    const { app, getSessions } = await setup({ getModelDefaults });
+    getSessions.mockResolvedValue([]);
+    const first = await app.inject('/api/sessions');
+    const second = await app.inject('/api/sessions');
+    expect(first.statusCode).toBe(200);
+    expect(first.json()).toEqual({ ok: true, sessions: [], defaults: { model: 'scene-specific-model', modelProvider: 'configured-provider' } });
+    expect(second.json().defaults).toEqual({ model: 'new-default', modelProvider: 'other-provider' });
+  });
+
+  it('retains authorized sessions when model configuration cannot be resolved', async () => {
+    const getModelDefaults = vi.fn().mockRejectedValue(new Error('private configuration detail'));
+    const { app } = await setup({ getModelDefaults });
+    const response = await app.inject('/api/sessions?activeMinutes=10');
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({ ok: true, sessions: [{ key: 'recent' }], defaults: {} });
+    expect(response.body).not.toContain('private configuration detail');
+  });
+
+  it('does not resolve defaults for a denied actor and omits them on a later revocation', async () => {
+    const getModelDefaults = vi.fn().mockResolvedValue({ model: 'scene-specific-model', modelProvider: 'configured-provider' });
+    const authorizeChat = vi.fn().mockRejectedValue(new ChatForbiddenError());
+    const { app } = await setup({ getModelDefaults, authorizeChat });
+    const denied = await app.inject('/api/sessions');
+    expect(denied.statusCode).toBe(403);
+    expect(getModelDefaults).not.toHaveBeenCalled();
+
+    authorizeChat.mockResolvedValueOnce(actor);
+    const revoked = await app.inject('/api/sessions');
+    expect(revoked.statusCode).toBe(403);
+    expect(revoked.json()).toEqual({ error: '权限不足', code: 'CHAT_FORBIDDEN' });
+    expect(getModelDefaults).toHaveBeenCalledOnce();
   });
 });

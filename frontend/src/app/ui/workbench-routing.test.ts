@@ -36,3 +36,21 @@ it.each([['attention','events','/events?view=aggregate&eventList=active'],['oper
 it.each(['/investigations','/?tab=investigations'])('keeps the full list for plain historical entry %s',path=>{
  expect(canonicalWorkspaceUrl(new URL(path,location.origin)).searchParams.get('workspaceTab')).toBe('investigations');
 });
+
+it.each(['/attention','/?tab=attention'])('preserves the investigation context of %s through shell synchronization', async path => {
+  const {syncTabWithLocation,syncUrlWithTab}=await import('./app-settings.ts');
+  const url=new URL(path,location.origin);
+  url.searchParams.set('eventId','72101');
+  url.searchParams.set('investigation','original-record');
+  history.replaceState({},'',url);
+  const host={basePath:'',connected:false,tab:'dashboard',settings:{}} as any;
+  try {
+    for(const _reload of [false,true]) {
+      syncTabWithLocation(host,true);
+      expect(location.pathname).toBe('/events');
+      expect(new URLSearchParams(location.search).get('investigation')).toBe('original-record');
+    }
+    syncUrlWithTab(host,'dashboard',true);
+    expect(new URLSearchParams(location.search).has('investigation')).toBe(false);
+  } finally { history.replaceState({},'','/'); }
+});

@@ -18,7 +18,7 @@ export async function registerQueryAnalysisRoutes(fastify: FastifyInstance, veri
       if (!data) {
         return reply.code(404).send({ error: '无法获取 QAN 数据，实例可能未连接或数据库不支持' });
       }
-      reply.send(data);
+      return reply.send(data);
     } catch (error: any) {
       reply.code(500).send({ error: '获取 QAN 数据失败：' + error.message });
     }
@@ -42,9 +42,9 @@ export async function registerQueryAnalysisRoutes(fastify: FastifyInstance, veri
       if (!plan) {
         return reply.code(404).send({ error: '无法获取执行计划，实例可能未连接' });
       }
-      reply.send(plan);
+      return reply.send(plan);
     } catch (error: any) {
-      reply.code(500).send({ error: '获取执行计划失败：' + error.message });
+      return reply.code(500).send({ error: '获取执行计划失败：' + error.message });
     }
   });
 

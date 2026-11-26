@@ -17,6 +17,7 @@ export const DEFAULT_WEIGHTS: Record<string, number> = {
 const CONFIG_KEY = 'scoring.weights';
 
 const VALID_DIMENSIONS = ['availability', 'performance', 'capacity', 'security'];
+const WEIGHT_SUM_TOLERANCE = 0.01;
 
 class ScoringConfigService {
   /**
@@ -26,11 +27,37 @@ class ScoringConfigService {
     return dbConnection.getPool();
   }
 
-  /**
-   * 检查数据库是否已连接
-   */
-  private isConnected(): boolean {
-    return dbConnection.isConnected();
+  private async readStoredWeights(pool: mysql.Pool): Promise<unknown> {
+    const [rows] = await pool.execute<mysql.RowDataPacket[]>(
+      'SELECT config_key, config_value FROM system_config WHERE config_key = ?',
+      [CONFIG_KEY],
+    );
+    if (!rows.length) return undefined;
+    const raw = rows[0].config_value;
+    return typeof raw === 'string' && raw ? JSON.parse(raw) : raw ?? null;
+  }
+
+  /** The settings editor must not offer synthesized weights after a failed read. */
+  async getConfiguredWeights(): Promise<Record<string, number>> {
+    const pool = this.getPool();
+    if (!pool) throw new Error('SCORING_STORAGE_UNAVAILABLE');
+    const stored = await this.readStoredWeights(pool);
+    if (stored === undefined) return { ...DEFAULT_WEIGHTS };
+    if (!stored || typeof stored !== 'object' || Array.isArray(stored)) throw new Error('SCORING_WEIGHTS_INVALID');
+
+    const values = stored as Record<string, unknown>;
+    const weights: Record<string, number> = {};
+    let sum = 0;
+    for (const dimension of VALID_DIMENSIONS) {
+      const value = values[dimension];
+      if (!Object.hasOwn(values, dimension) || typeof value !== 'number' || !Number.isFinite(value) || value < 0 || value > 1) {
+        throw new Error('SCORING_WEIGHTS_INVALID');
+      }
+      weights[dimension] = value;
+      sum += value;
+    }
+    if (Math.abs(sum - 1) > WEIGHT_SUM_TOLERANCE) throw new Error('SCORING_WEIGHTS_INVALID');
+    return weights;
   }
 
   /**
@@ -48,22 +75,8 @@ class ScoringConfigService {
     }
 
     try {
-      const [rows] = await pool.execute(
-        `SELECT config_key, config_value FROM system_config WHERE config_key = ?`,
-        [CONFIG_KEY],
-      ) as any;
-
-      if (Array.isArray(rows) && rows.length > 0) {
-        const configValue = rows[0].config_value;
-        if (configValue) {
-          const parsed = typeof configValue === 'string'
-            ? JSON.parse(configValue)
-            : configValue;
-          return { ...DEFAULT_WEIGHTS, ...parsed };
-        }
-      }
-
-      return { ...DEFAULT_WEIGHTS };
+      const stored = await this.readStoredWeights(pool);
+      return { ...DEFAULT_WEIGHTS, ...stored as Record<string, number> | undefined };
     } catch (error) {
       console.error('获取评分权重失败:', error);
       return { ...DEFAULT_WEIGHTS };
@@ -110,7 +123,7 @@ class ScoringConfigService {
 
     // 验证权值之和 ≈ 1.0
     const sum = VALID_DIMENSIONS.reduce((s, dim) => s + (values[dim] as number), 0);
-    if (Math.abs(sum - 1.0) > 0.01) {
+    if (Math.abs(sum - 1.0) > WEIGHT_SUM_TOLERANCE) {
       return {
         success: false,
         error: `所有权重之和必须约等于 1.0（当前之和: ${sum.toFixed(4)}）`,

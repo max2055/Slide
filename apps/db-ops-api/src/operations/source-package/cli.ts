@@ -102,7 +102,7 @@ async function main() {
       const password = await instanceDatabaseService.getInstancePassword(config.instanceId);
       if (!instance || password === null || !await databaseService.addConnection(instance.id, instance.name, {
         host: instance.host, port: instance.port, user: instance.username, password,
-        database: instance.database_name || 'mysql', db_type: 'mysql',
+        database: instance.database_name || undefined, db_type: 'mysql',
       })) sourceFailure('INSTANCE_CONNECTION');
     }
     let result: unknown;

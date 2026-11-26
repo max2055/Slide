@@ -10,7 +10,7 @@ const bodyContent = `
     <tr>
       <td>${i + 1}</td>
       <td><code>${escapeHtml(q.sql_text?.substring(0, 80) || '')}${q.sql_text?.length > 80 ? '...' : ''}</code></td>
-      <td>${q.avg_time_ms?.toFixed(2) || 0}</td>
+      <td>${q.avg_time_ms?.toFixed(2) ?? '未知'}</td>
       <td>${q.execution_count || 0}</td>
       <td>${q.rows_examined || 0}</td>
     </tr>

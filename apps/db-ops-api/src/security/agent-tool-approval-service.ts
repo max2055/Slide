@@ -348,12 +348,13 @@ export class AgentToolApprovalService {
     );
     const row = Array.isArray(rows) ? rows[0] : undefined;
     if (!row || row.tool_name === ACTION_APPROVAL_TOOL || row.tool_name === 'restart_demo_service') return { approved: false, failure: 'INVALID_APPROVAL' };
-    if (row.status === 'pending') return { approved: false, failure: 'APPROVAL_PENDING' };
+    const expired = new Date(row.expires_at).getTime() <= Date.now();
+    if (row.status === 'pending') return { approved: false, failure: expired ? 'APPROVAL_EXPIRED' : 'APPROVAL_PENDING' };
     if (row.status === 'rejected') return { approved: false, failure: 'APPROVAL_REJECTED' };
     if (row.status === 'consumed' || Number(row.used_count ?? 0) >= Number(row.max_uses ?? 1)) {
       return { approved: false, failure: 'APPROVAL_CONSUMED' };
     }
-    if (row.status === 'expired' || new Date(row.expires_at).getTime() <= Date.now()) {
+    if (row.status === 'expired' || expired) {
       return { approved: false, failure: 'APPROVAL_EXPIRED' };
     }
     if (row.status !== 'approved') return { approved: false, failure: 'INVALID_APPROVAL' };

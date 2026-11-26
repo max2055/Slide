@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import nodemailer from 'nodemailer';
 import * as https from 'node:https';
 import { NotificationService } from '../notification-service.js';
+import { notificationSuppressionReason } from '../maintenance-notification.js';
 import { exchangeMicrosoftSmtpRefreshToken } from '../smtp-oauth2.js';
 import { resolveOutboundTarget, OutboundPolicyError } from '../security/outbound-policy.js';
 import { JobRegistry } from './job-registry.js';
@@ -11,7 +12,7 @@ import type { DeliveryGate, DeliveryRequest } from './delivery-store.js';
 import type { NotificationTransition } from './notification-dispatch.js';
 import type { RolloutAlertPublicationGate } from '../metrics/rollout/alert-publication-fence.js';
 
-vi.mock('../maintenance-notification.js', () => ({ maintenanceBlocksDelivery: async () => false }));
+vi.mock('../maintenance-notification.js', () => ({ notificationSuppressionReason: vi.fn(async () => null) }));
 vi.mock('../smtp-oauth2.js', () => ({ exchangeMicrosoftSmtpRefreshToken: vi.fn() }));
 vi.mock('../db-connection.js', () => ({
   dbConnection: { getPool: () => null }, decryptData: () => 'test-refresh-token',
@@ -155,6 +156,17 @@ describe('preparation and transport outcome boundary', () => {
     await expect(test.run()).rejects.toThrow('DNS_FAILED');
     expect(https.request).not.toHaveBeenCalled();
     expect(test.finishes).toEqual([{ state: 'unknown', error: 'DELIVERY_OUTCOME_UNCERTAIN' }]);
+  });
+
+  it.each([
+    [false, 'skipped'],
+    [true, 'unknown'],
+  ])('manual silence stops transport and preserves an earlier uncertain outcome (retry=%s)', async (retry, state) => {
+    vi.mocked(notificationSuppressionReason).mockResolvedValueOnce('MANUAL_SILENCE_SUPPRESSED');
+    const test = setup(webhook, undefined, retry ? Date.now() + 60_000 : undefined);
+    await test.run('notification.deliver');
+    expect(https.request).not.toHaveBeenCalled();
+    expect(test.finishes).toEqual([{ state, error: 'MANUAL_SILENCE_SUPPRESSED' }]);
   });
 
   it('serialization fails before HTTP invocation and remains retryable', async () => {

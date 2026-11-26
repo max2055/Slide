@@ -113,14 +113,14 @@ describe('formal raw observation page', () => {
     await expect(service.observations(admin, request({ cursor: first.next_cursor, dimensions: { device: 'sda' } })))
       .rejects.toThrow('QUERY_INPUT_INVALID');
     await expect(service.observations(admin, request({ cursor: first.next_cursor,
-      to: '2026-09-18T03:00:00.000Z' }))).rejects.toThrow('QUERY_INPUT_INVALID');
+      to: new Date(Date.parse(fixture.window.to) - 1).toISOString() }))).rejects.toThrow('QUERY_INPUT_INVALID');
     expect(reads).toBe(1);
   });
 
   it('bounds the limit and window before any store read', async () => {
     for (const limit of [0, 1001, 1.5]) await expect(service.observations(admin, request({ limit }))).rejects.toThrow();
     await expect(service.observations(admin, request({ to: fixture.window.from }))).rejects.toThrow('QUERY_WINDOW');
-    await expect(service.observations(admin, request({ to: '2026-10-25T00:00:00.000Z' }))).rejects.toThrow('QUERY_WINDOW');
+    await expect(service.observations(admin, request({ from: '2026-08-01T00:00:00.000Z' }))).rejects.toThrow('QUERY_WINDOW');
     expect(reads).toBe(0);
   });
 });

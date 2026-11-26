@@ -33,6 +33,13 @@ export class ReportConfigCreateOutcomeUnknownError extends Error {
   }
 }
 
+export class ReportConfigTargetConflictError extends Error {
+  constructor() {
+    super('报表计划的类型或目标已变化，请重新读取后再编辑。');
+    this.name = 'ReportConfigTargetConflictError';
+  }
+}
+
 export interface CreateReportConfigData {
   name: string;
   cron: string;
@@ -49,7 +56,7 @@ export interface UpdateReportConfigData {
   cron?: string;
   type?: string;
   instance_id?: number | null;
-  server_id?: number;
+  server_id?: number | null;
   notification_channel_ids?: number[];
   format?: string;
   enabled?: boolean;
@@ -178,7 +185,12 @@ class ReportConfigDatabaseService {
   /**
    * 更新报表配置
    */
-  async updateConfig(id: number, data: UpdateReportConfigData, scope?: ReportAccessScope): Promise<boolean> {
+  async updateConfig(
+    id: number,
+    data: UpdateReportConfigData,
+    scope?: ReportAccessScope,
+    original?: Pick<ReportConfig, 'type' | 'instance_id' | 'server_id' | 'cron'>,
+  ): Promise<boolean> {
     if (data.cron !== undefined) assertReportCron(data.cron);
     const pool = this.getPool();
     if (!pool) {
@@ -186,7 +198,7 @@ class ReportConfigDatabaseService {
     }
 
     try {
-      const current = await this.getConfigById(id, scope);
+      const current = original ?? await this.getConfigById(id, scope);
       if (!current) return false;
       // Historical bad rows may still be disabled or repaired; never re-enable one.
       if (data.enabled) assertReportCron(data.cron ?? current.cron);
@@ -242,14 +254,16 @@ class ReportConfigDatabaseService {
       }
 
       const access = reportAccessSql(scope, 'report_configs');
-      const [result] = await pool.execute(
-        `UPDATE report_configs SET ${updates.join(', ')} WHERE id = ? AND ${access.sql}`,
-        [...values, id, ...access.params]
-      ) as any;
-
-      return (result as any).affectedRows > 0;
+      const [result] = await pool.execute<mysql.ResultSetHeader>(
+        `UPDATE report_configs SET ${updates.join(', ')}
+         WHERE id = ? AND (${access.sql})
+           AND type = ? AND instance_id <=> ? AND server_id <=> ?`,
+        [...values, id, ...access.params, current.type, current.instance_id, current.server_id ?? null],
+      );
+      if (result.affectedRows === 0) throw new ReportConfigTargetConflictError();
+      return true;
     } catch (error: any) {
-      console.error('更新报表配置失败:', error);
+      if (!(error instanceof ReportConfigTargetConflictError)) console.error('更新报表配置失败:', error);
       throw error;
     }
   }

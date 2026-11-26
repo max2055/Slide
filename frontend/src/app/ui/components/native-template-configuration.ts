@@ -636,6 +636,12 @@ export class NativeTemplateConfiguration extends LitElement {
             const remaining = new Set(this.selected.map(pin => pin.template_id));
             this.parameters = Object.fromEntries(Object.entries(this.parameters).filter(([id]) => remaining.has(id)));
             if (!this.selected.length) { this.settings = { enabled: 'disable' }; this.metricToggles = {}; this.groupId = ''; }
+            else {
+              const removedMetrics = new Set(impact.removed_items.filter(item => item.loses_provider)
+                .map(({ canonical_metric: metric }) => `${metric.id}@${metric.semantic_version}`));
+              this.metricToggles = Object.fromEntries(Object.entries(this.metricToggles)
+                .filter(([key]) => !removedMetrics.has(key)));
+            }
             this.invalidate(false);
           }}>将移除结果带入配置</button>
         <p>带入后需重新检查、试采并确认提交；取消预览不会修改绑定。全部移除会清空当前策略组与指标覆盖并停止采集，原设置保留在配置历史中。</p>
@@ -730,7 +736,7 @@ export class NativeTemplateConfiguration extends LitElement {
   private trialReady() { return !!this.preview && (this.preview.executable || (!this.selected.length && this.settings.enabled === 'disable')) && !this.previewStale && !this.busy; }
   private trialPassed() { return nativeTrialPassed(this.trial); }
   private saveOnly() { return !!this.preview && this.preview.settings.enabled === false; }
-  private applyReady() { return !!this.trial && !this.previewStale && (this.trialPassed() || this.saveOnly()); }
+  private applyReady() { return !!this.trial?.receipt_id && !this.previewStale && (this.trialPassed() || this.saveOnly()); }
   private async runTrial() {
     if (!this.trialReady()) return;
     const generation = this.generation;
@@ -1332,14 +1338,21 @@ export class NativeTemplateConfiguration extends LitElement {
           : '试采未满足启用门禁：必要项必须读取、转换、单位校验全部通过并返回有效值；可选项排除见下。'}</p>
         <ul aria-label="逐项试采结果">${this.trial.items.map(item => {
           const optional = this.trial!.optional_exclusions.some(exclusion => itemKey(exclusion) === itemKey(item));
-          const sample = this.trial!.samples.find(entry => itemKey(entry) === itemKey(item));
-          return html`<li>${this.names[item.template_id] ?? item.template_id} v${item.item_version} · ${metricName(sample?.metric.id ?? item.item_id)}：
+          const samples = this.trial!.samples.filter(entry => itemKey(entry) === itemKey(item));
+          return html`<li>${this.names[item.template_id] ?? item.template_id} v${item.item_version} · ${metricName(samples[0]?.metric.id ?? item.item_id)}：
             读取 ${item.phases.read ? '✓' : '✗'} · 转换 ${item.phases.transform ? '✓' : '✗'} · 单位 ${item.phases.unit ? '✓' : '✗'}
-            ${optional ? ' · 可选排除' : ''}${sample ? ` · 值 ${formatValue(sample.value)} ${sample.unit} · ${sample.observed_at}` : ''}</li>`;
+            ${optional ? ' · 可选排除' : ''}
+            ${samples.length ? html`<ul>${samples.map(sample => {
+              const dimensions = Object.entries(sample.dimensions ?? {}).map(([key, value]) => `${key}=${value}`).join(' · ');
+              const issue = sample.quality?.status && sample.quality.status !== 'good'
+                ? ` · 质量 ${sample.quality.status}${sample.quality.reason ? ` (${sample.quality.reason})` : ''}` : '';
+              return html`<li>${dimensions ? html`<span>${dimensions} · </span>` : nothing}值 ${formatValue(sample.value)} ${sample.unit} · ${sample.observed_at}${issue}</li>`;
+            })}</ul>` : nothing}</li>`;
         })}</ul>
         ${this.trial.attempts.some(attempt => attempt.error) ? html`<div role="alert"><strong>采集尝试错误</strong><ul>${this.trial.attempts.filter(attempt => attempt.error)
           .map(attempt => html`<li>${attempt.collector_id ?? '采集器'}：${attempt.error}</li>`)}</ul></div>` : nothing}
-        <p>试用凭证 ${this.trial.receipt_id} · 有效至 ${this.trial.expires_at} · 本次返回 ${this.trial.samples.length} 个样本</p>
+        <p>${this.trial.receipt_id ? html`试用凭证 ${this.trial.receipt_id} · 有效至 ${this.trial.expires_at}`
+          : '未生成试用凭证'} · 本次返回 ${this.trial.samples.length} 个样本</p>
         <details><summary>高级诊断与样本</summary><pre>${JSON.stringify(this.trial, null, 2)}</pre></details>`}
     </app-card>`;
   }

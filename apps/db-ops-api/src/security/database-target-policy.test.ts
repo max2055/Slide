@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { authorizeDatabaseTarget, DatabaseTargetPolicyError } from './database-target-policy.js';
 
 const lookup = async (hostname: string) => {
@@ -37,6 +37,20 @@ describe('database target policy', () => {
       { host: 'public.example', port: 3306, dbType: 'mysql' },
       { lookup },
     )).resolves.toMatchObject({ address: '203.0.113.10', port: 3306 });
+  });
+
+  it('reports an unresolved database target within five seconds', async () => {
+    vi.useFakeTimers();
+    try {
+      const unresolved = authorizeDatabaseTarget({ host: 'unresolved.example', port: 5236, dbType: 'dameng' }, {
+        lookup: () => new Promise(() => undefined),
+      });
+      const assertion = expect(unresolved).rejects.toMatchObject({ reasonCode: 'DB_TARGET_DNS_FAILED' });
+      await vi.advanceTimersByTimeAsync(5_000);
+      await assertion;
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('allows a persisted loopback target only for non-production managed reconnects', async () => {

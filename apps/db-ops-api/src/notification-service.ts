@@ -391,9 +391,14 @@ export class NotificationService {
         return { success: false, error: 'EMAIL_CONFIGURATION_INVALID' };
       }
       try {
-        if (onTransportStart) await this.sendEmail(channel.config, message, channel.id, signal, businessKey, onTransportStart);
-        else if (businessKey) await this.sendEmail(channel.config, message, channel.id, signal, businessKey);
-        else await this.sendEmail(channel.config, message, channel.id, ...(signal ? [signal] : []));
+        // Existing queued report notifications carry the report DTO, not mail headers.
+        const email = message?.type === 'scheduled_report' ? {
+          subject: `报表已生成 #${message.report.id}`,
+          text: `报表 #${message.report.id} ${message.report.name}\n下载路径 ${message.downloadPath}`,
+        } : message;
+        if (onTransportStart) await this.sendEmail(channel.config, email, channel.id, signal, businessKey, onTransportStart);
+        else if (businessKey) await this.sendEmail(channel.config, email, channel.id, signal, businessKey);
+        else await this.sendEmail(channel.config, email, channel.id, ...(signal ? [signal] : []));
         signal?.throwIfAborted();
         return { success: true };
       } catch {

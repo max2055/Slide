@@ -109,6 +109,31 @@ describe('server hosted database instances', () => {
     expect(element.shadowRoot.querySelector('app-empty-state')).toBeTruthy();
   });
 
+  it.each([
+    { lastCheck: null, alerts: 0, heading: '当前证据不足以判断运行状态', badge: '待确认' },
+    { lastCheck: '2026-08-10T00:00:00.000Z', alerts: 0, heading: '资源当前不可用', badge: '不可用' },
+    { lastCheck: null, alerts: 1, heading: '存在需要核对的异常', badge: '异常' },
+  ])('uses the check record and independent alerts to distinguish $badge from the offline default', async ({ lastCheck, alerts, heading, badge }) => {
+    const item = { resource: { type: 'server', id: 9 }, status: 'offline', quality: 'unknown', freshness: 'missing',
+      observedAt: null, unresolvedAlerts: alerts, gaps: ['OBSERVATIONS_EMPTY'] };
+    authFetch.mockImplementation(async (url: string) => {
+      if (url === '/api/servers/9') return response({ ...server(9), status: 'offline', last_check_at: lastCheck });
+      if (url === '/api/servers/9/instances') return response({ instances: [] });
+      if (url === '/api/resources/overview') return response({ items: [item] });
+      throw new Error(`unexpected request: ${url}`);
+    });
+    const element = document.createElement('server-detail') as HTMLElement & { serverId: number; updateComplete: Promise<unknown> };
+    element.serverId = 9;
+    document.body.append(element);
+    await settle(element);
+
+    const badgeLabel = (selector: string) => Array.from(element.shadowRoot?.querySelector(selector)?.childNodes ?? [])
+      .filter(node => node.nodeType === Node.TEXT_NODE).map(node => node.textContent).join('').trim();
+    expect(badgeLabel('.header-left app-badge')).toBe(badge);
+    expect(element.shadowRoot?.querySelector('app-card h3')?.textContent?.trim()).toBe(heading);
+    expect(badgeLabel('.status-grid app-badge')).toBe('离线');
+  });
+
   it('defines a single-column 390px layout without page overflow', () => {
     const source = fs.readFileSync(path.resolve(__dirname, './server-detail.ts'), 'utf8');
     expect(source).toContain('@media (max-width: 600px)');

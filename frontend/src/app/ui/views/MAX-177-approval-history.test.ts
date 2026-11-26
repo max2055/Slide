@@ -71,6 +71,10 @@ describe('MAX-177 result evidence', () => {
     subject.remove(); const restored = document.createElement('approval-dashboard') as ApprovalDashboard;
     document.body.append(restored); await flush(restored);
     expect((restored as any).executionFilter).toBe('failed'); expect((restored as any).filter).toBe('processed');
+    const filters = restored.shadowRoot!.querySelectorAll<HTMLSelectElement>('.history-toolbar select');
+    expect([...filters].map(filter => filter.value)).toEqual(['approved', 'failed']);
+    expect(restored.shadowRoot!.querySelectorAll('tbody tr')).toHaveLength(1);
+    expect(restored.shadowRoot!.querySelector('tbody')!.textContent).toContain('执行失败');
   });
   it('retains complete SQL/analysis/error originals in the evidence dialog and exposes partial events', async () => {
     const source = { ...row(1, 'execution_failed', 'raw-error'.repeat(1000)), sql_text: 'SELECT 1;\n'.repeat(1000), ai_recommendation: '{"reasoning":"full-reason"}' };
@@ -160,15 +164,99 @@ describe('MAX-177 result evidence', () => {
   });
   it('keeps a failed batch dialog and feedback when HTTP 200 contains per-item failures', async () => {
     const subject = await history([]); (subject as any)._openBatchDialog([1], 'approve');
-    authFetch.mockResolvedValue(response([{ id: 1, success: false, error: '权限已撤回' }]));
+    authFetch.mockResolvedValueOnce(response([{ id: 1, success: false, error: '权限已撤回' }]))
+      .mockResolvedValueOnce(response({ items: [] }));
     await (subject as any)._confirmBatch(); await flush(subject);
-    expect((subject as any).batchDialogOpen).toBe(true); expect((subject as any).batchError).toContain('权限已撤回');
-    expect(JSON.parse(authFetch.mock.calls.at(-1)![1].body)).toMatchObject({ ids: [1], action: 'approve', execute_ids: [1] });
+    expect(subject.shadowRoot!.querySelector('app-dialog [role="status"]')?.textContent).toContain('#1 · 未完成 · 权限已撤回');
+    const submission = authFetch.mock.calls.find(([url]) => url === '/api/approval/batch-review');
+    expect(JSON.parse(submission![1].body)).toMatchObject({ ids: [1], action: 'approve', execute_ids: [1] });
+  });
+  it.each(['permissions', 'history', 'disconnected'])('ignores a late batch response after %s invalidates its view', async reason => {
+    const subject = await history([]);
+    (subject as any).switchFilter('pending'); await flush(subject);
+    const draw = subject as any;
+    draw._openBatchDialog([17], 'approve');
+    let settle!: (value: unknown) => void;
+    const batchBody = new Promise(resolve => { settle = resolve; });
+    const readBody = vi.fn(() => batchBody);
+    authFetch.mockResolvedValueOnce({ ok: true, status: 200, json: readBody });
+    const pending = draw._confirmBatch();
+    await vi.waitFor(() => expect(readBody).toHaveBeenCalledOnce());
+    if (reason === 'permissions') window.dispatchEvent(new Event('slide-permissions-loaded'));
+    else if (reason === 'history') draw.switchFilter('processed');
+    else subject.remove();
+    const lastRead = authFetch.mock.calls.length;
+    settle([{ id: 17, success: true }]);
+    await pending;
+    if (reason !== 'disconnected') await flush(subject);
+    expect(draw.batchDialogOpen).toBe(false);
+    expect(draw.batchLoading).toBe(false);
+    expect(authFetch.mock.calls).toHaveLength(lastRead);
+    if (reason === 'permissions') expect(subject.shadowRoot?.textContent).toContain('权限已变更');
+  });
+  it.each(['malformed JSON', 'missing item', 'transport failure', 'server failure'])('does not submit again after %s leaves the batch outcome unknown', async failure => {
+    const subject = await history([]);
+    const draw = subject as any;
+    draw.switchFilter('pending'); await flush(subject);
+    draw._openBatchDialog([17, 18], 'approve');
+    if (failure === 'malformed JSON') authFetch.mockResolvedValueOnce({ ...response({}), json: async () => { throw new SyntaxError('bad body'); } });
+    else if (failure === 'missing item') authFetch.mockResolvedValueOnce(response([{ id: 17, success: true }]));
+    else if (failure === 'server failure') authFetch.mockResolvedValueOnce(response({ error: 'unavailable' }, 503));
+    else authFetch.mockRejectedValueOnce(new TypeError('disconnected'));
+    await draw._confirmBatch(); await flush(subject);
+    expect(subject.shadowRoot?.querySelector('app-dialog [role="alert"]')?.textContent).toContain('结果待确认');
+    expect(subject.shadowRoot?.querySelector('app-dialog .btn-success')).toBeNull();
+    await draw._confirmBatch();
+    expect(authFetch.mock.calls.filter(([url]) => url === '/api/approval/batch-review')).toHaveLength(1);
+    subject.shadowRoot?.querySelector<HTMLButtonElement>('app-dialog button[slot="footer"]')!.click();
+    await flush(subject);
+    expect(subject.shadowRoot?.querySelector('app-dialog')).toBeNull();
+    expect(authFetch.mock.lastCall?.[0]).toBe('/api/approval/unified?status=pending');
+  });
+  it('allows a manual retry after a definite HTTP rejection without changing success handling', async () => {
+    const subject = await history([]);
+    const draw = subject as any;
+    draw._openBatchDialog([17], 'approve');
+    authFetch.mockResolvedValueOnce(response({ error: '请求未受理' }, 400))
+      .mockResolvedValueOnce(response([{ id: 17, success: true }]));
+    await draw._confirmBatch(); await flush(subject);
+    expect(subject.shadowRoot?.querySelector('app-dialog [role="alert"]')?.textContent).toContain('请求未受理');
+    expect(subject.shadowRoot?.querySelector('app-dialog .btn-success')).not.toBeNull();
+    await draw._confirmBatch(); await flush(subject);
+    expect(subject.shadowRoot?.querySelector('app-dialog')).toBeNull();
+    expect(authFetch.mock.calls.filter(([url]) => url === '/api/approval/batch-review')).toHaveLength(2);
   });
   it('shows permission failure without presenting it as an empty history', async () => {
     const subject = await history([]); authFetch.mockResolvedValue(response({}, 403));
     await (subject as any).loadRequests(); await flush(subject);
     expect(subject.shadowRoot!.querySelector('[role="alert"]')!.textContent).toContain('权限');
     expect(subject.shadowRoot!.querySelector('app-data-table')).toBeNull();
+  });
+  it('rereads the child approval from the original audit after a retry loses its acknowledgement', async () => {
+    const source = { ...row(1, 'execution_failed', { success: false, executionState: 'rolled_back' }), operation_id: 'op-original' };
+    const subject = await history([source]);
+    const draw = subject as any;
+    let committed = false;
+    authFetch.mockImplementation(async (url: string, options?: RequestInit) => {
+      if (options?.method === 'POST') { committed = true; return response({}, 503); }
+      if (url === '/api/operations/op-original/events') {
+        return response({ events: committed ? [{ reasonCode: 'RETRY_CREATED', metadata: { retryApprovalId: 21, retryAttempt: 2 } }] : [] });
+      }
+      if (url === '/api/operations/op-original') return response({ state: 'failed' });
+      return response(url.endsWith('/events') ? [] : source);
+    });
+    draw.openDetail(source);
+    await flush(subject);
+    await draw._retryOperation();
+    await flush(subject);
+    let dialog = subject.shadowRoot!.querySelector('app-dialog')!;
+    expect(dialog.querySelector('[role="alert"]')?.textContent).toContain('回执待确认');
+    expect(dialog.querySelector('.actions button')).toBeNull();
+    await draw._retryOperation();
+    await draw._loadDetail(1);
+    await flush(subject);
+    dialog = subject.shadowRoot!.querySelector('app-dialog')!;
+    expect(dialog.querySelector('[role="status"]')?.textContent).toContain('#21');
+    expect(authFetch.mock.calls.filter(([url]) => url === '/api/operations/op-original/retry')).toHaveLength(1);
   });
 });

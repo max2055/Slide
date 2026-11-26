@@ -30,6 +30,22 @@ function setup() {
   return { b, x, transport, context, run, advance, reset: () => { ticks = 100; }, discovery };
 }
 describe('SNMP V2 precision and continuity', () => {
+  it('carries a validated interface snapshot and retains no inventory on an incomplete extended read', async () => {
+    const s = setup();
+    s.context.evidence.snmp = new SnmpDiscovery(undefined, undefined, true);
+    s.x[0].values['18'] = Buffer.from(' uplink\u0000 ');
+    s.b[0].values['8'] = 3;
+    expect((await s.run()).snmp_interface_inventory).toEqual([expect.objectContaining({
+      index: 1, name: 'port-1', alias: 'uplink', speedBps: '1000000000', adminStatus: 'up', operStatus: 'testing',
+    })]);
+
+    const table = s.transport.table;
+    s.transport.table = (oid, timeout) => oid === OIDS.xTable
+      ? Promise.reject(new AdapterError('timeout')) : table(oid, timeout);
+    s.advance();
+    expect((await s.run()).snmp_interface_inventory).toBeUndefined();
+  });
+
   it('MAX245 physical interface identity survives rename, loss and process restart, while reused ifIndex is distinct', async () => {
     const s=setup();s.context.evidence.snmp=new SnmpDiscovery(()=>Date.parse(s.context.observed_at),undefined,true);
     const first=metric(await s.run(),'network.interface.oper_up');

@@ -260,16 +260,22 @@ describe.skipIf(!port)('T02-C real investigation HTTP/JWT/MySQL', () => {
     expect((await all('chat_sessions')).find(r=>r.session_id===automatic.sessionId)?.user_id).toBe(serviceId);
   });
 
-  it('conversion retains original message IDs; running Chat and read-share conversion are rejected', async () => {
+  it('conversion retains original message IDs and distinguishes a running Chat from an already linked session', async () => {
     const original=await chat.createSession(owner); await chat.addMessage(owner,original.session_id,{messageId:'original-id',role:'user',content:'Original'});
     await chat.grantSessionShare(owner,original.session_id,102,'read');
     const auth={authorization:`Bearer ${signAccessToken(member,secret)}`};
     expect((await post('share-convert',{...payload(),sessionId:original.session_id} as never,auth)).statusCode).toBe(404);
     const runId=randomUUID(); await pool.execute("INSERT INTO agent_runs (id,actor_id,session_id,message_id,idempotency_key,state,expires_at) VALUES (?,101,?,'m','k','running',DATE_ADD(NOW(),INTERVAL 1 DAY))",[runId,original.session_id]);
-    expect((await post('convert',{...payload(),sessionId:original.session_id} as never)).statusCode).toBe(409);
+    const running=await post('convert',{...payload(),sessionId:original.session_id} as never);
+    expect(running.statusCode).toBe(409);
+    expect(running.json()).toEqual({error:'INVESTIGATION_ACTIVE_REQUEST'});
     await pool.execute("UPDATE agent_runs SET state='completed' WHERE id=?",[runId]);
     const converted=await post('convert',{...payload(),sessionId:original.session_id} as never); expect(converted.statusCode).toBe(202);
     expect(converted.json().sessionId).toBe(original.session_id); expect((await post('convert',{...payload(),sessionId:original.session_id} as never)).json()).toEqual(converted.json());
+    const duplicate=await post('another-conversion',{...payload(),sessionId:original.session_id} as never);
+    expect(duplicate.statusCode).toBe(409);
+    expect(duplicate.json()).toEqual({error:'INVESTIGATION_SESSION_ALREADY_LINKED'});
+    expect((await all('investigations')).filter(row=>row.session_id===original.session_id)).toHaveLength(1);
     expect((await all('chat_messages')).map(r=>r.message_id).filter(id=>id==='original-id')).toHaveLength(1);
   });
 

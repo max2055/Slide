@@ -46,6 +46,24 @@ describe('MetricsDatabaseService.recordMetrics', () => {
   });
 });
 
+describe('MetricsDatabaseService.getSlowQueries', () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it('preserves SQL NULL for reports and leaves ordinary numeric reads compatible', async () => {
+    const query = vi.fn().mockResolvedValue([[
+      { avg_time_ms: null, total_time_ms: null, min_time_ms: null, max_time_ms: null },
+      { avg_time_ms: '0.00', total_time_ms: '0.00', min_time_ms: '0.00', max_time_ms: '0.00' },
+      { avg_time_ms: '12.34', total_time_ms: '24.68', min_time_ms: '11.57', max_time_ms: '13.11' },
+    ], []]);
+    vi.spyOn(dbConnection, 'getPool').mockReturnValue({ query } as any);
+
+    const report = await metricsDatabaseService.getSlowQueries(7, 20, { preserveUnknownDurations: true });
+    expect(report.map(row => [row.avg_time_ms, row.total_time_ms])).toEqual([[null, null], [0, 0], [12.34, 24.68]]);
+    const existing = await metricsDatabaseService.getSlowQueries(7, 20);
+    expect(existing.map(row => [row.avg_time_ms, row.total_time_ms])).toEqual([[0, 0], [0, 0], [12.34, 24.68]]);
+  });
+});
+
 describe('MAX-536 MetricsDatabaseService.getSlowQueryById', () => {
   afterEach(() => vi.restoreAllMocks());
 

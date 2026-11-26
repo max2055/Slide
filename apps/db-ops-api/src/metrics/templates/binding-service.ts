@@ -50,13 +50,13 @@ import { trustedTargetIdentity } from '../bindings/target-identity.js';
 import { MysqlPolicyStore } from '../policy/store.js';
 import type { TemplateVersionReadPort } from '../bindings/preflight.js';
 import {
-  resolveTemplateBinding, type ResolvedTemplateBinding, type ResolvedTemplateItem,
+  resolveTemplateBinding, templateResolutionIdentity, type ResolvedTemplateBinding, type ResolvedTemplateItem,
 } from '../bindings/resolve.js';
 import { buildTemplateCollectionPlan, itemIntervals, type TemplateCollectionPlan } from '../bindings/plan.js';
 import { issueTrialReceipt, type TrialReceiptItem } from '../bindings/trial-receipt-issuer.js';
 import { writeTrialReceipt } from '../bindings/trial-receipt-writer.js';
 import { decodeBindingPayload, type DecodedTemplateBindingPayload } from '../bindings/persistence-codec.js';
-import { BindingTransactionError } from '../bindings/transaction-guard.js';
+import { BindingTransactionError, REQUIRED_GOOD_TRIAL_SAMPLE_POLICY } from '../bindings/transaction-guard.js';
 import type { BindingApplicationOutcome } from '../bindings/transaction-adapter.js';
 import type { BindingSqlConnection, TrustedBindingInputs } from '../bindings/mysql-host.js';
 import { MySqlTemplateRepository, type TemplateSqlConnection, type TemplateSqlPool } from './mysql-repository.js';
@@ -157,6 +157,7 @@ export interface TemplateTrialSample {
   item_id: string;
   item_version: number;
   metric: ResolvedTemplateItem['canonical_metric'];
+  dimensions?: Record<string, string>;
   value: unknown;
   unit: string;
   observed_at: string;
@@ -320,6 +321,8 @@ interface TrustedContext {
   at: string;
 }
 
+type CapabilityContext = 'binding' | 'candidate' | 'probe';
+
 export class TemplateBindingService {
   private readonly relations: ResourceRelationStore;
 
@@ -395,15 +398,15 @@ export class TemplateBindingService {
 
   /** Trusted B2C context read once per operation; nothing here comes from the request. */
   private async context(ref: Ref, candidate: ResourceBindingCandidate, actorId: number,
-    recover = false): Promise<TrustedContext> {
+    capabilityContext: CapabilityContext): Promise<TrustedContext> {
     const pool = this.pool();
     return this.contextOn({ execute: (sql, values) => pool.execute(sql, values as any[]) as Promise<[unknown, unknown]> },
-      ref, candidate, actorId, recover);
+      ref, candidate, actorId, capabilityContext);
   }
 
   private async contextOn(
     connection: Pick<BindingSqlConnection, 'execute'>, ref: Ref, candidate: ResourceBindingCandidate,
-    actorId: number, recover = false,
+    actorId: number, capabilityContext: CapabilityContext = 'binding',
   ): Promise<TrustedContext> {
     const resource = await this.inventory(ref);
     if (!resource) fail('TEMPLATE_BINDING_RESOURCE_NOT_FOUND', 404);
@@ -420,14 +423,12 @@ export class TemplateBindingService {
     if (targetIdentity === null) fail('TEMPLATE_BINDING_RESOURCE_NOT_FOUND', 404);
     const [caps] = await connection.execute('SELECT capabilities, payload FROM metric_policy_bindings WHERE resource_key = ?',
       [refKey(ref)]) as unknown as [RowDataPacket[], unknown];
-    // An active stored binding is its capability authority. A stopped binding
-    // re-probes the exact candidate rather than reviving old support facts.
-    // An unbound resource has no row at all; its bootstrap context comes from the
-    // exact, unexpired read-only probe evidence for this candidate intent.
+    // Ordinary active edits use the binding's capabilities. Rollout, stopped
+    // bindings and first activation use the exact, unexpired candidate evidence.
     const stopped = candidate.template_pins.length > 0 && caps[0] && this.usesRebindEvidence(caps[0].payload, candidate.revision);
-    const capabilities = caps[0] && !stopped
+    const capabilities = capabilityContext === 'binding' && caps[0] && !stopped
       ? decode(caps[0].capabilities)
-      : await this.bootstrapCapabilities(connection, ref, candidate, actorId, targetIdentity, recover);
+      : await this.bootstrapCapabilities(connection, ref, candidate, actorId, targetIdentity, capabilityContext === 'probe');
     return { resource: resource!, group, capabilities, targetIdentity, at: this.now().toISOString() };
   }
 
@@ -475,8 +476,8 @@ export class TemplateBindingService {
     }
   }
 
-  private async resolve(ref: Ref, candidate: ResourceBindingCandidate, actorId: number, recover = false) {
-    const context = await this.context(ref, candidate, actorId, recover);
+  private async resolve(ref: Ref, candidate: ResourceBindingCandidate, actorId: number, capabilityContext: CapabilityContext = 'binding') {
+    const context = await this.context(ref, candidate, actorId, capabilityContext);
     const outcome = await resolveTemplateBinding(candidate, context, poolTemplatePort(this.pool()), this.deps.registry);
     if (outcome.kind !== 'template_resolution') fail('TEMPLATE_BINDING_LEGACY_CANDIDATE');
     const resolution = outcome as ResolvedTemplateBinding;
@@ -651,21 +652,26 @@ export class TemplateBindingService {
    * activation predicate still decides whether the resulting preview/trial may
    * enable anything.
    */
-  async probe(actor: ActorContext, ref: Ref, body: unknown): Promise<TemplateProbeResult> {
+  async probe(actor: ActorContext, ref: Ref, body: unknown, rollout = false): Promise<TemplateProbeResult> {
     await this.assertAccess(actor, ref, true);
     const candidate = this.candidate(ref, body);
-    // A stopped revision may acquire fresh candidate-scoped facts for rebind.
-    // Active bindings keep their published capability authority.
+    // The public probe handles first binding or a stopped revision. A rollout
+    // can probe its next candidate without changing the active revision.
     const [bound] = await this.pool().execute(
       'SELECT payload AS stopped_payload FROM metric_policy_bindings WHERE resource_key = ? LIMIT 1', [refKey(ref)],
     ) as unknown as [RowDataPacket[], unknown];
-    if (bound[0] && !this.isStoppedBinding(bound[0].stopped_payload, candidate.revision)) fail('TEMPLATE_BINDING_ALREADY_BOUND', 409);
+    if (bound[0] && !this.isStoppedBinding(bound[0].stopped_payload, candidate.revision)) {
+      if (!rollout) fail('TEMPLATE_BINDING_ALREADY_BOUND', 409);
+      const active = decodeBindingPayload(bound[0].stopped_payload);
+      rule(active.kind === 'template_pending' && active.binding.revision === candidate.revision,
+        'TEMPLATE_BINDING_ALREADY_BOUND', 409);
+    }
 
     // Parameters/settings come from the exact pins; capabilities still come only
     // from the real probe below. The request cannot report support. Stored
     // evidence is read for the storage-error distinction only: an expired or
     // corrupt row must never stop the explicit re-probe that replaces it.
-    const { context, resolution } = await this.resolve(ref, candidate, actor.userId, true);
+    const { context, resolution } = await this.resolve(ref, candidate, actor.userId, 'probe');
     const selection = this.probeSelection(resolution);
     if (selection.length === 0) fail('TEMPLATE_BINDING_NOT_EXECUTABLE', 422);
 
@@ -810,11 +816,12 @@ export class TemplateBindingService {
   }
 
   /** Unit pairs declared by the mapping that produced each item's metric. */
-  private unitChecks(plan: TemplateCollectionPlan): Map<string, { input_unit: string; output_unit: string }> {    const checks = new Map<string, { input_unit: string; output_unit: string }>();
+  private unitChecks(plan: TemplateCollectionPlan): Map<string, { input_unit: string; output_unit: string }> {
+    const checks = new Map<string, { input_unit: string; output_unit: string }>();
     for (const entry of plan.releases) {
       const release = this.deps.registry.get({ ...entry.release });
       for (const collector of release.package.collectors) for (const mapping of collector.mappings) {
-        checks.set(`${collector.id}|${mapping.metric.id}@${mapping.metric.semantic_version}`,
+        checks.set(`${entry.release_ref}|${collector.id}|${metricKey(mapping.metric)}`,
           { input_unit: mapping.input_unit, output_unit: mapping.output_unit });
       }
     }
@@ -859,12 +866,12 @@ export class TemplateBindingService {
     return { results, access };
   }
 
-  async trial(actor: ActorContext, ref: Ref, body: unknown): Promise<TemplateTrialResult> {
+  async trial(actor: ActorContext, ref: Ref, body: unknown, rollout = false): Promise<TemplateTrialResult> {
     await this.assertAccess(actor, ref, true);
     const candidate = this.candidate(ref, body);
     const receiptId = (body as { receipt_id?: unknown }).receipt_id;
     if (typeof receiptId !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(receiptId)) fail('TEMPLATE_BINDING_INPUT_INVALID');
-    const { context, resolution, plan } = await this.resolve(ref, candidate, actor.userId);
+    const { context, resolution, plan } = await this.resolve(ref, candidate, actor.userId, rollout ? 'candidate' : 'binding');
     const stopped = candidate.template_pins.length === 0 && candidate.overrides.enabled === 'disable';
     if (!plan.executable && !stopped) fail('TEMPLATE_BINDING_NOT_EXECUTABLE', 422);
 
@@ -890,49 +897,83 @@ export class TemplateBindingService {
     // grant that no longer holds.
     await authorize();
 
-    type Computation = PackageResult['observations'][number];
-    const observations = new Map<string, Computation>();
+    type Observation = PackageResult['observations'][number]['observation'];
+    const observations = new Map<string, Observation[]>();
     const attemptIds = new Map<string, string[]>();
-    for (const { result } of executed.results) {
-      for (const computation of result.observations) {
-        observations.set(`${computation.observation.metric.id}@${computation.observation.metric.semantic_version}`, computation);
+    for (const { release_ref, result } of executed.results) {
+      for (const { observation } of result.observations) {
+        const key = `${release_ref}|${observation.source.collector_id}|${metricKey(observation.metric)}`;
+        const series = observations.get(key) ?? [];
+        series.push(observation);
+        observations.set(key, series);
       }
       for (const attempt of result.attempts) {
-        const collectorId = String((attempt as { collector_id?: string }).collector_id ?? '');
-        attemptIds.set(collectorId, [...(attemptIds.get(collectorId) ?? []), attempt.id]);
+        const key = `${release_ref}|${attempt.collector_id}`;
+        attemptIds.set(key, [...(attemptIds.get(key) ?? []), attempt.id]);
       }
     }
     const units = this.unitChecks(plan);
     const samples: TemplateTrialSample[] = [];
+    let requiredSampleMissing = false;
     const evidence = this.items(resolution).map(item => {
-      const key = `${item.canonical_metric.id}@${item.canonical_metric.semantic_version}`;
-      const observation = observations.get(key)?.observation;
-      const unitCheck = units.get(`${item.collector_id}|${key}`);
-      const phases = {
-        read: Boolean(observation) && (attemptIds.get(item.collector_id)?.length ?? 0) > 0,
-        transform: Boolean(observation?.versions.transform_version),
-        unit: Boolean(observation) && unitCheck !== undefined && unitCheck.output_unit === item.unit,
-      };
-      if (observation) {
+      const collectorKey = `${item.release_ref}|${item.collector_id}`;
+      const key = `${collectorKey}|${metricKey(item.canonical_metric)}`;
+      const unitCheck = units.get(key);
+      const itemAttemptIds = attemptIds.get(collectorKey) ?? [];
+      let firstPhases: TrialReceiptItem['phases'] | undefined;
+      let qualifiedPhases: TrialReceiptItem['phases'] | undefined;
+      for (const observation of observations.get(key) ?? []) {
+        const phases = {
+          read: itemAttemptIds.includes(observation.source.attempt_id),
+          transform: Boolean(observation.versions.transform_version),
+          unit: unitCheck !== undefined && unitCheck.output_unit === item.unit,
+        };
+        firstPhases ??= phases;
+        // A required item needs one fully valid observation. Keep diagnostics
+        // for the other dimensions without using them to qualify the receipt.
+        if (phases.read && phases.transform && phases.unit && observation.value != null && observation.quality.status === 'good') {
+          qualifiedPhases ??= phases;
+        }
         samples.push({
           template_id: item.template_id, item_id: item.item_id, item_version: item.item_version,
           metric: item.canonical_metric, value: observation.value, unit: observation.unit,
+          ...(Object.keys(observation.dimensions).length > 0 ? { dimensions: observation.dimensions } : {}),
           observed_at: observation.observed_at, quality: observation.quality,
-          read: { collector_id: item.collector_id, attempt_ids: attemptIds.get(item.collector_id) ?? [],
+          read: { collector_id: item.collector_id, attempt_ids: itemAttemptIds,
             status: observation.value === null ? 'no_value' : 'succeeded' },
           transform: { version: observation.versions.transform_version },
           unit_check: unitCheck ?? { input_unit: item.unit, output_unit: observation.unit },
         });
       }
-      // A selected item without complete read/transform/unit evidence is an
-      // explicit optional exclusion; it never becomes a fabricated pass.
+      if (item.decision === 'collect' && !qualifiedPhases) requiredSampleMissing = true;
       return {
         template_id: item.template_id, item_id: item.item_id, item_version: item.item_version,
         status: 'qualified' as const,
-        optional: !(phases.read && phases.transform && phases.unit),
-        phases,
+        optional: item.decision === 'disabled',
+        phases: qualifiedPhases ?? firstPhases ?? { read: false, transform: false, unit: false },
       };
     });
+
+    const decisions = executed.results.map(entry => entry.result.decision);
+    const diagnostics = {
+      trial: true as const, persisted: false as const,
+      decision: decisions.length === 0 ? 'unsupported' as const
+        : decisions.every(value => value === 'attempted') ? 'attempted' as const : decisions[0],
+      samples, attempts: executed.results.flatMap(entry => entry.result.attempts),
+      releases: executed.results.map(entry => ({ release_ref: entry.release_ref, decision: entry.result.decision })),
+    };
+    // A diagnostic result still describes every attempted phase. Only a trial
+    // with a valid sample for every required item can authorize publication.
+    if (requiredSampleMissing) {
+      const items = evidence.map(({ template_id, item_id, item_version, phases }) =>
+        ({ template_id, item_id, item_version, phases }));
+      return {
+        ...diagnostics, receipt_id: '', expires_at: this.now().toISOString(),
+        resolution_identity: templateResolutionIdentity(resolution), items,
+        optional_exclusions: evidence.filter(item => item.optional)
+          .map(({ template_id, item_id, item_version }) => ({ template_id, item_id, item_version })),
+      };
+    }
 
     const dependencyDigest = this.dependencyDigest(context, credentialReference(ref));
     const issued = await issueTrialReceipt({ resource: ref, candidate, receipt_id: receiptId }, {
@@ -940,22 +981,17 @@ export class TemplateBindingService {
       evidence: { read: async () => evidence }, now: () => this.now().toISOString(), ttlMs: TRIAL_RECEIPT_TTL_MS,
     });
     const written = await writeTrialReceipt(
-      { receipt_id: issued.receipt_id, payload: issued.payload as unknown as Record<string, unknown> },
+      { receipt_id: issued.receipt_id, payload: { ...issued.payload, sample_policy: REQUIRED_GOOD_TRIAL_SAMPLE_POLICY } },
       { pool: this.deps.pool, authorize: authorizeOn });
     if (written.kind === 'collision') fail('TEMPLATE_BINDING_RECEIPT_INVALID', 409);
 
-    const decisions = executed.results.map(entry => entry.result.decision);
     return {
-      trial: true, persisted: false,
-      decision: decisions.length === 0 ? 'unsupported'
-        : decisions.every(value => value === 'attempted') ? 'attempted' : decisions[0],
+      ...diagnostics,
       receipt_id: issued.receipt_id, expires_at: issued.payload.expires_at,
       resolution_identity: issued.payload.resolution_identity,
       items: issued.payload.items,
       optional_exclusions: issued.payload.optional_exclusions
         .map(({ template_id, item_id, item_version }) => ({ template_id, item_id, item_version })),
-      samples, attempts: executed.results.flatMap(entry => entry.result.attempts),
-      releases: executed.results.map(entry => ({ release_ref: entry.release_ref, decision: entry.result.decision })),
     };
   }
 
@@ -964,7 +1000,7 @@ export class TemplateBindingService {
    * the lock, the three identities, the CAS and the audit; this method supplies
    * only trusted reads bound to the host's own connection.
    */
-  async apply(actor: ActorContext, ref: Ref, body: unknown): Promise<BindingApplicationOutcome> {
+  async apply(actor: ActorContext, ref: Ref, body: unknown, rollout = false): Promise<BindingApplicationOutcome> {
     await this.assertAccess(actor, ref, true);
     const candidate = this.candidate(ref, body);
     const input = body as { receipt_id?: unknown; caller_key?: unknown };
@@ -973,7 +1009,8 @@ export class TemplateBindingService {
     // generic host failure; keep that error to surface it unchanged.
     let authError: unknown;
     const store = new MysqlPolicyStore(this.deps.pool, {
-      trustedInputs: connection => this.trustedInputs(connection, actor, candidate, input.caller_key as string, error => { authError = error; }),
+      trustedInputs: connection => this.trustedInputs(connection, actor, candidate, input.caller_key as string,
+        rollout ? 'candidate' : 'binding', error => { authError = error; }),
       trustedNow: () => this.now().toISOString(),
       registry: this.deps.registry,
     });
@@ -993,11 +1030,13 @@ export class TemplateBindingService {
    * not resolved to a collectable capability, so all of them are required.
    */
   private trustedInputs(connection: BindingSqlConnection, actor: ActorContext, candidate: ResourceBindingCandidate, callerKey: string,
-    onAuthError?: (error: unknown) => void): TrustedBindingInputs {
+    capabilityContext: CapabilityContext, onAuthError?: (error: unknown) => void): TrustedBindingInputs {
     const versions = new MySqlTemplateRepository(connectionTemplatePool(connection));
     return {
+      requireGoodTrialSamples: true,
+      persistCandidateCapabilities: capabilityContext === 'candidate',
       stageTriggers: async (targetRevision, resolutionIdentity) => {
-        const live = await this.contextOn(connection, candidate.resource, candidate, actor.userId);
+        const live = await this.contextOn(connection, candidate.resource, candidate, actor.userId, capabilityContext);
         const resolved = await resolveTemplateBinding(candidate, live, versions, this.deps.registry);
         if (resolved.kind !== 'template_resolution') throw new Error('TRIGGER_INPUT_INVALID');
         // No trigger table dependency for templates that declare no triggers.
@@ -1018,7 +1057,7 @@ export class TemplateBindingService {
         try { current = this.deps.reloadOnLocked
           ? await this.deps.reloadOnLocked(actor, connection) : await this.liveOn(actor, connection); }
         catch (error) { onAuthError?.(error); throw error; }
-        const live = await this.contextOn(connection, target, candidate, actor.userId);
+        const live = await this.contextOn(connection, target, candidate, actor.userId, capabilityContext);
         const dep = this.dependencyDigest(live, credentialReference(target));
         return {
           allowed: canManageResource(current, target) && await this.ownsOperation(connection, actor, callerKey),
@@ -1028,7 +1067,7 @@ export class TemplateBindingService {
       },
       applicationContext: async resource => {
         const target = RefSchema.parse({ type: resource.type, id: Number(resource.id) });
-        const context = await this.contextOn(connection, target, candidate, actor.userId);
+        const context = await this.contextOn(connection, target, candidate, actor.userId, capabilityContext);
         return { resource: context.resource, group: context.group, capabilities: context.capabilities, at: context.at,
           actor_id: actor.userId };
       },
@@ -1041,7 +1080,7 @@ export class TemplateBindingService {
        */
       mandatoryItems: async resource => {
         const target = RefSchema.parse({ type: resource.type, id: Number(resource.id) });
-        const live = await this.contextOn(connection, target, candidate, actor.userId);
+        const live = await this.contextOn(connection, target, candidate, actor.userId, capabilityContext);
         const outcome = await resolveTemplateBinding(candidate, live, versions, this.deps.registry);
         if (outcome.kind !== 'template_resolution') throw new Error('TEMPLATE_BINDING_LEGACY_CANDIDATE');
         const items: Array<{ template_id: string; item_id: string; item_version: number }> = [];

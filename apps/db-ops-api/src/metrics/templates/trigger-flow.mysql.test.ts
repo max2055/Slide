@@ -84,6 +84,7 @@ describe.skipIf(!enabled)('immediate collection on a real platform, queue and re
   let templateId = '';
   let templateVersion = 0;
   let contentHash = '';
+  let recoveryExpressionPin: { template_id: string; version: number; content_hash: string };
   let worker: WorkerRuntime;
   let jobs: JobRegistry;
   let scheduler: MetricScheduler;
@@ -94,6 +95,7 @@ describe.skipIf(!enabled)('immediate collection on a real platform, queue and re
   const sourceTimes = new Map<string, string>();
   let clock = Date.now();
   let accessCheckHook: (() => Promise<void>) | undefined;
+  let trialReadFault: { resourceId: number; kind: 'null' | 'timeout' } | undefined;
   const registry = createConfigurationRegistry();
   const call = async (method: 'GET' | 'POST', url: string, body?: unknown) => {
     const response = await app.inject({ method, url, ...(body === undefined ? {} : { payload: body }) });
@@ -272,10 +274,26 @@ describe.skipIf(!enabled)('immediate collection on a real platform, queue and re
     templateVersion = published.version;
     contentHash = version!.content_hash;
 
+    const trialAccess = createAssetCollectorAccess();
     const service = new TemplateBindingService({
       pool: () => pool,
       registry,
-      access: createAssetCollectorAccess(),
+      access: { resolve: async ref => {
+        const resolved = await trialAccess.resolve(ref);
+        const fault = trialReadFault;
+        if (ref.id !== fault?.resourceId) return resolved;
+        return { ...resolved, resolve: async (...args) => {
+          const driver = await resolved.resolve(...args);
+          if (driver.method !== 'sql') return driver;
+          return { ...driver, pool: { query: options =>
+            options.sql.includes('information_schema.PROCESSLIST')
+              ? driver.pool.query(fault.kind === 'null'
+                ? { ...options, sql: 'SELECT CAST(NULL AS UNSIGNED) AS connections' }
+                : { sql: 'SELECT SLEEP(0.2)', timeout: 20 })
+              : driver.pool.query(options),
+          } };
+        } };
+      } },
       reload: async () => actor,
       inventory: undefined,
     });
@@ -320,6 +338,7 @@ describe.skipIf(!enabled)('immediate collection on a real platform, queue and re
     expect(publish.status, JSON.stringify(publish.data)).toBe(200);
     templateVersion = Number(publish.data.version);
     contentHash = String(publish.data.content_hash);
+    recoveryExpressionPin = { template_id: templateId, version: templateVersion, content_hash: contentHash };
 
     // The real binding path against the real read-only target.
     const probed = await call('POST', `/api/metrics/template-bindings/instance/${instanceId}/probe`, body());
@@ -1150,6 +1169,254 @@ describe.skipIf(!enabled)('immediate collection on a real platform, queue and re
       sourceTimes.clear();
     }
   }, 120000);
+
+  it('M06 preserves diagnostic data without issuing a receipt for null or timed-out required reads', async () => {
+    const target = await insertInstance('m06-trial-required-sample');
+    const path = `/api/metrics/template-bindings/instance/${target}`;
+    const before = await counts();
+    expect((await call('POST', `${path}/probe`, body())).status).toBe(200);
+    expect((await call('POST', `${path}/preview`, body())).data.executable).toBe(true);
+    try {
+      for (const kind of ['null', 'timeout'] as const) {
+        trialReadFault = { resourceId: target, kind };
+        const receiptId = `m06-invalid-${kind}`;
+        const trial = await call('POST', `${path}/trial`, { ...body(), receipt_id: receiptId });
+        expect(trial.status, JSON.stringify(trial.data)).toBe(200);
+        expect(trial.data).toMatchObject({ persisted: false, receipt_id: '' });
+        if (kind === 'null') {
+          expect(trial.data.samples).toMatchObject([{ value: null, quality: { status: 'unknown' } }]);
+        } else {
+          expect(trial.data.attempts).toMatchObject([{ status: 'failed', error: 'timeout' }]);
+        }
+        const [receipts] = await pool.execute<RowDataPacket[]>(
+          'SELECT receipt_id FROM metric_policy_trial_receipts WHERE receipt_id = ?', [receiptId]);
+        expect(receipts).toEqual([]);
+        const applied = await call('POST', `${path}/apply`, { ...body(), receipt_id: receiptId, caller_key: receiptId });
+        expect(applied.status, JSON.stringify(applied.data)).toBe(422);
+        expect((await call('GET', path)).data.revision).toBeNull();
+      }
+      expect(await counts()).toEqual(before);
+    } finally {
+      trialReadFault = undefined;
+    }
+  }, 60000);
+
+  it('M06 requires a fresh trial for a legacy receipt without changing committed replays', async () => {
+    const target = await insertInstance('m06-trial-policy-version');
+    const path = `/api/metrics/template-bindings/instance/${target}`;
+    const before = await counts();
+    expect((await call('POST', `${path}/probe`, body())).status).toBe(200);
+    const removeSamplePolicy = (receiptId: string) => pool.execute(
+      "UPDATE metric_policy_trial_receipts SET payload = JSON_REMOVE(payload, '$.sample_policy') WHERE receipt_id = ?", [receiptId]);
+    const legacy = { ...body(), receipt_id: 'm06-legacy-policy', caller_key: 'm06-legacy-policy' };
+    const trial = await call('POST', `${path}/trial`, { ...body(), receipt_id: legacy.receipt_id });
+    expect(trial.data).toMatchObject({ receipt_id: legacy.receipt_id, samples: [{ quality: { status: 'good' } }] });
+    await removeSamplePolicy(legacy.receipt_id);
+    const refused = await call('POST', `${path}/apply`, legacy);
+    expect(refused).toEqual({ status: 422, data: { error: 'TRANSACTION_RECEIPT_NOT_FOUND' } });
+    expect(await counts()).toEqual(before);
+
+    const fresh = { ...body(), receipt_id: 'm06-new-policy', caller_key: 'm06-new-policy' };
+    expect((await call('POST', `${path}/trial`, { ...body(), receipt_id: fresh.receipt_id })).data.receipt_id).toBe(fresh.receipt_id);
+    const applied = await call('POST', `${path}/apply`, fresh);
+    expect(applied).toMatchObject({ status: 200, data: { kind: 'committed', revision: 1 } });
+    await removeSamplePolicy(fresh.receipt_id);
+    expect(await call('POST', `${path}/apply`, fresh)).toMatchObject({ status: 200, data: {
+      kind: 'replay', target_revision: 1, operation: applied.data.operation,
+    } });
+    expect((await counts()).operations - before.operations).toBe(1);
+    expect((await counts()).audits - before.audits).toBe(1);
+  }, 60000);
+
+  it('M17 manual silence suppresses formal template delivery without losing observations and events', async () => {
+    const { alertSilenceService } = await import('../../alert-silence-service.js');
+    const { notificationDatabaseService } = await import('../../notification-database-service.js');
+    const { notificationService } = await import('../../notification-service.js');
+    const { reportDatabaseService } = await import('../../report-database-service.js');
+    const { registerNotificationHandlers } = await import('../../workflows/notification-handlers.js');
+    const { MysqlDeliveryStore } = await import('../../workflows/delivery-store.js');
+    const { NotificationDispatchScheduler } = await import('../../workflows/notification-dispatch.js');
+    const resourceId = await insertInstance('m17-manual-silence');
+    const resourceKey = 'instance:' + resourceId;
+    const bindingPath = '/api/metrics/template-bindings/instance/' + resourceId;
+    await pool.execute("INSERT INTO instance_permissions(user_id,instance_id,access_level) VALUES(1,?,'admin')", [resourceId]);
+    for (const action of ['probe', 'trial', 'apply']) {
+      const reply = await call('POST', bindingPath + '/' + action, {
+        ...body(), template_pins: [recoveryExpressionPin], ...(action === 'probe' ? {} : { receipt_id: 'm17-silence-trial' }),
+        ...(action === 'apply' ? { caller_key: 'm17-silence-apply' } : {}),
+      });
+      expect(reply.status, JSON.stringify(reply.data)).toBe(200);
+    }
+    const [channel] = await pool.execute<mysql.ResultSetHeader>(
+      "INSERT INTO notification_channels(name,type,config,enabled,delivery_start_at) VALUES('M17 in-memory sender','webhook',?,1,DATE_SUB(NOW(),INTERVAL 1 MINUTE))",
+      [JSON.stringify({ webhook_url: 'http://127.0.0.1:1/never-send', severity: 'warning' })],
+    );
+    const originalJobs = jobs;
+    const sent: number[] = [];
+    const store = new MysqlWorkflowStore(() => pool as never);
+    jobs = new JobRegistry();
+    scheduler.register(jobs);
+    registerNotificationHandlers(jobs, notificationDatabaseService, {
+      buildMessage: notificationService.buildMessage.bind(notificationService),
+      send: async (_channel, message) => {
+        sent.push(Number(message.alert_id));
+        return { success: true };
+      },
+    }, reportDatabaseService, new MysqlDeliveryStore(() => pool));
+    const keys = new Set<string>();
+    const collect = async (value: number, key: string, settleJobs = true) => {
+      controlledValue = value;
+      clock = Math.max(Date.now() + 1000, clock + 1000);
+      const caller_key = 'm17-' + key;
+      const accepted = await call('POST', bindingPath + '/collect', { caller_key, expected_revision: 1 });
+      expect(accepted.status).toBe(200);
+      if (settleJobs) await drain();
+      else {
+        const jobId = (accepted.data.task as { job_id: string }).job_id;
+        await pool.execute("UPDATE workflow_jobs SET available_at=DATE_SUB(NOW(),INTERVAL 1 SECOND) WHERE id=?", [jobId]);
+        expect(await worker.runOnce((job, context) => {
+          expect(job.id).toBe(jobId);
+          return jobs.execute(job, context);
+        }, Date.now())).toBe('completed');
+      }
+      const task = await call('GET', bindingPath + '/collect/' + caller_key);
+      expect(task.data.state).toBe('completed');
+      const [formal] = task.data.samples as Array<{ id: string }>;
+      expect(formal?.id).toBeTruthy();
+      expect(await observations(formal.id)).toHaveLength(1);
+      expect(keys.has(formal.id)).toBe(false);
+      keys.add(formal.id);
+    };
+    const latest = async () => (await pool.execute<RowDataPacket[]>(
+      'SELECT event_id,alert_id FROM metric_trigger_episodes WHERE resource_key=? ORDER BY event_id DESC LIMIT 1', [resourceKey],
+    ))[0][0];
+    const keyFor = (id: number) => 'notification:' + id + ':' + channel.insertId;
+    const jobStates = async (id: number) => (await pool.execute<RowDataPacket[]>(
+      'SELECT state FROM workflow_jobs WHERE idempotency_key IN (?,?) ORDER BY idempotency_key', [keyFor(id), keyFor(id) + ':recovery'],
+    ))[0].map(row => row.state);
+    const delivery = async (id: number) => (await pool.execute<RowDataPacket[]>(
+      'SELECT state,error_code FROM notification_delivery_states WHERE business_key=?', [keyFor(id)],
+    ))[0];
+    const dispatch = (alertId: number) => new NotificationDispatchScheduler({
+      getPendingAlerts: async () => (await notificationDatabaseService.getPendingAlerts()).filter(row => row.id === alertId),
+      getEnabledChannels: () => notificationDatabaseService.getEnabledChannels(),
+    }, notificationService, store).enqueuePending();
+    const metric = 'mysql.processlist.count';
+    try {
+      const legacy = await alertDatabaseService.createAlert({ instance_id: resourceId, source: 'alert-engine', alert_type: 'performance',
+        level: 'warning', title: 'M17 legacy fixture', message: 'synthetic', metric_name: metric });
+      expect(legacy.success).toBe(true);
+      expect(await alertSilenceService.silence(resourceId, metric, 5, legacy.alertId)).toEqual({ success: true });
+      expect(await alertSilenceService.silence(unboundId, metric, 5)).toEqual({ success: true });
+      expect(await alertSilenceService.silence(resourceId, 'mysql.max_connections', 5)).toEqual({ success: true });
+      await collect(95, 'queued-before-silence', false);
+      const queued = await latest();
+      expect(await jobStates(queued.alert_id)).toEqual(['queued']);
+      await pool.execute("UPDATE workflow_jobs SET available_at=DATE_ADD(NOW(),INTERVAL 30 MINUTE) WHERE idempotency_key=?", [keyFor(queued.alert_id)]);
+      await collect(60, 'recovery-queued-before-silence', false);
+      expect(await jobStates(queued.alert_id)).toEqual(['queued', 'queued']);
+
+      expect(await alertSilenceService.silence(resourceId, metric, 5)).toEqual({ success: true });
+      const silence = (await alertSilenceService.getActiveSilences(resourceId))
+        .find(row => row.metric_name === metric && row.created_by_alert_id === null);
+      expect(silence).toBeDefined();
+      await drain();
+      expect(await delivery(queued.alert_id)).toEqual([{ state: 'skipped', error_code: 'MANUAL_SILENCE_SUPPRESSED' }]);
+      expect(await jobStates(queued.alert_id)).toEqual(['completed', 'completed']);
+      const [skippedRecovery] = await pool.execute<RowDataPacket[]>(
+        'SELECT state,error_code,attempt_id FROM notification_delivery_states WHERE business_key=?', [keyFor(queued.alert_id) + ':recovery'],
+      );
+      expect(skippedRecovery).toEqual([{ state: 'skipped', error_code: 'MANUAL_SILENCE_SUPPRESSED', attempt_id: null }]);
+      expect(sent).toEqual([]);
+
+      expect(await dispatch(legacy.alertId!)).toBe(1);
+      await drain();
+      expect(sent).toEqual([legacy.alertId]);
+      await collect(95, 'new-event-during-silence');
+      const silent = await latest();
+      expect(silent.event_id).not.toBe(queued.event_id);
+      expect(await jobStates(silent.alert_id)).toEqual([]);
+      const opened = await call('GET', '/api/metrics/template-events/' + silent.event_id);
+      expect(opened).toMatchObject({ status: 200, data: { episode: { state: 'open', opened: { value: 95 } } } });
+      expect((await notificationDatabaseService.getAlertById(silent.alert_id))?.tags).not.toHaveProperty('manual_silence_suppressed');
+
+      const length = (await pool.query<RowDataPacket[]>("SELECT id FROM metric_observations WHERE stage='normalized'"))[0].length;
+      clock = Math.max(Date.now() + 1000, clock + 30000);
+      controlledValue = 96;
+      await pool.execute(
+        "INSERT INTO metric_schedule(resource_key,revision,next_due_ms,states,cadence) VALUES(?,1,?,'{}',?) ON DUPLICATE KEY UPDATE next_due_ms=VALUES(next_due_ms),cadence=VALUES(cadence)",
+        [resourceKey, clock, JSON.stringify({ next: { 30000: clock }, through: null })],
+      );
+      const scheduled = (await scheduleStore.scan()).templates.find(item => item.resource_key === resourceKey)!;
+      expect(await scheduleStore.enqueueTemplate(scheduled, clock)).toBe(true);
+      await drain();
+      expect((await pool.query<RowDataPacket[]>("SELECT id FROM metric_observations WHERE stage='normalized'"))[0]).toHaveLength(length + 1);
+
+      await pool.execute("UPDATE silence_periods SET silenced_until=DATE_ADD(NOW(),INTERVAL 1 SECOND) WHERE id=?", [silence.id]);
+      await vi.waitFor(async () => {
+        await alertSilenceService.cleanupExpiredSilences();
+        expect(await alertSilenceService.getSilenceInstanceId(Number(silence.id))).toBeNull();
+      }, { timeout: 5000, interval: 100 });
+      expect(await dispatch(silent.alert_id)).toBe(0);
+      await collect(60, 'silent-event-recovery-after-expiry');
+      expect(await jobStates(silent.alert_id)).toEqual([]);
+      const recovered = await call('GET', '/api/metrics/template-events/' + silent.event_id);
+      expect(recovered).toMatchObject({ status: 200, data: { episode: { state: 'closed', recovery_count: 1 } } });
+      expect(recovered.data.snapshot).toEqual(opened.data.snapshot);
+
+      await collect(95, 'new-event-after-expiry');
+      const next = await latest();
+      expect(next.event_id).not.toBe(silent.event_id);
+      expect(await delivery(next.alert_id)).toEqual([{ state: 'sent', error_code: null }]);
+      await collect(60, 'new-event-recovers-after-expiry');
+      expect(await jobStates(next.alert_id)).toEqual(['completed', 'completed']);
+      expect(sent).toEqual([legacy.alertId, next.alert_id, next.alert_id]);
+
+      const { enqueueNotificationTransition } = await import('../../notification-transition.js');
+      await collect(95, 'before-concurrent-settlement', false);
+      const racing = await latest();
+      const recovery = await pool.getConnection();
+      try {
+        await recovery.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ');
+        await recovery.beginTransaction();
+        const readOriginal = () => recovery.execute<RowDataPacket[]>(
+          'SELECT state FROM notification_delivery_states WHERE business_key=?', [keyFor(racing.alert_id)],
+        );
+        expect((await readOriginal())[0]).toHaveLength(0);
+        expect(await alertSilenceService.silence(resourceId, metric, 5)).toEqual({ success: true });
+        const created = (await alertSilenceService.getActiveSilences(resourceId))
+          .find(row => row.metric_name === metric && row.created_by_alert_id === null);
+        expect(created).toBeDefined();
+        await drain();
+        expect(await delivery(racing.alert_id)).toEqual([{ state: 'skipped', error_code: 'MANUAL_SILENCE_SUPPRESSED' }]);
+        expect(await alertSilenceService.clearSilence(Number(created.id))).toEqual({ success: true });
+        // The pre-existing transaction still sees its old snapshot. The
+        // transition's locking reads must see the completed suppression.
+        expect((await readOriginal())[0]).toHaveLength(0);
+        expect(await enqueueNotificationTransition(recovery, racing.alert_id, {
+          id: 'recovery', phase: 'recovery', at: new Date().toISOString(),
+        })).toBe(0);
+        await recovery.commit();
+      } finally {
+        await recovery.rollback();
+        recovery.release();
+      }
+      await collect(60, 'stale-event-recovers-after-cancel');
+      expect(await jobStates(racing.alert_id)).toEqual(['completed']);
+      await collect(95, 'new-problem-after-cancel');
+      const afterCancel = await latest();
+      expect(afterCancel.event_id).not.toBe(racing.event_id);
+      expect(sent).toEqual([legacy.alertId, next.alert_id, next.alert_id, afterCancel.alert_id]);
+      console.info(JSON.stringify({ id: 'M17', normalized: keys.size + 1, scheduledInside: 1,
+        oldQueuedState: 'skipped', oldQueuedRecoveryState: 'skipped', oldQueuedRecoveryAttempts: 0,
+        historicalReplayJobs: 0, legacyCompatibility: true,
+        snapshotPreserved: true, newProblemAndRecoverySends: 2, staleRecoveryEnqueueBlocked: true,
+        newProblemAfterExplicitCancel: true, externalSends: 0 }));
+    } finally {
+      jobs = originalJobs;
+      await pool.execute('UPDATE notification_channels SET enabled=0 WHERE id=?', [channel.insertId]);
+    }
+  }, 120_000);
 
   it('uses same-batch upstream truth through a dependency chain for opening and recovery', async () => {
     const resource = await insertInstance('template-trigger-dependencies');

@@ -247,26 +247,38 @@ describe('PromptManager version lifecycle (#360, #545, #696)', () => {
   });
 
   it('#360 watches real events, catches sanitized failures, and recovers after a burst', async () => {
-    const { manager, versionsDir } = await fixture();
+    const { manager, versionsDir, bundledVersionsDir } = await fixture();
+    const alternate = await manager.createVersion('sample', 'activated by another manager');
+    const second = new PromptManager({ versionsDir, bundledVersionsDir });
+    await second.initialize();
     const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
-    const original = fs.promises.readdir.bind(fs.promises);
-    const read = vi.spyOn(fs.promises, 'readdir').mockRejectedValue(Object.assign(
-      new Error('secret body and /private/path'), { code: 'EACCES' },
-    ));
     manager.startWatch();
     try {
+      // The native watcher can miss a write during startup. Observe a real
+      // reload before testing how the watcher handles a failed directory read.
+      const readyFile = join(versionsDir, 'watch-ready-v1.md');
+      await vi.waitFor(async () => {
+        if (manager.getVersionContent('watch-ready', 1) !== 'ready') await writeFile(readyFile, 'ready');
+        expect(manager.getVersionContent('watch-ready', 1)).toBe('ready');
+      }, { interval: 300 }); // Space the writes past the watcher's debounce.
+
+      const read = vi.spyOn(fs.promises, 'readdir').mockRejectedValue(Object.assign(
+        new Error('secret body and /private/path'), { code: 'EACCES' },
+      ));
       await writeFile(join(versionsDir, 'sample-v2.md'), 'changed');
       await vi.waitFor(() => expect(warning).toHaveBeenCalledWith(
         '[PromptManager] 文件监听或热重载失败，保留原快照 (EACCES)',
       ));
       expect(manager.getPrompt('sample')).toBe('custom');
       expect(JSON.stringify(warning.mock.calls)).not.toContain('secret');
-      read.mockImplementation(original);
+      read.mockRestore();
       await Promise.all(Array.from({ length: 5 }, (_, i) => writeFile(join(versionsDir, `extra-v${i + 1}.md`), `event-${i}`)));
       await vi.waitFor(() => {
         expect(manager.getPrompt('sample')).toBe('changed');
         expect(manager.getTypeInfo('extra')!.versions).toHaveLength(5);
       });
+      await second.setActiveVersion('sample', alternate.version);
+      await vi.waitFor(() => expect(manager.getPrompt('sample')).toBe('activated by another manager'));
     } finally {
       manager.stopWatch();
     }
@@ -298,6 +310,73 @@ describe('PromptManager version lifecycle (#360, #545, #696)', () => {
 });
 
 describe('PromptManager persistent version directory', () => {
+  it('persists activation for each type across restart and honors a changed explicit default', async () => {
+    const { manager, versionsDir, bundledVersionsDir } = await fixture();
+    await writeFile(join(bundledVersionsDir, 'sample-v1.md'), 'sample v1');
+    await writeFile(join(bundledVersionsDir, 'other-v1.md'), 'other v1');
+    await writeFile(join(bundledVersionsDir, 'other-v2.md'), 'other v2');
+    await reload(manager);
+    await manager.createVersion('sample', 'sample v3');
+    await expect(manager.setActiveVersion('sample', 3)).resolves.toBe(true);
+    await expect(manager.setActiveVersion('other', 99)).resolves.toBe(false);
+    expect(manager.getActiveVersion('sample')).toBe(3);
+    expect(manager.getActiveVersion('other')).toBe(2);
+    expect(manager.getActiveVersion()).toBe(2);
+    expect(JSON.parse(await readFile(join(versionsDir, '.active-version-sample.json'), 'utf8')))
+      .toEqual({ defaultVersion: 2, version: 3 });
+
+    vi.stubEnv('PROMPT_VERSION', '2');
+    vi.stubEnv('PROMPT_AB_TEST', 'true');
+    vi.spyOn(Math, 'random').mockReturnValue(0);
+    const restarted = new PromptManager({ versionsDir, bundledVersionsDir });
+    await restarted.initialize();
+    expect(restarted.getTypeInfo('sample')?.activeVersion).toBe(3);
+    expect(restarted.getPrompt('sample')).toBe('sample v3');
+    expect(restarted.getPrompt('sample', 1)).toBe('sample v1');
+    expect(restarted.getPrompt('other')).toBe('other v1');
+
+    vi.stubEnv('PROMPT_VERSION', '1');
+    vi.stubEnv('PROMPT_AB_TEST', 'false');
+    const configured = new PromptManager({ versionsDir, bundledVersionsDir });
+    await configured.initialize();
+    expect(configured.getAllTypes().map(entry => entry.activeVersion)).toEqual([1, 1]);
+    expect(configured.getPrompt('sample')).toBe('sample v1');
+  });
+
+  it('keeps independent concurrent activations from two stale managers after restart', async () => {
+    const { manager, versionsDir, bundledVersionsDir } = await fixture();
+    await manager.createVersion('sample', 'sample v3');
+    await writeFile(join(bundledVersionsDir, 'other-v1.md'), 'other v1');
+    await writeFile(join(bundledVersionsDir, 'other-v2.md'), 'other v2');
+    await reload(manager);
+    const second = new PromptManager({ versionsDir, bundledVersionsDir });
+    await second.initialize();
+    await expect(Promise.all([
+      manager.setActiveVersion('sample', 3), second.setActiveVersion('other', 1),
+    ])).resolves.toEqual([true, true]);
+
+    const restarted = new PromptManager({ versionsDir, bundledVersionsDir });
+    await restarted.initialize();
+    expect(restarted.getPrompt('sample')).toBe('sample v3');
+    expect(restarted.getPrompt('other')).toBe('other v1');
+  });
+
+  it('keeps the previous in-memory and durable choice when an activation write fails', async () => {
+    const { manager, versionsDir, bundledVersionsDir } = await fixture();
+    await manager.createVersion('sample', 'sample v3');
+    await manager.createVersion('sample', 'sample v4');
+    await manager.setActiveVersion('sample', 3);
+    const failure = vi.spyOn(fs.promises, 'rename').mockRejectedValueOnce(Object.assign(new Error('fixture write failure'), { code: 'EACCES' }));
+    await expect(manager.setActiveVersion('sample', 4)).rejects.toMatchObject({ code: 'EACCES' });
+    failure.mockRestore();
+    expect(manager.getActiveVersion('sample')).toBe(3);
+    expect(manager.getPrompt('sample')).toBe('sample v3');
+    expect((await readdir(versionsDir)).filter(file => file.endsWith('.tmp'))).toHaveLength(0);
+    const restarted = new PromptManager({ versionsDir, bundledVersionsDir });
+    await restarted.initialize();
+    expect(restarted.getActiveVersion('sample')).toBe(3);
+  });
+
   it('defaults to the agent workspace instead of the bundled code directory', async () => {
     const workspace = await createTemporaryDirectory();
     const previous = process.env.AGENT_WORKSPACE;

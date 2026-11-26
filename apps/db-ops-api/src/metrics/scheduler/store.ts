@@ -52,6 +52,36 @@ export interface TemplateExecutionSnapshot {
   states: Map<string, CounterState>;
   /** Formal publication tickets captured before remote IO; empty until formalized. */
   tickets: Map<string, Ticket>;
+  /** Internal fence for interface inventory; never written to a receipt. */
+  snmpInventoryTarget?: string;
+}
+
+async function snmpInventoryTarget(c: PoolConnection, ref: Ref): Promise<string | null> {
+  // The caller already holds the device row lock. Lock the exact SNMP credential
+  // source selected by the collector as well as its configured host and port.
+  const [rows] = await c.execute<RowDataPacket[]>(`SELECT d.host, d.snmp_port, s.protocol, s.username, s.security_level,
+      s.auth_protocol, s.privacy_protocol, s.community_encrypted, s.auth_secret_encrypted, s.privacy_secret_encrypted
+    FROM network_devices d JOIN network_device_credentials s ON s.device_id = d.id
+    WHERE d.id = ? AND s.protocol IN ('snmpv2c','snmpv3') ORDER BY s.protocol LIMIT 1 FOR SHARE`, [ref.id]);
+  return rows[0] ? createHash('sha256').update(stable(rows[0])).digest('hex') : null;
+}
+
+async function inventoryTargetForPlan(c: PoolConnection, ref: Ref, releases: TemplateReleasePlan[]): Promise<string | undefined> {
+  if (ref.type !== 'network_device' || !releases.some(release => release.steps.some(step =>
+    step.implementation_id === 'builtin:snmp.interfaces.v1'))) return undefined;
+  const identity = await snmpInventoryTarget(c, ref);
+  rule(identity, 'SCHEDULE_STALE_EXECUTION');
+  return identity;
+}
+
+async function assertSnmpInventoryTarget(c: PoolConnection, ref: Ref, expected: string | undefined): Promise<void> {
+  if (expected !== undefined) rule(await snmpInventoryTarget(c, ref) === expected, 'SCHEDULE_STALE_EXECUTION');
+}
+
+async function holdsJobLease(c: PoolConnection, job: ClaimedJob, ctx: JobExecutionContext): Promise<boolean> {
+  const [rows] = await c.execute<RowDataPacket[]>(`SELECT id FROM workflow_jobs WHERE id = ? AND state = 'running'
+    AND lease_owner = ? AND fencing_token = ? AND lease_expires_at > NOW() FOR UPDATE`, [job.id, ctx.workerId, ctx.fencingToken]);
+  return rows.length === 1;
 }
 
 /* --- manual collection tasks ---------------------------------------------- */
@@ -457,7 +487,8 @@ export class MysqlScheduleStore {
           || !pins.has(`${pin.id}@${pin.version}#${pin.digest}`)) continue;
         tickets.set(String(source.series_hash), { source: 'semantic', generation: Number(source.generation), revision });
       }
-      return { decoded, plan, releases, tickets,
+      const snmpInventoryTarget = await inventoryTargetForPlan(c, ref, releases);
+      return { decoded, plan, releases, tickets, snmpInventoryTarget,
         states: new Map(Object.entries(decode<Record<string, CounterState>>(schedule[0].states))) };
     });
   }
@@ -476,10 +507,7 @@ export class MysqlScheduleStore {
     if (!await assetCollectionEnabled(c, ref, true)) return null;
     const current = await this.currentTemplate(c, ref);
     if (!current || current.binding.revision !== revision) return null;
-    const [jobs] = await c.execute<RowDataPacket[]>(`SELECT id FROM workflow_jobs WHERE id = ? AND state = 'running'
-      AND lease_owner = ? AND fencing_token = ? AND lease_expires_at > NOW() FOR UPDATE`,
-    [job.id, ctx.workerId, ctx.fencingToken]);
-    if (jobs.length !== 1) return null;
+    if (!await holdsJobLease(c, job, ctx)) return null;
     const [schedule] = await c.execute<RowDataPacket[]>(
       'SELECT job_id FROM metric_schedule WHERE resource_key = ? AND revision = ? AND job_id = ?',
       [refKey(ref), revision, job.id]);
@@ -493,11 +521,13 @@ export class MysqlScheduleStore {
    * after `beginTemplate`; the final commit refusing the result cannot take back
    * a request that was already sent.
    */
-  async assertCurrentTemplate(ref: Ref, revision: number, job: ClaimedJob, ctx: JobExecutionContext): Promise<void> {
+  async assertCurrentTemplate(ref: Ref, revision: number, job: ClaimedJob, ctx: JobExecutionContext,
+    expectedSnmpInventoryTarget?: string): Promise<void> {
     await this.transaction(async c => {
       const current = await this.currentTemplate(c, ref);
       rule(current && current.binding.revision === revision, 'SCHEDULE_SUPERSEDED');
       rule(await this.validTemplate(c, ref, revision, job, ctx), 'SCHEDULE_STALE_EXECUTION');
+      await assertSnmpInventoryTarget(c, ref, expectedSnmpInventoryTarget);
     });
   }
 
@@ -512,8 +542,7 @@ export class MysqlScheduleStore {
       const [rows] = await c.execute<RowDataPacket[]>('SELECT job_id, cadence, next_due_ms FROM metric_schedule WHERE resource_key = ? FOR UPDATE', [refKey(ref)]);
       if (rows[0]?.job_id !== job.id) return false;
       await this.writeTemplateResults(c, snapshot, results, now);
-      // Re-checked after the last asynchronous work: anything written below is
-      // rolled back if the lease, revision or switch changed during the call.
+      // Re-check the binding and schedule while the schedule still names this job.
       rule(await this.validTemplate(c, ref, revision, job, ctx), 'SCHEDULE_STALE_EXECUTION');
       await this.recordTemplateCapabilities(c, ref, plan, results);
       const cadence = rows[0].cadence ? decode<TemplateCadence>(rows[0].cadence) : {
@@ -524,6 +553,9 @@ export class MysqlScheduleStore {
       const states = results.at(-1)?.result.states ?? snapshot.states;
       await c.execute('UPDATE metric_schedule SET states = ?, job_id = NULL, last_end_ms = ?, next_due_ms = ?, cadence = ? WHERE resource_key = ?',
         [JSON.stringify(Object.fromEntries(states)), now, deadline, JSON.stringify(next), refKey(ref)]);
+      // The schedule no longer names this job, but its locked lease can expire.
+      rule(await holdsJobLease(c, job, ctx), 'SCHEDULE_STALE_EXECUTION');
+      ctx.signal.throwIfAborted();
       return true;
     });
   }
@@ -539,6 +571,26 @@ export class MysqlScheduleStore {
     now: number): Promise<{ samples: CollectSample[]; attempts: CollectAttempt[] }> {
     const { decoded } = snapshot;
     const ref = decoded.binding.resource, revision = decoded.binding.revision;
+    if (snapshot.snmpInventoryTarget !== undefined) {
+      // This check and the upserts share the device, binding and job locks of
+      // the caller's formal write. Probe and trial never enter this writer.
+      await assertSnmpInventoryTarget(c, ref, snapshot.snmpInventoryTarget);
+      for (const { result } of results) {
+        const inventory = result.snmp_interface_inventory;
+        if (!inventory?.length) continue;
+        await c.execute(`INSERT INTO network_device_interfaces
+          (device_id, if_index, if_name, if_alias, speed_bps, admin_status, oper_status, last_seen_at)
+          VALUES ${inventory.map(() => '(?, ?, ?, ?, ?, ?, ?, ?)').join(', ')}
+          ON DUPLICATE KEY UPDATE
+            if_name = IF(last_seen_at IS NULL OR last_seen_at <= VALUES(last_seen_at), VALUES(if_name), if_name),
+            if_alias = IF(last_seen_at IS NULL OR last_seen_at <= VALUES(last_seen_at), VALUES(if_alias), if_alias),
+            speed_bps = IF(last_seen_at IS NULL OR last_seen_at <= VALUES(last_seen_at), VALUES(speed_bps), speed_bps),
+            admin_status = IF(last_seen_at IS NULL OR last_seen_at <= VALUES(last_seen_at), VALUES(admin_status), admin_status),
+            oper_status = IF(last_seen_at IS NULL OR last_seen_at <= VALUES(last_seen_at), VALUES(oper_status), oper_status),
+            last_seen_at = IF(last_seen_at IS NULL OR last_seen_at <= VALUES(last_seen_at), VALUES(last_seen_at), last_seen_at)`,
+        inventory.flatMap(row => [ref.id, row.index, row.name, row.alias, row.speedBps, row.adminStatus, row.operStatus, new Date(row.observedAt)]));
+      }
+    }
     const discovered = await updateFormalDiscovery(c, decoded, results, now, snapshot.releases ?? snapshot.plan.releases);
     if (discovered.size) for (const { result } of results) {
       result.observations = result.observations.filter(({ observation: o }) => {
@@ -922,7 +974,8 @@ export class MysqlScheduleStore {
       // cadence's snapshot, never force it to this job.
       const [schedule] = await c.execute<RowDataPacket[]>(
         'SELECT states FROM metric_schedule WHERE resource_key = ? AND revision = ?', [refKey(ref), revision]);
-      return { decoded, plan, tickets,
+      const snmpInventoryTarget = await inventoryTargetForPlan(c, ref, plan.releases);
+      return { decoded, plan, tickets, snmpInventoryTarget,
         states: new Map(Object.entries(decode<Record<string, CounterState>>(schedule[0]?.states ?? '{}'))) };
     });
   }
@@ -935,10 +988,7 @@ export class MysqlScheduleStore {
     if (!await assetCollectionEnabled(c, ref, true)) return false;
     const current = await this.currentTemplate(c, ref);
     if (!current || current.binding.revision !== revision) return false;
-    const [jobs] = await c.execute<RowDataPacket[]>(`SELECT id FROM workflow_jobs WHERE id = ? AND state = 'running'
-      AND lease_owner = ? AND fencing_token = ? AND lease_expires_at > NOW() FOR UPDATE`,
-    [job.id, ctx.workerId, ctx.fencingToken]);
-    if (jobs.length !== 1) return false;
+    if (!await holdsJobLease(c, job, ctx)) return false;
     const [rows] = await c.execute<RowDataPacket[]>(
       "SELECT id, intent_digest FROM metric_collect_requests WHERE id = ? AND job_id = ? AND state IN ('accepted','running') FOR UPDATE",
       [requestId, job.id]);
@@ -947,11 +997,13 @@ export class MysqlScheduleStore {
 
   async assertCollectNow(ref: Ref, revision: number, requestId: string, job: ClaimedJob,
     ctx: JobExecutionContext,
-    authorizeOn: (c: { execute(sql: string, values?: any[]): Promise<unknown> }) => Promise<void>): Promise<void> {
+    authorizeOn: (c: { execute(sql: string, values?: any[]): Promise<unknown> }) => Promise<void>,
+    expectedSnmpInventoryTarget?: string): Promise<void> {
     await this.collectTransaction(async c => {
       const current = await this.currentTemplate(c, ref);
       rule(current && current.binding.revision === revision, 'SCHEDULE_SUPERSEDED');
       rule(await this.validCollectNow(c, ref, revision, requestId, job, ctx), 'SCHEDULE_STALE_EXECUTION');
+      await assertSnmpInventoryTarget(c, ref, expectedSnmpInventoryTarget);
       await authorizeOn(c);
       ctx.signal.throwIfAborted();
     });
@@ -977,6 +1029,10 @@ export class MysqlScheduleStore {
       const states = results.at(-1)?.result.states ?? snapshot.states;
       await c.execute('UPDATE metric_schedule SET states = ? WHERE resource_key = ? AND revision = ?',
         [JSON.stringify(Object.fromEntries(states)), refKey(ref), revision]);
+      // The journal is already terminal inside this transaction. Re-check the
+      // same locked job lease before committing formal data or its receipt.
+      rule(await holdsJobLease(c, job, ctx), 'SCHEDULE_STALE_EXECUTION');
+      ctx.signal.throwIfAborted();
       return true;
     });
   }

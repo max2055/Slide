@@ -11,6 +11,21 @@ import { providerForModel } from '../llm/model-parameters.js';
 
 type ProviderStore = Pick<typeof llmDatabaseService, 'getAllProviders' | 'getSceneBindings' | 'getProviderApiKey'>;
 
+function unavailableAgentProvider(error: Error): AgentProvider {
+  const unavailable = async (): Promise<never> => { throw error; };
+  return { getDefaultModel: () => 'unconfigured', chat: unavailable, chatStream: unavailable };
+}
+
+export async function createBootstrapAgentProvider(store: ProviderStore): Promise<AgentProvider> {
+  try {
+    return await createConfiguredAgentProvider(store);
+  } catch (error) {
+    if (!(error instanceof Error) || error.message !== 'LLM_CREDENTIAL_NOT_CONFIGURED') throw error;
+    // The administrator needs the API to re-enter credentials after a cross-environment restore.
+    return unavailableAgentProvider(error);
+  }
+}
+
 /** Stored limits remain authoritative; a catalog can only tighten them. No route changes. */
 export function configuredModelCapabilities(provider: LLMProvider, model: string): ModelCapabilities {
   provider = providerForModel(provider, model);
@@ -54,10 +69,9 @@ export async function createConfiguredAgentProvider(store: ProviderStore, purpos
   } catch (error) {
     if (!(error instanceof LLMConfigurationError) || !allowUnconfigured) throw error;
     // Keep configuration repair available at bootstrap; request resolution is strict.
-    const unavailable = async (): Promise<never> => { throw error; };
-    return { getDefaultModel: () => 'unconfigured', chat: unavailable, chatStream: unavailable };
+    return unavailableAgentProvider(error);
   }
-  const apiKey = await store.getProviderApiKey(provider.name);
+  const apiKey = await store.getProviderApiKey(provider.name, provider);
   const connection = resolveProviderConnection({ ...provider, default_model: model }, apiKey);
   const capabilities = configuredModelCapabilities(provider, model);
   const identity = { provider: provider.name, providerId: provider.id, routeVersion: evidenceHash([provider.id, provider.updated_at, model, purpose, connection.format]) };

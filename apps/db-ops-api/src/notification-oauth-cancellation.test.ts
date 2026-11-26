@@ -205,7 +205,7 @@ describe('MAX-592 OAuth cancellation through notification delivery', () => {
 
   it.each(['notification.deliver', 'report.notify'])('keeps %s cancellation before SMTP retryable through the production handler', async type => {
     mode = 'headers';
-    vi.spyOn(maintenance, 'maintenanceBlocksDelivery').mockResolvedValue(false);
+    vi.spyOn(maintenance, 'notificationSuppressionReason').mockResolvedValue(null);
     const controller = new AbortController();
     const gate = testDeliveryGate();
     const finish = vi.spyOn(gate, 'finish');

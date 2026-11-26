@@ -93,6 +93,51 @@ describe('Cron exact run tracking', () => {
     await page.openLogViewer(job); await page.updateComplete;
     expect(page.shadowRoot!.textContent).toContain('旧成功（仅 runner 结束）');
   });
+  it('retries a failed execution-log read for the same job without executing it', async () => {
+    const page = await mount();
+    authFetch.mockClear();
+    authFetch.mockResolvedValueOnce(response({}, 503)).mockResolvedValueOnce(response({
+      logs: [{ id: 2, job_id: 42, run_id: 'owned-run', status: 'failed',
+        started_at: '2026-11-25T04:28:20.000Z', finished_at: '2026-11-25T04:28:21.000Z',
+        error_message: '保留的执行失败回执' }],
+      total: 1,
+    }));
+    await page.openLogViewer(job);
+    await page.updateComplete;
+    const dialog = page.shadowRoot!.querySelector('app-dialog')!;
+    expect(dialog.querySelector('[role="alert"]')?.textContent).toContain('加载日志失败');
+    const retry = [...dialog.querySelectorAll('button')].find(button => button.textContent?.trim() === '重试')!;
+    retry.click();
+    await vi.waitFor(() => expect(dialog.textContent).toContain('保留的执行失败回执'));
+    expect(authFetch.mock.calls.map(([url, options]) => [url, options?.method ?? 'GET'])).toEqual([
+      ['/api/cron/jobs/42/logs?limit=100', 'GET'],
+      ['/api/cron/jobs/42/logs?limit=100', 'GET'],
+    ]);
+  });
+  it.each(['slide-session-expired', 'slide-permissions-loaded'])(
+    'clears the log dialog and ignores an old response after %s',
+    async event => {
+      localStorage.setItem('permissions', JSON.stringify(['cron:view', 'cron:manage']));
+      const page = await mount();
+      authFetch.mockResolvedValueOnce(response({ logs: [{ id: 1, result: '撤权前日志' }], total: 1 }));
+      await page.openLogViewer(job);
+      await page.updateComplete;
+      expect(page.shadowRoot!.textContent).toContain('撤权前日志');
+      let complete!: (value: unknown) => void;
+      authFetch.mockImplementationOnce(() => new Promise(resolve => { complete = resolve; }));
+      const pending = page.loadLogViewer();
+      const signal = authFetch.mock.lastCall?.[1]?.signal as AbortSignal;
+      localStorage.setItem('permissions', JSON.stringify(['cron:manage']));
+      window.dispatchEvent(new Event(event));
+      expect(signal.aborted).toBe(true);
+      complete(response({ logs: [{ id: 2, result: '已撤权的晚到日志' }], total: 1 }));
+      await pending;
+      await page.updateComplete;
+      expect(page.logViewerJob).toBeNull();
+      expect(page.viewerLogs).toEqual([]);
+      expect(page.shadowRoot!.textContent).not.toContain('已撤权的晚到日志');
+    },
+  );
   it('does not trigger without a selected job', async () => {
     const page = await mount(); authFetch.mockClear(); await page.confirmTrigger();
     expect(authFetch).not.toHaveBeenCalled();
@@ -167,6 +212,19 @@ describe('Cron creation, display and draft script testing', () => {
     expect(page.filteredJobs.map((j: any) => j.id)).toEqual([42, 2, 3]);
     expect(page.shadowRoot!.querySelectorAll('.table-row')).toHaveLength(3);
     page.filterMode = 'script'; expect(page.filteredJobs.map((j: any) => j.id)).toEqual([4]);
+  });
+  it('restores the saved target database on edit and drops it when the target instance changes', async () => {
+    const page = await mount();
+    page.instances = [
+      { id: 9, db_type: 'mysql', name: 'Original' },
+      { id: 10, db_type: 'mysql', name: 'Replacement' },
+    ];
+    page.openEditDialog({ ...job, task_type: 'script', target_instance_id: 9, target_database: 'inspection' });
+    expect(page.formTargetDatabase).toBe('inspection');
+    page.onInstanceChange({ target: { value: '9' } });
+    expect(page.formTargetDatabase).toBe('inspection');
+    page.onInstanceChange({ target: { value: '10' } });
+    expect(page.formTargetDatabase).toBe('');
   });
   async function draft() {
     const page = await mount(); await page.openCreateDialog(); await Promise.resolve();

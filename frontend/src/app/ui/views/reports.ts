@@ -345,6 +345,7 @@ export class ReportsPage extends LitElement {
   @state() private showConfigDialog = false;
   @state() private showDeleteConfirm = false;
   @state() private deletingConfig: ReportConfig | null = null;
+  @state() private deleting = false;
   @state() private configForm: Partial<ReportConfig> & { instance_id?: number } = {};
   @state() private saving = false;
 
@@ -736,17 +737,18 @@ export class ReportsPage extends LitElement {
   }
 
   private async _deleteConfig() {
-    if (!this.deletingConfig) return;
+    if (!this.deletingConfig || this.deleting) return;
+    this.deleting = true;
     try {
-      await authFetch(`/api/reports/configs/${this.deletingConfig.id}`, {
-        method: 'DELETE',
-        headers: this.headers,
-      });
+      const response = await authFetch(`/api/reports/configs/${this.deletingConfig.id}`, { method: 'DELETE' });
+      if (!response.ok) throw new Error('删除请求未获确认');
       this.showDeleteConfirm = false;
       this.deletingConfig = null;
-      this.loadConfigs();
-    } catch (err: any) {
-      showToast(`Failed to delete: ${err.message}`, 'error');
+      await this.loadConfigs();
+    } catch {
+      showToast('暂时无法确认是否删除定时报表，请重新读取计划核对。', 'error');
+    } finally {
+      this.deleting = false;
     }
   }
 
@@ -756,13 +758,17 @@ export class ReportsPage extends LitElement {
       showToast('Please fill in all required fields', 'warning');
       return;
     }
+    const body = JSON.stringify({
+      name, cron, type, instance_id: instance_id ?? null, server_id: server_id ?? null,
+      format, enabled, notification_channel_ids,
+    });
     this.saving = true;
     try {
       if (this.editingConfig) {
         const res = await authFetch(`/api/reports/configs/${this.editingConfig.id}`, {
           method: 'PUT',
           headers: this.headers,
-          body: JSON.stringify({ name, cron, type, instance_id, server_id, format, enabled, notification_channel_ids }),
+          body,
         });
         if (!res.ok) {
           const err = await res.json();
@@ -772,7 +778,7 @@ export class ReportsPage extends LitElement {
         const res = await authFetch('/api/reports/configs', {
           method: 'POST',
           headers: this.headers,
-          body: JSON.stringify({ name, cron, type, instance_id, server_id, format, enabled, notification_channel_ids }),
+          body,
         });
         if (!res.ok) {
           const err = await res.json();
@@ -800,7 +806,7 @@ export class ReportsPage extends LitElement {
         ${this._renderNotificationChannels(set)}
         <div slot="footer"><button class="btn" @click=${() => this.showConfigDialog = false}>取消</button><button class="btn-primary" ?disabled=${this.saving} @click=${this._saveConfig}>保存</button></div>
       </app-dialog>` : ''}
-      ${this.showDeleteConfirm ? html`<app-dialog .open=${true} size="sm" title="删除定时报表" @app-dialog-close=${() => this.showDeleteConfirm = false}><p>删除 “${this.deletingConfig?.name}” 后无法恢复。</p><div slot="footer"><button class="btn" @click=${() => this.showDeleteConfirm = false}>取消</button><button class="btn-primary" @click=${this._deleteConfig}>删除</button></div></app-dialog>` : ''}
+      ${this.showDeleteConfirm ? html`<app-dialog .open=${true} size="sm" title="删除定时报表" @app-dialog-close=${() => this.showDeleteConfirm = false}><p>删除 “${this.deletingConfig?.name}” 后无法恢复。</p><div slot="footer"><button class="btn" @click=${() => this.showDeleteConfirm = false}>取消</button><button class="btn-primary" ?disabled=${this.deleting} @click=${this._deleteConfig}>删除</button></div></app-dialog>` : ''}
     `;
   }
 
@@ -832,15 +838,20 @@ export class ReportsPage extends LitElement {
     try {
       const response = await authFetch(url, { method: 'POST', headers: this.headers, body: JSON.stringify(body) });
       if (!response.ok) {
+        if (response.status >= 500) throw new Error('REPORT_GENERATION_UNCONFIRMED');
         const result = await response.json().catch(() => null);
         const message = typeof result?.error === 'string' ? `：${result.error}` : '，请稍后重试。';
         showToast(`生成报表失败${message}`, 'error');
         return;
       }
+      const receipt = await response.json();
+      const reportId = isServer ? receipt?.reportId : receipt?.id;
+      if (!Number.isSafeInteger(reportId) || reportId <= 0) throw new Error('REPORT_GENERATION_UNCONFIRMED');
       showToast('报表已生成。', 'success');
       await this.refreshReadData();
     } catch {
       showToast('暂时无法确认生成结果，请先查看历史报告。', 'error');
+      await this.refreshReadData();
     } finally {
       this.generating = false;
     }

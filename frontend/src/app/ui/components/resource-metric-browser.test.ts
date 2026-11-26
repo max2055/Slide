@@ -44,9 +44,10 @@ beforeEach(() => {
     const body = JSON.parse(options.body);
     if (path.endsWith('/latest')) return response({ resource: body, evaluated_at: at, metrics: [counter, textMetric] });
     const window = { from: body.from, to: body.to };
-    if (path.endsWith('/query')) return response({ window, metrics: [{ definition: counter.definition,
+    if (path.endsWith('/query')) return response({ resource: body.resource, window, metrics: [{ definition: counter.definition,
       series: [{ dimensions, buckets: [{ value: { encoding: 'uint64', value: '0' }, unit: 'count', quality: { status: 'good' }, window }] }] }] });
-    return response({ window, observations: [body.metric.id === metricRef.id ? counter.series[0] : textMetric.series[0]],
+    return response({ resource: body.resource, metric: body.metric, dimensions: body.dimensions, window,
+      observations: [body.metric.id === metricRef.id ? counter.series[0] : textMetric.series[0]],
       total: 51, has_more: !body.cursor, next_cursor: body.cursor ? undefined : 'fixture-next' });
   });
 });
@@ -92,10 +93,10 @@ it('switches the exact series from graph to raw values and maintains the same cu
 it('plots retained mean and bounds alongside detail, while long windows stay chart-only', async () => {
   const element = await mount();
   authFetch.mockImplementationOnce(async (_path, options) => {
-    const { from, to } = JSON.parse(options.body), window = { from, to };
+    const { resource, from, to } = JSON.parse(options.body), window = { from, to };
     const bucket = (value: number | null) => ({ window, unit: 'count', quality: { status: 'good' },
       value: value === null ? null : { encoding: 'float64', value } });
-    return response({ window, metrics: [{ definition: counter.definition, series: [{ dimensions, buckets: [
+    return response({ resource, window, metrics: [{ definition: counter.definition, series: [{ dimensions, buckets: [
       { ...bucket(4.5), retained_sample_count: 4, stats: { min: { encoding: 'uint64', value: '1' }, max: { encoding: 'uint64', value: '8' } } },
       bucket(null), bucket(0),
     ] }] }] });
@@ -117,9 +118,9 @@ it('plots retained mean and bounds alongside detail, while long windows stay cha
 it('plots trend evidence at a failed detail bucket as markers and keeps the detail line broken', async () => {
   const element = await mount();
   authFetch.mockImplementationOnce(async (_path, options) => {
-    const { from, to } = JSON.parse(options.body), window = { from, to };
+    const { resource, from, to } = JSON.parse(options.body), window = { from, to };
     const value = (value: number) => ({ encoding: 'float64', value });
-    return response({ window, metrics: [{ definition: counter.definition, series: [{ dimensions, buckets: [
+    return response({ resource, window, metrics: [{ definition: counter.definition, series: [{ dimensions, buckets: [
       { window, unit: 'count', value: null, quality: { status: 'unknown' }, retained_sample_count: 2,
         stats: { avg: value(4.5), min: value(1), max: value(8) } },
       { window, unit: 'count', value: null, quality: { status: 'unknown' } },
@@ -139,8 +140,8 @@ it.each([{ value_type: 'float64', visible: true }, { value_type: 'uint64', visib
     response({ resource: JSON.parse(options.body), evaluated_at: at, metrics: [{ ...counter, definition }] }));
   const element = await mount();
   authFetch.mockImplementationOnce(async (_path, options) => {
-    const { from, to } = JSON.parse(options.body), window = { from, to };
-    return response({ window, metrics: [{ definition, series: [{ dimensions, buckets: [
+    const { resource, from, to } = JSON.parse(options.body), window = { from, to };
+    return response({ resource, window, metrics: [{ definition, series: [{ dimensions, buckets: [
       { window, unit: 'count', value: { encoding: 'float64', value: 2 ** 54 }, quality: { status: 'good' }, retained_sample_count: 2 },
     ] }] }] });
   });
@@ -168,6 +169,54 @@ it('uses text history with time filtering and renders characters as text', async
   expect(calls('observations')[1].from).toBe(new Date(inputs[0].value).toISOString());
   expect(element.shadowRoot!.querySelector('metric-chart')).toBeNull();
   expect(element.shadowRoot!.querySelector('log')).toBeNull();
+});
+
+it('shows large byte counts exactly in the raw value column', async () => {
+  const definition = { ...counter.definition, id: 'host.filesystem.used_bytes', unit: 'By', kind: 'gauge' };
+  const sample = { ...counter.series[0], unit: 'By', value: { encoding: 'uint64', value: '9007199254740993' } };
+  authFetch.mockImplementationOnce(async (_path, options) =>
+    response({ resource: JSON.parse(options.body), evaluated_at: at, metrics: [{ ...counter, definition, series: [sample] }] }));
+  const element = await mount('server');
+  button(element, '图形').click();
+  await element.updateComplete;
+  authFetch.mockImplementationOnce(async (_path, options) => {
+    const { from, to, resource, metric, dimensions } = JSON.parse(options.body);
+    return response({ resource, metric, dimensions, window: { from, to }, observations: [sample], total: 1, has_more: false });
+  });
+  button(element, '查看采集详情').click();
+  await vi.waitFor(() => expect(element.shadowRoot!.querySelector('tbody .number')?.textContent).toBe('9007199254740993 B'));
+});
+
+it('rejects a raw page for a different dimension even when the window matches', async () => {
+  const element = await mount();
+  button(element, '图形').click();
+  await element.updateComplete;
+  authFetch.mockImplementationOnce(async (_path, options) => {
+    const { from, to, resource, metric } = JSON.parse(options.body);
+    return response({ resource, metric, dimensions: { target: 'other' }, window: { from, to },
+      observations: [{ ...counter.series[0], value: { encoding: 'uint64', value: '8675309' } }], total: 1, has_more: false });
+  });
+  button(element, '查看采集详情').click();
+  await vi.waitFor(() => expect(element.shadowRoot!.querySelector('[role="alert"]')?.textContent ?? '').toContain('指标历史'));
+  expect(element.shadowRoot!.textContent).not.toContain('8675309');
+});
+
+it('shows a structured histogram without changing exact count strings', async () => {
+  const definition = { ...textMetric.definition, id: 'fixture.device.histogram', kind: 'histogram', value_type: 'histogram' };
+  const sample = { ...textMetric.series[0], value: { encoding: 'histogram', count: '9007199254740993', sum: 19,
+    buckets: [{ upper_bound: '+Inf', count: '9007199254740993' }] } };
+  authFetch.mockImplementationOnce(async (_path, options) =>
+    response({ resource: JSON.parse(options.body), evaluated_at: at, metrics: [{ ...textMetric, definition, series: [sample] }] }));
+  const element = await mount('network_device');
+  authFetch.mockImplementationOnce(async (_path, options) => {
+    const { from, to, resource, metric, dimensions } = JSON.parse(options.body);
+    return response({ resource, metric, dimensions, window: { from, to }, observations: [sample], total: 1, has_more: false });
+  });
+  button(element, '历史记录').click();
+  await waitForText(element, '查看结构化值');
+  const details = [...element.shadowRoot!.querySelectorAll('tbody details')].find(node => node.textContent?.includes('查看结构化值'));
+  expect(JSON.parse(details!.querySelector('pre')!.textContent!)).toEqual(sample.value);
+  expect(calls('query')).toHaveLength(0);
 });
 
 it('does not show a late history reply after the authorization context changes', async () => {

@@ -23,6 +23,8 @@ export const SERVER_HISTORICAL_REPORT_DELETE_ERROR =
 export const SERVER_ADDRESS_ALREADY_MANAGED = '该主机地址和端口已被纳管，请勿重复添加';
 /** Client text for an unexpected update failure. Driver details stay in the server log. */
 export const SERVER_UPDATE_FAILED = '更新服务器失败';
+const SERVER_ENVIRONMENTS = ['development', 'testing', 'staging', 'production'] as const;
+type ServerEnvironment = typeof SERVER_ENVIRONMENTS[number];
 
 const UPDATE_BUSINESS_ERRORS = new Set([
   'SSH_CREDENTIAL_TYPE_INVALID',
@@ -97,6 +99,7 @@ export interface ServerRow {
   host: string;
   port: number;
   label: string | null;
+  environment?: ServerEnvironment | null;
   os_type: string;
   credential_type: 'password' | 'key';
   credential_encrypted: string;
@@ -163,7 +166,7 @@ class ServerDatabaseService {
       const [rows] = await pool.execute(
         `SELECT id, host, port, label, os_type, credential_type,
                 credential_encrypted, host_key_fingerprint, ssh_trust_mode, status,
-                last_check_at, collection_enabled, created_at, updated_at
+                last_check_at, collection_enabled, created_at, updated_at, environment
          FROM servers
          ORDER BY host`
       ) as any;
@@ -189,7 +192,7 @@ class ServerDatabaseService {
       const [rows] = await pool.execute(
         `SELECT id, host, port, label, os_type, credential_type,
                 credential_encrypted, host_key_fingerprint, ssh_trust_mode, status,
-                last_check_at, collection_enabled, created_at, updated_at
+                last_check_at, collection_enabled, created_at, updated_at, environment
          FROM servers
          WHERE id = ?`,
         [id]
@@ -266,6 +269,7 @@ class ServerDatabaseService {
     host: string;
     port?: number;
     label?: string;
+    environment?: ServerEnvironment | null;
     os_type: string;
     credential_type: 'password' | 'key';
     credential_username: string;
@@ -282,6 +286,9 @@ class ServerDatabaseService {
     try {
       const canonicalOs = normalizeServerOs(data.os_type);
       if (!canonicalOs) return { success: false, error: 'HOST_OS_UNSUPPORTED' };
+      if (data.environment != null && !SERVER_ENVIRONMENTS.includes(data.environment)) {
+        return { success: false, error: 'SERVER_ENVIRONMENT_INVALID' };
+      }
       const target = await authorizeServerTarget({ host: data.host, port: data.port || 22 });
       createCredentialSshHostVerifier(data.credential_type, data.host_key_fingerprint, data.ssh_trust_mode);
       const hostKeyFingerprint = normalizeOptionalSshHostKeyFingerprint(data.host_key_fingerprint) ?? null;
@@ -312,8 +319,8 @@ class ServerDatabaseService {
 
       const [result] = await pool.execute(
         `INSERT INTO servers
-         (host, port, label, os_type, credential_type, credential_encrypted, host_key_fingerprint, ssh_trust_mode, collection_enabled)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)`,
+         (host, port, label, os_type, credential_type, credential_encrypted, host_key_fingerprint, ssh_trust_mode, collection_enabled, environment)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?)`,
         [
           target.hostname,
           target.port,
@@ -323,6 +330,7 @@ class ServerDatabaseService {
           encrypted,
           hostKeyFingerprint,
           data.credential_type === 'key' ? data.ssh_trust_mode ?? null : null,
+          data.environment ?? null,
         ]
       ) as any;
 
@@ -346,6 +354,7 @@ class ServerDatabaseService {
       host?: string;
       port?: number;
       label?: string;
+      environment?: ServerEnvironment | null;
       os_type?: string;
       credential_type?: 'password' | 'key';
       credential_username?: string;
@@ -358,6 +367,9 @@ class ServerDatabaseService {
     const pool = this.getPool();
     if (!pool) {
       return { success: false, error: '数据库未连接' };
+    }
+    if (data.environment != null && !SERVER_ENVIRONMENTS.includes(data.environment)) {
+      return { success: false, error: 'SERVER_ENVIRONMENT_INVALID' };
     }
 
     const apply = async (sql: { execute(statement: string, values?: any[]): Promise<any> }) => {
@@ -395,6 +407,10 @@ class ServerDatabaseService {
       if (data.label !== undefined) {
         updates.push('label = ?');
         values.push(data.label);
+      }
+      if (data.environment !== undefined) {
+        updates.push('environment = ?');
+        values.push(data.environment);
       }
       if (data.os_type !== undefined) {
         updates.push('os_type = ?');

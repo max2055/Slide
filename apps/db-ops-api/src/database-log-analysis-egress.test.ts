@@ -74,6 +74,21 @@ describe('MAX-425 log analysis egress', () => {
     expect(llmService.chatWithTracking).not.toHaveBeenCalled();
   });
 
+  it('runs a manually selected warning through the original task and existing projection', async () => {
+    const input = { ...log(), log_level: 'warning' } as const;
+    await databaseLogService.triggerLogAnalysis([input], 2, 12);
+    expect(analysis.createAnalysis).not.toHaveBeenCalled();
+    expect(analysis.updateStatus).toHaveBeenCalledWith(12, 'running');
+    const [messages, options] = vi.mocked(llmService.chatWithTracking).mock.calls[0];
+    expect(options.sessionId).toBe('log-analysis-12');
+    expect(messages[0].content).toContain('[warning]');
+    expect(messages[0].content).toContain('MY-010584');
+    for (const secret of secrets) expect(messages[0].content).not.toContain(secret);
+    expect(analysis.completeAnalysis).toHaveBeenCalledWith(12, expect.objectContaining({
+      result: expect.objectContaining({ log_count: 1 }),
+    }));
+  });
+
   it('fails closed for a malformed stored message instead of falling back to raw logs', async () => {
     const malformed = { ...log(), message: null } as unknown as DatabaseLog;
     await databaseLogService.triggerLogAnalysis([malformed], 2, 12);

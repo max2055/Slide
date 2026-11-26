@@ -6,6 +6,9 @@ import { dbConnection } from './db-connection';
 import { reportAccessSql, type ReportAccessScope } from './report-access.js';
 import { scheduledReportPersistence } from './workflows/scheduled-report-context.js';
 
+// Reports without an expiration remain available, including historical records.
+const REPORT_AVAILABLE_SQL = '(r.expires_at IS NULL OR r.expires_at > UTC_TIMESTAMP())';
+
 export type ReportType = 'health' | 'performance' | 'slow_query' | 'capacity' | 'server_health';
 export type ReportFormat = 'pdf' | 'html' | 'json' | 'csv';
 export type ReportStatus = 'pending' | 'completed' | 'failed';
@@ -123,7 +126,7 @@ class ReportDatabaseService {
          FROM reports r
          LEFT JOIN database_instances i ON r.instance_id = i.id
          LEFT JOIN servers s ON r.server_id = s.id
-         WHERE r.id = ? AND ${access.sql}`,
+         WHERE r.id = ? AND ${REPORT_AVAILABLE_SQL} AND ${access.sql}`,
         [id, ...access.params]
       ) as any;
 
@@ -153,7 +156,7 @@ class ReportDatabaseService {
 
     try {
       const access = reportAccessSql(scope, 'reports', 'r.');
-      const conditions = [access.sql];
+      const conditions = [REPORT_AVAILABLE_SQL, access.sql];
       const params: (string | number)[] = access.params;
 
       if (filters.type) {
@@ -333,15 +336,15 @@ class ReportDatabaseService {
     }
 
     try {
-      const access = reportAccessSql({ instanceIds: allowedInstanceIds, serverIds: allowedServerIds }, 'reports');
+      const access = reportAccessSql({ instanceIds: allowedInstanceIds, serverIds: allowedServerIds }, 'reports', 'r.');
       const [rows] = await pool.execute(`
         SELECT
           COUNT(*) as total,
           SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) as completed,
           SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) as running,
           SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) as failed
-        FROM reports
-        WHERE ${access.sql}
+        FROM reports r
+        WHERE ${REPORT_AVAILABLE_SQL} AND ${access.sql}
       `, access.params) as any;
 
       return {

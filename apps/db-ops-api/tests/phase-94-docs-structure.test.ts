@@ -5,11 +5,13 @@
  * no files outside docs/slide/ in docs/ directory, root files kept, tmp/ files moved.
  *
  * NOTE: Plan specified .md files; implementation refactored to .html (commit f70eaf6374e).
- * Tests check for actual files on disk.
+ * Required docs are checked on disk. In a checkout the layout boundary applies
+ * to tracked and non-ignored files, so private local outputs do not affect it.
  */
 
 import { describe, it, expect } from 'vitest';
-import { existsSync, readdirSync, statSync } from 'fs';
+import { execFileSync } from 'node:child_process';
+import { existsSync, readdirSync } from 'fs';
 import { join } from 'path';
 import { fileURLToPath } from 'url';
 
@@ -64,14 +66,16 @@ describe('94-01-01: docs/slide/ directory structure and file cleanup', () => {
   // This is a known deviation — may be intentional template storage
 
   it('no doc files outside docs/slide/ in docs/ directory (excluding reference/ templates)', () => {
-    const docsDir = join(ROOT, 'docs');
-    const allEntries = readdirSync(docsDir);
-    const nonSlide = allEntries.filter(e => e !== 'slide' && e !== '.DS_Store');
+    const allEntries = existsSync(join(ROOT, '.git'))
+      ? execFileSync('git', ['ls-files', '--cached', '--others', '--exclude-standard', '-z', '--', 'docs'], {
+          cwd: ROOT, encoding: 'utf8',
+        }).split('\0').filter(Boolean).map(file => file.split('/')[1])
+      : readdirSync(join(ROOT, 'docs'));
     // docs/reference/templates/ exists with Slide template files
     // (SOUL.dev.md, AGENTS.md, etc.). These are Slide-owned templates not
     // covered by the D-02 cleanup scope. Accept as known exception.
-    const nonReference = nonSlide.filter(e => e !== 'reference' && e !== 'superpowers');
-    expect(nonReference).toEqual([]);
+    const allowed = new Set(['slide', '.DS_Store', 'reference', 'superpowers']);
+    expect([...new Set(allEntries)].filter(entry => !allowed.has(entry))).toEqual([]);
   });
 
   // ===== Root files kept (D-03) =====

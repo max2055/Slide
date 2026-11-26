@@ -1,6 +1,6 @@
 import type { RawObservation } from '../../contracts/metrics/index.js';
 import { AdapterError, classifyError, type DecodedRow, type DriverEvidence, type Transport } from '../packages/adapters.js';
-import { databaseReads, capacityReads, oracle1919Reads, vendorLifecycleReads, implementationId, type Engine } from './catalog.js';
+import { databaseReads, capacityReads, postgres1616Reads, oracle1919Reads, vendorLifecycleReads, implementationId, type Engine } from './catalog.js';
 import { diagnosticReads, innodbDeadlocksRead } from './diagnostics.js';
 
 /** Adapt authorized PG/Oracle/DM driver rows. The owner supplies a bounded native execute
@@ -51,7 +51,7 @@ async function collectInnodbDeadlocks(transport: Extract<Transport, { method: 's
 }
 
 export async function collectDatabase(id: string, transport: Transport, evidence: DriverEvidence, timeoutMs: number): Promise<DecodedRow[]> {
-  const read = [...databaseReads, ...capacityReads, ...oracle1919Reads, ...vendorLifecycleReads, ...diagnosticReads].find(r => implementationId(r) === id);
+  const read = [...databaseReads, ...capacityReads, ...postgres1616Reads, ...oracle1919Reads, ...vendorLifecycleReads, ...diagnosticReads].find(r => implementationId(r) === id);
   if (!read || transport.method !== 'sql') throw new AdapterError('parse_error');
   if (read === innodbDeadlocksRead) return collectInnodbDeadlocks(transport, timeoutMs);
   let response: unknown, counter = evidence.counter, observed_at: string | undefined;

@@ -5,6 +5,7 @@
 import { reportServiceUnavailable } from './service-recovery.js';
 const BASE_URL = '/api'; // 使用 Vite 代理到后端
 export const SESSION_EXPIRED_EVENT = 'slide-session-expired';
+export const ACCESS_TOKEN_REFRESHED_EVENT = 'slide-access-token-refreshed';
 
 let sessionExpiryInProgress = false;
 
@@ -25,6 +26,8 @@ export function notifySessionExpired(): void {
 interface RequestConfig extends RequestInit {
   params?: Record<string, string | number | boolean | undefined>;
 }
+
+type AuthFetchOptions = RequestInit & { refreshAccess?: boolean };
 
 interface ApiResponse<T> {
   code: number;
@@ -193,6 +196,7 @@ class ApiClient {
       // Rotation authenticated by this same refresh session preserves UI ownership.
       this.storeToken(data.token);
       this.setRefreshToken(data.refreshToken);
+      window.dispatchEvent(new Event(ACCESS_TOKEN_REFRESHED_EVENT));
       return data.token;
     } catch {
       if (session !== this.getSessionContext()) return null;
@@ -204,7 +208,7 @@ class ApiClient {
     }
   }
 
-  async fetchResponseWithAuth(url: string, options: RequestInit = {}): Promise<Response> {
+  async fetchResponseWithAuth(url: string, { refreshAccess = true, ...options }: AuthFetchOptions = {}): Promise<Response> {
     const executeFetch = (token: string | null) => {
       const headers = new Headers(options.headers || {});
       const method = (options.method || 'GET').toUpperCase();
@@ -227,7 +231,7 @@ class ApiClient {
     if (options.signal?.aborted) return response;
     if (response.status >= 500) reportServiceUnavailable();
 
-    if (response.status === 401) {
+    if (response.status === 401 && refreshAccess) {
       if (sessionStorage.getItem('slide-refresh-uncertain')) return this.uncertainRefreshResponse();
       // Try token refresh first
       if (!this.refreshPromise) {
@@ -298,7 +302,7 @@ class ApiClient {
 
 // Shared auth-aware fetch — injects JWT token from localStorage.
 // For components that use raw fetch() instead of ApiClient.
-export async function authFetch(url: string, options: RequestInit = {}): Promise<Response> {
+export async function authFetch(url: string, options: AuthFetchOptions = {}): Promise<Response> {
   return apiClient.fetchResponseWithAuth(url, options);
 }
 

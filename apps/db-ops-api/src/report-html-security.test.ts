@@ -98,6 +98,24 @@ describe('HTML report text boundaries (#279 / #362)', () => {
     expect(result.content).not.toMatch(/<(?:img|script)\b/i);
   });
 
+  it.each([false, true])('distinguishes unknown duration from zero and keeps precision, missing=%s', async missing => {
+    if (missing) {
+      vi.spyOn(fs, 'existsSync').mockReturnValue(false);
+      vi.spyOn(console, 'warn').mockImplementation(() => {});
+    }
+    mocks.slowQueries.mockResolvedValue([
+      { sql_text: 'unknown duration', avg_time_ms: null, total_time_ms: null },
+      { sql_text: 'measured zero', avg_time_ms: 0, total_time_ms: 0 },
+      { sql_text: 'measured decimal', avg_time_ms: 12.34, total_time_ms: 24.68 },
+    ]);
+
+    const report = await reportService.generateReport('slow_query', 7);
+    expect(report.content).toMatch(/<code>unknown duration<\/code><\/td>\s*<td>未知<\/td>/);
+    expect(report.content).toMatch(/<code>measured zero<\/code><\/td>\s*<td>0\.00<\/td>/);
+    expect(report.content).toMatch(/<code>measured decimal<\/code><\/td>\s*<td>12\.34<\/td>/);
+    expect(report.data.recommendations[0]).toContain('平均执行时间未知');
+  });
+
   it('preserves ordinary Chinese text, JSON formatting, and null data', async () => {
     const html = await reportExporter.exportToHTML({ ...stored, name: '中文报表', data: { count: 3 } });
     expect(html).toContain('<h1>中文报表</h1>');

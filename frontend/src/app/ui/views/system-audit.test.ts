@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { setFormatSettings } from '../format-config.js';
 
 const mocks = vi.hoisted(() => ({
   get: vi.fn(),
@@ -27,6 +28,10 @@ describe('system audit page', () => {
 
   afterEach(() => {
     document.body.replaceChildren();
+    localStorage.clear();
+    setFormatSettings({});
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
     vi.clearAllMocks();
   });
 
@@ -41,10 +46,37 @@ describe('system audit page', () => {
   it('loads and renders system audit records', async () => {
     const page = await renderPage();
 
-    expect(mocks.get).toHaveBeenCalledWith('/audit/logs', { params: expect.objectContaining({ limit: 25, offset: 0 }) });
+    expect(mocks.get).toHaveBeenCalledWith('/audit/logs', { params: expect.objectContaining({ limit: 50, offset: 0 }) });
     expect(page.shadowRoot?.textContent).toContain('PATCH /api/users/:id');
     expect(page.shadowRoot?.textContent).toContain('alice');
     expect(page.shadowRoot?.textContent).toContain('127.0.0.1');
+  });
+
+  it('S03 uses display preferences while preserving the recorded audit instant', async () => {
+    const instant = new Date(1_788_000_000_000);
+    vi.spyOn(Date, 'now').mockReturnValue(instant.getTime() + 60 * 60_000);
+    const storageKey = 'slide.control.settings.v1:default';
+    vi.stubGlobal('localStorage', window.localStorage);
+    localStorage.setItem(storageKey, JSON.stringify({ defaultPageSize: 10 }));
+    setFormatSettings({ locale: 'zh-CN', dateFormat: 'relative', timezone: 'Asia/Tokyo' });
+    const page = await renderPage();
+    const displayedTime = () => page.shadowRoot!.querySelector('tbody td time');
+
+    expect(mocks.get).toHaveBeenLastCalledWith('/audit/logs', { params: expect.objectContaining({ limit: 10, offset: 0 }) });
+    expect(displayedTime()?.textContent).toBe('1小时前');
+    expect(displayedTime()?.getAttribute('datetime')).toBe(instant.toISOString());
+    expect(displayedTime()?.getAttribute('title')).toBe(instant.toISOString());
+
+    setFormatSettings({ locale: 'zh-CN', dateFormat: 'absolute', timezone: 'Asia/Tokyo' });
+    window.dispatchEvent(new Event('slide-settings-applied'));
+    await page.updateComplete;
+    expect(displayedTime()?.textContent).toBe(instant.toLocaleString('zh-CN', { timeZone: 'Asia/Tokyo' }));
+    expect(mocks.get).toHaveBeenCalledTimes(1);
+
+    localStorage.setItem(storageKey, JSON.stringify({ defaultPageSize: 20 }));
+    window.dispatchEvent(new Event('slide-settings-applied'));
+    await page.updateComplete;
+    expect(mocks.get).toHaveBeenLastCalledWith('/audit/logs', { params: expect.objectContaining({ limit: 20, offset: 0 }) });
   });
 
   it('submits keyword, operation type, and time filters', async () => {

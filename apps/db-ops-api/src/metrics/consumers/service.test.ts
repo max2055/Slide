@@ -163,6 +163,18 @@ describe('MAX-75 deterministic consumer contract', () => {
     live = admin;
     await expect(guarded.latest(admin, fixture.resource)).rejects.toThrow('POLICY_FORBIDDEN');
   });
+  it('rejects a raw observation page ending after the consumer clock before reading the page', async () => {
+    const app = Fastify();
+    await registerMetricConsumerRoutes(app, async r => { (r as any).user = admin; }, service);
+    try {
+      const response = await app.inject({ method: 'POST', url: '/api/metrics/observations', payload: {
+        resource: fixture.resource, metric: rows[0].metric, dimensions: {},
+        from: fixture.window.from, to: new Date(Date.parse(now) + 1).toISOString(),
+      } });
+      expect(response.statusCode).toBe(400);
+      expect(response.json()).toEqual({ error: 'QUERY_WINDOW' });
+    } finally { await app.close(); }
+  });
   it.each(['discover', 'inventory'] as const)('%s revalidates after its storage reads', async operation => {
     let live = admin;
     const guarded = new MetricConsumerService(policies, createConfigurationRegistry(), {

@@ -20,7 +20,10 @@ export class AgentSkillsPage extends AgentListPage<Skill> {
   @state() private toggleError = '';
   static styles = [sharedBtnStyles, agentListStyles];
   protected clearDetails() { this.selected = null; this.pending = null; this.toggleError = ''; }
-  private canManage() { const permissions = readCachedPermissions(); return !!permissions && (permissions.has('*') || permissions.has('config:manage')); }
+  private canManage() {
+    const permissions = readCachedPermissions();
+    return ['*', 'config:manage', 'config:*', '*:manage'].some(permission => permissions?.has(permission));
+  }
   async toggleSkill(skill: Skill) {
     if (this.pending || !this.canManage()) return;
     const generation = this.generation, enabled = !skill.enabled;

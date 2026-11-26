@@ -4,7 +4,8 @@
 set -u
 
 root="$(cd "$(dirname "$0")/../.." && pwd)"
-real_node="$(command -v node)"
+# Use the same runtime as the Node test runner even when PATH contains another Node.
+real_node="${1:-$(command -v node)}"
 real_python="$(command -v python3)"
 export SERVE_E2E_PYTHON="$real_python"
 script="$root/scripts/qualification/serve-e2e.sh"

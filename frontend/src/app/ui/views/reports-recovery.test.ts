@@ -1,7 +1,9 @@
 import { afterEach, expect, it, vi } from 'vitest';
 import { ReportsPage } from './reports.js';
 import { authFetch } from '../../../api/index.js';
+import { showToast } from '../components/app-toast-container.js';
 vi.mock('../../../api/index.js', () => ({ authFetch: vi.fn() }));
+vi.mock('../components/app-toast-container.js', () => ({ showToast: vi.fn() }));
 afterEach(() => { document.body.replaceChildren(); vi.resetAllMocks(); });
 async function page() {
   const element = new ReportsPage();
@@ -58,4 +60,40 @@ it('keeps a healthy empty list distinct from failure', async () => {
   expect(element.shadowRoot.querySelector('[role="alert"]')).toBeNull();
   const create = [...element.shadowRoot.querySelectorAll('button')].find((button: any) => button.textContent.includes('新建计划')) as HTMLButtonElement;
   expect(create.disabled).toBe(false);
+});
+
+it('keeps the confirmation open on DELETE rejection and reads back an accepted deletion', async () => {
+  const element = await page();
+  const config = { id: 42, name: 'test schedule' };
+  element.configs = [config];
+  element._confirmDelete(config);
+  vi.mocked(authFetch).mockResolvedValueOnce(Response.json({ error: 'denied' }, { status: 403 }));
+  await element._deleteConfig();
+  expect(authFetch).toHaveBeenCalledExactlyOnceWith('/api/reports/configs/42', { method: 'DELETE' });
+  expect(element.showDeleteConfirm).toBe(true);
+  expect(element.configs).toEqual([config]);
+  expect(showToast).toHaveBeenCalledWith(expect.any(String), 'error');
+  vi.mocked(authFetch).mockResolvedValueOnce(Response.json({ message: '删除成功' })).mockResolvedValueOnce(Response.json([]));
+  await element._deleteConfig();
+  expect(element.showDeleteConfirm).toBe(false);
+  expect(element.configs).toEqual([]);
+  expect(authFetch).toHaveBeenLastCalledWith('/api/reports/configs');
+});
+
+it.each([
+  ['health', '/api/reports/generate', { id: 12 }],
+  ['server_health', '/api/servers/reports/generate', { reportId: 13 }],
+] as const)('confirms %s generation only after an ID and reads history for an unknown receipt', async (type, path, receipt) => {
+  const element = await page();
+  const refresh = vi.spyOn(element, 'refreshReadData').mockResolvedValue(undefined);
+  vi.mocked(authFetch).mockResolvedValueOnce(new Response(null, { status: 200 }));
+  await element._generateReport(type);
+  expect(authFetch).toHaveBeenCalledTimes(1);
+  expect(authFetch).toHaveBeenCalledWith(path, expect.objectContaining({ method: 'POST' }));
+  expect(showToast).toHaveBeenLastCalledWith(expect.stringContaining('无法确认'), 'error');
+  expect(refresh).toHaveBeenCalledOnce();
+  vi.mocked(authFetch).mockResolvedValueOnce(Response.json(receipt));
+  await element._generateReport(type);
+  expect(authFetch).toHaveBeenCalledTimes(2);
+  expect(showToast).toHaveBeenLastCalledWith('报表已生成。', 'success');
 });

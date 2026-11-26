@@ -110,6 +110,15 @@ describe('MAX-176 sessions and skills', () => {
     expect(request.mock.calls.every(([, options]) => (options?.method ?? 'GET') === 'GET')).toBe(true);
     localStorage.removeItem('permissions');
   });
+  it.each(['config:*', '*:manage'])('shows skill controls for the API-authorized %s grant', async permission => {
+    localStorage.setItem('permissions', JSON.stringify(['ai:view', permission]));
+    try {
+      vi.spyOn(apiClient, 'fetchResponseWithAuth').mockImplementation(async url =>
+        response(String(url).includes('/agent/extensions') ? { extensions: [] } : { skills: [skill()] }));
+      const element = new AgentSkillsPage(); document.body.append(element); await settled(element);
+      expect(element.shadowRoot!.querySelector('button[aria-label="禁用 path/技能"]')).not.toBeNull();
+    } finally { localStorage.removeItem('permissions'); }
+  });
 });
 
 describe('MAX-176 authorization during details', () => {

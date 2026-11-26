@@ -97,6 +97,7 @@ export interface AuditLogQuery {
   requestCategory?: 'business' | 'background';
   /** 资源 ID 过滤（用于 query-history 的 instance 过滤） */
   resourceId?: string;
+  approvedSql?: { requestId: number; operationId: string };
   /** 搜索文本（用于 SQL 文本模糊搜索） */
   search?: string;
   /** 分页限制 */
@@ -144,6 +145,7 @@ export class MemoryAuditLogStore implements AuditLogHandler {
   }
 
   async query(params: AuditLogQuery): Promise<{ entries: AuditLogEntry[]; total: number }> {
+    if (params.approvedSql) return { entries: [], total: 0 };
     let filtered = [...this.logs];
 
     if (params.eventType) {
@@ -321,6 +323,16 @@ export class DatabaseAuditLogStore implements AuditLogHandler {
       conditions.push('h.instance_id = ?');
       params.push(Number(filter.resourceId));
     }
+    if (filter.approvedSql) {
+      conditions.push(`h.approval_request_id = ? AND EXISTS (
+        SELECT 1 FROM sql_execution_intents i
+        JOIN approval_requests a ON a.id = i.approval_request_id
+          AND CAST(a.operation_id AS BINARY) = CAST(i.operation_id AS BINARY)
+        WHERE i.operation_id = ? AND i.approval_request_id = h.approval_request_id
+          AND i.instance_id = h.instance_id AND a.instance_id = h.instance_id
+      )`);
+      params.push(filter.approvedSql.requestId, filter.approvedSql.operationId);
+    }
     if (filter.startTime !== undefined) {
       conditions.push('h.created_at >= FROM_UNIXTIME(?)');
       params.push(Math.floor(filter.startTime / 1000));
@@ -372,6 +384,7 @@ export class DatabaseAuditLogStore implements AuditLogHandler {
         action: 'sql_execute',
         resourceType: 'database',
         resourceId: row.instance_id != null ? String(row.instance_id) : undefined,
+        ...(filter.approvedSql ? { approvalRequestId: String(row.approval_request_id) } : {}),
         clientIp: row.ip_address || undefined,
         result: row.status === 'error' ? 'failure' as const : 'success' as const,
         errorMessage: row.error_message || undefined,

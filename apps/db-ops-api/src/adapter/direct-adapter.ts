@@ -17,6 +17,7 @@ import { orderedChatConsumer } from './chat-event-consumer.js';
 import { BusinessMemoryService } from './memory-service.js';
 import { resolveRuntimePolicy, runtimeSpec } from './runtime-policy.js';
 import { PlatformUnavailableError } from '../lifecycle/platform-unavailable.js';
+import jwt from 'jsonwebtoken';
 /**
  * DirectAdapter — Default IAgentEngine implementation.
  *
@@ -211,6 +212,8 @@ export interface DirectAdapterOptions {
   tools: ToolRegistry;
   /** Builds an actor-bound registry so LLM calls cannot supply their own identity. */
   toolsForActor?: (actor: ActorContext) => ToolRegistry;
+  authorizeToolCatalog?: (actor: ActorContext, names: readonly string[]) => Promise<void>;
+  recordToolDiscovery?: (actor: ActorContext, names: readonly string[]) => Promise<void>;
   llmProvider: import('@slide/agent-core').LLMProvider;
   providerForPurpose?: (purpose?: string) => Promise<import('@slide/agent-core').LLMProvider>;
   workspace?: string;              // workspace root path (defaults to process.cwd())
@@ -257,6 +260,8 @@ export class DirectAdapter implements IAgentEngine {
   private providerForPurpose?: DirectAdapterOptions['providerForPurpose'];
   private registry: ToolRegistry;
   private toolsForActor?: (actor: ActorContext) => ToolRegistry;
+  private readonly authorizeToolCatalog?: DirectAdapterOptions['authorizeToolCatalog'];
+  private readonly recordToolDiscovery?: DirectAdapterOptions['recordToolDiscovery'];
   private provider: import('@slide/agent-core').LLMProvider;
   private sessionManager: SessionManager;
   private contextBuilder: ContextBuilder;
@@ -315,6 +320,8 @@ export class DirectAdapter implements IAgentEngine {
     });
     this.investigationExecutor = opts.investigationExecutor;
     this.providerForPurpose = opts.providerForPurpose;
+    this.authorizeToolCatalog = opts.authorizeToolCatalog;
+    this.recordToolDiscovery = opts.recordToolDiscovery;
     this.registry = opts.tools;
     this.toolsForActor = opts.toolsForActor;
     this.provider = opts.llmProvider;
@@ -496,8 +503,11 @@ export class DirectAdapter implements IAgentEngine {
       };
 
       const closeAfterAuthFailure = (code: number, reason: string) => {
+        const credential = connectionActor && chatCredential(connectionActor);
+        const closeReason = code === 4001 && reason === 'Unauthorized' && credential && credential.expiresAt <= Date.now()
+          ? 'Access credential expired' : reason;
         clearAuthentication();
-        if (ws.readyState === WebSocket.OPEN) ws.close(code, reason);
+        if (ws.readyState === WebSocket.OPEN) ws.close(code, closeReason);
       };
 
       this.socketWriter.setGuard(ws, async payload => {
@@ -690,7 +700,7 @@ export class DirectAdapter implements IAgentEngine {
               && authGeneration === authenticationGeneration) {
               const credential = chatCredential(authenticatedActor);
               if (!credential) throw new ActorAuthenticationError();
-              credentialTimer = setTimeout(() => closeAfterAuthFailure(4001, 'Unauthorized'), Math.max(0, credential.expiresAt - Date.now()));
+              credentialTimer = setTimeout(() => closeAfterAuthFailure(4001, 'Access credential expired'), Math.max(0, credential.expiresAt - Date.now()));
               connectionActor = authenticatedActor;
               connectionCeiling = authenticatedActor;
               authenticatedUserId = authenticatedActor.userId;
@@ -705,7 +715,10 @@ export class DirectAdapter implements IAgentEngine {
             }
           } catch (error) {
             if (authGeneration === authenticationGeneration) {
-              closeAfterAuthFailure(error instanceof PlatformUnavailableError ? 1013 : 4001, error instanceof PlatformUnavailableError ? 'Service unavailable' : 'Unauthorized');
+              if (error instanceof PlatformUnavailableError) closeAfterAuthFailure(1013, 'Service unavailable');
+              else if (error instanceof ActorAuthenticationError && error.cause instanceof jwt.TokenExpiredError) {
+                closeAfterAuthFailure(4001, 'Access credential expired');
+              } else closeAfterAuthFailure(4001, 'Unauthorized');
             }
           }
           return;
@@ -1068,7 +1081,13 @@ export class DirectAdapter implements IAgentEngine {
               return;
             }
             if (await agentRunService.cancelForActor(runId, connectionActor.userId, cancelSession)) {
+              this.displayStreams.markCancelled(cancelSession, runId);
               active.controller.abort();
+              // Acknowledge the durable cancellation even while the provider is settling.
+              const cancelled = await agentRunService.getForActor(runId, active.actorId, cancelSession);
+              if (cancelled?.state === 'cancelled' && authGeneration === commandGeneration) {
+                this.sendSocketEvent(ws, { type: 'run.snapshot', run: cancelled, messageId: cancelled.messageId, sessionKey: cancelSession });
+              }
             } else this.sendSocketEvent(ws, { type: 'protocol.error', code: 'RUN_NOT_CANCELLABLE' });
             break;
           }
@@ -1457,7 +1476,26 @@ export class DirectAdapter implements IAgentEngine {
     let terminalEmitted = false;
     try {
       const provider = this.providerForPurpose ? await this.providerForPurpose('chat') : this.provider;
-      const runner = this.providerForPurpose ? new AgentRunner(guardedChatProvider(provider)) : this.runner;
+      const authorizeCatalog = this.authorizeToolCatalog;
+      const recordDiscovery = this.recordToolDiscovery;
+      let discovery: Promise<void> | undefined;
+      let discoveryFailure: unknown;
+      const auditDiscovery = _actor && authorizeCatalog && recordDiscovery ? async (tools: import('@slide/agent-core').ToolSchema[]) => {
+        const names = tools.map(tool => tool.name);
+        try {
+          if (!discovery) {
+            discovery = authorizeCatalog(_actor, names).then(() => recordDiscovery(_actor, names));
+            await discovery;
+            await currentChatExecution()?.check();
+          } else await discovery;
+          await authorizeCatalog(_actor, names);
+        } catch (error) {
+          discoveryFailure = error;
+          throw error;
+        }
+      } : undefined;
+      const runner = this.providerForPurpose || auditDiscovery
+        ? new AgentRunner(guardedChatProvider(provider, auditDiscovery)) : this.runner;
 
       const result = await runner.run({
         initialMessages: contextMessages as Message[],
@@ -1540,6 +1578,9 @@ export class DirectAdapter implements IAgentEngine {
         return { stopReason, finalContent: null, usage: counters?.usage, error: cancelled.message, resolution };
       });
 
+      // Runner failures are normally summarized as a tool/model result. Keep the
+      // original platform authorization error for the HTTP/WS denial handlers.
+      if (discoveryFailure !== undefined) throw discoveryFailure;
       const active = this.activeRuns.get(runId);
       if (active) active.acceptingSteers = false;
 

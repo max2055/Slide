@@ -254,11 +254,13 @@ export async function registerNetworkDeviceRoutes(
   fastify.get('/api/network-devices/:id/interfaces', { preHandler: view }, async (request, reply) => {
     const id = routeId(request);
     if (id === null) return reply.code(400).send({ error: '资源 ID 无效' });
+    if (!canReadIdentity(actor(request), { type: 'network_device', id })) return reply.code(403).send({ error: 'RESOURCE_FORBIDDEN' });
     const pool = dbConnection.getPool();
     if (!pool) return reply.code(500).send({ error: '数据库未连接' });
     const [rows] = await pool.execute<any[]>(
       `SELECT id, device_id AS deviceId, if_index AS ifIndex, if_name AS ifName, if_alias AS ifAlias, speed_bps AS speedBps, admin_status AS adminStatus, oper_status AS operStatus, last_seen_at AS lastSeenAt
        FROM network_device_interfaces WHERE device_id = ? ORDER BY if_index`, [id]);
+    if (!await revalidateIdentityRead(request, reply, 'network_device', id)) return reply;
     return reply.send({ interfaces: rows.map((row) => ({ ...row, lastSeenAt: row.lastSeenAt ? new Date(row.lastSeenAt).toISOString() : null })) });
   });
 

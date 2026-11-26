@@ -50,6 +50,13 @@ const indexSections = {
 } as const;
 type IndexSection = keyof typeof indexSections;
 type IndexRead = { state: 'loading' | 'ready' } | { state: 'error'; message: string };
+type IndexUsageEvidence = {
+  status: 'available' | 'no-evidence' | 'no-snapshot' | 'unsupported';
+  source?: 'mysql-performance-schema' | 'postgresql-pg-stat-user-indexes';
+  observedAt?: string;
+  covered?: number;
+};
+const indexIdentity = (row: IndexRow) => JSON.stringify([row.table_name, row.index_name]);
 
 @customElement("index-management-page")
 export class IndexManagementPage extends LitElement {
@@ -342,6 +349,7 @@ export class IndexManagementPage extends LitElement {
   @state() private indexes: IndexRow[] = [];
   @state() private redundancyReport: RedundancyReportRow[] = [];
   @state() private unusedIndexes: IndexRow[] = [];
+  @state() private usageEvidence: IndexUsageEvidence | null = null;
   @state() private selectedTable = "";
   private indexBrowser = new ListBrowser();
   private unusedBrowser = new ListBrowser();
@@ -433,6 +441,7 @@ export class IndexManagementPage extends LitElement {
     this.indexes = []; this.unusedIndexes = []; this.redundancyReport = [];
     this.tables = []; this.expandedIndex = null; this.readAt = null;
     this.indexReads = {};
+    this.usageEvidence = null;
   }
 
   private async loadIndexes() {
@@ -471,6 +480,12 @@ export class IndexManagementPage extends LitElement {
         this.redundancyReport = rows;
       } else {
         this.unusedIndexes = rows;
+        try {
+          const evidence = res.headers.get('x-slide-index-usage');
+          this.usageEvidence = evidence ? JSON.parse(evidence) : null;
+        } catch {
+          this.usageEvidence = null;
+        }
       }
       this.indexReads = { ...this.indexReads, [section]: { state: 'ready' } };
     } catch {
@@ -580,12 +595,22 @@ export class IndexManagementPage extends LitElement {
     return grouped;
   }
 
-  private getUnusedSet(): Set<string> {
-    const set = new Set<string>();
-    for (const u of this.unusedIndexes) {
-      set.add(`${u.table_name}.${u.index_name}`);
-    }
-    return set;
+  private renderUsageEvidence() {
+    if (this.indexReads.unused?.state !== 'ready') return '';
+    const evidence = this.usageEvidence;
+    if (evidence?.status === 'unsupported') return html`<p role="status">当前数据库未提供未使用索引统计，使用情况未知。</p>`;
+    if (evidence?.status === 'no-snapshot') return html`<p role="status">请先采集索引，当前没有可核对使用情况的快照。</p>`;
+
+    const mysql = evidence?.source === 'mysql-performance-schema';
+    const postgresql = evidence?.source === 'postgresql-pg-stat-user-indexes';
+    if (!mysql && !postgresql) return html`<p role="status">未获得可核对的原生使用统计，使用情况未知。</p>`;
+
+    const source = mysql ? 'MySQL performance_schema 表索引 I/O 计数' : 'PostgreSQL pg_stat_user_indexes 扫描计数';
+    const scope = mysql ? '当前配置库' : '当前连接库';
+    return html`<p role="status">
+      未使用统计来源：${source} · 读取：${evidenceTime(evidence?.observedAt)}。范围为${scope}中与索引快照同名且提供原生计数的非主键索引，数据库统计窗口起点未知。
+      ${evidence?.status === 'available' ? `本次覆盖 ${evidence.covered} 个索引，零计数标为未使用。` : '本次没有可匹配的计数，使用情况未知。'}
+    </p>`;
   }
 
   private formatColumns(rows: IndexRow[]): string {
@@ -600,17 +625,19 @@ export class IndexManagementPage extends LitElement {
 
   override render() {
     const ready = (section: IndexSection) => this.indexReads[section]?.state === 'ready';
-    const count = (section: IndexSection, value: number) =>
+    const count = (section: IndexSection, value: number | string) =>
       ready(section) ? value : this.indexReads[section]?.state === 'loading' ? '读取中' : '未知';
     const selectedInstance = this.instances.find(
       (i) => i.id === this.selectedInstanceId,
     );
     const filteredIndexes = this.getFilteredIndexes();
     const groupedIndexes = this.getGroupedIndexes();
-    const unusedSet = this.getUnusedSet();
+    const usageKnown = this.usageEvidence?.status === 'available';
+    const unusedRows = usageKnown ? [...new Map(this.unusedIndexes.map(row => [indexIdentity(row), row])).values()] : [];
+    const unusedSet = new Set(unusedRows.map(indexIdentity));
     const indexCount = new Set(this.indexes.map(row => JSON.stringify([row.table_name, row.index_name]))).size;
     const indexPage = this.indexBrowser.select([...groupedIndexes.entries()], ([, rows]) => `${rows[0].table_name} ${rows[0].index_name} ${this.formatColumns(rows)}`, ([, rows]) => `${rows[0].table_name}.${rows[0].index_name}`);
-    const unusedPage = this.unusedBrowser.select(this.unusedIndexes, row => `${row.table_name} ${row.index_name}`, row => `${row.table_name}.${row.index_name}`);
+    const unusedPage = this.unusedBrowser.select(unusedRows, row => `${row.table_name} ${row.index_name}`, row => `${row.table_name}.${row.index_name}`);
     const redundancyPage = this.redundancyBrowser.select(this.redundancyReport, row => `${row.table_name} ${row.redundant_index} ${row.covered_by_index}`, row => `${row.table_name}.${row.redundant_index}`);
 
     return html`
@@ -673,11 +700,12 @@ export class IndexManagementPage extends LitElement {
               <span style="color: var(--warn);">${count('redundancy', this.redundancyReport.length)}</span> 冗余
             </div>
             <div class="stat-item">
-              <span style="color: var(--muted);">${count('unused', this.unusedIndexes.length)}</span> 未使用
+              <span style="color: var(--muted);">${count('unused', usageKnown ? unusedRows.length : '未知')}</span> 未使用
             </div>
           </div>
           ${this.renderReadStatus('redundancy')}
           ${this.renderReadStatus('unused')}
+          ${this.renderUsageEvidence()}
         </div>
 
         <!-- 冗余索引警告 -->
@@ -713,15 +741,15 @@ export class IndexManagementPage extends LitElement {
           : ""}
 
         <!-- 未使用索引列表 -->
-        ${this.unusedIndexes.length > 0
+        ${unusedRows.length > 0
           ? html`
               <div class="card">
                 <div class="card-header">
                   <span class="card-title">
-                    未使用索引 (${this.unusedIndexes.length})
+                    未使用索引 (${unusedRows.length})
                   </span>
                 </div>
-                ${renderListBrowser(this.unusedBrowser, unusedPage.total, this.unusedIndexes.length, "未使用索引", () => this.requestUpdate())}
+                ${renderListBrowser(this.unusedBrowser, unusedPage.total, unusedRows.length, "未使用索引", () => this.requestUpdate())}
                 <div class="table-container">
                   <table class="table">
                     <thead>
@@ -820,9 +848,7 @@ export class IndexManagementPage extends LitElement {
                           ([indexKey, rows]) => {
                             const indexName = rows[0].index_name;
                             const isExpanded = this.expandedIndex === indexKey;
-                            const isUnused = unusedSet.has(
-                              `${rows[0].table_name}.${indexName}`,
-                            );
+                            const isUnused = unusedSet.has(indexIdentity(rows[0]));
                             return html`
                               <tr>
                                 <td style="text-align:center;">

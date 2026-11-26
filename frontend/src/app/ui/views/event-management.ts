@@ -17,8 +17,11 @@ import { generateUUID } from '../uuid.ts';
 import { returnToWorkbench } from '../workbench-position.ts';
 import { eventDetailUrl, eventDisplayTitle, readEventId } from '../controllers/event-investigation-api.ts';
 import { ALERT_LEVELS, alertLevelLabel, alertLevelVariant } from '../alert-levels.js';
+import { readCachedPermissions } from '../permissions.ts';
 
 const API_BASE = "/api";
+const EVENT_READ_TIMEOUT = 15_000;
+const EVENT_LOCATION_KEY = 'slide.aggregate-event-location.v1';
 const EVENT_GROUPS = {
   active: { status: 'open,investigating,handled', label: '活跃事件' },
   resolved: { status: 'resolved,closed', label: '已解决 / 已关闭' },
@@ -43,12 +46,62 @@ type EventListReturn = {
   position: EventListPosition;
 };
 
-// The history entries hold only the token. Filters and focus belong to the
-// current document session and become invalid when its authority changes.
 let eventListReturn: EventListReturn | undefined;
-function clearEventListReturn() { eventListReturn = undefined; }
+let eventListAuthority: string | null = null;
+
+function currentEventListAuthority() {
+  try {
+    const payload = localStorage.getItem('token')?.split('.')[1];
+    if (!payload) return null;
+    const { userId, sessionVersion } = JSON.parse(atob(payload.replace(/-/g, '+').replace(/_/g, '/')));
+    const permissions = readCachedPermissions();
+    if (!readEventId(userId) || !readEventId(sessionVersion) || !permissions) return null;
+    return JSON.stringify([userId, sessionVersion, [...permissions].sort()]);
+  } catch { return null; }
+}
+
+function clearEventListReturn() {
+  eventListReturn = undefined;
+  eventListAuthority = null;
+  try { sessionStorage.removeItem(EVENT_LOCATION_KEY); } catch { /* Optional navigation state. */ }
+}
+
+function rememberEventListReturn(location: EventListReturn) {
+  eventListReturn = location;
+  eventListAuthority = currentEventListAuthority();
+  try {
+    if (eventListAuthority) sessionStorage.setItem(EVENT_LOCATION_KEY, JSON.stringify({ authority: eventListAuthority, location }));
+    else sessionStorage.removeItem(EVENT_LOCATION_KEY);
+  } catch { /* The in-document history remains available. */ }
+}
+
+function readEventListReturn(): EventListReturn | undefined {
+  const authority = currentEventListAuthority();
+  if (eventListReturn && eventListAuthority === authority) return eventListReturn;
+  try {
+    const stored = JSON.parse(sessionStorage.getItem(EVENT_LOCATION_KEY) ?? 'null');
+    const location = stored?.location as EventListReturn | undefined;
+    const position = location?.position;
+    if (authority && stored?.authority === authority && location && typeof location.token === 'string'
+      && readEventId(location.eventId) && Object.hasOwn(EVENT_GROUPS, location.group)
+      && Number.isSafeInteger(location.page) && location.page >= 0 && typeof location.severity === 'string'
+      && typeof location.search === 'string' && position && typeof position.key === 'string'
+      && Number.isFinite(position.mainTop) && Number.isFinite(position.listTop)
+      && position.focusId === String(location.eventId)
+      && (!position.row || readEventId(position.row.id) && Number.isFinite(position.row.viewportTop) && Number.isFinite(position.row.listOffset))) {
+      eventListReturn = location;
+      eventListAuthority = authority;
+      return location;
+    }
+  } catch { /* Invalid navigation state is discarded. */ }
+  clearEventListReturn();
+}
+
 if (typeof window !== 'undefined') {
-  window.addEventListener('slide-permissions-loaded', clearEventListReturn);
+  window.addEventListener('slide-permissions-loaded', () => {
+    if (currentEventListAuthority()) readEventListReturn();
+    else clearEventListReturn();
+  });
   window.addEventListener('slide-session-expired', clearEventListReturn);
 }
 
@@ -78,6 +131,7 @@ interface AlertEvent {
   alert_count?: number;
   root_cause?: string;
   assignee?: string;
+  assigned_to?: number | null;
   created_at: string;
   updated_at: string;
   closed_at?: string;
@@ -519,6 +573,7 @@ export class EventManagementPage extends LitElement {
   @state() private loadError: string | null = null;
   @state() private statsError = false;
   @state() private retryLoading = false;
+  @state() private listLoading = false;
   @state() private activeListTab: EventGroup = 'active';
   @state() private filterSeverity = "all";
   @state() private filterSearch = "";
@@ -528,7 +583,7 @@ export class EventManagementPage extends LitElement {
   @state() private showPostmortemForm = false;
   @state() private postmortemText = "";
   @state() private rcaLoading = false;
-  @state() private rcaResult: { analysisIds: number[]; sessionKeys: string[]; eventId: number } | null = null;
+  @state() private rcaResult: { analysisIds: number[]; sessionKeys: string[]; investigationIds?: string[]; eventId: number } | null = null;
   @state() private eventsPage = 0;
   @state() private eventsTotal: number | null = null;
   private readonly eventsPageSize = 50;
@@ -549,6 +604,7 @@ export class EventManagementPage extends LitElement {
   };
   override disconnectedCallback() {
     this.listRequest++; this.detailRequest++;
+    this.listReadController?.abort();
     window.removeEventListener('keydown', this.returnToList);
     super.disconnectedCallback();
   }
@@ -576,7 +632,8 @@ export class EventManagementPage extends LitElement {
       this.detailLoading = true;
       return;
     }
-    const saved = history.state?.aggregateListReturn === eventListReturn?.token ? eventListReturn : undefined;
+    const location = readEventListReturn();
+    const saved = history.state?.aggregateListReturn === location?.token ? location : undefined;
     if (!saved && !changes.get('eventId')) return;
     this._clearDetail();
     this.activeListTab = saved?.group ?? 'active';
@@ -592,6 +649,7 @@ export class EventManagementPage extends LitElement {
     if (!changes.has('eventId')) return;
     if (this.eventId) {
       this.listRequest++;
+      this.listReadController?.abort();
       void this._readDetail(this.eventId);
     } else void this._loadEvents();
   }
@@ -600,13 +658,16 @@ export class EventManagementPage extends LitElement {
     return value !== null && typeof value === 'object' && value.success !== false
       && Number.isSafeInteger(value.eventId) && value.eventId > 0
       && Array.isArray(value.analysisIds) && value.analysisIds.every((id: unknown) => typeof id === 'number' && Number.isSafeInteger(id) && id > 0)
-      && Array.isArray(value.sessionKeys) && value.sessionKeys.every((key: unknown) => typeof key === 'string' && key.trim().length > 0);
+      && Array.isArray(value.sessionKeys) && value.sessionKeys.every((key: unknown) => typeof key === 'string' && key.trim().length > 0)
+      && (value.investigationIds === undefined || Array.isArray(value.investigationIds)
+        && value.investigationIds.every((id: unknown) => typeof id === 'string' && /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(id)))
+      && (value.analysisIds.length > 0 || value.investigationIds?.length > 0);
   }
 
   private _saveRCAResult() {
-    if (this.rcaResult) {
-      localStorage.setItem('event_rca_result', JSON.stringify(this.rcaResult));
-    }
+    if (!this.rcaResult?.analysisIds.length) return;
+    const { eventId, analysisIds, sessionKeys } = this.rcaResult;
+    localStorage.setItem('event_rca_result', JSON.stringify({ eventId, analysisIds, sessionKeys }));
   }
 
   private _clearRCAResult() {
@@ -615,6 +676,7 @@ export class EventManagementPage extends LitElement {
   }
 
   private listRequest = 0;
+  private listReadController?: AbortController;
   private loadedListScope = '';
   private listPosition?: EventListPosition;
 
@@ -631,8 +693,8 @@ export class EventManagementPage extends LitElement {
   }
 
   private get canReturnToList() {
-    return eventListReturn?.eventId === this.eventId
-      && history.state?.aggregateEventReturn === eventListReturn.token;
+    const location = readEventListReturn();
+    return location?.eventId === this.eventId && history.state?.aggregateEventReturn === location.token;
   }
 
   private _eventRow(id: string) {
@@ -674,12 +736,17 @@ export class EventManagementPage extends LitElement {
       list.scrollTop = position.listTop;
       main.scrollTop = position.mainTop;
     }
-    if (position.focusId) this._eventRow(position.focusId)?.focus({ preventScroll: true });
+    if (position.focusId) {
+      const target = this._eventRow(position.focusId);
+      if (!target) clearEventListReturn();
+      (target ?? this.renderRoot.querySelector<HTMLInputElement>('input[aria-label="搜索本页事件"]'))
+        ?.focus({ preventScroll: true });
+    }
   }
 
-  private async _readEventList() {
+  private async _readEventList(signal: AbortSignal) {
     const offset = this.eventsPage * this.eventsPageSize;
-    const res = await authFetch(`${API_BASE}/alerts/events?limit=${this.eventsPageSize}&offset=${offset}&status=${EVENT_GROUPS[this.activeListTab].status}`, { cache: 'no-store' });
+    const res = await authFetch(`${API_BASE}/alerts/events?limit=${this.eventsPageSize}&offset=${offset}&status=${EVENT_GROUPS[this.activeListTab].status}`, { cache: 'no-store', signal });
     if (res.status === 401 || res.status === 403) throw new EventListAccessError('无权访问事件');
     if (!res.ok) throw new Error(`事件加载失败: ${res.status}`);
     const data = await res.json();
@@ -688,8 +755,8 @@ export class EventManagementPage extends LitElement {
     return { items: data.items ?? data, total: Number.isSafeInteger(total) && total >= 0 ? total : null };
   }
 
-  private async _readEventStats(): Promise<EventStats> {
-    const res = await authFetch(`${API_BASE}/alerts/events/stats`, { cache: 'no-store' });
+  private async _readEventStats(signal: AbortSignal): Promise<EventStats> {
+    const res = await authFetch(`${API_BASE}/alerts/events/stats`, { cache: 'no-store', signal });
     if (res.status === 401 || res.status === 403) throw new EventListAccessError('无权访问事件');
     if (!res.ok) throw new Error('事件统计读取失败');
     const stats: EventStats = await res.json();
@@ -700,8 +767,8 @@ export class EventManagementPage extends LitElement {
     return stats;
   }
 
-  private async _readEventMttr(): Promise<MTTREntry | null> {
-    const res = await authFetch(`${API_BASE}/alerts/events/mttr`, { cache: 'no-store' });
+  private async _readEventMttr(signal: AbortSignal): Promise<MTTREntry | null> {
+    const res = await authFetch(`${API_BASE}/alerts/events/mttr`, { cache: 'no-store', signal });
     if (res.status === 401 || res.status === 403) throw new EventListAccessError('无权访问事件');
     return res.ok ? res.json() : null;
   }
@@ -709,11 +776,26 @@ export class EventManagementPage extends LitElement {
   private async _loadEvents() {
     const request = ++this.listRequest;
     const scope = this.listScope;
+    this.listReadController?.abort();
+    const controller = this.listReadController = new AbortController();
+    const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(EVENT_READ_TIMEOUT)]);
     if (this.listPosition?.key !== this.listPositionKey) this.listPosition = undefined;
     this.retryLoading = true;
-    const read = <T>(operation: Promise<T>) => operation.catch(error => {
-      if (request === this.listRequest && error instanceof EventListAccessError) {
+    this.listLoading = true;
+    const restore = async (position?: EventListPosition) => {
+      if (!position) return;
+      await this.updateComplete;
+      if (request === this.listRequest && position.key === this.listPositionKey
+        && this.isConnected && !this.eventId && !this.selectedEvent) this._restoreListPosition(position);
+    };
+    const read = async <T>(operation: Promise<T>, apply: (result: PromiseSettledResult<T>) => void | Promise<void>) => {
+      let result: PromiseSettledResult<T>;
+      try { result = { status: 'fulfilled', value: await operation }; }
+      catch (reason) { result = { status: 'rejected', reason }; }
+      if (request !== this.listRequest) return;
+      if (result.status === 'rejected' && result.reason instanceof EventListAccessError) {
         this.listRequest++;
+        controller.abort();
         this.listPosition = undefined;
         clearEventListReturn();
         this.loadedListScope = '';
@@ -724,46 +806,55 @@ export class EventManagementPage extends LitElement {
         this.statsError = false;
         this.mttr = null;
         this._clearDetail();
-        this.loadError = error.message;
+        this.loadError = result.reason.message;
         this.loading = false;
         this.retryLoading = false;
-      }
-      throw error;
-    });
-    const [list, stats, mttr] = await Promise.allSettled([
-      read(this._readEventList()),
-      read(this._readEventStats()),
-      read(this._readEventMttr()),
-    ]);
-    if (request !== this.listRequest) return;
-    const key = this.listPositionKey;
-    if (this.loadedListScope === scope) this.listPosition = this._captureListPosition(key) ?? this.listPosition;
-    const readable = list.status === 'fulfilled';
-    this.loadError = readable ? null
-      : list.reason instanceof Error ? list.reason.message : '事件暂不可读';
-    if (this.loadError) this._clearDetail();
-    this.events = readable ? list.value.items : [];
-    this.eventsTotal = readable ? list.value.total : null;
-    this.loadedListScope = readable ? scope : '';
-    this.stats = stats.status === 'fulfilled' ? stats.value : null;
-    this.statsError = stats.status === 'rejected';
-    this.mttr = mttr.status === 'fulfilled' ? mttr.value : null;
-    if (this.eventsTotal !== null) {
-      const lastPage = Math.max(0, Math.ceil(this.eventsTotal / this.eventsPageSize) - 1);
-      if (this.eventsPage > lastPage) {
-        this.eventsPage = lastPage;
-        await this._loadEvents();
+        this.listLoading = false;
         return;
       }
-    }
-    this.loading = false;
-    this.retryLoading = false;
-    const position = this.listPosition;
-    if (readable && position) {
-      this.listPosition = undefined;
-      await this.updateComplete;
-      if (request === this.listRequest && position.key === this.listPositionKey
-        && this.isConnected && !this.eventId && !this.selectedEvent) this._restoreListPosition(position);
+      await apply(result);
+    };
+    await Promise.all([
+      read(this._readEventList(signal), async list => {
+        if (this.loadedListScope === scope) this.listPosition = this._captureListPosition(this.listPositionKey) ?? this.listPosition;
+        const readable = list.status === 'fulfilled';
+        this.loadError = readable ? null : list.reason?.name === 'TimeoutError' ? '事件读取超时，请重试。'
+          : list.reason instanceof Error ? list.reason.message : '事件暂不可读';
+        if (this.loadError) this._clearDetail();
+        this.events = readable ? list.value.items : [];
+        this.eventsTotal = readable ? list.value.total : null;
+        this.loadedListScope = readable ? scope : '';
+        if (this.eventsTotal !== null) {
+          const lastPage = Math.max(0, Math.ceil(this.eventsTotal / this.eventsPageSize) - 1);
+          if (this.eventsPage > lastPage) {
+            if (this.listPosition?.focusId) clearEventListReturn();
+            this.eventsPage = lastPage;
+            await this._loadEvents();
+            return;
+          }
+        }
+        this.loading = false;
+        this.listLoading = false;
+        if (readable) {
+          const position = this.listPosition;
+          this.listPosition = undefined;
+          await restore(position);
+        }
+      }),
+      read(this._readEventStats(signal), async stats => {
+        const position = this.loadedListScope === scope ? this._captureListPosition(this.listPositionKey) : undefined;
+        this.stats = stats.status === 'fulfilled' ? stats.value : null;
+        this.statsError = stats.status === 'rejected';
+        this.loading = false;
+        await restore(position);
+      }),
+      read(this._readEventMttr(signal), mttr => {
+        this.mttr = mttr.status === 'fulfilled' ? mttr.value : null;
+      }),
+    ]);
+    if (request === this.listRequest) {
+      this.listReadController = undefined;
+      this.retryLoading = false;
     }
   }
 
@@ -796,11 +887,11 @@ export class EventManagementPage extends LitElement {
     const url = new URL(location.href);
     if (eventId && position && url.pathname === '/events' && ['aggregate', 'rules'].includes(url.searchParams.get('view') ?? '')) {
       const token = generateUUID();
-      eventListReturn = {
+      rememberEventListReturn({
         token, eventId, group: this.activeListTab, page: this.eventsPage,
         severity: this.filterSeverity, search: this.filterSearch,
         position: { ...position, focusId: String(eventId) },
-      };
+      });
       history.replaceState({ ...history.state, aggregateListReturn: token }, '', url);
       history.pushState({ aggregateEventReturn: token }, '', eventDetailUrl(eventId));
       window.dispatchEvent(new PopStateEvent('popstate'));
@@ -1079,9 +1170,9 @@ export class EventManagementPage extends LitElement {
     if (totalPages <= 1) return html``;
     return html`
       <div class="pagination">
-        <button class="btn" ?disabled=${this.retryLoading || this.eventsPage === 0} @click=${() => { this.eventsPage--; this._loadEvents(); }}>← 上一页</button>
+        <button class="btn" ?disabled=${this.listLoading || this.eventsPage === 0} @click=${() => { this.eventsPage--; this._loadEvents(); }}>← 上一页</button>
         <span class="event-list-info">第 ${this.eventsPage + 1}/${totalPages} 页</span>
-        <button class="btn" ?disabled=${this.retryLoading || this.eventsPage >= totalPages - 1} @click=${() => { this.eventsPage++; this._loadEvents(); }}>下一页 →</button>
+        <button class="btn" ?disabled=${this.listLoading || this.eventsPage >= totalPages - 1} @click=${() => { this.eventsPage++; this._loadEvents(); }}>下一页 →</button>
       </div>`;
   }
 
@@ -1146,7 +1237,7 @@ export class EventManagementPage extends LitElement {
             ${ALERT_LEVELS.map(level => html`<option value=${level} ?selected=${this.filterSeverity === level}>${alertLevelLabel(level)}</option>`)}
           </select>
           <span class="event-list-info" role="status">
-            ${this.retryLoading ? '正在加载事件…' : this.loadError ? nothing : html`
+            ${this.listLoading ? (this.loadedListScope ? '正在加载事件…' : '正在加载事件') : this.loadError ? nothing : html`
               本页命中 ${filtered.length} 条 · ${this.eventsTotal === null ? '当前分组总量未知' : `当前状态可见事件共 ${this.eventsTotal} 条`}
             `}
           </span>
@@ -1154,7 +1245,8 @@ export class EventManagementPage extends LitElement {
         </div>
 
         ${this.loadedListScope !== this.listScope || this.events.length === 0
-          ? this.loadError || this.retryLoading ? nothing : html`
+          ? this.listLoading && !this.loadedListScope ? html`<div class="skeleton-block" style="height:300px" aria-hidden="true"></div>`
+            : this.loadError || this.listLoading ? nothing : html`
               <div class="empty-state">
                 <div class="empty-icon">${this.activeListTab === 'resolved' ? renderIcon('check-circle') : renderIcon('triangle-alert')}</div>
                 <div>${{active: '暂无活跃事件', resolved: '没有已解决事件', other: '暂无历史未归类事件'}[this.activeListTab]}</div>
@@ -1165,14 +1257,14 @@ export class EventManagementPage extends LitElement {
               <div class="main-layout">
                 <div class="panel">
                   <div class="panel-header">事件列表</div>
-                  <div class="event-list" aria-busy=${this.retryLoading}>
+                  <div class="event-list" aria-busy=${this.listLoading}>
                     ${filtered.length === 0
                       ? html`<div class="detail-empty">暂无匹配的事件</div>`
                       : filtered.map((event) => html`
                           <button type="button" data-event-id=${event.id} aria-label=${`查看事件 #${event.id} 详情`} aria-description=${event.title}
-                            aria-disabled=${this.retryLoading}
+                            aria-disabled=${this.listLoading}
                             class="event-item ${this.selectedEvent?.id === event.id ? "selected" : ""}"
-                            @click=${() => { if (!this.retryLoading) this._openListEvent(event); }}
+                            @click=${() => { if (!this.listLoading) this._openListEvent(event); }}
                           >
                             <div class="event-title">
                               <span class="event-number">#${event.id}</span>
@@ -1277,6 +1369,9 @@ export class EventManagementPage extends LitElement {
 
   private _renderDetail() {
     const e = this.selectedEvent!;
+    const assigneeName = typeof e.assignee === 'string' ? e.assignee.trim() : '';
+    const assigneeId = e.assigned_to ?? 0;
+    const assignee = assigneeName || (Number.isSafeInteger(assigneeId) && assigneeId > 0 ? `用户 #${assigneeId}` : '未分配');
     return html`
       <div class="detail-panel">
         <div class="detail-section">
@@ -1286,7 +1381,7 @@ export class EventManagementPage extends LitElement {
           <div class="detail-row"><span class="label">严重度</span><span class="value" style="color: ${this._severityColor(e.severity)}">${e.severity.toUpperCase()}</span></div>
           <div class="detail-row"><span class="label">告警数</span><span class="value">${e.alert_count ?? '未知'}</span></div>
           <div class="detail-row"><span class="label">目标</span><span class="value">${eventTarget(e)}</span></div>
-          <div class="detail-row"><span class="label">负责人</span><span class="value">${e.assignee || "未分配"}</span></div>
+          <div class="detail-row"><span class="label">负责人</span><span class="value">${assignee}</span></div>
           <div class="detail-row"><span class="label">创建时间</span><span class="value">${this._formatTime(e.created_at)}</span></div>
           ${e.verification_passed_at ? html`
             <div class="detail-row"><span class="label">人工恢复确认</span><span class="value">${this._formatTime(e.verification_passed_at)}</span></div>
@@ -1333,10 +1428,11 @@ export class EventManagementPage extends LitElement {
             ${e.status === "open" ? html`<button class="btn btn-primary" @click=${this._startInvestigation} ?disabled=${this.actionLoading}>开始调查</button>` : nothing}
             <button class="btn" @click=${this._triggerRCA} ?disabled=${this.rcaLoading} style="border-color:var(--accent);color:var(--accent-text);">${this.rcaLoading ? "分析中..." : "AI 根因分析"}</button>
             ${this.rcaResult && this.rcaResult.eventId === Number(this.selectedEvent?.id) ? html`
-              <span style="font-size:12px;color:var(--ok);margin-left:8px;">已触发 ${this.rcaResult.analysisIds.length} 个分析</span>
+              <span style="font-size:12px;color:var(--ok);margin-left:8px;">已触发 ${this.rcaResult.analysisIds.length + (this.rcaResult.investigationIds?.length ?? 0)} 个分析</span>
               ${this.rcaResult.sessionKeys.map((sk: string) => html`
                 <a href="#" @click=${(e: Event) => { e.preventDefault(); this._navigateToChat(sk); }} style="font-size:11px;color:var(--accent-text);margin-left:4px;">查看 →</a>
               `)}
+              ${this.rcaResult.investigationIds?.map(id => html`<a class="btn" href=${`/workbench?investigation=${id}`}>打开调查</a>`)}
               <button class="btn" style="font-size:var(--text-xs);margin-left:var(--space-sm);padding:var(--space-xs) var(--space-sm);" @click=${this._clearRCAResult}>清除</button>
             ` : nothing}
             <button class="btn" @click=${() => { this.showPostmortemForm = !this.showPostmortemForm; }} ?disabled=${this.actionLoading}>添加复盘</button>

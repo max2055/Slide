@@ -79,9 +79,9 @@ export async function rbacApiRoutes(fastify: FastifyInstance, _options: any) {
         if (!result.success) {
           return reply.code(400).send({ error: result.error });
         }
-        reply.code(201).send(result);
+        return reply.code(201).send(result);
       } catch (error: any) {
-        reply.code(500).send({ error: error.message });
+        return reply.code(500).send({ error: error.message });
       }
     });
 
@@ -95,9 +95,9 @@ export async function rbacApiRoutes(fastify: FastifyInstance, _options: any) {
         if (!role) {
           return reply.code(404).send({ error: '角色不存在' });
         }
-        reply.send(role);
+        return reply.send(role);
       } catch (error: any) {
-        reply.code(500).send({ error: error.message });
+        return reply.code(500).send({ error: error.message });
       }
     });
 
@@ -118,9 +118,9 @@ export async function rbacApiRoutes(fastify: FastifyInstance, _options: any) {
         if (!result.success) {
           return reply.code(400).send({ error: result.error });
         }
-        reply.send(result);
+        return reply.send(result);
       } catch (error: any) {
-        reply.code(500).send({ error: error.message });
+        return reply.code(500).send({ error: error.message });
       }
     });
 
@@ -134,9 +134,9 @@ export async function rbacApiRoutes(fastify: FastifyInstance, _options: any) {
         if (!result.success) {
           return reply.code(400).send({ error: result.error });
         }
-        reply.send(result);
+        return reply.send(result);
       } catch (error: any) {
-        reply.code(500).send({ error: error.message });
+        return reply.code(500).send({ error: error.message });
       }
     });
 
@@ -188,9 +188,9 @@ export async function rbacApiRoutes(fastify: FastifyInstance, _options: any) {
         if (!result.success) {
           return reply.code(400).send({ error: result.error });
         }
-        reply.code(201).send(result);
+        return reply.code(201).send(result);
       } catch (error: any) {
-        reply.code(500).send({ error: error.message });
+        return reply.code(500).send({ error: error.message });
       }
     });
 
@@ -204,9 +204,9 @@ export async function rbacApiRoutes(fastify: FastifyInstance, _options: any) {
         if (!result.success) {
           return reply.code(400).send({ error: result.error });
         }
-        reply.send(result);
+        return reply.send(result);
       } catch (error: any) {
-        reply.code(500).send({ error: error.message });
+        return reply.code(500).send({ error: error.message });
       }
     });
 
@@ -295,9 +295,9 @@ export async function rbacApiRoutes(fastify: FastifyInstance, _options: any) {
         if (!result.success) {
           return reply.code(400).send({ error: result.error });
         }
-        reply.code(201).send(result);
+        return reply.code(201).send(result);
       } catch (error: any) {
-        reply.code(500).send({ error: error.message });
+        return reply.code(500).send({ error: error.message });
       }
     });
 
@@ -311,9 +311,9 @@ export async function rbacApiRoutes(fastify: FastifyInstance, _options: any) {
         if (!result.success) {
           return reply.code(400).send({ error: result.error });
         }
-        reply.send(result);
+        return reply.send(result);
       } catch (error: any) {
-        reply.code(500).send({ error: error.message });
+        return reply.code(500).send({ error: error.message });
       }
     });
 
@@ -324,9 +324,9 @@ export async function rbacApiRoutes(fastify: FastifyInstance, _options: any) {
       try {
         const { userId } = request.params as any;
         const roles = await rbacService.getUserRoles(Number(userId));
-        reply.send(roles);
+        return reply.send(roles);
       } catch (error: any) {
-        reply.code(500).send({ error: error.message });
+        return reply.code(500).send({ error: error.message });
       }
     });
 

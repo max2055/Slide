@@ -4,7 +4,35 @@
  */
 import { dbConnection } from './db-connection';
 import * as net from 'net';
+import type { Pool, RowDataPacket } from 'mysql2/promise';
 import { aggregateHealth, statusFromCounts, type HealthDimension, type HealthTruth } from './health-truth.js';
+import { withTimeout } from './promise-timeout.js';
+
+const queryTimeoutMs = 2_000;
+const queryTimeoutMessage = '数据库检查超时';
+const freshnessWindowMs = 10 * 60_000;
+
+// Seek backward from the newest publication of each series instead of
+// aggregating every observation in retained history. Keep the observation's
+// primary key usable across mixed publication/observation collations.
+const latestFormalPublications = (recentOnly = false) => `
+  FROM metric_rollout r
+  JOIN metric_policy_bindings b ON b.resource_key = CONCAT(r.resource_type, ':', r.resource_id)
+    AND JSON_EXTRACT(b.payload, '$.binding.revision') = r.published_revision
+  JOIN LATERAL (
+    SELECT p.observed_at
+    FROM metric_publications p
+    STRAIGHT_JOIN metric_observations o
+      ON o.id = CONVERT(p.observation_id USING ascii) COLLATE ascii_bin
+      AND CAST(o.id AS BINARY) = CAST(p.observation_id AS BINARY)
+    WHERE p.series_hash = r.series_hash AND p.generation = r.generation
+      ${recentOnly ? 'AND p.observed_at >= ?' : ''}
+      AND JSON_EXTRACT(o.payload, '$.versions.config_revision') = r.published_revision
+    ORDER BY p.observed_at DESC
+    LIMIT 1
+  ) latest ON TRUE
+  WHERE r.source = 'semantic' AND r.read_mode = 'semantic' AND r.applied_revision = r.published_revision
+`;
 
 // ── Types ────────────────────────────────────────────────
 
@@ -46,6 +74,30 @@ export class ConsistencyChecker {
   private overviewCache: { value: HealthOverview; expiresAt: number } | null = null;
   private overviewInFlight: Promise<HealthOverview> | null = null;
 
+  private async execute(pool: Pool, sql: string, values: Array<string | number | Date> = []) {
+    const expiresAt = performance.now() + queryTimeoutMs;
+    const connection = await withTimeout(pool.getConnection(), queryTimeoutMs, queryTimeoutMessage, late => late.release());
+    let reusable = true;
+    try {
+      const remainingMs = Math.floor(expiresAt - performance.now());
+      if (remainingMs <= 0) throw new Error(queryTimeoutMessage);
+      // Leave a little time for MySQL to report cancellation before the client
+      // deadline. On a client timeout, never return a busy socket to the pool.
+      const boundedSql = sql.replace(/^\s*SELECT\b/i, 'SELECT /*+ MAX_EXECUTION_TIME(1800) */');
+      try {
+        return await withTimeout(connection.execute<RowDataPacket[]>(boundedSql, values), remainingMs, queryTimeoutMessage);
+      } catch (error) {
+        if (error instanceof Error && error.message === queryTimeoutMessage) {
+          reusable = false;
+          connection.destroy();
+        }
+        throw error;
+      }
+    } finally {
+      if (reusable) connection.release();
+    }
+  }
+
   async resourceHealthTruth(): Promise<HealthTruth> {
     const pool = dbConnection.getPool();
     try {
@@ -83,26 +135,37 @@ export class ConsistencyChecker {
   }
 
   private async collectResourceHealthTruth(pool: NonNullable<ReturnType<typeof dbConnection.getPool>>): Promise<HealthTruth> {
+    // Resource truth needs to know whether a fresh observation exists. Older
+    // publications cannot change that answer and need not be visited.
+    const freshSince = new Date(Date.now() - freshnessWindowMs);
     // Legacy rollout columns may use a different collation from this connection.
     // Compare canonical resource IDs byte-for-byte; numeric coercion or padded
     // text comparisons would incorrectly accept aliases such as "01" or "1 ".
-    const [instances] = await pool.execute(`
+    const [instances] = await this.execute(pool, `
       SELECT di.id, di.health_status, MAX(mh.recorded_at) AS latest_metric
       FROM database_instances di
-      LEFT JOIN (SELECT CAST(r.resource_id AS BINARY) AS resource_id,MAX(p.observed_at) recorded_at FROM metric_rollout r JOIN metric_publications p ON p.series_hash=r.series_hash AND p.generation=r.generation JOIN metric_observations o ON o.id=p.observation_id JOIN metric_policy_bindings b ON b.resource_key=CONCAT(r.resource_type,':',r.resource_id) WHERE r.resource_type='instance' AND r.source='semantic' AND r.read_mode='semantic' AND r.applied_revision=r.published_revision AND JSON_EXTRACT(o.payload,'$.versions.config_revision')=r.published_revision AND JSON_EXTRACT(b.payload,'$.binding.revision')=r.published_revision GROUP BY CAST(r.resource_id AS BINARY)) mh ON CAST(mh.resource_id AS BINARY) = CAST(di.id AS BINARY)
+      LEFT JOIN (
+        SELECT CAST(r.resource_id AS BINARY) AS resource_id, MAX(latest.observed_at) AS recorded_at
+        ${latestFormalPublications(true)} AND r.resource_type = 'instance'
+        GROUP BY CAST(r.resource_id AS BINARY)
+      ) mh ON mh.resource_id = CAST(di.id AS BINARY)
       WHERE di.status = 'active'
       GROUP BY di.id, di.health_status
-    `) as any;
-    const [servers] = await pool.execute(`
+    `, [freshSince]) as any;
+    const [servers] = await this.execute(pool, `
       SELECT s.id, s.status, MAX(sm.recorded_at) AS latest_metric
       FROM servers s
-      LEFT JOIN (SELECT CAST(r.resource_id AS BINARY) AS resource_id,MAX(p.observed_at) recorded_at FROM metric_rollout r JOIN metric_publications p ON p.series_hash=r.series_hash AND p.generation=r.generation JOIN metric_observations o ON o.id=p.observation_id JOIN metric_policy_bindings b ON b.resource_key=CONCAT(r.resource_type,':',r.resource_id) WHERE r.resource_type='server' AND r.source='semantic' AND r.read_mode='semantic' AND r.applied_revision=r.published_revision AND JSON_EXTRACT(o.payload,'$.versions.config_revision')=r.published_revision AND JSON_EXTRACT(b.payload,'$.binding.revision')=r.published_revision GROUP BY CAST(r.resource_id AS BINARY)) sm ON CAST(sm.resource_id AS BINARY) = CAST(s.id AS BINARY)
+      LEFT JOIN (
+        SELECT CAST(r.resource_id AS BINARY) AS resource_id, MAX(latest.observed_at) AS recorded_at
+        ${latestFormalPublications(true)} AND r.resource_type = 'server'
+        GROUP BY CAST(r.resource_id AS BINARY)
+      ) sm ON sm.resource_id = CAST(s.id AS BINARY)
       WHERE s.collection_enabled = 1
       GROUP BY s.id, s.status
-    `) as any;
+    `, [freshSince]) as any;
     const resources = [
-      ...instances.map((row: any) => ({ type: 'instance' as const, id: Number(row.id), available: row.health_status === 'healthy', fresh: this.isFresh(row.latest_metric) })),
-      ...servers.map((row: any) => ({ type: 'server' as const, id: Number(row.id), available: row.status === 'online', fresh: this.isFresh(row.latest_metric) })),
+      ...instances.map((row: any) => ({ type: 'instance' as const, id: Number(row.id), available: row.health_status === 'healthy', fresh: this.isFresh(row.latest_metric, freshSince) })),
+      ...servers.map((row: any) => ({ type: 'server' as const, id: Number(row.id), available: row.status === 'online', fresh: this.isFresh(row.latest_metric, freshSince) })),
     ];
     const availability = this.resourceDimension(resources, 'available', 'managed_resource_unavailable');
     const freshness = this.resourceDimension(resources, 'fresh', 'required_metric_stale_or_missing');
@@ -116,15 +179,17 @@ export class ConsistencyChecker {
     });
   }
 
-  private isFresh(value: unknown): boolean { return Boolean(value) && Date.now() - new Date(value as string).getTime() <= 10 * 60_000; }
+  private isFresh(value: unknown, freshSince: Date): boolean {
+    return Boolean(value) && new Date(value as string).getTime() >= freshSince.getTime();
+  }
   private resourceDimension(resources: Array<{ type: 'instance' | 'server'; id: number; available: boolean; fresh: boolean }>, key: 'available' | 'fresh', reason: string): HealthDimension {
     const good = resources.filter((resource) => resource[key]).length;
     const failedRefs = resources.filter((resource) => !resource[key]).map(({ type, id }) => ({ type, id }));
     return { status: statusFromCounts(good, resources.length), numerator: good, denominator: resources.length, failedRefs, observedAt: new Date().toISOString(), reason: failedRefs.length ? reason : undefined };
   }
-  private async workflowDimension(pool: any): Promise<HealthDimension> {
+  private async workflowDimension(pool: Pool): Promise<HealthDimension> {
     try {
-      const [rows] = await pool.execute(`SELECT COUNT(*) AS failed FROM cron_job_logs WHERE status = 'error' AND started_at > NOW() - INTERVAL 15 MINUTE`);
+      const [rows] = await this.execute(pool, `SELECT COUNT(*) AS failed FROM cron_job_logs WHERE status = 'error' AND started_at > NOW() - INTERVAL 15 MINUTE`);
       const failed = Number(rows[0]?.failed ?? 0);
       return { status: failed ? 'degraded' : 'healthy', numerator: failed ? 0 : 1, denominator: 1, failedRefs: failed ? [{ type: 'system', id: 'cron_jobs' }] : [], observedAt: new Date().toISOString(), reason: failed ? 'recent_workflow_failures' : undefined };
     } catch {
@@ -160,7 +225,7 @@ export class ConsistencyChecker {
     const pool = dbConnection.getPool();
     if (!pool) throw new Error('数据库未连接');
 
-    const [rows] = await pool.execute(
+    const [rows] = await this.execute(pool,
       'SELECT COUNT(*) as active_count, COALESCE(SUM(data_size_gb), 0) as total_data_size FROM database_instances WHERE status = ?',
       ['active'],
     ) as any;
@@ -193,14 +258,14 @@ export class ConsistencyChecker {
     const pool = dbConnection.getPool();
     if (!pool) throw new Error('数据库未连接');
 
-    const [instRows] = await pool.execute(
+    const [instRows] = await this.execute(pool,
       'SELECT COALESCE(SUM(data_size_gb), 0) as inst_total FROM database_instances',
       [],
     ) as any;
     const instTotal = Number(instRows[0]?.inst_total || 0);
 
     // Get per-instance capacity vs DB record
-    const [perInst] = await pool.execute(
+    const [perInst] = await this.execute(pool,
       `SELECT di.id, di.name, di.data_size_gb as inst_size,
               COALESCE(ch.total_size_gb, -1) as cap_size,
               ch.recorded_at as cap_ts
@@ -275,10 +340,12 @@ export class ConsistencyChecker {
     const pool = dbConnection.getPool();
     if (!pool) throw new Error('数据库未连接');
 
-    const [rows] = await pool.execute(
-      `SELECT MAX(p.observed_at) AS latest FROM metric_publications p JOIN metric_rollout r ON r.series_hash=p.series_hash AND r.generation=p.generation JOIN metric_observations o ON o.id=p.observation_id JOIN metric_policy_bindings b ON b.resource_key=CONCAT(r.resource_type,':',r.resource_id) WHERE r.source='semantic' AND r.read_mode='semantic' AND r.applied_revision=r.published_revision AND JSON_EXTRACT(o.payload,'$.versions.config_revision')=r.published_revision AND JSON_EXTRACT(b.payload,'$.binding.revision')=r.published_revision`,
-      [],
-    ) as any;
+    const now = Date.now();
+    const selectLatest = (recentOnly: boolean) => `SELECT MAX(latest.observed_at) AS latest ${latestFormalPublications(recentOnly)}`;
+    let [rows] = await this.execute(pool, selectLatest(true), [new Date(now - 60 * 60_000)]);
+    // Any accepted publication in the recent window is newer than everything
+    // outside it. Only an empty window needs the exact historical search.
+    if (!rows[0]?.latest) [rows] = await this.execute(pool, selectLatest(false));
 
     const latest = rows[0]?.latest;
     if (!latest) {
@@ -293,7 +360,7 @@ export class ConsistencyChecker {
       };
     }
 
-    const ageMs = Date.now() - new Date(latest).getTime();
+    const ageMs = now - new Date(latest).getTime();
     const ageMin = ageMs / 60000;
 
     if (ageMin <= 10) {
@@ -334,7 +401,7 @@ export class ConsistencyChecker {
     const pool = dbConnection.getPool();
     if (!pool) throw new Error('数据库未连接');
 
-    const [rows] = await pool.execute(
+    const [rows] = await this.execute(pool,
       `SELECT ar.id, ar.name, ar.target_type, ar.metric_name
        FROM alert_rules ar
        LEFT JOIN metric_definitions md ON ar.metric_name = md.id AND ar.target_type = md.target_type
@@ -371,7 +438,7 @@ export class ConsistencyChecker {
     const pool = dbConnection.getPool();
     if (!pool) throw new Error('数据库未连接');
 
-    const [rows] = await pool.execute(
+    const [rows] = await this.execute(pool,
       `SELECT ae.id, ae.event_id, ae.title, ae.status as event_status, COUNT(aem.id) as open_members
        FROM alert_events ae
        JOIN alert_event_members aem ON ae.id = aem.event_id
@@ -415,14 +482,14 @@ export class ConsistencyChecker {
     const pool = dbConnection.getPool();
     if (!pool) throw new Error('数据库未连接');
 
-    const [rolePermRows] = await pool.execute(
+    const [rolePermRows] = await this.execute(pool,
       `SELECT rp.id FROM role_permissions rp
        LEFT JOIN roles r ON rp.role_id = r.id
        WHERE r.id IS NULL`,
       [],
     ) as any;
 
-    const [userRoleRows] = await pool.execute(
+    const [userRoleRows] = await this.execute(pool,
       `SELECT ur.id FROM user_roles ur
        LEFT JOIN users u ON ur.user_id = u.id
        WHERE u.id IS NULL`,
@@ -457,7 +524,7 @@ export class ConsistencyChecker {
     const pool = dbConnection.getPool();
     if (!pool) throw new Error('数据库未连接');
 
-    const [hungRows] = await pool.execute(
+    const [hungRows] = await this.execute(pool,
       `SELECT cj.id, cj.name, cjl.started_at
        FROM cron_jobs cj
        JOIN cron_job_logs cjl ON cj.id = cjl.job_id AND cjl.status = ?
@@ -465,7 +532,7 @@ export class ConsistencyChecker {
       ['running'],
     ) as any;
 
-    const [stalledRows] = await pool.execute(
+    const [stalledRows] = await this.execute(pool,
       `SELECT id, name, next_run_at
        FROM cron_jobs
        WHERE enabled = TRUE AND next_run_at IS NOT NULL AND next_run_at < NOW()`,
@@ -512,7 +579,7 @@ export class ConsistencyChecker {
     const pool = dbConnection.getPool();
     if (!pool) throw new Error('数据库未连接');
 
-    const [rows] = await pool.execute(
+    const [rows] = await this.execute(pool,
       `SELECT cs.id, cs.session_id, cs.message_count as stored_count,
               COUNT(cm.id) as actual_count,
               cs.last_message_at as stored_last_msg,
@@ -585,7 +652,7 @@ export class ConsistencyChecker {
     const pool = dbConnection.getPool();
     if (!pool) throw new Error('数据库未连接');
 
-    const [orphanRows] = await pool.execute(
+    const [orphanRows] = await this.execute(pool,
       `SELECT ar.id FROM approval_requests ar
        WHERE ar.status IN (?, ?)
        AND (NOT EXISTS (
@@ -598,7 +665,7 @@ export class ConsistencyChecker {
       ['approved', 'executed', 'approved', 'executed', 'executed'],
     ) as any;
 
-    const [oldPendingRows] = await pool.execute(
+    const [oldPendingRows] = await this.execute(pool,
       `SELECT id, created_at FROM approval_requests
        WHERE status = ? AND created_at < NOW() - INTERVAL 7 DAY`,
       ['pending'],
@@ -644,7 +711,7 @@ export class ConsistencyChecker {
   async _checkNotificationClosure(): Promise<ConsistencyCheck> {
     const pool = dbConnection.getPool();
     if (!pool) throw new Error('数据库未连接');
-    const [rows] = await pool.execute(`
+    const [rows] = await this.execute(pool, `
       SELECT
         (SELECT COUNT(*) FROM notification_channels WHERE enabled = TRUE) AS enabled_channels,
         (SELECT COUNT(*) FROM notification_channels WHERE enabled = TRUE AND delivery_start_at IS NULL) AS invalid_channels,
@@ -733,7 +800,7 @@ export class ConsistencyChecker {
       try {
         const pool = dbConnection.getPool();
         if (pool) {
-          await pool.execute('SELECT 1', []);
+          await this.execute(pool, 'SELECT 1', []);
           dbReachable = true;
         }
       } catch {
@@ -746,7 +813,7 @@ export class ConsistencyChecker {
       try {
         const pool = dbConnection.getPool();
         if (pool) {
-          const [rows] = await pool.execute(
+          const [rows] = await this.execute(pool,
             'SELECT id FROM llm_providers WHERE enabled = TRUE LIMIT 1',
             [],
           ) as any;
@@ -762,7 +829,7 @@ export class ConsistencyChecker {
       try {
         const pool = dbConnection.getPool();
         if (pool) {
-          const [rows] = await pool.execute(
+          const [rows] = await this.execute(pool,
             'SELECT id FROM cron_jobs WHERE enabled = TRUE LIMIT 1',
             [],
           ) as any;
@@ -809,7 +876,7 @@ export class ConsistencyChecker {
   // ── Run all checks ───────────────────────────────────
 
   async runAllChecks(): Promise<ConsistencyResponse> {
-    const checks: ConsistencyCheck[] = await Promise.all([
+    const checksInFlight = Promise.all([
       this._checkSafe(() => this._checkInstanceCountMatch(), 'instance_count_match', '活跃实例数量', 'instance'),
       this._checkSafe(() => this._checkCapacitySumMatch(), 'capacity_sum_match', '容量数据一致性', 'capacity'),
       this._checkSafe(() => this._checkMetricsFreshness(), 'metrics_freshness', '指标采集新鲜度', 'metrics'),
@@ -821,13 +888,12 @@ export class ConsistencyChecker {
       this._checkSafe(() => this._checkApprovalEventIntegrity(), 'approval_event_integrity', '审批事件完整性', 'approval'),
       this._checkSafe(() => this._checkNotificationClosure(), 'notification_closure', '通知闭环完成性', 'notification'),
     ]);
+    const [checks, readiness] = await Promise.all([checksInFlight, this._checkReadiness()]);
 
     const pass = checks.filter(c => c.status === 'pass').length;
     const warn = checks.filter(c => c.status === 'warn').length;
     const fail = checks.filter(c => c.status === 'fail').length;
     const deferred = checks.filter(c => c.status === 'deferred').length;
-
-    const readiness = await this._checkReadiness();
 
     return {
       timestamp: new Date().toISOString(),

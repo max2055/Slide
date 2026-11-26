@@ -16,7 +16,7 @@ async function mount(edit = false) {
 const save = (page: any) => page.shadowRoot.querySelector('.basic-actions .btn-primary') as HTMLButtonElement;
 beforeEach(() => {
   authFetch.mockReset(); showToast.mockReset();
-  localStorage.setItem('permissions', JSON.stringify(['instance:manage']));
+  localStorage.setItem('permissions', JSON.stringify(['instance:manage', 'instance:create']));
   authFetch.mockResolvedValue(response([]));
 });
 afterEach(() => { document.body.replaceChildren(); localStorage.clear(); vi.restoreAllMocks(); });

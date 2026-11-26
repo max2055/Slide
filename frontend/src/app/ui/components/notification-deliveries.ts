@@ -1,7 +1,52 @@
 import { LitElement, html, css } from "lit";
 import { customElement, state } from "lit/decorators.js";
-import { authFetch } from "../../../api/index.js";
+import { apiClient, authFetch, SESSION_EXPIRED_EVENT } from "../../../api/index.js";
+import type { NotificationDeliveryList } from "../../../api/generated/public-api.js";
 import { sharedBtnStyles } from "../../styles/shared-btn-styles.js";
+
+type Receipt = NotificationDeliveryList[number];
+type Attempt = Receipt["attempts"][number];
+type ReceiptRow = Pick<Receipt, "id" | "phase" | "job_state"> & {
+  alert_id: number | string;
+  channel_id: number | string;
+  error_code?: Receipt["error_code"];
+  delivery?: Pick<NonNullable<Receipt["delivery"]>, "business_key" | "state"> & { error_code?: Receipt["error_code"] } | null;
+  attempts?: (Pick<Attempt, "attempt_number" | "status"> & { error_code?: Attempt["error_code"] })[] | null;
+};
+
+const invalidReceipt = "投递回执格式异常，请稍后重试。";
+const expiredSession = "登录已失效（HTTP 401），请重新登录后重试。";
+const changedSession = "登录状态已变化，请刷新投递回执。";
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isReceiptReference(value: unknown): value is number | string {
+  const id = typeof value === "string" && /^\d+$/.test(value) ? Number(value) : value;
+  return typeof id === "number" && Number.isSafeInteger(id) && id > 0;
+}
+
+function isOptionalErrorCode(value: unknown): value is string | null | undefined {
+  return value == null || typeof value === "string";
+}
+
+function isReceiptRow(row: unknown): row is ReceiptRow {
+  if (!isRecord(row) || typeof row.id !== "string" || !row.id.trim()
+    || !isReceiptReference(row.alert_id) || !isReceiptReference(row.channel_id)
+    || (row.phase !== "problem" && row.phase !== "recovery" && row.phase !== "escalation")
+    || typeof row.job_state !== "string" || !row.job_state.trim()
+    || !isOptionalErrorCode(row.error_code)) return false;
+
+  // Historical receipts can omit delivery details or attempt history.
+  if (row.delivery != null && (!isRecord(row.delivery) || typeof row.delivery.business_key !== "string"
+    || typeof row.delivery.state !== "string" || !isOptionalErrorCode(row.delivery.error_code))) return false;
+
+  return row.attempts == null || (Array.isArray(row.attempts) && row.attempts.every((attempt: unknown) =>
+    isRecord(attempt) && Number.isSafeInteger(attempt.attempt_number) && typeof attempt.status === "string"
+    && isOptionalErrorCode(attempt.error_code)));
+}
+
 @customElement("notification-deliveries")
 export class NotificationDeliveries extends LitElement {
   static styles = [
@@ -28,42 +73,92 @@ export class NotificationDeliveries extends LitElement {
       }
     `,
   ];
-  @state() private rows: any[] = [];
+  @state() private rows: ReceiptRow[] = [];
   @state() private busy = true;
   @state() private error = "";
-  private epoch = 0;
-  private onStorage = (e: StorageEvent) => {
-    if (e.key === "token") void this.load();
+  private read?: { controller: AbortController; timeout: ReturnType<typeof setTimeout> };
+
+  private readonly onStorage = (event: StorageEvent) => {
+    if (event.key !== "token" && event.key !== null) return;
+    if (apiClient.getToken()) void this.load();
+    else this.onSessionExpired();
   };
-  connectedCallback() {
+
+  private readonly onSessionExpired = () => {
+    this.cancelRead();
+    this.rows = [];
+    this.busy = false;
+    this.error = expiredSession;
+  };
+
+  override connectedCallback() {
     super.connectedCallback();
     window.addEventListener("storage", this.onStorage);
+    window.addEventListener(SESSION_EXPIRED_EVENT, this.onSessionExpired);
     void this.load();
   }
-  disconnectedCallback() {
+
+  override disconnectedCallback() {
     window.removeEventListener("storage", this.onStorage);
-    this.epoch++;
+    window.removeEventListener(SESSION_EXPIRED_EVENT, this.onSessionExpired);
+    this.cancelRead();
+    this.rows = [];
     super.disconnectedCallback();
   }
-  private async load() {
-    const g = ++this.epoch,
-      s = localStorage.getItem("token");
+
+  private cancelRead(): void {
+    const read = this.read;
+    if (!read) return;
+    this.read = undefined;
+    clearTimeout(read.timeout);
+    read.controller.abort();
+  }
+
+  private async load(): Promise<void> {
+    this.cancelRead();
+    const controller = new AbortController();
+    const session = apiClient.getSessionContext();
+    const isCurrent = () => this.read?.controller === controller && this.isConnected;
+    const ownsSession = () => session === apiClient.getSessionContext();
     this.rows = [];
     this.busy = true;
     this.error = "";
+
+    const timeout = setTimeout(() => {
+      if (!isCurrent()) return;
+      // A shared auth refresh may still be pending after aborting this read.
+      this.cancelRead();
+      this.busy = false;
+      this.error = ownsSession() ? "加载投递回执超时，请重试。" : changedSession;
+    }, 15_000);
+    this.read = { controller, timeout };
+
     try {
-      const r = await authFetch("/api/notification/deliveries", { cache: "no-store" });
-      if (!r.ok) throw Error(r.status === 403 ? "无权查看投递回执" : "投递回执暂时无法查询");
-      const v = await r.json();
-      if (!this.isConnected || g !== this.epoch || s !== localStorage.getItem("token")) return;
-      if (!Array.isArray(v) || v.some(row => !row || typeof row !== "object")) throw Error("投递回执格式异常");
-      this.rows = v;
-    } catch (e) {
-      if (this.isConnected && g === this.epoch && s === localStorage.getItem("token"))
-        this.error = e instanceof SyntaxError || e instanceof TypeError ? "投递回执暂时无法查询" : (e as Error).message;
+      const response = await authFetch("/api/notification/deliveries", { cache: "no-store", signal: controller.signal });
+      if (!isCurrent() || !ownsSession()) return;
+      if (!response.ok) {
+        if (response.status === 401) this.error = expiredSession;
+        else if (response.status === 403) this.error = "无权查看投递回执（HTTP 403），请联系管理员确认权限后重试。";
+        else this.error = `投递回执暂时无法查询（HTTP ${response.status}），请重试。`;
+        return;
+      }
+      const body = await response.text();
+      if (!isCurrent() || !ownsSession()) return;
+      const rows: unknown = JSON.parse(body);
+      if (!Array.isArray(rows) || !rows.every(isReceiptRow)) {
+        this.error = invalidReceipt;
+        return;
+      }
+      this.rows = rows;
+    } catch (error) {
+      if (isCurrent()) this.error = error instanceof SyntaxError ? invalidReceipt : "网络异常，无法加载投递回执，请检查连接后重试。";
     } finally {
-      if (this.isConnected && g === this.epoch && s === localStorage.getItem("token"))
+      if (isCurrent()) {
+        clearTimeout(timeout);
+        this.read = undefined;
         this.busy = false;
+        if (!ownsSession()) this.error = changedSession;
+      }
     }
   }
   render() {
@@ -86,6 +181,7 @@ export class NotificationDeliveries extends LitElement {
       DELIVERY_OUTCOME_UNCERTAIN: "投递结果未知",
       LEGACY_DELIVERY: "已有投递记录，未重复发送",
     };
+    const label = (code: string | null | undefined) => code == null ? "—" : Object.hasOwn(labels, code) ? labels[code] : code;
     return html`<h3>投递回执</h3>
       <button class="btn btn-refresh" .disabled=${this.busy} @click=${this.load}>
         刷新投递回执
@@ -107,15 +203,15 @@ export class NotificationDeliveries extends LitElement {
               (r) =>
                 html`<tr>
                   <td>${r.alert_id} / ${r.channel_id}</td>
-                  <td>${labels[r.phase]}</td>
-                  <td>${labels[r.delivery?.state ?? r.job_state] ?? r.job_state}</td>
+                  <td>${label(r.phase)}</td>
+                  <td>${label(r.delivery?.state ?? r.job_state)}</td>
                   <td>
                     ${r.attempts?.length ?? 0} 次 ·
-                    ${labels[r.delivery?.error_code ?? r.error_code] ?? r.delivery?.error_code ?? r.error_code ?? "—"}
+                    ${label(r.delivery?.error_code ?? r.error_code)}
                     <details>
                       <summary>查看回执</summary>
                       <p>投递身份：${r.delivery?.business_key ?? r.id}</p>
-                      ${(r.attempts ?? []).map((a: any) => html`<p>${a.attempt_number} · ${labels[a.status] ?? a.status} · ${labels[a.error_code] ?? a.error_code ?? "—"}</p>`)}
+                      ${(r.attempts ?? []).map((a) => html`<p>${a.attempt_number} · ${label(a.status)} · ${label(a.error_code)}</p>`)}
                     </details>
                   </td>
                 </tr>`,

@@ -16,7 +16,7 @@ class Socket {
   constructor() { Socket.instances.push(this); }
   send(raw: string) { this.frames.push(JSON.parse(raw)); }
   receive(frame: object) { this.onmessage?.({ data: JSON.stringify(frame) }); }
-  closeWith(code: number) { this.readyState = 3; this.onclose?.({ code, reason: 'contract substitute', wasClean: true }); }
+  closeWith(code: number, reason = 'contract substitute') { this.readyState = 3; this.onclose?.({ code, reason, wasClean: true }); }
   close() { this.readyState = 3; }
 }
 
@@ -400,5 +400,49 @@ describe('MAX-684 denied chat state and credential recovery', () => {
     expect(next.frames).toContainEqual(expect.objectContaining({ type: 'auth', token: 'credential-B' }));
     expect(next.frames).toContainEqual({ type: 'chat.watch', sessionKey: 'one' });
     expect(next.frames.some(frame => frame.type === 'chat.send')).toBe(false);
+  });
+
+  it('waits for an authenticated HTTP refresh after scheduled access expiry without issuing a background refresh', async () => {
+    apiClient.setRefreshToken('refresh-A');
+    const execute = vi.fn()
+      .mockResolvedValueOnce(new Response(null, { status: 401 }))
+      .mockResolvedValueOnce(Response.json({ token: 'credential-B', refreshToken: 'refresh-B' }))
+      .mockResolvedValueOnce(Response.json([]));
+    vi.stubGlobal('fetch', execute);
+    const { client, socket, changes } = connected();
+    client.watchSession('one');
+    const pending = client.sendChat('one', 'unconfirmed').catch(error => error);
+
+    socket.closeWith(4001, 'Access credential expired');
+    expect(await pending).toBeInstanceOf(Error);
+    expect(changes).toHaveBeenLastCalledWith('access_expired');
+    expect(localStorage.getItem('refreshToken')).toBe('refresh-A');
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(execute).not.toHaveBeenCalled();
+    expect(Socket.instances).toHaveLength(1);
+
+    expect((await apiClient.fetchResponseWithAuth('/api/auth/permissions')).status).toBe(200);
+    expect(localStorage.getItem('refreshToken')).toBe('refresh-B');
+    const next = Socket.instances.at(-1)!;
+    expect(next).not.toBe(socket);
+    next.onopen?.(); next.receive({ type: 'auth_ok' });
+    expect(next.frames).toContainEqual(expect.objectContaining({ type: 'auth', token: 'credential-B' }));
+    expect(next.frames).toContainEqual({ type: 'chat.watch', sessionKey: 'one' });
+    expect(next.frames.some(frame => frame.type === 'chat.send')).toBe(false);
+  });
+
+  it('restores the expired socket after another tab rotates the shared credentials', () => {
+    apiClient.setRefreshToken('refresh-A');
+    const { socket, changes } = connected();
+    socket.closeWith(4001, 'Access credential expired');
+    localStorage.setItem('token', 'credential-B');
+    localStorage.setItem('refreshToken', 'refresh-B');
+    window.dispatchEvent(new StorageEvent('storage', { key: 'refreshToken', newValue: 'refresh-B' }));
+
+    const next = Socket.instances.at(-1)!;
+    expect(next).not.toBe(socket);
+    next.onopen?.(); next.receive({ type: 'auth_ok' });
+    expect(next.frames).toContainEqual(expect.objectContaining({ type: 'auth', token: 'credential-B' }));
+    expect(changes).toHaveBeenLastCalledWith('connected');
   });
 });

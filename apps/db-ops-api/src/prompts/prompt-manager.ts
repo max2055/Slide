@@ -16,6 +16,8 @@ import { randomUUID } from 'node:crypto';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const BUNDLED_VERSIONS_DIR = path.resolve(__dirname, 'versions');
+const PROMPT_TYPE = /^[a-z0-9][a-z0-9-]*$/;
+const ACTIVE_VERSION_FILE = /^\.active-version-([a-z0-9][a-z0-9-]*)\.json$/;
 
 interface PromptVersion {
   version: number;
@@ -38,6 +40,7 @@ interface PromptManagerOptions {
 export class PromptManager {
   private prompts: Map<string, PromptVersion[]> = new Map();
   private activeVersion: number = 2;
+  private activeByType = new Map<string, number>();
   private abTest = false;
   private watcher: fs.FSWatcher | null = null;
   private reloadTimer: ReturnType<typeof setTimeout> | null = null;
@@ -76,6 +79,30 @@ export class PromptManager {
     console.log(`[PromptManager] 已加载 ${this.countEntries()} 个提示词文件，${this.prompts.size} 种类型，当前版本：v${this.activeVersion}${this.abTest ? '（A/B 测试模式）' : ''}`);
   }
 
+  private async loadActiveVersions(files: string[], prompts: Map<string, PromptVersion[]>): Promise<Map<string, number>> {
+    const activeByType = new Map<string, number>();
+    for (const file of files) {
+      const type = ACTIVE_VERSION_FILE.exec(file)?.[1];
+      if (!type || !prompts.has(type)) continue;
+      let text: string;
+      try {
+        text = await fs.promises.readFile(path.join(this.versionsDir, file), 'utf-8');
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') continue;
+        throw error;
+      }
+      try {
+        const stored = JSON.parse(text);
+        if (stored?.defaultVersion === this.activeVersion && prompts.get(type)?.some(entry => entry.version === stored.version)) {
+          activeByType.set(type, stored.version);
+        }
+      } catch {
+        console.warn('[PromptManager] 活跃版本文件格式无效，使用启动默认版本');
+      }
+    }
+    return activeByType;
+  }
+
   /**
    * 重新加载所有提示词文件
    */
@@ -83,10 +110,10 @@ export class PromptManager {
     return this.enqueueUpdate(async () => {
       const snapshot = new Map<string, PromptVersion[]>();
       await this.loadDirectory(this.bundledVersionsDir, snapshot);
-      if (this.versionsDir !== this.bundledVersionsDir) {
-        await this.loadDirectory(this.versionsDir, snapshot);
-      }
+      const files = await this.loadDirectory(this.versionsDir, snapshot);
+      const activeByType = await this.loadActiveVersions(files, snapshot);
       this.prompts = snapshot;
+      this.activeByType = activeByType;
     });
   }
 
@@ -97,7 +124,7 @@ export class PromptManager {
     return result;
   }
 
-  private async loadDirectory(directory: string, snapshot: Map<string, PromptVersion[]>): Promise<void> {
+  private async loadDirectory(directory: string, snapshot: Map<string, PromptVersion[]>): Promise<string[]> {
     const files = await fs.promises.readdir(directory);
 
     for (const file of files) {
@@ -123,6 +150,7 @@ export class PromptManager {
         versions[existingIndex] = entry;
       }
     }
+    return files;
   }
 
   private async prepareVersionsDirectory(): Promise<void> {
@@ -158,14 +186,14 @@ export class PromptManager {
       return '';
     }
 
-    const version = overrideVersion ?? this.activeVersion;
+    const version = overrideVersion ?? this.getActiveVersion(type);
 
     const entry = versions.find(e => e.version === version);
     if (!entry) {
       console.warn(`[PromptManager] 请求的提示词版本 v${version} 不存在，未返回其他版本`);
       return '';
     }
-    if (this.abTest && overrideVersion === undefined) {
+    if (this.abTest && overrideVersion === undefined && this.activeByType.get(type) !== version) {
       const v1 = versions.find(e => e.version === 1);
       const v2 = versions.find(e => e.version === 2);
       if (v1 && v2) {
@@ -196,7 +224,7 @@ export class PromptManager {
       result.push({
         type,
         versions: versions.sort((a, b) => a.version - b.version),
-        activeVersion: this.activeVersion,
+        activeVersion: this.getActiveVersion(type),
       });
     }
     return result.sort((a, b) => a.type.localeCompare(b.type));
@@ -211,11 +239,15 @@ export class PromptManager {
     return {
       type,
       versions: versions.sort((a, b) => a.version - b.version),
-      activeVersion: this.activeVersion,
+      activeVersion: this.getActiveVersion(type),
     };
   }
 
-  getActiveVersion(): number { return this.activeVersion; }
+  getActiveVersion(type?: string): number {
+    if (!type) return this.activeVersion;
+    const selected = this.activeByType.get(type);
+    return selected !== undefined && this.getVersionContent(type, selected) !== null ? selected : this.activeVersion;
+  }
   getVersionsDir(): string { return this.versionsDir; }
 
   // ══════════════ 运行时更新方法 ══════════════
@@ -223,10 +255,25 @@ export class PromptManager {
   /**
    * 切换活跃版本
    */
-  setActiveVersion(version: number): void {
-    if (version < 1) return;
-    this.activeVersion = version;
-    console.log(`[PromptManager] 切换到 v${version}`);
+  async setActiveVersion(type: string, version: number): Promise<boolean> {
+    return this.enqueueUpdate(async () => {
+      if (!PROMPT_TYPE.test(type) || this.getVersionContent(type, version) === null) return false;
+      const destination = path.join(this.versionsDir, `.active-version-${type}.json`);
+      const temporary = path.join(this.versionsDir, `.${randomUUID()}.tmp`);
+      try {
+        await fs.promises.writeFile(temporary, JSON.stringify({
+          defaultVersion: this.activeVersion, version,
+        }), { encoding: 'utf-8', flag: 'wx', mode: 0o600 });
+        await fs.promises.rename(temporary, destination);
+      } catch (error) {
+        try { await fs.promises.unlink(temporary); }
+        catch (cleanup) { if ((cleanup as NodeJS.ErrnoException).code !== 'ENOENT') this.logCleanupFailure('unlink', cleanup); }
+        throw error;
+      }
+      this.activeByType.set(type, version);
+      console.log(`[PromptManager] ${type} 切换到 v${version}`);
+      return true;
+    });
   }
 
   /**
@@ -252,7 +299,7 @@ export class PromptManager {
    * 创建新版本
    */
   async createVersion(type: string, content: string): Promise<{ version: number; fileName: string }> {
-    if (!/^[a-z0-9][a-z0-9-]*$/.test(type)) throw new Error('提示词类型无效');
+    if (!PROMPT_TYPE.test(type)) throw new Error('提示词类型无效');
     return this.enqueueUpdate(async () => {
       const versions = this.prompts.get(type) ?? [];
       const files = await fs.promises.readdir(this.versionsDir);
@@ -308,7 +355,7 @@ export class PromptManager {
 
     try {
       this.watcher = fs.watch(this.versionsDir, (_eventType, fileName) => {
-        if (!fileName || !fileName.endsWith('.md')) return;
+        if (!fileName || !fileName.endsWith('.md') && !ACTIVE_VERSION_FILE.test(fileName)) return;
         if (this.reloadTimer) clearTimeout(this.reloadTimer);
         this.reloadTimer = setTimeout(() => {
           this.reloadTimer = null;

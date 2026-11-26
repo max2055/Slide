@@ -7,7 +7,7 @@ import { LitElement, html, css, nothing } from "lit";
 import { sharedBtnStyles } from "../../styles/shared-btn-styles.ts";
 import { customElement, property, state } from "lit/decorators.js";
 import { icons } from "../../../icons.js";
-import { authFetch } from "../../../api/index.js";
+import { apiClient, authFetch, SESSION_EXPIRED_EVENT } from "../../../api/index.js";
 import { showToast } from "../components/app-toast-container.js";
 import "./../components/alert-list.js";
 import "./../components/alert-detail-modal.js";
@@ -21,12 +21,16 @@ import "./../components/app-form-field.js";
 interface Alert {
   id: number;
   template_event_id?: number | null;
+  related_event_id?: number | null;
   instance_id: number;
   instance_name?: string;
   alert_type: string;
   severity: string;
   title: string;
   message: string;
+  metric_name?: string | null;
+  metric_value?: string | null;
+  threshold_value?: string | null;
   status: 'unread' | 'read' | 'acknowledged' | 'resolved' | 'closed';
   acknowledged: boolean;
   acknowledged_by?: string;
@@ -855,7 +859,7 @@ export class AlertsPage extends LitElement {
     return html`
       <alert-list .alerts=${this.filteredAlerts} .loading=${this.loading} .error=${this.error}
         .activeListTab=${this.activeListTab} .filterSeverity=${this.filterSeverity}
-        .filterTargetType=${this.filterTargetType} .servers=${this.servers}
+        .filterTargetType=${this.filterTargetType} .filterServerId=${this.filterServerId} .servers=${this.servers}
         .searchText=${this.searchText} .stats=${this.stats} .levelCounts=${this._levelCounts}
         .statsActiveTotal=${this._statsActiveTotal} .statsResolved=${this._statsResolved}
         .analyzedStatuses=${this.analyzedStatuses} .activeRCAAnalysis=${this.activeRCAAnalysis}
@@ -894,46 +898,79 @@ export class AlertsPage extends LitElement {
   private async loadNotificationDeadLetters() {
     if (this.notificationDeadLettersLoading) return;
     const controller = new AbortController();
+    const session = apiClient.getSessionContext();
+    const isCurrent = () => this.notificationReadController === controller && this.isConnected;
+    const ownsSession = () => session === apiClient.getSessionContext();
     this.notificationReadController = controller;
     this.notificationDeadLettersLoading = true;
     this.notificationDeadLettersError = null;
     this.notificationDeadLetters = null;
     this.replayingNotification = null;
-    let timedOut = false;
-    const timeout = setTimeout(() => { timedOut = true; controller.abort(); }, 15_000);
+    // authFetch can wait for a shared refresh that outlives this read's signal.
+    let rejectInterrupted!: (reason: unknown) => void;
+    const interrupted = new Promise<never>((_resolve, reject) => { rejectInterrupted = reject; });
+    const onAbort = () => rejectInterrupted(controller.signal.reason);
+    controller.signal.addEventListener('abort', onAbort, { once: true });
+    const timeout = setTimeout(() => controller.abort(new DOMException('Notification read timed out', 'TimeoutError')), 15_000);
     try {
-      const response = await authFetch('/api/notification/dead-letters?limit=100', {
+      const response = await Promise.race([authFetch('/api/notification/dead-letters?limit=100', {
         signal: controller.signal, cache: 'no-store',
-      });
+      }), interrupted]);
+      if (!isCurrent() || !ownsSession()) return;
       if (response.status === 403) throw new Error('无权查看通知死信（HTTP 403），请联系管理员确认权限后重试。');
       if (response.status === 401) throw new Error('登录已失效（HTTP 401），请重新登录后重试。');
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      const jobs: unknown = await response.json();
-      if (timedOut) throw new Error('通知死信读取超时');
+      const jobs: unknown = await Promise.race([response.json(), interrupted]);
+      if (!isCurrent() || !ownsSession()) return;
       if (!Array.isArray(jobs) || !jobs.every(job => job && typeof job.id === 'string' && job.id.length > 0
         && typeof job.type === 'string' && job.payload && typeof job.payload === 'object' && !Array.isArray(job.payload)
         && Number.isFinite(job.attempts) && (job.lastError === null || typeof job.lastError === 'string')
         && typeof job.createdAt === 'string' && Number.isFinite(Date.parse(job.createdAt)))) {
         throw new Error('通知死信格式异常，请稍后重试。');
       }
-      if (this.notificationReadController === controller && this.isConnected && !controller.signal.aborted) {
-        this.notificationDeadLetters = jobs;
-      }
+      this.notificationDeadLetters = jobs;
     } catch (error: unknown) {
-      if (this.notificationReadController === controller && this.isConnected) {
-        this.notificationDeadLettersError = timedOut ? '加载通知死信超时，请重试。'
+      if (isCurrent()) {
+        this.notificationDeadLettersError = controller.signal.reason?.name === 'TimeoutError' ? '加载通知死信超时，请重试。'
           : error instanceof SyntaxError ? '通知死信格式异常，请稍后重试。'
           : error instanceof TypeError ? '网络异常，请检查连接后重试。'
           : error instanceof Error ? error.message : '网络异常，请检查连接后重试。';
       }
     } finally {
       clearTimeout(timeout);
-      if (this.notificationReadController === controller) {
+      controller.signal.removeEventListener('abort', onAbort);
+      if (isCurrent()) {
         this.notificationReadController = null;
         this.notificationDeadLettersLoading = false;
+        if (!ownsSession()) this.notificationDeadLettersError = '登录状态已变化，请刷新通知死信。';
       }
     }
   }
+
+  private resetNotificationDeadLetterRead(error: string | null = null) {
+    const controller = this.notificationReadController;
+    this.notificationReadController = null;
+    controller?.abort();
+    this.notificationDeadLettersLoading = false;
+    this.notificationDeadLetters = null;
+    this.notificationDeadLettersError = error;
+    this.replayingNotification = null;
+    this.notificationReplayReason = '';
+  }
+
+  private readonly notificationSessionExpired = () => {
+    this.resetNotificationDeadLetterRead('登录已失效（HTTP 401），请重新登录后重试。');
+  };
+
+  private readonly notificationSessionStorageChanged = (event: StorageEvent) => {
+    if (event.key !== 'token' && event.key !== null) return;
+    if (!apiClient.getToken()) {
+      this.notificationSessionExpired();
+      return;
+    }
+    this.resetNotificationDeadLetterRead();
+    if (this.activeAlertTab === 'notifications') void this.loadNotificationDeadLetters();
+  };
 
   private async _replayNotificationDeadLetter() {
     const job = this.replayingNotification;
@@ -1046,13 +1083,9 @@ export class AlertsPage extends LitElement {
         headers: { 'Content-Type': 'application/json' },
         body: "{}",
       });
-      if (res.ok) {
-        alert.acknowledged = true;
-        alert.status = 'acknowledged';
-        alert.acknowledged_at = new Date().toISOString();
-        this.requestUpdate();
-      }
-    } catch (e) { showToast('Failed to acknowledge alert', 'error'); }
+      if (!res.ok || (await res.json())?.success !== true) throw new Error('ALERT_ACKNOWLEDGEMENT_UNCONFIRMED');
+      await this.loadAlerts();
+    } catch { showToast('未能确认该告警，请刷新后核对状态。', 'error'); }
   }
 
   @state() private detailAlert: Alert | null = null;
@@ -1220,15 +1253,18 @@ export class AlertsPage extends LitElement {
     this.diagnosisController = null;
   }
 
+  override connectedCallback() {
+    super.connectedCallback();
+    window.addEventListener(SESSION_EXPIRED_EVENT, this.notificationSessionExpired);
+    window.addEventListener('storage', this.notificationSessionStorageChanged);
+  }
+
   override disconnectedCallback() {
-    super.disconnectedCallback();
+    window.removeEventListener(SESSION_EXPIRED_EVENT, this.notificationSessionExpired);
+    window.removeEventListener('storage', this.notificationSessionStorageChanged);
     this._stopDiagnosisPolling();
-    this.notificationReadController?.abort();
-    this.notificationReadController = null;
-    this.notificationDeadLettersLoading = false;
-    this.notificationDeadLetters = null;
-    this.notificationDeadLettersError = null;
-    this.replayingNotification = null;
+    this.resetNotificationDeadLetterRead();
+    super.disconnectedCallback();
   }
 
   // ==================== Task 2: Rules CRUD ====================

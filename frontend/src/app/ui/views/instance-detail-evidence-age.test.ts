@@ -54,7 +54,7 @@ describe('detail evidence ages independently of network refresh', () => {
     } else {
       expect(content()).toContain('已过期（超过5分钟）');
       expect(content()).not.toContain('新鲜（5分钟内）');
-      expect(content()).toContain('0.66 GB');
+      expect(content()).toContain('0.66 GiB');
     }
     expect(refresh).not.toHaveBeenCalled();
     expect(authFetch).not.toHaveBeenCalled();

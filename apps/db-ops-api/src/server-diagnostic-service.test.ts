@@ -68,6 +68,27 @@ describe('ServerDiagnosticService', () => {
     expect(closeConnection).not.toHaveBeenCalled();
   });
 
+  it('reads fresh and expired diagnostic snapshots without opening SSH, including on cache misses', async () => {
+    let now = new Date('2026-08-26T00:00:00.000Z');
+    const service = create({ now: () => now });
+    await expect(service.readDiagnosticsSnapshot(3)).rejects.toThrow('DIAGNOSTIC_SNAPSHOT_NOT_FOUND');
+    expect(getDecryptedCredentials).not.toHaveBeenCalled();
+    expect(execCommands).not.toHaveBeenCalled();
+
+    const snapshot = await service.collectDiagnostics(3);
+    const collectedCommandCount = execCommands.mock.calls.length;
+    expect(await service.readDiagnosticsSnapshot(3)).toEqual(snapshot);
+    now = new Date(snapshot.expiresAt);
+    const expired = await service.readDiagnosticsSnapshot(3);
+    expect(expired).toMatchObject({ quality: 'unknown', collectedAt: snapshot.collectedAt, expiresAt: snapshot.expiresAt });
+    expect(expired.sections.services).toMatchObject({ quality: 'unknown', reason: 'EVIDENCE_STALE', items: snapshot.sections.services.items });
+    getServerById.mockResolvedValue(null);
+    await expect(service.readDiagnosticsSnapshot(3)).rejects.toThrow('SERVER_NOT_FOUND');
+    expect(getDecryptedCredentials).toHaveBeenCalledOnce();
+    expect(getConnection).toHaveBeenCalledOnce();
+    expect(execCommands).toHaveBeenCalledTimes(collectedCommandCount);
+  });
+
   it.each(['exit', 'throw'])('MAX-406 deduplicates log failures (%s) while retaining other gaps', async mode => {
     const original = execCommands.getMockImplementation()! as (client: unknown, commands: string[]) => Promise<ReturnType<typeof ok>[]>;
     execCommands.mockImplementation(async (client: unknown, commands: string[]) => {
@@ -109,5 +130,30 @@ describe('ServerDiagnosticService', () => {
     await expect(create().collectDiagnostics(3)).rejects.toThrow('SSH_COMMAND_OUTPUT_LIMIT');
     expect(closeConnection).toHaveBeenCalledWith(client);
     expect(releaseConnection).not.toHaveBeenCalled();
+  });
+
+  it('treats a closed SSH channel without exit status as a protocol failure', async () => {
+    const service = create();
+    const snapshot = await service.collectDiagnostics(3);
+    releaseConnection.mockClear();
+    execCommands.mockResolvedValueOnce([{ ...ok(), exitCode: null }]);
+    await expect(service.collectDiagnostics(3)).rejects.toThrow('SSH_COMMAND_PROTOCOL_ERROR');
+    expect(closeConnection).toHaveBeenCalledWith(client);
+    expect(releaseConnection).not.toHaveBeenCalled();
+    expect(await service.readDiagnosticsSnapshot(3)).toEqual(snapshot);
+  });
+
+  it.each(['SSH_COMMAND_PROTOCOL_ERROR', 'SSH_COMMAND_TIMEOUT'])('retains the original snapshot when explicit refresh fails with %s', async code => {
+    const service = create();
+    execCommands.mockRejectedValueOnce(new Error(code));
+    await expect(service.getDiagnostics(3, { refresh: true })).rejects.toThrow(code);
+
+    const snapshot = await service.collectDiagnostics(3);
+    execCommands.mockRejectedValueOnce(new Error(code));
+    const stale = await service.getDiagnostics(3, { refresh: true });
+    expect(stale).toMatchObject({ quality: 'unknown', collectedAt: snapshot.collectedAt, expiresAt: snapshot.expiresAt });
+    expect(stale.gaps).toContainEqual({ section: 'all', reason: code });
+    expect(stale.topProcesses.items).toEqual(snapshot.topProcesses.items);
+    expect(await service.readDiagnosticsSnapshot(3)).toEqual(snapshot);
   });
 });

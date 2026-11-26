@@ -337,9 +337,9 @@ class NotificationDatabaseService {
         return { success: false, error: '通知渠道不存在' };
       }
       return { success: true };
-    } catch (error: any) {
-      console.error('删除通知渠道失败:', error);
-      return { success: false, error: error.message };
+    } catch {
+      console.error('删除通知渠道失败', { code: 'NOTIFICATION_CHANNEL_DELETE_FAILED' });
+      return { success: false, error: 'NOTIFICATION_CHANNEL_DELETE_FAILED' };
     }
   }
 
@@ -359,6 +359,7 @@ class NotificationDatabaseService {
          FROM alerts a
          LEFT JOIN database_instances di ON a.instance_id = di.id
          WHERE a.status = 'unread'
+           AND NOT (a.source <=> 'template-trigger' AND COALESCE(a.tags->>'$.manual_silence_suppressed', 'false') = 'true')
          ORDER BY a.created_at ASC`
       ) as any;
 

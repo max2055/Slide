@@ -6,6 +6,7 @@ import mysql, { type Pool, type RowDataPacket } from 'mysql2/promise';
 import { WebSocket, type WebSocketServer, type RawData } from 'ws';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ToolRegistry, type LLMProvider, type LLMResponse } from '@slide/agent-core';
+import { PARTS_STREAM_CAPABILITY } from '@slide/agent-core/display-stream';
 import { MigrationRunner } from '../../migrations/runner.js';
 import { ActorContextService, signAccessToken } from '../../auth/actor-context.js';
 import { dbConnection } from '../../db-connection.js';
@@ -203,16 +204,15 @@ describe.skipIf(!port)('T04-A durable terminal and real WebSocket regressions', 
     providerReleases.push(release);
     return { implementation, started: started.promise, release, calls: () => calls };
   }
-  async function socketAdapter(llmProvider: LLMProvider, authority: DirectAdapterOptions['actorContextService'] = contexts) {
+  async function socketAdapter(llmProvider: LLMProvider, authority: DirectAdapterOptions['actorContextService'] = contexts, tools = new ToolRegistry()) {
     const workspace = await mkdtemp(join(tmpdir(), 't04-a-ws-')); directories.push(workspace);
-    const tools = new ToolRegistry();
     const adapter = new DirectAdapter({ llmProvider, tools, toolsForActor: () => tools, actorContextService: authority, workspace });
     adapters.push(adapter); await adapter.start();
     const server = (adapter as unknown as { wsServer: WebSocketServer }).wsServer;
     if (!server.address()) await new Promise<void>(r => server.once('listening', r));
     return { adapter, server };
   }
-  async function connect(server: WebSocketServer, userId = 7) {
+  async function connect(server: WebSocketServer, userId = 7, nativeParts = false) {
     const address = server.address();
     if (typeof address === 'string') throw new Error('EXPECTED_TCP_ADDRESS');
     const client = new WebSocket(`ws://127.0.0.1:${address.port}`); clients.push(client);
@@ -229,7 +229,8 @@ describe.skipIf(!port)('T04-A durable terminal and real WebSocket regressions', 
       handlers.add(pending);
       void pending.finally(() => handlers.delete(pending));
     });
-    client.send(JSON.stringify({ type: 'auth', token: signAccessToken(await contexts.loadActiveActor(userId, 1), secret) }));
+    client.send(JSON.stringify({ type: 'auth', token: signAccessToken(await contexts.loadActiveActor(userId, 1), secret),
+      ...(nativeParts ? { capabilities: [PARTS_STREAM_CAPABILITY] } : {}) }));
     await vi.waitFor(() => expect(events.some(event => event.type === 'auth_ok')).toBe(true));
     return { client, socket, events, handled, send: (frame: unknown) => client.send(JSON.stringify(frame)) };
   }
@@ -253,6 +254,87 @@ describe.skipIf(!port)('T04-A durable terminal and real WebSocket regressions', 
     await vi.waitFor(() => expect(peer.handled).toContain('chat.send'));
     expect(peer.events.some(event => event.type === 'complete')).toBe(false);
     expect(controlled.calls()).toBe(1);
+  });
+  it.each([false, true])('C15 acknowledges the cancelled Run before provider settlement (native Parts %s)', async nativeParts => {
+    const controlled = provider();
+    const { server } = await socketAdapter(controlled.implementation);
+    const peer = await connect(server, 7, nativeParts);
+    const auth = peer.events.find(event => event.type === 'auth_ok');
+    expect(auth.capabilities?.includes(PARTS_STREAM_CAPABILITY) ?? false).toBe(nativeParts);
+    const frame = sendFrame('owned:key');
+    peer.send(frame);
+    const runId = await startedRun(peer);
+    await controlled.started;
+    const cancel = { type: 'chat.cancel', runId, sessionKey: frame.sessionKey };
+    peer.send(cancel);
+    await vi.waitFor(async () => expect(await service.getForActor(runId, 7, frame.sessionKey)).toMatchObject({ state: 'cancelled' }));
+    const receipts = () => peer.events.filter(event => event.type === 'run.snapshot' && event.run?.id === runId);
+    await vi.waitFor(() => expect(receipts()).toEqual([expect.objectContaining({
+      messageId: frame.messageId, sessionKey: frame.sessionKey, run: expect.objectContaining({ id: runId, state: 'cancelled' }),
+    })]));
+    expect(receipts()[0].run).not.toHaveProperty('chatAuthority');
+
+    peer.send(cancel);
+    await vi.waitFor(() => expect(peer.events.some(event => event.code === 'RUN_NOT_CANCELLABLE')).toBe(true));
+    expect(receipts()).toHaveLength(1);
+
+    const reconnected = await connect(server, 7, nativeParts);
+    if (nativeParts) {
+      reconnected.send({ type: 'chat.watch', sessionKey: frame.sessionKey, subscriptionId: 'watch-after-cancel' });
+      await vi.waitFor(() => expect(reconnected.events).toContainEqual(expect.objectContaining({
+        type: 'stream.snapshot', stream: expect.objectContaining({ runId }), snapshot: expect.objectContaining({ terminal: 'cancelled' }),
+      })));
+    }
+    reconnected.send(frame);
+    await vi.waitFor(() => expect(reconnected.events).toContainEqual(expect.objectContaining({
+      type: 'run.snapshot', run: expect.objectContaining({ id: runId, state: 'cancelled' }),
+    })));
+    expect(controlled.calls()).toBe(1);
+    controlled.release();
+  });
+  it('C15 acknowledges cancellation on reconnect after a settled tool and a partial answer', async () => {
+    const controlled = provider();
+    const toolCall = { id: 'cancelled-turn-tool', name: 'fixture_read', arguments: {} };
+    const tool = vi.fn(async () => ({ success: true }));
+    const tools = new ToolRegistry();
+    tools.register({ name: toolCall.name, description: 'Controlled read', parameters: { type: 'object', properties: {} },
+      readOnly: true, exclusive: false, concurrencySafe: true, execute: tool });
+    let calls = 0;
+    const partial = 'provisional answer before cancellation';
+    controlled.implementation.chatStream = async (_messages, _tools, callbacks, options) => {
+      if (++calls === 1) return { ...response, content: '', finishReason: 'tool_calls', toolCalls: [toolCall], hasToolCalls: true, shouldExecuteTools: true };
+      await callbacks.onContentDelta(partial);
+      return new Promise((resolve, reject) => {
+        providerReleases.push(() => resolve(response));
+        const signal = options?.signal;
+        if (signal?.aborted) reject(signal.reason);
+        else signal?.addEventListener('abort', () => reject(signal.reason), { once: true });
+      });
+    };
+    const { server } = await socketAdapter(controlled.implementation, contexts, tools);
+    const peer = await connect(server, 7, true);
+    const frame = sendFrame('owned:key');
+    peer.send({ type: 'chat.watch', sessionKey: frame.sessionKey, subscriptionId: 'before-cancel' });
+    peer.send(frame);
+    const runId = await startedRun(peer);
+    await vi.waitFor(() => expect(peer.events.some(event => JSON.stringify(event).includes(partial))).toBe(true));
+    peer.send({ type: 'chat.cancel', runId, sessionKey: frame.sessionKey });
+    await vi.waitFor(() => expect(peer.events).toContainEqual(expect.objectContaining({
+      type: 'run.snapshot', run: expect.objectContaining({ id: runId, state: 'cancelled' }),
+    })));
+    await vi.waitFor(() => expect(peer.handled).toContain('chat.send'));
+
+    const reconnected = await connect(server, 7, true);
+    reconnected.send({ type: 'chat.watch', sessionKey: frame.sessionKey, subscriptionId: 'after-cancel' });
+    await vi.waitFor(() => expect(reconnected.events.some(event => event.type === 'stream.snapshot')).toBe(true));
+    const restored = reconnected.events.find(event => event.type === 'stream.snapshot');
+    expect(restored).toMatchObject({ stream: { runId }, snapshot: { terminal: 'cancelled' } });
+    expect(restored.snapshot.parts).toContainEqual(expect.objectContaining({
+      part: expect.objectContaining({ type: 'tool_call', call: expect.objectContaining({ id: toolCall.id }) }),
+    }));
+    expect(JSON.stringify(restored.snapshot)).not.toContain(partial);
+    expect(tool).toHaveBeenCalledTimes(1);
+    expect(calls).toBe(2);
   });
   it('WS mismatched actor/session cannot abort the owner run', async () => {
     const controlled = provider(); const { server } = await socketAdapter(controlled.implementation);

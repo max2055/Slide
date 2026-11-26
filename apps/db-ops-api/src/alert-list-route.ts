@@ -43,6 +43,25 @@ async function attachTemplateEventIds(items: { id: number; template_event_id?: n
   }
 }
 
+async function attachAggregateEventIds(items: { id: number; related_event_id?: number }[]) {
+  const byAlertId = new Map(items.map(item => [item.id, item]));
+  if (!byAlertId.size) return;
+  const pool = dbConnection.getPool();
+  if (!pool) throw new Error('ALERTS_UNAVAILABLE');
+  // A non-template event scope is its database instance. Match it to the
+  // alert's already-authorized instance before disclosing a related ID.
+  const [rows] = await pool.query<RowDataPacket[]>(`SELECT m.alert_id, MAX(e.id) AS event_id FROM alert_event_members m
+    JOIN alerts a ON a.id=m.alert_id AND (a.target_type IS NULL OR a.target_type='instance')
+    JOIN alert_events e ON e.id=m.event_id AND e.instance_id=a.instance_id
+    WHERE m.alert_id IN (?) AND NOT (e.source_type <=> 'template-trigger')
+    GROUP BY m.alert_id`, [[...byAlertId.keys()]]);
+  for (const row of rows) {
+    const item = byAlertId.get(Number(row.alert_id));
+    const eventId = Number(row.event_id);
+    if (item && Number.isSafeInteger(eventId) && eventId > 0) item.related_event_id = eventId;
+  }
+}
+
 /** Shared production registrar; fixtures exercise the actual JWT/public read path. */
 export async function registerAlertListRoute(fastify:FastifyInstance,verifyToken:preHandlerHookHandler){
   fastify.get('/api/alerts', { preHandler: [verifyToken, requirePermission('alert:view')] }, async (request, reply) => {
@@ -70,6 +89,7 @@ export async function registerAlertListRoute(fastify:FastifyInstance,verifyToken
         strict: true,
       });
       await attachTemplateEventIds(alerts.items, actor);
+      await attachAggregateEventIds(alerts.items);
       const live = await actorContextService.revalidateActor(actor, request.id);
       if (JSON.stringify([actor.permissions, actor.roles, actor.instanceScopes, actor.resourceBoundary])
         !== JSON.stringify([live.permissions, live.roles, live.instanceScopes, live.resourceBoundary])) {

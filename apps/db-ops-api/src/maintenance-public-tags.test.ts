@@ -11,4 +11,9 @@ describe('public maintenance tags',()=>{
   expect(publicMaintenanceTags(null)).toBeNull();
   expect(publicMaintenanceTags('{broken')).toBeNull();
  });
+ it('does not expose the persistent manual silence marker on alert reads',()=>{
+  const original={template_trigger:true,manual_silence_suppressed:true};
+  expect(publicMaintenanceTags(original)).toEqual({template_trigger:true});
+  expect(original.manual_silence_suppressed).toBe(true);
+ });
 });

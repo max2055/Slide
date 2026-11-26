@@ -1,13 +1,22 @@
 import { afterEach, expect, it, vi } from 'vitest';
-const { authFetch } = vi.hoisted(() => ({ authFetch: vi.fn() }));
+const { authFetch, readCurrentPermissions } = vi.hoisted(() => ({ authFetch: vi.fn(), readCurrentPermissions: vi.fn() }));
 vi.mock('../../../api/index.js', () => ({ authFetch }));
+vi.mock('../permissions.js', async importOriginal => ({ ...await importOriginal<typeof import('../permissions.js')>(), readCurrentPermissions }));
 vi.mock('../components/app-toast-container.js', () => ({ showToast: vi.fn() }));
 import './instances-db.js';
 import './servers-page.js';
 import './network-devices-page.js';
 
 const response = (data: unknown, status = 200) => ({ ok: status === 200, status, json: async () => data });
-afterEach(() => { document.body.replaceChildren(); sessionStorage.clear(); authFetch.mockReset(); });
+afterEach(() => {
+  document.body.replaceChildren();
+  sessionStorage.clear();
+  localStorage.removeItem('permissions');
+  authFetch.mockReset();
+  readCurrentPermissions.mockReset();
+  readCurrentPermissions.mockResolvedValue([]);
+});
+readCurrentPermissions.mockResolvedValue([]);
 const cases = [
   ['instances-page', '/api/database/instances', { id: 1, name: 'db', host: 'db.invalid', db_type: 'mysql', health_status: 'unknown' }],
   ['servers-page', '/api/servers', { id: 1, label: '192.0.2.1', host: '192.0.2.1', os_type: 'kylin', status: 'offline' }],
@@ -51,4 +60,44 @@ it.each(cases)('%s has one refresh for inventory and stored metrics, and columns
     expect(cell.querySelector('small')).toBeNull();
   }
   if (tag === 'network-devices-page') expect(table.shadowRoot.querySelector('.desktop-resources app-data-table tbody .btn-ghost')).toBeTruthy();
+});
+
+it.each([
+  [...cases[1], 'servers'],
+  [...cases[2], 'network_devices'],
+] as const)('%s uses current management permission for list actions and copied edits', async (tag, endpoint, entry, permissionPrefix) => {
+  const previousUrl = location.href;
+  history.replaceState(null, '', '?edit=1');
+  localStorage.setItem('permissions', JSON.stringify([`${permissionPrefix}:view`, `${permissionPrefix}:manage`]));
+  let resolveOldPermissions!: (permissions: string[]) => void;
+  const oldPermissions = new Promise<string[]>(resolve => { resolveOldPermissions = resolve; });
+  readCurrentPermissions.mockReturnValueOnce(oldPermissions).mockResolvedValue([`${permissionPrefix}:view`]);
+  authFetch.mockImplementation(async (url: string) => {
+    if (url === endpoint) return response([entry]);
+    if (url === `${endpoint}/1`) return response({ ...entry, credential_username: 'fixture' });
+    if (url === '/api/resources/overview') return response({ items: [] });
+    return response({}, 503);
+  });
+  const page = document.createElement(tag) as HTMLElement & { renderRoot: HTMLElement; refreshReadData(): Promise<void> };
+  try {
+    document.body.append(page);
+    await vi.waitFor(() => expect(readCurrentPermissions).toHaveBeenCalledTimes(1));
+    await page.refreshReadData();
+    const editButton = () => page.renderRoot.querySelector('resource-metrics-table')?.shadowRoot
+      ?.querySelector<HTMLButtonElement>('button[data-resource-edit-id="1"]');
+    await vi.waitFor(() => expect(editButton()?.disabled).toBe(true));
+    expect(new URL(location.href).searchParams.has('edit')).toBe(false);
+    resolveOldPermissions([`${permissionPrefix}:manage`]);
+    await oldPermissions;
+    expect(editButton()?.disabled).toBe(true);
+    expect(page.renderRoot.querySelector('resource-editor-shell')).toBeNull();
+
+    readCurrentPermissions.mockResolvedValue(['*:manage']);
+    await page.refreshReadData();
+    await vi.waitFor(() => expect(editButton()?.disabled).toBe(false));
+    editButton()?.click();
+    await vi.waitFor(() => expect(page.renderRoot.querySelector('resource-editor-shell')).toBeTruthy());
+  } finally {
+    history.replaceState(null, '', previousUrl);
+  }
 });

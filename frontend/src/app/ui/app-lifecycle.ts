@@ -7,14 +7,16 @@ import {
   detachThemeListener,
   inferBasePath,
   getTabSelectionRevision,
+  hasSlidePermission,
   setTabFromRoute,
   syncUrlWithTab,
   syncTabWithLocation,
   syncThemeWithSettings,
 } from "./app-settings.ts";
 import { loadControlUiBootstrapConfig } from "./controllers/control-ui-bootstrap.ts";
-import { DEFAULT_TAB_OPTIONS, type Tab } from "./navigation.ts";
+import { DEFAULT_TAB_OPTIONS, TAB_REQUIRED_PERMISSIONS, type Tab } from "./navigation.ts";
 import type { UiSettings } from "./storage.ts";
+import { readCurrentPermissions } from "./permissions.ts";
 
 type LifecycleHost = {
   basePath: string;
@@ -38,7 +40,7 @@ type LifecycleHost = {
   chatStream: string | null;
   popStateHandler: () => void;
   topbarObserver: ResizeObserver | null;
-  settings?: { defaultTab?: string };
+  settings: UiSettings;
 };
 
 export function handleConnected(host: LifecycleHost) {
@@ -51,11 +53,11 @@ export function handleConnected(host: LifecycleHost) {
     && !url.searchParams.has("tab") && !url.searchParams.has("session");
   const bootstrapReady = loadControlUiBootstrapConfig(host);
   syncTabWithLocation(host as unknown as Parameters<typeof syncTabWithLocation>[0], true);
-  // Apply user's default landing page if on root path
-  if (applyLandingDefault) applyDefaultTab(host);
+  // Only ungated cached preferences can be applied before the session is checked.
+  if (applyLandingDefault) void applyDefaultTab(host, null);
   syncThemeWithSettings(host as unknown as Parameters<typeof syncThemeWithSettings>[0]);
   // Sync user preferences with server (login migration + cross-device sync)
-  void syncUserPreferences(host as unknown as PreferenceHost, applyLandingDefault);
+  void syncUserPreferences(host, applyLandingDefault);
   // Fetch Slide version from backend
   fetch("/api/version").then(r => r.json()).then(d => {
     (host as any).slideVersion = `Slide v${d.version}`;
@@ -75,16 +77,54 @@ export function handleConnected(host: LifecycleHost) {
 
 type PreferenceHost = { settings: UiSettings; connectGeneration?: number; tab?: Tab };
 
-function applyDefaultTab(host: { settings?: { defaultTab?: string }; tab?: Tab }) {
-  const defaultTab = host.settings?.defaultTab;
-  if (!defaultTab || defaultTab === host.tab || !([...DEFAULT_TAB_OPTIONS, 'attention', 'operations-actions'] as readonly string[]).includes(defaultTab)) return;
-  // Automatic landing resolution replaces the startup entry, preserving Back behavior.
-  const settingsHost = host as Parameters<typeof setTabFromRoute>[0];
-  setTabFromRoute(settingsHost, defaultTab as Tab);
-  syncUrlWithTab(settingsHost, defaultTab === 'attention' ? 'events' : defaultTab === 'operations-actions' ? 'investigations' : defaultTab as Tab, true);
+async function loadLandingPermissions(): Promise<Set<string> | null> {
+  try {
+    const storage = getSafeLocalStorage();
+    if (!storage?.getItem('token')) return null;
+    const user = storage.getItem('user');
+    const permissions = await readCurrentPermissions();
+    return storage.getItem('token') && storage.getItem('user') === user ? new Set(permissions) : null;
+  } catch {
+    return null;
+  }
 }
 
-export async function syncUserPreferences(host: PreferenceHost, applyLandingDefault = false) {
+function canOpenLandingTab(tab: Tab, permissions: Set<string> | null) {
+  if (tab === 'investigations') {
+    return hasSlidePermission(permissions, 'chat:view') || hasSlidePermission(permissions, 'operations:actions:view');
+  }
+  return hasSlidePermission(permissions, TAB_REQUIRED_PERMISSIONS[tab]);
+}
+
+async function applyDefaultTab(host: PreferenceHost, readPermissions: typeof loadLandingPermissions | null) {
+  const initial = host.settings;
+  const generation = host.connectGeneration;
+  const revision = getTabSelectionRevision(host);
+  const url = window.location.href;
+  const preferred = initial.defaultTab as Tab;
+  const canonical = preferred === 'attention' ? 'events' : preferred === 'operations-actions' ? 'investigations' : preferred;
+  if (!DEFAULT_TAB_OPTIONS.includes(canonical)) return;
+  let tab = preferred;
+  let route = canonical;
+  if (TAB_REQUIRED_PERMISSIONS[canonical] || canonical === 'investigations') {
+    if (!readPermissions) return;
+    const permissions = await readPermissions();
+    if (host.settings !== initial || host.connectGeneration !== generation || getTabSelectionRevision(host) !== revision
+        || window.location.href !== url) return;
+    if (!canOpenLandingTab(canonical, permissions)) {
+      if (permissions && host.tab && canOpenLandingTab(host.tab, permissions)) return;
+      if (!permissions) return;
+      tab = route = 'feedback';
+    }
+  }
+  if (route === host.tab) return;
+  // Automatic landing resolution replaces the startup entry, preserving Back behavior.
+  const settingsHost = host as Parameters<typeof setTabFromRoute>[0];
+  setTabFromRoute(settingsHost, tab);
+  syncUrlWithTab(settingsHost, route, true);
+}
+
+export async function syncUserPreferences(host: PreferenceHost, applyLandingDefault = false, readPermissions = loadLandingPermissions) {
   const initial = host.settings;
   const generation = host.connectGeneration;
   const selectionRevision = getTabSelectionRevision(host);
@@ -98,7 +138,7 @@ export async function syncUserPreferences(host: PreferenceHost, applyLandingDefa
   const canApplyDefault = applyLandingDefault && getTabSelectionRevision(host) === selectionRevision
     && window.location.href === initialUrl;
   applySettings(host as Parameters<typeof applySettings>[0], merged);
-  if (canApplyDefault) applyDefaultTab(host);
+  if (canApplyDefault) await applyDefaultTab(host, readPermissions);
 }
 
 export function handleFirstUpdated(host: LifecycleHost) {

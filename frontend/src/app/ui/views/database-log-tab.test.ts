@@ -168,3 +168,35 @@ it('MAX-717 shows only confirmed log counts and retries the failing read with th
   expect(view.shadowRoot.querySelector('.stats-row')).toBeNull();
   expect(view.shadowRoot.textContent).toContain('范围内共 0 条（所选级别）');
 });
+
+it('clears the native row and batch checkboxes when a keyword changes the visible row', async () => {
+  view.loading = false;
+  view.error = null;
+  view.analysisLoading = false;
+  view.logs = ['first', 'second'].map((message, index) => ({
+    id: index + 1, instance_id: 1, message, raw_content: message, log_level: 'error', source: 'mysql_error',
+    collected_at: '2026-11-26T00:00:00Z',
+  }));
+  await view.updateComplete;
+  const root: ShadowRoot = view.shadowRoot;
+  const keyword = root.querySelector<HTMLInputElement>('[aria-label="本批日志关键字"]')!;
+  const filter = async (text: string) => {
+    keyword.value = text;
+    keyword.dispatchEvent(new Event('input', { bubbles: true }));
+    await view.updateComplete;
+  };
+  await filter('first');
+  const first = root.querySelector<HTMLInputElement>('[aria-label="选择日志 1"]')!;
+  first.click();
+  await view.updateComplete;
+  expect(first.checked).toBe(true);
+
+  await filter('second');
+  const second = root.querySelector<HTMLInputElement>('[aria-label="选择日志 2"]')!;
+  expect(second.checked).toBe(false);
+  expect(root.querySelector<HTMLInputElement>('[aria-label="选择本批日志"]')!.checked).toBe(false);
+  expect(root.querySelector('button.btn-primary')!.textContent).toContain('AI 分析 (0)');
+  second.click();
+  await view.updateComplete;
+  expect(root.querySelector('button.btn-primary')!.textContent).toContain('AI 分析 (1)');
+});

@@ -26,12 +26,15 @@ type ChatSendHandler = (
   params: { sessionKey?: string; message: string },
 ) => Promise<ChatResult & { sessionKey: string }>;
 
+type ChatModelDefaults = { model?: string; modelProvider?: string };
+
 export interface ChatRouteDependencies {
   verifyToken: preHandlerHookHandler;
   service: ChatRouteService;
   handleChatSend: ChatSendHandler;
   authorizeChat?: typeof chatAuthorization.require;
   getGreeting?: () => string;
+  getModelDefaults?: () => Promise<ChatModelDefaults>;
 }
 
 function authenticatedActor(request: { user?: ActorContext }): ActorContext {
@@ -187,6 +190,12 @@ export async function registerChatRoutes(
             return now - lastMessage < activeMinutes * 60 * 1000;
           })
         : sessions;
+      let defaults: ChatModelDefaults = {};
+      try {
+        defaults = await deps.getModelDefaults?.() ?? {};
+      } catch {
+        request.log.warn({ code: 'CHAT_MODEL_DEFAULTS_UNAVAILABLE' }, 'Chat model defaults unavailable');
+      }
       return reply.send({
         ok: true,
         sessions: filtered.map((session) => {
@@ -211,7 +220,7 @@ export async function registerChatRoutes(
             thinkingLevels: Array.isArray(metadata?.thinkingLevels) ? metadata.thinkingLevels : undefined,
           };
         }),
-        defaults: {},
+        defaults,
       });
     } catch (error) {
       if (reject(error, reply)) return reply;

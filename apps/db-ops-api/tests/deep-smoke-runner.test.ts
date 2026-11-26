@@ -86,9 +86,15 @@ async function runShapeChecks(
   const readEpisodes = vi.fn().mockResolvedValue([[{
     alert_id: alertItem.id, event_id: templateEventId, resource: { type: 'instance', id: alertItem.instance_id },
   }]]);
+  const aggregateEventId = 63;
+  const readAggregateEvents = vi.fn().mockResolvedValue([[{ alert_id: alertItem.id, event_id: aggregateEventId }]]);
   // Exercise the real actor reload and resource check against deterministic storage rows.
   const pool = {
-    query: readEpisodes,
+    async query(sql: string, params: unknown[]) {
+      if (sql.includes('FROM metric_trigger_episodes')) return readEpisodes(sql, params);
+      if (sql.includes('FROM alert_event_members')) return readAggregateEvents(sql, params);
+      throw new Error('Unexpected query in deep smoke fixture');
+    },
     async execute(sql: string, params: unknown[]) {
       if (sql.includes('FROM users u')) return readActor(params);
       if (sql === 'SELECT id FROM database_instances WHERE id = ? LIMIT 1') {
@@ -145,9 +151,13 @@ async function runShapeChecks(
     expect(readActor.mock.calls).toEqual(Array.from({ length: identityReads }, () => [[actor.userId]]));
     if (!overridden && alerts === alertPage && !(page instanceof Error)) {
       expect(readEpisodes).toHaveBeenCalledExactlyOnceWith(expect.stringContaining('FROM metric_trigger_episodes'), [[alertItem.id]]);
-      expect(page.items).toMatchObject([{ id: alertItem.id, template_event_id: templateEventId }]);
+      expect(readAggregateEvents).toHaveBeenCalledExactlyOnceWith(expect.stringContaining('FROM alert_event_members'), [[alertItem.id]]);
+      expect(page.items).toMatchObject([{
+        id: alertItem.id, template_event_id: templateEventId, related_event_id: aggregateEventId,
+      }]);
     } else {
       expect(readEpisodes).not.toHaveBeenCalled();
+      expect(readAggregateEvents).not.toHaveBeenCalled();
     }
     return { ...result, alertRedirectReads };
   } finally {

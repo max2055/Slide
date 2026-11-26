@@ -62,14 +62,42 @@ for (const [method, path, rows] of paths) describe(`MAX-354/356 management read 
 
 const rolePermissionsPath = paths[0][1];
 const instancePermissionsPath = paths[1][1];
+const userRolesPath = ['', 'users', 1, 'roles'].join('/');
+
+const roleDetails = { id: 1, name: 'fixture', description: null, is_system: false, created_at: '2026-11-25 00:00:00' };
+const roleBindings = [{ id: 2, role_id: 1, role_name: 'fixture' }];
+
+it.each([
+  { action: 'getRole', path: '/roles/1', body: roleDetails },
+  { action: 'getUserRoles', path: userRolesPath, body: roleBindings },
+  { action: 'getUserRoles', path: userRolesPath, body: [] },
+] as const)('D4 $action sends the JSON body through asynchronous onSend', async ({ action, path, body }) => {
+  vi.spyOn(RbacService.prototype, action).mockResolvedValue(structuredClone(body) as Awaited<ReturnType<RbacService[typeof action]>>);
+  const app = await managementApp();
+  try {
+    const response = await app.inject({ url: `/api/v1/rbac${path}`, headers: { authorization: 'admin' } });
+    expect(response.statusCode).toBe(200);
+    expect(response.headers['content-type']).toMatch(/^application\/json/);
+    expect(response.json()).toEqual(body);
+  } finally { await app.close(); }
+});
+
 const saveRequests = [
   { action: 'assignPermissionToRole', method: 'POST', path: rolePermissionsPath, body: { permissionId: 2 }, status: 201 },
   { action: 'revokePermissionFromRole', method: 'DELETE', path: `${rolePermissionsPath}/2`, body: undefined, status: 200 },
   { action: 'grantInstanceAccess', method: 'POST', path: instancePermissionsPath, body: { instanceId: 2 }, status: 201 },
   { action: 'revokeInstanceAccess', method: 'DELETE', path: `${instancePermissionsPath}/2`, body: undefined, status: 200 },
+  { action: 'createRole', method: 'POST', path: '/roles', body: { name: 'fixture' }, status: 201 },
+  { action: 'updateRole', method: 'PUT', path: '/roles/1', body: { description: null }, status: 200 },
+  { action: 'deleteRole', method: 'DELETE', path: '/roles/1', body: undefined, status: 200 },
+  { action: 'createPermission', method: 'POST', path: '/permissions',
+    body: { code: 'fixture:read', name: '读取', resource: 'fixture', action: 'read' }, status: 201 },
+  { action: 'deletePermission', method: 'DELETE', path: '/permissions/1', body: undefined, status: 200 },
+  { action: 'assignRoleToUser', method: 'POST', path: userRolesPath, body: { roleId: 2 }, status: 201 },
+  { action: 'revokeRoleFromUser', method: 'DELETE', path: `${userRolesPath}/2`, body: undefined, status: 200 },
 ] as const;
 
-it.each(saveRequests)('MAX-730 $action returns a JSON write receipt', async ({ action, method, path, body, status }) => {
+it.each(saveRequests)('MAX-730/D4 $action returns a JSON write receipt', async ({ action, method, path, body, status }) => {
   vi.spyOn(RbacService.prototype, action).mockResolvedValue({ success: true });
   const app = await managementApp();
   try {

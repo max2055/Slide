@@ -11,6 +11,14 @@ function isPermissions(value: unknown): value is string[] {
   return Array.isArray(value) && value.every((entry) => typeof entry === 'string');
 }
 
+export async function readCurrentPermissions(): Promise<string[]> {
+  const response = await apiClient.fetchResponseWithAuth('/api/auth/permissions');
+  if (!response.ok) throw new Error(`HTTP ${response.status}`);
+  const permissions: unknown = await response.json();
+  if (!isPermissions(permissions)) throw new Error('invalid permissions');
+  return permissions;
+}
+
 export function readCachedPermissions(): Set<string> | null {
   const stored = localStorage.getItem('permissions');
   if (stored === null) return null;
@@ -29,10 +37,7 @@ export async function loadPermissions(state: PermissionsState): Promise<void> {
     && !isSessionExpiryInProgress() && localStorage.getItem('user') === user;
   state.permissionsLoading = true;
   try {
-    const response = await apiClient.fetchResponseWithAuth('/api/auth/permissions');
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    const permissions: unknown = await response.json();
-    if (!isPermissions(permissions)) throw new Error('invalid permissions');
+    const permissions = await readCurrentPermissions();
     if (!isCurrentSession()) return;
     localStorage.setItem('permissions', JSON.stringify(permissions));
     state.userPermissions = new Set(permissions);

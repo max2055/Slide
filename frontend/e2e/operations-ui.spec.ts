@@ -98,8 +98,15 @@ test('synthetic plan uses real version-bound submission and independent approval
   const own=author.locator('operations-actions');await expect(own).toContainText('SYNTHETIC 独立审批测试');
   await own.getByRole('button',{name:'提交当前版本审批',exact:true}).click();
   await expect(own).toContainText('待独立审批');await expect(own.getByRole('button',{name:'批准当前版本',exact:true})).toBeDisabled();
-  await reviewer.goto(`${env.url}/operations-actions`);const view=reviewer.locator('operations-actions');
-  await view.locator(`button[data-plan="${env.plan.id}"]`).click();
+  await reviewer.goto(`${env.url}/approval`);
+  const queue=reviewer.locator('approval-dashboard'),view=reviewer.locator('operations-actions');
+  const queueLink=queue.locator(`a[href*="plan=${env.plan.id}"]`);
+  await queueLink.click();
+  await view.getByRole('link',{name:'返回来源页面',exact:true}).click();
+  await expect(queue.getByRole('button',{name:'待审批',exact:true})).toHaveAttribute('aria-pressed','true');
+  await expect(queueLink).toBeInViewport();
+  await expect(queueLink).toBeFocused();
+  await queueLink.click();
   await view.getByLabel('审批备注',{exact:true}).fill('SYNTHETIC 独立身份核对目标、影响、不可回退能力与版本。');
   const approve=view.getByRole('button',{name:'批准当前版本',exact:true});await approve.click();
   await expect(view.getByRole('dialog',{name:'确认当前计划审批'})).toBeVisible();

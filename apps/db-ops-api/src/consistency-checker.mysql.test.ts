@@ -1,16 +1,24 @@
-import mysql, { type Connection } from 'mysql2/promise';
+import mysql, { type Connection, type Pool } from 'mysql2/promise';
 import { readFileSync } from 'node:fs';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 let connection: Connection;
+let pool: Pool;
 vi.mock('./db-connection', () => ({
-  dbConnection: { getPool: () => connection, isConnected: () => true },
+  dbConnection: { getPool: () => pool, isConnected: () => true },
 }));
 import { ConsistencyChecker } from './consistency-checker.js';
 
 // Opt-in disposable localhost MySQL, following the metrics integration suite.
 // Never load .env or connect to the application database.
 const port = Number(process.env.METRICS_TEST_MYSQL_PORT);
+function fixturePool(database: string, user = 'root') {
+  return mysql.createPool({
+    host: '127.0.0.1', port, user, password: process.env.METRICS_TEST_MYSQL_PASSWORD!,
+    database, charset: 'utf8mb4', timezone: 'Z', connectionLimit: 4,
+  });
+}
+
 describe.skipIf(!port)('MAX-347 approval event integrity on real MySQL', () => {
   const database = `max347_${process.pid}`;
   const checker = new ConsistencyChecker();
@@ -20,6 +28,7 @@ describe.skipIf(!port)('MAX-347 approval event integrity on real MySQL', () => {
     connection = await mysql.createConnection({ host: '127.0.0.1', port, user: 'root', password: process.env.METRICS_TEST_MYSQL_PASSWORD!, timezone: 'Z' });
     await connection.query(`CREATE DATABASE ${database}`);
     await connection.query(`USE ${database}`);
+    pool = fixturePool(database);
     const schema = readFileSync(new URL('../sql/schema.sql', import.meta.url), 'utf8');
     for (const table of ['approval_requests', 'approval_events']) {
       const ddl = schema.match(new RegExp('CREATE TABLE IF NOT EXISTS `' + table + '` \\([\\s\\S]*?;'));
@@ -28,6 +37,7 @@ describe.skipIf(!port)('MAX-347 approval event integrity on real MySQL', () => {
     }
   });
   afterAll(async () => {
+    await pool?.end();
     if (connection) { await connection.query(`DROP DATABASE IF EXISTS ${database}`); await connection.end(); }
   });
   beforeEach(async () => {
@@ -99,15 +109,17 @@ describe.skipIf(!port)('resource health truth with legacy mixed collations', () 
     connection = await mysql.createConnection({ host: '127.0.0.1', port, user: 'root', password: process.env.METRICS_TEST_MYSQL_PASSWORD!, charset: 'utf8mb4', timezone: 'Z' });
     await connection.query(`CREATE DATABASE ${database}`);
     await connection.query(`USE ${database}`);
+    pool = fixturePool(database);
     await connection.query("CREATE TABLE database_instances (id INT PRIMARY KEY, health_status VARCHAR(32), status VARCHAR(32))");
     await connection.query("CREATE TABLE servers (id INT PRIMARY KEY, status VARCHAR(32), collection_enabled BOOLEAN)");
     await connection.query("CREATE TABLE metric_rollout (series_hash VARCHAR(64), resource_type VARCHAR(32), resource_id VARCHAR(255), source VARCHAR(32), read_mode VARCHAR(32), generation INT, applied_revision INT, published_revision INT) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci");
-    await connection.query("CREATE TABLE metric_publications (series_hash VARCHAR(64), generation INT, observed_at DATETIME, observation_id VARCHAR(64)) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci");
-    await connection.query("CREATE TABLE metric_observations (id VARCHAR(64) CHARACTER SET ascii COLLATE ascii_bin, payload JSON)");
-    await connection.query("CREATE TABLE metric_policy_bindings (resource_key VARCHAR(255) CHARACTER SET ascii COLLATE ascii_bin, payload JSON)");
+    await connection.query("CREATE TABLE metric_publications (series_hash VARCHAR(64), generation INT, observed_at DATETIME(3), observation_id VARCHAR(64) PRIMARY KEY, INDEX idx_metric_publication_window (series_hash, observed_at)) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci");
+    await connection.query("CREATE TABLE metric_observations (id VARCHAR(64) CHARACTER SET ascii COLLATE ascii_bin PRIMARY KEY, payload JSON)");
+    await connection.query("CREATE TABLE metric_policy_bindings (resource_key VARCHAR(255) CHARACTER SET ascii COLLATE ascii_bin PRIMARY KEY, payload JSON)");
     await connection.query("CREATE TABLE cron_job_logs (status VARCHAR(32), started_at DATETIME)");
   });
   afterAll(async () => {
+    await pool?.end();
     if (connection) { await connection.query(`DROP DATABASE IF EXISTS ${database}`); await connection.end(); }
   });
   beforeEach(async () => {
@@ -157,8 +169,39 @@ describe.skipIf(!port)('resource health truth with legacy mixed collations', () 
     it(`${type}: does not merge a fresh padded alias into the stale canonical ID`, async () => {
       await seed(type, '1', { age: 11 * 60_000 });
       await connection.execute("INSERT INTO metric_rollout VALUES ('alias',?,'1 ','semantic','semantic',1,1,1)", [type]);
-      await connection.execute("INSERT INTO metric_publications VALUES ('alias',1,?,'observation')", [new Date()]);
+      await connection.execute("INSERT INTO metric_publications VALUES ('alias',1,?,'alias-observation')", [new Date()]);
+      await connection.execute("INSERT INTO metric_observations VALUES ('alias-observation',?)", [JSON.stringify({ versions: { config_revision: 1 } })]);
       expect((await checker.resourceHealthTruth()).dataFreshness).toMatchObject({ numerator: 0, denominator: 1 });
+    });
+    it(`${type}: seeks past newer unaccepted publications to the newest valid observation`, async () => {
+      await seed(type, '1', { age: 70 * 60_000 });
+      const publish = async (id: string, generation: number, revision: number, age: number) => {
+        await connection.execute("INSERT INTO metric_publications VALUES ('series',?,?,?)", [generation, new Date(Date.now() - age), id]);
+        await connection.execute("INSERT INTO metric_observations VALUES (?,?)", [id, JSON.stringify({ versions: { config_revision: revision } })]);
+      };
+      await publish('newer-other-generation', 2, 1, 10_000);
+      await publish('newer-other-revision', 1, 2, 30_000);
+      await connection.execute("INSERT INTO metric_observations VALUES ('unpublished-canonical',?)", [JSON.stringify({ versions: { config_revision: 1 } })]);
+      await connection.execute("INSERT INTO metric_publications VALUES ('series',1,?,'unpublished-canonical ')", [new Date()]);
+      expect((await checker.resourceHealthTruth()).dataFreshness).toMatchObject({ status: 'critical', numerator: 0 });
+      expect(await checker._checkMetricsFreshness()).toMatchObject({
+        status: 'fail', severity: 'major', summary: '最新指标 1.2 小时前',
+      });
+      await publish('recent-current-revision', 1, 1, 60_000);
+      expect((await checker.resourceHealthTruth()).dataFreshness).toMatchObject({ status: 'healthy', numerator: 1 });
+      expect((await checker._checkMetricsFreshness()).status).toBe('pass');
+    });
+    it(`${type}: includes the cutoff instant but not the millisecond before it`, async () => {
+      const now = Date.now();
+      const clock = vi.spyOn(Date, 'now').mockReturnValue(now);
+      try {
+        await seed(type, '1', { age: 10 * 60_000 + 1 });
+        expect((await checker.resourceHealthTruth()).dataFreshness).toMatchObject({ status: 'critical', numerator: 0 });
+        await connection.execute('UPDATE metric_publications SET observed_at = ?', [new Date(now - 10 * 60_000)]);
+        expect((await checker.resourceHealthTruth()).dataFreshness).toMatchObject({ status: 'healthy', numerator: 1 });
+      } finally {
+        clock.mockRestore();
+      }
     });
   }
   it('MAX-2: serves retained checks over HTTP after a real resource SQL error and recovers', async () => {
@@ -214,6 +257,7 @@ describe.skipIf(!port)('MAX-8 / #473 composite alert metric references on MySQL'
     });
     await connection.query(`CREATE DATABASE ${database}`);
     await connection.query(`USE ${database}`);
+    pool = fixturePool(database, process.env.METRICS_TEST_MYSQL_USER ?? 'root');
     const schema = readFileSync(new URL('../sql/schema.sql', import.meta.url), 'utf8');
     for (const table of ['alert_rules', 'metric_definitions']) {
       const ddl = schema.match(new RegExp('CREATE TABLE IF NOT EXISTS `' + table + '` \\([\\s\\S]*?;'));
@@ -230,6 +274,7 @@ describe.skipIf(!port)('MAX-8 / #473 composite alert metric references on MySQL'
     await connection.query("ALTER TABLE metric_definitions MODIFY COLUMN target_type ENUM('instance','server','network_device') NOT NULL DEFAULT 'instance'");
   });
   afterAll(async () => {
+    await pool?.end();
     if (connection) {
       try { await connection.query(`DROP DATABASE IF EXISTS ${database}`); }
       finally { await connection.end(); }

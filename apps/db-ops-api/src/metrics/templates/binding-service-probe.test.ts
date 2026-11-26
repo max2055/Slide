@@ -221,6 +221,23 @@ describe('bootstrap probe wiring', () => {
     expect(state.evidenceWrites).toHaveLength(0);
   });
 
+  it('a rollout can probe only the exact active revision without replacing its binding', async () => {
+    reset(); state.bound = true;
+    const binding = service();
+    const ref = { type: 'instance' as const, id: 11 };
+    await expect(binding.probe(admin, ref, body(), true))
+      .rejects.toMatchObject({ code: 'TEMPLATE_BINDING_ALREADY_BOUND' });
+    expect(state.runs).toHaveLength(0);
+
+    const input = { ...body(), expected_revision: 1 };
+    await expect(binding.probe(admin, ref, input))
+      .rejects.toMatchObject({ code: 'TEMPLATE_BINDING_ALREADY_BOUND' });
+    const candidate = await binding.probe(admin, ref, input, true);
+    expect(candidate.revision).toBe(1);
+    expect(state.runs).toHaveLength(1);
+    expect(state.evidenceWrites).toHaveLength(1);
+  });
+
   it('a failed credential/target read stores nothing', async () => {
     reset();
     const failing = service({ access: async () => { throw new Error('permission_denied'); } });
