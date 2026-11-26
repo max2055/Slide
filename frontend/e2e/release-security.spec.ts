@@ -1,5 +1,7 @@
 import { qualificationPassword, qualificationMysqlTarget } from './qualification-credentials.js';
 import { expect, test } from '@playwright/test';
+import { randomUUID } from 'node:crypto';
+import pg from '../../apps/db-ops-api/node_modules/pg/lib/index.js';
 
 test('qualification security boundary rejects unauthenticated administration and invalid login', async ({ page }) => {
   const privileged = await page.request.get('/api/users');
@@ -353,7 +355,12 @@ test('approval cancellation and retry keep the request attached to the current a
   });
   expect(instance.status()).toBe(200);
   const { id: instanceId } = await instance.json();
+  let retryInstanceId: number | undefined;
+  let retryTarget: InstanceType<typeof pg.Pool> | undefined;
+  const table = `qualification_retry_${randomUUID().replaceAll('-', '')}`;
   try {
+    const reloaded = await page.request.post(`/api/database/instances/${instanceId}/reload`, { headers });
+    expect(reloaded.status()).toBe(200);
     const sqlText = 'UPDATE qualification_approval_counter SET value = value + 1 WHERE id = 1';
     const submitted = await page.request.post('/api/approval/submit', {
       headers: { ...headers, 'Idempotency-Key': `qualification-approval-retry-${Date.now()}` },
@@ -388,24 +395,88 @@ test('approval cancellation and retry keep the request attached to the current a
     await dashboard.getByRole('button', { name: '取消 Operation' }).click();
     expect((await cancelResponse).status()).toBe(200);
     await expect(dashboard.getByText('cancelled', { exact: true })).toBeVisible();
+    await expect(dashboard.getByRole('button', { name: '创建重试尝试' })).toHaveCount(0);
+    const cancelledRetry = await page.request.post(`/api/operations/${originalOperationId}/retry`, { headers });
+    expect(cancelledRetry.status()).toBe(409);
+    expect(await cancelledRetry.json()).toMatchObject({ reasonCode: 'RETRY_NOT_AVAILABLE' });
+
+    // PostgreSQL reports a transaction rollback receipt for the failed write.
+    const pgHost = process.env.QUALIFICATION_PG_HOST;
+    const pgPort = Number(process.env.QUALIFICATION_PG_PORT);
+    const pgUser = process.env.QUALIFICATION_PG_USER;
+    const pgDatabase = process.env.QUALIFICATION_PG_DATABASE;
+    const pgPassword = process.env.QUALIFICATION_PG_PASSWORD;
+    if (!pgHost || !Number.isSafeInteger(pgPort) || pgPort < 1 || pgPort > 65535 ||
+      !pgUser || pgDatabase !== 'slide_qualification_pg' || !pgPassword) {
+      throw new Error('Isolated PostgreSQL qualification database is required');
+    }
+    retryTarget = new pg.Pool({ host: pgHost, port: pgPort, user: pgUser, database: pgDatabase, password: pgPassword });
+    await retryTarget.query(`CREATE TABLE ${table} (id int PRIMARY KEY, value int NOT NULL)`);
+    await retryTarget.query(`INSERT INTO ${table} VALUES (1, 0)`);
+    const retryInstance = await page.request.post('/api/database/instances', {
+      headers,
+      data: {
+        name: `qualification-confirmed-rollback-${Date.now()}`, environment: 'testing', db_type: 'postgresql',
+        host: pgHost, port: pgPort, username: pgUser, database_name: pgDatabase, password: pgPassword,
+      },
+    });
+    expect(retryInstance.status()).toBe(200);
+    retryInstanceId = Number((await retryInstance.json()).id);
+    const retryReload = await page.request.post(`/api/database/instances/${retryInstanceId}/reload`, { headers });
+    expect(retryReload.status()).toBe(200);
+    const rejectedSql = `UPDATE ${table} SET value = NULL WHERE id = 1`;
+    const failedSubmission = await page.request.post('/api/approval/submit', {
+      headers: { ...headers, 'Idempotency-Key': `qualification-rollback-retry-${Date.now()}` },
+      data: { instance_id: retryInstanceId, sql_text: rejectedSql, database_name: pgDatabase },
+    });
+    expect(failedSubmission.status()).toBe(200);
+    const failedRequest = await failedSubmission.json();
+    const failedApprovalId = Number(failedRequest.request_id);
+    const failedOperationId = String(failedRequest.operationId);
+    const review = await page.request.post(`/api/approval/${failedApprovalId}/review`, {
+      headers,
+      data: { action: 'approve', execute_after_approve: true },
+    });
+    expect(review.status()).toBe(200);
+    expect(await review.json()).toMatchObject({
+      success: false,
+      execution_result: { executionState: 'rolled_back' },
+    });
+    expect((await retryTarget.query(`SELECT value FROM ${table} WHERE id = 1`)).rows).toEqual([{ value: 0 }]);
+
+    await dashboard.getByRole('button', { name: '返回列表' }).click();
+    await dashboard.getByRole('button', { name: '审批历史', exact: true }).click();
+    await dashboard.locator(`[data-sql-approval-id="${failedApprovalId}"]`).click();
     const retryResponse = page.waitForResponse((response) =>
-      response.url().endsWith(`/api/operations/${originalOperationId}/retry`) && response.request().method() === 'POST',
+      response.url().endsWith(`/api/operations/${failedOperationId}/retry`) && response.request().method() === 'POST',
     );
     await dashboard.getByRole('button', { name: '创建重试尝试' }).click();
     const retried = await retryResponse;
     expect(retried.status()).toBe(202);
-    const retryId = String((await retried.json()).operation.id);
-    expect(retryId).not.toBe(originalOperationId);
-    await expect(dashboard.getByText('queued', { exact: true })).toBeVisible();
+    const { operation: newAttempt } = await retried.json();
+    const retryId = String(newAttempt.id);
+    const retryApprovalId = Number(newAttempt.approvalId);
+    expect(retryId).not.toBe(failedOperationId);
+    expect(retryApprovalId).not.toBe(failedApprovalId);
+    await expect(dashboard.getByRole('status').filter({ hasText: `已创建审批 #${retryApprovalId}` })).toBeVisible();
     const retry = await page.request.get(`/api/operations/${retryId}`, { headers });
     expect(retry.status()).toBe(200);
-    expect(await retry.json()).toMatchObject({ id: retryId, state: 'queued', attempt: 2 });
+    expect(await retry.json()).toMatchObject({ id: retryId, state: 'waiting_approval', attempt: 2, approvalId: retryApprovalId });
 
-    const detail = await page.request.get(`/api/approval/${approvalId}`, { headers });
+    const detail = await page.request.get(`/api/approval/${failedApprovalId}`, { headers });
     expect(detail.status()).toBe(200);
-    expect((await detail.json()).operation_id).toBe(retryId);
+    expect(await detail.json()).toMatchObject({ operation_id: failedOperationId, status: 'execution_failed' });
+    const newDetail = await page.request.get(`/api/approval/${retryApprovalId}`, { headers });
+    expect(newDetail.status()).toBe(200);
+    expect(await newDetail.json()).toMatchObject({ operation_id: retryId, status: 'pending' });
   } finally {
-    await page.request.delete(`/api/database/instances/${instanceId}`, { headers });
+    try {
+      if (retryTarget) await retryTarget.query(`DROP TABLE IF EXISTS ${table}`);
+    } finally {
+      await retryTarget?.end();
+      if (retryInstanceId) await page.request.delete(`/api/database/instances/${retryInstanceId}`, { headers });
+      await page.request.delete(`/api/database/instances/${instanceId}`, { headers });
+    }
   }
 });
 

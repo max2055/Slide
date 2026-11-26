@@ -390,7 +390,7 @@ test.describe('MAX-710: accessible names on application routes (controlled HTTP)
       await instance.selectOption('7');
       await expectTabFocus(page, dialog.getByRole('button', { name: '测试执行', exact: true }));
       await expectTabFocus(page, database);
-      await expect(database).toHaveAccessibleDescription('（MySQL 需要指定库名）');
+      await expect(database).toHaveAccessibleDescription('（未填写时使用实例默认库，或在 SQL 中写明库名）');
       await page.keyboard.type('information_schema');
       await expect(database).toHaveValue('information_schema');
       await expect(database).toHaveAccessibleName('目标数据库');
