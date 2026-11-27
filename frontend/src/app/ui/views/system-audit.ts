@@ -4,6 +4,8 @@ import { LitElement, css, html, nothing } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
 import { apiClient } from '../../../api/index.js';
 import { icons } from '../../../icons.js';
+import { formatDate } from '../format-config.js';
+import { loadSettings } from '../storage.js';
 import { sharedBtnStyles } from '../../styles/shared-btn-styles.js';
 import { showToast } from '../components/app-toast-container.js';
 import '../components/app-badge.js';
@@ -47,6 +49,25 @@ const EVENT_TYPES = [
 ] as const;
 
 const EVENT_LABELS = new Map<string, string>(EVENT_TYPES.filter(([value]) => value));
+EVENT_LABELS.set('sql_execution', 'SQL 执行');
+
+function readApprovalAuditScope() {
+  const query = new URLSearchParams(location.search);
+  if (!query.has('approvalRequestId') && !query.has('operationId')) return undefined;
+  const approvalRequestId = query.get('approvalRequestId');
+  const operationId = query.get('operationId');
+  const resource = query.get('resource');
+  if (!approvalRequestId || !/^[1-9]\d*$/.test(approvalRequestId) || !Number.isSafeInteger(Number(approvalRequestId))
+    || !operationId || !/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(operationId)
+    || !resource || !/^instance:[1-9]\d*$/.test(resource) || !Number.isSafeInteger(Number(resource.slice(9)))
+    || ['approvalRequestId', 'operationId', 'resource'].some(key => query.getAll(key).length !== 1)) return null;
+  return { approvalRequestId, operationId, resource };
+}
+
+function preferencePageSize(): number {
+  const { defaultPageSize } = loadSettings();
+  return Number.isSafeInteger(defaultPageSize) && defaultPageSize >= 1 && defaultPageSize <= 200 ? defaultPageSize : 25;
+}
 
 @customElement('system-audit-page')
 export class SystemAuditPage extends LitElement {
@@ -73,7 +94,17 @@ export class SystemAuditPage extends LitElement {
   @state() private startTime = '';
   @state() private endTime = '';
   private appliedFilters: Partial<Record<'keyword' | 'eventType' | 'result' | 'requestCategory' | 'startTime' | 'endTime', string>> = {};
-  private readonly limit = 25;
+  private limit = preferencePageSize();
+  private readonly settingsApplied = () => {
+    const limit = preferencePageSize();
+    if (this.limit === limit) {
+      this.requestUpdate();
+      return;
+    }
+    this.limit = limit;
+    this.offset = 0;
+    void this.load();
+  };
 
   static styles = [sharedFieldStyles, sharedBtnStyles, css`
     :host { display: block; min-width: 0; color: var(--text); }
@@ -104,6 +135,8 @@ export class SystemAuditPage extends LitElement {
 
   override connectedCallback(): void {
     super.connectedCallback();
+    this.limit = preferencePageSize();
+    window.addEventListener('slide-settings-applied', this.settingsApplied);
     window.addEventListener('slide-permissions-loaded',this.accessChanged);
     window.addEventListener('slide-session-expired',this.accessChanged);
     void this.load(true);
@@ -111,6 +144,7 @@ export class SystemAuditPage extends LitElement {
 
   override disconnectedCallback(): void {
     this.accessChanged();
+    window.removeEventListener('slide-settings-applied', this.settingsApplied);
     window.removeEventListener('slide-permissions-loaded', this.accessChanged);
     window.removeEventListener('slide-session-expired', this.accessChanged);
     super.disconnectedCallback();
@@ -135,17 +169,22 @@ export class SystemAuditPage extends LitElement {
     }
     this.loading = true;
     try {
-      const scope=readResourceContext();
-      if(new URLSearchParams(location.search).has('resource')&&!scope)throw new Error('无效资源观察范围');
+      const approvalScope = readApprovalAuditScope();
+      const scope = approvalScope ? null : readResourceContext();
+      if (approvalScope === null || (new URLSearchParams(location.search).has('resource') && !scope && !approvalScope)) {
+        throw new Error('无效资源观察范围');
+      }
       const { startTime, endTime, ...filters } = this.appliedFilters;
       const response = await apiClient.get<{ items: SystemAuditRecord[]; total: number }>('/audit/logs', {
         params: {
           limit: this.limit,
           offset: this.offset,
-          ...filters,
-          ...(scope?{resource:`${scope.resource.type}:${scope.resource.id}`}:{}),
-          startTime: scope?.from ?? (startTime ? new Date(startTime).toISOString() : undefined),
-          endTime: scope?.to ?? (endTime ? new Date(endTime).toISOString() : undefined),
+          ...(approvalScope || {
+            ...filters,
+            ...(scope?{resource:`${scope.resource.type}:${scope.resource.id}`}:{}),
+            startTime: scope?.from ?? (startTime ? new Date(startTime).toISOString() : undefined),
+            endTime: scope?.to ?? (endTime ? new Date(endTime).toISOString() : undefined),
+          }),
         },
       });
       if (generation !== this.generation) return;
@@ -179,9 +218,11 @@ export class SystemAuditPage extends LitElement {
     void this.load(true);
   }
 
-  private formatTime(timestamp: number): string {
+  private renderTime(timestamp: number) {
     const date = new Date(timestamp);
-    return Number.isNaN(date.getTime()) ? '-' : date.toLocaleString();
+    if (Number.isNaN(date.getTime())) return '-';
+    const instant = date.toISOString();
+    return html`<time datetime=${instant} title=${instant}>${formatDate(date)}</time>`;
   }
 
   private resultBadge(record: SystemAuditRecord) {
@@ -192,7 +233,7 @@ export class SystemAuditPage extends LitElement {
 
   private rows(): Record<string, unknown>[] {
     return this.records.map(record => ({
-      timestamp: this.formatTime(record.timestamp),
+      timestamp: this.renderTime(record.timestamp),
       eventType: html`<app-badge variant="info">${EVENT_LABELS.get(record.eventType) ?? record.eventType}</app-badge>`,
       action: html`<span class="mono">${record.action}</span>`,
       actor: record.username || (record.userId ? `用户 #${record.userId}` : '-'),
@@ -204,17 +245,21 @@ export class SystemAuditPage extends LitElement {
   }
 
   override render() {
-    const scope=readResourceContext();
+    const approvalScope = readApprovalAuditScope();
+    const scope = approvalScope ? null : readResourceContext();
     const pageStart = this.total === 0 ? 0 : this.offset + 1;
     const pageEnd = Math.min(this.offset + this.limit, this.total);
     return html`
       ${scope?html`<p>资源 ${scope.resource.type}:${scope.resource.id} · ${scope.from} → ${scope.to}。仅匹配结构化资源审计；旧的未标资源记录不推断为空。</p><a class="btn" href=${scope.returnTo}>返回资源详情</a>`:''}
+      ${approvalScope ? html`<p>审批 #${approvalScope.approvalRequestId} · Operation <span class="mono">${approvalScope.operationId}</span></p>
+        <a class="btn" href=${`/approval?auditApproval=${approvalScope.approvalRequestId}`}>返回审批详情</a>` : nothing}
       <div class="page-header">
         <h1>系统审计</h1>
         <button aria-busy=${String(this.loading)} class="btn btn-refresh" title="刷新" aria-label="刷新" @click=${() => this.load()} .disabled=${this.loading}>刷新</button>
       </div>
       <app-card>
-        <span slot="header">筛选</span>
+        <span slot="header">${approvalScope ? '关联 SQL 审计' : '筛选'}</span>
+        ${approvalScope ? nothing : html`
         <div class="filters">
           <app-form-field label="关键字"><input type="search" placeholder="操作者、操作、资源或 IP" .value=${this.keyword} @input=${(event: Event) => { this.keyword = (event.target as HTMLInputElement).value; }} @keydown=${(event: KeyboardEvent) => { if (event.key === 'Enter') void this.load(true); }}></app-form-field>
           <app-form-field label="操作类型"><select .value=${this.eventType} @change=${(event: Event) => { this.eventType = (event.target as HTMLSelectElement).value; }}>${EVENT_TYPES.map(([value, label]) => html`<option value=${value}>${label}</option>`)}</select></app-form-field>
@@ -232,7 +277,7 @@ export class SystemAuditPage extends LitElement {
           <app-form-field label="结束时间"><input type="datetime-local" .value=${this.endTime} @input=${(event: Event) => { this.endTime = (event.target as HTMLInputElement).value; }}></app-form-field>
           <button class="btn" type="button" @click=${this.resetFilters}>重置</button>
           <button class="btn-primary" type="button" @click=${() => this.load(true)}>${icons.search} 查询</button>
-        </div>
+        </div>`}
         ${this.loadError ? html`<p role="alert">${this.loadError}</p>` : html`<div class="table-wrap" aria-busy=${this.loading}><app-data-table .columns=${[
           { key: 'timestamp', label: '时间' },
           { key: 'eventType', label: '操作类型' },
@@ -242,7 +287,7 @@ export class SystemAuditPage extends LitElement {
           { key: 'result', label: '结果' },
           { key: 'clientIp', label: '客户端 IP' },
           { key: 'actions', label: '' },
-        ]} .rows=${this.rows()} .loading=${this.loading} .dense=${true} emptyMessage="当前条件下暂无系统审计记录"></app-data-table></div>
+        ]} .rows=${this.rows()} .loading=${this.loading} .dense=${true} emptyMessage=${approvalScope ? '未找到可与此审批和 Operation 精确关联的持久 SQL 审计' : '当前条件下暂无系统审计记录'}></app-data-table></div>
         <div class="pagination">
           <span class="pagination-info" role="status">${this.loading ? '正在读取系统审计…' : `${pageStart}-${pageEnd} / ${this.total}`}</span>
           <button class="btn" type="button" @click=${() => { this.offset = Math.max(0, this.offset - this.limit); void this.load(); }} .disabled=${this.offset === 0 || this.loading}>上一页</button>
@@ -252,7 +297,7 @@ export class SystemAuditPage extends LitElement {
       <app-dialog size="lg" title="系统审计详情" .open=${this.selected !== null} @app-dialog-close=${() => { this.selected = null; }}>
         ${this.selected ? html`<div class="dialog-grid">
           <div class="detail-row"><span>记录 ID</span><span class="mono">${this.selected.id}</span></div>
-          <div class="detail-row"><span>时间</span><span>${this.formatTime(this.selected.timestamp)}</span></div>
+          <div class="detail-row"><span>时间</span>${this.renderTime(this.selected.timestamp)}</div>
           <div class="detail-row"><span>操作者</span><span>${this.selected.username ?? '-'}${this.selected.userId ? ` (#${this.selected.userId})` : ''}</span></div>
           <div class="detail-row"><span>操作</span><span class="mono">${this.selected.action}</span></div>
           <div class="detail-row"><span>资源</span><span>${this.selected.resourceType ?? '-'}${this.selected.resourceId ? ` · ${this.selected.resourceId}` : ''}</span></div>

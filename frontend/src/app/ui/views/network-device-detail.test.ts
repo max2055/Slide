@@ -226,4 +226,34 @@ describe("network-device-detail", () => {
     expect(authFetch.mock.calls.some(([url]) => String(url).endsWith('/metrics'))).toBe(false);
     expect(authFetch.mock.calls.some(([url]) => String(url).endsWith('/interfaces'))).toBe(true);
   });
+
+  it('distinguishes expired discovery records from records without matching freshness evidence', async () => {
+    const original = authFetch.getMockImplementation()!;
+    const at = '2026-08-26T00:00:00.000Z';
+    const row = (ifIndex: number, ifName: string) => ({ id: ifIndex, ifIndex, ifName, deviceId: 4,
+      ifAlias: null, speedBps: null, adminStatus: 'up', operStatus: 'up', lastSeenAt: at });
+    authFetch.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (url.endsWith('/interfaces')) return response({ interfaces: [row(1, 'record-old'), row(2, 'record-new'), row(3, 'record-without-evidence')] });
+      if (url === '/api/metrics/latest') return response({ resource: { type: 'network_device', id: 4 }, metrics: [{
+        definition: { id: 'network.interface.oper_up' }, series: [
+          { dimensions: { if_index: '1' }, observed_at: '2026-08-26T00:00:00.250Z', freshness: 'stale' },
+          { dimensions: { if_index: '2' }, observed_at: at, freshness: 'fresh' },
+          { dimensions: { if_index: '3' }, observed_at: '2026-08-26T00:05:00.000Z', freshness: 'fresh' },
+        ],
+      }] });
+      return original(url, init);
+    });
+    const element = new NetworkDeviceDetail();
+    element.deviceId = 4;
+    document.body.append(element);
+    await settle(element);
+    Array.from(element.querySelectorAll('button')).find(button => button.textContent?.trim() === '接口')!.click();
+    await settle(element);
+
+    const port = (name: string) => [...element.querySelectorAll('tbody tr')].find(row => row.querySelector('strong')?.textContent === name);
+    expect(port('record-old')?.textContent).toContain('发现记录已过期');
+    expect(port('record-old')?.textContent).toContain('已启用 / 已启用');
+    expect(port('record-new')?.textContent).not.toContain('发现记录已过期');
+    expect(port('record-without-evidence')?.textContent).toContain('发现时效待确认');
+  });
 });

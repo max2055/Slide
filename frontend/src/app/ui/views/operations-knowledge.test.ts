@@ -5,7 +5,8 @@ import './operations-knowledge.ts';
 import type { CaseRecord } from '../controllers/operations-api.ts';
 vi.mock('../../../api/index.ts',()=>({authFetch:vi.fn()}));
 const api=vi.mocked(authFetch);
-vi.mock('../controllers/operations-api.ts',async importOriginal=>({...await importOriginal<any>(),watchCase:()=>()=>{}}));
+const watchCase = vi.hoisted(() => vi.fn());
+vi.mock('../controllers/operations-api.ts',async importOriginal=>({...await importOriginal<any>(),watchCase}));
 const record=():CaseRecord=>({id:'case',revision:4,version:2,contentHash:'a'.repeat(64),state:'pending_review',author:{kind:'user',id:11},resources:[],validUntil:new Date(Date.now()+600000).toISOString(),tombstone:false,referenceOnly:true,
   content:{title:'合成案例：服务无响应',symptoms:'当前症状',faultType:'服务异常',confirmedCause:'已确认事实',actions:'隔离测试',actualEffect:'恢复',counterexamples:'依赖故障不适用'},applicability:{conditions:'有证据',productVersion:'1',resourceVersion:'1'},source:{investigationId:'inv',resultId:'result',resultVersion:3,evidence:[]}});
 const json=(v:unknown,status=200)=>({ok:status<400,status,json:async()=>v}) as Response;
@@ -45,7 +46,7 @@ const emptyKnowledge = () => json({ items: [], nextCursor: null, authorizedCount
 const button = (root: ShadowRoot, name: string) =>
   [...root.querySelectorAll('button')].find(item => item.textContent?.trim() === name);
 const prepareReads = () => api.mock.calls.map(([url]) => String(url)).filter(url => url.includes('/prepare?'));
-beforeEach(()=>{api.mockReset();localStorage.setItem('user',JSON.stringify({id:22}));});
+beforeEach(()=>{api.mockReset();watchCase.mockReset().mockReturnValue(() => {});localStorage.setItem('user',JSON.stringify({id:22}));});
 afterEach(()=>{view?.remove();localStorage.clear();history.replaceState({},'','/');});
 it('review submits the exact displayed revision, content version and hash',async()=>{
   const root=await mount();const textarea=root.querySelector('textarea[aria-label="审核或撤回依据"]') as HTMLTextAreaElement;
@@ -66,6 +67,33 @@ it('permission changes clear the article and open draft before a late response c
   const root=await mount();expect(root.textContent).toContain('已确认事实');
   window.dispatchEvent(new CustomEvent('slide-permissions-loaded',{detail:{permissions:[]}}));await flush();
   expect(root.textContent).not.toContain('已确认事实');expect(root.textContent).not.toContain('当前症状');expect(root.textContent).toContain('内容已清除');
+});
+
+it('identifies a listed version in the detail URL and leaves newer content undisplayed', async () => {
+  const newer = { ...record(), state: 'published' as const };
+  const listed = { ...newer, version: 1, content: { ...newer.content!, title: '合成旧版记录' } };
+  api.mockResolvedValueOnce(json({ items: [listed], nextCursor: null, authorizedCounts: { total: 1 } }))
+    .mockResolvedValueOnce(json(newer));
+  const root = await mountHome();
+  button(root, '合成旧版记录')!.click();
+  await flush();
+  expect(new URL(location.href).searchParams.get('caseVersion')).toBe('1');
+  expect(root.querySelector('[role=alert]')?.textContent).toContain('版本已变化');
+  expect(root.textContent).not.toContain(newer.content!.confirmedCause);
+  expect(watchCase).not.toHaveBeenCalled();
+});
+
+it('clears pinned detail content when the live watch sees a newer version', async () => {
+  const current = { ...record(), state: 'published' as const };
+  api.mockResolvedValueOnce(json(current));
+  const root = await mountHome('/operations-knowledge?case=case&caseVersion=2');
+  expect(root.textContent).toContain(current.content!.confirmedCause);
+  const receive = watchCase.mock.calls[0][1];
+  receive({ ...current, version: 3, content: { ...current.content!, confirmedCause: '新版本事实' } });
+  await flush();
+  expect(root.querySelector('[role=alert]')?.textContent).toContain('返回列表重新搜索');
+  expect(root.textContent).not.toContain(current.content!.confirmedCause);
+  expect(root.textContent).not.toContain('新版本事实');
 });
 
 it('starts with an authorized paginated source search and distinguishes empty, no match and read failure', async () => {

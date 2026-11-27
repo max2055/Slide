@@ -18,6 +18,23 @@ const decision: PolicyDecision = {
 };
 
 describe('Agent tool audit persistence', () => {
+  it('records a single discovery catalog without definitions, arguments, or an invocation pair', async () => {
+    const calls: Array<{ sql: string; values: unknown[] }> = [];
+    const service = new AgentToolAuditService(() => ({ execute: async (sql, values = []) => {
+      calls.push({ sql, values });
+      return [sql.startsWith('INSERT') ? { insertId: 1 } : [], undefined];
+    } }));
+
+    await service.recordDiscovery(actor, 'slide-db-ops', ['z_tool', 'a_tool', 'z_tool']);
+    expect(calls[0].sql).toContain("'discovery'");
+    expect(calls[0].sql).not.toContain('invocation_id');
+    expect(calls[0].values).toEqual([7, 'slide-db-ops', 'audit-test', '{"actorSessionVersion":1}', '{"toolNames":["a_tool","z_tool"]}']);
+
+    await service.list({ phase: 'discovery', toolName: 'a_tool' });
+    expect(calls[1].sql).toContain("JSON_CONTAINS(a.result_redacted, JSON_QUOTE(?), '$.toolNames')");
+    expect(calls[1].values).toEqual(['a_tool', 'a_tool', 'discovery']);
+  });
+
   it('persists redacted inputs and outputs', async () => {
     let values: unknown[] = [];
     const service = new AgentToolAuditService(() => ({

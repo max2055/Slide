@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { renderChatSessionSelect } from "./app-render.helpers.ts";
 import type { AppViewState } from "./app-view-state.ts";
 import { createChatModelOverride } from "./chat-model-ref.ts";
+import { resolveChatModelSelectState } from "./chat-model-select-state.ts";
 import { loadSessions } from "./controllers/sessions.ts";
 
 vi.mock("./controllers/sessions.ts", () => ({ loadSessions: vi.fn() }));
@@ -10,6 +11,47 @@ vi.mock("./controllers/sessions.ts", () => ({ loadSessions: vi.fn() }));
 afterEach(() => {
   vi.clearAllMocks();
   document.body.replaceChildren();
+});
+
+describe("configured chat default", () => {
+  it.each(["shared", "family/shared"])("preserves the configured provider for %s", (model) => {
+    const state = {
+      connected: true,
+      chatModelOverrides: {},
+      chatModelCatalog: [
+        { id: "other-default", name: "Scene provider catalog default", provider: "scene-team" },
+        { id: model, name: "Other Provider Alias", provider: "catalog-company" },
+      ],
+      sessionKey: "agent:main:main",
+      sessionsResult: {
+        defaults: { model, modelProvider: "scene-team" },
+        sessions: [],
+      },
+    } as unknown as AppViewState;
+    const container = document.createElement("div");
+    render(renderChatSessionSelect(state), container);
+    const select = container.querySelector<HTMLSelectElement>("[data-chat-model-select]")!;
+    expect(select.options[0].text).toBe(`默认模型（${model} · scene-team）`);
+    expect(select.value).toBe("");
+    expect(Array.from(select.options, (option) => option.value)).toContain(`scene-team/${model}`);
+  });
+
+  it("still infers the provider for legacy default and historical session values", () => {
+    const state = {
+      chatModelOverrides: {},
+      chatModelCatalog: [{ id: "legacy", name: "Legacy alias", provider: "listed-provider" }],
+      sessionKey: "agent:main:main",
+      sessionsResult: {
+        defaults: { model: "legacy" },
+        sessions: [{ key: "agent:main:main", model: "legacy", modelProvider: "old-provider" }],
+      },
+    } as unknown as AppViewState;
+    expect(resolveChatModelSelectState(state)).toMatchObject({
+      currentOverride: "listed-provider/legacy",
+      defaultModel: "listed-provider/legacy",
+      defaultLabel: "默认模型（Legacy alias）",
+    });
+  });
 });
 
 // #641 / OCR-1629: use the real Lit selector/change handler with controlled RPC replies.

@@ -86,9 +86,10 @@ export class MetricRequestError extends Error {
     /** Structured rejection fields (conflict item/setting, release, provider), never a driver message. */
     readonly details: Record<string, unknown> = {}) { super(String(status)); }
 }
-export async function metricRequest<T>(path: string, body?: unknown, signal?: AbortSignal): Promise<T> {
+export async function metricRequest<T>(path: string, body?: unknown, signal?: AbortSignal, refreshAccess = true): Promise<T> {
   const response = await authFetch(`/api/metrics/${path}`, {
     signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(35000)]) : AbortSignal.timeout(35000),
+    refreshAccess,
     ...(body === undefined ? {} : { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }),
   });
   if (!response.ok) {
@@ -242,6 +243,7 @@ export interface TemplateProbe {
 export interface TemplateTrialSample {
   template_id: string; item_id: string; item_version: number;
   metric: { id: string; semantic_version: string }; value: unknown; unit: string; observed_at: string;
+  dimensions?: Record<string, string>;
   quality: { status?: string; reason?: string } | null;
   read: { collector_id: string; attempt_ids: string[]; status: string };
   transform: { version: string }; unit_check: { input_unit: string; output_unit: string };

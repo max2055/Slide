@@ -64,8 +64,9 @@ describe.skipIf(!port)('event transitions / isolated MySQL', () => {
     const app = Fastify();
     // Execute the actual server route registrations without booting unrelated jobs or user services.
     const source = readFileSync(new URL('../server.ts', import.meta.url), 'utf8');
-    const routes = source.slice(source.indexOf("  fastify.post('/api/alerts/events/:id/investigate'"), source.indexOf("  fastify.post('/api/alerts/events/:id/postmortem'"));
+    const routes = source.slice(source.indexOf("  fastify.post('/api/alerts/events/:id/investigate'"), source.indexOf("  fastify.post('/api/alerts/aggregate'"));
     expect(routes).toContain('/verify-recovery');
+    expect(routes).toContain('/postmortem');
     const register = new Function('fastify', 'verifyToken', 'requirePermission', 'requireAlertEventAccess', 'alertEventService', 'strictBody', transpileModule(routes, {}).outputText);
     register(app, async (request: any) => { request.user = { userId: 77 }; }, () => async () => {}, async () => true, service, strictBody);
     return app;
@@ -78,9 +79,21 @@ describe.skipIf(!port)('event transitions / isolated MySQL', () => {
         const response = await app.inject({ method: 'POST', url: `/api/alerts/events/${eventId}/${action}`, payload });
         expect(response.statusCode).toBe(200);
         expect(response.json().success).toBe(true);
-        expect((await app.inject({ method: 'POST', url: `/api/alerts/events/${eventId}/${action}`, payload })).statusCode).toBe(409);
+        const conflict = await app.inject({ method: 'POST', url: `/api/alerts/events/${eventId}/${action}`, payload });
+        expect(conflict.statusCode).toBe(409);
+        if (action === 'verify-recovery' || action === 'close') expect(conflict.json()).toMatchObject({ success: false, error: expect.any(String) });
       }
-      expect((await snapshot()).logs.map(log => log.actor_id)).toEqual([77, 77, 77, 77]);
+      const postmortemUrl = `/api/alerts/events/${eventId}/postmortem`;
+      const invalid = await app.inject({ method: 'POST', url: postmortemUrl, payload: { postmortem: 'wrong', extra: true } });
+      expect(invalid.statusCode).toBe(400);
+      expect(invalid.json()).toMatchObject({ error: expect.any(String) });
+      const report = await app.inject({ method: 'POST', url: postmortemUrl, payload: { postmortem: 'reviewed recovery' } });
+      expect(report.statusCode).toBe(200);
+      expect(report.json()).toEqual({ success: true });
+      const state = await snapshot();
+      expect(state.event.status).toBe('closed');
+      expect(state.logs.map(log => log.actor_id)).toEqual([77, 77, 77, 77, 77]);
+      expect(state.logs.at(-1)?.details).toMatchObject({ action: 'postmortem_added', postmortem: 'reviewed recovery' });
     } finally { await app.close(); }
   });
 

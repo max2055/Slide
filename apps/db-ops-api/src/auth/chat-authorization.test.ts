@@ -39,6 +39,19 @@ describe('MAX-684 ordinary chat boundaries', () => {
       expect(chat).toHaveBeenCalledTimes(1); expect(scope.controller.signal.aborted).toBe(true);
     } finally { scope.release(); }
   });
+
+  it('does not treat internal context compaction as the first discovered model catalog', async () => {
+    const audit = vi.fn(async () => undefined);
+    const chat = vi.fn(async () => ({ content: 'fixture', finishReason: 'stop', toolCalls: [], hasToolCalls: false, shouldExecuteTools: false, usage: {} }));
+    const provider = guardedChatProvider({ chat, chatStream: vi.fn(), getDefaultModel: () => 'fixture' }, audit);
+    const compaction = { signal: new AbortController().signal, requestIdentity: { id: 'summary', purpose: 'summary', sourceHash: 'fixture' } };
+    await provider.chat([], [], compaction);
+    expect(audit).not.toHaveBeenCalled();
+    const catalog = [{ name: 'read_fixture', description: 'Read fixture', parameters: { type: 'object' as const, properties: {} } }];
+    await provider.chat([], catalog);
+    expect(audit).toHaveBeenCalledExactlyOnceWith(catalog);
+    expect(chat).toHaveBeenCalledTimes(2);
+  });
   it('rechecks a queued WS body at dispatch and discards it after withdrawal', async () => {
     let release!: () => void;
     let allowed = true;

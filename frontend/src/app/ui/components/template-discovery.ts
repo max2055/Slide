@@ -7,7 +7,16 @@ import { sharedBtnStyles } from '../../styles/shared-btn-styles.js';
 import { sharedFieldStyles } from '../../styles/shared-field-styles.js';
 import './app-data-table.js';
 import './app-empty-state.js';
-import './native-template-configuration.js';
+
+const previewReasons: Record<string, string> = {
+  DISCOVERY_BUDGET: '超出实例数量上限',
+  DISCOVERY_TIMEOUT: '枚举超时，结果未知',
+  DISCOVERY_ENUMERATION_FAILED: '来源数据校验失败',
+  DISCOVERY_CONNECTION_FAILED: '连接采集来源失败',
+  DISCOVERY_SOURCE_FORBIDDEN: '采集来源拒绝读取',
+  DISCOVERY_RESOURCE_TYPE: '当前资源类型没有适用的发现实现',
+  DISCOVERY_APPLICABILITY_UNKNOWN: '当前资源适用性待确认',
+};
 
 interface ReadContext { generation:number; selected:string; version:TemplateDiscovery['version']; session:number; signal:AbortSignal; resource:{type:string;id:number} }
 
@@ -42,7 +51,12 @@ export class TemplateDiscovery extends LitElement {
   private readonly accessChanged=()=>{this.changeResource('');this.resources=[];this.error='登录或资源权限已变更，请重新读取模板';};
   override connectedCallback(){super.connectedCallback();window.addEventListener('slide-permissions-loaded',this.accessChanged);window.addEventListener('slide-session-expired',this.accessChanged);}
   override disconnectedCallback(){this.resourceRequests.abort();this.generation++;window.removeEventListener('slide-permissions-loaded',this.accessChanged);window.removeEventListener('slide-session-expired',this.accessChanged);super.disconnectedCallback();}
-  protected updated(changes:Map<string,unknown>){if(changes.has('version')){this.changeResource('');this.resources=[];if(this.version && this.resourceTools)void this.loadResources();}}
+  protected updated(changes:Map<string,unknown>){
+    if(changes.has('version')||changes.has('resourceTools')){
+      this.changeResource('');this.resources=[];
+      if(this.version?.aggregate.discovery_rules?.length && this.resourceTools)void this.loadResources();
+    }
+  }
   private failure(error:unknown){if(error instanceof MetricRequestError && [401,403].includes(error.status)){this.changeResource('');this.resources=[];this.error='登录或资源权限已变更，请重新读取模板';}
     else this.error=error instanceof Error?error.message:'操作未完成，结果未知';}
   private async loadResources(){const g=this.generation,session=apiClient.getSessionContext();this.busy=true;this.error='';try{const resources=await metricRequest<Array<{type:string;id:number;name:string}>>('template-governance/resources',undefined,this.resourceRequests.signal);if(g===this.generation){if(session===apiClient.getSessionContext())this.resources=resources;else this.accessChanged();}}catch(e){if(g===this.generation)this.failure(e);}finally{if(g===this.generation)this.busy=false;}}
@@ -122,8 +136,7 @@ export class TemplateDiscovery extends LitElement {
         }))}></app-data-table>` : html`<app-empty-state title="还没有自动发现规则"></app-empty-state>`}
       ${this.resourceTools&&this.version&&this.version.aggregate.discovery_rules?.length?html`<p>枚举预览固定使用已发布 v${this.version.version}；未保存或未发布的草稿不会生效。</p><div class="row"><label>授权资源<select aria-label="发现授权资源" .value=${this.selected} @change=${(e:Event)=>{this.changeResource((e.target as HTMLSelectElement).value);void this.loadState();}}><option value="">请选择资源</option>${this.resources.map(r=>html`<option value=${`${r.type}:${r.id}`}>${r.name}</option>`)}</select></label>
       <button class="btn" ?disabled=${!this.resource||this.busy} @click=${this.enumerate}>只读枚举预览</button><button class="btn btn-refresh" ?disabled=${!this.resource||this.busy} @click=${this.loadState}>刷新生命周期</button>${this.preview?html`<button class="btn" ?disabled=${!this.resource||this.busy} @click=${()=>{this.operation=null;void this.enumerate();}}>重新发起只读枚举</button>`:nothing}</div>
-      <p>发布、只读预览、绑定应用与真实采样分别反馈。预览不生成正式样本；在下方沿既有资源配置测试并应用后，正式采样生成项及触发器实例。</p>
-      ${this.preview?html`<p role="status">${this.preview.state==='completed'?'只读枚举完成；此结果不代表正式生效':'枚举结果未知；不自动重放'}</p>${this.preview.rules.map(r=>html`<p>${r.rule.name}：${r.status==='complete'?`${r.count} 个实例`:`未知（${r.error}）`}；项上限 ${r.budget.item_upper_bound}，触发器上限 ${r.budget.trigger_upper_bound}</p><ul>${r.members.map(m=>html`<li>${m.name}</li>`)}</ul>`)}`:nothing}
-      ${this.resource?html`<native-template-configuration .resourceType=${this.resource.type} .resourceId=${this.resource.id}></native-template-configuration>`:nothing}
+      <p>正式监控项和触发器实例在资源页面应用模板并完成采样后生成。</p>
+      ${this.preview?html`<p role="status">${this.preview.state==='completed'?'只读枚举完成':'枚举未完成，保留原回执'}</p>${this.preview.rules.map(r=>html`<p>${r.rule.name}：${r.status==='complete'?`${r.count} 个实例`:previewReasons[r.error??'']??`枚举结果未知（${r.error??'无回执'}）`}；项上限 ${r.budget.item_upper_bound}，触发器上限 ${r.budget.trigger_upper_bound}</p><ul>${r.members.map(m=>html`<li>${m.name}</li>`)}</ul>`)}`:nothing}
       ${this.instances?html`<div class="scroll"><app-data-table .columns=${[{key:'name',label:'实例'},{key:'state',label:'生命周期'},{key:'prototypes',label:'项 / 触发器'},{key:'actions',label:'保留历史操作'}]} .rows=${this.instances.rows.filter(row=>row.template_id===this.version!.template_id).flatMap(row=>row.state.members.map(m=>({name:html`${m.name}<small>${m.id.slice(0,24)} · v${row.state.template_version}</small>`,state:{active:'已发现 / 正式采样',waiting:'失联等待',disabled:'已禁用',retired:'已退役'}[m.state],prototypes:`${row.state.items.length} / ${row.state.triggers.length}`,actions:html`<button class="btn btn-sm" ?disabled=${!context||this.busy||m.state==='disabled'||m.state==='retired'} @click=${()=>this.stop(context,row,m.id,'disabled')}>禁用</button><button class="btn btn-sm" ?disabled=${!context||this.busy||m.state==='retired'} @click=${()=>this.stop(context,row,m.id,'retired')}>退役并保留历史</button>`})))}></app-data-table></div>${!this.instances.rows.some(row=>row.state.members.length)?html`<p>尚无正式发现实例；预览不会冒充实际生效。</p>`:nothing}`:nothing}`:nothing}`;}
 }

@@ -4,7 +4,7 @@ import { assertWorkflowActive } from './workflows/execution-context.js';
  * 报表生成服务
  */
 import { reportDatabaseService, Report, ReportType, ReportFormat } from './report-database-service';
-import { metricsDatabaseService } from './metrics-database-service';
+import { metricsDatabaseService, type SlowQueryReportRecord } from './metrics-database-service';
 import { databaseService } from './database-service';
 import { instanceDatabaseService } from './instance-database-service';
 import type { ActorContext } from './auth/actor-context.js';
@@ -243,7 +243,7 @@ function generatePerformanceFallbackHTML(
  */
 function generateSlowQueryFallbackHTML(
   instanceName: string,
-  slowQueries: any[],
+  slowQueries: SlowQueryReportRecord[],
   generatedAt: string
 ): string {
   return `
@@ -274,7 +274,7 @@ function generateSlowQueryFallbackHTML(
       <tr>
         <td>${i + 1}</td>
         <td><code>${ejs.escapeXML(q.sql_text?.substring(0, 80) || '')}${q.sql_text?.length > 80 ? '...' : ''}</code></td>
-        <td>${ejs.escapeXML(q.avg_time_ms?.toFixed(2) || 0)}</td>
+        <td>${ejs.escapeXML(q.avg_time_ms?.toFixed(2) ?? '未知')}</td>
         <td>${ejs.escapeXML(q.execution_count || 0)}</td>
         <td>${ejs.escapeXML(q.rows_examined || 0)}</td>
       </tr>
@@ -377,7 +377,7 @@ class ReportService {
 
       // 收集慢查询数据
       assertWorkflowActive();
-      const slowQueries = await metricsDatabaseService.getSlowQueries(instanceId, topN);
+      const slowQueries = await metricsDatabaseService.getSlowQueries(instanceId, topN, { preserveUnknownDurations: true });
 
       // 生成 HTML 内容
       const generatedAt = new Date().toISOString();
@@ -611,12 +611,13 @@ class ReportService {
   /**
    * 生成慢查询优化建议
    */
-  private generateSlowQueryRecommendations(slowQueries: any[]): string[] {
+  private generateSlowQueryRecommendations(slowQueries: SlowQueryReportRecord[]): string[] {
     return slowQueries.slice(0, 3).map((q) => {
       if (q.rows_examined > 10000) {
         return `SQL 扫描行数过多 (${q.rows_examined})，建议添加索引优化`;
       }
-      return `平均执行时间 ${q.avg_time_ms?.toFixed(0)}ms，建议分析执行计划`;
+      if (q.avg_time_ms == null) return '平均执行时间未知，建议核对采样后再分析执行计划';
+      return `平均执行时间 ${q.avg_time_ms.toFixed(0)}ms，建议分析执行计划`;
     });
   }
 

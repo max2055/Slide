@@ -135,7 +135,7 @@ export function createAssetCollectorAccess(preserveDiscovery = false): Collector
           const password = await instanceDatabaseService.getInstancePassword(ref.id);
           if (!instance || connection.config.host !== instance.host || connection.config.port !== instance.port
             || connection.config.user !== instance.username || connection.db_type !== instance.db_type
-            || (connection.config.database || undefined) !== (instance.database_name || (instance.db_type === 'postgresql' ? 'postgres' : instance.db_type === 'mysql' ? 'mysql' : undefined))
+            || (connection.config.database || undefined) !== (instance.database_name || (instance.db_type === 'postgresql' ? 'postgres' : undefined))
             || connection.config.password !== password) throw new AdapterError('permission_denied');
           return trialDatabaseTransport(connection, mysqlCounters.get(ref.id, initialIdentity));
         }

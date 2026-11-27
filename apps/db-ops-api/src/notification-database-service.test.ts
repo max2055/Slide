@@ -18,6 +18,13 @@ describe('NotificationDatabaseService email credentials', () => {
     encryptData.mockClear();
   });
 
+  it('returns a fixed error when deleting a channel fails in storage', async () => {
+    execute.mockRejectedValueOnce(new Error('driver details only'));
+    await expect(notificationDatabaseService.deleteChannel(9)).resolves.toEqual({
+      success: false, error: 'NOTIFICATION_CHANNEL_DELETE_FAILED',
+    });
+  });
+
   it('encrypts an email SMTP password before storing channel configuration', async () => {
     execute.mockResolvedValue([{ insertId: 9 }]);
 

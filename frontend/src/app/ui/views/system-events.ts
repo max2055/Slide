@@ -7,6 +7,8 @@ import '../components/app-card.ts';
 import '../components/app-empty-state.ts';
 import '../components/app-badge.ts';
 
+class SystemEventAccessError extends Error {}
+
 @customElement('system-events-page')
 export class SystemEventsPageElement extends LitElement {
   @state() private items: SystemEventSummary[] = [];
@@ -43,7 +45,8 @@ export class SystemEventsPageElement extends LitElement {
   override disconnectedCallback() { this.invalidate(); window.removeEventListener('slide-session-expired', this.invalidate); window.removeEventListener('slide-permissions-loaded', this.invalidate); super.disconnectedCallback(); }
   private async request<T>(path: string): Promise<T> {
     const response = await authFetch(`/api/platform/system-events${path}`, { cache: 'no-store' });
-    if (!response.ok) throw new Error([401, 403, 404].includes(response.status) ? '无访问权限或登录已失效。' : '异常记录暂不可读，请刷新重试。');
+    if ([401, 403, 404].includes(response.status)) throw new SystemEventAccessError('无访问权限或登录已失效。');
+    if (!response.ok) throw new Error('异常记录暂不可读，请刷新重试。');
     return response.json();
   }
   private async readCollectionState(): Promise<boolean | null> {
@@ -90,18 +93,28 @@ export class SystemEventsPageElement extends LitElement {
         }
       }
     } catch (error) {
-      if (generation === this.generation) this.error = error instanceof Error && !(error instanceof SyntaxError || error instanceof TypeError)
-        ? error.message : '异常记录暂不可读，请刷新重试。';
+      if (generation === this.generation) {
+        if (error instanceof SystemEventAccessError) this.invalidate();
+        this.error = error instanceof Error && !(error instanceof SyntaxError || error instanceof TypeError)
+          ? error.message : '异常记录暂不可读，请刷新重试。';
+      }
     } finally { if (generation === this.generation) this.loading = false; }
   }
   private async openDraft(eventId: string) {
     const g = ++this.generation; this.loading = true; this.error = '';
     try {
       const response = await authFetch(`/api/platform/system-events/${encodeURIComponent(eventId)}/investigation`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
-      if (!response.ok) throw new Error([401,403,404].includes(response.status) ? '原异常或已有调查无访问权限，请联系管理员授权。' : '调查保存回执未确认，请从同一异常重试。');
-      const data = await response.json();
+      if ([401, 403, 404].includes(response.status)) throw new SystemEventAccessError('原异常或已有调查无访问权限，请联系管理员授权。');
+      const data = response.ok ? await response.json().catch(() => null) : null;
+      if (data?.eventId !== eventId || data.modelInvoked !== false || typeof data.id !== 'string'
+        || !/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(data.id)) throw new Error('调查保存回执未确认，请从同一异常重试。');
       if (g === this.generation) location.assign(`/workbench?investigation=${encodeURIComponent(data.id)}`);
-    } catch (e) { if (g === this.generation) this.error = e instanceof Error ? e.message : '调查入口暂不可用。'; }
+    } catch (error) {
+      if (g === this.generation) {
+        if (error instanceof SystemEventAccessError) this.invalidate();
+        this.error = error instanceof Error ? error.message : '调查入口暂不可用。';
+      }
+    }
     finally { if (g === this.generation) this.loading = false; }
   }
   override render() {

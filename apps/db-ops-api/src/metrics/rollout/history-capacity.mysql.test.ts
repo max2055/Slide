@@ -1,4 +1,5 @@
 import { readConfigurationHistory } from '../policy/configuration-history.js';
+import { randomBytes } from 'node:crypto';
 import { writeFile } from 'node:fs/promises';
 import mysql, { type Pool } from 'mysql2/promise';
 import Fastify from 'fastify';
@@ -15,6 +16,8 @@ import { MysqlPolicyStore } from '../policy/store.js';
 import { admin } from '../policy/test-support.js';
 import { createConfigurationRegistry } from '../config/registry.js';
 import { readHistoryContext } from '../consumers/history-context.js';
+import { ActorContextService, signAccessToken } from '../../auth/actor-context.js';
+import { createVerifyToken } from '../../auth-middleware.js';
 
 const port = Number(process.env.METRICS_TEST_MYSQL_PORT);
 const enabled = process.env.MAX240_CAPACITY === '1' && port && port !== 3306;
@@ -23,6 +26,8 @@ const enabled = process.env.MAX240_CAPACITY === '1' && port && port !== 3306;
 describe.skipIf(!enabled)('MAX240 650-resource persisted history measurement', () => {
   const database = `max240_capacity_${process.pid}`;
   let root: Pool, pool: Pool, app: ReturnType<typeof Fastify>, base: string;
+  let readerToken: string;
+  const readerId = 8401;
   const to = Math.floor(Date.now() / 60000) * 60000, from = to - 86400000;
   const iso = (ms: number) => new Date(ms).toISOString();
   const sql = (at: string) => at.slice(0, 23).replace('T', ' ');
@@ -36,6 +41,19 @@ describe.skipIf(!enabled)('MAX240 650-resource persisted history measurement', (
     await root.query(`CREATE DATABASE ${database}`);
     pool = mysql.createPool({ host: '127.0.0.1', port, user: 'root', password: '', database, connectionLimit: 8 });
     await new MigrationRunner(pool as unknown as MigrationPool).run();
+    await pool.execute('INSERT INTO users (id, username, password_hash) VALUES (?,?,?)',
+      [readerId, 'capacity-scoped-reader', randomBytes(32).toString('hex')]);
+    await pool.execute('INSERT INTO roles (id, name) VALUES (?,?)', [readerId, 'Capacity scoped reader']);
+    await pool.execute("INSERT INTO role_permissions (role_id,permission_id) SELECT ?,id FROM permissions WHERE code IN ('metric:view','instance:view')",
+      [readerId]);
+    await pool.execute('INSERT INTO user_roles (user_id,role_id) VALUES (?,?)', [readerId, readerId]);
+    await pool.execute(`INSERT INTO database_instances (id,name,environment,db_type,host,port,username,password_encrypted,database_name,status)
+      VALUES (1,'Capacity read scope','testing','mysql','capacity.fixture.invalid',3306,'unused','unused','scope_fixture','inactive')`);
+    await pool.execute("INSERT INTO instance_permissions (user_id,instance_id,access_level) VALUES (?,1,'read-only')", [readerId]);
+    const contexts = new ActorContextService(() => pool as never);
+    const jwtSecret = randomBytes(32).toString('hex');
+    readerToken = signAccessToken(await contexts.loadActiveActor(readerId), jwtSecret);
+    const verify = createVerifyToken(jwtSecret, contexts);
     const formal = new MysqlFormalMetricStore(pool);
     const policy = new PolicyService(new MysqlPolicyStore(() => pool), createConfigurationRegistry(),
       { exists: async () => true, inventory: async () => null });
@@ -45,8 +63,13 @@ describe.skipIf(!enabled)('MAX240 650-resource persisted history measurement', (
       readHistoryWindow: (...a) => formal.readHistoryWindow(...a), historyDimensions: (...a) => formal.historyDimensions(...a),
       readObservationPage: (...a) => formal.readObservationPage(...a), dimensions: (...a) => formal.dimensions(...a),
       inventory: async () => null, attempts: async () => [], historyContext: (...a) => readHistoryContext(pool, ...a),
-    }, undefined, undefined, undefined, (_actor, ref, revision) => readConfigurationHistory(pool, ref, revision));
-    app = Fastify(); await registerMetricConsumerRoutes(app, async req => { (req as any).user = admin; }, service);
+    }, undefined, undefined, actor => actor.userId === readerId ? contexts.revalidateActor(actor) : Promise.resolve(actor),
+    (_actor, ref, revision) => readConfigurationHistory(pool, ref, revision));
+    app = Fastify();
+    await registerMetricConsumerRoutes(app, async (req, reply) => {
+      if (req.headers.authorization) return verify(req, reply);
+      (req as any).user = admin;
+    }, service);
     base = await app.listen({ host: '127.0.0.1', port: 0 });
   }, 120000);
   afterAll(async () => {
@@ -99,12 +122,25 @@ describe.skipIf(!enabled)('MAX240 650-resource persisted history measurement', (
     const quantile = (q: number) => sorted[Math.ceil(q * sorted.length) - 1];
     const [tables] = await pool.query<any[]>(`SELECT TABLE_NAME,DATA_LENGTH,INDEX_LENGTH,TABLE_ROWS FROM information_schema.TABLES
       WHERE TABLE_SCHEMA=? AND TABLE_NAME IN ('metric_observations','metric_publications')`, [database]);
+    const scopedQuery = async (id: number) => {
+      const started = performance.now();
+      const response = await fetch(`${base}/api/metrics/query`, { method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${readerToken}` },
+        body: JSON.stringify({ resource: { type: 'instance', id }, metric_ids: ['db.uptime_seconds'],
+          history: true, from: iso(from), to: iso(to), bucket_ms: 60000 }) });
+      const result = await response.json() as any;
+      return { status: response.status, ms: performance.now() - started,
+        buckets: result.metrics?.[0]?.series?.[0]?.buckets?.length ?? 0 };
+    };
+    const scoped = { allowed: await scopedQuery(1), denied: await scopedQuery(2) };
+    expect(scoped.allowed).toMatchObject({ status: 200, buckets: 1440 });
+    expect(scoped.denied).toMatchObject({ status: 403, buckets: 0 });
     const report = { workload: { servers: 500, databases: 100, network_devices: 50, series_per_resource: 1,
       sample_ms: 60000, hours: 24, persisted_rows: Number(count.n), clients: 4, http_queries: selected.length },
       boundary: 'Synthetic contract samples in real MySQL; read-side HTTP only, no target collectors, no SLO claim',
       environment: { node: process.version, platform: process.platform, mysql: (await pool.query<any[]>('SELECT VERSION() AS v'))[0][0].v },
       seed_ms: seedMs, latency_ms: { p50: quantile(.5), p95: quantile(.95), p99: quantile(.99), max: sorted.at(-1) },
-      errors, truncated, truncation_rate: truncated / selected.length, tables, receipts };
+      errors, truncated, truncation_rate: truncated / selected.length, tables, receipts, scoped };
     console.log('[MAX240 capacity]', JSON.stringify(report));
     if (process.env.MAX240_CAPACITY_REPORT) await writeFile(process.env.MAX240_CAPACITY_REPORT, JSON.stringify(report, null, 2));
     expect(errors).toBe(0); expect(truncated).toBe(0);

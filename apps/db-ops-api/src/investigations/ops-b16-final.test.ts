@@ -51,6 +51,9 @@ it.each([false, true])('admits the complete B16 final through loopback SDK with 
     res.setHeader('content-type', 'application/json'); res.end(JSON.stringify({ choices: [{ message, finish_reason: violate ? 'tool_calls' : 'stop' }], usage: { prompt_tokens: 20, completion_tokens: 20 } }));
   });
   await new Promise<void>(r => receiver.listen(0, '127.0.0.1', r));
+  // The recording used Asia/Shanghai. The conservative estimate counts the
+  // request clock's timezone bytes, so the exact output boundary needs that timezone.
+  vi.stubEnv('TZ', 'Asia/Shanghai');
   try {
     const actual = new OpenAIProvider({ apiKey: 'offline-unused', model: 'deepseek-flash', baseURL: `http://127.0.0.1:${(receiver.address() as any).port}/v1`, capabilities: { model: 'deepseek-flash', contextWindowTokens: 1048576, maxOutputTokens: 393216, source: 'configuration', version: 'retained-B16' } });
     const provider = { getDefaultModel: actual.getDefaultModel.bind(actual), getModelCapabilities: actual.getModelCapabilities.bind(actual), countPromptTokens: actual.countPromptTokens.bind(actual), projectMessages: (m: Message[]) => investigationContextMessages(actual.projectMessages(m), 'ops'), chat: actual.chat.bind(actual), chatStream: actual.chatStream.bind(actual) };
@@ -77,7 +80,10 @@ it.each([false, true])('admits the complete B16 final through loopback SDK with 
     else { expect(result.stopReason).toBe('completed'); expect(modelAnalysis(result.finalContent!, [])).not.toBeNull(); expect(modelAnalysis(JSON.stringify({ ...answer, claims: [{ statement: 'unknown', supportingToolCallIds: ['unreturned'], contradictingToolCallIds: [] }] }), [])).toBeNull(); }
     const out = process.env.OPS_B16_EVIDENCE_DIR;
     if (out) { mkdirSync(out, { recursive: true }); writeFileSync(`${out}/b16-final-${violate}.json`, JSON.stringify({ scope: 'Full retained B16 source, local SDK scripted final; no product call, not autonomous analysis or live collector', bodies, result, saved }, null, 2)); }
-  } finally { await new Promise<void>(r => receiver.close(() => r())); }
+  } finally {
+    vi.unstubAllEnvs();
+    await new Promise<void>(r => receiver.close(() => r()));
+  }
 }, 30000);
 
 // Replay observed wall-clock intervals without assigning the uninstrumented

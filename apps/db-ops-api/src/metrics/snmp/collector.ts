@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import type { SnmpVarbind, SnmpTableRow } from '../../network-devices/snmp-types.js';
 import type { HuaweiMibCatalog } from '../../network-devices/huawei-mib-catalog.js';
-import { AdapterError, classifyError, type DecodedRow, type Transport } from '../packages/adapters.js';
+import { AdapterError, classifyError, type DecodedRow, type SnmpInterfaceStatus, type Transport } from '../packages/adapters.js';
 
 export const OIDS = Object.freeze({ uptime: '1.3.6.1.2.1.1.3.0', count: '1.3.6.1.2.1.2.1.0', table: '1.3.6.1.2.1.2.2', xTable: '1.3.6.1.2.1.31.1.1' });
 function capacityError(max: number): AdapterError {
@@ -27,6 +27,23 @@ export function unsigned(input: unknown, bits: 32 | 64): string {
   return v;
 }
 const text = (v: unknown) => { const raw = unwrap(v); return Buffer.isBuffer(raw) ? raw.toString('hex') : typeof raw === 'string' ? raw.slice(0, 512) : ''; };
+function interfaceText(value: unknown): string {
+  if (absent(value)) return '';
+  const raw = unwrap(value);
+  return (Buffer.isBuffer(raw) ? raw.toString('utf8') : typeof raw === 'string' ? raw : '')
+    .replace(/\p{Cc}/gu, '').trim().slice(0, 255);
+}
+function interfaceStatus(value: unknown): SnmpInterfaceStatus {
+  if (absent(value)) return 'unknown';
+  try {
+    switch (unsigned(value, 32)) {
+      case '1': return 'up';
+      case '2': return 'down';
+      case '3': return 'testing';
+      default: return 'unknown';
+    }
+  } catch { return 'unknown'; }
+}
 function column(row: SnmpTableRow | undefined, root: string, n: number): unknown {
   return row?.values[`${root}.1.${n}`] ?? row?.values[String(n)];
 }
@@ -155,6 +172,11 @@ export class SnmpDiscovery {
         if (value > 0n) speed = value.toString();
       } catch { /* no trustworthy speed bound */ }
       this.field(row, 'ifSpeed', speed, v => ({ encoding: 'uint64', value: String(v) }));
+      if (this.persistentIdentity && !xError) {
+        row.snmp_interface = { index: Number(index), name: interfaceText(xc(1)) || interfaceText(bc(2)) || `if-${index}`,
+          alias: interfaceText(xc(18)) || null, speedBps: speed ?? null,
+          adminStatus: interfaceStatus(bc(7)), operStatus: interfaceStatus(bc(8)), observedAt: at };
+      }
       for (const [field, hc, low] of [['rxOctets', 6, 10], ['txOctets', 10, 16]] as const) {
         const wide = !absent(xc(hc)), bits = wide ? '64' : '32';
         const bound = speed ? (BigInt(speed) / 8n).toString() : undefined;

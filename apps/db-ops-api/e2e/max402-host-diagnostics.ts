@@ -23,7 +23,7 @@ const pin = process.env.SSH_HOST_KEY_FINGERPRINT;
 const pool = new SshSessionPool();
 const app = Fastify();
 app.addHook('onError', async (_request, _reply, error) => { console.error(redactSensitiveText(error.message)); });
-const originalGet = serverDiagnosticService.getDiagnostics;
+const originalReadSnapshot = serverDiagnosticService.readDiagnosticsSnapshot;
 let commands = 0;
 const transport = {
   getConnection: pool.getConnection.bind(pool), releaseConnection: pool.releaseConnection.bind(pool),
@@ -91,8 +91,8 @@ try {
   assert.deepEqual(diagnostics.recentSystemLogs, diagnostics.sections.systemLogs);
   assert.equal(new Set(diagnostics.gaps.map((g: any) => JSON.stringify([g.section, g.reason]))).size, diagnostics.gaps.length);
   assert(Buffer.byteLength(response.body) <= EVIDENCE_PACK_MAX_BYTES);
-  // Bind the real SSH-backed service into the production tool for this isolated process only.
-  serverDiagnosticService.getDiagnostics = diagnosticService.getDiagnostics.bind(diagnosticService);
+  // Read the snapshot already collected by the host evidence route.
+  serverDiagnosticService.readDiagnosticsSnapshot = diagnosticService.readDiagnosticsSnapshot.bind(diagnosticService);
   const tool = await getServerDiagnosticsTool.handler({ serverId: 402 }, { actor });
   assert(tool.success);
   assert.equal(tool.details?.expiresAt, diagnostics.expiresAt);
@@ -111,7 +111,7 @@ try {
   }, null, 2) + '\n');
   console.log('MAX-402 real SSH → host evidence HTTP serialization → diagnostic tool passed');
 } finally {
-  serverDiagnosticService.getDiagnostics = originalGet;
+  serverDiagnosticService.readDiagnosticsSnapshot = originalReadSnapshot;
   await app.close();
   pool.closeAll();
 }

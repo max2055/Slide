@@ -9,6 +9,7 @@ import { assertCredentialUsable, CredentialRotationRequiredError } from './crede
 import { assertCreatableDatabaseType } from './adapters/capability-matrix.js';
 import { authorizeDatabaseTarget } from './security/database-target-policy.js';
 import { ensureOracleClientReady, formatOracleConnectionError, initializeOracleClient } from './oracle-client.js';
+import { withTimeout } from './promise-timeout.js';
 
 initializeOracleClient();
 
@@ -794,7 +795,7 @@ class InstanceDatabaseService {
           port: config.port,
           user: config.username,
           password: config.password,
-          database: config.database || 'mysql',
+          database: config.database || undefined,
           connectionLimit: 1,
           waitForConnections: true,
           connectTimeout: 5000,
@@ -861,17 +862,25 @@ class InstanceDatabaseService {
         if (instanceId !== undefined) await instanceAccessLifecycle.assertAvailable(instanceId);
 
         const host = pinnedHost;
-        const connection = guard(await dmdb.getConnection({
+        const nativeConnection = await withTimeout(dmdb.getConnection({
           user: config.username,
           password: config.password,
           connectString: `${host}:${config.port}`,
           schema: config.database || undefined,
           connectTimeout: 5000,
+          socketTimeout: 5_000,
           loginEncrypt: false,
-        }));
+        }), 10_000, 'Dameng connection timed out', lateConnection => {
+          const closeLateConnection = () => lateConnection.close();
+          const cleanup = instanceId === undefined
+            ? closeLateConnection()
+            : instanceAccessLifecycle.track(instanceId, instanceAccessLifecycle.ownTemporary(instanceId, closeLateConnection));
+          void cleanup.catch(() => undefined);
+        });
+        const connection = guard(nativeConnection);
         own(() => connection.close());
 
-        await connection.execute('SELECT 1 FROM DUAL');
+        await withTimeout(connection.execute('SELECT 1 FROM DUAL'), 5_000, 'Dameng connection probe timed out');
 
 
         return { success: true, message: `连接成功：${config.host}:${config.port}` };
@@ -903,14 +912,25 @@ class InstanceDatabaseService {
   /**
    * 记录连接目标实际报告的版本；未连上或读不到版本时保持未知，不猜测。
    */
-  async recordDetectedVersion(id: number, version: string | null): Promise<void> {
+  async recordDetectedVersion(id: number, version: string | null, connectedEngine: string): Promise<void> {
     const pool = this.getPool();
     const value = version?.trim();
-    if (!pool || !value || value.length > 64) return;
+    if (!pool) return;
     try {
+      if (!value || value.length > 64) {
+        // A successful vendor reconnect without full release metadata cannot
+        // qualify a template based on the previous connection's version.
+        if (version === null && (connectedEngine === 'oracle' || connectedEngine === 'dameng')) {
+          await pool.execute(
+            "UPDATE database_instances SET db_version = NULL WHERE id = ? AND db_type = ? AND lifecycle_state = 'available' AND db_version IS NOT NULL",
+            [id, connectedEngine]
+          );
+        }
+        return;
+      }
       await pool.execute(
-        "UPDATE database_instances SET db_version = ? WHERE id = ? AND lifecycle_state = 'available' AND (db_version IS NULL OR db_version <> ?)",
-        [value, id, value]
+        "UPDATE database_instances SET db_version = ? WHERE id = ? AND db_type = ? AND lifecycle_state = 'available' AND (db_version IS NULL OR db_version <> ?)",
+        [value, id, connectedEngine, value]
       );
     } catch (error) {
       // Version metadata must not fail the connection it was read from.

@@ -10,7 +10,7 @@ async function fixture(page: Page, options: { emptyNetwork?: boolean; overviewFa
   }, options.permissions ?? ['*']);
   await page.routeWebSocket('**/agent-ws', socket => socket.onMessage(message => { if (JSON.parse(String(message)).type === 'auth') socket.send(JSON.stringify({ type: 'auth_ok' })); }));
   const now = new Date().toISOString();
-  const metrics = (type: string) => (type === 'network_device' ? ['device_reachability', 'device_cpu_percent', 'device_memory_percent', 'device_temperature_celsius'] : ['cpu_usage', 'memory_usage', 'disk_usage', 'connections', 'qps']).map((metricId, index) => ({ metricId, value: metricId === 'device_reachability' ? 1 : index * 14, quality: 'good', observedAt: now, validUntil: new Date(Date.now() + 300_000).toISOString() }));
+  const metrics = (type: string) => (type === 'network_device' ? ['device_reachability', 'device_uptime_seconds', 'device_cpu_percent', 'device_memory_percent', 'device_temperature_celsius'] : ['cpu_usage', 'memory_usage', 'disk_usage', 'connections', 'qps']).map((metricId, index) => ({ metricId, value: metricId === 'device_reachability' ? 1 : index * 14, quality: 'good', observedAt: now, validUntil: new Date(Date.now() + 300_000).toISOString() }));
   const items = ['instance', 'server', 'network_device'].flatMap((type, index) => options.emptyNetwork && type === 'network_device' ? [] : [0, 1].map(n => ({
     resource: { type, id: index * 10 + n + 1 }, label: (options.longName ? '长资源名称'.repeat(24) : '') + ['Orders MySQL', 'Payments host', 'Core switch'][index] + (n ? ' secondary' : ''),
     status: type === 'server' && !n ? 'offline' : 'online', quality: n ? 'partial' : 'good', freshness: n ? 'stale' : 'fresh',
@@ -71,9 +71,16 @@ for (const viewport of [{ width: 1280, height: 720 }, { width: 1440, height: 900
           const quality = (await view.locator('.collection-summary').boundingBox())!; expect(quality.y + quality.height).toBeLessThan(900);
         }
       }
-      if (name !== '综合态势') await expect(view.getByRole('combobox', { name: '指标', exact: true })).toHaveValue(name === '网络设备' ? 'device_cpu_percent' : 'cpu_usage');
+      if (name !== '综合态势') await expect(view.getByRole('combobox', { name: '指标', exact: true })).toHaveValue(name === '网络设备' ? 'device_uptime_seconds' : 'cpu_usage');
       if (name === '服务器') { await expect(view).not.toContainText('Orders MySQL'); await expect(view).toContainText('Payments host'); }
-      if (name === '网络设备') { await view.getByRole('button', { name: '读取最近备份' }).click(); await expect(view).toContainText('最近已保存备份 v2'); }
+      if (name === '网络设备') {
+        const rank = view.locator('.metric-row').first();
+        await expect(rank).toContainText('14 s');
+        await view.getByRole('combobox', { name: '指标', exact: true }).selectOption('device_cpu_percent');
+        await expect(rank).toContainText('28%');
+        await view.getByRole('button', { name: '读取最近备份' }).click();
+        await expect(view).toContainText('最近已保存备份 v2');
+      }
       if (name === '数据库') { await expect(view.locator('.trend-chart-container')).toBeVisible(); await expect(view.locator('.engine-pie')).toBeVisible(); }
       else await expect(view.locator('.trend-chart-container')).toHaveCount(0);
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);

@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { post, get, put } = vi.hoisted(() => ({ post: vi.fn(), get: vi.fn(), put: vi.fn() }));
-vi.mock("../../../api/index.js", () => ({ apiClient: { post, get, put } }));
+const { post, get, put, remove } = vi.hoisted(() => ({ post: vi.fn(), get: vi.fn(), put: vi.fn(), remove: vi.fn() }));
+vi.mock("../../../api/index.js", () => ({ apiClient: { post, get, put, delete: remove } }));
 
 import "./llm-config.js";
 
@@ -359,6 +359,34 @@ describe('save outcome separates persistence from runtime application', () => {
     expect(warning(element).textContent).toContain('LLM_CONFIGURATION_UNAVAILABLE');
   });
 
+  it.each(['启停', '删除'])('retries runtime application after %s without repeating the mutation', async (action) => {
+    const element = await page();
+    const provider = element.editing;
+    const unapplied = { success: true, applied: false, reloadError: 'LLM_CONFIGURATION_UNAVAILABLE' };
+    if (action === '删除') {
+      const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true);
+      remove.mockReset();
+      remove.mockResolvedValueOnce(unapplied);
+      get.mockResolvedValue([]);
+      try { await element._delete(provider); } finally { confirm.mockRestore(); }
+      expect(remove).toHaveBeenCalledExactlyOnceWith('/llm/configs/11');
+      expect(element.viewMode).toBe('picker');
+    } else {
+      post.mockResolvedValueOnce(unapplied);
+      await element._toggle(provider);
+    }
+    await element.updateComplete;
+    expect(warning(element).textContent).toContain('尚未应用');
+    post.mockResolvedValueOnce({ applied: true });
+    warning(element).querySelector('button').click();
+    await vi.waitFor(() => expect(warning(element)).toBeNull());
+    expect(post.mock.calls).toEqual(action === '删除'
+      ? [['/llm/configs/reload']]
+      : [['/llm/configs/11/toggle'], ['/llm/configs/reload']]);
+    if (action === '删除') expect(remove).toHaveBeenCalledTimes(1);
+    expect(confirmed(element).textContent).toContain('已应用到运行时');
+  });
+
   it('reports the same unapplied outcome when creating a provider', async () => {
     const element = await page();
     element._openCustomForm();
@@ -458,6 +486,28 @@ describe('provider refresh ordering (#665)', () => {
     expect(el.providers[0].id).toBe(2);
     expect(el.editing.id).toBe(2);
     expect(el.sceneDrafts).toEqual({});
+  });
+
+  it('keeps a scene draft made while the current provider refresh is pending', async () => {
+    const el = document.createElement('llm-config-page') as any;
+    const provider = { id: 1, name: 'primary', enabled: true, is_default: true };
+    const initial = [{ scene: 'chat', binding: null }, { scene: 'health_check', binding: null }];
+    get.mockResolvedValueOnce([provider]).mockResolvedValueOnce(initial);
+    await el._load();
+    const delayed = pending();
+    get.mockResolvedValueOnce([provider]).mockReturnValueOnce(delayed.promise);
+    const refresh = el._load(true);
+    await Promise.resolve();
+    el.sceneDrafts = { ...el.sceneDrafts, chat: { provider_id: 1, model: 'unsaved' } };
+    delayed.resolve([
+      { scene: 'chat', binding: null },
+      { scene: 'health_check', binding: { provider_id: 1, model: 'persisted' } },
+    ]);
+    await refresh;
+    expect(el.sceneDrafts).toEqual({
+      chat: { provider_id: 1, model: 'unsaved' },
+      health_check: { provider_id: 1, model: 'persisted' },
+    });
   });
 });
 

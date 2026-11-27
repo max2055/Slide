@@ -20,6 +20,14 @@ export interface WorkflowStore {
   fail(job: ClaimedJob, workerId: string, error: Error, retryAt: Date | null): Promise<boolean>;
 }
 interface SqlPool { execute<T = unknown>(sql: string, values?: unknown[]): Promise<[T, unknown?]>; }
+interface SqlConnection extends SqlPool {
+  beginTransaction(): Promise<void>;
+  commit(): Promise<void>;
+  rollback(): Promise<void>;
+  release(): void;
+  destroy(): void;
+}
+interface TransactionalSqlPool extends SqlPool { getConnection(): Promise<SqlConnection>; }
 export type WorkflowJobInput = { id: string; type: string; schemaVersion: number; payload: Record<string, unknown>; idempotencyKey: string; maxAttempts?: number; availableAt?: Date };
 
 // A recovery job is the durable intent. Waiting for the original confirmation
@@ -32,8 +40,14 @@ const notificationOrder = `(job_type <> 'notification.deliver'
       JSON_UNQUOTE(JSON_EXTRACT(payload, '$.channelId')))
     AND original_delivery.state = 'sent'))`;
 
+// Only report occurrences journal worker attempts. Other job types keep their
+// existing lifecycle, including the separate notification delivery journal.
+const reportAttemptJoin = `LEFT JOIN workflow_attempts a
+  ON j.job_type = 'report.occurrence' AND a.job_id = j.id AND a.attempt_number = j.attempts
+  AND a.worker_id = j.lease_owner AND a.fencing_token = j.fencing_token AND a.state = 'running'`;
+
 export class MysqlWorkflowStore implements WorkflowStore {
-  constructor(private readonly poolProvider: () => SqlPool | null) {}
+  constructor(private readonly poolProvider: () => SqlPool | TransactionalSqlPool | null) {}
   /** Durable gauges, not throughput. Eligibility matches claim, including expired leases. */
   async observeQueue(): Promise<QueueObservation> {
     const eligible = "state IN ('queued', 'retry', 'running') AND available_at <= NOW() AND (lease_expires_at IS NULL OR lease_expires_at < NOW())"
@@ -107,32 +121,82 @@ export class MysqlWorkflowStore implements WorkflowStore {
     // A locking UPDATE over a queue scan acquires cross-lane gap locks and can
     // deadlock even when job types differ. Read an optimistic candidate, then
     // fence a primary-key-only update; a raced claimant simply returns idle.
-    const [candidates] = await pool.execute<Array<{ id: string }>>(
-      `SELECT id FROM workflow_jobs WHERE state IN ('queued', 'retry', 'running')
+    const [candidates] = await pool.execute<Array<{ id: string; type: string }>>(
+      `SELECT id, job_type AS type FROM workflow_jobs WHERE state IN ('queued', 'retry', 'running')
        AND available_at <= NOW() AND (lease_expires_at IS NULL OR lease_expires_at < NOW())
        AND ${notificationOrder}
        ${process.env.ANALYSIS_DISPATCH_ENABLED === 'false' ? "AND job_type <> 'analysis.dispatch'" : ''}
        ${typeFilter} ORDER BY available_at, created_at, id LIMIT 1`, [...(filter?.types ?? [])],
     );
-    if (!candidates[0]) return null;
-    const candidateId = candidates[0].id;
+    const candidate = candidates[0];
+    if (!candidate) return null;
+    if (candidate.type === 'report.occurrence') {
+      if (!('getConnection' in pool)) throw new Error('WORKFLOW_ATTEMPT_TRANSACTION_UNAVAILABLE');
+      return this.claimReportAttempt(pool, candidate.id, workerId, leaseSeconds);
+    }
+    if (!await this.acquireLease(pool, candidate.id, workerId, leaseSeconds)) return null;
+    return this.readClaim(pool, candidate.id, workerId);
+  }
+  private async acquireLease(pool: SqlPool, jobId: string, workerId: string, leaseSeconds: number): Promise<boolean> {
     const [result] = await pool.execute<{ affectedRows: number }>(
       `UPDATE workflow_jobs SET state = 'running', attempts = attempts + 1, lease_owner = ?,
        lease_expires_at = DATE_ADD(NOW(), INTERVAL ? SECOND), fencing_token = fencing_token + 1
        WHERE id = ? AND state IN ('queued', 'retry', 'running') AND available_at <= NOW()
        AND (lease_expires_at IS NULL OR lease_expires_at < NOW()) AND ${notificationOrder}`,
-      [workerId, leaseSeconds, candidateId],
+      [workerId, leaseSeconds, jobId],
     );
-    if (Number(result.affectedRows) !== 1) return null;
+    return Number(result.affectedRows) === 1;
+  }
+  private async readClaim(pool: SqlPool, jobId: string, workerId: string): Promise<ClaimedJob | null> {
     const [rows] = await pool.execute<Array<any>>(
       `SELECT id, job_type AS type, payload, attempts, max_attempts AS maxAttempts, fencing_token AS fencingToken,
          GREATEST(0, TIMESTAMPDIFF(MICROSECOND, GREATEST(created_at, available_at), NOW(3)) / 1000) AS queueWaitMs
        FROM workflow_jobs WHERE id = ? AND lease_owner = ? AND state = 'running' AND lease_expires_at > NOW()
-       LIMIT 1`, [candidateId, workerId],
+       LIMIT 1`, [jobId, workerId],
     );
     const row = rows[0];
     return row ? { id: row.id, type: row.type, payload: typeof row.payload === 'string' ? JSON.parse(row.payload) : row.payload, attempts: Number(row.attempts), maxAttempts: Number(row.maxAttempts), fencingToken: Number(row.fencingToken),
       ...(row.queueWaitMs !== undefined ? { queueWaitMs: Number(row.queueWaitMs) } : {}) } : null;
+  }
+  private async claimReportAttempt(pool: TransactionalSqlPool, jobId: string, workerId: string, leaseSeconds: number): Promise<ClaimedJob | null> {
+    const connection = await pool.getConnection();
+    let discardConnection = false;
+    try {
+      await connection.beginTransaction();
+      if (!await this.acquireLease(connection, jobId, workerId, leaseSeconds)) {
+        await connection.commit();
+        return null;
+      }
+      await connection.execute(
+        `UPDATE workflow_attempts a JOIN workflow_jobs j
+         ON a.job_id = j.id AND a.attempt_number = j.attempts - 1 AND a.fencing_token = j.fencing_token - 1
+         SET a.state = 'abandoned', a.finished_at = NOW(), a.error_message = 'WORKFLOW_LEASE_LOST'
+         WHERE j.id = ? AND a.state = 'running'`,
+        [jobId],
+      );
+      await connection.execute(
+        `INSERT INTO workflow_attempts (job_id, attempt_number, worker_id, fencing_token, state)
+         SELECT id, attempts, lease_owner, fencing_token, 'running' FROM workflow_jobs WHERE id = ?`,
+        [jobId],
+      );
+      // The attempt writes may wait for a lock. Hand back only a lease that is
+      // still current, without leaving a journal row if the claim rolls back.
+      const job = await this.readClaim(connection, jobId, workerId);
+      if (!job) throw new Error('WORKFLOW_ATTEMPT_CLAIM_NOT_READABLE');
+      await connection.commit();
+      return job;
+    } catch (error) {
+      try {
+        await connection.rollback();
+      } catch {
+        // A failed rollback leaves the session unsafe for another borrower.
+        discardConnection = true;
+        try { connection.destroy(); } catch { /* Preserve the original error. */ }
+      }
+      throw error;
+    } finally {
+      if (!discardConnection) connection.release();
+    }
   }
   /** Unknown/global handlers deliberately exclude every other resource. Never trust an added instanceId. */
   async resourcesFor(job: ClaimedJob, context?: Pick<JobExecutionContext, 'workerId'>): Promise<string[]> {
@@ -223,21 +287,35 @@ export class MysqlWorkflowStore implements WorkflowStore {
   }
   async complete(jobId: string, workerId: string, fencingToken: number): Promise<boolean> {
     const [result] = await this.pool().execute<{ affectedRows: number }>(
-      `UPDATE workflow_jobs SET state = 'completed', completed_at = NOW(), lease_owner = NULL, lease_expires_at = NULL
-       WHERE id = ? AND state = 'running' AND lease_owner = ? AND fencing_token = ? AND lease_expires_at > NOW()`, [jobId, workerId, fencingToken],
+      `UPDATE workflow_jobs j ${reportAttemptJoin}
+       SET j.state = 'completed', j.completed_at = NOW(), j.lease_owner = NULL, j.lease_expires_at = NULL,
+           a.state = 'succeeded', a.finished_at = NOW()
+       WHERE j.id = ? AND j.state = 'running' AND j.lease_owner = ? AND j.fencing_token = ? AND j.lease_expires_at > NOW()`,
+      [jobId, workerId, fencingToken],
     );
-    return Number(result.affectedRows) === 1;
+    return Number(result.affectedRows) > 0;
   }
   async fail(job: ClaimedJob, workerId: string, error: Error, retryAt: Date | null): Promise<boolean> {
     const state = retryAt ? 'retry' : 'dead_letter';
+    const values = [state, retryAt ?? new Date(), error.message.slice(0, 4096), job.id, workerId, job.fencingToken];
+    if (job.type === 'report.occurrence') {
+      const [result] = await this.pool().execute<{ affectedRows: number }>(
+        `UPDATE workflow_jobs j ${reportAttemptJoin}
+         SET j.state = ?, j.available_at = ?, j.last_error = ?, j.lease_owner = NULL, j.lease_expires_at = NULL,
+             a.state = 'failed', a.finished_at = NOW(), a.error_message = 'WORKFLOW_HANDLER_FAILED'
+         WHERE j.id = ? AND j.state = 'running' AND j.lease_owner = ? AND j.fencing_token = ? AND j.lease_expires_at > NOW()`,
+        values,
+      );
+      return Number(result.affectedRows) > 0;
+    }
     const [result] = await this.pool().execute<{ affectedRows: number }>(
       `UPDATE workflow_jobs SET state = ?, available_at = ?, last_error = ?, lease_owner = NULL, lease_expires_at = NULL
        WHERE id = ? AND state = 'running' AND lease_owner = ? AND fencing_token = ? AND lease_expires_at > NOW()`,
-      [state, retryAt ?? new Date(), error.message.slice(0, 4096), job.id, workerId, job.fencingToken],
+      values,
     );
     return Number(result.affectedRows) === 1;
   }
-  private pool(): SqlPool { const pool = this.poolProvider(); if (!pool) throw new Error('WORKFLOW_STORE_UNAVAILABLE'); return pool; }
+  private pool(): SqlPool | TransactionalSqlPool { const pool = this.poolProvider(); if (!pool) throw new Error('WORKFLOW_STORE_UNAVAILABLE'); return pool; }
 }
 export interface JobExecutionContext { readonly signal: AbortSignal; readonly workerId: string; readonly fencingToken: number; }
 

@@ -96,24 +96,18 @@ describe.skipIf(!enabled)('first binding on a real MySQL platform and read-only 
     [String(id)]))[0][0].c);
 
   let platform: OwnedDatabase;
-  let target: OwnedDatabase;
+  const targets: OwnedDatabase[] = [];
+  const targetConnections: number[] = [];
 
   beforeAll(async () => {
     process.env.ENCRYPTION_KEY = randomBytes(32).toString('hex');
     const root = await mysql.createConnection({ host: '127.0.0.1', port: PORT, user: 'root', password: PASSWORD });
     try {
       platform = await createOwnedDatabase(root, { nonce: NONCE, purpose: 'first', handleDir: HANDLE_DIR });
-      target = await createOwnedDatabase(root, { nonce: NONCE, purpose: 'target', handleDir: HANDLE_DIR });
-    } catch (error) { await root.end(); throw error; }
-    try {
-      await root.query(`CREATE TABLE \`${target.database}\`.probe (id INT PRIMARY KEY, label VARCHAR(64))`);
-      await root.query(`INSERT INTO \`${target.database}\`.probe VALUES (1, 'max238-first-binding')`);
       // A nonce-named user; an existing one is a neighbour, not ours to reuse.
       await root.query(`CREATE USER '${TARGET_USER}'@'%' IDENTIFIED BY ?`, [TARGET_PASSWORD]);
-      await root.query(`GRANT SELECT ON \`${target.database}\`.* TO '${TARGET_USER}'@'%'`);
       await root.query(`GRANT PROCESS ON *.* TO '${TARGET_USER}'@'%'`);
-    } catch (error) { await root.end(); throw error; }
-    await root.end();
+    } finally { await root.end(); }
 
     pool = mysql.createPool({ host: '127.0.0.1', port: PORT, user: 'root', password: PASSWORD,
       database: platform.database, timezone: 'Z', connectionLimit: 12 });
@@ -129,31 +123,32 @@ describe.skipIf(!enabled)('first binding on a real MySQL platform and read-only 
     await pool.execute(`INSERT INTO metric_policy_groups (id, payload) VALUES ('prod-max238', ?)
       ON DUPLICATE KEY UPDATE payload = VALUES(payload)`, [JSON.stringify({ id: 'prod-max238', revision: 1, overrides: {} })]);
 
-    const instance = async (name: string, targetUser: string, targetPassword: string): Promise<number> => {
+      const instance = async (name: string, password: string): Promise<number> => {
+      const target = await createOwnedDatabase(pool, { nonce: NONCE, purpose: `firsttarget${targets.length}`, handleDir: HANDLE_DIR });
+      targets.push(target);
+      await pool.query(`CREATE TABLE \`${target.database}\`.probe (id INT PRIMARY KEY, label VARCHAR(64))`);
+      await pool.query(`INSERT INTO \`${target.database}\`.probe VALUES (1, 'max238-first-binding')`);
+      await pool.query(`GRANT SELECT ON \`${target.database}\`.* TO '${TARGET_USER}'@'%'`);
       await pool.execute(`INSERT INTO database_instances
         (name, environment, db_type, db_version, host, port, username, password_encrypted, database_name, status, lifecycle_state,
          max_connections, connection_timeout_ms, created_by, created_at, updated_at)
         VALUES (?, 'testing', 'mysql', '8.4', '127.0.0.1', ?, ?, ?, ?, 'active', 'available', 10, 5000, 1, ?, ?)`,
-      [name, PORT, targetUser, encryptData(targetPassword), target.database, now.replace('T', ' ').replace('Z', ''),
+          [name, PORT, TARGET_USER, encryptData(password), target.database, now.replace('T', ' ').replace('Z', ''),
         now.replace('T', ' ').replace('Z', '')]);
-      return Number((await pool.query<RowDataPacket[]>('SELECT id FROM database_instances WHERE name = ?', [name]))[0][0].id);
+      const id = Number((await pool.query<RowDataPacket[]>('SELECT id FROM database_instances WHERE name = ?', [name]))[0][0].id);
+        if (password === TARGET_PASSWORD) {
+        targetConnections.push(id);
+        expect(await databaseService.addConnection(id, name, { host: '127.0.0.1', port: PORT, user: TARGET_USER,
+            password, database: target.database, db_type: 'mysql' })).toBe(true);
+      }
+      return id;
     };
-    instanceId = await instance('max238-first-unbound', TARGET_USER, TARGET_PASSWORD);
-    secondInstanceId = await instance('max238-first-concurrent', TARGET_USER, TARGET_PASSWORD);
-    failingInstanceId = await instance('max238-first-bad-credential', TARGET_USER, `${TARGET_PASSWORD}-wrong`);
-    reProbeInstanceId = await instance('max238-r3-reprobe', TARGET_USER, TARGET_PASSWORD);
-    rotatedInstanceId = await instance('max238-r3-rotated', TARGET_USER, TARGET_PASSWORD);
-    evidenceInstanceId = await instance('max238-r3-evidence', TARGET_USER, TARGET_PASSWORD);
-    // The accepted collector access reads the live shared connection it built
-    // when the connection was saved; a raw fixture row alone is not a target.
-    const targetConfig = { host: '127.0.0.1', port: PORT, user: TARGET_USER, password: TARGET_PASSWORD,
-      database: target.database, db_type: 'mysql' as const };
-    expect(await databaseService.addConnection(instanceId, 'max238-first-unbound', targetConfig)).toBe(true);
-    expect(await databaseService.addConnection(secondInstanceId, 'max238-first-concurrent', targetConfig)).toBe(true);
-    for (const [id, name] of [[reProbeInstanceId, 'max238-r3-reprobe'], [rotatedInstanceId, 'max238-r3-rotated'],
-      [evidenceInstanceId, 'max238-r3-evidence']] as Array<[number, string]>) {
-      expect(await databaseService.addConnection(id, name, targetConfig)).toBe(true);
-    }
+    instanceId = await instance('max238-first-unbound', TARGET_PASSWORD);
+    secondInstanceId = await instance('max238-first-concurrent', TARGET_PASSWORD);
+    failingInstanceId = await instance('max238-first-bad-credential', `${TARGET_PASSWORD}-wrong`);
+    reProbeInstanceId = await instance('max238-r3-reprobe', TARGET_PASSWORD);
+    rotatedInstanceId = await instance('max238-r3-rotated', TARGET_PASSWORD);
+    evidenceInstanceId = await instance('max238-r3-evidence', TARGET_PASSWORD);
     (admin as unknown as { instanceScopes: Record<number, string> }).instanceScopes = {
       [instanceId]: 'admin', [secondInstanceId]: 'admin', [failingInstanceId]: 'admin',
       [reProbeInstanceId]: 'admin', [rotatedInstanceId]: 'admin', [evidenceInstanceId]: 'admin',
@@ -203,14 +198,15 @@ describe.skipIf(!enabled)('first binding on a real MySQL platform and read-only 
 
   afterAll(async () => {
     await app?.close();
-    await pool?.end();
-    const root = await mysql.createConnection({ host: '127.0.0.1', port: PORT, user: 'root', password: PASSWORD });
     const errors: unknown[] = [];
+    for (const id of targetConnections) await databaseService.removeConnection(id).catch(error => errors.push(error));
+    await pool?.end().catch(error => errors.push(error));
+    const root = await mysql.createConnection({ host: '127.0.0.1', port: PORT, user: 'root', password: PASSWORD });
     try {
       // Each cleanup is independently verified on the live root connection; one
       // failure never hides the others and leaves its handle behind for a human.
       await root.query(`DROP USER IF EXISTS '${TARGET_USER}'@'%'`).catch(error => errors.push(error));
-      await dropOwnedDatabase(root, { nonce: NONCE, purpose: 'target', handleDir: HANDLE_DIR })
+      for (const target of targets) await dropOwnedDatabase(root, { nonce: NONCE, purpose: target.purpose, handleDir: HANDLE_DIR })
         .catch(error => errors.push(error));
       await dropOwnedDatabase(root, { nonce: NONCE, purpose: 'first', handleDir: HANDLE_DIR })
         .catch(error => errors.push(error));

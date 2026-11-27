@@ -29,7 +29,7 @@ export function openWorkbenchRecord(event: MouseEvent, destination: string, key:
   window.dispatchEvent(new PopStateEvent('popstate'));
 }
 
-export async function restoreWorkbenchPosition(root: ParentNode, queueRows?: HTMLElement | null) {
+export async function restoreWorkbenchPosition(root: ParentNode, queueRows?: HTMLElement | null, options?: { preserveHistory?: boolean }) {
   await Promise.all([...root.querySelectorAll('app-data-table')].map(table=>(table as HTMLElement & {updateComplete:Promise<unknown>}).updateComplete));
   if (root instanceof Node && !root.isConnected) return;
   const position = history.state?.workbenchPosition;
@@ -59,6 +59,8 @@ export async function restoreWorkbenchPosition(root: ParentNode, queueRows?: HTM
       target.scrollIntoView({block:'center',inline:'nearest',behavior:'instant'});
     }
   }
-  const {workbenchPosition: _position,...state} = history.state;
-  history.replaceState(state,'',location.href);
+  if (!options?.preserveHistory || !match || target !== match) {
+    const {workbenchPosition: _position,...state} = history.state;
+    history.replaceState(state,'',location.href);
+  }
 }

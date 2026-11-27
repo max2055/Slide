@@ -253,6 +253,14 @@ class ServerDiagnosticService {
     };
   }
 
+  async readDiagnosticsSnapshot(serverId: number): Promise<ServerDiagnostics> {
+    if (!Number.isSafeInteger(serverId) || serverId <= 0) throw new Error('SERVER_ID_INVALID');
+    if (!await this.dependencies.serverDatabaseService.getServerById(serverId)) throw new Error('SERVER_NOT_FOUND');
+    const snapshot = this.getCachedDiagnostics(serverId);
+    if (!snapshot) throw new Error('DIAGNOSTIC_SNAPSHOT_NOT_FOUND');
+    return snapshot;
+  }
+
   async getDiagnostics(serverId: number, options: { refresh?: boolean } = {}): Promise<ServerDiagnostics> {
     if (!Number.isSafeInteger(serverId) || serverId <= 0) throw new Error('SERVER_ID_INVALID');
     const cached = this.cache.get(serverId);
@@ -296,6 +304,7 @@ class ServerDiagnosticService {
           maxOutputBytes: Math.min(maxOutputBytes, remaining),
         });
         const result = results[0];
+        if (result && result.exitCode === null && result.signal === null) throw new Error('SSH_COMMAND_PROTOCOL_ERROR');
         if (result?.truncated) throw new Error('SSH_COMMAND_OUTPUT_LIMIT');
         outputBytes += result ? Buffer.byteLength(result.stdout) + Buffer.byteLength(result.stderr) : 0;
         if (outputBytes > SERVER_DIAGNOSTIC_MAX_OUTPUT_BYTES) throw new Error('SSH_COMMAND_OUTPUT_LIMIT');

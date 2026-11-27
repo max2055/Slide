@@ -28,6 +28,7 @@ import { MYSQL_BINDING_HOST_SQL } from '../bindings/mysql-host.js';
 import { encodeTemplatePendingPayload } from '../bindings/persistence-codec.js';
 import type { ResourceBindingCandidate } from '../../contracts/metrics/templates.js';
 import { TRIAL_RECEIPT_INSERT_SQL } from '../bindings/trial-receipt-writer.js';
+import * as packageRunner from '../packages/runner.js';
 
 const AT = '2026-10-29T12:00:00.000Z';
 const HASH = `sha256:${'a'.repeat(64)}`;
@@ -76,6 +77,7 @@ const state = vi.hoisted(() => {
     statements: [] as string[],
     order: [] as string[],
     plan,
+    resolutionReleases: [] as unknown[],
     /** Committed receipt rows; the fixture applies a write only on commit. */
     receipts: new Map<string, string>(),
     /** Called before the writer's pool hands out its connection (a pool wait). */
@@ -111,7 +113,7 @@ vi.mock('../bindings/resolve.js', async importOriginal => {
   return {
     ...actual,
     resolveTemplateBinding: async () => ({ kind: 'template_resolution', binding: {}, resource: { type: 'instance', id: 1 },
-      releases: [], excluded: [], templates: [], settings: {} }),
+      releases: state.resolutionReleases, excluded: [], templates: [], settings: {} }),
   };
 });
 vi.mock('../bindings/plan.js', async importOriginal => {
@@ -227,6 +229,7 @@ const reset = () => {
   state.statements = []; state.order = []; state.relationExists = true;
   state.receipts.clear(); state.beforeGetConnection = null; state.beforeInsert = null;
   state.operations = []; state.operationActors = []; state.bindingPayload = null;
+  state.resolutionReleases = [];
   state.issue = state.issueDefault;
   pool = newPool();
   state.liveActor = (async () => admin) as never;
@@ -695,6 +698,42 @@ describe('template trial — the receipt persistence boundary', () => {
   const send = (server: Awaited<ReturnType<typeof trialApp>>['server'], receiptId: string) =>
     server.inject({ method: 'POST', url: '/api/metrics/template-bindings/instance/1/trial',
       payload: { ...BODY, receipt_id: receiptId } });
+
+  it.each([
+    { values: [1, 0], qualified: true },
+    { values: [1, null], qualified: true },
+    { values: [null, 0], qualified: true },
+    { values: [null, null], qualified: false },
+  ])('preserves both dimensions and evaluates receipt qualification for $values', async ({ values, qualified }) => {
+    reset();
+    const release = r3Release('a');
+    const metric = { id: 'db.uptime_seconds', semantic_version: '1.0.0' };
+    const attempt = { id: 'attempt-per-collector', collector_id: 'mysql-status', status: 'succeeded' };
+    state.resolutionReleases = [{ release: release.release, derived: [], collectors: [{ items: [{ template_id: PIN.template_id, item_id: 'uptime',
+      item_version: 1, canonical_metric: metric, collector_id: attempt.collector_id, release_ref: release.release_ref,
+      unit: 's', decision: 'collect', capability: { status: 'supported' } }] }] }];
+    const observations = values.map((value, index) => ({ observation: {
+      metric, dimensions: { fixture_index: String(index + 1) }, unit: 's', observed_at: AT,
+      value: value === null ? null : { encoding: 'float64', value },
+      source: { collector_id: attempt.collector_id, attempt_id: attempt.id }, versions: { transform_version: '1.0.0' },
+      quality: { status: value === null ? 'unknown' : 'good' },
+    } }));
+    const runner = vi.spyOn(packageRunner, 'runPackage').mockResolvedValue({
+      observations, attempts: [attempt], decision: 'attempted',
+    } as unknown as packageRunner.PackageResult);
+    const { server, reserved } = await trialApp();
+    try {
+      const response = await send(server, 'trial-m06-dimensions');
+      expect(response.statusCode, response.body).toBe(200);
+      const result = response.json();
+      expect(result.persisted).toBe(false);
+      expect(result.samples.map((sample: { dimensions: { fixture_index: string }; value: { value: number } | null }) =>
+        [sample.dimensions.fixture_index, sample.value?.value ?? null])).toEqual(values.map((value, index) => [String(index + 1), value]));
+      expect(result.receipt_id).toBe(qualified ? 'trial-m06-dimensions' : '');
+      expect(state.receipts.size).toBe(qualified ? 1 : 0);
+      expect(state.statements.filter(isWrite)).toEqual(qualified ? [normalize(TRIAL_RECEIPT_INSERT_SQL)] : []);
+    } finally { state.plan.releases = []; state.resolutionReleases = []; runner.mockRestore(); reserved.mockRestore(); await server.close(); }
+  });
 
   it('fails closed when the grant is revoked while the receipt issuer reads', async () => {
     reset();

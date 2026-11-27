@@ -6,6 +6,7 @@ import { metricDisplayName, triggerRecoveryModes, type TriggerRecoveryMode } fro
 import { displayTime } from '../views/diagnosis-presentation.ts';
 import "./app-data-table.js";
 import "./template-event-close.js";
+import { templateEventSourceLabel } from './template-event-source.js';
 const condition = (n: any, operands: Map<string, string>): string =>
   n?.node === "compare"
     ? `${n.select.item_id ? `${operands.get(n.select.item_id) ?? n.select.item_id} · ` : ""}${n.select.aggregation}${n.select.window_ms ? `(${n.select.window_ms / 1000}秒)` : ""} ${n.operator} ${n.threshold.value ?? n.threshold.name}`
@@ -178,6 +179,9 @@ export class TemplateEventEvidence extends LitElement {
         <dd>
           ${(d.snapshot.opening.samples ?? []).map((v: any) => `${r.inputs && v.metric ? `${metricDisplayName(v.metric.id)} · ` : ''}${v.id} · ${v.value.value} ${v.unit} · ${v.observed_at}`).join("；") || "缺测时钟，无数值样本"}
         </dd>
+        <dt>触发样本原始来源</dt>
+        <dd>${templateEventSourceLabel(d.source_availability?.opening)}</dd>
+        ${recovered ? html`<dt>恢复样本原始来源</dt><dd>${templateEventSourceLabel(d.source_availability?.recovery)}</dd>` : nothing}
         <dt>采集尝试身份</dt>
         <dd>${d.snapshot.opening.attempt_ids.join("、") || "无"}</dd>
         <dt>恢复次数 / 时间</dt>

@@ -2,8 +2,26 @@
  * 告警静默服务
  * 管理实例级静默期，同一实例同一指标触发后在静默期内不再重复通知。
  */
-import mysql from 'mysql2/promise';
+import mysql, { type PoolConnection, type RowDataPacket } from 'mysql2/promise';
 import { dbConnection } from './db-connection';
+
+/** A manual instance/metric silence applies to the occurrence or to delivery now.
+ * A rule-created cooldown still belongs to legacy alert evaluation. */
+export async function manualSilenceBlocksNotification(
+  database: Pick<PoolConnection, 'execute'>,
+  instanceId: number,
+  metricName: string,
+  occurredAt: Date,
+): Promise<boolean> {
+  const [rows] = await database.execute<RowDataPacket[]>(
+    `SELECT id FROM silence_periods
+     WHERE instance_id = ? AND metric_name = ? AND created_by_alert_id IS NULL
+       AND ((created_at <= ? AND silenced_until > ?) OR (created_at <= NOW() AND silenced_until > NOW()))
+     LIMIT 1`,
+    [instanceId, metricName, occurredAt, occurredAt],
+  );
+  return rows.length > 0;
+}
 
 class AlertSilenceService {
   private getPool(): mysql.Pool | null {

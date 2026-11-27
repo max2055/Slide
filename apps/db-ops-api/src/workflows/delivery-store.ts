@@ -168,6 +168,25 @@ export class MysqlDeliveryStore implements DeliveryGate {
       }
       await c.execute('UPDATE notification_delivery_states SET state = ?, error_code = ?, version = version + 1 WHERE business_key = ?', [state, error ?? null, claim.key]);
       await this.attemptResult(c, row, state === 'retryable' ? 'failed' : state, error ?? null);
+      if (state === 'skipped' && error === 'MANUAL_SILENCE_SUPPRESSED' && row.kind === 'notification' && !deliveryIdentity(job).transition) {
+        const recoveryKey = claim.key + ':recovery';
+        // This recovery cannot become eligible after its original was skipped.
+        // Only an untouched recovery with no delivery history is safe to settle.
+        const [recoveries] = await c.execute<any[]>(
+          `SELECT id,fencing_token FROM workflow_jobs
+           WHERE job_type='notification.deliver' AND idempotency_key=? AND state='queued' AND attempts=0
+             AND NOT EXISTS (SELECT 1 FROM notification_delivery_states WHERE business_key=?)
+           FOR UPDATE`, [recoveryKey, recoveryKey]);
+        if (recoveries.length) {
+          const recovery = recoveries[0];
+          await c.execute(
+            `INSERT INTO notification_delivery_states
+             (business_key,kind,source_id,channel_id,state,workflow_job_id,fencing_token,error_code)
+             VALUES (?,'notification',?,?,'skipped',?,?,'MANUAL_SILENCE_SUPPRESSED')`,
+            [recoveryKey, row.source_id, row.channel_id, recovery.id, recovery.fencing_token]);
+          await c.execute("UPDATE workflow_jobs SET state='completed',completed_at=NOW() WHERE id=?", [recovery.id]);
+        }
+      }
     });
   }
   private async authorize(c:Pool | PoolConnection,job:{type:string;payload:any},actor:ActorContext,write=false,lock=false){

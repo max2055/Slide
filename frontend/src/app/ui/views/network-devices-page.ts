@@ -1,5 +1,6 @@
 import { captureListReturn, restoredListState } from '../components/resource-detail-context.js';
 import { hasListPermission } from '../components/resource-list-access.js';
+import { readCurrentPermissions } from '../permissions.js';
 import "../components/resource-collection-section.js";
 import "../components/resource-editor-shell.js";
 import "../components/resource-metrics-table.js";
@@ -56,6 +57,7 @@ const EMPTY_FORM: DeviceForm = {
 function responseBody(response: Response): Promise<Record<string, unknown>> {
   return response.json().catch(() => ({}));
 }
+const deleteReceiptUnknown = "删除结果尚未确认，请刷新列表核对后再重试。";
 
 @customElement("network-devices-page")
 export class NetworkDevicesPage extends LitElement {
@@ -77,6 +79,7 @@ export class NetworkDevicesPage extends LitElement {
   @state() private testingDeviceId: number | null = null;
   @state() private deletingDevice: NetworkDevice | null = null;
   @state() private deleting = false;
+  @state() private deleteError = "";
   @state() private form: DeviceForm = { ...EMPTY_FORM };
   private savedSnmpVersion: 2 | 3 | null = null;
   private savedSnmpSettings: Pick<DeviceForm, "securityLevel" | "authProtocol" | "privacyProtocol"> = EMPTY_FORM;
@@ -87,6 +90,8 @@ export class NetworkDevicesPage extends LitElement {
   @state() private connectionPending = false;
   @state() private metricRefreshVersion = 0;
   @state() private metricsLoading = false;
+  @state() private canManageDeviceEditor = false;
+
   private openColumnSettings() {
     this.renderRoot.querySelector<ResourceMetricsTable>('resource-metrics-table')?.openColumnSettings();
   }
@@ -95,6 +100,7 @@ export class NetworkDevicesPage extends LitElement {
     this.inventoryRequest++;
     this.devices = [];
     this.metricsLoading = false;
+    this.canManageDeviceEditor = false;
     if (this.editingId !== null) {
       this.editingId = null;
       this.showDialog = false;
@@ -126,6 +132,12 @@ export class NetworkDevicesPage extends LitElement {
 
   async loadDevices(background = false): Promise<void> {
     const request = ++this.inventoryRequest;
+    this.canManageDeviceEditor = false;
+    const management = readCurrentPermissions().then(permissions =>
+      ['network_devices:manage', 'network_devices:*', '*:manage', '*'].some(permission => permissions.includes(permission)), () => false);
+    void management.then(allowed => {
+      if (request === this.inventoryRequest) this.canManageDeviceEditor = allowed;
+    });
     if (background !== true || this.devices.length === 0) this.loading = true;
     this.error = null;
     try {
@@ -143,10 +155,12 @@ export class NetworkDevicesPage extends LitElement {
         const editId = Number(url.searchParams.get('edit'));
         const editSsh = url.searchParams.get('editSection') === 'ssh';
         const edit = this.devices.find(device => device.id === editId);
+        const allowed = edit && await management;
+        if (request !== this.inventoryRequest) return;
         url.searchParams.delete('edit');
         url.searchParams.delete('editSection');
         history.replaceState(history.state, '', url);
-        if (edit && hasListPermission('network_devices:manage')) {
+        if (allowed && edit && !this.showDialog) {
           this.openEdit(edit);
           if (editSsh) {
             await this.updateComplete;
@@ -367,6 +381,7 @@ export class NetworkDevicesPage extends LitElement {
         body: JSON.stringify(this.requestPayload()),
       });
       if (!response.ok) {
+        if (response.status === 403) this.canManageDeviceEditor = false;
         const body = await responseBody(response);
         throw new Error(String(body.error || "保存网络设备失败"));
       }
@@ -462,6 +477,7 @@ export class NetworkDevicesPage extends LitElement {
   }
 
   private confirmDelete(device: NetworkDevice) {
+    this.deleteError = "";
     this.deletingDevice = device;
   }
 
@@ -473,15 +489,21 @@ export class NetworkDevicesPage extends LitElement {
     const device = this.deletingDevice;
     if (!device || this.deleting) return;
     this.deleting = true;
+    this.deleteError = "";
     try {
       const response = await authFetch(`/api/network-devices/${device.id}`, { method: "DELETE" });
-      const body = await responseBody(response);
-      if (!response.ok) throw new Error(String(body.error || "删除失败"));
+      if (!response.ok) {
+        this.deleteError = response.status === 408 || response.status >= 500
+          ? deleteReceiptUnknown : String((await responseBody(response)).error || "删除失败");
+        showToast(this.deleteError, "error");
+        return;
+      }
       this.deletingDevice = null;
       await this.loadDevices();
       showToast("网络设备已删除", "success");
-    } catch (error) {
-      showToast(error instanceof Error ? error.message : "删除失败", "error");
+    } catch {
+      this.deleteError = deleteReceiptUnknown;
+      showToast(this.deleteError, "error");
     } finally {
       this.deleting = false;
     }
@@ -512,9 +534,9 @@ export class NetworkDevicesPage extends LitElement {
       lastCheck: device.last_check_at ? new Date(device.last_check_at).toLocaleString("zh-CN") : "--",
       actions: html`<div class="actions">
         <button class="btn-sm" type="button" data-resource-detail-id=${device.id} @click=${() => this.navigate(device.id)}>详情</button>
-        <button class="btn-sm" type="button" title=${hasListPermission("network_devices:manage") ? "编辑网络设备" : "需要网络设备管理权限"} .disabled=${!hasListPermission("network_devices:manage")} data-resource-edit-id=${device.id} @click=${() => this.openEdit(device)}>编辑</button>
+        <button class="btn-sm" type="button" title=${this.canManageDeviceEditor ? "编辑网络设备" : "需要网络设备管理权限"} .disabled=${!this.canManageDeviceEditor} data-resource-edit-id=${device.id} @click=${() => this.canManageDeviceEditor && this.openEdit(device)}>编辑</button>
         <button class="btn-sm" type="button" @click=${() => this.testDevice(device)} .disabled=${this.testingDeviceId !== null} title=${this.testingDeviceId !== null ? "已有网络设备正在测试，请稍候" : "测试连接"}>${this.testingDeviceId === device.id ? "测试中…" : "测试"}</button>
-        <button class="btn-sm danger" type="button" title=${hasListPermission("network_devices:manage") ? "删除网络设备" : "需要网络设备管理权限"} .disabled=${!hasListPermission("network_devices:manage")} @click=${() => this.confirmDelete(device)}>删除</button>
+        <button class="btn-sm danger" type="button" title=${this.canManageDeviceEditor ? "删除网络设备" : "需要网络设备管理权限"} .disabled=${!this.canManageDeviceEditor} @click=${() => this.confirmDelete(device)}>删除</button>
       </div>`,
     }));
   }
@@ -587,6 +609,7 @@ export class NetworkDevicesPage extends LitElement {
     if (!device) return nothing;
     return html`<app-dialog .open=${true} size="sm" title="确认删除网络设备" .closeOnOverlay=${false} @app-dialog-close=${this.closeDeleteDialog}>
       <p>确定删除“${device.label || device.name}”吗？此操作不可撤销。</p>
+      ${this.deleteError ? html`<p role="alert">${this.deleteError}</p>` : nothing}
       <div slot="footer" class="dialog-actions">
         <button class="btn" type="button" @click=${this.closeDeleteDialog} .disabled=${this.deleting}>取消</button>
         <button class="btn-primary btn-danger" type="button" @click=${this.deleteDevice} .disabled=${this.deleting}>${this.deleting ? "删除中…" : "确认删除"}</button>
@@ -652,7 +675,7 @@ export class NetworkDevicesPage extends LitElement {
               <button class="btn resource-action" type="button" aria-haspopup="dialog" @click=${this.openColumnSettings} .disabled=${filtered.length === 0}>列设置</button>
             ${this.activeFilterCount > 0 ? html`<button class="btn-ghost resource-filter-reset" type="button" @click=${this.resetFilters}>重置筛选</button>` : nothing}
             <button aria-busy=${String(this.loading || this.metricsLoading)} class="btn btn-refresh resource-action resource-action--refresh" type="button" .disabled=${this.loading || this.metricsLoading} @click=${this.loadDevices}> 刷新</button>
-            <button class="btn-primary resource-action resource-action--add" type="button" @click=${this.openCreate}>${icons.plus} 添加设备</button>
+            <button class="btn-primary resource-action resource-action--add" type="button" .disabled=${!this.canManageDeviceEditor} title=${this.canManageDeviceEditor ? '添加设备' : '需要网络设备管理权限'} @click=${() => this.canManageDeviceEditor && this.openCreate()}>${icons.plus} 添加设备</button>
           </div>
         </div>
         <div class="resource-toolbar-meta" aria-live="polite">

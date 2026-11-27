@@ -18,7 +18,7 @@ function fixture() {
   vi.spyOn(dbConnection, 'getPool').mockReturnValue(pool as never);
   vi.spyOn(console, 'error').mockImplementation(() => {});
   execute.mockResolvedValueOnce([[{ id: 1 }, { id: 2 }]])
-    .mockResolvedValueOnce([[{ id: 2 }]]);
+    .mockResolvedValueOnce([[{ id: 2, enabled: 1 }]]);
   return { pool, connection };
 }
 
@@ -30,7 +30,7 @@ describe('default Provider switching (#523)', () => {
     expect(connection.beginTransaction).toHaveBeenCalledOnce();
     expect(connection.execute.mock.calls[0][0]).toMatch(/ORDER BY id FOR UPDATE/);
     expect(connection.execute.mock.calls[1]).toEqual([
-      'SELECT id FROM llm_providers WHERE name = ?', ['beta'],
+      'SELECT id, enabled FROM llm_providers WHERE name = ?', ['beta'],
     ]);
     expect(connection.commit).toHaveBeenCalledOnce();
     expect(connection.rollback).not.toHaveBeenCalled();

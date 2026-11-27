@@ -335,9 +335,10 @@ export class MetricConsumerService {
    * another resource, metric, version, dimensions or window.
    */
   async observations(actor: ActorContext, input: unknown) {
-    const q = ObservationPageQuerySchema.parse(input);
+    const q = ObservationPageQuerySchema.parse(input), now = this.clock();
     const from = new Date(q.from).toISOString(), to = new Date(q.to).toISOString();
-    rule(Date.parse(to) > Date.parse(from) && Date.parse(to) - Date.parse(from) <= 31 * 86400000, 'QUERY_WINDOW');
+    rule(Date.parse(from) < Date.parse(to) && Date.parse(to) <= Date.parse(now)
+      && Date.parse(to) - Date.parse(from) <= 31 * 86400000, 'QUERY_WINDOW');
     actor = await this.authorize(actor, q.resource);
     const catalog = await this.discover(actor, q.resource);
     const definition = [...catalog.definitions, ...this.registry.list().flatMap(r => r.extensions)]

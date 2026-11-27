@@ -14,7 +14,7 @@ import '../components/app-form-field.js';
 
 interface AuditRecord {
   id: number;
-  phase: 'decision' | 'result';
+  phase: 'decision' | 'result' | 'discovery';
   actorId: number;
   actorUsername: string | null;
   agentId: string;
@@ -31,7 +31,10 @@ interface AuditRecord {
   relatedRecordId?: number | null;
 }
 
-const phaseLabels = { decision: '权限决策', result: '执行结果' };
+const phaseLabels = { decision: '权限决策', result: '执行结果', discovery: '工具发现' };
+
+const toolLabel = (record: AuditRecord) => record.phase === 'discovery' ? '可用工具目录' : record.toolName;
+const accessLabel = (record: AuditRecord) => record.phase === 'discovery' ? '可见' : record.allowed ? '允许' : '拒绝';
 
 @customElement('agent-tool-audit-page')
 export class AgentToolAuditPage extends LitElement {
@@ -191,10 +194,10 @@ export class AgentToolAuditPage extends LitElement {
   private rows(): Record<string, unknown>[] {
     return this.records.map((record) => ({
       createdAt: new Date(record.createdAt).toLocaleString(),
-      toolName: html`<span class="tool-name">${record.toolName}</span>`,
+      toolName: html`<span class="tool-name">${toolLabel(record)}</span>`,
       phase: phaseLabels[record.phase],
       actor: record.actorUsername || `用户 #${record.actorId}`,
-      allowed: html`<app-badge variant=${record.allowed ? 'ok' : 'danger'}>${record.allowed ? '允许' : '拒绝'}</app-badge>`,
+      allowed: html`<app-badge variant=${record.allowed ? 'ok' : 'danger'}>${accessLabel(record)}</app-badge>`,
       reasonCode: html`<span class="mono">${record.reasonCode}</span>`,
       actions: html`<button class="btn-icon" title="查看详情" aria-label="查看详情" @click=${() => this.openDetail(record.id)}>${icons.eye}</button>`,
     }));
@@ -213,7 +216,7 @@ export class AgentToolAuditPage extends LitElement {
 
   private renderRelatedRecord(record: AuditRecord) {
     const id = record.relatedRecordId;
-    if (this.detailLoading) return nothing;
+    if (this.detailLoading || record.phase === 'discovery') return nothing;
     const label = record.phase === 'decision' ? phaseLabels.result : phaseLabels.decision;
     return html`<div class="detail-row"><span>关联${label}</span><div>
       ${typeof id === 'number' && Number.isSafeInteger(id) && id > 0 && id !== record.id
@@ -240,7 +243,7 @@ export class AgentToolAuditPage extends LitElement {
         <div class="filters">
           <app-form-field label="Tool"><input type="text" .value=${this.toolName} @input=${(event: Event) => { this.toolName = (event.target as HTMLInputElement).value; }}></app-form-field>
           <app-form-field label="操作者 ID"><input type="text" inputmode="numeric" .value=${this.actorId} @input=${(event: Event) => { this.actorId = (event.target as HTMLInputElement).value; }}></app-form-field>
-          <app-form-field label="阶段"><select .value=${this.phase} @change=${(event: Event) => { this.phase = (event.target as HTMLSelectElement).value; }}><option value="">全部</option><option value="decision">权限决策</option><option value="result">执行结果</option></select></app-form-field>
+          <app-form-field label="阶段"><select .value=${this.phase} @change=${(event: Event) => { this.phase = (event.target as HTMLSelectElement).value; }}><option value="">全部</option><option value="discovery">工具发现</option><option value="decision">权限决策</option><option value="result">执行结果</option></select></app-form-field>
           <app-form-field label="授权判定"><select .value=${this.allowed} @change=${(event: Event) => { this.allowed = (event.target as HTMLSelectElement).value; }}><option value="">全部</option><option value="true">允许</option><option value="false">拒绝</option></select></app-form-field>
           <app-form-field label="开始时间"><input type="datetime-local" .value=${this.from} @input=${(event: Event) => { this.from = (event.target as HTMLInputElement).value; }}></app-form-field>
           <app-form-field label="结束时间"><input type="datetime-local" .value=${this.to} @input=${(event: Event) => { this.to = (event.target as HTMLInputElement).value; }}></app-form-field>
@@ -254,17 +257,18 @@ export class AgentToolAuditPage extends LitElement {
       </app-card>
       <app-dialog size="xl" title="Tool 审计详情" .open=${this.detailId !== null} @app-dialog-close=${this.closeDetail}>
         ${this.selected ? html`<div class="dialog-grid">
-          <div class="detail-row"><span>记录</span><strong id="audit-detail-record" tabindex="-1">#${this.selected.id} · ${this.selected.toolName}</strong></div>
+          <div class="detail-row"><span>记录</span><strong id="audit-detail-record" tabindex="-1">#${this.selected.id} · ${toolLabel(this.selected)}</strong></div>
           <div class="detail-row"><span>请求 ID</span><span class="mono">${this.selected.requestId}</span></div>
           <div class="detail-row"><span>Agent</span><span>${this.selected.agentId}</span></div>
           <div class="detail-row"><span>阶段</span><strong>${phaseLabels[this.selected.phase]}</strong></div>
-          <div class="detail-row"><span>授权判定</span><span><app-badge variant=${this.selected.allowed ? 'ok' : 'danger'}>${this.selected.allowed ? '允许' : '拒绝'}</app-badge> <span class="mono">${this.selected.reasonCode}</span></span></div>
+          <div class="detail-row"><span>${this.selected.phase === 'discovery' ? '目录权限' : '授权判定'}</span><span><app-badge variant=${this.selected.allowed ? 'ok' : 'danger'}>${accessLabel(this.selected)}</app-badge> <span class="mono">${this.selected.reasonCode}</span></span></div>
           ${this.selected.phase === 'result' ? this.renderExecutionOutcome(this.selected) : nothing}
           ${this.renderRelatedRecord(this.selected)}
           <div><strong>资源</strong><pre>${this.json(this.selected.resource)}</pre></div>
           <div><strong>策略快照</strong><pre>${this.detailLoading ? '加载中' : this.json(this.selected.policySnapshot)}</pre></div>
           <div><strong>参数（已脱敏）</strong><pre>${this.detailLoading ? '加载中' : this.json(this.selected.args)}</pre></div>
           ${this.selected.phase === 'result' ? html`<div><strong>执行回执（已脱敏）</strong><pre>${this.detailLoading ? '加载中' : this.json(this.selected.result)}</pre></div>` : nothing}
+          ${this.selected.phase === 'discovery' ? html`<div><strong>模型可用工具</strong><pre>${this.detailLoading ? '加载中' : this.json(this.selected.result)}</pre></div>` : nothing}
         </div>` : this.detailLoading ? html`<p role="status">正在读取审计记录 #${this.detailId}…</p>` : nothing}
         <button slot="footer" type="button" class="btn" @click=${this.closeDetail}>返回列表</button>
       </app-dialog>

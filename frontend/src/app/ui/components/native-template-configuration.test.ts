@@ -147,6 +147,39 @@ it('previews selected published pins without applying and keeps the draft on can
   expect(authFetch.mock.calls.some((entry: unknown[]) => String(entry[0]).endsWith('/apply'))).toBe(false);
 });
 
+it('rechecks a partial removal with overrides only for metrics and templates still provided', async () => {
+  const remaining = binding().template_pins[0];
+  const removed = { template_id: 'tpl-extra', version: 1, content_hash: hash('c') };
+  const lostMetric = 'db.uptime_seconds';
+  const sharedMetric = 'mysql.connections.limit';
+  const item = (id: string, losesProvider: boolean) => ({
+    pin: removed, template_id: removed.template_id, item_id: id, item_version: 1,
+    canonical_metric: { id, semantic_version: '1.0.0' }, unit: 'count', dimensions: {},
+    snapshot_decision: 'disabled', loses_provider: losesProvider, remaining_providers: losesProvider ? [] : [{
+      pin: remaining, template_id: remaining.template_id, item_id: id, unit: 'count', dimensions: {}, snapshot_decision: 'disabled',
+    }],
+  });
+  authFetch.mockImplementation(routes({
+    '/template-bindings/instance/1': () => ({ ok: true, json: async () => binding({ template_pins: [remaining, removed] }) }),
+    '/unbind-preview': () => ({ ok: true, json: async () => ({ revision: 5, removed_pins: [removed], remaining_pins: [remaining],
+      removed_items: [item(lostMetric, true), item(sharedMetric, false)], triggers: [], configuration: {},
+    }) }),
+  }));
+  const element = await mount();
+  element.metricToggles = { [`${lostMetric}@1.0.0`]: 'disable', [`${sharedMetric}@1.0.0`]: 'disable' };
+  element.parameters = { [remaining.template_id]: { timeout: 8 }, [removed.template_id]: { timeout: 9 } };
+  element.unbindPins = [removed.template_id];
+  await element.inspectUnbind(); await element.updateComplete;
+  const carry = [...element.shadowRoot.querySelectorAll('button')]
+    .find((button: HTMLButtonElement) => button.textContent?.includes('将移除结果带入配置')) as HTMLButtonElement;
+  carry.click();
+  await element.previewFlow();
+  expect(jsonOf('/preview')).toMatchObject({ template_pins: [remaining], overrides: {
+    metrics: { [`${sharedMetric}@1.0.0`]: 'disable' }, template_parameters: { [remaining.template_id]: { timeout: 8 } },
+  } });
+  expect(jsonOf('/preview').overrides.metrics).toEqual({ [`${sharedMetric}@1.0.0`]: 'disable' });
+});
+
 it('discards a late unbind preview after changing resource or session', async () => {
   let resolve!: (value: unknown) => void;
   authFetch.mockImplementation(routes({ '/unbind-preview': () => new Promise(r => { resolve = r; }) }));
@@ -278,6 +311,24 @@ it('renders the encoded observation value, never "[object Object]"', async () =>
   const text = element.shadowRoot.textContent;
   expect(text).toContain('值 78602 s');
   expect(text).not.toContain('[object Object]');
+});
+
+it('shows each interface sample and its quality while one good dimension qualifies the item', async () => {
+  const base = trial();
+  const sample = base.samples[0];
+  authFetch.mockImplementation(routes({ '/trial': () => ({ ok: true, json: async () => ({ ...base,
+    samples: [
+      { ...sample, dimensions: { if_index: '1' }, value: null, quality: { status: 'unknown', reason: 'source_error' } },
+      { ...sample, dimensions: { if_index: '2' }, value: { encoding: 'float64', value: 0 } },
+    ] }) }) }));
+  const element = await mount();
+  await element.previewFlow(); await element.runTrial();
+  const rows = element.shadowRoot.querySelectorAll('ul[aria-label="逐项试采结果"] li ul li');
+  expect(rows).toHaveLength(2);
+  expect(rows[0].textContent).toContain('if_index=1 · 值 — s');
+  expect(rows[0].textContent).toContain('质量 unknown (source_error)');
+  expect(rows[1].textContent).toContain('if_index=2 · 值 0 s');
+  expect(nativeTrialPassed(element.trial)).toBe(true);
 });
 
 it('a failed or partial trial never authorizes applying', async () => {

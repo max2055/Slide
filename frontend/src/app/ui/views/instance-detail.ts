@@ -25,12 +25,12 @@ import { authFetch } from "../../../api/index.js";
 
 import { currentHealthStatus, evidenceTime, evidenceTimeState } from './health-score-state.js';
 
-interface InstanceDetail { hasCredential?: boolean; db_version?: string | null; id: number; name: string; db_type: string; host: string; port: number; database_name: string; username: string; environment: string; description: string; health_status: "healthy"|"warning"|"critical"|"unknown"|"error"; health_score: number; status: string; created_at: string; updated_at: string; }
-interface SlowQuery { id: string; sql_text: string; avg_time_ms: number; max_time_ms: number | null; execution_count: number; first_seen: string; last_seen: string; }
+interface InstanceDetail { hasCredential?: boolean; db_version?: string | null; id: number; name: string; db_type: string; host: string; port: number; database_name: string; username: string; environment: string; description: string; health_status: "healthy"|"warning"|"critical"|"unknown"|"error"; health_score: number; status: string; lifecycle_state?: 'available' | 'deleting' | 'deleted'; removed_at?: string | null; created_at: string; updated_at: string; }
+interface SlowQuery { id: string; sql_text: string; avg_time_ms: number; max_time_ms: number | null; execution_count: number; first_seen: string | null; last_seen: string | null; }
 interface Session { id: number; user: string; host: string; database: string; command: string; time_seconds: number; state: string; query: string | null; }
-type ReadStatus = 'idle' | 'loading' | 'success' | 'error' | 'forbidden' | 'unavailable';
+type ReadStatus = 'idle' | 'loading' | 'success' | 'error' | 'forbidden' | 'unavailable' | 'source-unavailable' | 'source-forbidden';
 interface QueryRead { status: ReadStatus; instanceId: number | null; readAt?: number; source?: string; }
-interface CapacityInfo { observed_at?: string; source?: string; scope?: string; total_size_gb: number; databases?: Array<{ name: string; size_gb: number; table_count?: number }>; tablespaces?: Array<{ name: string; size_gb: number; max_size_gb?: number; usage_percent?: number }>; top_tables: Array<{ name: string; size_gb: number; row_count?: number }>; }
+interface CapacityInfo { observed_at?: string; source?: string; scope?: string; total_size_gb?: number; details_unavailable?: boolean; databases?: Array<{ name: string; size_gb: number; table_count?: number }>; tablespaces?: Array<{ name: string; size_gb: number; max_size_gb?: number; usage_percent?: number }>; top_tables: Array<{ name: string; size_gb: number; row_count?: number }>; }
 
 const instanceDetailTabs = ["overview","collection","metrics","topsql","health","sessions","capacity","schema","indexes","sqlaudit","logs","qan","diagnosis"];
 
@@ -174,11 +174,11 @@ export class InstanceDetailPage extends LitElement {
     this.diagnosisStatus = 'idle'; this.diagnosisError = null;
     this.activeDiagnosisRecord = null; this.diagnosisExecutionTrace = null; this.showDiagnosisModal = false;
   }
-  private async loadOverview() {
+  private async loadOverview(refreshAccess = true) {
     const request = ++this.overviewRequest, id = this.instanceId;
     this.overview = null; this.overviewError = ''; this.overviewLoading = true;
     try {
-      const response = await authFetch('/api/resources/overview');
+      const response = await authFetch('/api/resources/overview', { refreshAccess });
       if (request !== this.overviewRequest || id !== this.instanceId) return;
       if (!response.ok) throw new Error([401, 403].includes(response.status) ? '无权读取资源概览' : '资源概览读取失败');
       const body: Overview = await response.json();
@@ -255,7 +255,7 @@ export class InstanceDetailPage extends LitElement {
   private startAutoRefresh() {
     this.stopAutoRefresh();
     if (this.autoRefresh) this.refreshTimer = window.setInterval(() => {
-      if (document.visibilityState === "visible") this.refreshCurrentTab();
+      if (document.visibilityState === "visible") this.refreshCurrentTab(false);
     }, this.REFRESH_INTERVAL);
   }
   private stopAutoRefresh() { if (this.refreshTimer) { clearInterval(this.refreshTimer); this.refreshTimer = null; } }
@@ -277,19 +277,20 @@ export class InstanceDetailPage extends LitElement {
       if (instanceId !== this.instanceId || version !== this.contextVersion) return;
       this.instance = instance;
       this.lastUpdated = new Date();
+      if (this.instance?.lifecycle_state === 'deleted') return;
       this.loadDiagnosisHistory();
       await this.loadTabData();
     } catch (err: any) { if (instanceId === this.instanceId && version === this.contextVersion) this.error = err.message; }
     finally { if (instanceId === this.instanceId && version === this.contextVersion) this.loading = false; }
   }
 
-  private async refreshCurrentTab() {
-    if (!this.instanceId || this.isRefreshing) return;
+  private async refreshCurrentTab(refreshAccess = true) {
+    if (!this.instanceId || this.isRefreshing || this.instance?.lifecycle_state === 'deleted') return;
     this.isRefreshing = true;
     this.detailReadError = '';
     const instanceId = this.instanceId, version = this.contextVersion;
     try {
-      const res = await authFetch(`/api/database/instances/${this.instanceId}`);
+      const res = await authFetch(`/api/database/instances/${this.instanceId}`, { refreshAccess });
       if (instanceId !== this.instanceId || version !== this.contextVersion) return;
       if (!res.ok) {
         this._invalidateQueryReads(res.status === 401 || res.status === 403 ? 'forbidden' : 'unavailable');
@@ -301,14 +302,19 @@ export class InstanceDetailPage extends LitElement {
       if (instanceId !== this.instanceId || version !== this.contextVersion) return;
       this.instance = instance;
       this.lastUpdated = new Date();
-      await Promise.all([this.loadTabData(), this.loadOverview()]);
-      if (instanceId === this.instanceId && version === this.contextVersion) await this.renderRoot.querySelector<import('../components/resource-metric-browser.js').ResourceMetricBrowser>('resource-metric-browser')?.load();
+      if (this.instance?.lifecycle_state === 'deleted') {
+        this._resetEvidence();
+        this._resetQueryReads();
+        return;
+      }
+      await Promise.all([this.loadTabData(refreshAccess), this.loadOverview(refreshAccess)]);
+      if (instanceId === this.instanceId && version === this.contextVersion) await this.renderRoot.querySelector<import('../components/resource-metric-browser.js').ResourceMetricBrowser>('resource-metric-browser')?.load(refreshAccess);
     } catch { if (instanceId === this.instanceId && version === this.contextVersion) { this._invalidateQueryReads('error'); this.detailReadError = '实例详情读取失败'; } }
     finally { if (version === this.contextVersion) this.isRefreshing = false; }
   }
 
-  private async loadTabData() {
-    if (!this.instanceId) return;
+  private async loadTabData(refreshAccess = true) {
+    if (!this.instanceId || this.instance?.lifecycle_state === 'deleted') return;
     try {
 
       switch (this.activeTab) {
@@ -318,15 +324,15 @@ export class InstanceDetailPage extends LitElement {
         }
         case "topsql":
         case "sessions": {
-          await this._loadQueryData(this.activeTab);
+          await this._loadQueryData(this.activeTab, refreshAccess);
           break;
         }
         case "capacity": {
-          await this.loadCapacity();
+          await this.loadCapacity(refreshAccess);
           break;
         }
         case "diagnosis":
-          this.loadDiagnosisHistory();
+          this.loadDiagnosisHistory(refreshAccess);
           break;
       }
     } catch {/* ignore tab data errors */}
@@ -357,7 +363,7 @@ export class InstanceDetailPage extends LitElement {
     this._resetQueryReads();
     this.queryReads = { topsql: { status, instanceId: this.instanceId }, sessions: { status, instanceId: this.instanceId } };
   }
-  private async _loadQueryData(kind: 'topsql' | 'sessions') {
+  private async _loadQueryData(kind: 'topsql' | 'sessions', refreshAccess = true) {
     const instanceId = this.instanceId;
     if (!instanceId) return;
     const request = ++this.queryRequests[kind];
@@ -366,10 +372,15 @@ export class InstanceDetailPage extends LitElement {
     if (kind === 'topsql') this.slowQueries = []; else this.sessions = [];
     const current = () => this.instanceId === instanceId && this.queryRequests[kind] === request;
     try {
-      const res = await authFetch(`/api/database/instances/${instanceId}/${kind}`);
+      const res = await authFetch(`/api/database/instances/${instanceId}/${kind}`, { refreshAccess });
       if (!current()) return;
       if (!res.ok) {
-        const status = res.status === 401 || res.status === 403 ? 'forbidden' : res.status === 404 ? 'unavailable' : 'error';
+        const failure = await res.json().catch(() => null);
+        if (!current()) return;
+        const status = res.status === 401 || res.status === 403 ? 'forbidden'
+          : res.status === 404 ? 'unavailable'
+          : failure?.error === 'SOURCE_PERMISSION_DENIED' ? 'source-forbidden'
+          : failure?.error === 'SOURCE_UNAVAILABLE' ? 'source-unavailable' : 'error';
         this.queryReads = { ...this.queryReads, [kind]: { status, instanceId } };
         return;
       }
@@ -395,14 +406,17 @@ export class InstanceDetailPage extends LitElement {
     const state = this._queryState(kind);
     if (state === 'success') return nothing;
     const label = kind === 'topsql' ? '慢查询' : '会话';
-    const titles = { idle: `尚未读取${label}`, loading: `加载${label}数据…`, error: `${label}读取失败`, forbidden: `无权读取${label}`, unavailable: `${label}数据不可用`, expired: `${label}数据已过期` };
+    const titles = { idle: `尚未读取${label}`, loading: `加载${label}数据…`, error: `${label}读取失败`, forbidden: `无权读取${label}`, unavailable: '实例未连接',
+      'source-unavailable': `${label}统计来源未就绪`, 'source-forbidden': `数据库账号无权读取${label}统计`, expired: `${label}数据已过期` };
     const descriptions = {
       idle: '尚无读取结果，无法判断是否存在记录。', loading: '正在读取，请稍候。',
       error: '请求失败或返回格式异常，请刷新重试。', forbidden: '请确认当前账号的实例访问权限。',
-      unavailable: '实例未连接、采集来源未就绪或数据库不支持此查询，请检查连接和监控配置。',
+      unavailable: '检查实例连接后刷新。',
+      'source-unavailable': '检查数据库是否支持并已启用相应监控视图、日志或统计扩展。',
+      'source-forbidden': '当前纳管数据库账号缺少统计来源的读取权限。',
       expired: '距上次成功读取已超过 1 分钟，请刷新后查看。',
     };
-    return html`<app-card><div role=${state === 'error' || state === 'forbidden' ? 'alert' : 'status'}>
+    return html`<app-card><div role=${state === 'error' || state === 'forbidden' || state === 'source-forbidden' ? 'alert' : 'status'}>
       <app-empty-state .title=${titles[state]} .description=${descriptions[state]}></app-empty-state>
     </div></app-card>`;
   }
@@ -412,6 +426,7 @@ export class InstanceDetailPage extends LitElement {
     const sessionSources: Record<string, string> = { mysql: 'MySQL PROCESSLIST', postgresql: 'PostgreSQL pg_stat_activity', oracle: 'Oracle V$SESSION', dameng: '达梦 V$SESSIONS' };
     const source = kind === 'topsql' ? sources[read.source!] : sessionSources[this.instance?.db_type ?? ''];
     return html`<p class="empty-desc">来源：${source ?? '实例查询接口（未提供具体采集来源）'} ·
+      查询范围：当前数据库账号可见的原生统计（可能跨库） ·
       时间范围：${kind === 'sessions' ? '本次读取时的活跃会话快照（最多 50 条）' : '数据库当前保留的记录（统计起止时间未知，Top 10）'} ·
       读取时间：${new Date(read.readAt!).toLocaleString('zh-CN')}（非最近采集时间）</p>`;
   }
@@ -462,7 +477,7 @@ export class InstanceDetailPage extends LitElement {
     }, 2000);
   }
   private _stopDiagnosisPolling() { if (this.diagnosisPollTimer) { clearInterval(this.diagnosisPollTimer); this.diagnosisPollTimer = null; } }
-  private async loadCapacity() {
+  private async loadCapacity(refreshAccess = true) {
     if (!this.instanceId) return;
     const request = ++this.capacityRequest, version = this.contextVersion, instanceId = this.instanceId;
     const current = () => request === this.capacityRequest && version === this.contextVersion && instanceId === this.instanceId;
@@ -471,7 +486,7 @@ export class InstanceDetailPage extends LitElement {
     await Promise.all([
       (async () => {
         try {
-          const response = await authFetch(`/api/database/instances/${instanceId}/capacity`);
+          const response = await authFetch(`/api/database/instances/${instanceId}/capacity`, { refreshAccess });
           if (!response.ok) throw new Error(`容量读取失败（HTTP ${response.status}）`);
           const data = await response.json();
           if (current()) this.capacity = data;
@@ -481,12 +496,15 @@ export class InstanceDetailPage extends LitElement {
       })(),
       (async () => {
         try {
-          const response = await authFetch(`/api/database/instances/${instanceId}/capacity/history?hours=168`);
+          const response = await authFetch(`/api/database/instances/${instanceId}/capacity/history?hours=168`, { refreshAccess });
           if (!response.ok) throw new Error(`容量历史读取失败（HTTP ${response.status}）`);
           const data = await response.json();
-          if (current() && data?.history) this.capHistory = {
-            time: data.history.map((x: any) => x.recorded_at?.substring(0, 16) || ''),
-            size: data.history.map((x: any) => x.total_size_gb || 0),
+          if (!Array.isArray(data?.history) || !data.history.every((row: any) => typeof row?.recorded_at === 'string' && Number.isFinite(row.total_size_gb))) {
+            throw new Error('容量历史读取失败，返回的数据格式异常。');
+          }
+          if (current()) this.capHistory = {
+            time: data.history.map((x: any) => x.recorded_at.substring(0, 16)),
+            size: data.history.map((x: any) => x.total_size_gb),
           };
         } catch (error) {
           if (current()) this.capacityHistoryError = error instanceof Error && error.message.startsWith('容量历史读取失败') ? error.message : '容量历史读取失败，请检查网络或服务状态。';
@@ -495,13 +513,13 @@ export class InstanceDetailPage extends LitElement {
     ]);
     if (current()) this.capacityLoading = false;
   }
-  private async loadDiagnosisHistory() {
+  private async loadDiagnosisHistory(refreshAccess = true) {
     if (!this.instanceId) return;
     const request = ++this.diagnosisHistoryRequest, version = this.contextVersion, instanceId = this.instanceId;
     const current = () => request === this.diagnosisHistoryRequest && version === this.contextVersion && instanceId === this.instanceId;
     this.diagnosisHistoryLoading = true; this.diagnosisHistoryError = ''; this.diagnosisHistory = [];
     try {
-      const response = await authFetch(`/api/ai/analysis/history?instance_id=${instanceId}&analysis_type=fault_diagnosis&limit=10`);
+      const response = await authFetch(`/api/ai/analysis/history?instance_id=${instanceId}&analysis_type=fault_diagnosis&limit=10`, { refreshAccess });
       if (!response.ok) throw new Error(`诊断历史读取失败（HTTP ${response.status}）`);
       const data = await response.json();
       if (current()) this.diagnosisHistory = data.records || [];
@@ -552,7 +570,7 @@ export class InstanceDetailPage extends LitElement {
     return html`<operations-resource-relations resourceType="instance" .resourceId=${this.instanceId}></operations-resource-relations><div class="overview-grid">
       <app-card><h2 slot="header">当前需要关注</h2>
         ${this.overviewLoading ? html`<p role="status">正在读取资源状态与证据…</p>` : nothing}
-        ${this.overviewError ? html`<p role="alert">${this.overviewError}</p><button class="btn" @click=${this.loadOverview}>重新读取概览</button>` : nothing}
+        ${this.overviewError ? html`<p role="alert">${this.overviewError}</p><button class="btn" @click=${() => this.loadOverview()}>重新读取概览</button>` : nothing}
         <section class="attention"><h3>${({ normal:'当前观测未提示运行异常', abnormal:'存在需要核对的异常', unavailable:'资源当前不可用', unknown:'当前证据不足以判断运行状态' })[state]}</h3>
           <p>${item && !item.gaps.includes('ALERTS_UNAVAILABLE') ? `未解决告警 ${item.alertsTruncated ? '至少 ' : ''}${item.unresolvedAlerts} 项。` : '尚未取得可用的告警结果。'} 状态只反映已有观测，不能代替完整健康判断。</p>
           <button class="btn" @click=${() => this._setTab('metrics')}>核对指标与时间范围</button>
@@ -579,6 +597,21 @@ export class InstanceDetailPage extends LitElement {
     if (this.loading && !this.instance) return html`<div class="loading loading-pulse">加载中...</div>`;
     if (this.error) return html`<div class="empty"><div class="empty-state"><div class="empty-title">加载失败</div><button class="btn btn-refresh" @click=${this.loadData}>重试</button><button class="btn" @click=${this._goBack}>返回列表</button><div class="empty-desc">${this.error}</div></div></div>`;
     if (!this.instance) return html`<div class="empty"><div class="empty-state"><div class="empty-title">实例不存在</div></div></div>`;
+    if (this.instance.lifecycle_state === 'deleted') {
+      const viewingHistory = this.activeTab === 'metrics' || this.activeTab === 'trend';
+      return html`<div class="page">
+        <div class="header"><div class="header-left">
+          <button class="btn" @click=${this._goBack}>${icons['chevron-left']} 返回列表</button>
+          <h1 class="instance-title">${this.instance.name}</h1>
+          <app-badge variant="muted">实例已删除</app-badge>
+        </div></div>
+        <app-card>
+          ${this.instance.removed_at ? html`<p>删除时间 ${evidenceTime(this.instance.removed_at)}</p>` : nothing}
+          ${viewingHistory ? nothing : html`<button class="btn" @click=${() => this._setTab('metrics')}>查看历史指标</button>`}
+        </app-card>
+        ${viewingHistory ? this._renderTabContent() : nothing}
+      </div>`;
+    }
 
     return html`
       <div class="page">
@@ -633,7 +666,7 @@ export class InstanceDetailPage extends LitElement {
   private _renderDiagnosisHistory() {
     if (this.diagnosisHistoryLoading) return html`<app-card style="margin-bottom:var(--space-lg);"><span slot="header">AI 诊断历史</span><div style="display:flex;align-items:center;justify-content:center;gap:10px;padding:24px;color:var(--muted);"><div class="spinner"></div><span>加载中...</span></div></app-card>`;
 
-    if (this.diagnosisHistoryError) return html`<app-card style="margin-bottom:var(--space-lg);"><span slot="header">AI 诊断历史</span><div role="alert"><p>${this.diagnosisHistoryError}</p><button class="btn btn-refresh" @click=${this.loadDiagnosisHistory}>重试诊断历史</button></div></app-card>`;
+    if (this.diagnosisHistoryError) return html`<app-card style="margin-bottom:var(--space-lg);"><span slot="header">AI 诊断历史</span><div role="alert"><p>${this.diagnosisHistoryError}</p><button class="btn btn-refresh" @click=${() => this.loadDiagnosisHistory()}>重试诊断历史</button></div></app-card>`;
     if (this.diagnosisHistory.length === 0 && this.diagnosisStatus !== "running") return nothing;
 
     return html`
@@ -689,7 +722,7 @@ export class InstanceDetailPage extends LitElement {
               <td style="text-align:center;"><span style="color:${Number(q.avg_time_ms) > 1000 ? 'var(--danger)' : Number(q.avg_time_ms) > 100 ? 'var(--warn)' : 'var(--ok)'};font-weight:600;">${Number(q.avg_time_ms).toFixed(2)} ms</span></td>
               <td style="text-align:center;">${q.max_time_ms == null ? '未知' : `${Number(q.max_time_ms).toFixed(2)} ms`}</td>
               <td style="text-align:center;">${Number(q.execution_count).toLocaleString()}</td>
-              <td style="text-align:center;">${new Date(q.last_seen).toLocaleString("zh-CN")}</td>
+              <td style="text-align:center;">${evidenceTime(q.last_seen)}</td>
             </tr>`)}</tbody>
           </table>
         </div>
@@ -719,18 +752,23 @@ export class InstanceDetailPage extends LitElement {
 
   private _renderCapacity() {
     if (this.capacityLoading) return html`<app-card><div role="status">容量加载中...</div></app-card>`;
-    const errors = html`${this.capacityError || this.capacityHistoryError ? html`<app-card><div role="alert"><p>${this.capacityError}</p><p>${this.capacityHistoryError}</p><button class="btn btn-refresh" @click=${this.loadCapacity}>重试容量读取</button></div></app-card>` : nothing}`;
-    if (!this.capacity) return html`${errors}${this.capacityError ? nothing : html`<app-card><app-empty-state title="暂无容量数据" description="容量接口未返回数据"></app-empty-state></app-card>`}`;
+    const errors = html`${this.capacityError || this.capacityHistoryError ? html`<app-card><div role="alert"><p>${this.capacityError}</p><p>${this.capacityHistoryError}</p><button class="btn btn-refresh" @click=${() => this.loadCapacity()}>重试容量读取</button></div></app-card>` : nothing}`;
+    const history = this.capHistory.time.length > 0
+      ? html`<metric-chart title="历史容量采样（过去7天，非当前读取）" height="220px" yAxisLabel="GiB" .timeData=${this.capHistory.time} .series=${[{ name: "容量", data: this.capHistory.size, color: "var(--accent)" }]}></metric-chart><div style="height:16px"></div>`
+      : this.capacityHistoryError ? nothing : html`<p class="overview-note">过去 7 天没有已保存的容量样本。</p>`;
+    if (!this.capacity) return html`${errors}${history}${this.capacityError ? nothing : html`<app-card><app-empty-state title="暂无容量数据" description="容量接口未返回数据"></app-empty-state></app-card>`}`;
     const cap = this.capacity;
     return html`
       ${errors}
-      ${this.capHistory.time.length > 0 ? html`<metric-chart title="历史容量采样（过去7天，非当前读取）" height="220px" yAxisLabel="GB" .timeData=${this.capHistory.time} .series=${[{ name: "容量", data: this.capHistory.size, color: "var(--accent)" }]}></metric-chart><div style="height:16px"></div>` : nothing}
+      ${history}
       <app-card>
-        <span slot="header">容量读取结果：${cap.total_size_gb.toFixed(2)} GB</span>
+        <span slot="header">${typeof cap.total_size_gb === 'number' ? `容量读取结果：${cap.total_size_gb.toFixed(2)} GiB` : '容量总量未知'}</span>
         <p class="overview-note">来源：${cap.source || '数据库容量接口（来源未提供）'} · 观测：${evidenceTime(cap.observed_at)} · ${evidenceTimeState(cap.observed_at)}<br>范围：${cap.scope || '接口未提供范围，不与结构/索引数量直接比较'}。历史趋势为独立采样；结构/索引为独立快照，时间与范围可能不同。</p>
-        ${cap.databases && cap.databases.length > 0 ? html`<h4 style="font-size:var(--text-md);color:var(--text-strong);margin:0 0 16px 0;">数据库</h4><div class="capacity-list">${cap.databases.map(db => html`<div class="capacity-item"><div class="capacity-icon">${icons['database']}</div><div class="capacity-info"><div class="capacity-name">${db.name}</div><div class="capacity-meta">${db.size_gb.toFixed(2)} GB${db.table_count !== undefined ? ` · ${db.table_count} 张表` : ""}</div></div></div>`)}</div>` : ""}
-        ${cap.tablespaces && cap.tablespaces.length > 0 ? html`<h4 style="font-size:var(--text-md);color:var(--text-strong);margin:24px 0 16px 0;">表空间</h4><div class="capacity-list">${cap.tablespaces.map(ts => html`<div class="capacity-item"><div class="capacity-icon">${icons['package']}</div><div class="capacity-info"><div class="capacity-name">${ts.name}</div><div class="capacity-meta">${ts.size_gb.toFixed(2)} GB / ${ts.max_size_gb?.toFixed(2) || "∞"} GB</div></div>${ts.usage_percent !== undefined ? html`<div class="capacity-bar-wrap"><div class="capacity-percent" style="color:${ts.usage_percent > 90 ? 'var(--danger)' : ts.usage_percent > 70 ? 'var(--warn)' : 'var(--ok)'}">${ts.usage_percent.toFixed(1)}%</div><div class="progress-bar"><div class="progress-fill ${ts.usage_percent > 90 ? 'danger' : ts.usage_percent > 70 ? 'warn' : 'ok'}" style="width:${ts.usage_percent}%"></div></div></div>` : ""}</div>`)}</div>` : ""}
-        <h4 style="font-size:var(--text-md);color:var(--text-strong);margin:24px 0 16px 0;">最大表（Top ${cap.top_tables.length}）</h4><div class="capacity-list">${cap.top_tables.map(t => html`<div class="capacity-item"><div class="capacity-icon">${icons['file-text']}</div><div class="capacity-info"><div class="capacity-name">${t.name}</div><div class="capacity-meta">${t.size_gb.toFixed(2)} GB${t.row_count ? ` · ${t.row_count.toLocaleString()} 行` : ""}</div></div></div>`)}</div>
+        ${typeof cap.total_size_gb !== 'number' ? html`<p role="status">当前配置的容量来源未返回有效总量，请检查数据源与视图权限。</p>` : nothing}
+        ${cap.details_unavailable ? html`<p role="status">部分容量明细读取失败，继续显示已获得的结果。</p>` : nothing}
+        ${cap.databases && cap.databases.length > 0 ? html`<h4 style="font-size:var(--text-md);color:var(--text-strong);margin:0 0 16px 0;">数据库</h4><div class="capacity-list">${cap.databases.map(db => html`<div class="capacity-item"><div class="capacity-icon">${icons['database']}</div><div class="capacity-info"><div class="capacity-name">${db.name}</div><div class="capacity-meta">${db.size_gb.toFixed(2)} GiB${db.table_count !== undefined ? ` · ${db.table_count} 张表` : ""}</div></div></div>`)}</div>` : ""}
+        ${cap.tablespaces && cap.tablespaces.length > 0 ? html`<h4 style="font-size:var(--text-md);color:var(--text-strong);margin:24px 0 16px 0;">表空间</h4><div class="capacity-list">${cap.tablespaces.map(ts => html`<div class="capacity-item"><div class="capacity-icon">${icons['package']}</div><div class="capacity-info"><div class="capacity-name">${ts.name}</div><div class="capacity-meta">${ts.size_gb.toFixed(2)} GiB / ${ts.max_size_gb?.toFixed(2) || "∞"} GiB</div></div>${ts.usage_percent !== undefined ? html`<div class="capacity-bar-wrap"><div class="capacity-percent" style="color:${ts.usage_percent > 90 ? 'var(--danger)' : ts.usage_percent > 70 ? 'var(--warn)' : 'var(--ok)'}">${ts.usage_percent.toFixed(1)}%</div><div class="progress-bar"><div class="progress-fill ${ts.usage_percent > 90 ? 'danger' : ts.usage_percent > 70 ? 'warn' : 'ok'}" style="width:${ts.usage_percent}%"></div></div></div>` : ""}</div>`)}</div>` : ""}
+        <h4 style="font-size:var(--text-md);color:var(--text-strong);margin:24px 0 16px 0;">最大表（Top ${cap.top_tables.length}）</h4><div class="capacity-list">${cap.top_tables.map(t => html`<div class="capacity-item"><div class="capacity-icon">${icons['file-text']}</div><div class="capacity-info"><div class="capacity-name">${t.name}</div><div class="capacity-meta">${t.size_gb.toFixed(2)} GiB${t.row_count ? ` · ${t.row_count.toLocaleString()} 行` : ""}</div></div></div>`)}</div>
       </app-card>`;
   }
 }

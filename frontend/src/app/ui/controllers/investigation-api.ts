@@ -47,6 +47,7 @@ export function investigationErrorText(error: unknown): string {
   const messages: Record<string, string> = {
     INVESTIGATION_NOT_FOUND: '调查不存在或已无访问权限。', INVESTIGATION_OPERATION_FORBIDDEN: '当前用户没有调查操作权限。',
     VERSION_CONFLICT: '调查已更新，请刷新后再操作。', INVESTIGATION_ACTIVE_REQUEST: '已有执行进行中，请等待结束后继续。',
+    INVESTIGATION_SESSION_ALREADY_LINKED: '此对话已关联调查，请从工作台打开原调查。',
     INVESTIGATION_INPUT_INVALID: '请检查目标、资源和时间范围。', PROFILE_SUBJECT_UNSUPPORTED: '该 Profile 不支持此调查对象。',
     INVESTIGATION_BUDGET_EXHAUSTED: '调查预算已用尽。', INVESTIGATION_RATE_LIMITED: '调查请求过于频繁，请稍后再试。',
     INVESTIGATION_QUEUE_UNAVAILABLE: '调查服务暂不可用，接受结果尚未确认。请核对原请求。',

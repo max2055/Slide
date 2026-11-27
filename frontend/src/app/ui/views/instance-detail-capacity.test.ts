@@ -33,7 +33,7 @@ describe('MAX-529 / #661 capacity and diagnosis history failures', () => {
     content(el).querySelector('button')!.click();
     content(el, true).querySelector('button')!.click();
     await vi.waitFor(() => { expect(el.capacityLoading).toBe(false); expect(el.diagnosisHistoryLoading).toBe(false); });
-    expect(content(el).textContent).toContain('10.00 GB');
+    expect(content(el).textContent).toContain('10.00 GiB');
     expect(content(el).textContent).not.toContain('失败');
     expect(el.diagnosisHistoryError).toBe('');
   });
@@ -41,7 +41,19 @@ describe('MAX-529 / #661 capacity and diagnosis history failures', () => {
     fetchMock.mockImplementation(async url => String(url).includes('/history') ? response({}, 503) : response(capacity));
     const el = page(); await el.loadTabData();
     expect(content(el).textContent).toContain('容量历史读取失败（HTTP 503）');
-    expect(content(el).textContent).toContain('10.00 GB');
+    expect(content(el).textContent).toContain('10.00 GiB');
+  });
+  it('keeps a verified detail visible when current total is unknown', async () => {
+    fetchMock.mockImplementation(async url => String(url).includes('/history')
+      ? response({ history: [] })
+      : response({ ...capacity, total_size_gb: undefined, details_unavailable: true,
+        top_tables: [{ name: 'known-detail', size_gb: 0 }] }));
+    const el = page(); await el.loadTabData();
+    expect(content(el).textContent).toContain('容量总量未知');
+    expect(content(el).textContent).toContain('部分容量明细读取失败');
+    expect(content(el).textContent).toContain('已保存的容量样本');
+    expect(content(el).textContent).toContain('known-detail');
+    expect(content(el).textContent).toContain('0.00 GiB');
   });
   it('shows loading before an empty successful response, with no false error', async () => {
     let finish!: (r: Response) => void;

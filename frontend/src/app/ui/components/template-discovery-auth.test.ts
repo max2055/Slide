@@ -7,13 +7,22 @@ const json=(body:unknown,status=200)=>new Response(JSON.stringify(body),{status}
 const row=(name='port',state='active')=>({template_id:'tpl',rule_id:'rule',revision:1,state:{template_version:1,items:[],triggers:[],members:[{id:'instance',name,state}]}});
 const result=()=>({rows:[row()]});
 const deferred=()=>{let resolve!:(v:any)=>void;const promise=new Promise<any>(r=>resolve=r);return{promise,resolve};};
-async function mount(){
+const discoveryRule={rule_id:'rule',name:'接口发现',item_ids:['port_status'],identity_dimensions:['interface_epoch'],
+ timeout_ms:5000,max_instances:10,lost_after_ms:1000,retire_after_ms:2000};
+async function mount(discoveryRules=[discoveryRule]){
  const fetch=vi.spyOn(globalThis,'fetch').mockImplementation(async(url)=>String(url).endsWith('/resources')?json([{type:'network_device',id:1,name:'A'}]):json(result()));
- const el:any=document.createElement('template-discovery');el.version={template_id:'tpl',version:1,content_hash:'hash',aggregate:{discovery_rules:[]}};
- document.body.append(el);await settle();await el.updateComplete;el.changeResource('network_device:1');await el.loadState();return{el,fetch};
+ const el:any=document.createElement('template-discovery');el.version={template_id:'tpl',version:1,content_hash:'hash',status:'published',aggregate:{discovery_rules:discoveryRules}};
+ document.body.append(el);await settle();await el.updateComplete;
+ if(discoveryRules.length){el.changeResource('network_device:1');await el.loadState();}
+ return{el,fetch};
 }
 beforeEach(()=>{localStorage.clear();sessionStorage.clear();apiClient.setToken('old-access');apiClient.setRefreshToken('refresh');});
 afterEach(()=>{document.body.replaceChildren();vi.restoreAllMocks();localStorage.clear();sessionStorage.clear();});
+it('does not load discovery resources for a published version without rules',async()=>{
+ const {el,fetch}=await mount([]);
+ expect(fetch).not.toHaveBeenCalled();
+ expect(el.shadowRoot.querySelector('[aria-label="发现授权资源"]')).toBeNull();
+});
 for(const action of ['read','preview','stop'] as const)for(const rotation of ['own','parallel'] as const){
  it(`Chief R3 refresh: ${action} completes after ${rotation} request refresh using actual authFetch`,async()=>{
   const {el,fetch}=await mount(),held=deferred(),seen=deferred();let reads=0,refreshes=0,targets=0;
@@ -36,7 +45,8 @@ for(const action of ['read','preview','stop'] as const)for(const rotation of ['o
  });
 }
 it.each(['user','logout','permissions','version'])('Chief R3 refresh: a real %s context change rejects old results and finishes loading',async change=>{
- const {el,fetch}=await mount(),held=deferred();fetch.mockReturnValue(held.promise);const pending=el.loadState();
+ const {el,fetch}=await mount(),held=deferred();expect(el.instances).toEqual(result());
+ fetch.mockReturnValue(held.promise);const pending=el.loadState();
  if(change==='user')apiClient.setToken('other-user');
  if(change==='logout')apiClient.setToken(null);
  if(change==='permissions')window.dispatchEvent(new Event('slide-permissions-loaded'));

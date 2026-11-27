@@ -49,9 +49,21 @@ export interface DriverEvidence {
     devices: Record<string, { epoch: string; observed_at: string }>;
   };
 }
+export type SnmpInterfaceStatus = 'up' | 'down' | 'testing' | 'unknown';
+export interface SnmpInterfaceInventoryRow {
+  index: number;
+  name: string;
+  alias: string | null;
+  speedBps: string | null;
+  adminStatus: SnmpInterfaceStatus;
+  operStatus: SnmpInterfaceStatus;
+  observedAt: string;
+}
+
 export interface DecodedRow {
   display_name?: string;
   observed_at?: string;
+  snmp_interface?: SnmpInterfaceInventoryRow;
   dimensions: Record<string, string>;
   fields: Record<string, RawObservation['value']>;
   counter?: RawObservation['counter'];

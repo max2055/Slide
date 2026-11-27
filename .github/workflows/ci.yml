@@ -231,6 +231,15 @@ jobs:
         options: >-
           --health-cmd="mysqladmin ping -h 127.0.0.1 -pqualification-test-password"
           --health-interval=10s --health-timeout=5s --health-retries=10
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: qualification-test-password
+          POSTGRES_DB: slide_qualification_pg
+        ports: ['15432:5432']
+        options: >-
+          --health-cmd="pg_isready -U postgres -d slide_qualification_pg"
+          --health-interval=10s --health-timeout=5s --health-retries=10
     env:
       DB_HOST: 127.0.0.1
       DB_PORT: '3306'
@@ -241,6 +250,10 @@ jobs:
       QUALIFICATION_MYSQL_USER: root
       QUALIFICATION_MYSQL_DATABASE: db_ops_ai_qualification
       QUALIFICATION_MYSQL_PASSWORD: qualification-test-password
+      QUALIFICATION_PG_PORT: '15432'
+      QUALIFICATION_PG_USER: postgres
+      QUALIFICATION_PG_DATABASE: slide_qualification_pg
+      QUALIFICATION_PG_PASSWORD: qualification-test-password
       QUALIFICATION_CANCELLATION_E2E: '1'
       QUALIFICATION_CRON_E2E: '1'
       PLAYWRIGHT_MANAGED_ENV: '1'
@@ -264,9 +277,9 @@ jobs:
           T06_TEST_MYSQL_PORT: '3306'
           T06_TEST_MYSQL_PASSWORD: qualification-test-password
         run: pnpm --filter slide-frontend exec playwright test --config playwright.investigation-tls.config.ts
-      - name: Bind database target to the runner-owned MySQL service ingress
-        # New managed targets reject loopback. The job service publishes 3306 on
-        # this disposable runner; platform DB_HOST stays separate from the target.
+      - name: Bind database targets to the runner-owned service ingress
+        # New managed targets reject loopback. Both database services publish
+        # their test ports on this disposable runner.
         run: |
           node --input-type=module <<'NODE'
           import { networkInterfaces } from 'node:os';
@@ -274,8 +287,9 @@ jobs:
           const ingress = Object.values(networkInterfaces()).flat().find(
             address => address.family === 'IPv4' && !address.internal,
           );
-          if (!ingress) throw new Error('owned MySQL service ingress unavailable');
+          if (!ingress) throw new Error('owned database service ingress unavailable');
           appendFileSync(process.env.GITHUB_ENV, `QUALIFICATION_MYSQL_HOST=${ingress.address}\n`);
+          appendFileSync(process.env.GITHUB_ENV, `QUALIFICATION_PG_HOST=${ingress.address}\n`);
           NODE
       - name: Login, authorization and persistent Agent cancellation
         run: >-

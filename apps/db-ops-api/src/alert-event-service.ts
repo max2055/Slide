@@ -1,5 +1,6 @@
 import { enqueueNotificationTransition } from './notification-transition.js';
 import { maintenanceAt } from './maintenance-intervals.js';
+import { manualSilenceBlocksNotification } from './alert-silence-service.js';
 import type { ActorContext } from './auth/actor-context.js';
 import { assertWorkflowActive } from './workflows/execution-context.js';
 /**
@@ -44,6 +45,14 @@ class AlertEventService {
         const intervals = await maintenanceAt(connection,{type:next.resource.type,id:Number(next.resource.id)},Date.parse(next.opened_at));
         maintenance = {state:intervals.length?'active':'inactive',at:next.opened_at,intervals};
       } catch { /* Preserve problem facts; unknown suppresses delivery. */ }
+      let manualSilenceSuppressed = false;
+      if (next.resource.type === 'instance') {
+        try {
+          manualSilenceSuppressed = await manualSilenceBlocksNotification(
+            connection, Number(next.resource.id), next.opened.metric.id, new Date(next.opened_at),
+          );
+        } catch { manualSilenceSuppressed = true; }
+      }
       const result = await alertDatabaseService.createAlert({
         ...(next.resource.type === 'instance' ? { instance_id: Number(next.resource.id) }
           : next.resource.type === 'server' ? { server_id: Number(next.resource.id) }
@@ -52,7 +61,8 @@ class AlertEventService {
         title: `模板触发器：${next.rule_id}`, message,
         source: 'template-trigger', metric_name: next.opened.metric.id,
         metric_value: next.opened.value === null ? undefined : String(next.opened.value),
-        tags: { maintenance: {state:maintenance.state,at:maintenance.at}, template_trigger: true, episode_id: next.episode_id, config_revision: snapshot.config_revision },
+        tags: { maintenance: {state:maintenance.state,at:maintenance.at}, template_trigger: true, episode_id: next.episode_id, config_revision: snapshot.config_revision,
+          ...(manualSilenceSuppressed ? { manual_silence_suppressed: true } : {}) },
       }, connection);
       if (!result.success || !result.alertId) throw new Error('TRIGGER_ALERT_WRITE_FAILED');
       const [inserted] = await connection.execute<mysql.ResultSetHeader>(`INSERT INTO alert_events
@@ -69,11 +79,12 @@ class AlertEventService {
         JSON.stringify({ configuration: snapshot, opening: evidence })]);
       await connection.execute("INSERT INTO alert_event_logs(event_id,action,details) VALUES(?,'note_added',?)", [eventId,
         JSON.stringify({ action:'trigger_opened', episode_id:next.episode_id, ...evidence })]);
+      if (maintenance.state !== 'inactive' || manualSilenceSuppressed) return;
       // Reuse the existing routing, workflow outbox and delivery idempotency key.
       const [channels] = await connection.execute<mysql.RowDataPacket[]>('SELECT id,config,delivery_start_at FROM notification_channels WHERE enabled=1');
       const deliveryChannels = channels.map(row => ({ ...row, config: typeof row.config === 'string' ? JSON.parse(row.config) : row.config }));
       const alert = { id: result.alertId, level:severity, created_at: new Date(next.opened_at) };
-      if(maintenance.state === 'inactive') await new NotificationDispatchScheduler({ getPendingAlerts: async () => [alert],
+      await new NotificationDispatchScheduler({ getPendingAlerts: async () => [alert],
         getEnabledChannels: async () => deliveryChannels as any },
       { routeAlert: (a, cs) => notificationService.routeAlert(a as any, cs as any) },
       new MysqlWorkflowStore(() => connection as any)).enqueuePending();
@@ -460,7 +471,9 @@ class AlertEventService {
   /**
    * 为事件关联的所有告警触发 RCA 分析
    */
-  async triggerRCAForEvent(eventId: number, userId?: number, actor?: ActorContext): Promise<{ success: boolean; analysisIds?: number[]; sessionKeys?: string[] }> {
+  async triggerRCAForEvent(eventId: number, userId?: number, actor?: ActorContext): Promise<{
+    success: boolean; analysisIds?: number[]; sessionKeys?: string[]; investigationIds?: string[];
+  }> {
     const pool = this.getPool();
     if (!pool) return { success: false };
 
@@ -476,22 +489,29 @@ class AlertEventService {
 
       const analysisIds: number[] = [];
       const sessionKeys: string[] = [];
+      const investigationIds = new Set<string>();
       for (const member of members) {
         const result = await alertRCAService.analyzeAlert(member.alert_id, 'manual', actor);
-        if (result.success && result.analysisId) {
+        if (!result.success) continue;
+        if (result.analysisId) {
           analysisIds.push(result.analysisId);
           if (result.sessionKey) sessionKeys.push(result.sessionKey);
         }
+        if (result.investigationId) investigationIds.add(result.investigationId);
       }
+      if (!analysisIds.length && !investigationIds.size) return { success: false };
+      const linkedInvestigations = [...investigationIds];
 
       await this._logEvent(eventId, 'note_added', userId, {
         action: 'rca_triggered',
         analysis_ids: analysisIds,
         session_keys: sessionKeys,
+        ...(linkedInvestigations.length ? { investigation_ids: linkedInvestigations } : {}),
         user_id: userId,
       });
 
-      return { success: true, analysisIds, sessionKeys };
+      return { success: true, analysisIds, sessionKeys,
+        ...(linkedInvestigations.length ? { investigationIds: linkedInvestigations } : {}) };
     } catch (error) {
       console.error('触发事件 RCA 失败:', error);
       return { success: false };

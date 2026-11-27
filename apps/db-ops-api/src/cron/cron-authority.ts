@@ -6,6 +6,7 @@ import { dbConnection } from '../db-connection.js';
 import type { CronJobConfig } from './types.js';
 import type { CronToolAuthority } from '../adapter/get-agent-engine.js';
 import { DATABASE_LOG_COLLECTION_HANDLER } from './database-log-collection.js';
+import { readScriptTargetDatabase } from './script-policy.js';
 
 export const CRON_MAINTENANCE_HANDLERS = new Set([
   'capacity.collect', 'baseline.cleanup', 'report.schedule', 'alert.evaluate',
@@ -28,6 +29,15 @@ export async function assertCronActorAccess(actor: ActorContext, job: CronJobCon
   if (job.target_instance_id !== null && !hasInstanceAccess(actor, job.target_instance_id,
     job.task_type === 'script' ? 'read-write' : 'read-only')) throw new Error('CRON_TARGET_ACCESS_REVOKED');
   if (job.task_type === 'script' && job.target_instance_id === null && !hasUnrestrictedInstanceAccess(actor)) throw new Error('CRON_CONTROL_ACCESS_REVOKED');
+}
+
+export async function assertCronMysqlTarget(instanceId: number): Promise<void> {
+  const pool = dbConnection.getPool();
+  if (!pool) throw new Error('CRON_AUTHORITY_UNAVAILABLE');
+  const [rows] = await pool.execute("SELECT db_type FROM database_instances WHERE id = ? AND lifecycle_state = 'available'", [instanceId]);
+  const target = (rows as Array<{ db_type: string }>)[0];
+  if (!target) throw new Error('CRON_TARGET_DELETED');
+  if (target.db_type !== 'mysql') throw new Error('CRON_TARGET_DATABASE_UNSUPPORTED');
 }
 
 export interface CronRunAuthority extends CronToolAuthority {
@@ -74,6 +84,7 @@ export class CronAuthorityService {
         const current = await cronJobService.getJobById(job.id);
         if (!current || current.owner_user_id !== job.owner_user_id || current.principal_type !== 'user'
           || current.identity_status !== 'bound' || current.enabled !== job.enabled || current.target_instance_id !== job.target_instance_id
+          || readScriptTargetDatabase(current.script_binding) !== readScriptTargetDatabase(job.script_binding)
           || JSON.stringify(current.resource_scope) !== JSON.stringify(scope)) throw new Error('CRON_AUTHORITY_CHANGED');
         return load();
       },

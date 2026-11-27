@@ -479,16 +479,19 @@ class FakeSqlConnection implements BindingSqlConnection {
         if (mode === 'throw-after') throw new Error('fixture operation insert failed after write');
         return [{ affectedRows: 1 }, []];
       }
-      case 'bindingUpdate': {
+      case 'bindingUpdate':
+      case 'bindingUpdateWithCapabilities': {
         if (mode === 'throw') throw new Error('fixture binding update failed');
         if (mode === 'cas-zero') return [{ affectedRows: 0 }, []];
-        const key = textOf(params[2]);
-        const baseRevision = Number(params[3]);
-        const row = tx.bindings.get(key);
+        const withCapabilities = key === 'bindingUpdateWithCapabilities';
+        const resourceKey = textOf(params[withCapabilities ? 3 : 2]);
+        const baseRevision = Number(params[withCapabilities ? 4 : 3]);
+        const row = tx.bindings.get(resourceKey);
         if (row === undefined) return [{ affectedRows: 0 }, []];
         const stored = JSON.parse(row.payload) as { binding?: { revision?: unknown } };
         if (stored.binding?.revision !== baseRevision) return [{ affectedRows: 0 }, []];
-        tx.bindings.set(key, { ...row, payload: textOf(params[0]), group_id: textOf(params[1]) });
+        tx.bindings.set(resourceKey, { payload: textOf(params[0]), group_id: textOf(params[1]),
+          capabilities: withCapabilities ? textOf(params[2]) : row.capabilities });
         tx.pending.binding += 1;
         if (mode === 'throw-after') throw new Error('fixture binding update failed after write');
         return [{ affectedRows: 1 }, []];
@@ -593,6 +596,7 @@ function legacyPublished(overrides: Record<string, unknown> = {}): Record<string
 
 interface HostSetup {
   stageTriggers?: TrustedBindingInputs['stageTriggers'];
+  persistCandidateCapabilities?: boolean;
   faults?: Faults;
   omit?: 'mandatoryItems' | 'trustedInputs';
   now?: () => unknown;
@@ -610,6 +614,7 @@ function makeHost(db: FakeDatabase, setup: HostSetup = {}) {
   };
   const inputs: TrustedBindingInputs = {
     stageTriggers: setup.stageTriggers,
+    persistCandidateCapabilities: setup.persistCandidateCapabilities,
     authorize: async () => allowed(),
     applicationContext: async () => trustedContext(),
     mandatoryItems: async () => [],
@@ -1022,6 +1027,37 @@ describe('MySQL binding host', () => {
     expect(db.eventNames().filter(at => at === 'rollback')).toHaveLength(1);
     expect(db.eventNames().filter(at => at === 'release')).toHaveLength(1);
     expect(db.connections[0].state).toBe('released');
+  });
+
+  it('persists trusted candidate capabilities with the same revision and binding update', async () => {
+    const db = await seededDb();
+    const { outcome } = await outcomeOf(db, { persistCandidateCapabilities: true });
+
+    expect(outcome).toMatchObject({ kind: 'committed', revision: 5 });
+    const row = db.bindings.get(RESOURCE_KEY)!;
+    expect(JSON.parse(row.capabilities)).toEqual(trustedContext().capabilities);
+    expect(decodeBindingPayload(row.payload)).toMatchObject({ binding: { revision: 5 } });
+    expect(db.log.find(event => event.at === 'bindingUpdateWithCapabilities')?.params.slice(2)).toEqual([
+      row.capabilities, Buffer.from(RESOURCE_KEY), 4,
+    ]);
+    expect(db.eventNames()).not.toContain('bindingUpdate');
+    expect(db.connectionIds()).toEqual([1]);
+  });
+
+  it.each([
+    ['bindingUpdateWithCapabilities', 'cas-zero', 'REVISION_CONFLICT'],
+    ['auditInsert', 'throw-after', 'UNAVAILABLE'],
+  ] as const)('keeps the committed row and capabilities when %s fails after admission', async (step, mode, code) => {
+    const db = await seededDb();
+    const before = structuredClone(db.bindings.get(RESOURCE_KEY));
+    const { outcome } = await outcomeOf(db, { persistCandidateCapabilities: true, faults: { [step]: mode } });
+
+    expect(outcome).toMatchObject({ kind: 'rejected', code, persisted: false });
+    expect(db.eventNames()).toContain('bindingUpdateWithCapabilities');
+    expect(db.eventNames()).not.toContain('commit');
+    expect(db.eventNames().filter(event => event === 'rollback')).toHaveLength(1);
+    expect(db.bindings.get(RESOURCE_KEY)).toEqual(before);
+    expect(db.writes).toEqual({ binding: 0, operation: 0, audit: 0 });
   });
 
   it('rolls back a write that reached the transaction before failing, at every write point', async () => {

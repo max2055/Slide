@@ -107,7 +107,7 @@ export class PromptSettingsPage extends LitElement {
   }
 
   activeVersionOf(type: PromptTypeInfo): PromptVersion | undefined {
-    return type.versions.find(v => v.version === type.activeVersion) ?? type.versions[0];
+    return type.versions.find(v => v.version === type.activeVersion);
   }
 
   async switchVersion(type: PromptTypeInfo, version: number) {
@@ -286,7 +286,7 @@ export class PromptSettingsPage extends LitElement {
               </span>
               <span class="type-meta">
                 <app-badge variant="info">${type.versions.length} 个版本</app-badge>
-                ${activeV ? html`<app-badge variant="ok">v${activeV.version} 使用中</app-badge>` : ''}
+                ${activeV ? html`<app-badge variant="ok">v${activeV.version} 使用中</app-badge>` : html`<app-badge variant="warn">当前版本不可用</app-badge>`}
                 <span class="expand-arrow ${isExpanded ? 'open' : ''}" aria-hidden="true">
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
                 </span>
@@ -345,8 +345,8 @@ export class PromptSettingsPage extends LitElement {
               <span class="editor-info">分析当前提示词并给出优化建议</span>
             </div>
             <div style="margin-bottom:var(--space-md);">
-              <label style="font-size:12px;font-weight:600;color:var(--text);display:block;margin-bottom:4px;">优化重点（可选）</label>
-              <input class="optimize-input" placeholder="例如：增加具体工具使用的示例、优化输出格式要求…" .value=${this.optimizeFocus} @input=${(e: InputEvent) => { this.optimizeFocus = (e.target as HTMLInputElement).value; }} />
+              <label for="prompt-optimize-focus" style="font-size:12px;font-weight:600;color:var(--text);display:block;margin-bottom:4px;">优化重点（可选）</label>
+              <input id="prompt-optimize-focus" class="optimize-input" placeholder="例如：增加具体工具使用的示例、优化输出格式要求…" .value=${this.optimizeFocus} @input=${(e: InputEvent) => { this.optimizeFocus = (e.target as HTMLInputElement).value; }} />
             </div>
             <button class="btn-primary" @click=${this.runOptimize} ?disabled=${this.optimizing}>
               ${this.optimizing ? 'AI 分析中...' : '开始优化'}

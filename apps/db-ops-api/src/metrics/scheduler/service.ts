@@ -65,7 +65,7 @@ type PackageResults = Array<{ release: { id: string; version: string; digest: st
 export interface TemplateRunFence {
   /** `return` keeps the accepted cadence semantics; a task must report why it stopped. */
   onMissingBinding(): 'return' | 'throw';
-  assertCurrent(): Promise<void>;
+  assertCurrent(snapshot?: TemplateExecutionSnapshot): Promise<void>;
   begin(): Promise<TemplateExecutionSnapshot | null>;
   commit(snapshot: TemplateExecutionSnapshot, results: PackageResults): Promise<boolean>;
   recordFailure(snapshot: TemplateExecutionSnapshot, results: PackageResults): Promise<void>;
@@ -179,7 +179,7 @@ export class MetricScheduler {
         await reservation.connection.ping();
         await access.assertCurrent?.();
         // Credential and target checks may wait; authorize only after they finish.
-        await fence.assertCurrent();
+        await fence.assertCurrent(snapshot);
         signal.throwIfAborted();
       };
       await check();
@@ -246,7 +246,7 @@ export class MetricScheduler {
       if (this.scheduleMode === 'legacy-packages') return this.runLegacy(ref, revision, job, context);
       return this.executeTemplate(ref, revision, job, context, execution => ({
         onMissingBinding: () => 'return',
-        assertCurrent: () => this.store.assertCurrentTemplate(ref, revision, job, execution),
+        assertCurrent: snapshot => this.store.assertCurrentTemplate(ref, revision, job, execution, snapshot?.snmpInventoryTarget),
         begin: () => this.store.beginTemplate(ref, revision, job, execution, this.clock()),
         commit: (snapshot, results) => this.store.commitTemplate(snapshot, results, job, execution, this.clock()),
         recordFailure: (snapshot, results) => this.store.recordTemplateFailure(snapshot, results, job, execution, this.clock()),
@@ -269,7 +269,7 @@ export class MetricScheduler {
         authorizer.authorizeOn(c, execution.actorId, execution.sessionVersion, ref);
       return this.executeTemplate(ref, revision, job, context, exec => ({
         onMissingBinding: () => 'throw',
-        assertCurrent: () => this.store.assertCollectNow(ref, revision, request_id, job, exec, authorizeOn),
+        assertCurrent: snapshot => this.store.assertCollectNow(ref, revision, request_id, job, exec, authorizeOn, snapshot?.snmpInventoryTarget),
         begin: () => this.store.beginCollectNow(ref, revision, request_id, job, exec, this.clock(), authorizeOn),
         commit: async (snapshot, results) => {
           const committed = await this.store.commitCollectNow(ref, revision, request_id, snapshot, results,

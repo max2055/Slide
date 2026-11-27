@@ -31,7 +31,8 @@ type Latest = {
     series: Point[];
   }>;
 };
-type HistoryPage = { window: Window; observations: Sample[]; total: number; has_more: boolean; next_cursor?: string };
+type HistoryPage = Omit<MetricObservationPage, 'observations'> & { observations: Sample[] };
+type ResourceGraph = SemanticResult & { resource: Latest['resource'] };
 type Row = { key: string; metric: Latest['metrics'][number]; point?: Point; dimensions: Dimensions; name: string; graph: boolean };
 type LatestEvidence = { state: 'loading' | 'missing' } | { state: 'ready'; sample: Sample } | { state: 'error'; message: string };
 
@@ -75,6 +76,10 @@ function chartNumber(value: MetricValue | null, quality: string, sameUnit: boole
 function displayValue(sample: Sample | undefined, id: string, full = false) {
   if (!sample?.value) return html`<span class="subtle">${sample ? '空值' : '暂无采样'}</span>`;
   const { value, unit } = sample;
+  if (full && (value.encoding === 'int64' || value.encoding === 'uint64') && !Number.isSafeInteger(Number(value.value))) {
+    const suffix = unit === '1' ? '' : ` ${unit === 'By' ? 'B' : unit}`;
+    return html`<span class="number">${value.value}${suffix}</span>`;
+  }
   if (numeric.includes(value.encoding)) return html`<span class="number">${metricValueText(value.value!, unit, id)}</span>`;
   if (typeof value.value === 'string') return full ? html`<span class="record-text">${value.value}</span>`
     : html`<span class="sample-preview" title=${value.value}>${value.value}</span>`;
@@ -211,7 +216,7 @@ export class ResourceMetricBrowser extends LitElement {
 
   private get resource() { return { type: this.resourceType, id: this.resourceId }; }
 
-  async load() {
+  async load(refreshAccess = true) {
     if (this.invalidated || !this.resourceId) return;
     this.latestRequest?.abort();
     const request = this.latestRequest = new AbortController();
@@ -219,7 +224,7 @@ export class ResourceMetricBrowser extends LitElement {
     this.listBusy = true;
     this.listError = '';
     try {
-      const latest = await metricRequest<Latest>('latest', resource, request.signal);
+      const latest = await metricRequest<Latest>('latest', resource, request.signal, refreshAccess);
       if (request.signal.aborted) return;
       if (latest.resource.type !== resource.type || latest.resource.id !== resource.id || !Array.isArray(latest.metrics)) {
         throw new Error('LATEST_METRICS_CONTEXT');
@@ -478,12 +483,13 @@ export class ResourceMetricBrowser extends LitElement {
     }
     try {
       if (mode === 'graph') {
-        const result = await metricRequest<SemanticResult>('query', {
+        const result = await metricRequest<ResourceGraph>('query', {
           resource, series, history: true, include_retained_trends: true, from, to,
           bucket_ms: bucketMsFor(Date.parse(from), Date.parse(to)),
         }, request.signal);
         if (request.signal.aborted) return;
         if (result.window.from !== from || result.window.to !== to) throw new Error('METRIC_HISTORY_WINDOW');
+        if (result.resource?.type !== resource.type || result.resource.id !== resource.id) throw new Error('METRIC_HISTORY_CONTEXT');
         this.graph = result;
       } else {
         const cursor = cursors.at(-1);
@@ -491,6 +497,9 @@ export class ResourceMetricBrowser extends LitElement {
           limit: historyPageSize, ...(cursor ? { cursor } : {}) }, request.signal);
         if (request.signal.aborted) return;
         if (result.window.from !== from || result.window.to !== to) throw new Error('METRIC_HISTORY_WINDOW');
+        if (result.resource?.type !== resource.type || result.resource.id !== resource.id
+          || result.metric?.id !== series.metric.id || result.metric.semantic_version !== series.metric.semantic_version
+          || dimensionKey(result.dimensions) !== dimensionKey(row.dimensions)) throw new Error('METRIC_HISTORY_CONTEXT');
         this.historyPage = result;
       }
       this.historyAt = new Date().toISOString();

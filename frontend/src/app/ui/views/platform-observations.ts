@@ -24,6 +24,10 @@ interface Evidence {
 interface ComponentEvidence extends Evidence {
   component: string;
 }
+interface LogEvidence extends Evidence {
+  from?: string;
+  to?: string;
+}
 interface Observations {
   system?: { quality?: string; gaps?: string[]; collection?: { configured: boolean; effective: boolean }; automatic?: { configured: boolean; effective: boolean };
     publisher?: { acceptedEvents?: number; lostEvents?: number; pending?: number };
@@ -34,7 +38,7 @@ interface Observations {
   commitSha?: string | null;
   uptimeSeconds?: number;
   components?: ComponentEvidence[];
-  logs?: Evidence;
+  logs?: LogEvidence;
   queue?: { quality?: string; generatedAt?: string; gaps?: string[]; types?: unknown[] };
 }
 const COMPONENT_LABELS: Record<string, string> = {
@@ -59,6 +63,7 @@ const time = (value?: string | null) =>
   value && Number.isFinite(Date.parse(value)) ? new Date(value).toLocaleString("zh-CN") : "未知";
 const validCount = (value?: number) =>
   typeof value === "number" && Number.isFinite(value) && value >= 0;
+const LOG_SCOPE_PARAMS = ["from", "to", "component"];
 
 @customElement("platform-observations-page")
 export class PlatformObservationsPage extends LitElement {
@@ -69,6 +74,7 @@ export class PlatformObservationsPage extends LitElement {
   @state() private selected: string | null = null;
   @state() private denied = false;
   @state() private page = 0;
+  @state() private logScope = new URLSearchParams();
   private requestId = 0;
   private permissionsChanged = (event: Event) => {
     const permissions = (event as CustomEvent<{ permissions?: string[] }>).detail?.permissions;
@@ -102,6 +108,13 @@ export class PlatformObservationsPage extends LitElement {
         justify-content: space-between;
         align-items: flex-start;
         gap: var(--space-md);
+        margin-bottom: var(--space-md);
+      }
+      .log-scope {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: baseline;
+        gap: var(--space-xs) var(--space-sm);
         margin-bottom: var(--space-xl);
       }
       h1 {
@@ -293,6 +306,17 @@ export class PlatformObservationsPage extends LitElement {
     this.denied = true;
     this.error = message;
   }
+  private changeLogRange() {
+    const url = new URL(window.location.href);
+    for (const key of LOG_SCOPE_PARAMS) url.searchParams.delete(key);
+    if (!this.logScope.size) {
+      const now = Date.now();
+      url.searchParams.set("from", new Date(now - 30 * 60_000).toISOString());
+      url.searchParams.set("to", new Date(now).toISOString());
+    }
+    window.history.replaceState(window.history.state, "", url);
+    void this.load();
+  }
   private async load() {
     if (this.denied) return;
     const id = ++this.requestId;
@@ -303,7 +327,13 @@ export class PlatformObservationsPage extends LitElement {
     this.readAt = null;
     this.page = 0;
     try {
-      const response = await authFetch("/api/platform/observations");
+      this.logScope = new URLSearchParams([...new URLSearchParams(window.location.search)]
+        .filter(([key]) => LOG_SCOPE_PARAMS.includes(key)));
+      if (LOG_SCOPE_PARAMS.some((key) => this.logScope.getAll(key).length > 1)) {
+        throw new Error("日志范围包含重复参数，请恢复默认范围后重试。");
+      }
+      const query = this.logScope.toString();
+      const response = await authFetch(`/api/platform/observations${query ? `?${query}` : ""}`);
       if (!response.ok) {
         if (response.status === 401 || response.status === 403) {
           if (id === this.requestId) this.invalidate("无权读取平台观测，证据已清理。");
@@ -461,6 +491,9 @@ ${JSON.stringify({ generatedAt: d.generatedAt, readAt: this.readAt, evidence: ev
   }
   override render() {
     const d = this.details;
+    const component = this.logScope.get("component");
+    const scopeLabel = !this.logScope.size ? "最近 5 分钟"
+      : d?.logs?.from && d.logs.to ? `${time(d.logs.from)} 至 ${time(d.logs.to)}` : "指定范围";
     const rows = d
       ? [
           ...this.components.map((c, i) => {
@@ -521,6 +554,12 @@ ${JSON.stringify({ generatedAt: d.generatedAt, readAt: this.readAt, evidence: ev
           ${this.loading ? "读取中…" : "刷新"}
         </button>
       </header>
+      <div class="log-scope">
+        <span class="caption">日志范围 ${scopeLabel}${component ? ` · ${Object.hasOwn(COMPONENT_LABELS, component) ? COMPONENT_LABELS[component] : component}` : ""}</span>
+        <button type="button" class="btn-ghost" @click=${this.changeLogRange} ?disabled=${this.loading || this.denied}>
+          ${this.logScope.size ? "恢复默认范围" : "查看最近 30 分钟"}
+        </button>
+      </div>
       ${
         this.loading
           ? html`<p class="state" role="status">正在读取平台观测…</p>`

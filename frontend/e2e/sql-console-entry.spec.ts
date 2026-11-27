@@ -9,7 +9,8 @@ const atPath = (path: string) => (response: Response) => new URL(response.url())
 test.use({ trace: 'off', locale: 'zh-CN' });
 
 test('SQL workbench editor restores comment drafts from the operations menu and recovers from initialization failure', async ({ page }) => {
-  const target = qualificationMysqlTarget();
+  const nonce = randomUUID().replaceAll('-', '');
+  const target = { ...qualificationMysqlTarget(), database_name: `qualification_editor_${nonce}` };
   const queryRequests: string[] = [];
   const pageErrors: string[] = [];
   await page.addInitScript(() => localStorage.setItem('slide.control.settings.v1:default', JSON.stringify({ locale: 'zh-CN' })));
@@ -30,21 +31,26 @@ test('SQL workbench editor restores comment drafts from the operations menu and 
   expect(login.status()).toBe(200);
   const { token } = await login.json();
   const headers = { Authorization: `Bearer ${token}` };
-  const created = await page.request.post('/api/database/instances', { headers, data: {
-    name: `qualification-sql-editor-${Date.now()}`, environment: 'testing', db_type: 'mysql', ...target,
-  } });
-  expect(created.status()).toBe(200);
-  const { id } = await created.json();
-  const instancePath = `/api/database/instances/${id}`;
-  const table = `qualification_columns_${randomUUID().replaceAll('-', '')}`;
+  const table = `qualification_columns_${nonce}`;
   const duplicateSchema = `${table}_copy`;
   const primaryTable = `${target.database_name}.${table}`;
+  const ownedSchemas: string[] = [];
   let db: Awaited<ReturnType<typeof mysql.createConnection>> | undefined;
+  let instancePath: string | undefined;
 
   try {
     db = await mysql.createConnection({ host: target.host, port: target.port, user: target.username, password: target.password });
+    await db.query('CREATE DATABASE ??', [target.database_name]);
+    ownedSchemas.push(target.database_name);
+    const created = await page.request.post('/api/database/instances', { headers, data: {
+      name: `qualification-sql-editor-${nonce}`, environment: 'testing', db_type: 'mysql', ...target,
+    } });
+    expect(created.status(), '为 SQL 编辑器注册其独占数据库').toBe(200);
+    const { id } = await created.json();
+    instancePath = `/api/database/instances/${id}`;
     await db.query('CREATE TABLE ?? (id INT, `编号` INT, `名称` VARCHAR(32))', [primaryTable]);
     await db.query('CREATE DATABASE ??', [duplicateSchema]);
+    ownedSchemas.push(duplicateSchema);
     await db.query('CREATE TABLE ?? (id INT, `编号` INT, `状态` INT)', [`${duplicateSchema}.${table}`]);
     await db.query('CREATE TABLE ?? (unrelated INT)', [`${duplicateSchema}.shadow_alias`]);
     await db.query('INSERT INTO ?? (id, `编号`) VALUES (1, 7)', [primaryTable]);
@@ -210,14 +216,16 @@ test('SQL workbench editor restores comment drafts from the operations menu and 
     expect(pageErrors).toEqual([]);
   } finally {
     try {
-      if (db) {
-        await db.query('DROP TABLE IF EXISTS ??', [primaryTable]);
-        await db.query('DROP DATABASE IF EXISTS ??', [duplicateSchema]);
+      if (instancePath) {
+        const removed = await page.request.delete(instancePath, { headers }).catch(() => undefined);
+        expect.soft(removed?.status(), '清理隔离测试实例').toBe(200);
       }
     } finally {
-      await db?.end();
-      const removed = await page.request.delete(instancePath, { headers }).catch(() => undefined);
-      expect.soft(removed?.status(), '清理隔离测试实例').toBe(200);
+      try {
+        if (db) for (const schema of ownedSchemas) await db.query('DROP DATABASE ??', [schema]);
+      } finally {
+        await db?.end();
+      }
     }
   }
 });

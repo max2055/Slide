@@ -248,17 +248,19 @@ export class TemplateGovernance {
       const current = await actorContextService.revalidateActor(actor);
       this.access(current, item.resource, false);
       const status = await this.binding.status(current, item.resource);
-      const failure = await this.collectionFailure(item.resource, item.target_revision);
+      // A rollback or retry can retain an earlier revision while its own submission is unresolved.
+      const submittedRevision = item.state === 'submitted' ? item.target_revision : null;
+      const failure = await this.collectionFailure(item.resource, submittedRevision);
       items.push({
         ...item,
         status,
         collection_failure: failure,
         receipt:
-          item.target_revision === null
+          submittedRevision === null
             ? item.state
-            : status.application?.applied_revision === item.target_revision
+            : status.application?.applied_revision === submittedRevision
               ? 'applied'
-              : status.revision !== item.target_revision
+              : status.revision !== submittedRevision
                 ? 'superseded'
                 : failure
                   ? 'collection_failed'
@@ -391,10 +393,14 @@ export class TemplateGovernance {
             409,
           );
           const body = { ...item.candidate, receipt_id: item.key };
-          if (status.source === 'unbound') await this.binding.probe(actor, ref, body);
+          const refreshCapability = status.source === 'template'
+            && (action === 'retry' || stable(status.template_pins) !== stable(item.candidate.template_pins));
+          if (status.source === 'unbound' || refreshCapability) {
+            await this.binding.probe(actor, ref, body, refreshCapability);
+          }
           await this.binding.preview(actor, ref, body);
-          await this.binding.trial(actor, ref, body);
-          const result = await this.binding.apply(actor, ref, { ...body, caller_key: item.key });
+          await this.binding.trial(actor, ref, body, refreshCapability);
+          const result = await this.binding.apply(actor, ref, { ...body, caller_key: item.key }, refreshCapability);
           if (result.kind === 'committed') {
             item.state = 'submitted';
             item.target_revision = result.revision;

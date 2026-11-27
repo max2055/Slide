@@ -8,9 +8,11 @@ import * as contracts from './contracts/public-api.js';
 import { buildClientTypes, buildOpenApiDocument } from './contracts/generate-public-api.js';
 import type { InstanceDiagnosticContext } from './instance-diagnostic-context-service.js';
 import {
+  InstanceHostService,
   type HostedInstanceDetail,
   type InstanceHostDetail,
   type InstanceHostMapping,
+  type InstanceHostStore,
 } from './resources/instance-host-service.js';
 
 interface InstanceHostRouteService {
@@ -63,6 +65,10 @@ function actor(
 const actors: Record<string, ActorContext> = {
   manager: actor(['instance:manage', 'servers:manage'], { 10: 'admin' }),
   reader: actor(['servers:view'], { 10: 'read-only' }),
+  boundedReader: {
+    ...actor(['servers:view'], { 10: 'read-only' }),
+    resourceBoundary: { instanceIds: [10], serverIds: [20], networkDeviceIds: [] },
+  },
   evidenceReader: actor(
     ['instance:view', 'servers:view', 'metric:view', 'alert:view', 'log:view'],
     { 10: 'read-only' },
@@ -361,6 +367,35 @@ describe('instance-host Fastify routes', () => {
       expect(response.json()).toEqual({ error: 'RESOURCE_FORBIDDEN' });
     }
     await app.close();
+  });
+
+  it('omits excluded hosts and denies reverse reads before accessing their relationship rows', async () => {
+    const listServerInstances = vi.fn(async () => []);
+    const store: InstanceHostStore = {
+      instanceExists: async () => true,
+      serversExist: vi.fn(),
+      replaceInstanceHosts: vi.fn(),
+      expireInstanceHost: vi.fn(),
+      listInstanceHosts: async () => [host({ serverId: 20, role: 'primary' }), host({ serverId: 21, role: 'replica' })],
+      listServerInstances,
+      countActiveForServer: vi.fn(),
+    };
+    const app = await buildApp(new InstanceHostService(store));
+    if (!app) return;
+
+    const headers = { authorization: 'Bearer boundedReader' };
+    try {
+      const hosts = await app.inject({ url: '/api/database/instances/10/hosts', headers });
+      expect(hosts.statusCode).toBe(200);
+      expect(hosts.json().hosts.map((entry: InstanceHostDetail) => entry.serverId)).toEqual([20]);
+
+      const reverse = await app.inject({ url: '/api/servers/21/instances', headers });
+      expect(reverse.statusCode).toBe(404);
+      expect(reverse.json()).toEqual({ error: 'RESOURCE_FORBIDDEN' });
+      expect(listServerInstances).not.toHaveBeenCalled();
+    } finally {
+      await app.close();
+    }
   });
 
   it('returns 401 for every relationship route without authentication', async () => {

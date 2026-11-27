@@ -1,6 +1,7 @@
 import { promises as dns } from 'node:dns';
 import { BlockList, isIP } from 'node:net';
 import { securityEventService } from './security-event-service.js';
+import { withTimeout } from '../promise-timeout.js';
 
 export type DatabaseTargetReason =
   | 'DB_TARGET_INVALID_HOST'
@@ -38,6 +39,7 @@ const ALWAYS_DENIED_CIDRS = [
   '::/128', 'fe80::/10', 'ff00::/8', 'fd00:ec2::254/128',
 ];
 const LOOPBACK_CIDRS = ['127.0.0.0/8', '::1/128'];
+const DATABASE_DNS_TIMEOUT_MS = 5_000;
 
 function addCidr(list: BlockList, cidr: string): void {
   const slash = cidr.lastIndexOf('/');
@@ -83,7 +85,11 @@ export async function authorizeDatabaseTarget(
 
   const addresses = isIP(hostname)
     ? [{ address: hostname }]
-    : await (options.lookup ?? ((host) => dns.lookup(host, { all: true, verbatim: true })))(hostname)
+    : await withTimeout(
+      (options.lookup ?? ((host) => dns.lookup(host, { all: true, verbatim: true })))(hostname),
+      DATABASE_DNS_TIMEOUT_MS,
+      'DB_TARGET_DNS_FAILED',
+    )
       .catch(() => { throw denyTarget('DB_TARGET_DNS_FAILED'); });
   if (addresses.length === 0) throw denyTarget('DB_TARGET_DNS_FAILED');
 

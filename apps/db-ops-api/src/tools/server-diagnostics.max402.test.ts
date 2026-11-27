@@ -17,13 +17,13 @@ describe('MAX-407 diagnostic tool time semantics', () => {
       sections: { systemLogs: { source: ['journald'], items: [{ message: 'warning' }] } },
       gaps,
     };
-    const get = vi.spyOn(serverDiagnosticService, 'getDiagnostics').mockResolvedValue(diagnostics as any);
+    const get = vi.spyOn(serverDiagnosticService, 'readDiagnosticsSnapshot').mockResolvedValue(diagnostics as any);
     const result = await getServerDiagnosticsTool.handler({ serverId: 3, section: 'systemLogs', maxRows: 1 }, context);
     expect(result.success).toBe(true);
     expect(result.details).toEqual({ server_id: 3, expiresAt: diagnostics.expiresAt, gaps });
     expect(result.details).not.toHaveProperty('freshness');
     expect(result.data).toMatchObject(diagnostics);
-    expect(get).toHaveBeenCalledWith(3, { refresh: false });
+    expect(get).toHaveBeenCalledWith(3);
   });
 
   it('keeps metrics and health freshness as the sample timestamp', async () => {
@@ -38,17 +38,27 @@ describe('MAX-407 diagnostic tool time semantics', () => {
   });
 
   it.each([undefined, { actor: { ...context.actor!, permissions: [] } }])('denies unauthorized diagnostics without collection', async actorContext => {
-    const get = vi.spyOn(serverDiagnosticService, 'getDiagnostics');
+    const get = vi.spyOn(serverDiagnosticService, 'readDiagnosticsSnapshot');
     expect(await getServerDiagnosticsTool.handler({ serverId: 3 }, actorContext)).toMatchObject({
       success: false, errorCode: 'RESOURCE_FORBIDDEN',
     });
     expect(get).not.toHaveBeenCalled();
   });
 
-  it('preserves diagnostic failure codes', async () => {
-    vi.spyOn(serverDiagnosticService, 'getDiagnostics').mockRejectedValue(new Error('SERVER_NOT_FOUND'));
+  it('directs explicit refresh requests to the diagnostic collection entry without reading or collecting', async () => {
+    const read = vi.spyOn(serverDiagnosticService, 'readDiagnosticsSnapshot');
+    const collect = vi.spyOn(serverDiagnosticService, 'collectDiagnostics');
+    expect(await getServerDiagnosticsTool.handler({ serverId: 3, refresh: true }, context)).toMatchObject({
+      success: false, errorCode: 'DIAGNOSTIC_REFRESH_REQUIRES_COLLECTION',
+    });
+    expect(read).not.toHaveBeenCalled();
+    expect(collect).not.toHaveBeenCalled();
+  });
+
+  it.each(['SERVER_NOT_FOUND', 'DIAGNOSTIC_SNAPSHOT_NOT_FOUND'])('preserves diagnostic failure code %s', async code => {
+    vi.spyOn(serverDiagnosticService, 'readDiagnosticsSnapshot').mockRejectedValue(new Error(code));
     expect(await getServerDiagnosticsTool.handler({ serverId: 3 }, context)).toMatchObject({
-      success: false, errorCode: 'SERVER_NOT_FOUND',
+      success: false, errorCode: code,
     });
   });
 });

@@ -102,7 +102,7 @@ export class LLMService {
    * 创建 Provider 客户端
    */
   private async createClient(provider: LLMProvider): Promise<ProviderClient | null> {
-    const apiKey = await llmDatabaseService.getProviderApiKey(provider.name);
+    const apiKey = await llmDatabaseService.getProviderApiKey(provider.name, provider);
     return createServiceProviderClient(provider, apiKey);
   }
 

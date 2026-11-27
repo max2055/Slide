@@ -20,6 +20,7 @@ import "./template-event-evidence.js";
 interface Alert {
   id: number;
   template_event_id?: number | null;
+  related_event_id?: number | null;
   instance_id: number;
   instance_name?: string;
   server_id?: number;
@@ -31,6 +32,9 @@ interface Alert {
   severity: string;
   title: string;
   message: string;
+  metric_name?: string | null;
+  metric_value?: string | null;
+  threshold_value?: string | null;
   status: 'unread' | 'read' | 'acknowledged' | 'resolved' | 'closed';
   acknowledged: boolean;
   acknowledged_by?: string;
@@ -55,9 +59,19 @@ export class AlertDetailModal extends LitElement {
     this.dispatchEvent(new CustomEvent(name, { detail, bubbles: true, composed: true }));
   }
 
+  private targetLink(alert: Alert): string | undefined {
+    if (alert.target_type === 'network_device') return alert.network_device_id ? `/network-device-detail?networkDeviceId=${alert.network_device_id}` : undefined;
+    if (alert.target_type === 'server') return alert.server_id ? `/server-detail?id=${alert.server_id}` : undefined;
+    return alert.instance_id ? `/instance-detail?id=${alert.instance_id}` : undefined;
+  }
+
   override render() {
     if (!this.alert || !this.open) return nothing;
     const a = this.alert;
+    const target = a.target_type === 'network_device' ? (a.network_device_name || `网络设备 #${a.network_device_id ?? '—'}`)
+      : a.target_type === 'server' ? (a.server_name || `服务器 #${a.server_id ?? '—'}`) : (a.instance_name || '—');
+    const targetLink = this.targetLink(a);
+    const eventId = a.template_event_id ?? a.related_event_id;
     const isAnalyzing = this.activeRCAAnalysis?.alertId === a.id;
     const analysisRunning = isAnalyzing && this.diagnosisStatus === 'running';
     const analysisComplete = isAnalyzing && this.diagnosisStatus === 'completed';
@@ -78,9 +92,12 @@ export class AlertDetailModal extends LitElement {
 
         <!-- Metadata grid -->
         <div style="display:grid;grid-template-columns:80px 1fr;gap:var(--space-sm) var(--space-md);font-size:var(--text-base);margin-bottom:var(--space-lg);padding:var(--space-md);background:var(--bg-elevated);border-radius:var(--radius-sm);">
-          <span style="color:var(--muted);">目标</span><span>${a.target_type === 'network_device' ? (a.network_device_name || `网络设备 #${a.network_device_id ?? '—'}`) : a.target_type === 'server' ? (a.server_name || `服务器 #${a.server_id ?? '—'}`) : (a.instance_name || '—')}</span>
+          <span style="color:var(--muted);">目标</span><span>${targetLink ? html`<a href=${targetLink}>${target}</a>` : target}</span>
           <span style="color:var(--muted);">时间</span><span>${new Date(a.created_at).toLocaleString('zh-CN')}</span>
           <span style="color:var(--muted);">状态</span><span><app-badge variant="${this._statusVariant(a.status)}">${this._statusLabel(a)}</app-badge></span>
+          ${a.metric_value != null ? html`<span style="color:var(--muted);">触发值</span><span>${a.metric_name ? `${a.metric_name} · ` : ''}${a.metric_value}</span>` : nothing}
+          ${a.threshold_value != null ? html`<span style="color:var(--muted);">阈值</span><span>${a.threshold_value}</span>` : nothing}
+          ${eventId ? html`<span style="color:var(--muted);">关联事件</span><a href=${`/events?view=aggregate&eventId=${eventId}`}>事件 #${eventId}</a>` : nothing}
           ${a.template_event_id ? html`<span style="color:var(--muted);">规则来源</span>
             <template-event-evidence .eventId=${a.template_event_id} .alertId=${a.id}></template-event-evidence>` : nothing}
           <span style="color:var(--muted);">描述</span><span style="line-height:1.5;">${a.message || '—'}</span>

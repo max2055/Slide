@@ -1,4 +1,10 @@
-import type { LLMProvider } from '../llm-database-service.js';
+import type { LLMProvider, ModelInfo } from '../llm-database-service.js';
+
+const modelTextFields = ['id', 'name', 'desc', 'parameterProvider'];
+const modelBooleanFields = ['recommended', 'supportsFunctionCall', 'supportsVision'];
+const modelLimitFields = ['contextWindow', 'maxTokens'];
+const modelPriceFields = ['input', 'output'];
+const browserModelFields = new Set([...modelTextFields, ...modelBooleanFields, ...modelLimitFields, 'parameterSource', 'cost']);
 
 /** Query names outside this public metadata contract may carry arbitrary secrets. */
 function publicBaseUrl(value: unknown): string | null {
@@ -22,13 +28,13 @@ function publicBaseUrl(value: unknown): string | null {
 
 function publicModel(model: Record<string, unknown>) {
   const metadata: Record<string, unknown> = {};
-  for (const field of ['id', 'name', 'desc', 'parameterProvider']) {
+  for (const field of modelTextFields) {
     if (typeof model[field] === 'string') metadata[field] = model[field];
   }
-  for (const field of ['recommended', 'supportsFunctionCall', 'supportsVision']) {
+  for (const field of modelBooleanFields) {
     if (typeof model[field] === 'boolean') metadata[field] = model[field];
   }
-  for (const field of ['contextWindow', 'maxTokens']) {
+  for (const field of modelLimitFields) {
     const value = model[field];
     if (typeof value === 'number' && Number.isSafeInteger(value) && value > 0) metadata[field] = value;
   }
@@ -39,13 +45,33 @@ function publicModel(model: Record<string, unknown>) {
   if (model.cost && typeof model.cost === 'object' && !Array.isArray(model.cost)) {
     const source = model.cost as Record<string, unknown>;
     const cost: Record<string, number> = {};
-    for (const field of ['input', 'output']) {
+    for (const field of modelPriceFields) {
       const value = source[field];
       if (typeof value === 'number' && Number.isFinite(value) && value >= 0) cost[field] = value;
     }
     metadata.cost = cost;
   }
   return metadata;
+}
+
+/** An edit from the public DTO can clear its own fields without dropping stored extensions. */
+export function retainStoredModelMetadata(models: ModelInfo[], stored: ModelInfo[] | null): ModelInfo[] {
+  if (!Array.isArray(stored)) return models;
+  const storedById = new Map(stored.filter(model => typeof model?.id === 'string').map(model => [model.id, model]));
+  return models.map(model => {
+    const previous = storedById.get(model.id) as (ModelInfo & { cost?: unknown }) | undefined;
+    if (!previous) return model;
+    const hidden = Object.fromEntries(Object.entries(previous).filter(([field]) => !browserModelFields.has(field)));
+    const next = { ...hidden, ...model } as ModelInfo & { cost?: unknown };
+    if (previous.cost && typeof previous.cost === 'object' && !Array.isArray(previous.cost)) {
+      const oldPrices = Object.entries(previous.cost).filter(([field]) => !modelPriceFields.includes(field));
+      const supplied = next.cost;
+      if (oldPrices.length && (supplied === undefined || supplied && typeof supplied === 'object' && !Array.isArray(supplied))) {
+        next.cost = Object.fromEntries([...oldPrices, ...Object.entries(supplied ?? {})]);
+      }
+    }
+    return next;
+  });
 }
 
 /** Browser configuration metadata only; runtime services retain the full provider. */

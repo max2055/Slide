@@ -718,6 +718,7 @@ export const PublicApiSchemas = {
     principal_type: Type.Union([Type.Literal('user'), Type.Literal('system-maintenance')]),
     identity_status: Type.Union([Type.Literal('bound'), Type.Literal('owner-required')]),
     identity_audit: Type.Union([UnknownRecordSchema, Type.Null()]),
+    target_database: Type.Optional(Type.String({ minLength: 1, maxLength: 64, description: 'Explicit database pinned to the MySQL Script binding.' })),
     resource_scope: Type.Union([Type.Object({
       version: Type.Literal(1), targetInstanceId: Type.Union([Type.Integer({ minimum: 1 }), Type.Null()]),
       instanceIds: Type.Array(Type.Integer({ minimum: 1 })),
@@ -725,10 +726,14 @@ export const PublicApiSchemas = {
     }), Type.Null()]),
   }, { $id: 'CronJobIdentity', additionalProperties: true }),
   CronJobUpdateRequest: Type.Object({
+    name: Type.Optional(Type.String({ minLength: 1, maxLength: 100, pattern: '\\S' })),
     owner_user_id: Type.Optional(Type.Integer({ minimum: 1, description: 'Admin-only explicit rebinding of user tasks; never changes a user task to system maintenance.' })),
     task_description: Type.Optional(Type.String()), cron_expr: Type.Optional(Type.String()), enabled: Type.Optional(Type.Boolean()),
     task_type: Type.Optional(Type.Union([Type.Literal('agent'), Type.Literal('script')])),
     target_instance_id: Type.Optional(Type.Union([Type.Integer({ minimum: 1 }), Type.Null()])),
+    target_database: Type.Optional(Type.Union([Type.String({ minLength: 1, maxLength: 64 }), Type.Null()], {
+      description: 'MySQL Script database. Omit to retain the existing selection for the same instance. Null clears it.',
+    })),
     script_id: Type.Optional(Type.Integer({ minimum: 1 })),
     control_sql_capability: Type.Optional(Type.Union([Type.Literal('read-only'), Type.Literal('baseline-cleanup-v1'), Type.Literal('silence-cleanup-v1')])),
     timezone: Type.Optional(Type.String()), description: Type.Optional(Type.String()),

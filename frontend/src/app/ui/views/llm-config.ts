@@ -118,6 +118,7 @@ export class LLMConfigPage extends LitElement {
   @state() private formMsg: string | null = null;
   @state() private savedOk = false;
   @state() private applyWarning: ApplyWarning | null = null;
+  @state() private applyingRuntime = false;
   @state() private mutationOk: string | null = null;
   @state() private showKey = false;
   @state() private modelSuggestions: string[] = [];
@@ -447,6 +448,27 @@ export class LLMConfigPage extends LitElement {
     return true;
   }
 
+  private async _retryRuntime(savedLabel: string) {
+    if (!this.applyWarning || this.applyingRuntime) return;
+    const warning = this.applyWarning;
+    const retry = () => void this._retryRuntime(savedLabel);
+    this.applyingRuntime = true;
+    try {
+      const result = await apiClient.post<LLMConfigMutationResult>('/llm/configs/reload');
+      if (this.applyWarning !== warning) return;
+      if (result?.applied !== true) {
+        this._reportApplyOutcome(savedLabel, { ...result, applied: false }, retry);
+        return;
+      }
+      this.applyWarning = null;
+      this.mutationOk = `${savedLabel}，并已应用到运行时。`;
+    } catch {
+      if (this.applyWarning === warning) this._reportApplyOutcome(savedLabel, { applied: false }, retry);
+    } finally {
+      this.applyingRuntime = false;
+    }
+  }
+
   private async _save() {
     if (this.saving || this.modelSaving) return;
     this.saving = true; this._beginMutation();
@@ -523,8 +545,7 @@ export class LLMConfigPage extends LitElement {
           this.form = { ...this.form, enabled: fresh.enabled, is_default: fresh.is_default };
         }
       }
-      // Re-toggling would invert the persisted state, so retry stays on the next save.
-      const unapplied = this._reportApplyOutcome('启用状态已保存', result ?? {});
+      const unapplied = this._reportApplyOutcome('启用状态已保存', result ?? {}, () => this._retryRuntime('启用状态已保存'));
       if (!unapplied) this.mutationOk = '启用状态已保存，并已应用到运行时。';
     } catch (e: any) { this.formMsg = e.message || "操作失败"; }
   }
@@ -543,7 +564,7 @@ export class LLMConfigPage extends LitElement {
           this.form = { ...this.form, enabled: fresh.enabled, is_default: fresh.is_default };
         }
       }
-      const unapplied = this._reportApplyOutcome('默认提供商已保存', result ?? {}, () => this._setDefault(p));
+      const unapplied = this._reportApplyOutcome('默认提供商已保存', result ?? {}, () => this._retryRuntime('默认提供商已保存'));
       if (!unapplied) this.mutationOk = '默认提供商已更新，并已应用到运行时。';
     } catch (e: any) { this.formMsg = e.message || "操作失败"; }
   }
@@ -551,10 +572,14 @@ export class LLMConfigPage extends LitElement {
   private async _delete(p: LLMProvider) {
     if (!confirm(`确定删除提供商 "${p.display_name || p.name}"？`)) return;
     try {
-      await apiClient.delete(`/llm/configs/${p.id}`);
+      this._beginMutation();
+      const result = await apiClient.delete<LLMConfigMutationResult>(`/llm/configs/${p.id}`);
+      if (result?.success === false) throw new Error(result.error || '删除失败');
       this._resetTest();
       if (this.selectedId === p.id) { this.selectedId = null; this.viewMode = "placeholder"; this.editing = null; }
       await this._load(true);
+      const unapplied = this._reportApplyOutcome('提供商已删除', result ?? {}, () => this._retryRuntime('提供商已删除'));
+      if (!unapplied) this.mutationOk = '提供商已删除，并已应用到运行时。';
     } catch (e: any) { this.formMsg = e.message || "删除失败"; }
   }
 
@@ -750,6 +775,7 @@ export class LLMConfigPage extends LitElement {
         </div>
         <slot name="page-tabs"></slot>
       </div>
+      ${!scenes && this.viewMode !== 'form' ? this._renderMutationOutcome() : ''}
       ${this._renderPageContent()}
     `;
   }
@@ -782,16 +808,23 @@ export class LLMConfigPage extends LitElement {
     `;
   }
 
-  private async _loadScenes(providerVersion?: number) {
+  private async _loadScenes(providerVersion?: number, savedScene?: string) {
     const version = ++this._sceneRequestVersion;
     const current = () => version === this._sceneRequestVersion
       && (providerVersion === undefined || providerVersion === this._loadRequestVersion);
     try {
       const scenes = await apiClient.get<SceneConfig[]>('/llm/scenes');
       if (!current()) return;
+      const previousBindings = new Map(this.scenes.map(row => [row.scene, row.binding]));
+      this.sceneDrafts = Object.fromEntries(scenes.map(row => {
+        const draft = this.sceneDrafts[row.scene];
+        const previous = previousBindings.get(row.scene);
+        const edited = draft && (draft.provider_id !== (previous?.provider_id ?? null) || draft.model !== (previous?.model ?? ''));
+        const currentDraft = edited && row.scene !== savedScene
+          ? draft : row.binding ? { ...row.binding } : { provider_id: null, model: '' };
+        return [row.scene, currentDraft];
+      }));
       this.scenes = scenes;
-      this.sceneDrafts = Object.fromEntries(this.scenes.map(row => [row.scene,
-        row.binding ? { ...row.binding } : { provider_id: null, model: '' }]));
       this.sceneMessage = '';
     } catch (error: any) { if (current()) this.sceneMessage = error.message || '场景配置加载失败'; }
   }
@@ -803,7 +836,7 @@ export class LLMConfigPage extends LitElement {
     try {
       await apiClient.put(`/llm/scenes/${scene}`, draft.provider_id === null
         ? { provider_id: null } : draft);
-      await this._loadScenes();
+      await this._loadScenes(undefined, scene);
     } catch (error: any) { this.sceneMessage = error.message || '场景配置保存失败'; }
     finally { this.sceneSaving = ''; }
   }
@@ -914,6 +947,23 @@ export class LLMConfigPage extends LitElement {
     `;
   }
 
+  private _renderMutationOutcome() {
+    return html`
+          ${this.mutationOk ? html`
+            <div role="status" aria-label="操作结果">
+              <app-notice severity="info">${this.mutationOk}</app-notice>
+            </div>` : ''}
+
+          ${this.applyWarning ? html`
+            <div role="alert" aria-label="运行时应用结果">
+              <app-notice severity="warning">
+                <span>${this.applyWarning.message}</span>
+                ${this.applyWarning.retry ? html`<button class="btn btn-sm" style="margin-inline-start:var(--space-md)" ?disabled=${this.applyingRuntime} @click=${() => this.applyWarning?.retry?.()}>重试应用</button>` : ''}
+              </app-notice>
+            </div>` : ''}
+    `;
+  }
+
   _renderForm() {
     const isEdit = !!this.editing;
     return html`
@@ -925,19 +975,7 @@ export class LLMConfigPage extends LitElement {
               ${this.savedOk ? '✓ 已保存配置' : this.saving ? '保存中...' : '保存配置'}
             </button>
           </div>
-          ${this.mutationOk ? html`
-            <div role="status" aria-label="操作结果">
-              <app-notice severity="info">${this.mutationOk}</app-notice>
-            </div>` : ''}
-
-          ${this.applyWarning ? html`
-            <div role="alert" aria-label="运行时应用结果">
-              <app-notice severity="warning">
-                <span>${this.applyWarning.message}</span>
-                ${this.applyWarning.retry ? html`<button class="btn btn-sm" style="margin-inline-start:var(--space-md)" @click=${() => this.applyWarning?.retry?.()}>重试应用</button>` : ''}
-              </app-notice>
-            </div>` : ''}
-
+          ${this._renderMutationOutcome()}
           ${this.formMsg ? html`<div class="msg msg-err" role="alert">${this.formMsg}</div>` : ''}
           <div class="section-body">
       <div class="connection-identity">
@@ -1065,7 +1103,7 @@ export class LLMConfigPage extends LitElement {
           ${this.editing!.is_default ? html`
             <span style="font-size:var(--text-xs);color:var(--accent-text);font-weight:500">★ 默认提供商</span>
           ` : html`
-            <button class="btn" style="font-size:var(--text-xs);padding:var(--space-xs) var(--space-md)" @click=${() => this._setDefault(this.editing!)}>设为默认</button>
+            <button class="btn" style="font-size:var(--text-xs);padding:var(--space-xs) var(--space-md)" ?disabled=${!this.editing!.enabled} @click=${() => this._setDefault(this.editing!)}>设为默认</button>
           `}
         </div>
       ` : ''}

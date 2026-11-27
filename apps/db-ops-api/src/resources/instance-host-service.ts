@@ -33,7 +33,7 @@ export interface HostedInstanceDetail extends InstanceHostMapping {
 export interface InstanceHostStore {
   instanceExists(id: number): Promise<boolean>;
   serversExist(ids: number[]): Promise<number[]>;
-  replaceInstanceHosts(instanceId: number, mappings: InstanceHostMapping[], now?: Date): Promise<InstanceHostDetail[]>;
+  replaceInstanceHosts(instanceId: number, mappings: InstanceHostMapping[], now?: Date, serverScope?: ReadonlySet<number>): Promise<InstanceHostDetail[]>;
   expireInstanceHost(instanceId: number, serverId: number, now?: Date): Promise<boolean>;
   listInstanceHosts(instanceId: number): Promise<InstanceHostDetail[]>;
   listServerInstances(serverId: number): Promise<HostedInstanceDetail[]>;
@@ -74,7 +74,8 @@ export class InstanceHostService {
       throw new Error('RESOURCE_FORBIDDEN');
     }
     if (!await this.store.instanceExists(instanceId)) throw new Error('INSTANCE_NOT_FOUND');
-    return this.store.listInstanceHosts(instanceId);
+    const hosts = await this.store.listInstanceHosts(instanceId);
+    return hosts.filter(({ serverId }) => canReadResource(actor, { type: 'server', id: serverId }));
   }
 
   async replaceHosts(actor: ActorContext, instanceId: number, rawMappings: InstanceHostMapping[]): Promise<InstanceHostDetail[]> {
@@ -83,16 +84,21 @@ export class InstanceHostService {
       throw new Error('RESOURCE_FORBIDDEN');
     }
     const mappings = this.normalizeMappings(rawMappings);
+    if (mappings.some(({ serverId }) => !canManageResource(actor, { type: 'server', id: serverId }))) {
+      throw new Error('RESOURCE_FORBIDDEN');
+    }
     if (!await this.store.instanceExists(instanceId)) throw new Error('INSTANCE_NOT_FOUND');
     const existingIds = new Set(await this.store.serversExist(mappings.map((mapping) => mapping.serverId)));
     if (mappings.some((mapping) => !existingIds.has(mapping.serverId))) throw new Error('SERVER_NOT_FOUND');
-    return this.store.replaceInstanceHosts(instanceId, mappings);
+    const serverScope = actor.resourceBoundary ? new Set(actor.resourceBoundary.serverIds) : undefined;
+    return this.store.replaceInstanceHosts(instanceId, mappings, undefined, serverScope);
   }
 
   async unlinkHost(actor: ActorContext, instanceId: number, serverId: number): Promise<boolean> {
     this.assertId(instanceId);
     this.assertId(serverId);
-    if (!canManageResource(actor, { type: 'instance', id: instanceId }) || !hasPermission(actor, 'servers:manage')) {
+    if (!canManageResource(actor, { type: 'instance', id: instanceId })
+      || !canManageResource(actor, { type: 'server', id: serverId })) {
       throw new Error('RESOURCE_FORBIDDEN');
     }
     return this.store.expireInstanceHost(instanceId, serverId);
@@ -100,7 +106,7 @@ export class InstanceHostService {
 
   async listInstances(actor: ActorContext, serverId: number): Promise<HostedInstanceDetail[]> {
     this.assertId(serverId);
-    if (!hasPermission(actor, 'servers:view')) throw new Error('RESOURCE_FORBIDDEN');
+    if (!canReadResource(actor, { type: 'server', id: serverId })) throw new Error('RESOURCE_FORBIDDEN');
     const rows = await this.store.listServerInstances(serverId);
     return rows.filter((row) => canReadResource(actor, { type: 'instance', id: row.instanceId }));
   }
@@ -160,7 +166,12 @@ export class MysqlInstanceHostStore implements InstanceHostStore {
     return rows.map((row) => Number(row.id));
   }
 
-  async replaceInstanceHosts(instanceId: number, mappings: InstanceHostMapping[], now = new Date()): Promise<InstanceHostDetail[]> {
+  async replaceInstanceHosts(
+    instanceId: number,
+    mappings: InstanceHostMapping[],
+    now = new Date(),
+    serverScope?: ReadonlySet<number>,
+  ): Promise<InstanceHostDetail[]> {
     const connection = await this.pool().getConnection();
     try {
       await connection.beginTransaction();
@@ -185,6 +196,8 @@ export class MysqlInstanceHostStore implements InstanceHostStore {
       const desired = new Map(mappings.map((mapping) => [mapping.serverId, mapping]));
       const unchanged = new Set<number>();
       for (const row of rows) {
+        // A bounded editor submits only the hosts it can manage.
+        if (serverScope && !serverScope.has(Number(row.server_id))) continue;
         const current = normalizeRowMapping(row);
         const next = desired.get(current.serverId);
         const validFrom = new Date(row.valid_from);
@@ -217,7 +230,8 @@ export class MysqlInstanceHostStore implements InstanceHostStore {
         [instanceId, now, now],
       );
       await connection.commit();
-      return enrichedRows.map((row) => ({
+      const visibleRows = serverScope ? enrichedRows.filter((row) => serverScope.has(Number(row.server_id))) : enrichedRows;
+      return visibleRows.map((row) => ({
         ...normalizeRowMapping(row), host: row.host, port: Number(row.port), label: row.label,
         osType: row.os_type, status: row.status, collectionEnabled: Boolean(row.collection_enabled),
         validFrom: new Date(row.valid_from),

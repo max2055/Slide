@@ -781,6 +781,7 @@ class SqlExecutor {
    */
   async executeSql(instanceId: number, sql: string, context?: {
     userId?: string; username?: string; ipAddress?: string; database?: string; timeoutMs?: number;
+    requiredDbType?: 'mysql';
     approvalGrant?: ApprovalExecutionGrant;
   }): Promise<{
     success: boolean;
@@ -849,6 +850,9 @@ class SqlExecutor {
     if (!conn) {
       return { success: false, error: '实例未连接' };
     }
+    if (context?.requiredDbType && conn.db_type !== context.requiredDbType) {
+      return { success: false, error: 'SQL_TARGET_DB_TYPE_CHANGED' };
+    }
 
     // Re-classify with actual db_type for dialect-specific rules
     const reclassification = classifySql(sql, conn.db_type as 'mysql' | 'postgresql' | 'oracle' | 'dameng');
@@ -891,7 +895,7 @@ class SqlExecutor {
     let targetAcknowledged = false;
     let oracleRollbackAcknowledged = false;
     try {
-      let result: any;
+      let result: { rows?: unknown; fields?: unknown; affectedRows?: unknown };
       const isReadOnly = reclassification.commandType === 'read';
       const timeoutMs = this.normalizeTimeout(context?.timeoutMs);
 
@@ -909,6 +913,7 @@ class SqlExecutor {
           }
           const connection = await pool.getConnection();
           let transactionStarted = false;
+          let selectedDatabase: string | undefined;
           let discard = false;
           const discardConnection = () => {
             if (discard) return;
@@ -922,6 +927,7 @@ class SqlExecutor {
             if (context?.database) {
               const escapedDb = context.database.replace(/`/g, '``');
               await connection.query('USE `' + escapedDb + '`');
+              selectedDatabase = context.database;
             }
             if (isReadOnly) {
               await connection.query('START TRANSACTION READ ONLY');
@@ -939,7 +945,8 @@ class SqlExecutor {
               await connection.query('COMMIT');
               transactionStarted = false;
             }
-            return { rows, fields };
+            const affectedRows = rows && typeof rows === 'object' && 'affectedRows' in rows ? rows.affectedRows : undefined;
+            return { rows, fields, affectedRows };
           } catch (error) {
             if (transactionStarted) await connection.query('ROLLBACK').catch(() => undefined);
             if (!isReadOnly && isMysqlStatementTimeout(error)) {
@@ -974,8 +981,20 @@ class SqlExecutor {
                 discardConnection();
               }
             }
-            if (discard) discardConnection();
-            else connection.release();
+            const defaultDatabase = conn.config?.database;
+            if (!discard && selectedDatabase && selectedDatabase !== defaultDatabase) {
+              if (!defaultDatabase) {
+                // MySQL has no USE statement to clear the selected database.
+                discardConnection();
+              } else {
+                try {
+                  await connection.query('USE `' + defaultDatabase.replace(/`/g, '``') + '`');
+                } catch {
+                  discardConnection();
+                }
+              }
+            }
+            if (!discard) connection.release();
           }
         });
         if (mysqlResult && typeof mysqlResult === 'object' && 'intentRejected' in mysqlResult) {
@@ -1019,7 +1038,7 @@ class SqlExecutor {
             commitAttempted = true;
             await pgClient.query('COMMIT');
             commitAcknowledged = true;
-            return { rows: pgResult.rows, fields: pgResult.fields };
+            return { rows: pgResult.rows, fields: pgResult.fields, affectedRows: pgResult.rowCount };
           } catch (error) {
             if (began && !commitAcknowledged) {
               try {
@@ -1068,7 +1087,7 @@ class SqlExecutor {
                   fields.forEach((f: any, i: number) => { obj[f.name] = row[i]; });
                   return obj;
                 });
-            return { rows, fields };
+            return { rows, fields, affectedRows: oracleResult.rowsAffected };
           } catch (error) {
             if (readOnlyTransaction || isDml) {
               try {
@@ -1140,7 +1159,7 @@ class SqlExecutor {
                   fields.forEach((f: any, i: number) => { obj[f.name] = row[i]; });
                   return obj;
                 });
-            return { statement: { rows, fields } };
+            return { statement: { rows, fields, affectedRows: dmResult.rowsAffected } };
           } catch (error) {
             primaryError = error;
             if (readOnlyTransaction || reclassification.commandType === 'write') {
@@ -1190,6 +1209,11 @@ class SqlExecutor {
       const columns = Array.isArray(result.fields)
         ? result.fields.map((f: any) => f.name)
         : Object.keys(rows[0] || {});
+      const affectedRows = result.affectedRows;
+      const rowCount = reclassification.commandType === 'write'
+        && typeof affectedRows === 'number' && Number.isSafeInteger(affectedRows) && affectedRows >= 0
+        ? affectedRows
+        : rows.length;
 
       // 审计记录. A failed audit does not change a commit the driver already acknowledged.
       let auditStatus: 'recorded' | 'failed' | undefined;
@@ -1204,7 +1228,7 @@ class SqlExecutor {
             sqlText: sql.substring(0, 500),
             durationMs: duration_ms,
             status: 'success',
-            rowCount: rows.length,
+            rowCount,
             ipAddress: context?.ipAddress,
             approvalRequestId: context?.approvalGrant?.approvalRequestId,
           });
@@ -1218,10 +1242,11 @@ class SqlExecutor {
         await sqlExecutionIntent.finish(operationId!, 'succeeded', {
           duration_ms,
           targetAcknowledged: true,
+          rowCount,
           ...(auditStatus ? { auditStatus, ...(auditStatus === 'failed' ? { auditError: 'AUDIT_LOG_FAILED' } : {}) } : {}),
         });
       }
-      return { success: true, columns, rows, rowCount: rows.length, truncated, duration_ms,
+      return { success: true, columns, rows, rowCount, truncated, duration_ms,
         ...(isMutation ? {
           executionState: 'succeeded' as const,
           operationId,

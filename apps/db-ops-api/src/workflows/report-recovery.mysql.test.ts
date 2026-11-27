@@ -44,7 +44,7 @@ describe.skipIf(!port)('report recovery in isolated MySQL', () => {
   });
   beforeEach(async () => {
     await pool.query('DROP TRIGGER IF EXISTS fail_report_commit');
-    for (const table of ['report_schedule_occurrences', 'outbox_events', 'workflow_jobs', 'reports', 'notification_delivery_states', 'notification_delivery_attempts', 'report_notification_deliveries', 'report_configs']) await pool.query(`DELETE FROM ${table}`);
+    for (const table of ['report_schedule_occurrences', 'outbox_events', 'workflow_attempts', 'workflow_jobs', 'reports', 'notification_delivery_states', 'notification_delivery_attempts', 'report_notification_deliveries', 'report_configs']) await pool.query(`DELETE FROM ${table}`);
     await pool.query("INSERT INTO report_configs (id, type, server_id, notification_channel_ids) VALUES (1, 'server_health', 1, '[1]')");
     store = new MysqlReportOccurrenceStore(() => pool);
     workflows = new MysqlWorkflowStore(() => pool as any);
@@ -96,6 +96,98 @@ describe.skipIf(!port)('report recovery in isolated MySQL', () => {
     expect(await rows('SELECT * FROM outbox_events WHERE published_at IS NOT NULL')).toHaveLength(1);
     expect(await rows("SELECT * FROM workflow_jobs WHERE job_type = 'report.notify'")).toHaveLength(1);
   }
+  it('P06 records a failed generation and the successful retry against the same report job', async () => {
+    await store.schedule(first, { ...config, notification_channel_ids: [] });
+    await ready();
+    const h = registry();
+    h.generation.mockRejectedValueOnce(new Error('generation failed'));
+    expect(await run(h)).toBe('retry');
+    await pool.query("UPDATE workflow_jobs SET available_at = DATE_SUB(NOW(), INTERVAL 1 SECOND) WHERE job_type = 'report.occurrence'");
+    expect(await run(h)).toBe('completed');
+
+    const [job] = await rows("SELECT id, attempts, state FROM workflow_jobs WHERE job_type = 'report.occurrence'");
+    expect(job).toMatchObject({ attempts: 2, state: 'completed' });
+    const attempts = await rows('SELECT * FROM workflow_attempts ORDER BY attempt_number');
+    expect(attempts).toMatchObject([
+      { job_id: job.id, attempt_number: 1, worker_id: 'restarted', fencing_token: 1, state: 'failed', error_message: 'WORKFLOW_HANDLER_FAILED' },
+      { job_id: job.id, attempt_number: 2, worker_id: 'restarted', fencing_token: 2, state: 'succeeded', error_message: null },
+    ]);
+    for (const attempt of attempts) expect(attempt.finished_at.getTime()).toBeGreaterThanOrEqual(attempt.started_at.getTime());
+    expect(await rows('SELECT id FROM reports')).toHaveLength(1);
+    expect(await rows('SELECT id FROM outbox_events')).toHaveLength(0);
+  });
+  it('P06 abandons a claim that expired before report admission and fences late updates', async () => {
+    await enqueue();
+    const old = (await workflows.claim('expired', 30))!;
+    expect(await rows('SELECT * FROM workflow_attempts')).toMatchObject([
+      { job_id: old.id, attempt_number: 1, state: 'running', finished_at: null },
+    ]);
+    await expire();
+    const other = new MysqlWorkflowStore(() => secondPool as any);
+    const claims = await Promise.all([workflows.claim('first', 30), other.claim('second', 30)]);
+    expect(claims.filter(Boolean)).toHaveLength(1);
+    const current = claims[0] ?? claims[1]!;
+    const owner = claims[0] ? 'first' : 'second';
+    expect(await workflows.complete(old.id, 'expired', old.fencingToken)).toBe(false);
+    expect(await workflows.fail(old, 'expired', new Error('late'), null)).toBe(false);
+    expect(await workflows.complete(old.id, owner, old.fencingToken)).toBe(false);
+    expect(await workflows.fail(old, owner, new Error('stale fence'), null)).toBe(false);
+    expect(await workflows.complete(current.id, owner, current.fencingToken)).toBe(true);
+    expect(await rows('SELECT * FROM workflow_attempts ORDER BY attempt_number')).toMatchObject([
+      { job_id: old.id, attempt_number: 1, worker_id: 'expired', fencing_token: old.fencingToken,
+        state: 'abandoned', error_message: 'WORKFLOW_LEASE_LOST', finished_at: expect.any(Date) },
+      { job_id: current.id, attempt_number: 2, worker_id: owner, fencing_token: current.fencingToken,
+        state: 'succeeded', error_message: null, finished_at: expect.any(Date) },
+    ]);
+  });
+  it('P06 rolls back a report lease when writing the corresponding running attempt fails', async () => {
+    await enqueue();
+    await pool.query("CREATE TRIGGER fail_report_commit BEFORE INSERT ON workflow_attempts FOR EACH ROW SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'INJECTED_ATTEMPT_FAILURE'");
+    await expect(workflows.claim('failed-claim', 30)).rejects.toThrow('INJECTED_ATTEMPT_FAILURE');
+    expect(await rows('SELECT state, attempts, fencing_token, lease_owner FROM workflow_jobs')).toEqual([
+      { state: 'queued', attempts: 0, fencing_token: 0, lease_owner: null },
+    ]);
+    expect(await rows('SELECT id FROM workflow_attempts')).toHaveLength(0);
+    await pool.query('DROP TRIGGER fail_report_commit');
+    expect(await workflows.claim('first-valid-claim', 30)).toMatchObject({ attempts: 1, fencingToken: 1 });
+  });
+  it('P06 rolls back a provisional claim if the lease expires while recording its attempt', async () => {
+    await enqueue();
+    await pool.query('CREATE TRIGGER fail_report_commit BEFORE INSERT ON workflow_attempts FOR EACH ROW DO SLEEP(2)');
+    await expect(workflows.claim('expired-provisional-claim', 1)).rejects.toThrow('WORKFLOW_ATTEMPT_CLAIM_NOT_READABLE');
+    expect(await rows('SELECT state, attempts, fencing_token, lease_owner FROM workflow_jobs')).toEqual([
+      { state: 'queued', attempts: 0, fencing_token: 0, lease_owner: null },
+    ]);
+    expect(await rows('SELECT id FROM workflow_attempts')).toHaveLength(0);
+  });
+  it('P06 rolls back a completion or failure when the attempt update fails', async () => {
+    await enqueue();
+    const job = (await workflows.claim('current', 30))!;
+    await pool.query("CREATE TRIGGER fail_report_commit BEFORE UPDATE ON workflow_attempts FOR EACH ROW SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'INJECTED_ATTEMPT_FINISH_FAILURE'");
+    await expect(workflows.complete(job.id, 'current', job.fencingToken)).rejects.toThrow('INJECTED_ATTEMPT_FINISH_FAILURE');
+    await expect(workflows.fail(job, 'current', new Error('failed'), null)).rejects.toThrow('INJECTED_ATTEMPT_FINISH_FAILURE');
+    expect(await rows('SELECT state, attempts, fencing_token, lease_owner FROM workflow_jobs')).toEqual([
+      { state: 'running', attempts: 1, fencing_token: 1, lease_owner: 'current' },
+    ]);
+    expect(await rows('SELECT state, finished_at FROM workflow_attempts')).toEqual([{ state: 'running', finished_at: null }]);
+    await pool.query('DROP TRIGGER fail_report_commit');
+    expect(await workflows.complete(job.id, 'current', job.fencingToken)).toBe(true);
+  });
+  it('P06 lets an existing unjournaled lease finish and leaves notification execution unjournaled', async () => {
+    const legacy = createReportOccurrenceJob(first);
+    await workflows.enqueue(legacy);
+    await pool.execute(
+      "UPDATE workflow_jobs SET state = 'running', attempts = 1, fencing_token = 1, lease_owner = 'legacy', lease_expires_at = DATE_ADD(NOW(), INTERVAL 30 SECOND) WHERE id = ?",
+      [legacy.id],
+    );
+    expect(await workflows.complete(legacy.id, 'legacy', 1)).toBe(true);
+    await workflows.enqueue({ id: 'notify-fixture', type: 'report.notify', schemaVersion: 1, payload: {}, idempotencyKey: 'notify-fixture' });
+    await ready();
+    const notify = (await workflows.claim('notify-owner', 30))!;
+    expect(notify.type).toBe('report.notify');
+    expect(await workflows.complete(notify.id, 'notify-owner', notify.fencingToken)).toBe(true);
+    expect(await rows('SELECT id FROM workflow_attempts')).toHaveLength(0);
+  });
   it('another due occurrence succeeds even when the first generation fails', async () => {
     const configs = [config, { ...config, id: 2 }];
     await new ReportScheduler({ getEnabledConfigs: async () => configs }, store).scheduleDue(first.occurrenceAt);
@@ -217,6 +309,8 @@ describe.skipIf(!port)('report recovery in isolated MySQL', () => {
     try {
       await expect(notifications.execute(notify, context)).rejects.toThrow('INJECTED_RESPONSE_LOSS');
       expect(smtp.messages).toHaveLength(1);
+      expect(smtp.messages[0]).toContain('saved');
+      expect(smtp.messages[0]).toContain(`/api/reports/${report.id}/download`);
       await workflows.fail(notify, context.workerId, new Error('response lost'), new Date(Date.now() - 1000));
       await store.schedule(first, config);
       const retry = (await workflows.claim('sender2', 30))!;

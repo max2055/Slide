@@ -98,6 +98,24 @@ describe('Feishu notification settings', () => {
     expect(subject.error).toContain('open.feishu.cn');
   });
 
+  it('saves a new Feishu webhook without an optional signing key', async () => {
+    authFetch.mockResolvedValue(response([]));
+    const subject = page();
+    document.body.append(subject);
+    await subject.load();
+    const webhookUrl = 'https://open.feishu.cn/open-apis/bot/v2/hook/no-signature';
+    subject.webhookUrl = webhookUrl;
+    authFetch.mockResolvedValueOnce(response({ id: 10 }));
+    await subject.save();
+    expect(authFetch).toHaveBeenLastCalledWith('/api/notification/channels', expect.objectContaining({
+      method: 'POST', body: JSON.stringify({
+        name: '飞书告警', type: 'feishu', enabled: false, config: { webhook_url: webhookUrl, severity: 'info' },
+      }),
+    }));
+    expect(subject.channelId).toBe(10);
+    expect(subject.hasStoredCredential).toBe(false);
+  });
+
   it('loads an existing email channel without placing SMTP credentials in the form', async () => {
     authFetch.mockResolvedValue(response([{
       id: 12, name: '邮件告警', type: 'email', enabled: true,
@@ -177,6 +195,27 @@ describe('Feishu notification settings', () => {
     await subject.test();
 
     expect(authFetch).toHaveBeenLastCalledWith('/api/notification/channels/14/test', { method: 'POST' });
+    authFetch.mockResolvedValueOnce(response({ error: 'INTERNAL_ERROR' }, false, 500));
+    await subject.test();
+    expect(subject.error).toBe('测试邮件发送失败，请核对 SMTP 配置和接收端。');
+  });
+
+  it('reports empty successful HTTP responses as unconfirmed save and test receipts', async () => {
+    authFetch.mockResolvedValue(response([{
+      id: 9, name: '飞书告警', type: 'feishu', enabled: false,
+      config: { hasWebhook: true, hasCredential: true },
+    }]));
+    const subject = page();
+    document.body.append(subject);
+    await subject.load();
+    subject.secret = 'unsaved-fixture-input';
+    authFetch.mockResolvedValueOnce(new Response(null, { status: 200 }));
+    await subject.save();
+    expect(subject.error).toContain('保存回执未确认');
+    expect(subject.secret).toBe('unsaved-fixture-input');
+    authFetch.mockResolvedValueOnce(new Response(null, { status: 200 }));
+    await subject.test();
+    expect(subject.error).toContain('测试发送回执未确认');
   });
 });
 

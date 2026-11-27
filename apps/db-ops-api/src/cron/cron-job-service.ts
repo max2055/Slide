@@ -6,8 +6,11 @@ import { cronStorageError, validateCronPagination } from './cron-storage-error.j
 import mysql from 'mysql2/promise';
 import { dbConnection } from '../db-connection';
 import { CronJobConfig, CronJobLog, CronJobParam } from './types';
+import type { CronRun } from './cron-run-store.js';
 import { validateCronTimeoutSeconds } from '../adapter/runtime-policy.js';
 import { DATABASE_LOG_COLLECTION_DESCRIPTION, DATABASE_LOG_COLLECTION_HANDLER } from './database-log-collection.js';
+
+type CronCancellationReceipt = Pick<CronRun, 'runId' | 'triggeredBy' | 'startedAt' | 'runnerFinishedAt' | 'errorCode'>;
 
 export class CronJobDatabaseService {
   /**
@@ -106,14 +109,22 @@ export class CronJobDatabaseService {
   /**
    * 更新任务配置（仅更新非 undefined 的字段）
    */
-  async updateJob(id: number, data: Partial<Pick<CronJobConfig, 'task_description' | 'cron_expr' | 'enabled' | 'task_type' | 'script_id' | 'script_binding' | 'target_instance_id' | 'timezone' | 'description' | 'timeout_seconds' | 'retry_count' | 'owner_user_id' | 'principal_type' | 'resource_scope' | 'identity_status' | 'identity_audit'>>): Promise<boolean> {
+  async updateJob(id: number, data: Partial<Pick<CronJobConfig, 'name' | 'task_description' | 'cron_expr' | 'enabled' | 'task_type' | 'script_id' | 'script_binding' | 'target_instance_id' | 'timezone' | 'description' | 'timeout_seconds' | 'retry_count' | 'owner_user_id' | 'principal_type' | 'resource_scope' | 'identity_status' | 'identity_audit'>>): Promise<boolean> {
     if (data.timeout_seconds !== undefined) validateCronTimeoutSeconds(data.timeout_seconds);
+    if (data.name !== undefined && (typeof data.name !== 'string' || !data.name.trim() || [...data.name].length > 100)) {
+      throw new Error('CRON_INVALID_JOB_NAME');
+    }
     const pool = this.getPool();
     if (!pool) throw new Error('数据库未连接');
 
     try {
       const updates: string[] = [];
       const values: any[] = [];
+
+      if (data.name !== undefined) {
+        updates.push('name = ?');
+        values.push(data.name);
+      }
 
       if (data.task_description !== undefined) {
         updates.push('task_description = ?');
@@ -187,6 +198,7 @@ export class CronJobDatabaseService {
 
       return (result as any).affectedRows > 0;
     } catch (error: any) {
+      if (data.name !== undefined && error?.code === 'ER_DUP_ENTRY') throw new Error('CRON_JOB_NAME_CONFLICT');
       console.error('更新定时任务失败:', error);
       throw error;
     }
@@ -466,7 +478,11 @@ export class CronJobDatabaseService {
   /**
    * 获取任务执行日志（按时间倒序）
    */
-  async getLogs(jobId: number, limit: number = 20, offset: number = 0): Promise<{ logs: CronJobLog[]; total: number }> {
+  async getLogs(jobId: number, limit: number = 20, offset: number = 0): Promise<{
+    logs: CronJobLog[];
+    total: number;
+    cancellations?: CronCancellationReceipt[];
+  }> {
     validateCronPagination(limit, offset);
     const pool = this.getPool();
     if (!pool) throw cronStorageError('getLogs');
@@ -488,7 +504,19 @@ export class CronJobDatabaseService {
         [jobId]
       ) as any;
 
-      return { logs: rows as CronJobLog[], total };
+      // A rejected execution can finish before a worker log exists. Preserve
+      // its durable receipt without treating it as a log or duplicating rows.
+      const [cancellations] = await pool.execute<(mysql.RowDataPacket & CronCancellationReceipt)[]>(
+        `SELECT run_id AS runId, triggered_by AS triggeredBy, started_at AS startedAt,
+                runner_finished_at AS runnerFinishedAt, error_code AS errorCode
+         FROM cron_runs
+         WHERE job_id = ? AND status = 'cancelled' AND log_id IS NULL
+         ORDER BY started_at DESC, run_id DESC
+         LIMIT ${Number(limit)} OFFSET ${Number(offset)}`,
+        [jobId],
+      );
+
+      return { logs: rows as CronJobLog[], total, ...(cancellations.length ? { cancellations } : {}) };
     } catch (error) {
       throw cronStorageError('getLogs', error);
     }

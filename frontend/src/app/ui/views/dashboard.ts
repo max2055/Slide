@@ -257,7 +257,11 @@ export class DashboardPage extends LitElement {
     if (!['good', 'degraded'].includes(metric.quality)) return o(metric.quality === 'invalid' ? 'invalid' : 'unknown');
     return o('stale');
   }
-  private unit(metric: string) { return metric.includes('temperature') ? ' °C' : ['connections', 'qps'].includes(metric) ? '' : '%'; }
+  private unit(metric: string) {
+    if (metric === 'device_uptime_seconds') return ' s';
+    if (metric.includes('temperature')) return ' °C';
+    return ['connections', 'qps'].includes(metric) ? '' : '%';
+  }
   private renderMetrics(items: OverviewItem[]) {
     if (this.resourceScope === 'all') return nothing;
     const metrics = metricConfig[this.resourceScope];

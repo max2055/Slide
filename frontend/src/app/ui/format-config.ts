@@ -3,6 +3,7 @@
  * Uses user preferences from settings for locale, timezone, and date format.
  */
 import type { UiSettings } from "./storage.ts";
+import { i18n } from "../i18n/index.ts";
 
 let _cachedSettings: Partial<UiSettings> = {};
 
@@ -11,7 +12,7 @@ export function setFormatSettings(settings: Partial<UiSettings>) {
 }
 
 function getLocale(): string {
-  return _cachedSettings.locale || "en";
+  return _cachedSettings.locale || i18n.getLocale();
 }
 
 function getTimezone(): string | undefined {
@@ -56,18 +57,19 @@ export function formatNumber(n: number | null | undefined): string {
 /** Format a relative time string */
 export function formatRelativeTime(date: Date | string | number): string {
   const d = typeof date === "object" ? date : new Date(date);
-  const now = Date.now();
-  const diffMs = now - d.getTime();
-  const diffSec = Math.floor(diffMs / 1000);
-  const diffMin = Math.floor(diffSec / 60);
-  const diffHr = Math.floor(diffMin / 60);
-  const diffDay = Math.floor(diffHr / 24);
-
-  if (diffSec < 60) return "just now";
-  if (diffMin < 60) return `${diffMin}m ago`;
-  if (diffHr < 24) return `${diffHr}h ago`;
-  if (diffDay < 7) return `${diffDay}d ago`;
-  return d.toLocaleDateString(getLocale());
+  const minutes = Math.trunc((d.getTime() - Date.now()) / 60_000);
+  const hours = Math.trunc(minutes / 60);
+  const days = Math.trunc(hours / 24);
+  const relative = new Intl.RelativeTimeFormat(getLocale(), { numeric: "auto" });
+  if (Math.abs(minutes) < 1) return relative.format(0, "second");
+  if (Math.abs(minutes) < 60) return relative.format(minutes, "minute");
+  if (Math.abs(hours) < 24) return relative.format(hours, "hour");
+  if (Math.abs(days) < 7) return relative.format(days, "day");
+  try {
+    return d.toLocaleDateString(getLocale(), { timeZone: getTimezone() });
+  } catch {
+    return d.toLocaleDateString(getLocale());
+  }
 }
 
 /** Format duration in ms */

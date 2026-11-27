@@ -14,11 +14,13 @@ import type {
   ConfigBackupSchedule as BackupSchedule,
   ConfigBackupSummary,
   ConfigBackupSummariesResponse,
+  LatestMetricObservations,
   NetworkDevice,
   NetworkDeviceRelation,
   NetworkDeviceInterface,
 } from "../../../api/generated/public-api.js";
 import { showToast } from "../components/app-toast-container.js";
+import { metricRequest } from '../components/metric-api.js';
 import { networkDeviceLabel, networkDeviceError } from './network-device-labels.js';
 import "../components/app-badge.js";
 import "../components/app-card.js";
@@ -77,6 +79,7 @@ export class NetworkDeviceDetail extends LitElement {
   private interfaceRequest = 0;
   private overviewRequest = 0;
   @state() private interfaces: NetworkDeviceInterface[] = [];
+  @state() private interfaceFreshness = new Map<number, 'fresh' | 'stale'>();
   @state() private interfacesLoading = false;
   @state() private interfacesError = '';
   @state() private interfaceSearch = '';
@@ -89,6 +92,7 @@ export class NetworkDeviceDetail extends LitElement {
     ++this.contextVersion; ++this.interfaceRequest; ++this.overviewRequest;
     this.device = null; this.relations = []; this.backups = []; this.selectedBackup = null; this.backupSchedule = null;
     this.interfaces = []; this.overview = null; this.lastRead = null; this.loading = false;
+    this.interfaceFreshness = new Map();
     this.error = '权限或登录状态已变更，请重新打开资源。';
   };
   override firstUpdated() {
@@ -155,6 +159,7 @@ export class NetworkDeviceDetail extends LitElement {
     const version = ++this.contextVersion;
     this.device = null; this.relations = []; this.backups = []; this.backupSchedule = null; this.selectedBackup = null;
     this.interfaces = []; ++this.interfaceRequest; this.interfacesError = ''; this.interfacesLoading = false;
+    this.interfaceFreshness = new Map();
     this.interfaceSearch = ''; this.interfaceStatus = ''; this.lastRead = null;
     this.backupLoading = false; this.selectedBackupLoading = false; this.scheduleSaving = false;
     void this.loadOverview(id, version);
@@ -199,6 +204,7 @@ export class NetworkDeviceDetail extends LitElement {
     const request = ++this.interfaceRequest;
     const current = () => version === this.contextVersion && id === this.validId() && request === this.interfaceRequest;
     this.interfaces = []; this.interfacesLoading = true; this.interfacesError = '';
+    this.interfaceFreshness = new Map();
     try {
       const response = await authFetch(`/api/network-devices/${id}/interfaces`, { signal: AbortSignal.timeout(15000) });
       if (!current()) return;
@@ -213,9 +219,31 @@ export class NetworkDeviceDetail extends LitElement {
       if (!current()) return;
       if (!Array.isArray(body?.interfaces)) throw new Error();
       this.interfaces = body.interfaces;
+      if (this.interfaces.length) void this.loadInterfaceFreshness(id, this.interfaces, current);
     } catch { if (current()) this.interfacesError = '接口记录读取失败'; }
     finally { if (current()) this.interfacesLoading = false; }
   }
+
+  private async loadInterfaceFreshness(id: number, rows: NetworkDeviceInterface[], current: () => boolean) {
+    try {
+      const latest = await metricRequest<LatestMetricObservations>('latest', { type: 'network_device', id }, AbortSignal.timeout(15000));
+      if (!current() || latest.resource?.id !== id || latest.resource.type !== 'network_device') return;
+      const observations = latest.metrics.find(metric => metric.definition.id === 'network.interface.oper_up')?.series ?? [];
+      const freshness = new Map<number, 'fresh' | 'stale'>();
+      for (const row of rows) {
+        const seenAt = Date.parse(row.lastSeenAt ?? '');
+        // The inventory timestamp has second precision. Match a single observation in the same discovery batch.
+        const matches = observations.filter(point => point.dimensions.if_index === String(row.ifIndex)
+          && Math.abs(Date.parse(point.observed_at) - seenAt) < 1000);
+        const point = matches.length === 1 ? matches[0] : undefined;
+        if (point?.freshness === 'fresh' || point?.freshness === 'stale') freshness.set(row.ifIndex, point.freshness);
+      }
+      this.interfaceFreshness = freshness;
+    } catch {
+      // Historical inventory remains readable when matching metric evidence is unavailable.
+    }
+  }
+
   private renderInterfaces() {
     const rows = this.interfaces.filter(row => (!this.interfaceStatus || row.operStatus === this.interfaceStatus) && `${row.ifName} ${row.ifAlias ?? ''} ${row.ifIndex}`.toLowerCase().includes(this.interfaceSearch.trim().toLowerCase()));
     const status = (value: string) => ({up:'已启用',down:'已停用',testing:'测试中',unknown:'未知',notPresent:'不存在',lowerLayerDown:'下层链路中断',dormant:'休眠'}[value] ?? value);
@@ -223,9 +251,19 @@ export class NetworkDeviceDetail extends LitElement {
       <label>名称或别名 <input aria-label="接口名称或别名" .value=${this.interfaceSearch} @input=${(e:Event)=>this.interfaceSearch=(e.target as HTMLInputElement).value}></label>
       <label>运行状态 <select aria-label="接口运行状态" .value=${this.interfaceStatus} @change=${(e:Event)=>this.interfaceStatus=(e.target as HTMLSelectElement).value}><option value="">全部状态</option>${[...new Set([...this.interfaces.map(row=>row.operStatus), this.interfaceStatus].filter(Boolean))].map(value=>html`<option value=${value}>${status(value)}</option>`)}</select></label>
       <button aria-busy=${String(this.interfacesLoading)} class="btn btn-refresh" ?disabled=${this.interfacesLoading} @click=${()=>this.loadInterfaces()}>${this.interfacesError ? "重试读取接口" : "刷新接口"}</button>
-    </div>${!this.interfacesLoading && !this.interfacesError ? html`<p class="meta">显示 ${rows.length} / ${this.interfaces.length} 个已保存接口。速率为接口标称容量，不代表实测流量；最后发现时间不代表当前在线。</p>` : nothing}
-      ${this.interfacesError ? html`<p role="alert" class="error">${this.interfacesError}</p>` : this.interfacesLoading ? html`<p role="status">正在读取接口…</p>` : rows.length ? html`<app-data-table tabindex="0" role="region" aria-label="接口列表，可横向滚动" .dense=${true} .columns=${[{key:'name',label:'接口 / 别名'},{key:'status',label:'管理 / 运行状态'},{key:'speed',label:'标称容量'},{key:'seen',label:'最后发现'}]}
-        .rows=${rows.map(row=>({name:html`<strong>${row.ifName}</strong><div>${row.ifAlias || '无别名'} · #${row.ifIndex}</div>`,status:`${status(row.adminStatus)} / ${status(row.operStatus)}`,speed:row.speedBps === null ? '未知' : `${row.speedBps} bit/s`,seen:row.lastSeenAt ? new Date(row.lastSeenAt).toLocaleString('zh-CN') : '未知'}))}></app-data-table>` : html`<app-empty-state title=${this.interfaces.length ? '没有匹配的接口' : '设备没有已保存的接口记录'} description="接口记录缺失不代表设备没有接口，也不能推断设备健康。"></app-empty-state>`}
+    </div>${!this.interfacesLoading && !this.interfacesError ? html`<p class="meta">显示 ${rows.length} / ${this.interfaces.length} 个已保存接口。实测流量见「指标与趋势」。最后发现时间不代表当前在线。</p>` : nothing}
+      ${this.interfacesError ? html`<p role="alert" class="error">${this.interfacesError}</p>` : this.interfacesLoading ? html`<p role="status">正在读取接口…</p>` : rows.length ? html`<app-data-table tabindex="0" role="region" aria-label="接口列表，可横向滚动" .dense=${true} .columns=${[{key:'name',label:'接口 / 别名'},{key:'status',label:'管理 / 运行状态（发现时）'},{key:'speed',label:'标称容量'},{key:'seen',label:'最后发现'}]}
+        .rows=${rows.map(row => {
+          const state = this.interfaceFreshness.get(row.ifIndex);
+          return {
+            name: html`<strong>${row.ifName}</strong><div>${row.ifAlias || '无别名'} · #${row.ifIndex}</div>`,
+            status: `${status(row.adminStatus)} / ${status(row.operStatus)}`,
+            speed: row.speedBps === null ? '未知' : `${row.speedBps} bit/s`,
+            seen: html`${row.lastSeenAt ? html`<time datetime=${row.lastSeenAt}>${new Date(row.lastSeenAt).toLocaleString('zh-CN')}</time>` : '未知'}
+              ${state === 'stale' ? html`<div><app-badge variant="warn">发现记录已过期</app-badge></div>`
+                : state === undefined ? html`<div><app-badge variant="muted">发现时效待确认</app-badge></div>` : nothing}`,
+          };
+        })}></app-data-table>` : html`<app-empty-state title=${this.interfaces.length ? '没有匹配的接口' : '设备没有已保存的接口记录'} description="接口记录缺失不代表设备没有接口，也不能推断设备健康。"></app-empty-state>`}
     </app-card>`;
   }
   private renderOverview() {

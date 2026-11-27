@@ -191,6 +191,18 @@ export class FeishuNotificationSettings extends LitElement {
     await this.saveFeishu();
   }
 
+  private async confirmSave(response: Response) {
+    const body = await response.json().catch(() => null);
+    if (!response.ok) throw new Error(body?.error || `保存失败 (${response.status})`);
+    if (this.channelId) {
+      if (typeof body?.message === 'string' && body.message.trim()) return;
+    } else if (Number.isSafeInteger(body?.id) && body.id > 0) {
+      this.channelId = body.id;
+      return;
+    }
+    throw new Error('保存回执未确认，请刷新通道核对。');
+  }
+
   private async saveFeishu() {
     this.error = '';
     const trimmedUrl = this.webhookUrl.trim();
@@ -202,10 +214,6 @@ export class FeishuNotificationSettings extends LitElement {
     }
     if (trimmedUrl && !normalizedUrl) {
       this.error = 'Webhook 必须是 open.feishu.cn 的 HTTPS 飞书机器人地址。';
-      return;
-    }
-    if (!this.channelId && !trimmedSecret) {
-      this.error = '创建通道时必须填写飞书签名密钥。';
       return;
     }
     this.saving = true;
@@ -224,10 +232,7 @@ export class FeishuNotificationSettings extends LitElement {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ name: '飞书告警', type: 'feishu', enabled: this.enabled, config }),
         });
-      const response = await request;
-      const body = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(body?.error || `保存失败 (${response.status})`);
-      if (!this.channelId) this.channelId = Number(body.id);
+      await this.confirmSave(await request);
       this.secret = '';
       this.webhookUrl = '';
       this.hasStoredCredential = this.hasStoredCredential || Boolean(trimmedSecret);
@@ -294,10 +299,7 @@ export class FeishuNotificationSettings extends LitElement {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ name: '邮件告警', type: 'email', enabled: this.enabled, config }),
         });
-      const response = await request;
-      const body = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(body?.error || `保存失败 (${response.status})`);
-      if (!this.channelId) this.channelId = Number(body.id);
+      await this.confirmSave(await request);
       this.emailPassword = '';
       this.emailRefreshToken = '';
       this.emailHasStoredCredential = this.emailHasStoredCredential || Boolean(password || refreshToken);
@@ -349,13 +351,17 @@ export class FeishuNotificationSettings extends LitElement {
     if (!this.channelId || this.saving || this.testing) return;
     this.testing = true;
     this.error = '';
+    const fallback = this.selectedType === 'email'
+      ? '测试邮件发送失败，请核对 SMTP 配置和接收端。'
+      : '飞书测试消息发送失败，请核对飞书配置和接收端。';
     try {
       const response = await authFetch(`/api/notification/channels/${this.channelId}/test`, { method: 'POST' });
       const body = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(body?.error || `测试失败 (${response.status})`);
+      if (!response.ok) throw new Error(body?.error && body.error !== 'INTERNAL_ERROR' ? body.error : fallback);
+      if (body?.success !== true) throw new Error('测试发送回执未确认，请检查收件端。');
       showToast(this.selectedType === 'email' ? '测试邮件已发送，请检查收件箱。' : '测试消息已发送，请在飞书群中确认。', 'success');
     } catch (error: any) {
-      this.error = error.message || (this.selectedType === 'email' ? '邮件测试发送失败' : '飞书测试发送失败');
+      this.error = error.message || fallback;
     } finally {
       this.testing = false;
     }

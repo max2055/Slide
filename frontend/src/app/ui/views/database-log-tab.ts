@@ -843,7 +843,7 @@ export class DatabaseLogTab extends LitElement {
                           } else {
                             this.selectedIds = new Set();
                           }
-                        }} ?checked=${this.selectedIds.size === filteredLogs.length && filteredLogs.length > 0}>
+                        }} .checked=${this.selectedIds.size === filteredLogs.length && filteredLogs.length > 0}>
                       </th>
                       <th style="width:160px;text-align:center">时间</th>
                       <th style="width:80px;text-align:center">级别</th>
@@ -860,7 +860,7 @@ export class DatabaseLogTab extends LitElement {
                             <input
                               type="checkbox"
                               aria-label=${`选择日志 ${log.id}`}
-                              ?checked=${this.selectedIds.has(log.id)}
+                              .checked=${this.selectedIds.has(log.id)}
                               @change=${() => this._toggleSelect(log.id)}
                             >
                           </td>

@@ -19,7 +19,7 @@ import { notificationService } from './notification-service.js';
 import { publicNotificationDto } from './security/public-dto.js';
 import { validateNotificationChannelConfig, isNotificationChannelType } from './notification-channel-config.js';
 import { createVerifyToken } from './auth-middleware.js';
-import { requirePermission } from './auth/require-permission.js';
+import { hasPermission, requirePermission } from './auth/require-permission.js';
 import { actorContextService } from './auth/actor-context.js';
 import { smtpRecipient } from './workflows/delivery-test-recipients.js';
 
@@ -56,7 +56,7 @@ describe.skipIf(!input)('MAX-590 #296/#342 real MySQL and normal notification en
     const source = readFileSync(new URL('../server.ts', import.meta.url), 'utf8');
     const fragment = source.slice(source.indexOf('  function validateWebhookUrl('),
       source.indexOf('  registerDeliveryRoutes(fastify,'));
-    const deps = { fastify: app, verifyToken: createVerifyToken(jwtSecret), requirePermission,
+    const deps = { fastify: app, verifyToken: createVerifyToken(jwtSecret), requirePermission, hasPermission,
       notificationDatabaseService: channels, notificationService, publicNotificationDto,
       validateNotificationChannelConfig, isNotificationChannelType };
     new Function(...Object.keys(deps), transpileModule(fragment, {}).outputText)(...Object.values(deps));

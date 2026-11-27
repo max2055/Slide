@@ -236,7 +236,7 @@ export function buildOpenApiDocument() {
         put: { operationId: 'updateCronJob', security: [{ bearerAuth: [] }], parameters: [pathId('id')],
           description: 'Requires cron:manage and current target access. owner_user_id is admin-only; principal_type, handler_key, resource_scope and identity fields are server-owned. Maintenance handlers cannot be replaced by arbitrary descriptions or Agent tasks. Rebinding retains the paused state; enable explicitly after review.',
           requestBody: { required: true, content: { 'application/json': { schema: refSchema(PublicApiSchemas.CronJobUpdateRequest) } } },
-          responses: { '200': { description: 'Updated' }, '400': { description: 'Invalid binding or server-owned authority supplied' }, '403': { description: 'Current target or owner rebinding permission denied' }, '404': { description: 'Job absent or inaccessible' } },
+          responses: { '200': { description: 'Updated' }, '400': { description: 'Invalid name, binding or server-owned authority supplied' }, '403': { description: 'Current target or owner rebinding permission denied' }, '404': { description: 'Job absent or inaccessible' }, '409': { description: 'Job name already exists' } },
         },
       },
       '/api/cron/jobs/{id}/run': {
@@ -424,7 +424,7 @@ export function buildOpenApiDocument() {
         get: {
           operationId: 'listInstanceHosts', security: [{ bearerAuth: [] }], parameters: [pathId('id')],
           responses: {
-            '200': { description: 'Active Linux hosts related to the database instance', content: { 'application/json': { schema: refSchema(PublicApiSchemas.InstanceHostsResponse) } } },
+            '200': { description: 'Active Linux host mappings within the actor’s current authorized server scope', content: { 'application/json': { schema: refSchema(PublicApiSchemas.InstanceHostsResponse) } } },
             '400': { description: 'Invalid resource identifier', content: { 'application/json': { schema: refSchema(PublicApiSchemas.ErrorResponse) } } },
             '401': { description: 'Authentication required', content: { 'application/json': { schema: refSchema(PublicApiSchemas.ErrorResponse) } } },
             '404': { description: 'Instance unavailable or unauthorized', content: { 'application/json': { schema: refSchema(PublicApiSchemas.ErrorResponse) } } },
@@ -435,10 +435,10 @@ export function buildOpenApiDocument() {
           operationId: 'replaceInstanceHosts', security: [{ bearerAuth: [] }], parameters: [pathId('id')],
           requestBody: { required: true, content: { 'application/json': { schema: refSchema(PublicApiSchemas.ReplaceInstanceHostsBody) } } },
           responses: {
-            '200': { description: 'Atomically replaced and enriched active host mappings', content: { 'application/json': { schema: refSchema(PublicApiSchemas.ReplaceInstanceHostsResponse) } } },
+            '200': { description: 'Atomically replaces and returns enriched mappings within the actor’s authorized server scope while preserving mappings outside it', content: { 'application/json': { schema: refSchema(PublicApiSchemas.ReplaceInstanceHostsResponse) } } },
             '400': { description: 'Invalid mapping payload or missing target server', content: { 'application/json': { schema: refSchema(PublicApiSchemas.ErrorResponse) } } },
             '401': { description: 'Authentication required', content: { 'application/json': { schema: refSchema(PublicApiSchemas.ErrorResponse) } } },
-            '404': { description: 'Instance unavailable or unauthorized', content: { 'application/json': { schema: refSchema(PublicApiSchemas.ErrorResponse) } } },
+            '404': { description: 'Instance or requested server mapping unavailable or unauthorized', content: { 'application/json': { schema: refSchema(PublicApiSchemas.ErrorResponse) } } },
             '500': { description: 'Relationship operation failed', content: { 'application/json': { schema: refSchema(PublicApiSchemas.ErrorResponse) } } },
           },
         },
@@ -471,16 +471,16 @@ export function buildOpenApiDocument() {
         get: {
           operationId: 'getServerDiagnostics', security: [{ bearerAuth: [] }], parameters: [
             pathId('id'),
-            { name: 'refresh', in: 'query', required: false, schema: { type: 'boolean', default: false } },
+            { name: 'refresh', in: 'query', required: false, description: 'Collect fresh evidence with server management permission. By default this operation only reads the latest snapshot.', schema: { type: 'boolean', default: false } },
           ],
           responses: {
-            '200': { description: 'Fixed-profile read-only server diagnostics', content: { 'application/json': { schema: refSchema(PublicApiSchemas.ServerDiagnostics) } } },
+            '200': { description: 'Fixed-profile server diagnostic snapshot, with stale evidence identified by its quality and gaps', content: { 'application/json': { schema: refSchema(PublicApiSchemas.ServerDiagnostics) } } },
             '400': { description: 'Invalid server identifier', content: { 'application/json': { schema: refSchema(PublicApiSchemas.ErrorResponse) } } },
             '401': { description: 'Authentication required', content: { 'application/json': { schema: refSchema(PublicApiSchemas.ErrorResponse) } } },
-            '403': { description: 'Server view permission required', content: { 'application/json': { schema: refSchema(PublicApiSchemas.ErrorResponse) } } },
-            '404': { description: 'Server unavailable', content: { 'application/json': { schema: refSchema(PublicApiSchemas.ErrorResponse) } } },
+            '403': { description: 'Server view permission required. An explicit refresh also requires server management permission.', content: { 'application/json': { schema: refSchema(PublicApiSchemas.ErrorResponse) } } },
+            '404': { description: 'Server or diagnostic snapshot unavailable', content: { 'application/json': { schema: refSchema(PublicApiSchemas.ErrorResponse) } } },
             '422': { description: 'Server operating-system profile unsupported', content: { 'application/json': { schema: refSchema(PublicApiSchemas.ErrorResponse) } } },
-            '503': { description: 'Diagnostics unavailable or stale evidence returned by a later read', content: { 'application/json': { schema: refSchema(PublicApiSchemas.ErrorResponse) } } },
+            '503': { description: 'Diagnostics unavailable', content: { 'application/json': { schema: refSchema(PublicApiSchemas.ErrorResponse) } } },
           },
         },
       },
@@ -672,12 +672,13 @@ export interface CronJobIdentity {
   principal_type: 'user' | 'system-maintenance';
   identity_status: 'bound' | 'owner-required';
   identity_audit: Record<string, unknown> | null;
+  target_database?: string;
   resource_scope: { version: 1; targetInstanceId: number | null; instanceIds: number[]; serverIds: number[]; networkDeviceIds: number[] } | null;
   [key: string]: unknown;
 }
 export interface CronJobUpdateRequest {
-  owner_user_id?: number; task_description?: string; cron_expr?: string; enabled?: boolean;
-  task_type?: 'agent' | 'script'; target_instance_id?: number | null; script_id?: number;
+  name?: string; owner_user_id?: number; task_description?: string; cron_expr?: string; enabled?: boolean;
+  task_type?: 'agent' | 'script'; target_instance_id?: number | null; target_database?: string | null; script_id?: number;
   control_sql_capability?: 'read-only' | 'baseline-cleanup-v1' | 'silence-cleanup-v1';
   timezone?: string; description?: string; timeout_seconds?: number; retry_count?: number;
 }

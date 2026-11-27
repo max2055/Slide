@@ -28,6 +28,7 @@ import { startMetricRetention } from './src/workflows/metric-retention-handler.j
 import { registerWorkflowHandlers, registerCronRunHandler } from './src/workflows/register-workflow-handlers.js';
 import { registerHealthRoutes } from './src/health-routes.js';
 import { registerLLMSceneRoutes } from './src/llm/scene-routes.js';
+import { LLMConfigurationError, resolveSceneModel } from './src/llm/scene-routing.js';
 import { registerModelDiscoveryRoutes } from './src/llm/model-discovery.js';
 import { registerConnectionTestRoutes } from './src/llm/connection-test-routes.js';
 import { capacityInstanceIds } from './src/capacity-scope.js';
@@ -107,7 +108,7 @@ import { registerChatRoutes } from './src/chat-routes.js';
 import { reportService } from './src/report-service.js';
 import { getReportAccessScope } from './src/report-access.js';
 import { reportDatabaseService } from './src/report-database-service.js';
-import { reportConfigService, ReportConfigCreateOutcomeUnknownError } from './src/report-config-database-service.js';
+import { reportConfigService, ReportConfigCreateOutcomeUnknownError, ReportConfigTargetConflictError, type UpdateReportConfigData } from './src/report-config-database-service.js';
 import { InvalidReportCronError } from './src/report-cron.js';
 import { ReportType } from './src/report-database-service.js';
 import { reportExporter } from './src/report-exporter.js';
@@ -157,7 +158,7 @@ import { queryAuditLogs, auditLogManager, DatabaseAuditLogStore } from './src/au
 import { registerSystemAuditRoutes } from './src/audit/system-audit-routes.js';
 import { sqlExecutor } from './src/sql-executor.js';
 import { classifySql } from './src/sql-validator.js';
-import { PersistentOperationService } from './src/operations/operation-service.js';
+import { OperationRetryUnavailableError, PersistentOperationService } from './src/operations/operation-service.js';
 import { migrateNotificationCredentials } from './src/notification-credential-migration.js';
 import { MigrationRunner } from './src/migrations/runner.js';
 import { WorkerLease, type LeasePool } from './src/lifecycle/worker-lease.js';
@@ -186,7 +187,7 @@ import { CronManager } from './src/cron/cron-manager';
 import { CronExecutor } from './src/cron/cron-executor';
 import { CronJob } from 'cron';
 import { registerCronRoutes } from './src/cron/cron-routes.js';
-import { createLLMProvider, createActorBoundToolRegistry, getAgentEngine, createCronToolRegistry, resumeAgentEngine, disposeAgentEngine } from './src/adapter/get-agent-engine.js';
+import { createBootstrapLLMProvider, createLLMProvider, createActorBoundToolRegistry, getAgentEngine, createCronToolRegistry, resumeAgentEngine, disposeAgentEngine } from './src/adapter/get-agent-engine.js';
 import { reloadOutcome } from './src/llm-config-reload.js';
 import { DirectAdapter } from './src/adapter/direct-adapter.js';
 import { AgentRunner } from '@slide/agent-core';
@@ -228,7 +229,6 @@ const fastify = Fastify({
 // JWT 密钥
 const securityConfig = loadSecurityConfig();
 const JWT_SECRET = securityConfig.jwtSecret || 'development-only-jwt-secret-not-for-production';
-const JWT_EXPIRES_IN = '1h';
 const rbacService = new RbacService();
 const operationService = new PersistentOperationService(() => dbConnection.getPool() as any);
 const workflowWorkerId = randomUUID();
@@ -431,12 +431,12 @@ async function start() {
           port: inst.port,
           user: inst.username,
           password,
-          database: inst.database_name || (inst.db_type === 'postgresql' ? 'postgres' : inst.db_type === 'mysql' ? 'mysql' : undefined),
+          database: inst.database_name || (inst.db_type === 'postgresql' ? 'postgres' : undefined),
           db_type: inst.db_type,
         }), () => databaseService.removeConnection(inst.id));
         if (ok) {
           recoveredConnections.add(inst.id); reconnected++;
-          await instanceDatabaseService.recordDetectedVersion(inst.id, await databaseService.detectVersion(inst.id));
+          await instanceDatabaseService.recordDetectedVersion(inst.id, await databaseService.detectVersion(inst.id), inst.db_type);
         }
       } catch (e: any) {
         startup.signal.throwIfAborted();
@@ -639,8 +639,9 @@ async function start() {
         undefined,
         String(request.id),
       );
-      const token = signAccessToken(actor, JWT_SECRET, JWT_EXPIRES_IN);
       const sessionConfig = await authSessionConfigService.get();
+      const expiresIn = authSessionConfigService.accessTokenSeconds(sessionConfig);
+      const token = signAccessToken(actor, JWT_SECRET, expiresIn);
       const refreshToken = await actorContextService.issueRefreshToken(
         actor,
         authSessionConfigService.expiresAt(sessionConfig),
@@ -657,7 +658,7 @@ async function start() {
       return reply.send({
         token,
         refreshToken,
-        expiresIn: 3600,
+        expiresIn,
         user: {
           id: actor.userId,
           username: actor.username,
@@ -683,15 +684,16 @@ async function start() {
         String(request.id),
         authSessionConfigService.expiresAt(sessionConfig),
       );
-      const newAccessToken = signAccessToken(rotated.actor, JWT_SECRET, JWT_EXPIRES_IN);
-      reply.send({
+      const expiresIn = authSessionConfigService.accessTokenSeconds(sessionConfig);
+      const newAccessToken = signAccessToken(rotated.actor, JWT_SECRET, expiresIn);
+      return reply.send({
         token: newAccessToken,
         refreshToken: rotated.refreshToken,
-        expiresIn: 3600,
+        expiresIn,
       });
     } catch (error) {
       if (!(error instanceof ActorAuthenticationError)) return reply.code(503).send(platformUnavailableResponse);
-      reply.code(401).send({ error: '无效的 refresh token' });
+      return reply.code(401).send({ error: '无效的 refresh token' });
     }
   });
 
@@ -742,9 +744,9 @@ async function start() {
       if (!result.success) {
         return reply.code(400).send(result);
       }
-      reply.code(201).send(result);
+      return reply.code(201).send(result);
     } catch (error: any) {
-      reply.code(500).send({ error: '创建用户失败：' + error.message });
+      return reply.code(500).send({ error: '创建用户失败：' + error.message });
     }
   });
 
@@ -771,9 +773,9 @@ async function start() {
       if (!result.success) {
         return reply.code(400).send(result);
       }
-      reply.send(result);
+      return reply.send(result);
     } catch (error: any) {
-      reply.code(500).send({ error: '更新用户失败：' + error.message });
+      return reply.code(500).send({ error: '更新用户失败：' + error.message });
     }
   });
 
@@ -789,9 +791,9 @@ async function start() {
       if (!result.success) {
         return reply.code(result.code === 'USER_HAS_RETAINED_RECORDS' ? 409 : 400).send(result);
       }
-      reply.send(result);
+      return reply.send(result);
     } catch (error: any) {
-      reply.code(500).send({ error: '删除用户失败，请稍后重试' });
+      return reply.code(500).send({ error: '删除用户失败，请稍后重试' });
     }
   });
 
@@ -807,9 +809,9 @@ async function start() {
       if (!result.success) {
         return reply.code(400).send(result);
       }
-      reply.send(result);
+      return reply.send(result);
     } catch (error: any) {
-      reply.code(500).send({ error: '重置密码失败：' + error.message });
+      return reply.code(500).send({ error: '重置密码失败：' + error.message });
     }
   });
 
@@ -851,14 +853,21 @@ async function start() {
 
   // ========== LLM 配置管理 API (CRUD) ==========
 
-  async function reloadChatProvider(): Promise<void> {
-    const engine = await getAgentEngine();
-    if (engine instanceof DirectAdapter) {
-      const newProvider = await createLLMProvider();
-      engine.setProvider(newProvider);
-    }
-    await llmService.reloadConfig();
+  let providerReload = Promise.resolve();
+  function reloadChatProvider(): Promise<void> {
+    const reload = providerReload.then(async () => {
+      const engine = await getAgentEngine();
+      const provider = engine instanceof DirectAdapter ? await createLLMProvider() : undefined;
+      await llmService.reloadConfig();
+      if (engine instanceof DirectAdapter && provider) engine.setProvider(provider);
+    });
+    providerReload = reload.catch(() => undefined);
+    return reload;
   }
+
+  fastify.post('/api/llm/configs/reload', { preHandler: [verifyToken, requirePermission('llm:manage')] }, async (request, reply) => {
+    return reply.send(await reloadOutcome(request.log, reloadChatProvider));
+  });
 
   // 列表
   fastify.get('/api/llm/configs', { preHandler: [verifyToken, requirePermission('llm:view')] }, async (request, reply) => {
@@ -876,9 +885,9 @@ async function start() {
       const { id } = request.params as any;
       const config = await llmDatabaseService.getProviderById(Number(id));
       if (!config) return reply.code(404).send({ error: '提供商不存在' });
-      reply.send(publicLLMProvider(config));
+      return reply.send(publicLLMProvider(config));
     } catch (error: any) {
-      reply.code(500).send({ error: '获取 LLM 配置失败：' + error.message });
+      return reply.code(500).send({ error: '获取 LLM 配置失败：' + error.message });
     }
   });
 
@@ -918,10 +927,10 @@ async function start() {
       const provider = await llmDatabaseService.getProviderById(Number(id));
       if (!provider) return reply.code(404).send({ error: '提供商不存在' });
       const result = await llmDatabaseService.deleteProvider(provider.name);
-      await reloadChatProvider();
-      reply.send(result);
+      if (!result.success) return reply.send(result);
+      return reply.send({ ...result, ...await reloadOutcome(request.log, reloadChatProvider) });
     } catch (error: any) {
-      reply.code(500).send({ error: '删除 LLM 配置失败：' + error.message });
+      return reply.code(500).send({ error: '删除 LLM 配置失败：' + error.message });
     }
   });
 
@@ -947,7 +956,7 @@ async function start() {
       if (!provider) return reply.code(404).send({ error: '提供商不存在' });
       const result = await llmDatabaseService.setDefaultProvider(provider.name);
       if (!result.success) return reply.send(result);
-      return reply.send({ ...result, ...await reloadOutcome(request.log, () => llmService.reloadConfig()) });
+      return reply.send({ ...result, ...await reloadOutcome(request.log, reloadChatProvider) });
     } catch (error: any) {
       reply.code(500).send({ error: '设置默认失败：' + error.message });
     }
@@ -1015,10 +1024,10 @@ async function start() {
   fastify.post('/api/alerts/:id/read', { preHandler: [verifyToken, requirePermission('alert:manage')] }, async (request, reply) => {
     try {
       const { id } = request.params as any;
-      if (!await requireAlertAccess(request, reply, Number(id), 'read-write')) return;
-      const result = await alertDatabaseService.acknowledgeAlert(Number(id));
-      reply.send(result);
-    } catch (error: any) { reply.code(500).send({ error: error.message }); }
+      if (!await requireAlertAccess(request, reply, Number(id), 'read-write')) return reply;
+      const result = await alertDatabaseService.acknowledgeAlert(Number(id), (request as any).user.userId);
+      return reply.code(result.success ? 200 : result.error === 'ALERT_NOT_ACKNOWLEDGEABLE' ? 409 : 503).send(result);
+    } catch (error: any) { return reply.code(500).send({ error: error.message }); }
   });
 
   fastify.delete('/api/alerts', { preHandler: [verifyToken, requirePermission('alert:manage')] }, async (request, reply) => {
@@ -1066,6 +1075,10 @@ async function start() {
     service: chatDatabaseService,
     handleChatSend,
     getGreeting: getAgentGreeting,
+    getModelDefaults: async () => {
+      const { provider, model } = await resolveSceneModel(llmDatabaseService, 'chat', { requiresFunctionCall: true });
+      return { model, modelProvider: provider.name };
+    },
   });
 
   fastify.get('/api/resources/:type/:id', { preHandler: [verifyToken] }, async (request, reply) => {
@@ -1187,12 +1200,12 @@ async function start() {
   // ========== Agent Management API ==========
 
   // GET /api/agent/skills — 列出所有技能
-  fastify.get('/api/agent/skills', { preHandler: [verifyToken] }, async (_request, reply) => {
+  fastify.get('/api/agent/skills', { preHandler: [verifyToken, requirePermission('ai:view')] }, async (_request, reply) => {
     try {
       const skills = agentManagementService.listSkills();
       return { ok: true, skills };
     } catch (error: any) {
-      reply.code(500).send({ error: '获取技能列表失败：' + error.message });
+      return reply.code(500).send({ error: '获取技能列表失败：' + error.message });
     }
   });
 
@@ -1200,14 +1213,17 @@ async function start() {
   fastify.post('/api/agent/skills/:name/toggle', { preHandler: [verifyToken, requirePermission('config:manage')] }, async (request, reply) => {
     try {
       const { name } = request.params as { name: string };
-      const { enabled } = request.body as { enabled: boolean };
+      const check = strictBody(request.body, ['enabled'], 'POST /api/agent/skills/:name/toggle');
+      if (check.error) return reply.code(400).send(check.error);
+      const { enabled } = check.body;
+      if (typeof enabled !== 'boolean') return reply.code(400).send({ error: 'enabled 必须为布尔值' });
       const success = agentManagementService.toggleSkill(name, enabled);
       if (!success) {
         return reply.code(404).send({ ok: false, error: 'Skill not found' });
       }
       return { ok: true };
     } catch (error: any) {
-      reply.code(500).send({ error: '切换技能状态失败：' + error.message });
+      return reply.code(500).send({ error: '切换技能状态失败：' + error.message });
     }
   });
 
@@ -1285,12 +1301,12 @@ async function start() {
   });
 
   // GET /api/agent/tools — 列出所有工具
-  fastify.get('/api/agent/tools', { preHandler: [verifyToken] }, async (_request, reply) => {
+  fastify.get('/api/agent/tools', { preHandler: [verifyToken, requirePermission('ai:view')] }, async (_request, reply) => {
     try {
       const tools = await agentManagementService.listTools();
       return { ok: true, tools };
     } catch (error: any) {
-      reply.code(500).send({ error: '获取工具列表失败：' + error.message });
+      return reply.code(500).send({ error: '获取工具列表失败：' + error.message });
     }
   });
 
@@ -1342,15 +1358,15 @@ async function start() {
     try {
       const { type } = request.params as { type: string };
       const { version } = request.body as { version: number };
-      if (!version || version < 1) return reply.code(400).send({ error: '版本号无效' });
+      if (!Number.isSafeInteger(version) || version < 1) return reply.code(400).send({ error: '版本号无效' });
       const info = promptManager.getTypeInfo(type);
       if (!info) return reply.code(404).send({ error: '提示词类型不存在' });
-      const exists = info.versions.some(v => v.version === version);
+      const exists = await promptManager.setActiveVersion(type, version);
       if (!exists) return reply.code(404).send({ error: `版本 v${version} 不存在` });
-      promptManager.setActiveVersion(version);
       return { ok: true, activeVersion: version };
     } catch (error: any) {
-      reply.code(500).send({ error: '切换版本失败：' + error.message });
+      request.log.error({ code: 'PROMPT_VERSION_SWITCH_FAILED' }, 'Prompt activation could not be saved');
+      return reply.code(500).send({ error: '切换版本失败，请重试' });
     }
   });
 
@@ -1506,12 +1522,12 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
         port: instance.port,
         user: instance.username,
         password,
-        database: instance.database_name || (instance.db_type === 'postgresql' ? 'postgres' : instance.db_type === 'mysql' ? 'mysql' : undefined),
+          database: instance.database_name || (instance.db_type === 'postgresql' ? 'postgres' : undefined),
         db_type: instance.db_type,
       });
       if (added) {
         await instanceDatabaseService.markInstanceActive(Number(id));
-        await instanceDatabaseService.recordDetectedVersion(Number(id), await databaseService.detectVersion(Number(id)));
+        await instanceDatabaseService.recordDetectedVersion(Number(id), await databaseService.detectVersion(Number(id)), instance.db_type);
         return reply.send({ success: true, message: '连接已建立，统一采集按当前绑定调度',
           configuration: await metricConfigurationService.status((request as any).user, { type: 'instance', id: Number(id) }) });
       } else {
@@ -1575,7 +1591,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
   fastify.post('/api/servers', { preHandler: [verifyToken, requirePermission('servers:manage')] }, async (request, reply) => {
     try {
       const data = request.body as any;
-      const bodyError = warnUnknown(data, ['host','port','label','os_type','credential_type','credential_username','credential_value','host_key_fingerprint','ssh_trust_mode','created_by'], 'POST /api/servers');
+      const bodyError = warnUnknown(data, ['host','port','label','environment','os_type','credential_type','credential_username','credential_value','host_key_fingerprint','ssh_trust_mode','created_by'], 'POST /api/servers');
       if (bodyError) return reply.code(400).send(bodyError);
       if (!data.host) return reply.code(400).send({ error: '缺少必填字段：host' });
       if (!data.os_type) return reply.code(400).send({ error: '缺少必填字段：os_type' });
@@ -1599,7 +1615,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
     try {
       const { id } = request.params as any;
       const data = request.body as any;
-      const bodyError = warnUnknown(data, ['host','port','label','os_type','credential_type','credential_username','credential_value','host_key_fingerprint','ssh_trust_mode','collection_enabled'], 'PUT /api/servers/:id');
+      const bodyError = warnUnknown(data, ['host','port','label','environment','os_type','credential_type','credential_username','credential_value','host_key_fingerprint','ssh_trust_mode','collection_enabled'], 'PUT /api/servers/:id');
       if (bodyError) return reply.code(400).send(bodyError);
       if (data.ssh_trust_mode === 'insecure' && (data.credential_type ?? (await serverDatabaseService.getServerById(Number(id)))?.credential_type) === 'key') {
         await recordSshTrustRequest(Number((request as any).user?.userId), 'server', String(id), data.ssh_trust_mode);
@@ -1726,24 +1742,32 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
     } catch (error) { return metricReadFailure(reply, error); }
   });
 
-  // Read-only fixed-profile diagnostics. The collection endpoint only
-  // triggers the same backend-defined commands; it cannot accept a shell
-  // command, path, or host supplied by the caller.
+  const requireDiagnosticManagement = requirePermission('servers:manage');
+  const publicDiagnosticError = (code: string) => code === 'SSH_COMMAND_PROTOCOL_ERROR' ? 'SSH_COMMAND_FAILED' : code;
   fastify.get('/api/servers/:id/diagnostics', {
-    preHandler: [verifyToken, requirePermission('servers:view')],
+    preHandler: [verifyToken, requirePermission('servers:view'), async (request, reply) => {
+      if ((request.query as { refresh?: string })?.refresh === 'true') {
+        return requireDiagnosticManagement(request, reply);
+      }
+    }],
     schema: { response: { 200: ServerDiagnosticsSchema, 400: ErrorResponseSchema, 401: ErrorResponseSchema, 403: ErrorResponseSchema, 404: ErrorResponseSchema, 422: ErrorResponseSchema, 503: ErrorResponseSchema } },
   }, async (request, reply) => {
     const id = Number((request.params as { id?: string }).id);
     if (!Number.isSafeInteger(id) || id <= 0) return reply.code(400).send({ error: 'SERVER_ID_INVALID' });
     try {
       const query = request.query as { refresh?: string };
-      return reply.send(await serverDiagnosticService.getDiagnostics(id, { refresh: query?.refresh === 'true' }));
+      if (query?.refresh !== 'true') return reply.send(await serverDiagnosticService.readDiagnosticsSnapshot(id));
+      const diagnostics = await serverDiagnosticService.getDiagnostics(id, { refresh: true });
+      return reply.send({
+        ...diagnostics,
+        gaps: diagnostics.gaps.map(gap => ({ ...gap, reason: publicDiagnosticError(gap.reason) })),
+      });
     } catch (error: any) {
       const code = typeof error?.message === 'string' ? error.message : 'DIAGNOSTIC_COLLECTION_FAILED';
-      if (code === 'SERVER_NOT_FOUND') return reply.code(404).send({ error: code });
+      if (code === 'SERVER_NOT_FOUND' || code === 'DIAGNOSTIC_SNAPSHOT_NOT_FOUND') return reply.code(404).send({ error: code });
       if (code === 'HOST_OS_UNSUPPORTED') return reply.code(422).send({ error: code });
       if (code === 'SERVER_ID_INVALID') return reply.code(400).send({ error: code });
-      return reply.code(503).send({ error: code });
+      return reply.code(503).send({ error: publicDiagnosticError(code) });
     }
   });
 
@@ -1759,9 +1783,9 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
     } catch (error: any) {
       const code = typeof error?.message === 'string' ? error.message : 'DIAGNOSTIC_COLLECTION_FAILED';
       if (code === 'SERVER_NOT_FOUND') return reply.code(404).send({ error: code });
-      if (code === 'HOST_OS_UNSUPPORTED') return reply.code(422).send({ error: code });
+      if (code === 'HOST_OS_UNSUPPORTED' || code === 'SSH_TRUST_CONFIRMATION_REQUIRED') return reply.code(422).send({ error: code });
       if (code === 'SERVER_ID_INVALID') return reply.code(400).send({ error: code });
-      return reply.code(503).send({ error: code });
+      return reply.code(503).send({ error: publicDiagnosticError(code) });
     }
   });
 
@@ -1770,17 +1794,19 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
   // POST /api/servers/reports/generate — Generate and persist server health report
   fastify.post('/api/servers/reports/generate', { preHandler: [verifyToken, requirePermission('servers:manage')] }, async (request, reply) => {
     try {
-      const { server_id } = request.body as { server_id?: number };
-      const result = await serverReportService.generateAndPersist(server_id ? [server_id] : undefined, (request as any).user);
-      if (result.success) {
-        reply.send({ reportId: result.reportId, message: '报告生成并持久化成功' });
-      } else {
-        reply.code(500).send({ error: result.error || '生成服务器健康报告失败' });
+      const { server_id } = (request.body ?? {}) as { server_id?: number | null };
+      if (server_id != null && (!Number.isSafeInteger(server_id) || server_id <= 0)) {
+        return reply.code(400).send({ error: 'SERVER_ID_INVALID' });
       }
+      const result = await serverReportService.generateAndPersist(server_id == null ? undefined : [server_id], (request as any).user);
+      if (result.success) {
+        return reply.send({ reportId: result.reportId, message: '报告生成并持久化成功' });
+      }
+      return reply.code(500).send({ error: result.error || '生成服务器健康报告失败' });
     } catch (error: any) {
       if (error instanceof ActorAuthenticationError) return reply.code(401).send({ error: 'AUTH_REQUIRED' });
       if (error instanceof PolicyError) return reply.code(error.status).send({ error: error.code });
-      reply.code(500).send({ error: '生成服务器健康报告失败：' + error.message });
+      return reply.code(500).send({ error: '生成服务器健康报告失败：' + error.message });
     }
   });
 
@@ -2070,9 +2096,9 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
       const list = await approvalService.getPendingRequests(
         getAccessibleInstanceIds((request as any).user),
       );
-      reply.send(list);
+      return reply.send(list);
     } catch (error: any) {
-      reply.code(500).send({ error: error.message });
+      return reply.code(500).send({ error: error.message });
     }
   });
 
@@ -2131,12 +2157,28 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
 
   fastify.post('/api/operations/:id/retry', { preHandler: [verifyToken] }, async (request, reply) => {
     const user = (request as any).user;
+    const scopeDenied = new Error('Approval retry scope denied');
     try {
-      const operation = await operationService.retryForActor(String((request.params as any).id), user.userId);
-      if (operation?.approvalId) await approvalService.setOperationId(operation.approvalId, operation.id);
+      const operation = await operationService.retryForActor(String((request.params as any).id), user.userId, {
+        authorize: async (connection, previous) => {
+          const current = await actorContextService.revalidateActorOn({ execute: connection.query.bind(connection) }, user, String(request.id), true);
+          const instanceId = Number(previous.resource.id);
+          if (previous.resource.type !== 'database-instance' || !Number.isSafeInteger(instanceId) || instanceId <= 0
+            || !hasPermission(new Set(current.permissions), 'instance:query') || !hasInstanceAccess(current, instanceId, 'read-write')) {
+            throw scopeDenied;
+          }
+        },
+        create: (connection, previous, nextId) => approvalService.createRollbackRetry(connection, previous, nextId),
+      });
       return operation ? reply.code(202).send({ operation }) : reply.code(404).send({ error: 'Operation not found' });
-    } catch {
-      return reply.code(409).send({ reasonCode: 'RETRY_NOT_AVAILABLE' });
+    } catch (error) {
+      if (error === scopeDenied) return reply.code(403).send({ reasonCode: 'RETRY_SCOPE_DENIED' });
+      if (error instanceof ActorAuthenticationError) return reply.code(401).send({ error: 'AUTH_REQUIRED' });
+      if (error instanceof PlatformUnavailableError) return reply.code(503).send(platformUnavailableResponse);
+      if (error instanceof OperationRetryUnavailableError) return reply.code(409).send({ reasonCode: 'RETRY_NOT_AVAILABLE' });
+      const code = (error as { code?: unknown })?.code;
+      request.log.error({ code: typeof code === 'string' ? code : undefined }, 'Operation retry could not be confirmed');
+      return reply.code(503).send({ reasonCode: 'RETRY_OUTCOME_UNCONFIRMED' });
     }
   });
 
@@ -2150,9 +2192,9 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
         limit,
         getAccessibleInstanceIds((request as any).user),
       );
-      reply.send(list);
+      return reply.send(list);
     } catch (error: any) {
-      reply.code(500).send({ error: error.message });
+      return reply.code(500).send({ error: error.message });
     }
   });
 
@@ -2283,7 +2325,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
 
       const result = await queryAuditLogs(filterParams);
 
-      reply.send({
+      return reply.send({
         items: result.entries.map(e => ({
           id: e.id,
           sql: e.details?.sql || '',
@@ -2299,7 +2341,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
         offset,
       });
     } catch (error: any) {
-      reply.code(500).send({ error: '获取查询历史失败：' + error.message });
+      return reply.code(500).send({ error: '获取查询历史失败：' + error.message });
     }
   });
 
@@ -2311,9 +2353,9 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
       if (!capacity) {
         return reply.code(404).send({ error: '无法获取容量信息，实例可能未连接' });
       }
-      reply.send(capacity);
-    } catch (error: any) {
-      reply.code(500).send({ error: '获取容量信息失败：' + error.message });
+      return reply.send(capacity);
+    } catch {
+      return reply.code(503).send({ error: 'SOURCE_CAPACITY_READ_FAILED' });
     }
   });
 
@@ -2323,9 +2365,9 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
       const { id } = request.params as any;
       const hours = Number((request.query as any)?.hours) || 168; // 默认 7 天
       const history = await metricsDatabaseService.getCapacityHistory(Number(id), hours);
-      reply.send({ history });
-    } catch (error: any) {
-      reply.code(500).send({ error: '获取容量历史失败：' + error.message });
+      return reply.send({ history });
+    } catch {
+      return reply.code(503).send({ error: 'SOURCE_CAPACITY_HISTORY_READ_FAILED' });
     }
   });
 
@@ -2340,9 +2382,9 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
         const query = request.query as any;
         const days = Math.min(Math.max(1, parseInt(query.days) || 7), 90);
         const history = await instanceDatabaseService.getHealthScoreHistory(Number(id), days);
-        reply.send(history);
+        return reply.send(history);
       } catch (error: any) {
-        reply.code(500).send({ error: error.message });
+        return reply.code(500).send({ error: error.message });
       }
     },
   });
@@ -2357,9 +2399,9 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
         if (!latest) {
           return reply.send({ checks: [], status: 'unknown' });
         }
-        reply.send(latest);
+        return reply.send(latest);
       } catch (error: any) {
-        reply.code(500).send({ error: error.message });
+        return reply.code(500).send({ error: error.message });
       }
     },
   });
@@ -2375,9 +2417,9 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
           return reply.code(404).send({ error: '实例不存在' });
         }
         const capabilities = collectionCapabilityTracker.getCapabilities(Number(id), instance.db_type);
-        reply.send(capabilities);
+        return reply.send(capabilities);
       } catch (error: any) {
-        reply.code(500).send({ error: error.message });
+        return reply.code(500).send({ error: error.message });
       }
     },
   });
@@ -2387,10 +2429,11 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
     preHandler: [verifyToken, requirePermission('metric:view')],
     handler: async (request, reply) => {
       try {
-        const weights = await scoringConfigService.getWeights();
+        const weights = await scoringConfigService.getConfiguredWeights();
         return reply.send(weights);
-      } catch (error: any) {
-        return reply.code(500).send({ error: error.message });
+      } catch (error) {
+        request.log.error({ err: error }, '读取评分权重失败');
+        return reply.code(500).send({ error: '无法读取有效的评分权重，请检查配置后重试' });
       }
     },
   });
@@ -2515,7 +2558,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
       // Cross-instance aggregation with hour-level bucket
       const [rows] = await pool.execute(
         `SELECT time_bucket, SUM(total_size_gb) AS total_size_gb,
-           COUNT(DISTINCT instance_id) AS instance_count, MAX(recorded_at) AS observed_at
+           COUNT(total_size_gb) AS instance_count, MAX(recorded_at) AS observed_at
          FROM (
            SELECT instance_id, total_size_gb, recorded_at,
              DATE_FORMAT(recorded_at, '%Y-%m-%d %H:00:00') AS time_bucket,
@@ -2551,17 +2594,17 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
         currentTotal = Number(current[0]?.current_total || 0);
       }
 
-      reply.send({
+      return reply.send({
         current_total_gb: currentTotal,
         trend: rows.map((r: any) => ({
           time: r.time_bucket,
           total_size_gb: r.total_size_gb == null ? null : Number(r.total_size_gb),
           observed_at: r.observed_at,
-          instance_count: instance_id ? 1 : Number(r.instance_count),
+          instance_count: Number(r.instance_count),
         })),
       });
     } catch (error: any) {
-      reply.code(500).send({ error: error.message });
+      return reply.code(500).send({ error: error.message });
     }
   });
 
@@ -2614,9 +2657,9 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
     try {
       const { id } = request.params as any;
       const databases = await metricsDatabaseService.getCapacityDatabases(Number(id));
-      reply.send({ databases });
-    } catch (error: any) {
-      reply.code(500).send({ error: '获取容量明细失败：' + error.message });
+      return reply.send({ databases });
+    } catch {
+      return reply.code(503).send({ error: 'SOURCE_CAPACITY_DETAILS_READ_FAILED' });
     }
   });
 
@@ -2627,8 +2670,11 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
       try {
         const { id } = request.params as any;
         const capacity = await databaseService.getCapacityInfo(Number(id));
-        if (!capacity || capacity.total_size_gb === undefined) {
+        if (!capacity) {
           return reply.code(404).send({ error: '无法获取容量信息' });
+        }
+        if (!Number.isFinite(capacity.total_size_gb)) {
+          return reply.code(503).send({ error: 'SOURCE_CAPACITY_UNAVAILABLE' });
         }
         const totalTableCount = capacity.databases
           ? capacity.databases.reduce((sum: number, db: any) => sum + (db.table_count || 0), 0)
@@ -2641,12 +2687,12 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
           databases: capacity.databases || [],
         });
         if (result.success) {
-          reply.send({ success: true, data: { total_size_gb: capacity.total_size_gb, db_count: capacity.databases?.length, table_count: totalTableCount } });
+          return reply.send({ success: true, data: { total_size_gb: capacity.total_size_gb, db_count: capacity.databases?.length, table_count: totalTableCount } });
         } else {
-          reply.code(500).send({ error: result.error });
+          return reply.code(503).send({ error: 'SOURCE_CAPACITY_STORE_FAILED' });
         }
-      } catch (error: any) {
-        reply.code(500).send({ error: '容量采集失败：' + error.message });
+      } catch {
+        return reply.code(503).send({ error: 'SOURCE_CAPACITY_STORE_FAILED' });
       }
     }
   });
@@ -2855,7 +2901,10 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
     handler: async (request, reply) => {
       try {
         const { id } = request.params as any;
-        const body = request.body as any;
+        if (!request.body || typeof request.body !== 'object' || Array.isArray(request.body)) {
+          return reply.code(400).send({ error: '报表配置更新必须提供对象' });
+        }
+        const body = request.body as UpdateReportConfigData;
 
         // Validate config exists
         const scope = getReportAccessScope((request as any).user);
@@ -2863,10 +2912,6 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
         if (!existing) {
           return reply.code(404).send({ error: '报表配置不存在' });
         }
-        if (body.instance_id != null && !hasInstanceAccess((request as any).user, Number(body.instance_id), 'read-only')) {
-          return reply.code(403).send({ error: '无权访问该实例' });
-        }
-
         const target = {
           type: body.type === undefined ? existing.type : body.type,
           instance_id: body.instance_id === undefined ? existing.instance_id : body.instance_id,
@@ -2875,6 +2920,9 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
         if (body.enabled !== false || body.type !== undefined || body.instance_id !== undefined || body.server_id !== undefined) {
           try { assertReportTarget(target); }
           catch (error: any) { return reply.code(400).send({ error: error.message }); }
+        }
+        if (body.instance_id != null && !hasInstanceAccess((request as any).user, body.instance_id, 'read-only')) {
+          return reply.code(403).send({ error: '无权访问该实例' });
         }
         if (target.server_id != null && !canReadResource((request as any).user, { type: 'server', id: target.server_id })) {
           return reply.code(403).send({ error: '无权访问该服务器' });
@@ -2904,12 +2952,12 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
           name: body.name,
           cron: body.cron,
           type: body.type,
-          instance_id: body.instance_id !== undefined ? body.instance_id : undefined,
-          server_id: body.server_id !== undefined ? Number(body.server_id) : undefined,
+          instance_id: body.instance_id,
+          server_id: body.server_id,
           format: body.format,
           notification_channel_ids: notificationChannelIds,
           enabled: body.enabled !== undefined ? body.enabled : undefined,
-        }, scope);
+        }, scope, existing);
 
         if (!updated) {
           return reply.code(400).send({ error: '没有可更新的字段' });
@@ -2917,6 +2965,9 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
 
         return reply.send({ message: '更新成功' });
       } catch (error: any) {
+        if (error instanceof ReportConfigTargetConflictError) {
+          return reply.code(409).send({ code: 'REPORT_CONFIG_TARGET_CONFLICT', error: error.message });
+        }
         if (error instanceof InvalidReportCronError) return reply.code(400).send({ error: error.message });
         return reply.code(500).send({ error: error.message });
       }
@@ -3005,11 +3056,14 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
         const safeFormat: string = validFormats.includes(format as any) ? format : 'html';
 
         const report = await reportService.generateReport(type as 'health' | 'performance' | 'slow_query' | 'capacity', instanceId, { format: safeFormat as 'pdf' | 'html' | 'json' | 'csv', actor: (request as any).user });
-        reply.send({ id: report.id, status: report.status, name: report.name });
+        return reply.send({ id: report.id, status: report.status, name: report.name });
       } catch (error: any) {
         if (error instanceof ActorAuthenticationError) return reply.code(401).send({ error: 'AUTH_REQUIRED' });
         if (error instanceof PolicyError) return reply.code(error.status).send({ error: error.code });
-        reply.code(500).send({ error: error.message });
+        if (error instanceof Error && error.message === 'METRIC_SOURCE_PENDING') {
+          return reply.code(422).send({ error: '当前指标来源尚未就绪，请等待正式指标发布后再生成。', reasonCode: 'METRIC_SOURCE_PENDING' });
+        }
+        return reply.code(500).send({ error: error.message });
       }
     }
   });
@@ -3490,10 +3544,17 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
       try {
         const { enabled } = request.query as { enabled?: 'true' | 'false' };
         const enabledFilter = enabled === 'true' ? true : enabled === 'false' ? false : undefined;
+        const actor = (request as any).user;
+        const canManage = actor.username?.toLowerCase?.() === 'admin' || actor.roles?.includes?.('admin') === true
+          || hasPermission(new Set<string>(Array.isArray(actor.permissions) ? actor.permissions : []), 'admin:*');
+        if (!canManage && enabledFilter !== true) return reply.code(403).send({ error: '权限不足' });
         const channels = await notificationDatabaseService.getChannels(enabledFilter);
+        if (!canManage) {
+          return reply.send(channels.map(({ id, name, type, enabled }) => ({ id, name, type, enabled })));
+        }
         return reply.send(channels.map((channel) => publicNotificationDto(channel as unknown as Record<string, unknown>)));
-      } catch (error: any) {
-        return reply.code(500).send({ error: error.message });
+      } catch {
+        return reply.code(500).send({ error: 'INTERNAL_ERROR' });
       }
     }
   });
@@ -3579,12 +3640,11 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
           enabled: data.enabled,
         });
         if (result.success) {
-          reply.send({ message: '更新成功' });
-        } else {
-          reply.code(400).send({ error: result.error });
+          return reply.send({ message: '更新成功' });
         }
-      } catch (error: any) {
-        reply.code(500).send({ error: error.message });
+        return reply.code(400).send({ error: result.error });
+      } catch {
+        return reply.code(500).send({ error: 'INTERNAL_ERROR' });
       }
     }
   });
@@ -3597,12 +3657,11 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
         const { id } = request.params as any;
         const result = await notificationDatabaseService.deleteChannel(Number(id));
         if (result.success) {
-          reply.send({ message: '删除成功' });
-        } else {
-          reply.code(400).send({ error: result.error });
+          return reply.send({ message: '删除成功' });
         }
-      } catch (error: any) {
-        reply.code(500).send({ error: error.message });
+        return reply.code(400).send({ error: result.error });
+      } catch {
+        return reply.code(500).send({ error: 'INTERNAL_ERROR' });
       }
     }
   });
@@ -3635,12 +3694,11 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
         const message = notificationService.buildMessage(channel.type, testAlert, testAlert.instance_name);
         const result = await notificationService.send(channel, message);
         if (result.success) {
-          reply.send({ success: true, message: '测试消息发送成功' });
-        } else {
-          reply.code(500).send({ success: false, error: result.error });
+          return reply.send({ success: true, message: '测试消息发送成功' });
         }
-      } catch (error: any) {
-        reply.code(500).send({ error: error.message });
+        return reply.code(500).send({ success: false, error: result.error });
+      } catch {
+        return reply.code(500).send({ success: false, error: 'INTERNAL_ERROR' });
       }
     }
   });
@@ -3664,9 +3722,9 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
           offset: Number(offset),
         };
         const records = await notificationDatabaseService.getRecords(filters,(request as any).user);
-        reply.send(records);
+        return reply.send(records);
       } catch (error: any) {
-        reply.code(500).send({ error: error.message });
+        return reply.code(500).send({ error: error.message });
       }
     }
   });
@@ -3780,9 +3838,9 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
         };
         const session_key = rcaSessionKey
           || (analysis_type in sessionKeyPrefix ? `${sessionKeyPrefix[analysis_type]}-${analysisId}` : undefined);
-        reply.send({ id: analysisId, status: "pending", session_key });
+        return reply.send({ id: analysisId, status: "pending", session_key });
       } catch (error: any) {
-        reply.code(error instanceof PredictionHorizonError ? 400 : 500).send({ error: error.message });
+        return reply.code(error instanceof PredictionHorizonError ? 400 : 500).send({ error: error.message });
       }
     }
   });
@@ -3800,7 +3858,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
         if (!canReadAnalysis((request as any).user, record)) {
           return reply.code(404).send({ ok: false, error: '分析记录不存在' });
         }
-        reply.send({
+        return reply.send({
           ok: true,
           record: {
             id: record.id,
@@ -3815,7 +3873,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
           }
         });
       } catch (error: any) {
-        reply.code(500).send({ error: error.message });
+        return reply.code(500).send({ error: error.message });
       }
     }
   });
@@ -3843,7 +3901,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
         const records = await aiAnalysisDatabaseService.getAnalysisList(filters, (request as any).user);
         return { ok: true, records };
       } catch (error: any) {
-        reply.code(500).send({ error: error.message });
+        return reply.code(500).send({ error: error.message });
       }
     }
   });
@@ -3861,7 +3919,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
         if (!canReadAnalysis((request as any).user, analysis)) {
           return reply.code(404).send({ error: '分析记录不存在' });
         }
-        reply.send({
+        return reply.send({
           id: analysis.id,
           status: analysis.status,
           analysis_type: analysis.analysis_type,
@@ -3871,7 +3929,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
           error_message: analysis.error_message,
         });
       } catch (error: any) {
-        reply.code(500).send({ error: error.message });
+        return reply.code(500).send({ error: error.message });
       }
     }
   });
@@ -3924,9 +3982,9 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
         if (!canReadAnalysis((request as any).user, analysis)) {
           return reply.code(404).send({ error: '分析记录不存在' });
         }
-        reply.send(analysis);
+        return reply.send(analysis);
       } catch (error: any) {
-        reply.code(500).send({ error: error.message });
+        return reply.code(500).send({ error: error.message });
       }
     }
   });
@@ -4083,14 +4141,17 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
 
         const result = await sqlAuditService.submitAudit(sql_text.trim(), instance_id, (request as any).user);
 
-        reply.send({
+        return reply.send({
           success: true,
           analysis_id: result.analysisId,
           record_id: result.recordId,
           pre_audit_results: result.preAuditResults,
         });
       } catch (error: any) {
-        reply.code(500).send({ error: error.message });
+        if (error instanceof LLMConfigurationError) {
+          return reply.code(422).send({ error: 'SQL_AUDIT_MODEL_UNAVAILABLE' });
+        }
+        return reply.code(500).send({ error: error.message });
       }
     }
   });
@@ -4108,9 +4169,9 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
         if (!hasInstanceAccess((request as any).user, Number(result.instance_id), 'read-only')) {
           return reply.code(404).send({ error: '审核记录不存在' });
         }
-        reply.send(result);
+        return reply.send(result);
       } catch (error: any) {
-        reply.code(500).send({ error: error.message });
+        return reply.code(500).send({ error: error.message });
       }
     }
   });
@@ -4128,7 +4189,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
         if (!hasInstanceAccess((request as any).user, Number(analysis.instance_id), 'read-only')) {
           return reply.code(404).send({ error: '审核记录不存在' });
         }
-        reply.send({
+        return reply.send({
           id: analysis.id,
           status: analysis.status,
           analysis_type: analysis.analysis_type,
@@ -4138,7 +4199,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
           error_message: analysis.error_message,
         });
       } catch (error: any) {
-        reply.code(500).send({ error: error.message });
+        return reply.code(500).send({ error: error.message });
       }
     }
   });
@@ -4151,9 +4212,9 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
         const { instanceId } = request.params as any;
         const { limit } = request.query as any;
         const history = await sqlAuditService.getAuditHistory(Number(instanceId), limit ? Number(limit) : 20);
-        reply.send(history);
+        return reply.send(history);
       } catch (error: any) {
-        reply.code(500).send({ error: error.message });
+        return reply.code(500).send({ error: error.message });
       }
     }
   });
@@ -4392,7 +4453,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
           console.error(`[日志] 手动分析 #${analysisId} 失败:`, err);
         });
 
-        reply.send({ success: true, analysisId });
+        return reply.send({ success: true, analysisId });
       } catch (error: any) {
         reply.code(500).send({ error: error.message });
       }
@@ -4412,7 +4473,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
         if (analysis.instance_id && !hasInstanceAccess((request as any).user, Number(analysis.instance_id), 'read-only')) {
           return reply.code(404).send({ error: '分析记录不存在' });
         }
-        reply.send(analysis);
+        return reply.send(analysis);
       } catch (error: any) {
         reply.code(500).send({ error: error.message });
       }
@@ -4531,9 +4592,9 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
         if ('error' in result) {
           return reply.code(400).send({ success: false, error: result.error });
         }
-        reply.send({ success: true, data: result });
+        return reply.send({ success: true, data: result });
       } catch (error: any) {
-        reply.code(500).send({ error: error.message });
+        return reply.code(500).send({ error: error.message });
       }
     }
   });
@@ -4792,12 +4853,11 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
       const { generateCollectionSql } = await import('./src/sql-generator.js');
       const result = await generateCollectionSql(db_type || 'mysql', description, instance_id ? Number(instance_id) : undefined);
       if (result.error) {
-        reply.code(400).send(result);
-        return;
+        return reply.code(400).send(result);
       }
-      reply.send(result);
+      return reply.send(result);
     } catch (error: any) {
-      reply.code(500).send({ error: error.message });
+      return reply.code(500).send({ error: error.message });
     }
   });
 
@@ -4896,25 +4956,33 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
         undefined,
         getAccessibleInstanceIds((request as any).user),
       );
-      reply.send(silences);
+      return reply.send(silences);
     } catch (error: any) {
-      reply.code(500).send({ error: error.message });
+      return reply.code(500).send({ error: error.message });
     }
   });
 
   fastify.post('/api/silence', { preHandler: [verifyToken, requirePermission('silence:manage')] }, async (request, reply) => {
     try {
       const check = strictBody(request.body as Record<string, unknown>,
-          ['instance_id', 'metric_name', 'duration_minutes'], 'POST /api/silence');
-        if (check.error) return reply.code(400).send(check.error);
-        const { instance_id, metric_name, duration_minutes } = check.body as { instance_id: number; metric_name: string; duration_minutes: number };
-      if (!hasInstanceAccess((request as any).user, Number(instance_id), 'read-write')) {
+        ['instance_id', 'metric_name', 'duration_minutes'], 'POST /api/silence');
+      if (check.error) return reply.code(400).send(check.error);
+      const { instance_id: instance, metric_name: metricName, duration_minutes: duration } = check.body;
+      const instanceId = typeof instance === 'number' || typeof instance === 'string' ? Number(instance) : NaN;
+      const durationMinutes = typeof duration === 'number' || typeof duration === 'string' ? Number(duration) : NaN;
+      if (!Number.isSafeInteger(instanceId) || instanceId <= 0 ||
+          typeof metricName !== 'string' || !metricName.trim() || [...metricName].length > 100 ||
+          !Number.isSafeInteger(durationMinutes) || durationMinutes <= 0 || durationMinutes > 2_147_483_647) {
+        return reply.code(400).send({ success: false, error: '需要有效的实例、指标名称和正整数静默分钟数' });
+      }
+      if (!hasInstanceAccess((request as any).user, instanceId, 'read-write')) {
         return reply.code(403).send({ error: '无权以读写级别访问该实例' });
       }
-      const result = await alertSilenceService.silence(instance_id, metric_name, duration_minutes);
-      reply.send(result);
+      const result = await alertSilenceService.silence(instanceId, metricName, durationMinutes);
+      if (!result.success) return reply.code(503).send({ success: false, error: '静默服务暂不可用' });
+      return reply.send(result);
     } catch (error: any) {
-      reply.code(500).send({ error: error.message });
+      return reply.code(500).send({ error: error.message });
     }
   });
 
@@ -4926,9 +4994,13 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
         return reply.code(404).send({ error: '静默记录不存在' });
       }
       const result = await alertSilenceService.clearSilence(Number(id));
-      reply.send(result);
+      if (!result.success) {
+        if (result.error === '静默记录不存在') return reply.code(404).send(result);
+        return reply.code(503).send({ success: false, error: '静默服务暂不可用' });
+      }
+      return reply.send(result);
     } catch (error: any) {
-      reply.code(500).send({ error: error.message });
+      return reply.code(500).send({ error: error.message });
     }
   });
 
@@ -4938,9 +5010,9 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
         return reply.code(403).send({ error: '清理全局静默记录需要不受限的实例管理权限' });
       }
       const count = await alertSilenceService.cleanupExpiredSilences();
-      reply.send({ cleaned: count });
+      return reply.send({ cleaned: count });
     } catch (error: any) {
-      reply.code(500).send({ error: error.message });
+      return reply.code(500).send({ error: error.message });
     }
   });
 
@@ -4967,9 +5039,9 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
         return reply.code(403).send({ error: '无权以读写级别访问该实例' });
       }
       const result = await alertEventService.createEvent({ ...body, instance_id: instanceId });
-      reply.code(201).send(result);
+      return reply.code(result.success ? 201 : 503).send(result);
     } catch (error: any) {
-      reply.code(500).send({ error: error.message });
+      return reply.code(500).send({ error: error.message });
     }
   });
 
@@ -5030,26 +5102,26 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
   fastify.post('/api/alerts/events/:id/note', { preHandler: [verifyToken, requirePermission('alert:manage')] }, async (request, reply) => {
     try {
       const { id } = request.params as any;
-      if (!await requireAlertEventAccess(request, reply, Number(id), 'read-write')) return;
+      if (!await requireAlertEventAccess(request, reply, Number(id), 'read-write')) return reply;
       const check = strictBody(request.body as Record<string, unknown>,
           ['note'], 'POST /api/alerts/events/:id/note');
         if (check.error) return reply.code(400).send(check.error);
         const { note } = check.body as { note: string };
       const result = await alertEventService.addHandlerNote(Number(id), note, (request as any).user.userId);
-      reply.send(result);
+      return reply.send(result);
     } catch (error: any) {
-      reply.code(500).send({ error: error.message });
+      return reply.code(500).send({ error: error.message });
     }
   });
 
   fastify.post('/api/alerts/events/:id/rca', { preHandler: [verifyToken, requirePermission('alert:manage')] }, async (request, reply) => {
     try {
       const { id } = request.params as any;
-      if (!await requireAlertEventAccess(request, reply, Number(id), 'read-write')) return;
+      if (!await requireAlertEventAccess(request, reply, Number(id), 'read-write')) return reply;
       const result = await alertEventService.triggerRCAForEvent(Number(id), (request as any).user.userId, (request as any).user);
-      reply.send(result);
+      return reply.send(result);
     } catch (error: any) {
-      reply.code(500).send({ error: error.message });
+      return reply.code(500).send({ error: error.message });
     }
   });
 
@@ -5071,18 +5143,18 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
   fastify.post('/api/alerts/events/:id/close', { preHandler: [verifyToken, requirePermission('alert:manage')] }, async (request, reply) => {
     try {
       const { id } = request.params as any;
-      if (!await requireAlertEventAccess(request, reply, Number(id), 'read-write')) return;
+      if (!await requireAlertEventAccess(request, reply, Number(id), 'read-write')) return reply;
       const result = await alertEventService.closeEvent(Number(id), (request as any).user.userId);
-      reply.code(result.success ? 200 : 409).send(result);
+      return reply.code(result.success ? 200 : 409).send(result);
     } catch (error: any) {
-      reply.code(500).send({ error: error.message });
+      return reply.code(500).send({ error: error.message });
     }
   });
 
   fastify.post('/api/alerts/events/:id/verify-recovery', { preHandler: [verifyToken, requirePermission('alert:manage')] }, async (request, reply) => {
     try {
       const { id } = request.params as any;
-      if (!await requireAlertEventAccess(request, reply, Number(id), 'read-write')) return;
+      if (!await requireAlertEventAccess(request, reply, Number(id), 'read-write')) return reply;
       const check = strictBody(request.body as Record<string, unknown>, ['reason'], 'POST /api/alerts/events/:id/verify-recovery');
       if (check.error) return reply.code(400).send(check.error);
       const rawReason = (check.body as { reason?: unknown }).reason;
@@ -5091,24 +5163,24 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
       }
       const reason = rawReason.trim();
       const result = await alertEventService.verifyRecovery(Number(id), reason, (request as any).user.userId);
-      reply.code(result.success ? 200 : 409).send(result);
+      return reply.code(result.success ? 200 : 409).send(result);
     } catch (error: any) {
-      reply.code(500).send({ error: error.message });
+      return reply.code(500).send({ error: error.message });
     }
   });
 
   fastify.post('/api/alerts/events/:id/postmortem', { preHandler: [verifyToken, requirePermission('alert:manage')] }, async (request, reply) => {
     try {
       const { id } = request.params as any;
-      if (!await requireAlertEventAccess(request, reply, Number(id), 'read-write')) return;
+      if (!await requireAlertEventAccess(request, reply, Number(id), 'read-write')) return reply;
       const check = strictBody(request.body as Record<string, unknown>,
           ['postmortem'], 'POST /api/alerts/events/:id/postmortem');
         if (check.error) return reply.code(400).send(check.error);
         const { postmortem } = check.body;
       const result = await alertEventService.addPostmortem(Number(id), postmortem, (request as any).user.userId);
-      reply.send(result);
+      return reply.send(result);
     } catch (error: any) {
-      reply.code(500).send({ error: error.message });
+      return reply.code(500).send({ error: error.message });
     }
   });
 
@@ -5122,9 +5194,9 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
   fastify.post('/api/alerts/aggregate', { preHandler: [verifyToken, requirePermission('alert:manage'), requireUnrestrictedInstanceAccess()] }, async (request, reply) => {
     try {
       const result = await eventAggregator.aggregate();
-      reply.send(result);
+      return reply.send(result);
     } catch (error: any) {
-      reply.code(500).send({ error: error.message });
+      return reply.code(500).send({ error: error.message });
     }
   });
 
@@ -5232,7 +5304,7 @@ ${focus ? `## 优化重点\n${focus}\n` : ''}
   console.log('⏸ 通知推送服务：未启动（待配置通知渠道）');
 
   // ========== CronManager 初始化 ==========
-  const cronProvider = await startup.step(() => createLLMProvider());
+  const cronProvider = await startup.step(createBootstrapLLMProvider);
   const cronRunner = new AgentRunner(cronProvider);
   const cronExecutor = new CronExecutor(cronRunner, createCronToolRegistry, cronProvider);
   cronManager = new CronManager(cronJobService, cronExecutor, workflowStore, async (type, payload, runId, context) => {

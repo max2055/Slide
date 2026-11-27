@@ -1,5 +1,6 @@
 import { captureListReturn, restoredListState } from '../components/resource-detail-context.js';
 import { hasListPermission } from '../components/resource-list-access.js';
+import { readCurrentPermissions } from '../permissions.js';
 import "../components/resource-collection-section.js";
 import "../components/resource-editor-shell.js";
 import "../components/resource-metrics-table.js";
@@ -19,6 +20,7 @@ import "../components/app-ssh-auth-selector.js";
 import { icons } from "../../../icons.js";
 import { authFetch } from "../../../api/index.js";
 import { showToast } from "../components/app-toast-container.js";
+import { SERVER_ENVIRONMENT_OPTIONS } from './server-environment.js';
 
 interface ServerRow {
   id: number;
@@ -45,19 +47,12 @@ interface ServerFormData {
   host: string;
   port: number;
   label: string;
+  environment: string;
   os_type: string;
   credential_type: "password" | "key";
   credential_username: string;
   credential_value: string;
 }
-
-const SERVER_ENVIRONMENT_OPTIONS = [
-  { value: "development", label: "开发环境" },
-  { value: "testing", label: "测试环境" },
-  { value: "staging", label: "预发布环境" },
-  { value: "production", label: "生产环境" },
-  { value: "unknown", label: "未标注环境" },
-] as const;
 
 const CANONICAL_OS_OPTIONS = [
   { value: "kylin", label: "Kylin OS" },
@@ -230,6 +225,7 @@ export class ServersPage extends LitElement {
     host: "",
     port: 22,
     label: "",
+    environment: "unknown",
     os_type: "centos",
     credential_type: "password",
     credential_username: "",
@@ -237,6 +233,7 @@ export class ServersPage extends LitElement {
   };
   /** True only after the user changes the operating-system control. */
   private _osTouched = false;
+  private _editOriginalCredentialUsername = "";
   /**
    * Unknown or empty os_type captured when this edit opened.
    * Stays selectable after the user picks kylin, rhel, or centos, until the
@@ -254,6 +251,8 @@ export class ServersPage extends LitElement {
   @state() private connectionPending = false;
   @state() private metricRefreshVersion = 0;
   @state() private metricsLoading = false;
+  @state() private canManageServerEditor = false;
+
   private openColumnSettings() {
     this.renderRoot.querySelector<ResourceMetricsTable>('resource-metrics-table')?.openColumnSettings();
   }
@@ -263,6 +262,7 @@ export class ServersPage extends LitElement {
     this.editorRequest++;
     this._servers = [];
     this.metricsLoading = false;
+    this.canManageServerEditor = false;
     if (this._editingId !== null) {
       this._editingId = null;
       this._showDialog = false;
@@ -297,6 +297,12 @@ export class ServersPage extends LitElement {
 
   private async _loadServers(background = false) {
     const request = ++this.inventoryRequest;
+    this.canManageServerEditor = false;
+    const management = readCurrentPermissions().then(permissions =>
+      ['servers:manage', 'servers:*', '*:manage', '*'].some(permission => permissions.includes(permission)), () => false);
+    void management.then(allowed => {
+      if (request === this.inventoryRequest) this.canManageServerEditor = allowed;
+    });
     if (background !== true || this._servers.length === 0) this._loading = true;
     this.inventoryError = '';
     let failure = '服务器清单读取失败';
@@ -318,11 +324,16 @@ export class ServersPage extends LitElement {
       this._servers = servers;
       const url = new URL(location.href), editId = Number(url.searchParams.get('edit'));
       const edit = this._servers.find(server => server.id === editId);
-      if (edit && !this._showDialog) {
-        await this._openEditDialog(edit);
+      if (url.searchParams.has('edit') && !this._showDialog) {
+        const allowed = edit && await management;
         if (request !== this.inventoryRequest) return;
-        this.editorTab = 'collection';
-        url.searchParams.delete('edit'); history.replaceState({}, '', url);
+        url.searchParams.delete('edit');
+        history.replaceState(history.state, '', url);
+        if (allowed && edit && !this._showDialog) {
+          await this._openEditDialog(edit);
+          if (request !== this.inventoryRequest) return;
+          this.editorTab = 'collection';
+        }
       }
       this.metricRefreshVersion++;
     } catch {
@@ -344,6 +355,7 @@ export class ServersPage extends LitElement {
       host: "",
       port: 22,
       label: "",
+      environment: "unknown",
       os_type: "centos",
       credential_type: "password",
       credential_username: "",
@@ -375,10 +387,12 @@ export class ServersPage extends LitElement {
     const recognized = canonicalOsKey(originalOsType);
     this._osTouched = false;
     this._editOriginalOs = recognized === "unknown" ? originalOsType : null;
+    this._editOriginalCredentialUsername = credentialUsername;
     this._form = {
       host: server.host,
       port: server.port,
       label: server.label || "",
+      environment: server.environment ?? "unknown",
       // Recognized families keep their existing option. Unknown and empty
       // values stay as stored so the control does not present CentOS.
       os_type: recognized === "unknown" ? originalOsType : recognized,
@@ -452,11 +466,17 @@ export class ServersPage extends LitElement {
     try {
       const isEdit = this._editingId !== null;
       const url = isEdit ? `/api/servers/${this._editingId}` : "/api/servers";
-      const body: Record<string, unknown> = { ...this._form };
+      const body: Record<string, unknown> = {
+        ...this._form,
+        environment: this._form.environment === "unknown" ? null : this._form.environment,
+      };
       if (this._form.credential_type === "password") delete body.ssh_trust_mode;
       if (isEdit) {
         if (!body.credential_value) delete body.credential_value;
-        if (!body.credential_username) delete body.credential_username;
+        if (!body.credential_username || (!body.credential_value
+          && body.credential_username === this._editOriginalCredentialUsername)) {
+          delete body.credential_username;
+        }
         // Leave os_type out unless the user picked kylin, rhel, or centos.
         // Sending the stored unknown value is rejected, and substituting
         // centos would overwrite it.
@@ -470,6 +490,7 @@ export class ServersPage extends LitElement {
       });
 
       if (!res.ok) {
+        if (res.status === 403) this.canManageServerEditor = false;
         const err = await res.json();
         throw new Error(err.error || "保存失败");
       }
@@ -543,7 +564,8 @@ export class ServersPage extends LitElement {
       const res = await authFetch(`/api/servers/${server.id}/collect-diagnostics`, { method: "POST" });
       const result = await res.json().catch(() => ({}));
       if (!res.ok || result.success === false) {
-        throw new Error(result.error || "测试失败");
+        throw new Error(result.error === 'SSH_TRUST_CONFIRMATION_REQUIRED'
+          ? 'SSH 主机身份待确认，请编辑服务器并核验主机密钥指纹后重试。' : result.error || '测试失败');
       }
       showToast("服务器诊断采集完成", "success");
       await this._loadServers();
@@ -671,9 +693,9 @@ export class ServersPage extends LitElement {
         actions: html`
           <div class="actions">
             <button class="btn-sm" data-resource-detail-id=${srv.id} @click=${() => this._navigateToDetail(srv.id)}>详情</button>
-            <button class="btn-sm" title=${hasListPermission("servers:manage") ? "编辑服务器" : "需要服务器管理权限"} .disabled=${!hasListPermission("servers:manage")} data-resource-edit-id=${srv.id} @click=${() => this._openEditDialog(srv)}>编辑</button>
-            <button class="btn-sm" @click=${() => this._testServer(srv)} .disabled=${!hasListPermission("servers:manage") || this._testingServerId !== null} title=${!hasListPermission("servers:manage") ? "需要服务器管理权限" : this._testingServerId !== null ? "已有服务器正在测试，请稍候" : "测试连接"}>${this._testingServerId === srv.id ? "测试中…" : "测试"}</button>
-            <button class="btn-sm danger" title=${hasListPermission("servers:manage") ? "删除服务器" : "需要服务器管理权限"} .disabled=${!hasListPermission("servers:manage")} @click=${() => this._confirmDelete(srv)}>删除</button>
+            <button class="btn-sm" title=${this.canManageServerEditor ? "编辑服务器" : "需要服务器管理权限"} .disabled=${!this.canManageServerEditor} data-resource-edit-id=${srv.id} @click=${() => this.canManageServerEditor && this._openEditDialog(srv)}>编辑</button>
+            <button class="btn-sm" @click=${() => this._testServer(srv)} .disabled=${!this.canManageServerEditor || this._testingServerId !== null} title=${!this.canManageServerEditor ? "需要服务器管理权限" : this._testingServerId !== null ? "已有服务器正在测试，请稍候" : "测试连接"}>${this._testingServerId === srv.id ? "测试中…" : "测试"}</button>
+            <button class="btn-sm danger" title=${this.canManageServerEditor ? "删除服务器" : "需要服务器管理权限"} .disabled=${!this.canManageServerEditor} @click=${() => this._confirmDelete(srv)}>删除</button>
           </div>`,
       };
     });
@@ -708,7 +730,7 @@ export class ServersPage extends LitElement {
                 <button aria-busy=${String(this._loading || this.metricsLoading)} class="btn btn-refresh resource-action resource-action--refresh" type="button" .disabled=${this._loading || this.metricsLoading} @click=${this._loadServers}>
                    刷新
                 </button>
-                <button class="btn-primary resource-action resource-action--add" type="button" @click=${this._openAddDialog}>
+                <button class="btn-primary resource-action resource-action--add" type="button" .disabled=${!this.canManageServerEditor} title=${this.canManageServerEditor ? '添加服务器' : '需要服务器管理权限'} @click=${() => this.canManageServerEditor && this._openAddDialog()}>
                   ${icons['plus']} 添加服务器
                 </button>
               </div>
@@ -774,7 +796,7 @@ export class ServersPage extends LitElement {
               <button aria-busy=${String(this._loading || this.metricsLoading)} class="btn btn-refresh resource-action resource-action--refresh" type="button" .disabled=${this._loading || this.metricsLoading} @click=${this._loadServers}>
                  刷新
               </button>
-              <button class="btn-primary resource-action resource-action--add" type="button" @click=${this._openAddDialog}>
+              <button class="btn-primary resource-action resource-action--add" type="button" .disabled=${!this.canManageServerEditor} title=${this.canManageServerEditor ? '添加服务器' : '需要服务器管理权限'} @click=${() => this.canManageServerEditor && this._openAddDialog()}>
                 ${icons['plus']} 添加服务器
               </button>
             </div>
@@ -824,11 +846,19 @@ export class ServersPage extends LitElement {
             </app-form-field>
           </div>
 
-          <app-form-field label="标签 (可选)" .inline=${true}>
-            <input class="form-input" type="text" .value=${this._form.label}
-              @input=${(e: any) => this._updateForm("label", e.target.value)}
-              placeholder="例如：生产环境主服务器" />
-          </app-form-field>
+          <div class="form-row">
+            <app-form-field label="标签 (可选)" .inline=${true}>
+              <input class="form-input" type="text" .value=${this._form.label}
+                @input=${(e: any) => this._updateForm("label", e.target.value)}
+                placeholder="例如：生产环境主服务器" />
+            </app-form-field>
+            <app-form-field label="环境" .inline=${true}>
+              <select class="form-select" aria-label="环境" .value=${this._form.environment}
+                @change=${(event: Event) => this._updateForm("environment", (event.target as HTMLSelectElement).value)}>
+                ${SERVER_ENVIRONMENT_OPTIONS.map(option => html`<option value=${option.value} ?selected=${option.value === this._form.environment}>${option.label}</option>`)}
+              </select>
+            </app-form-field>
+          </div>
 
           <div class="form-row">
             <app-form-field label="操作系统" .inline=${true}>

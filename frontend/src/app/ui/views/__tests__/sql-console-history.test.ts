@@ -34,9 +34,10 @@ describe('MAX-561/#684 and MAX-562/#685 history', () => {
     expect(view(el).textContent).not.toContain('暂无查询记录');
   });
 
-  it.each(['http', 'network', 'json'])('distinguishes %s failure from empty success and supports retry', async kind => {
+  it.each(['http', 'network', 'json', 'shape'])('distinguishes %s failure from empty success and supports retry', async kind => {
     const el = subject();
     if (kind === 'network') fetchHistory.mockRejectedValueOnce(new Error('offline'));
+    else if (kind === 'shape') fetchHistory.mockResolvedValueOnce({ ok: true, json: async () => ({ total: 0 }) } as Response);
     else fetchHistory.mockResolvedValueOnce(kind === 'http' ? { ok: false } as Response : { ok: true, json: async () => { throw new Error('bad json'); } } as unknown as Response);
     await el._loadHistory(true);
     const host = view(el);

@@ -1,7 +1,9 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { authFetch } from '../../../api/index.ts';
 import { AlertsPage } from './alerts.ts';
-vi.mock('../../../api/index.ts', () => ({ authFetch: vi.fn() }));
+vi.mock('../../../api/index.ts', async (importOriginal) => ({
+  ...await importOriginal<typeof import('../../../api/index.ts')>(), authFetch: vi.fn(),
+}));
 vi.mock('../components/app-toast-container.js', () => ({ showToast: vi.fn() }));
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status });
 let el: any;

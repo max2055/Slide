@@ -61,3 +61,24 @@ it('preserves the business view and its draft when the navigation crosses a brea
     expect(view!.querySelector('textarea')?.value).toBe('尚未提交的内容');
   }
 });
+
+it('applies the menu permission to direct bookmarks and unmounts an open page when access is withdrawn', () => {
+  const host = {
+    connected: true, tab: 'reports', sessionKey: '', basePath: '',
+    settings: { navGroupsCollapsed: {}, theme: 'claw', themeMode: 'system' },
+    userPermissions: new Set<string>(), paletteOpen: false, agentsList: null, chatQueue: [],
+  } as any;
+  render(renderApp(host), container);
+  expect(container.querySelector('reports-page')).toBeNull();
+  expect(container.querySelector('app-empty-state')?.getAttribute('title')).toBe('当前账号无权访问此页面');
+
+  host.userPermissions = new Set(['report:view']);
+  host.settings.visibleTabs = ['feedback'];
+  render(renderApp(host), container);
+  expect(container.querySelector('a[href="/reports"]')).toBeNull();
+  expect(container.querySelector('reports-page')).not.toBeNull();
+
+  host.userPermissions = new Set<string>();
+  render(renderApp(host), container);
+  expect(container.querySelector('reports-page')).toBeNull();
+});

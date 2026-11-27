@@ -19,6 +19,7 @@ import { canManageResource, canReadResource } from '../../resources/resource-ser
 import { verifyTriggerSnapshot } from './compile.js';
 import type { TriggerResourceSnapshot } from '../../contracts/metrics/triggers.js';
 import type { TriggerEpisodeRecord } from './episode.js';
+import { readTriggerSourceAvailability, type TriggerSourceAvailability } from './source-availability.js';
 
 const parsed = (v: unknown): any => (typeof v === 'string' ? JSON.parse(v) : v);
 const episodeResource = (episode: TriggerEpisodeRecord) =>
@@ -139,7 +140,7 @@ export async function registerTemplateTriggerRoutes(
             return live;
           };
           const live = await check();
-          const evidence: { configuration: TriggerResourceSnapshot; opening: unknown } = parsed(rows[0].snapshot);
+          const evidence: { configuration: TriggerResourceSnapshot; opening: { sample_ids?: unknown } } = parsed(rows[0].snapshot);
           const findOpeningRule = (configuration: TriggerResourceSnapshot) =>
             configuration.rules.find(rule =>
               rule.rule_id === episode.rule_id && rule.version === episode.version && rule.scope === episode.scope
@@ -195,6 +196,20 @@ export async function registerTemplateTriggerRoutes(
             'SELECT status,acknowledged_at FROM alerts WHERE id=?',
             [rows[0].alert_id],
           );
+          const sourceAvailability: { opening: TriggerSourceAvailability; recovery?: TriggerSourceAvailability } = {
+            opening: await readTriggerSourceAvailability(c, ref, evidence.opening?.sample_ids).catch(() => 'unknown' as const),
+          };
+          if (episode.state === 'closed' && !episode.manual_close && episode.recovery_count === 1) {
+            sourceAvailability.recovery = await (async () => {
+              const [recovery] = await c.execute<RowDataPacket[]>(`
+                SELECT JSON_EXTRACT(details, '$.sample_ids') AS sample_ids
+                FROM alert_event_logs WHERE event_id=? AND action='resolved'
+                  AND details->>'$.action'='trigger_recovered' AND details->>'$.episode_id'=?
+                ORDER BY id DESC LIMIT 1
+              `, [eventId, episode.episode_id]);
+              return readTriggerSourceAvailability(c, ref, parsed(recovery[0]?.sample_ids));
+            })().catch(() => 'unknown' as const);
+          }
           const final = await check();
           await c.commit();
           reusable = true;
@@ -203,6 +218,7 @@ export async function registerTemplateTriggerRoutes(
             alert_id: Number(rows[0].alert_id),
             episode,
             snapshot: evidence,
+            source_availability: sourceAvailability,
             current,
             evaluation,
             processing: alerts[0],

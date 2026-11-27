@@ -33,7 +33,7 @@ import {
   type BindingApplicationHost, type BindingApplicationIntent, type BindingApplicationOutcome,
   type BindingStageRejectionCode,
 } from './transaction-adapter.js';
-import type { ResourceRef } from './transaction-guard.js';
+import { REQUIRED_GOOD_TRIAL_SAMPLE_POLICY, type ResourceRef } from './transaction-guard.js';
 import {
   BindingPersistenceError, decodeBindingPayload, encodeTemplatePendingPayload,
   type DecodedBindingPayload, type EffectiveSnapshot,
@@ -54,6 +54,8 @@ export const MYSQL_BINDING_HOST_SQL = {
     + 'resource_key, target_revision, candidate_digest, resolution_identity, dependency_digest, status) '
     + 'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
   bindingUpdate: 'UPDATE metric_policy_bindings SET payload = ?, group_id = ? WHERE resource_key = ? '
+    + "AND JSON_EXTRACT(payload, '$.binding.revision') = ?",
+  bindingUpdateWithCapabilities: 'UPDATE metric_policy_bindings SET payload = ?, group_id = ?, capabilities = ? WHERE resource_key = ? '
     + "AND JSON_EXTRACT(payload, '$.binding.revision') = ?",
   // Only an unbound resource reaches this statement; the primary key is the CAS:
   // two concurrent first bindings cannot both create the row.
@@ -116,6 +118,10 @@ export interface BindingSqlPool {
 export interface TrustedBindingInputs {
   /** Stage immutable trigger evidence on this host's connection before settlement. */
   stageTriggers?(targetRevision: number, resolutionIdentity: string): Promise<void>;
+  /** Require freshly qualified samples when a new template application reads its receipt. */
+  requireGoodTrialSamples?: boolean;
+  /** Persist the trusted candidate's newly probed capabilities with the existing binding revision update. */
+  persistCandidateCapabilities?: boolean;
   authorize(resource: ResourceRef): Promise<unknown>;
   /** Returns `{resource, group, capabilities, at, actor_id}`; the host adds `application`. */
   applicationContext(resource: ResourceRef): Promise<unknown>;
@@ -524,13 +530,14 @@ class MysqlTransactionHost implements BindingApplicationHost {
     const rows = await this.select(MYSQL_BINDING_HOST_SQL.receiptRead, receiptId);
     if (rows.length > 1) return fail('HOST_QUERY_UNAVAILABLE');
     if (rows.length === 0) return null;
-    const payload = payloadOf(rows[0]);
-    if (typeof payload !== 'string') return payload;
-    try {
-      return JSON.parse(payload) as unknown;
-    } catch {
-      return fail('HOST_QUERY_UNAVAILABLE');
+    let payload = payloadOf(rows[0]);
+    if (typeof payload === 'string') {
+      try { payload = JSON.parse(payload) as unknown; }
+      catch { return fail('HOST_QUERY_UNAVAILABLE'); }
     }
+    if (this.inputs.requireGoodTrialSamples
+      && (!isPlainObject(payload) || payload.sample_policy !== REQUIRED_GOOD_TRIAL_SAMPLE_POLICY)) return null;
+    return payload;
   }
 
   async applicationContext(resource: ResourceRef): Promise<unknown> {
@@ -636,15 +643,21 @@ class MysqlTransactionHost implements BindingApplicationHost {
 
     let casResult: unknown;
     try {
-      casResult = decoded === null
+      if (decoded === null) {
         // The primary key is the CAS: a concurrent first binding conflicts here,
         // exactly like a revision mismatch would on an existing row.
-        ? await this.connection.execute(MYSQL_BINDING_HOST_SQL.bindingInsert, [
+        casResult = await this.connection.execute(MYSQL_BINDING_HOST_SQL.bindingInsert, [
           bytes(valid.resource_key), payloadText, valid.binding.group_id, JSON.stringify(valid.capabilities),
-        ])
-        : await this.connection.execute(MYSQL_BINDING_HOST_SQL.bindingUpdate, [
+        ]);
+      } else if (this.inputs.persistCandidateCapabilities) {
+        casResult = await this.connection.execute(MYSQL_BINDING_HOST_SQL.bindingUpdateWithCapabilities, [
+          payloadText, valid.binding.group_id, JSON.stringify(valid.capabilities), bytes(valid.resource_key), valid.base_revision,
+        ]);
+      } else {
+        casResult = await this.connection.execute(MYSQL_BINDING_HOST_SQL.bindingUpdate, [
           payloadText, valid.binding.group_id, bytes(valid.resource_key), valid.base_revision,
         ]);
+      }
     } catch (error) {
       // Another client created this resource's row between the lock read and the
       // insert: that is a revision conflict, not an unknown write failure.

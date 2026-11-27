@@ -94,8 +94,8 @@ describe('Oracle DML commit boundary (MAX-361)', () => {
       [],
       { maxRows: 0, autoCommit: false },
     );
-    expect(result).toMatchObject({ success: true, executionState: 'succeeded', operationId: grant.operationId, retryable: false });
-    expect(mocks.auditSql).toHaveBeenCalledWith(expect.objectContaining({ status: 'success', dbType: 'oracle' }));
+    expect(result).toMatchObject({ success: true, rowCount: 1, executionState: 'succeeded', operationId: grant.operationId, retryable: false });
+    expect(mocks.auditSql).toHaveBeenCalledWith(expect.objectContaining({ status: 'success', dbType: 'oracle', rowCount: 1 }));
     expect(mocks.finishIntent).toHaveBeenCalledWith(grant.operationId, 'succeeded', expect.objectContaining({ targetAcknowledged: true }));
     expect(session.callTimeout).toBe(0);
   });

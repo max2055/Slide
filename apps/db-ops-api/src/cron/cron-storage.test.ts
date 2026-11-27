@@ -77,6 +77,71 @@ describe('MAX-414/415/418/420 storage failures', () => {
     } finally { await server.close(); }
   });
 
+  it('returns paginated execution records through a pending onSend hook', async () => {
+    vi.spyOn(cronJobService, 'getJobById').mockResolvedValue({ id: 1, target_instance_id: 42 } as any);
+    const execution = { id: 10, job_id: 1, run_id: 'owned-run', status: 'success',
+      started_at: '2026-11-25T04:28:20.000Z', finished_at: '2026-11-25T04:28:21.000Z',
+      structured_result: { success: true, rowCount: 1 } };
+    const logs = vi.spyOn(cronJobService, 'getLogs')
+      .mockResolvedValueOnce({ logs: [execution as any], total: 1 })
+      .mockRejectedValueOnce(new Error('CRON_STORAGE_UNAVAILABLE'))
+      .mockResolvedValueOnce({ logs: [], total: 1 });
+    const server = Fastify();
+    server.addHook('onSend', async (_request, _reply, payload) => {
+      if (payload !== undefined) await new Promise<void>(resolve => setImmediate(resolve));
+      return payload;
+    });
+    registerCronRoutes(server, async request => {
+      (request as any).user = { userId: 8, permissions: ['cron:view'],
+        instanceScopes: request.headers.authorization === 'scoped-reader' ? { 42: 'read-only' } : {} };
+    }, () => undefined);
+    try {
+      const url = '/api/cron/jobs/1/logs?limit=100';
+      const headers = { authorization: 'scoped-reader' };
+      const loaded = await server.inject({ url, headers });
+      expect(loaded.statusCode).toBe(200);
+      expect(loaded.headers['content-type']).toMatch(/^application\/json/);
+      expect(loaded.json()).toEqual({ logs: [execution], total: 1 });
+      const failure = await server.inject({ url, headers });
+      expect(failure.statusCode).toBe(503);
+      expect(failure.json()).toEqual({ error: 'CRON_STORAGE_UNAVAILABLE' });
+      const retry = await server.inject({ url: url + '&offset=1', headers });
+      expect(retry.statusCode).toBe(200);
+      expect(retry.json()).toEqual({ logs: [], total: 1 });
+      const denied = await server.inject({ url });
+      expect(denied.statusCode).toBe(404);
+      expect(denied.json()).toEqual({ error: '定时任务不存在' });
+      expect(logs.mock.calls).toEqual([[1, 100, 0], [1, 100, 0], [1, 100, 1]]);
+    } finally { await server.close(); }
+  });
+
+  it('returns script inventory and detail JSON through a pending onSend hook for the T01 form', async () => {
+    const script = { id: 37, name: 'read-only fixture', content: 'SELECT 1', script_type: 'sql',
+      target_db_type: 'mysql', description: null, created_at: '2026-11-25', updated_at: '2026-11-25' } as const;
+    vi.spyOn(scriptService, 'getAllScripts').mockResolvedValue([script]);
+    vi.spyOn(scriptService, 'getScriptById')
+      .mockResolvedValueOnce(script)
+      .mockRejectedValueOnce(new Error('CRON_STORAGE_UNAVAILABLE'));
+    const server = await app();
+    server.addHook('onSend', async (_request, _reply, payload) => {
+      if (payload !== undefined) await new Promise<void>(resolve => setImmediate(resolve));
+      return payload;
+    });
+    try {
+      const list = await server.inject('/api/cron/scripts');
+      expect(list.statusCode).toBe(200);
+      expect(list.headers['content-type']).toMatch(/^application\/json/);
+      expect(list.json()).toEqual([script]);
+      const detail = await server.inject('/api/cron/scripts/37');
+      expect(detail.statusCode).toBe(200);
+      expect(detail.headers['content-type']).toMatch(/^application\/json/);
+      expect(detail.json()).toEqual(script);
+      const failure = await server.inject('/api/cron/scripts/37');
+      expect(failure.statusCode).toBe(503);
+      expect(failure.json()).toEqual({ error: 'CRON_STORAGE_UNAVAILABLE' });
+    } finally { await server.close(); }
+  });
+
   it.each(['1.5', 'Infinity', '9007199254740992', '-1', 'abc', ''])('rejects invalid pagination %s before querying logs', async value => {
     vi.spyOn(cronJobService, 'getJobById').mockResolvedValue({ id: 1, target_instance_id: null } as any);
     const logs = vi.spyOn(cronJobService, 'getLogs');

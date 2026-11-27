@@ -177,6 +177,7 @@ export class AppFormField extends LitElement {
         }
         .accessible-text {
           position: absolute;
+          inset: 0 auto auto 0;
           width: 1px;
           height: 1px;
           overflow: hidden;
@@ -196,6 +197,7 @@ export class AppFormField extends LitElement {
           : ""}
         <div class="form-control" part="control">
           <slot @slotchange=${this.syncControl}></slot>
+          <span class="accessible-text"><slot name="accessible-text"></slot></span>
         </div>
         ${this.hint && !this.error
           ? html`<div class="form-hint" part="hint">${this.hint}</div>`
@@ -206,7 +208,6 @@ export class AppFormField extends LitElement {
             </div>`
           : ""}
       </div>
-      <span class="accessible-text"><slot name="accessible-text"></slot></span>
     `;
   }
 }

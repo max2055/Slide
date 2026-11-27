@@ -97,6 +97,7 @@ export class AlertList extends LitElement {
   @property() activeListTab: 'active' | 'recovered' = 'active';
   @property() filterSeverity = '';
   @property() filterTargetType = '';
+  @property({ type: Number }) filterServerId: number | null = null;
   @property({ type: Array }) servers: any[] = [];
   @property() searchText = '';
   @property({ type: Object }) levelCounts: Record<string, number> | null = null;
@@ -169,12 +170,16 @@ export class AlertList extends LitElement {
           </select>
           ${this.filterTargetType === 'server' ? html`
             <select aria-label="服务器" class="filter-btn" style="font-size:var(--text-sm);" @change=${(e: any) => this._emit('alert-filter-server-id', { value: e.target.value ? Number(e.target.value) : null })}>
-              <option value="">全部服务器</option>
-              ${this.servers.map((srv: any) => html`<option value="${srv.id}">${srv.host}${srv.label ? ` (${srv.label})` : ''}</option>`)}
+              <option value="" ?selected=${this.filterServerId === null}>全部服务器</option>
+              ${this.servers.map((srv: any) => html`<option value="${srv.id}" ?selected=${srv.id === this.filterServerId}>${srv.host}${srv.label ? ` (${srv.label})` : ''}</option>`)}
             </select>
           ` : ''}
-          <input aria-label="搜索告警" class="form-input" type="text" placeholder="搜索编号/标题/实例..." style="flex:1;max-width:240px;padding:var(--space-sm) var(--space-md);font-size:var(--text-sm);" .value=${this.searchText} @input=${(e: any) => this._emit('alert-search', { value: e.target.value })} />
+          <input aria-label="搜索告警" class="form-input" type="text" placeholder="搜索本页编号、标题或目标…" style="flex:1;max-width:240px;padding:var(--space-sm) var(--space-md);font-size:var(--text-sm);" .value=${this.searchText} @input=${(e: any) => this._emit('alert-search', { value: e.target.value })} />
           <button class="btn btn-refresh" @click=${() => this._emit('alert-refresh')}>刷新</button>
+          <span class="pagination-info" role="status" aria-label="告警列表范围">
+            本页匹配 ${filtered.length} 条 · ${this.filterSeverity ? '当前状态及级别' : '当前状态'}共 ${this.total} 条
+            ${totalPages > 1 ? ' · 搜索和目标仅筛选本页' : nothing}
+          </span>
         </div>
 
         ${filtered.length > 0 ? html`
@@ -195,16 +200,16 @@ export class AlertList extends LitElement {
               <tbody>${filtered.map(a => this._renderRow(a))}</tbody>
             </table>
           </div>
-          ${this._renderPagination(totalPages)}
         ` : html`
           <div class="empty" style="min-height:200px;">
             <div class="empty__content">
               <div class="empty__icon">${this.activeListTab === 'recovered' ? icons['check-circle'] : icons['party-popper']}</div>
-              <div class="empty__title">${this.filterSeverity ? '没有匹配等级的告警' : this.activeListTab === 'recovered' ? '暂无已结束的告警' : '暂无活跃告警'}</div>
-              <div class="empty__desc">${this.filterSeverity ? '请选择其他等级或查看全部告警' : this.activeListTab === 'recovered' ? '显示已恢复或关闭的告警' : '当前范围没有活跃告警记录'}</div>
+              <div class="empty__title">${this.total > 0 ? '本页没有匹配的告警' : this.filterSeverity ? '没有匹配等级的告警' : this.activeListTab === 'recovered' ? '暂无已结束的告警' : '暂无活跃告警'}</div>
+              <div class="empty__desc">${this.total > 0 ? '可调整本页筛选或查看其他页' : this.filterSeverity ? '请选择其他等级或查看全部告警' : this.activeListTab === 'recovered' ? '显示已恢复或关闭的告警' : '当前范围没有活跃告警记录'}</div>
             </div>
           </div>
         `}
+        ${this._renderPagination(totalPages)}
       </div>
     `;
   }
@@ -289,7 +294,7 @@ export class AlertList extends LitElement {
     return html`
       <div class="pagination">
         <button class="btn" ?disabled=${this.page === 0} @click=${() => this._emit('alert-page-change', { page: this.page - 1 })}>← 上一页</button>
-        <span class="pagination-info">第 ${this.page + 1}/${totalPages} 页，共 ${this.total} 条</span>
+        <span class="pagination-info">第 ${this.page + 1}/${totalPages} 页</span>
         <button class="btn" ?disabled=${this.page >= totalPages - 1} @click=${() => this._emit('alert-page-change', { page: this.page + 1 })}>下一页 →</button>
         <span class="pagination-jump">跳转 <input class="pagination-jump-input" type="number" min="1" max=${totalPages}
           @keydown=${(e: KeyboardEvent) => { if (e.key === 'Enter') { const v = parseInt((e.target as HTMLInputElement).value); if (v >= 1 && v <= totalPages) this._emit('alert-page-change', { page: v - 1 }); }}}

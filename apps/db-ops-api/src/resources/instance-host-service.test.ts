@@ -140,9 +140,54 @@ describe('InstanceHostService', () => {
     await expect(service.listInstances(actor({ permissions: ['instance:view', 'servers:view'], scopes: { 10: 'read-only' } }), 20))
       .resolves.toEqual([expect.objectContaining({ instanceId: 10 })]);
   });
+
+  it('denies explicit writes outside the delegated server scope', async () => {
+    const store = new MemoryStore();
+    const service = new InstanceHostService(store);
+    await service.replaceHosts(actor(), 10, [{ serverId: 21, role: 'replica' }]);
+    const bounded = { ...actor(), resourceBoundary: { instanceIds: [10], serverIds: [20], networkDeviceIds: [] } };
+
+    await expect(service.replaceHosts(bounded, 10, [{ serverId: 21, role: 'primary' }]))
+      .rejects.toThrow('RESOURCE_FORBIDDEN');
+    await expect(service.unlinkHost(bounded, 10, 21)).rejects.toThrow('RESOURCE_FORBIDDEN');
+    await expect(store.listInstanceHosts(10)).resolves.toMatchObject([{ serverId: 21, role: 'replica' }]);
+  });
 });
 
 describe('MysqlInstanceHostStore current relation integrity', () => {
+  it('keeps hidden current and future rows during a scoped replacement and omits them in the result', async () => {
+    const now = new Date('2026-08-10T00:00:00.500Z');
+    const writes: Array<{ sql: string; values: unknown[] }> = [];
+    const connection = {
+      beginTransaction: async () => {},
+      execute: async (sql: string, values: unknown[] = []) => {
+        if (/^(UPDATE|DELETE FROM|INSERT INTO) resource_relations/.test(sql)) {
+          writes.push({ sql, values });
+          return [{ affectedRows: 1 }];
+        }
+        if (sql.includes('FROM database_instances')) return [[{ id: 10 }]];
+        if (sql.includes('FROM servers')) return [[{ id: 20 }]];
+        if (sql.includes('JOIN servers s')) return [[
+          { server_id: 20, metadata: { role: 'replica' }, valid_from: now },
+          { server_id: 21, metadata: { role: 'primary' }, valid_from: now },
+        ]];
+        return [[
+          { id: 1, server_id: 20, metadata: { role: 'primary' }, valid_from: new Date('2026-08-09') },
+          { id: 2, server_id: 21, metadata: { role: 'primary' }, valid_from: new Date('2026-08-09') },
+          { id: 3, server_id: 22, metadata: { role: 'replica' }, valid_from: new Date('2026-08-11') },
+        ]];
+      },
+      commit: async () => {}, rollback: async () => {}, release: () => {},
+    };
+    const store = new MysqlInstanceHostStore(() => ({ getConnection: async () => connection } as any));
+    const result = await store.replaceInstanceHosts(10, [{ serverId: 20, role: 'replica' }], now, new Set([20]));
+
+    expect(result).toMatchObject([{ serverId: 20, role: 'replica' }]);
+    expect(writes).toHaveLength(2);
+    expect(writes[0]).toMatchObject({ sql: expect.stringContaining('UPDATE'), values: [now, 1] });
+    expect(writes[1]).toMatchObject({ sql: expect.stringContaining('INSERT'), values: [10, 20, expect.any(String), now] });
+  });
+
   it('uses the same half-open current window for list and reverse-list', async () => {
     const calls: string[] = [];
     const store = new MysqlInstanceHostStore(() => ({

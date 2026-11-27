@@ -485,11 +485,16 @@ class AlertDatabaseService {
     }
 
     try {
-      await pool.execute(
-        'UPDATE alerts SET status = "acknowledged", acknowledged_by = ?, acknowledged_at = NOW() WHERE id = ? AND (NOT (source <=> "template-trigger") OR status IN (\"unread\",\"read\"))',
+      const [result] = await pool.execute<mysql.ResultSetHeader>(
+        `UPDATE alerts a SET a.status = 'acknowledged', a.acknowledged_by = ?, a.acknowledged_at = NOW()
+         WHERE a.id = ? AND a.status IN ('unread','read') AND (
+           (a.target_type = 'instance' AND EXISTS (SELECT 1 FROM database_instances d WHERE d.id=a.instance_id AND d.lifecycle_state='available')) OR
+           (a.target_type = 'server' AND EXISTS (SELECT 1 FROM servers s WHERE s.id=a.server_id)) OR
+           (a.target_type = 'network_device' AND EXISTS (SELECT 1 FROM network_devices n WHERE n.id=a.network_device_id))
+         )`,
         [userId || null, alertId]
       );
-      return { success: true };
+      return result.affectedRows === 1 ? { success: true } : { success: false, error: 'ALERT_NOT_ACKNOWLEDGEABLE' };
     } catch (error: any) {
       console.error('确认告警失败:', error);
       return { success: false, error: error.message };

@@ -8,7 +8,7 @@ const root = fileURLToPath(new URL('../..', import.meta.url));
 test('serve-e2e stops its service tree and stays in the launcher group (#460)', async () => {
   // Own an isolated harness group so a failed fixture cannot retain our pipes
   // or leave service children to the Actions orphan sweep (MAX-6 gate recovery).
-  const child = spawn('bash', ['scripts/qualification/serve-e2e.supervisor.test.sh'], {
+  const child = spawn('bash', ['scripts/qualification/serve-e2e.supervisor.test.sh', process.execPath], {
     cwd: root,
     detached: true,
     stdio: ['ignore', 'pipe', 'pipe'],

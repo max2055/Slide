@@ -8,6 +8,8 @@ import { sqlExecutor } from './sql-executor';
 import { dispatchOrReuse } from './ai-agent-bridge.js';
 import { hashApprovedSql } from './security/approval-execution-authorizer.js';
 import { classifySql } from './sql-validator.js';
+import { OperationRetryUnavailableError } from './operations/operation-service.js';
+import type { Operation } from './operations/types.js';
 
 interface ApprovalRequest {
   id: number;
@@ -34,6 +36,10 @@ interface ApprovalLifecycle {
   onRejected?(requestId: number): Promise<void>;
 }
 
+interface ApprovalRetryConnection {
+  query(sql: string, values?: unknown[]): Promise<[any, unknown?]>;
+}
+
 const HIGH_RISK_PATTERNS = [
   /\bDROP\b/i,
   /\bTRUNCATE\b/i,
@@ -54,14 +60,31 @@ function isHighRisk(sql: string): boolean {
 class ApprovalService {
   private getPool() { return dbConnection.getPool(); }
 
-  async setOperationId(requestId: number, operationId: string): Promise<void> {
-    const pool = this.getPool();
-    if (!pool) throw new Error('数据库未连接');
-    const [result] = await pool.execute(
-      'UPDATE approval_requests SET operation_id = ? WHERE id = ?',
-      [operationId, requestId],
-    ) as any;
-    if (Number(result.affectedRows) !== 1) throw new Error('审批记录不存在');
+  async createRollbackRetry(connection: ApprovalRetryConnection, previous: Operation, operationId: string): Promise<number> {
+    const [result] = await connection.query(
+      `INSERT INTO approval_requests
+        (instance_id,sql_text,sql_hash,risk_level,ai_recommendation,status,submitted_by,target_database,operation_id)
+       SELECT a.instance_id,a.sql_text,a.sql_hash,a.risk_level,a.ai_recommendation,'pending',a.submitted_by,a.target_database,?
+       FROM approval_requests a
+       JOIN database_instances d ON d.id = a.instance_id AND d.lifecycle_state = 'available'
+       JOIN sql_execution_intents i ON i.approval_request_id = a.id
+         AND CAST(i.operation_id AS BINARY) = CAST(a.operation_id AS BINARY)
+         AND i.instance_id = a.instance_id AND i.reviewer_id = a.reviewed_by
+         AND CAST(COALESCE(i.target_database, '') AS BINARY) = CAST(COALESCE(a.target_database, '') AS BINARY)
+       WHERE a.id = ? AND a.operation_id = ? AND a.submitted_by = ? AND a.instance_id = ?
+         AND a.status = 'execution_failed' AND i.state = 'rolled_back'
+         AND CAST(i.sql_text AS BINARY) = CAST(a.sql_text AS BINARY)`,
+      [operationId, previous.approvalId, previous.id, previous.actorId, Number(previous.resource.id)],
+    );
+    const approvalId = Number(result.insertId);
+    if (Number(result.affectedRows) !== 1 || !Number.isSafeInteger(approvalId) || approvalId <= 0) {
+      throw new OperationRetryUnavailableError('Approval retry requires confirmed rollback');
+    }
+    await connection.query(
+      "INSERT INTO approval_events (request_id,event_type,event_data,created_by) VALUES (?,'submitted',?,?)",
+      [approvalId, JSON.stringify({ previousApprovalId: previous.approvalId, previousOperationId: previous.id }), previous.actorId],
+    );
+    return approvalId;
   }
 
   /**

@@ -2,6 +2,7 @@ import type { AppViewState } from "./app-view-state.ts";
 import {
   buildCatalogDisplayLookup,
   buildChatModelOptionFromLookup,
+  buildQualifiedChatModelValue,
   formatCatalogChatModelDisplayFromLookup,
   normalizeChatModelOverrideValue,
   resolvePreferredServerChatModelValue,
@@ -48,11 +49,11 @@ export function resolveChatModelOverrideValue(state: ChatModelSelectStateInput):
 }
 
 function resolveDefaultModelValue(state: ChatModelSelectStateInput): string {
-  return resolvePreferredServerChatModelValue(
-    state.sessionsResult?.defaults?.model,
-    state.sessionsResult?.defaults?.modelProvider,
-    state.chatModelCatalog ?? [],
-  );
+  const { model, modelProvider } = state.sessionsResult?.defaults ?? {};
+  if (model && modelProvider?.trim()) {
+    return buildQualifiedChatModelValue(model, modelProvider);
+  }
+  return resolvePreferredServerChatModelValue(model, modelProvider, state.chatModelCatalog ?? []);
 }
 
 function buildChatModelOptions(

@@ -6,11 +6,14 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // ── Shared mock state ───────────────────────────────────
 const mockExecute = vi.fn();
+const mockGetConnection = vi.fn();
+const mockRelease = vi.fn();
+const mockDestroy = vi.fn();
 const poolState = vi.hoisted(() => ({ available: true }));
 
 vi.mock('./db-connection', () => ({
   dbConnection: {
-    getPool: () => poolState.available ? ({ execute: mockExecute }) : null,
+    getPool: () => poolState.available ? ({ getConnection: mockGetConnection }) : null,
     isConnected: () => true,
   },
 }));
@@ -23,6 +26,7 @@ describe('ConsistencyChecker', () => {
   beforeEach(() => {
     checker = new ConsistencyChecker();
     vi.clearAllMocks();
+    mockGetConnection.mockReset().mockResolvedValue({ execute: mockExecute, release: mockRelease, destroy: mockDestroy });
     poolState.available = true;
   });
 
@@ -67,6 +71,65 @@ describe('ConsistencyChecker', () => {
       const result = await checker.resourceHealthTruth();
       expect(result.dataFreshness).toMatchObject({ status: 'critical', numerator: 0, denominator: 1 });
       expect(result.overall).toBe('critical');
+    });
+
+    it('uses the same inclusive freshness cutoff for both resource types', async () => {
+      const now = Date.now();
+      const clock = vi.spyOn(Date, 'now').mockReturnValue(now);
+      const cutoff = new Date(now - 10 * 60_000);
+      mockExecute.mockResolvedValueOnce([[{ id: 1, health_status: 'healthy', latest_metric: cutoff }], []]);
+      mockExecute.mockResolvedValueOnce([[{ id: 2, status: 'online', latest_metric: new Date(cutoff.getTime() - 1) }], []]);
+      try {
+        const result = await checker.resourceHealthTruth();
+        expect(result.dataFreshness).toMatchObject({
+          status: 'degraded', numerator: 1, denominator: 2, failedRefs: [{ type: 'server', id: 2 }],
+        });
+        for (const [sql, values] of mockExecute.mock.calls.slice(0, 2)) {
+          expect(sql).toContain('AND p.observed_at >= ?');
+          expect(values).toEqual([cutoff]);
+        }
+      } finally {
+        clock.mockRestore();
+      }
+    });
+  });
+
+  describe('_checkMetricsFreshness', () => {
+    it('uses the exact recent maximum directly and computes age from the captured time', async () => {
+      const now = Date.now();
+      const clock = vi.spyOn(Date, 'now').mockReturnValueOnce(now).mockReturnValue(now + 2_000);
+      mockExecute.mockResolvedValueOnce([[{ latest: new Date(now - 60 * 60_000) }], []]);
+      try {
+        expect(await checker._checkMetricsFreshness()).toMatchObject({
+          status: 'warn', summary: '最新指标 60 分钟前（超过 10 分钟阈值）',
+        });
+        expect(mockExecute).toHaveBeenCalledExactlyOnceWith(
+          expect.stringContaining('AND p.observed_at >= ?'), [new Date(now - 60 * 60_000)],
+        );
+      } finally {
+        clock.mockRestore();
+      }
+    });
+
+    it('reads history when the recent window is empty and preserves the exact stale age', async () => {
+      const now = Date.now();
+      const clock = vi.spyOn(Date, 'now').mockReturnValue(now);
+      mockExecute.mockResolvedValueOnce([[{ latest: null }], []]);
+      mockExecute.mockResolvedValueOnce([[{ latest: new Date(now - 70 * 60_000) }], []]);
+      try {
+        expect(await checker._checkMetricsFreshness()).toMatchObject({
+          status: 'fail', severity: 'major', summary: '最新指标 1.2 小时前',
+        });
+        expect(mockExecute).toHaveBeenCalledTimes(2);
+        expect(mockExecute.mock.calls[0]).toEqual([
+          expect.stringContaining('AND p.observed_at >= ?'), [new Date(now - 60 * 60_000)],
+        ]);
+        expect(mockExecute.mock.calls[1]).toEqual([
+          expect.not.stringContaining('AND p.observed_at >= ?'), [],
+        ]);
+      } finally {
+        clock.mockRestore();
+      }
     });
   });
 
@@ -204,6 +267,72 @@ describe('ConsistencyChecker', () => {
   });
 
   describe('healthOverview', () => {
+    it('finishes a shared partial snapshot when a diagnostic query stops responding and recovers on refresh', async () => {
+      vi.useFakeTimers();
+      let completeRead!: () => void;
+      const stuck = new Promise<[unknown[], unknown[]]>(resolve => {
+        completeRead = () => resolve([[], []]);
+      });
+      let unhealthy = true;
+      mockExecute.mockImplementation(async (sql: string) => {
+        if (sql.includes('FROM database_instances di') && sql.includes('latest_metric')) {
+          if (unhealthy) return stuck;
+          return [[{ id: 1, health_status: 'healthy', latest_metric: new Date() }], []];
+        }
+        return [[], []];
+      });
+      vi.spyOn(checker, '_checkReadiness').mockResolvedValue({
+        db_connected: true, db_reachable: true, llm_provider: false, cron_running: false, agent_engine: false,
+      });
+      const overview = checker.healthOverview();
+      const concurrent = checker.healthOverview(true);
+      let finished = false;
+      void overview.then(() => { finished = true; });
+      try {
+        await vi.advanceTimersByTimeAsync(6_000);
+        expect(finished).toBe(true);
+        const snapshot = await overview;
+        expect(await concurrent).toBe(snapshot);
+        expect(snapshot.summary.total).toBe(10);
+        expect(snapshot.readiness.db_reachable).toBe(true);
+        expect(snapshot.truth.managedAvailability).toMatchObject({
+          status: 'unknown', reason: 'resource_health_query_failed',
+        });
+        expect(mockDestroy).toHaveBeenCalledTimes(1);
+        expect(mockRelease).toHaveBeenCalledTimes(mockGetConnection.mock.calls.length - 1);
+        unhealthy = false;
+        expect((await checker.healthOverview(true)).truth.managedAvailability).toMatchObject({
+          status: 'healthy', numerator: 1, denominator: 1,
+        });
+      } finally {
+        completeRead();
+        await overview;
+        vi.useRealTimers();
+      }
+    });
+
+    it('releases a connection acquired after queue timeout without starting its query', async () => {
+      vi.useFakeTimers();
+      let grant!: () => void;
+      const lateConnection = new Promise(resolve => {
+        grant = () => resolve({ execute: mockExecute, release: mockRelease, destroy: mockDestroy });
+      });
+      mockGetConnection.mockImplementationOnce(() => lateConnection);
+      const check = expect(checker._checkInstanceCountMatch()).rejects.toThrow('数据库检查超时');
+      try {
+        await vi.advanceTimersByTimeAsync(2_100);
+        await check;
+        grant();
+        await lateConnection;
+        expect(mockExecute).not.toHaveBeenCalled();
+        expect(mockRelease).toHaveBeenCalledTimes(1);
+        expect(mockDestroy).not.toHaveBeenCalled();
+      } finally {
+        grant();
+        vi.useRealTimers();
+      }
+    });
+
     it('coalesces and caches consistency and resource-health queries', async () => {
       const consistency = { timestamp: '2026-08-06T00:00:00.000Z', summary: { pass: 1, warn: 0, fail: 0, deferred: 0, total: 1 }, checks: [], readiness: {} } as any;
       const truth = { overall: 'healthy' } as any;
@@ -324,7 +453,7 @@ describe('ConsistencyChecker', () => {
   describe('_checkApprovalEventIntegrity', () => {
     it('reports incomplete approval evidence through the full checker entry', async () => {
       mockExecute.mockImplementation(async (sql: string) => [
-        sql.includes('SELECT ar.id FROM approval_requests ar') ? [{ id: 17 }] : [], [],
+        sql.includes('ar.id FROM approval_requests ar') ? [{ id: 17 }] : [], [],
       ]);
       const result = await checker.runAllChecks();
       expect(result.checks.find(check => check.id === 'approval_event_integrity')).toMatchObject({

@@ -40,6 +40,15 @@ test(`investigation page two restores visible focus at ${viewport.width} and mis
     };
     await assertFilters();
     await expect(page.locator(`button[data-investigation="${id}"]`)).toBeInViewport({ratio:1});
+    await page.goForward();
+    await expect(page.locator('.investigation-detail-title')).toBeVisible();
+    await page.reload();
+    await expect(page.locator('.investigation-detail-title')).toBeVisible();
+    await page.getByRole('link',{name:'返回来源页面',exact:true}).click();
+    await expect(page.locator('button[data-investigation]')).toHaveCount(25);
+    await expect(page.locator(`button[data-investigation="${id}"]`)).toBeFocused();
+    await expect(page.locator(`button[data-investigation="${id}"]`)).toBeInViewport({ratio:1});
+    await assertFilters();
     const measure=async(name:string)=>{
       const geometry=await page.evaluate(()=>{
         const target=document.activeElement!;const rect=target.getBoundingClientRect();

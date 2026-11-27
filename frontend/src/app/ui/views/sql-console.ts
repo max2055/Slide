@@ -7,7 +7,7 @@ import "../components/app-notice.js";
 import { basicSetup } from "codemirror";
 import { EditorView } from "@codemirror/view";
 import { Compartment, EditorState } from "@codemirror/state";
-import { sql, MySQL, SQLDialect, schemaCompletionSource } from "@codemirror/lang-sql";
+import { sql, MySQL, PostgreSQL, SQLDialect, schemaCompletionSource } from "@codemirror/lang-sql";
 import { autocompletion, CompletionContext, type Completion, type CompletionResult, type CompletionSource } from "@codemirror/autocomplete";
 import { oneDark } from "@codemirror/theme-one-dark";
 import { icons } from "../../../icons.js";
@@ -315,8 +315,11 @@ export class SqlConsolePage extends LitElement {
     .results-header { padding: var(--space-sm) var(--space-md); font-size: var(--text-sm); border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; flex-shrink: 0; }
     .results-scroll { overflow: auto; flex: 1; }
     .results table { width: 100%; border-collapse: collapse; font-size: var(--text-sm); }
-    .results th { position: sticky; top: 0; background: var(--bg-elevated); padding: var(--space-sm) var(--space-md); text-align: left; font-weight: 600; border-bottom: 1px solid var(--border); z-index: 1; }
+    .results th { position: sticky; top: 0; background: var(--bg-elevated); padding: 0; font-weight: 600; border-bottom: 1px solid var(--border); z-index: 1; }
     .results th:hover { background: var(--accent-subtle); }
+    .result-sort { width: 100%; padding: var(--space-xs) var(--space-md); font: inherit; user-select: none; }
+    .result-sort:focus-visible { outline-offset: -2px; }
+    .result-sort-direction { color: var(--accent-text); font-size: var(--text-xs); }
     .results td { padding: var(--space-xs) var(--space-md); border-bottom: 1px solid var(--border); max-width: 280px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .results td.null { color: var(--muted); font-style: italic; }
     .results-header-right { display: flex; align-items: center; gap: var(--space-md); }
@@ -383,6 +386,10 @@ export class SqlConsolePage extends LitElement {
   `];
 
   @state() private instances: InstanceOption[] = [];
+  @state() private instanceListLoading = true;
+  @state() private instanceListError = '';
+  private _instanceListRead?: AbortController;
+  private _instanceDetailRead?: AbortController;
   @state() private selectedId = 0;
   @state() private selectedDatabase: string = '';
   @state() private databases: string[] = [];
@@ -419,6 +426,7 @@ export class SqlConsolePage extends LitElement {
   @state() private explainViewMode: 'tree' | 'table' = 'tree';
   @state() private explainLoading = false;
   @state() private explainError: string | null = null;
+  private _explainRead?: AbortController;
   private _expandedNodes: Set<PlanNode> = new Set();
 
   private readonly _dialect = new Compartment();
@@ -426,7 +434,7 @@ export class SqlConsolePage extends LitElement {
 
   private _sqlLanguage() {
     const type = this.instances.find(i => i.id === this.selectedId)?.db_type;
-    const dialect = type === "oracle" ? OracleDialect : type === "dameng" ? DamengDialect : MySQL;
+    const dialect = type === "postgresql" ? PostgreSQL : type === "oracle" ? OracleDialect : type === "dameng" ? DamengDialect : MySQL;
     return sql({ dialect, upperCaseKeywords: dialect !== MySQL });
   }
 
@@ -443,7 +451,9 @@ export class SqlConsolePage extends LitElement {
   }
 
   private get _canQuery(): boolean {
-    return Boolean(this.selectedId && this.activeTab?.editorView);
+    return !this.instanceListLoading
+      && this.instances.some(instance => instance.id === this.selectedId)
+      && Boolean(this.activeTab?.editorView);
   }
 
   private _headers() {
@@ -453,17 +463,21 @@ export class SqlConsolePage extends LitElement {
 
   override connectedCallback() {
     super.connectedCallback();
-    this.loadInstances();
     document.addEventListener("keydown", this._globalKeyHandler);
     this._restoreTabs();
+    void this.loadInstances();
     void this.updateComplete.then(() => {
       if (this.isConnected) this._switchTab(this.activeTabId);
     });
   }
   override disconnectedCallback() {
     super.disconnectedCallback();
+    this._instanceListRead?.abort();
+    this._instanceListRead = undefined;
+    this._instanceDetailRead?.abort();
     this._historyRequestId++;
     this.historyLoading = false;
+    this._clearExplain();
     document.removeEventListener("keydown", this._globalKeyHandler);
     for (const tab of this.tabs) {
       if (!tab.editorView) continue;
@@ -483,6 +497,7 @@ export class SqlConsolePage extends LitElement {
     const tab = this.tabs.find(t => t.id === tabId);
     if (!tab) return;
     if (this.activeTabId !== tabId) {
+      this._clearExplain();
       this.activeTabId = tabId;
       this._saveTabs();
     }
@@ -506,7 +521,13 @@ export class SqlConsolePage extends LitElement {
               this._dialect.of(this._sqlLanguage()),
               oneDark,
               autocompletion({ override: [this._sqlCompletions.bind(this)] }),
-              EditorView.updateListener.of((update) => { this.requestUpdate(); if (update.docChanged) this._saveTabs(); }),
+              EditorView.updateListener.of(update => {
+                this.requestUpdate();
+                if (update.docChanged) {
+                  if (this.activeTab === tab) this._clearExplain();
+                  this._saveTabs();
+                }
+              }),
             ],
           }),
           parent: container,
@@ -598,7 +619,7 @@ export class SqlConsolePage extends LitElement {
     }
     try {
       const data = JSON.parse(raw);
-      if (data.instanceId) this._selectInstance(data.instanceId);
+      this.selectedId = Number.isSafeInteger(data.instanceId) && data.instanceId > 0 ? data.instanceId : 0;
       this.tabs = data.tabs.map((t: any) => ({
         id: t.id,
         name: t.name,
@@ -633,16 +654,14 @@ export class SqlConsolePage extends LitElement {
   }
 
   private _sqlCompletions(context: CompletionContext): CompletionResult | null {
-    const word = context.matchBefore(/[\w$.一-鿿]+/);
-    if (!word) return null;
-
-    const qualified = word.text.match(/([\w$一-鿿]+)\.([\w$一-鿿]*)$/);
+    const qualified = context.matchBefore(/(?:[\w$一-鿿]+|"(?:[^"]|"")*"|`(?:[^`]|``)*`)\.[\w$一-鿿]*/);
     if (qualified) {
-      const [, qualifier, prefix] = qualified;
-      const from = context.pos - prefix.length;
+      const dot = qualified.text.lastIndexOf('.');
+      const from = qualified.from + dot + 1;
       const scopedColumns = this._completeQualifiedColumns(context, from);
       if (scopedColumns) return scopedColumns;
 
+      const qualifier = qualified.text.slice(0, dot);
       const columns = new Map<string, Completion>();
       for (const schema of this.schemas) {
         for (const table of schema.tables || []) {
@@ -656,6 +675,9 @@ export class SqlConsolePage extends LitElement {
       }
       return columns.size ? { from, options: [...columns.values()] } : null;
     }
+
+    const word = context.matchBefore(/[\w$.一-鿿]+/);
+    if (!word) return null;
 
     const completions: Completion[] = [];
     for (const schema of this.schemas || []) {
@@ -752,6 +774,7 @@ export class SqlConsolePage extends LitElement {
       if (!res.ok) throw new Error('加载失败');
       const data = await res.json();
       if (requestId !== this._historyRequestId) return;
+      if (!Array.isArray(data?.items) || !Number.isFinite(data.total)) throw new Error('历史响应无效');
       if (reset) {
         this.historyItems = data.items;
       } else {
@@ -787,41 +810,99 @@ export class SqlConsolePage extends LitElement {
     this.requestUpdate();
   }
 
-  private async loadInstances() {
+  private async loadInstances(retryButton?: HTMLButtonElement) {
+    if (this._instanceListRead) return;
+    const read = new AbortController();
+    const signal = AbortSignal.any([read.signal, AbortSignal.timeout(15_000)]);
+    this._instanceListRead = read;
+    this.instanceListLoading = true;
+    this.instances = [];
+    this.schemas = [];
+    this.databases = [];
+    let moveFocus = false;
     try {
-      const res = await authFetch("/api/database/instances", { headers: this._headers() });
-      if (res.ok) {
-        this.instances = await res.json();
-        this._refreshDialect();
+      const res = await authFetch("/api/database/instances", { headers: this._headers(), signal });
+      signal.throwIfAborted();
+      if (!res.ok) {
+        if (res.status === 401) this.instanceListError = '登录已失效，请重新登录后读取数据库实例（HTTP 401）。';
+        else if (res.status === 403) this.instanceListError = '没有权限读取数据库实例（HTTP 403）。';
+        else if (res.status === 504) this.instanceListError = '读取数据库实例超时，请重试。';
+        else this.instanceListError = `数据库实例读取失败（HTTP ${res.status}）。`;
+        return;
       }
-    } catch { /* */ }
+      const instances: unknown = await res.json().catch(() => null);
+      signal.throwIfAborted();
+      if (!Array.isArray(instances) || !instances.every(instance =>
+        Number.isSafeInteger(instance?.id) && instance.id > 0
+        && typeof instance.name === 'string' && typeof instance.db_type === 'string'
+      )) {
+        this.instanceListError = '数据库实例列表响应无效，请重试。';
+        return;
+      }
+      moveFocus = Boolean(retryButton && this.shadowRoot?.activeElement === retryButton);
+      this.instances = instances;
+      this.instanceListError = '';
+      const restoredId = instances.some(instance => instance.id === this.selectedId) ? this.selectedId : 0;
+      void this._selectInstance(restoredId);
+    } catch {
+      if (this._instanceListRead !== read) return;
+      this.instanceListError = signal.reason?.name === 'TimeoutError'
+        ? '读取数据库实例超时，请重试。'
+        : '数据库实例读取失败，请重试。';
+    } finally {
+      if (this._instanceListRead === read) {
+        this._instanceListRead = undefined;
+        this.instanceListLoading = false;
+        if (moveFocus) void this.updateComplete.then(() => {
+          if (!this.isConnected || this.shadowRoot?.activeElement) return;
+          if (this.instances.length) this.renderRoot.querySelector<HTMLSelectElement>('#sql-instance')?.focus();
+          else this.activeTab?.editorView?.focus();
+        });
+      }
+    }
   }
 
   private async _selectInstance(id: number) {
+    if (id && !this.instances.some(instance => instance.id === id)) return;
+    const changed = id !== this.selectedId;
+    if (changed) {
+      this._clearExplain();
+      this.expandedTables = new Set();
+    }
+    this._instanceDetailRead?.abort();
+    const read = id ? new AbortController() : undefined;
+    this._instanceDetailRead = read;
     this.selectedId = id;
     this._refreshDialect();
     this.selectedDatabase = '';
     this.schemas = [];
     this.databases = [];
-    if (!id) return;
-    this.objectsLoading = true;
-    this._loadDatabases();
+    this.objectsLoading = Boolean(read);
+    if (changed) this._saveTabs();
+    if (!read) return;
+    const { signal } = read;
+    void this._loadDatabases(id, signal);
     try {
-      const res = await authFetch(`/api/database/instances/${id}/schema-objects`, { headers: this._headers() });
+      const res = await authFetch(`/api/database/instances/${id}/schema-objects`, { headers: this._headers(), signal });
       if (res.ok) {
-        this.schemas = await res.json();
-        this.expandedSchemas = new Set(this.schemas.map(s => s.schema));
+        const schemas = await res.json() as SchemaObject[];
+        if (!signal.aborted) {
+          this.schemas = schemas;
+          this.expandedSchemas = new Set(schemas.map(s => s.schema));
+        }
       }
     } catch { /* */ }
-    this.objectsLoading = false;
+    if (!signal.aborted) this.objectsLoading = false;
   }
 
-  private async _loadDatabases() {
-    if (!this.selectedId) return;
+  private async _loadDatabases(id: number, signal: AbortSignal) {
     try {
-      const res = await authFetch(`/api/database/instances/${this.selectedId}/databases`, { headers: this._headers() });
-      if (res.ok) this.databases = await res.json();
-    } catch (_) { this.databases = []; }
+      const res = await authFetch(`/api/database/instances/${id}/databases`, { headers: this._headers(), signal });
+      if (res.ok) {
+        const databases = await res.json();
+        if (!signal.aborted) this.databases = databases;
+      }
+    } catch { /* */ }
   }
 
   private _toggleSchema(schema: string) {
@@ -1044,7 +1125,7 @@ export class SqlConsolePage extends LitElement {
     if (node.table?.using_index) details['Using Index'] = true;
     if (node.table?.using_where) details['Using Where'] = true;
     if (node.table?.using_temporary) details['Using Temporary'] = true;
-    if (node.table?.using_filesort) details['Using Filesort'] = true;
+    if (node.using_filesort || node.table?.using_filesort) details['Using Filesort'] = true;
     if (node.possible_keys) details['Possible Keys'] = node.possible_keys;
 
     const children: PlanNode[] = [];
@@ -1053,7 +1134,10 @@ export class SqlConsolePage extends LitElement {
         children.push(this._normalizeMySQLNode(tbl));
       }
     }
-    if (node.table?.table_name && node.nested_loop) {
+    if (node.ordering_operation) {
+      children.push(this._normalizeMySQLNode(node.ordering_operation));
+    }
+    if (node.nested_loop) {
       for (const nl of node.nested_loop) {
         children.push(this._normalizeMySQLNode(nl));
       }
@@ -1198,32 +1282,55 @@ export class SqlConsolePage extends LitElement {
 
   /* ---- EXPLAIN fetch ---- */
 
+  private _clearExplain() {
+    this._explainRead?.abort();
+    this._explainRead = undefined;
+    this.explainLoading = false;
+    this.explainData = null;
+    this.explainError = null;
+    this._expandedNodes.clear();
+  }
+
   private async _fetchExplain() {
     if (!this._canQuery || this.explainLoading) return;
     const sql = this.getSQL().trim();
     if (!sql) return;
+    const instance = this.instances.find(i => i.id === this.selectedId);
+    const read = new AbortController();
+    const signal = AbortSignal.any([read.signal, AbortSignal.timeout(15_000)]);
+    this._explainRead = read;
     this.explainLoading = true;
     this.explainError = null;
     this.explainData = null;
     try {
       const res = await authFetch(`/api/database/instances/${this.selectedId}/explain?sql=${encodeURIComponent(sql)}`, {
         headers: this._headers(),
+        signal,
       });
+      const resp = await res.json().catch(() => null);
+      signal.throwIfAborted();
+      if (this._explainRead !== read) return;
       if (!res.ok) {
-        const err = await res.json();
-        throw new Error(err.error || '获取执行计划失败');
+        if (res.status === 504) throw new Error('读取执行计划超时，请重试');
+        throw new Error(resp?.error || `请求失败（HTTP ${res.status}）`);
       }
-      const resp = await res.json();
-      const plan = resp.plan || resp;
-      if (plan.error) throw new Error(plan.error || '无法获取执行计划');
-      const instance = this.instances.find(i => i.id === this.selectedId);
+      const plan = resp && typeof resp === 'object' && 'plan' in resp ? resp.plan : resp;
+      if (!plan || typeof plan !== 'object') throw new Error('执行计划响应无效，请重试');
+      if (plan.error) throw new Error(plan.error);
       const dbType = resp.db_type || instance?.db_type || 'mysql';
       this.explainData = this._explainNormalizer(plan, dbType);
       this._expandedNodes = new Set([this.explainData]); // root expanded by default
-    } catch (e: any) {
-      this.explainError = e.message;
+    } catch (error) {
+      if (this._explainRead !== read) return;
+      this.explainError = signal.reason?.name === 'TimeoutError'
+        ? '读取执行计划超时，请重试'
+        : error instanceof Error ? error.message : '读取执行计划失败，请重试';
+    } finally {
+      if (this._explainRead === read) {
+        this._explainRead = undefined;
+        this.explainLoading = false;
+      }
     }
-    this.explainLoading = false;
   }
 
   /* ---- Table view ---- */
@@ -1298,14 +1405,16 @@ export class SqlConsolePage extends LitElement {
       ` : ''}
 
       <div class="toolbar">
-        <select @change=${(e: Event) => this._selectInstance(Number((e.target as HTMLSelectElement).value))}>
-          <option value="0">选择数据库实例...</option>
+        <select id="sql-instance" aria-label="数据库实例"
+                ?disabled=${this.instanceListLoading || !this.instances.length}
+                @change=${(e: Event) => this._selectInstance(Number((e.target as HTMLSelectElement).value))}>
+          <option value="0" ?selected=${!instance}>选择数据库实例...</option>
           ${this.instances.map(i => html`
             <option value=${i.id} ?selected=${i.id === this.selectedId}>${i.name} (${i.db_type?.toUpperCase()} @ ${i.host}:${i.port})</option>
           `)}
         </select>
         <select @change=${(e: Event) => { this.selectedDatabase = (e.target as HTMLSelectElement).value; }}
-                ?disabled=${!this.selectedId}>
+                ?disabled=${!instance}>
           <option value="">选择数据库...</option>
           ${this.databases.map(db => html`
             <option value=${db} ?selected=${this.selectedDatabase === db}>${db}</option>
@@ -1321,6 +1430,23 @@ export class SqlConsolePage extends LitElement {
         <span style="font-size:12px;color:var(--muted)">${instance ? `${instance.db_type?.toUpperCase()} SQL` : ""}</span>
       </div>
 
+      ${this.instanceListError ? html`
+        <app-notice severity=${this.instanceListLoading ? 'info' : 'error'}>
+          ${this.instanceListLoading
+            ? html`<div role="status">正在读取数据库实例…</div>`
+            : html`<div role="alert">${this.instanceListError}</div>`}
+          <button class="btn btn-refresh" type="button" aria-busy=${this.instanceListLoading}
+                  aria-disabled=${this.instanceListLoading}
+                  @click=${(event: Event) => this.loadInstances(event.currentTarget as HTMLButtonElement)}>
+            重试读取数据库实例
+          </button>
+        </app-notice>
+      ` : this.instanceListLoading ? html`
+        <app-notice severity="info" role="status">正在读取数据库实例…</app-notice>
+      ` : !this.instances.length ? html`
+        <app-notice severity="info" role="status">当前没有可访问的数据库实例。</app-notice>
+      ` : nothing}
+
       <div class="main-area">
         <div class="browser">
           <div class="browser-tabs">
@@ -1335,14 +1461,14 @@ export class SqlConsolePage extends LitElement {
           </div>
           ${this.sidebarView === 'schema' ? html`
             <div class="browser-header">${instance?.name || ''}</div>
-            ${this.objectsLoading ? html`<div class="loading">加载中...</div>` :
+            ${this.objectsLoading && instance ? html`<div class="loading">加载中...</div>` :
               this.schemas.map(schema => html`
               <div class="tree-node">
                 <div class="schema-name" @click=${() => this._toggleSchema(schema.schema)}>
                   ${this.expandedSchemas.has(schema.schema) ? '▾' : '▸'} ${schema.schema}
                 </div>
                 ${this.expandedSchemas.has(schema.schema) ? schema.tables.map(table => {
-                  const key = `${schema.schema}.${table.name}`;
+                  const key = JSON.stringify([schema.schema, table.name]);
                   return html`
                   <div class="tree-node">
                     <div class="table-name" @click=${() => this._toggleTable(key)} @dblclick=${() => this._insertTable(table.name)}>
@@ -1466,11 +1592,11 @@ export class SqlConsolePage extends LitElement {
               <div class="loading">正在分析执行计划...</div>
             </div>
           ` : this.explainError ? html`
-            <div class="error-box">获取执行计划失败: ${this.explainError}</div>
+            <div class="error-box" role="alert">获取执行计划失败: ${this.explainError}</div>
           ` : r ? (() => {
             const allRows = this._sortRows(r.rows || []);
             const total = allRows.length;
-            const ps = this.pageSize === 'all' ? total : Number(this.pageSize);
+            const ps = this.pageSize === 'all' ? total : this.pageSize;
             const start = total > 0 ? (this.currentPage - 1) * ps + 1 : 0;
             const end = Math.min(this.currentPage * ps, total);
             const pageRows = allRows.slice(start - 1, end);
@@ -1484,13 +1610,16 @@ export class SqlConsolePage extends LitElement {
                       ${icons['download']} 导出 CSV
                     </button>
                     <span class="page-info">${start}–${end} / ${total} 行</span>
+                    <select class="page-size-select" .value=${String(this.pageSize)} @change=${(e: Event) => {
+                      const value = (e.target as HTMLSelectElement).value;
+                      this._changePageSize(value === 'all' ? value : Number(value));
+                    }}>
+                      <option value="25">25</option>
+                      <option value="50">50</option>
+                      <option value="100">100</option>
+                      <option value="all">全部</option>
+                    </select>
                     ${this.pageSize !== 'all' ? html`
-                      <select class="page-size-select" .value=${String(this.pageSize)} @change=${(e: Event) => this._changePageSize(Number((e.target as HTMLSelectElement).value))}>
-                        <option value="25">25</option>
-                        <option value="50">50</option>
-                        <option value="100">100</option>
-                        <option value="all">全部</option>
-                      </select>
                       <div class="page-nav">
                         <button class="btn-sm page-btn" aria-label="上一页" ?disabled=${this.currentPage <= 1} @click=${() => this._goToPage(this.currentPage - 1)}>‹</button>
                         <span class="page-num">${this.currentPage} / ${totalPages}</span>
@@ -1501,14 +1630,16 @@ export class SqlConsolePage extends LitElement {
                 </div>
                 <div class="results-scroll">
                   <table>
-                    <thead><tr>${(r.columns || []).map(c => html`
-                      <th @click=${() => this._toggleSort(c)}
-                          style="cursor:pointer;user-select:none;white-space:nowrap;text-align:center">
-                        ${c}
-                        ${this.sortColumn === c
-                          ? html`<span style="margin-left:var(--space-xs);color:var(--accent-text);font-size:10px">${this.sortDirection === 'asc' ? '▲' : '▼'}</span>`
-                          : ''}
-                      </th>`)}</tr></thead>
+                    <thead><tr>${(r.columns || []).map(column => {
+                      const direction = this.sortColumn === column ? this.sortDirection : null;
+                      return html`
+                        <th scope="col" aria-sort=${direction ? (direction === 'asc' ? 'ascending' : 'descending') : nothing}>
+                          <button class="btn-ghost result-sort" type="button" @click=${() => this._toggleSort(column)}>
+                            ${column}
+                            ${direction ? html`<span class="result-sort-direction" aria-hidden="true">${direction === 'asc' ? '▲' : '▼'}</span>` : nothing}
+                          </button>
+                        </th>`;
+                    })}</tr></thead>
                     <tbody>
                       ${pageRows.map(row => html`
                         <tr>${(r.columns || []).map(c => {

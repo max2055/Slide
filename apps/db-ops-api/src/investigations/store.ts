@@ -277,8 +277,9 @@ export class MysqlInvestigationStore {
       // Conversion is owner-only, regardless of ordinary read shares.
       if (!session || Number(session.user_id) !== input.actor.id) throw new InvestigationStoreError('INVESTIGATION_NOT_FOUND');
       const linked = await select(connection, 'SELECT id FROM investigations WHERE session_id = ? FOR UPDATE', [sessionId]);
+      if (linked.length) throw new InvestigationStoreError('INVESTIGATION_SESSION_ALREADY_LINKED');
       const running = await select(connection, "SELECT id FROM agent_runs WHERE session_id = ? AND state = 'running' FOR UPDATE", [sessionId]);
-      if (linked.length || running.length) throw new InvestigationStoreError('INVESTIGATION_ACTIVE_REQUEST');
+      if (running.length) throw new InvestigationStoreError('INVESTIGATION_ACTIVE_REQUEST');
     } else {
       await connection.execute(`INSERT INTO chat_sessions (session_id, user_id, title, message_count, last_message_at)
         VALUES (?, ?, ?, 0, NOW())`, [sessionId, input.actor.id, input.title]);

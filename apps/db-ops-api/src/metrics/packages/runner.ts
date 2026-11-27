@@ -6,7 +6,7 @@ import {
 } from '../../contracts/metrics/index.js';
 import { normalize, executeDerived, type Computation, type CounterState } from '../index.js';
 import { PackageRegistry, stable, type Selection } from './model.js';
-import { AdapterError, collectFixed, classifyError, type DecodedRow, type DriverEvidence, type Transport } from './adapters.js';
+import { AdapterError, collectFixed, classifyError, type DecodedRow, type DriverEvidence, type SnmpInterfaceInventoryRow, type Transport } from './adapters.js';
 import { metricKey } from '../policy/model.js';
 import { metricTiming, withDerivedIntervals } from '../timing.js';
 
@@ -36,6 +36,7 @@ export interface PackageExecution {
 }
 export interface PackageResult {
   discovery_rows?: Array<{ collector_id: string; dimensions: Record<string, string>; name: string }>;
+  snmp_interface_inventory?: SnmpInterfaceInventoryRow[];
   source_validation?: ReturnType<import('../rollout/source-shadow.js').SourceSnapshotCapture['compare']>;
   observations: Computation[];
   raw?: RawObservation[];
@@ -147,6 +148,10 @@ export async function runPackage(registry: PackageRegistry, input: Selection, ex
           } catch { error = 'parse_error'; }
         }
         validateObservationBatch(outputs.map(o => o.observation), definitions);
+        if (collector.implementation_ref === 'builtin:snmp.interfaces.v1'
+          && rows.length && rows.every(row => row.snmp_interface)) {
+          result.snmp_interface_inventory = rows.map(row => row.snmp_interface!);
+        }
       } catch (failure) {
         // Known transport errors retain their category. Validation failures are parse failures.
         error = failure instanceof AdapterError ? failure.code : 'parse_error';

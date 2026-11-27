@@ -6,6 +6,13 @@ import type { ResourceRef } from '../resources/types.js';
 interface QueryExecutor { query<T = any>(sql: string, values?: unknown[]): Promise<[T, unknown?]>; }
 interface Transaction extends QueryExecutor { beginTransaction(): Promise<void>; commit(): Promise<void>; rollback(): Promise<void>; release(): void; }
 interface OperationPool extends QueryExecutor { getConnection(): Promise<Transaction>; }
+type OperationInput = Omit<Operation, 'id' | 'state' | 'attempt' | 'createdAt' | 'updatedAt'>;
+interface ApprovalRetry {
+  authorize(connection: QueryExecutor, previous: Operation): Promise<void>;
+  create(connection: QueryExecutor, previous: Operation, operationId: string): Promise<number>;
+}
+
+export class OperationRetryUnavailableError extends Error {}
 
 const TRANSITIONS: Readonly<Record<OperationState, readonly OperationState[]>> = {
   queued: ['waiting_approval', 'claimed', 'cancelled', 'failed'],
@@ -77,41 +84,45 @@ export class OperationService {
 export class PersistentOperationService {
   constructor(private readonly poolProvider: () => OperationPool | null) {}
 
-  async create(input: Omit<Operation, 'id' | 'state' | 'attempt' | 'createdAt' | 'updatedAt'>): Promise<Operation> {
+  async create(input: OperationInput): Promise<Operation> {
     const pool = this.poolProvider();
     if (!pool) throw new Error('Operation database unavailable');
-    const id = randomUUID();
     const connection = await pool.getConnection();
     try {
       await connection.beginTransaction();
-      await connection.query(
-        `INSERT INTO operations (id, actor_id, origin, resource_type, resource_id, command_type, risk, idempotency_key, approval_id, correlation_id, state)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued')
-         ON DUPLICATE KEY UPDATE id = id`,
-        [id, input.actorId, input.origin, input.resource.type, input.resource.id, input.commandType, input.risk, input.idempotencyKey, input.approvalId ?? null, input.correlationId],
-      );
-      const [rows] = await connection.query<any[]>(
-        `SELECT * FROM operations WHERE actor_id = ? AND idempotency_key = ? FOR UPDATE`, [input.actorId, input.idempotencyKey],
-      );
-      const row = rows[0];
-      if (!row) throw new Error('Operation insert failed');
-      if (row.id === id) {
-        let metadata: Record<string, unknown> | undefined;
-        const ref = { type: row.resource_type, id: Number(row.resource_id) } as ResourceRef;
-        if (['instance', 'server', 'network_device'].includes(ref.type) && Number.isSafeInteger(ref.id) && ref.id > 0) {
-          const [policies] = await connection.query<any[]>('SELECT config_value FROM system_config WHERE config_key = ? LIMIT 1', [recoveryPolicyKey(ref)]);
-          if (policies[0]) {
-            try {
-              const binding = createRecoveryBinding(policies[0].config_value, Number(row.actor_id), ref, row.command_type);
-              if (binding) metadata = { recoveryBinding: binding };
-            } catch { metadata = { recoveryBindingUnavailable: 'RECOVERY_POLICY_INVALID' }; }
-          }
-        }
-        await this.append(connection, id, null, 'queued', 'CREATED', input.actorId, metadata);
-      }
+      const operation = await this.insert(connection, input);
       await connection.commit();
-      return this.map(row);
+      return operation;
     } catch (error) { await connection.rollback(); throw error; } finally { connection.release(); }
+  }
+
+  private async insert(connection: QueryExecutor, input: OperationInput, retry?: Operation): Promise<Operation> {
+    const id = randomUUID();
+    await connection.query(
+      `INSERT INTO operations (id, actor_id, origin, resource_type, resource_id, command_type, risk, idempotency_key, approval_id, correlation_id, state, attempt)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?)
+       ON DUPLICATE KEY UPDATE id = id`,
+      [id, input.actorId, input.origin, input.resource.type, input.resource.id, input.commandType, input.risk, input.idempotencyKey, input.approvalId ?? null, input.correlationId, retry ? retry.attempt + 1 : 1],
+    );
+    const [[row]] = await connection.query<any[]>(
+      `SELECT * FROM operations WHERE actor_id = ? AND idempotency_key = ? FOR UPDATE`, [input.actorId, input.idempotencyKey],
+    );
+    if (!row || (retry && row.id !== id)) throw new Error('Operation insert failed');
+    if (row.id === id) {
+      let metadata: Record<string, unknown> | undefined = retry ? { previousOperationId: retry.id } : undefined;
+      const ref = { type: row.resource_type, id: Number(row.resource_id) } as ResourceRef;
+      if (['instance', 'server', 'network_device'].includes(ref.type) && Number.isSafeInteger(ref.id) && ref.id > 0) {
+        const [policies] = await connection.query<any[]>('SELECT config_value FROM system_config WHERE config_key = ? LIMIT 1', [recoveryPolicyKey(ref)]);
+        if (policies[0]) {
+          try {
+            const binding = createRecoveryBinding(policies[0].config_value, Number(row.actor_id), ref, row.command_type);
+            if (binding) metadata = { ...metadata, recoveryBinding: binding };
+          } catch { metadata = { ...metadata, recoveryBindingUnavailable: 'RECOVERY_POLICY_INVALID' }; }
+        }
+      }
+      await this.append(connection, id, null, 'queued', 'CREATED', input.actorId, metadata);
+    }
+    return this.map(row);
   }
 
   async transition(id: string, toState: OperationState, reasonCode: string, actorId?: number, metadata?: Record<string, unknown>): Promise<Operation> {
@@ -188,26 +199,55 @@ export class PersistentOperationService {
     return this.transition(id, 'cancelled', 'CANCELLED_BY_ACTOR', actorId);
   }
 
-  async retryForActor(id: string, actorId: number): Promise<Operation | null> {
-    const previous = await this.getForActor(id, actorId);
-    if (!previous) return null;
-    if (!['failed', 'unknown', 'cancelled'].includes(previous.state)) {
-      throw new Error('Operation cannot be retried in its current state');
-    }
-    const retry = await this.create({
-      actorId,
-      origin: previous.origin,
-      resource: previous.resource,
-      commandType: previous.commandType,
-      risk: previous.risk,
-      idempotencyKey: `${previous.idempotencyKey}:retry:${previous.attempt + 1}`,
-      correlationId: previous.correlationId,
-      approvalId: previous.approvalId,
-    });
+  async retryForActor(id: string, actorId: number, approval?: ApprovalRetry): Promise<Operation | null> {
     const pool = this.poolProvider();
     if (!pool) throw new Error('Operation database unavailable');
-    await pool.query('UPDATE operations SET attempt = ? WHERE id = ?', [previous.attempt + 1, retry.id]);
-    return { ...retry, attempt: previous.attempt + 1 };
+    const connection = await pool.getConnection();
+    try {
+      await connection.beginTransaction();
+      const [[row]] = await connection.query<any[]>('SELECT * FROM operations WHERE id = ? AND actor_id = ? FOR UPDATE', [id, actorId]);
+      if (!row) { await connection.commit(); return null; }
+      const previous = this.map(row);
+      if (previous.state !== 'failed' && previous.state !== 'cancelled') throw new OperationRetryUnavailableError('Operation cannot be retried in its current state');
+      if (previous.origin === 'sql-approval') {
+        if (!approval || previous.state !== 'failed' || !previous.approvalId) throw new OperationRetryUnavailableError('Operation cannot be retried in its current state');
+        await approval.authorize(connection, previous);
+      }
+
+      // Serialize duplicates on the original row and find attempts by an internal audit link.
+      const [[receipt]] = await connection.query<any[]>(`SELECT metadata FROM operation_events
+        WHERE operation_id = ? AND reason_code = 'RETRY_CREATED' ORDER BY id DESC LIMIT 1 FOR SHARE`, [id]);
+      if (receipt) {
+        const metadata = typeof receipt.metadata === 'string' ? JSON.parse(receipt.metadata) : receipt.metadata;
+        const [[existing]] = await connection.query<any[]>('SELECT * FROM operations WHERE id = ? AND actor_id = ?', [metadata?.retryOperationId, actorId]);
+        if (!existing) throw new Error('Retry receipt is unavailable');
+        await connection.commit();
+        return this.map(existing);
+      }
+
+      if (previous.origin !== 'sql-approval') {
+        // Reuse completed legacy retry requests without deriving any new key from the caller's key.
+        const [[legacy]] = await connection.query<any[]>(`SELECT * FROM operations
+          WHERE actor_id = ? AND BINARY idempotency_key = ? AND origin = ? AND resource_type = ? AND resource_id = ?
+            AND command_type = ? AND risk = ? AND correlation_id = ? AND attempt = ? AND created_at >= ?
+          FOR SHARE`, [actorId, `${previous.idempotencyKey}:retry:${previous.attempt + 1}`, previous.origin,
+          previous.resource.type, previous.resource.id, previous.commandType, previous.risk, previous.correlationId, previous.attempt + 1, previous.createdAt]);
+        if (legacy) { await connection.commit(); return this.map(legacy); }
+      }
+
+      const next = await this.insert(connection, { ...previous, actorId, idempotencyKey: randomUUID(), approvalId: undefined }, previous);
+      if (previous.origin === 'sql-approval' && approval) {
+        const approvalId = await approval.create(connection, previous, next.id);
+        await connection.query("UPDATE operations SET approval_id = ?, state = 'waiting_approval' WHERE id = ?", [approvalId, next.id]);
+        await this.append(connection, next.id, 'queued', 'waiting_approval', 'NEEDS_APPROVAL', actorId, { approvalRequestId: approvalId });
+        next.state = 'waiting_approval';
+        next.approvalId = approvalId;
+      }
+      await this.append(connection, previous.id, previous.state, previous.state, 'RETRY_CREATED', actorId,
+        { retryOperationId: next.id, retryApprovalId: next.approvalId, retryAttempt: next.attempt });
+      await connection.commit();
+      return next;
+    } catch (error) { await connection.rollback(); throw error; } finally { connection.release(); }
   }
 
   private async append(connection: QueryExecutor, id: string, fromState: OperationState | null, toState: OperationState, reasonCode: string, actorId?: number, metadata?: Record<string, unknown>): Promise<void> {

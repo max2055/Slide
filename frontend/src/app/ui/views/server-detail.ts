@@ -17,12 +17,14 @@ import { authFetch } from "../../../api/index.js";
 import { sharedBtnStyles } from "../../styles/shared-btn-styles.js";
 import type { HostedInstance, HostedInstancesResponse } from "../../../api/generated/public-api.js";
 import type { ServerDiagnosticEvidence, ServerDiagnosticGroup } from "../components/server-diagnostic-panel.js";
+import { SERVER_ENVIRONMENT_OPTIONS } from './server-environment.js';
 
 interface ServerDetail {
   id: number;
   host: string;
   port: number;
   label: string | null;
+  environment?: string | null;
   os_type: string;
   os_version?: string | null;
   credential_type: "password" | "key";
@@ -471,6 +473,7 @@ export class ServerDetailPage extends LitElement {
       return html`<div class="page"><div class="loading">服务器不存在</div></div>`;
     }
 
+    const observationState = this.observationState();
     return html`
       <div class="page">
         <div class="header">
@@ -480,8 +483,8 @@ export class ServerDetailPage extends LitElement {
               <h1 class="server-title">${this.server.label || this.server.host}</h1><div class="resource-meta">${this.server.host}:${this.server.port} · ${this.server.os_type} · 版本 ${this.server.os_version || '未知'} · 观测于 ${this.overview?.observedAt ? new Date(this.overview.observedAt).toLocaleString('zh-CN') : '未知'}</div>
               
             </div>
-            <app-badge variant=${this.overview && ['abnormal','unavailable'].includes(runState(this.overview)) ? 'warn' : 'muted'}>
-              ${this.overview ? ({normal:'当前观测未提示异常',abnormal:'异常',unavailable:'不可用',unknown:'待确认'})[runState(this.overview)] : '待确认'}
+            <app-badge variant=${['abnormal', 'unavailable'].includes(observationState) ? 'warn' : 'muted'}>
+              ${({ normal: '当前观测未提示异常', abnormal: '异常', unavailable: '不可用', unknown: '待确认' })[observationState]}
             </app-badge>
           </div>
           <div class="header-right">
@@ -555,8 +558,16 @@ export class ServerDetailPage extends LitElement {
     `;
   }
 
+  private observationState() {
+    const item = this.overview;
+    if (!item) return 'unknown';
+    // New server records use offline until a recorded connection check exists.
+    const unchecked = item.status === 'offline' && this.server?.status === 'offline' && this.server.last_check_at === null;
+    return runState(unchecked ? { ...item, status: 'unknown' } : item);
+  }
+
   private _renderOverview() {
-    const item = this.overview, state = item ? runState(item) : 'unknown';
+    const item = this.overview, state = this.observationState();
     return html`<operations-resource-relations resourceType="server" .resourceId=${this.serverId}></operations-resource-relations><div class="overview-grid">
       <app-card><h2 slot="header">当前需要关注</h2>
         ${this.overviewLoading ? html`<p role="status">正在读取资源状态与证据…</p>` : nothing}
@@ -689,6 +700,10 @@ export class ServerDetailPage extends LitElement {
           <div class="config-item">
             <div class="config-label">标签</div>
             <div class="config-value">${this.server.label || "--"}</div>
+          </div>
+          <div class="config-item">
+            <div class="config-label">环境</div>
+            <div class="config-value">${SERVER_ENVIRONMENT_OPTIONS.find(option => option.value === (this.server?.environment ?? 'unknown'))?.label ?? '未标注环境'}</div>
           </div>
           <div class="config-item">
             <div class="config-label">操作系统</div>

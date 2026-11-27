@@ -10,7 +10,7 @@ import { DiscoveryPreviewRequestSchema, DiscoveryStopSchema, DiscoveryPreviewSch
 import { createConfigurationRegistry } from '../config/registry.js';
 import { createAssetCollectorAccess } from '../config/access.js';
 import type { CollectorAccess } from '../scheduler/service.js';
-import { collectFixed } from '../packages/adapters.js';
+import { AdapterError, collectFixed } from '../packages/adapters.js';
 import { stable } from '../packages/model.js';
 import { hashOf } from '../triggers/model.js';
 import { parsePackageReleaseRef } from './model.js';
@@ -18,6 +18,19 @@ import { MySqlTemplateRepository } from './mysql-repository.js';
 import { discoveryRows, decodeDiscovery } from './discovery-store.js';
 import { MysqlScheduleStore } from '../scheduler/store.js';
 import { checkApplicability } from '../packages/applicability.js';
+
+function previewError(error: unknown): string {
+  if (error instanceof PolicyError) return error.code;
+  if (!(error instanceof AdapterError)) return 'DISCOVERY_ENUMERATION_UNKNOWN';
+  if (error.evidenceCode === 'SNMP_INTERFACE_CAPACITY_EXCEEDED') return 'DISCOVERY_BUDGET';
+  const codes = {
+    timeout: 'DISCOVERY_TIMEOUT',
+    permission_denied: 'DISCOVERY_SOURCE_FORBIDDEN',
+    connection_error: 'DISCOVERY_CONNECTION_FAILED',
+    parse_error: 'DISCOVERY_ENUMERATION_FAILED',
+  };
+  return codes[error.code];
+}
 
 /** Explicit bounded read-only preview. A persisted unknown intent is never automatically re-executed. */
 export async function registerDiscoveryRoutes(app: FastifyInstance, verify: preHandlerHookHandler,
@@ -93,7 +106,7 @@ export async function registerDiscoveryRoutes(app: FastifyInstance, verify: preH
             const identity=stable(Object.fromEntries(rule.identity_dimensions.map(d=>[d,row.dimensions[d]])));
             requireRule(!identities.has(identity),'DISCOVERY_DUPLICATE',422);identities.add(identity);
             members.push({identity,name:(row.display_name??Object.values(row.dimensions).join(' / ')).slice(0,512),dimensions:row.dimensions});}
-        }catch(e){error=e instanceof PolicyError?e.code:'DISCOVERY_ENUMERATION_UNKNOWN';}
+        }catch(e){error=previewError(e);}
         rules.push({rule,status:error?'unknown' as const:'complete' as const,count:error?0:members.length,members:error?[]:members,error,
           budget:{timeout_ms:rule.timeout_ms,max_instances:rule.max_instances,item_upper_bound:rule.max_instances*rule.item_ids.length,
             trigger_upper_bound:rule.max_instances*version.aggregate.triggers.filter(t=>rule.item_ids.some(id=>t.scope===`item:${id}`)).length}});

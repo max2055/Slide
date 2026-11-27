@@ -7,6 +7,7 @@ import mysql from 'mysql2/promise';
 import type { LLMScene, SceneBinding } from './llm/scene-routing.js';
 import { dbConnection, encryptData, decryptData, needsEncryptionMigration } from './db-connection';
 import { CredentialDestinationError } from './llm/credential-destination-policy.js';
+import { retainStoredModelMetadata } from './llm/public-provider.js';
 
 // 部署方式
 export type DeploymentType = 'local' | 'cloud' | 'api';
@@ -416,7 +417,7 @@ class LLMDatabaseService {
         }
         if (config.modelsSupported !== undefined) {
           updates.push('models_supported = ?');
-          values.push(JSON.stringify(config.modelsSupported));
+          values.push(JSON.stringify(retainStoredModelMetadata(config.modelsSupported, existing.models_supported)));
         }
         if (config.contextWindow !== undefined) {
           updates.push('context_window = ?');
@@ -441,6 +442,7 @@ class LLMDatabaseService {
         if (config.enabled !== undefined) {
           updates.push('enabled = ?');
           values.push(config.enabled ? 1 : 0);
+          if (!config.enabled) updates.push('is_default = FALSE');
         }
         if (config.temperature !== undefined) {
           updates.push('temperature = ?');
@@ -469,10 +471,19 @@ class LLMDatabaseService {
 
         if (updates.length > 0) {
           values.push(config.name);
-          await pool.execute(
-            `UPDATE llm_providers SET ${updates.join(', ')} WHERE name = ?`,
+          let guard = '';
+          if (config.modelsSupported !== undefined) {
+            // Do not write extensions merged from an older generation after a concurrent edit or restore.
+            guard = " AND id = ? AND (CASE WHEN JSON_TYPE(models_supported) = 'NULL' THEN NULL ELSE models_supported END) <=> CAST(? AS JSON)";
+            values.push(existing.id, existing.models_supported == null ? null : JSON.stringify(existing.models_supported));
+          }
+          const [updated] = await pool.execute<mysql.ResultSetHeader>(
+            `UPDATE llm_providers SET ${updates.join(', ')} WHERE name = ?${guard}`,
             values
           );
+          if (guard && updated.affectedRows === 0) {
+            return { success: false, error: 'LLM_MODEL_CONFIGURATION_CHANGED：模型配置已更新，请重新读取后保存' };
+          }
         }
 
         return { success: true, providerId: existing.id };
@@ -534,9 +545,10 @@ class LLMDatabaseService {
       // 锁同时阻止目标在校验与提交之间被删除；全程只使用本连接。
       await connection.execute('SELECT id FROM llm_providers ORDER BY id FOR UPDATE');
       const [targets] = await connection.execute<mysql.RowDataPacket[]>(
-        'SELECT id FROM llm_providers WHERE name = ?', [name],
+        'SELECT id, enabled FROM llm_providers WHERE name = ?', [name],
       );
       if (targets.length !== 1) throw new Error('提供商不存在');
+      if (!targets[0].enabled) throw new Error('提供商未启用');
 
       await connection.execute('UPDATE llm_providers SET is_default = FALSE');
       const [result] = await connection.execute<mysql.ResultSetHeader>(
@@ -573,7 +585,8 @@ class LLMDatabaseService {
     }
 
     try {
-      await pool.execute('UPDATE llm_providers SET enabled = ? WHERE name = ?', [enabled ? 1 : 0, name]);
+      await pool.execute('UPDATE llm_providers SET enabled = ?, is_default = IF(?, is_default, FALSE) WHERE name = ?',
+        [enabled ? 1 : 0, enabled ? 1 : 0, name]);
       return { success: true };
     } catch (error: any) {
       console.error('切换提供商状态失败:', error);
