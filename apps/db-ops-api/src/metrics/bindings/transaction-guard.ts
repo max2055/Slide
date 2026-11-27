@@ -310,6 +310,8 @@ const TrialReceiptSchema = z.strictObject({
 });
 const MandatoryItemsSchema = z.array(ItemRefSchema);
 
+export const REQUIRED_GOOD_TRIAL_SAMPLE_POLICY = 'required-good-v1';
+
 /**
  * The explicit v2 receipt protocol. `receipt_version` is a discriminant, so a
  * v1 receipt is not a v2 receipt with optional fields: the old strict schema
@@ -321,6 +323,7 @@ const MandatoryItemsSchema = z.array(ItemRefSchema);
  */
 const TrialReceiptV2Schema = z.strictObject({
   receipt_version: z.literal(2),
+  sample_policy: z.literal(REQUIRED_GOOD_TRIAL_SAMPLE_POLICY).optional(),
   receipt_id: IdTextSchema,
   resource: ResourceRefSchema,
   base_revision: BaseRevisionSchema,

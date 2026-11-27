@@ -125,7 +125,7 @@ export async function registerAgentSecurityRoutes(
       || (query.agentId !== undefined && !validName(query.agentId, 64))
       || (query.toolName !== undefined && !validName(query.toolName))
       || (query.reasonCode !== undefined && !validName(query.reasonCode, 64))
-      || (query.phase !== undefined && query.phase !== 'decision' && query.phase !== 'result')
+      || (query.phase !== undefined && query.phase !== 'decision' && query.phase !== 'result' && query.phase !== 'discovery')
       || (query.allowed !== undefined && query.allowed !== 'true' && query.allowed !== 'false')) {
       return reply.code(400).send({ reasonCode: 'AGENT_AUDIT_QUERY_INVALID' });
     }
@@ -139,7 +139,7 @@ export async function registerAgentSecurityRoutes(
       actorId,
       toolName: query.toolName as string | undefined,
       reasonCode: query.reasonCode as string | undefined,
-      phase: query.phase as 'decision' | 'result' | undefined,
+      phase: query.phase as AgentToolAuditFilters['phase'],
       allowed: query.allowed === undefined ? undefined : query.allowed === 'true',
       from,
       to,

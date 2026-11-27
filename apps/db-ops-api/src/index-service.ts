@@ -1,12 +1,13 @@
 /**
  * 索引管理服务 — 从 managed database 采集索引信息，检测冗余和未使用索引
  */
-import { databaseService } from './database-service.js';
+import { databaseService, type DatabaseConnection } from './database-service.js';
 import { instanceDatabaseService } from './instance-database-service.js';
 import { dbConnection, decryptData } from './db-connection.js';
 import {
   indexDatabaseService,
   type IndexEntry,
+  type IndexRow,
   type RedundantIndexReport,
 } from './index-database-service.js';
 
@@ -24,6 +25,27 @@ export interface RedundantIndex {
     nonUnique: boolean;
   };
   reason: string;
+}
+
+type IndexUsageSource = 'mysql-performance-schema' | 'postgresql-pg-stat-user-indexes';
+type IndexUsageKey = Pick<IndexRow, 'table_name' | 'index_name'>;
+type IndexUsageCounter = IndexUsageKey & { usage_count: number | string | null };
+type IndexUsageObservation = {
+  rows: IndexRow[];
+  evidence: {
+    status: 'available' | 'no-evidence' | 'no-snapshot' | 'unsupported';
+    source?: IndexUsageSource;
+    observedAt?: string;
+    covered?: number;
+  };
+};
+
+const indexIdentity = (row: IndexUsageKey) => JSON.stringify([row.table_name, row.index_name]);
+const knownCounter = (row: IndexUsageCounter) =>
+  row.usage_count != null && row.usage_count !== '' && Number.isFinite(Number(row.usage_count)) && Number(row.usage_count) >= 0;
+
+export class IndexUsageReadError extends Error {
+  constructor() { super('索引使用统计读取失败'); }
 }
 
 class IndexService {
@@ -215,7 +237,7 @@ class IndexService {
         ix.indisvalid as is_valid,
         am.amname as index_type,
         a.attnum as ordinal_position,
-        array_position(ix.indkey, a.attnum) as seq
+        array_position(ix.indkey, a.attnum) - array_lower(ix.indkey, 1) + 1 AS seq
       FROM pg_index ix
       JOIN pg_class t ON t.oid = ix.indrelid
       JOIN pg_class i ON i.oid = ix.indexrelid
@@ -223,7 +245,7 @@ class IndexService {
       JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = ANY(ix.indkey)
       JOIN pg_am am ON am.oid = i.relam
       WHERE n.nspname NOT IN ('pg_catalog', 'pg_toast', 'information_schema')
-      ORDER BY n.nspname, t.relname, i.relname, array_position(ix.indkey, a.attnum)
+      ORDER BY n.nspname, t.relname, i.relname, seq
     `);
 
     if (!idxRows.rows || idxRows.rows.length === 0) {
@@ -381,84 +403,103 @@ class IndexService {
   }
 
   /**
-   * 未使用索引检测 — 基于 performance_schema
+   * Compare configured native counters with collected index identities without changing either database.
+   * Index rows keep their existing shape. The observation describes only the counters actually read.
    */
-  async detectUnusedIndexes(
-    instanceId: number
-  ): Promise<{ table_name: string; index_name: string }[] | { error: string }> {
+  async readUnusedIndexObservation(instanceId: number): Promise<IndexUsageObservation> {
+    const snapshot = await indexDatabaseService.getIndexesByInstance(instanceId);
+    if (!snapshot.length) return { rows: [], evidence: { status: 'no-snapshot' } };
+
+    const conn = databaseService.getConnection(instanceId);
+    const instance = await instanceDatabaseService.getInstanceById(instanceId);
+    const source = instance?.db_type === 'mysql' ? 'mysql-performance-schema'
+      : instance?.db_type === 'postgresql' ? 'postgresql-pg-stat-user-indexes' : undefined;
+    if (!instance) throw new IndexUsageReadError();
+    if (!source) return { rows: [], evidence: { status: 'unsupported' } };
+
+    const database = instance.database_name;
+    if (!database) return { rows: [], evidence: { status: 'no-evidence', source } };
+    if (!conn || conn.db_type !== instance.db_type || conn.config.database !== database ||
+        conn.config.host !== instance.host || conn.config.port !== instance.port || conn.config.user !== instance.username) {
+      throw new IndexUsageReadError();
+    }
+
+    let counters: IndexUsageCounter[];
+    try {
+      counters = await this.readIndexUsageCounters(conn, database);
+    } catch {
+      throw new IndexUsageReadError();
+    }
+
+    const observedAt = new Date().toISOString();
+    const observed = new Map(counters.filter(knownCounter).map(row => [indexIdentity(row), Number(row.usage_count)]));
+    const covered = new Set<string>();
+    const rows = snapshot.filter(row => {
+      const identity = indexIdentity(row);
+      if (observed.has(identity)) covered.add(identity);
+      return observed.get(identity) === 0;
+    }).map(row => ({ ...row, is_unused: true }));
+    return {
+      rows,
+      evidence: { status: covered.size ? 'available' : 'no-evidence', source, observedAt, covered: covered.size },
+    };
+  }
+
+  private async readIndexUsageCounters(conn: DatabaseConnection, database: string): Promise<IndexUsageCounter[]> {
+    if (conn.db_type === 'mysql' && conn.pool) {
+      const [rows] = await conn.pool.execute(
+        `SELECT object_name AS table_name, index_name, count_star AS usage_count
+         FROM performance_schema.table_io_waits_summary_by_index_usage
+         WHERE object_schema = ?
+           AND index_name IS NOT NULL
+           AND index_name <> 'PRIMARY'
+           AND @@GLOBAL.performance_schema = 1
+           AND EXISTS (
+             SELECT 1 FROM performance_schema.setup_instruments
+             WHERE NAME = 'wait/io/table/sql/handler' AND ENABLED = 'YES'
+           )`,
+        [database],
+      );
+      return rows as IndexUsageCounter[];
+    }
+    if (conn.db_type === 'postgresql' && conn.pgClient) {
+      const result = await conn.pgClient.query(
+        `SELECT $1::text || '.' || stats.schemaname || '.' || stats.relname AS table_name,
+                stats.indexrelname AS index_name, stats.idx_scan AS usage_count
+         FROM pg_stat_user_indexes stats
+         JOIN pg_index idx ON idx.indexrelid = stats.indexrelid
+         WHERE current_setting('track_counts')::boolean
+           AND NOT idx.indisprimary AND idx.indisvalid`,
+        [database],
+      );
+      return result.rows;
+    }
+    throw new IndexUsageReadError();
+  }
+
+  /**
+   * Detect and persist unused marks for callers explicitly requesting a write.
+   */
+  async detectUnusedIndexes(instanceId: number): Promise<IndexUsageKey[] | { error: string }> {
     try {
       const conn = databaseService.getConnection(instanceId);
-      if (!conn) {
-        return { error: '实例连接不存在，请先连接数据库实例' };
-      }
+      if (!conn) return { error: '实例连接不存在，请先连接数据库实例' };
 
       const instance = await instanceDatabaseService.getInstanceById(instanceId);
-      if (!instance) {
-        return { error: '实例不存在' };
-      }
+      if (!instance) return { error: '实例不存在' };
 
       const dbName = instance.database_name;
-      if (!dbName) {
-        return { error: '实例未配置 database_name' };
+      if (!dbName) return { error: '实例未配置 database_name' };
+      if (conn.db_type === 'oracle' || conn.db_type === 'dameng') {
+        return { error: '当前数据库没有未使用索引统计' };
       }
 
-      let unusedIndexes: { table_name: string; index_name: string }[];
-
-      if (conn.db_type === 'mysql') {
-        if (!conn.pool) return { error: '实例连接池未初始化' };
-
-        const [rows] = await conn.pool.execute(
-          `SELECT object_schema, object_name, index_name
-           FROM performance_schema.table_io_waits_summary_by_index_usage
-           WHERE object_schema = ?
-             AND index_name IS NOT NULL
-             AND index_name != 'PRIMARY'
-             AND count_star = 0`,
-          [dbName]
-        ) as any;
-
-        if (!Array.isArray(rows) || rows.length === 0) {
-          await this.markUnusedIndexes(instanceId, []);
-          return [];
-        }
-
-        unusedIndexes = rows.map((row: any) => ({
-          table_name: row.object_name,
-          index_name: row.index_name,
-        }));
-      } else if (conn.db_type === 'postgresql') {
-        if (!conn.pgClient) return { error: 'PostgreSQL 客户端未初始化' };
-
-        // PostgreSQL: 使用 pg_stat_user_indexes 查找 idx_scan = 0 的索引
-        const rows = await conn.pgClient.query(`
-          SELECT relname as table_name, indexrelname as index_name
-          FROM pg_stat_user_indexes
-          WHERE idx_scan = 0
-            AND indexrelname NOT LIKE '%_pkey'
-          ORDER BY relname, indexrelname
-        `);
-
-        if (!rows.rows || rows.rows.length === 0) {
-          await this.markUnusedIndexes(instanceId, []);
-          return [];
-        }
-
-        unusedIndexes = rows.rows.map((row: any) => ({
-          table_name: row.table_name,
-          index_name: row.index_name,
-        }));
-      } else if (conn.db_type === 'oracle' || conn.db_type === 'dameng') {
-        // Oracle/Dameng: 未使用索引检测需先启用 MONITORING，暂返回空
-        unusedIndexes = [];
-      } else {
-        return { error: `不支持的数据库类型: ${conn.db_type}` };
-      }
-
+      const counters = await this.readIndexUsageCounters(conn, dbName);
+      const unusedIndexes = counters.filter(row => knownCounter(row) && Number(row.usage_count) === 0)
+        .map(({ table_name, index_name }) => ({ table_name, index_name }));
       await this.markUnusedIndexes(instanceId, unusedIndexes);
-
       return unusedIndexes;
-    } catch (error: any) {
-      console.error('未使用索引检测失败:', error);
+    } catch {
       return { error: '未使用索引检测或保存失败' };
     }
   }

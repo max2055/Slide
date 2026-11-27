@@ -48,6 +48,7 @@ export class OperationsKnowledge extends LitElement {
   @state() private filter = 'published';
   @state() private resourceType = '';
   @state() private selected = '';
+  private selectedVersion: string | null = null;
   @state() private note = '';
   @state() private formOpen = false;
   @state() private editing = false;
@@ -106,20 +107,33 @@ export class OperationsKnowledge extends LitElement {
     if (cursor) query.set('cursor', cursor);
     await this.pages.load(`/knowledge?${query}`);
   }
-  private async open(id: string, push = true) {
+  private async open(id: string, push = true, version?: number) {
     this.stopWatch?.();this.stopWatch=null;this.destination.reset();this.bindingConfirmed=false;this.bindingNote='';
     this.clearDrafts(); this.selected = id;
-    if (push) { const u = new URL(location.href); u.searchParams.set('case', id); history.pushState({}, '', u); }
+    const url = new URL(location.href);
+    if (push) {
+      url.searchParams.set('case', id);
+      if (version === undefined) url.searchParams.delete('caseVersion');
+      else url.searchParams.set('caseVersion', String(version));
+      history.pushState({}, '', url);
+    }
+    const selectedVersion = this.selectedVersion = url.searchParams.get('caseVersion');
     const value=await this.record.load(`/knowledge/${encodeURIComponent(id)}`);
     if(value&&!value.tombstone&&this.selected===id) this.stopWatch=watchCase(id,record=>{
       if(this.selected!==id||this.record.accessInvalidated)return;
       if(!record){this.stopWatch?.();this.stopWatch=null;this.record.invalidate('案例订阅失效、来源撤回或授权变化，正文已清除；请只读核验。');this.pages.reset();this.destination.reset();}
-      else {this.record.data=record;this.requestUpdate();}
+      else if (selectedVersion !== null && String(record.version) !== selectedVersion) {
+        if (this.record.writing) return;
+        this.stopWatch?.(); this.stopWatch = null;
+        this.record.invalidate('案例版本已变化。请返回列表重新搜索并核对版本。');
+        this.pages.reset(); this.destination.reset();
+      } else {this.record.data=record;this.requestUpdate();}
     });
   }
   private back() {
     this.stopWatch?.();this.stopWatch=null;this.selected = ''; this.record.reset(); this.clearDrafts();
-    const u = new URL(location.href); u.searchParams.delete('case'); history.pushState({}, '', u); void this.search();
+    const u = new URL(location.href); u.searchParams.delete('case'); u.searchParams.delete('caseVersion');
+    history.pushState({}, '', u); void this.search();
   }
   private openLinkedCandidate() {
     const p = new URL(location.href).searchParams;
@@ -229,12 +243,17 @@ export class OperationsKnowledge extends LitElement {
     }
   }
   private async requestKnowledge<T>(path: string, options?: RequestInit): Promise<T> {
+    const selectedVersion = options ? null : this.selectedVersion;
     const submitting = path === '/knowledge' && options?.method === 'POST' && this.source;
     const source = submitting && { investigationId: this.candidate.investigationId, resultVersion: this.candidate.resultVersion };
     const generation = this.candidateGeneration;
     const ownsDraft = () => this.isConnected && generation === this.candidateGeneration && this.can('manage');
     try {
-      return await operationsApi<T>(path, options);
+      const value = await operationsApi<T>(path, options);
+      if (selectedVersion !== null && String((value as CaseRecord).version) !== selectedVersion) {
+        throw new OperationsApiError(409, 'OPERATIONS_VERSION_CONFLICT');
+      }
+      return value;
     } catch (error) {
       if (!source || !ownsDraft() || !isCandidateSourceRejection(error)) throw error;
       this.checkingSource = true;
@@ -292,8 +311,15 @@ export class OperationsKnowledge extends LitElement {
     const body = action === 'submit' ? { expectedRevision: r.revision } : action === 'withdraw'
       ? { expectedRevision: r.revision, reason: this.note.trim() }
       : { expectedRevision: r.revision, version: r.version, contentHash: r.contentHash, decision: action, note: this.note.trim() };
-    const result = await this.record.write(`/knowledge/${encodeURIComponent(r.id)}/${path}`, body);
-    if (result) { this.note = ''; this.formError = ''; await this.open(r.id, false); }
+    const result = await this.record.write<{ version: number }>(`/knowledge/${encodeURIComponent(r.id)}/${path}`, body);
+    if (result) {
+      if (this.selectedVersion !== null && validVersion(result.version) && result.version !== r.version) {
+        const url = new URL(location.href);
+        url.searchParams.set('caseVersion', String(result.version));
+        history.replaceState(history.state, '', url);
+      }
+      this.note = ''; this.formError = ''; await this.open(r.id, false);
+    }
   }
   private status(resource: OperationsResource<unknown>) {
     return html`${resource.error ? html`<p role="alert">${resource.error}</p>` : nothing}
@@ -312,7 +338,7 @@ export class OperationsKnowledge extends LitElement {
         <button class="btn-ghost" type="button" ?disabled=${p.accessInvalidated} @click=${() => { this.query = ''; this.resourceType = ''; this.filter = 'published'; void this.search(); }}>清除筛选</button>
       </form>${this.status(p)}
       ${!p.loading && p.data ? html`<app-card><span slot="header">当前可访问案例 · ${p.data.authorizedCounts.total}</span>
-        ${p.data.items.length ? p.data.items.map(r => html`<div class="row"><div class="row-head"><button class="btn-ghost" @click=${() => void this.open(r.id)}>${r.content?.title ?? '历史案例元数据'}</button><app-badge variant=${r.state === 'published' && !r.tombstone ? 'ok' : 'warn'}>${operationLabels[r.state]}</app-badge></div>
+        ${p.data.items.length ? p.data.items.map(r => html`<div class="row"><div class="row-head"><button class="btn-ghost" @click=${() => void this.open(r.id, true, r.version)}>${r.content?.title ?? '历史案例元数据'}</button><app-badge variant=${r.state === 'published' && !r.tombstone ? 'ok' : 'warn'}>${operationLabels[r.state]}</app-badge></div>
           <p>${r.content?.symptoms ?? '正文已不可引用，保留审核与版本轨迹。'}</p><div class="meta"><span>版本 ${r.version}</span><span>作者 #${r.author.id}</span><span>有效期至 ${new Date(r.validUntil).toLocaleString('zh-CN')}</span></div></div>`)
           : html`<app-empty-state title="没有匹配的案例" description=${!this.query && !this.resourceType && this.filter === 'published'
             ? '当前没有可访问的已发布案例。' : '可缩短搜索词或调整状态与资源类型。'}>

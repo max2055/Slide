@@ -99,6 +99,15 @@ describe('API authentication response handling', () => {
       .toBe('Bearer new-access-token');
   });
 
+  it('does not extend the session or replay a rejected background request', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(new Response(null, { status: 401 }));
+    const response = await authFetch('/api/cron/jobs', { refreshAccess: false });
+
+    expect(response.status).toBe(401);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(apiClient.getRefreshToken()).toBe('refresh-token');
+  });
+
   it('clears authentication and emits one event when refresh is rejected', async () => {
     const expired = vi.fn();
     window.addEventListener(SESSION_EXPIRED_EVENT, expired);

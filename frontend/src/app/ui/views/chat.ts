@@ -168,10 +168,12 @@ export type ChatProps = {
 const COMPACTION_TOAST_DURATION_MS = 5000;
 const FALLBACK_TOAST_DURATION_MS = 8000;
 
+type ChatDeletion = { store: DeletedMessages; undoKey?: string };
+
 // Persistent instances keyed by session
 const inputHistories = new Map<string, InputHistory>();
 const pinnedMessagesMap = new Map<string, PinnedMessages>();
-const deletedMessagesMap = new Map<string, DeletedMessages>();
+const deletedMessagesMap = new Map<string, ChatDeletion>();
 let activeDeletedMessages: { store: DeletedMessages; requestUpdate: () => void } | null = null;
 function handleDeletedMessagesStorage(event: StorageEvent) {
   const active = activeDeletedMessages;
@@ -242,11 +244,11 @@ function getPinnedMessages(sessionKey: string): PinnedMessages {
   );
 }
 
-function getDeletedMessages(sessionKey: string): DeletedMessages {
+function getDeletedMessages(sessionKey: string): ChatDeletion {
   return getOrCreateSessionCacheValue(
     deletedMessagesMap,
     sessionKey,
-    () => new DeletedMessages(sessionKey),
+    () => ({ store: new DeletedMessages(sessionKey) }),
   );
 }
 
@@ -1412,8 +1414,10 @@ export function renderChat(props: ChatProps) {
       }) ?? null,
   };
   const pinned = getPinnedMessages(props.sessionKey);
-  const deleted = getDeletedMessages(props.sessionKey);
+  const deletion = getDeletedMessages(props.sessionKey);
+  const deleted = deletion.store;
   deleted.refresh();
+  if (deletion.undoKey && !deleted.has(deletion.undoKey)) delete deletion.undoKey;
   activeDeletedMessages = { store: deleted, requestUpdate: props.onRequestUpdate ?? (() => {}) };
   window.addEventListener("storage", handleDeletedMessagesStorage);
   const inputHistory = getInputHistory(props.sessionKey);
@@ -1621,6 +1625,7 @@ export function renderChat(props: ChatProps) {
                     activeSession?.contextTokens ?? props.sessions?.defaults?.contextTokens ?? null,
                   onDelete: () => {
                     deleted.delete(item.key);
+                    deletion.undoKey = item.key;
                     requestUpdate();
                   },
                 })}
@@ -1785,6 +1790,19 @@ export function renderChat(props: ChatProps) {
       ${props.recoveryNotice && ![props.error, props.lastError, props.disabledReason].includes(props.recoveryNotice)
         ? html`<app-notice severity="warning" role="status" .dismissible=${!!props.onDismissRecoveryNotice}
             @dismiss=${props.onDismissRecoveryNotice}>${props.recoveryNotice}</app-notice>` : nothing}
+      ${deletion.undoKey ? html`
+        <app-notice severity="info" role="status" dismissible @dismiss=${() => {
+          delete deletion.undoKey;
+          requestUpdate();
+        }}>
+          消息已隐藏
+          <button class="btn btn-ghost btn-sm" type="button" @click=${() => {
+            if (deletion.undoKey) deleted.restore(deletion.undoKey);
+            delete deletion.undoKey;
+            requestUpdate();
+          }}>撤销</button>
+        </app-notice>
+      ` : nothing}
       ${props.focusMode
         ? html`
             <button

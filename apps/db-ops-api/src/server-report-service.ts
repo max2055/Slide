@@ -3,6 +3,7 @@ import { PolicyError } from './metrics/policy/model.js';
 import { metricConsumerService } from './metrics/consumers/runtime.js';
 import { internalMetricConsumerService } from './metrics/consumers/runtime.js';
 import { resourceMetricRead } from './metrics/consumers/resource-api.js';
+import { canReadResource } from './resources/resource-service.js';
 import { assertWorkflowActive } from './workflows/execution-context.js';
 /**
  * Server Report Service
@@ -114,6 +115,27 @@ function scoreClass(value: number): string {
   return 'critical';
 }
 
+function reportScores(server: ServerReportEntry) {
+  const metrics = server.metrics_summary;
+  const dimension = (value: number | null, score: number, unit = '%') => server.metrics_fresh && value !== null
+    ? { score, measurement: `${value}${unit}` }
+    : { score: null, measurement: null };
+  return {
+    cpu: dimension(metrics.cpu_usage_pct, server.cpu_score),
+    memory: dimension(metrics.memory_usage_pct, server.memory_score),
+    disk: dimension(metrics.disk_usage_pct, server.disk_score),
+    load: dimension(metrics.load_1min, server.load_score, ''),
+    overall: server.health_status === 'unknown' ? null : server.overall_score,
+  };
+}
+
+function inspectionNote(server: ServerReportEntry): string {
+  if (server.reachability_score === 0) {
+    return server.health_status === 'unknown' ? '最近连接检查失败，缺少有效采集样本' : '最近连接检查失败';
+  }
+  return server.health_status === 'unknown' ? '缺少有效采集样本' : '';
+}
+
 // ── Service ─────────────────────────────────────────────────────────────────────
 
 export class ServerReportService {
@@ -137,13 +159,16 @@ export class ServerReportService {
     if (serverIds && (!serverIds.length || !serverIds.every(id => Number.isSafeInteger(id) && id > 0))) {
       throw new Error('REPORT_SERVER_IDS_INVALID');
     }
+    const canReadServer = (id: number) => !userActor || canReadResource(userActor, { type: 'server', id });
+    if (serverIds?.some(id => !canReadServer(id))) throw new PolicyError('POLICY_FORBIDDEN', 403);
     const servers = serverIds
       ? await Promise.all([...new Set(serverIds)].map(async id => {
         const server = await serverDatabaseService.getServerById(id);
         if (!server) throw new Error(`REPORT_SERVER_NOT_FOUND:${id}`);
         return server;
       }))
-      : await serverDatabaseService.getAllServers();
+      : (await serverDatabaseService.getAllServers()).filter(server => canReadServer(server.id));
+    if (userActor?.resourceBoundary && !servers.length) throw new PolicyError('POLICY_FORBIDDEN', 403);
 
     // Fetch latest metrics per server
     const serverEntries: ServerReportEntry[] = [];
@@ -320,23 +345,26 @@ export class ServerReportService {
    * Format report data as an HTML document.
    */
   generateHtml(reportData: ReportData): string {
-    const { generated_at, server_count, healthy_count, warning_count, critical_count, servers } = reportData;
+    const { generated_at, server_count, healthy_count, warning_count, critical_count, unknown_count, servers } = reportData;
     const genDate = new Date(generated_at).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' });
 
-    const rows = servers
-      .map(
-        (s) => `
+    const scoreCell = (score: number | null, measurement?: string | null) => score === null
+      ? '<td class="score score-unavailable">未评分</td>'
+      : `<td class="score score-${scoreClass(score)}">${score}${measurement ? `<br><small>${measurement}</small>` : ''}</td>`;
+    const rows = servers.map(s => {
+      const { cpu, memory, disk, load, overall } = reportScores(s);
+      const note = inspectionNote(s);
+      return `
       <tr>
         <td>${this._escapeHtml(s.host)}${s.label ? `<br><small>${this._escapeHtml(s.label)}</small>` : ''}</td>
-        <td>${this._statusBadge(s.status)}</td>
-        <td class="score score-${scoreClass(s.cpu_score)}">${s.cpu_score}</td>
-        <td class="score score-${scoreClass(s.memory_score)}">${s.memory_score}</td>
-        <td class="score score-${scoreClass(s.disk_score)}">${s.disk_score}</td>
-        <td class="score score-${scoreClass(s.load_score)}">${s.load_score}</td>
-        <td class="score score-${scoreClass(s.overall_score)}"><strong>${s.overall_score}</strong></td>
-      </tr>`
-      )
-      .join('\n');
+        <td>${this._statusBadge(s.status)}${note ? `<br><small>${note}</small>` : ''}</td>
+        ${scoreCell(cpu.score, cpu.measurement)}
+        ${scoreCell(memory.score, memory.measurement)}
+        ${scoreCell(disk.score, disk.measurement)}
+        ${scoreCell(load.score, load.measurement)}
+        ${scoreCell(overall)}
+      </tr>`;
+    }).join('\n');
 
     const overallHealthClass =
       critical_count > 0 ? 'critical' : warning_count > 0 ? 'warning' : 'good';
@@ -353,7 +381,7 @@ export class ServerReportService {
     .container { max-width: 1200px; margin: 0 auto; }
     h1 { font-size: 24px; margin-bottom: 8px; }
     .subtitle { color: #666; font-size: 14px; margin-bottom: 24px; }
-    .summary-cards { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 32px; }
+    .summary-cards { display: grid; grid-template-columns: repeat(5, 1fr); gap: 16px; margin-bottom: 32px; }
     .card { padding: 20px; border-radius: 12px; background: #fff; box-shadow: 0 1px 4px rgba(0,0,0,0.08); text-align: center; }
     .card .num { font-size: 32px; font-weight: 700; }
     .card .label { font-size: 13px; color: #888; margin-top: 4px; }
@@ -373,6 +401,7 @@ export class ServerReportService {
     .score-good { background: #e8f5e9; color: #2e7d32; }
     .score-warning { background: #fff3e0; color: #e65100; }
     .score-critical { background: #ffebee; color: #c62828; }
+    .score-unavailable { background: #f5f7fa; color: #607d8b; }
     small { color: #999; font-size: 12px; }
     .status-badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 12px; font-weight: 600; }
     .status-badge.online { background: #e8f5e9; color: #2e7d32; }
@@ -411,6 +440,10 @@ export class ServerReportService {
       <div class="card critical">
         <div class="num">${critical_count}</div>
         <div class="label">严重</div>
+      </div>
+      <div class="card neutral">
+        <div class="num">${unknown_count}</div>
+        <div class="label">未评分</div>
       </div>
     </div>
 
@@ -453,7 +486,7 @@ export class ServerReportService {
    * Format report data as Markdown.
    */
   generateMarkdown(reportData: ReportData): string {
-    const { generated_at, server_count, healthy_count, warning_count, critical_count, servers } = reportData;
+    const { generated_at, server_count, healthy_count, warning_count, critical_count, unknown_count, servers } = reportData;
     const genDate = new Date(generated_at).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' });
 
     let md = `# 服务器健康巡检报告\n\n`;
@@ -465,7 +498,8 @@ export class ServerReportService {
     md += `| 服务器总数 | ${server_count} |\n`;
     md += `| 健康 | ${healthy_count} |\n`;
     md += `| 警告 | ${warning_count} |\n`;
-    md += `| 严重 | ${critical_count} |\n\n`;
+    md += `| 严重 | ${critical_count} |\n`;
+    md += `| 未评分 | ${unknown_count} |\n\n`;
 
     if (critical_count > 0) {
       md += `> **警告:** ${critical_count} 台服务器存在严重问题，需要立即关注\n\n`;
@@ -478,6 +512,8 @@ export class ServerReportService {
     md += `| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |\n`;
 
     for (const s of servers) {
+      const { cpu, memory, disk, load, overall } = reportScores(s);
+      const note = inspectionNote(s);
       const statusIcon =
         s.status === 'online'
           ? '🟢'
@@ -486,7 +522,7 @@ export class ServerReportService {
           : s.status === 'error'
           ? '🔴'
           : '⚫';
-      md += `| ${s.host} | ${s.label || '-'} | ${statusIcon} ${s.status} | ${s.cpu_score} | ${s.memory_score} | ${s.disk_score} | ${s.load_score} | **${s.overall_score}** | ${s.metrics_summary.cpu_usage_pct ?? '-'}% | ${s.metrics_summary.memory_usage_pct ?? '-'}% | ${s.metrics_summary.disk_usage_pct ?? '-'}% | ${s.metrics_summary.load_1min ?? '-'} |\n`;
+      md += `| ${s.host} | ${s.label || '-'} | ${statusIcon} ${s.status}${note ? `（${note}）` : ''} | ${cpu.score ?? '未评分'} | ${memory.score ?? '未评分'} | ${disk.score ?? '未评分'} | ${load.score ?? '未评分'} | **${overall ?? '未评分'}** | ${cpu.measurement ?? '—'} | ${memory.measurement ?? '—'} | ${disk.measurement ?? '—'} | ${load.measurement ?? '—'} |\n`;
     }
 
     md += `\n---\n*由 Slide 服务器健康巡检系统自动生成 — ${genDate}*\n`;

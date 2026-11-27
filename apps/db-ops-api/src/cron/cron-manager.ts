@@ -21,7 +21,7 @@ import { validateBinding } from './script-policy.js';
 import { executeControlSql } from './control-sql-executor.js';
 import type { ActorContext } from '../auth/actor-context.js';
 import { actorContextService } from '../auth/actor-context.js';
-import { cronAuthorityService, CRON_MAINTENANCE_HANDLERS } from './cron-authority.js';
+import { assertCronMysqlTarget, cronAuthorityService, CRON_MAINTENANCE_HANDLERS } from './cron-authority.js';
 import { hasUnrestrictedInstanceAccess } from '../auth/require-instance-access.js';
 import { hasPermission } from '../auth/require-permission.js';
 
@@ -375,7 +375,8 @@ export class CronManager {
   private async executeScriptJob(config: CronJobConfig, logId: number, revalidate: () => Promise<ActorContext>, runId?: string): Promise<void> {
     if (!config.script_id) throw new Error(`任务 #${config.id} 没有绑定脚本`);
     const binding = validateBinding(config.script_binding, config.script_id, config.target_instance_id);
-    const audit = { script_id: binding.scriptId, sha256: binding.sha256, capability: binding.capability, authorized_by: binding.authorizedBy };
+    const audit = { script_id: binding.scriptId, sha256: binding.sha256, capability: binding.capability, authorized_by: binding.authorizedBy,
+      ...(binding.targetDatabase === undefined ? {} : { target_database: binding.targetDatabase }) };
     if (!await this.jobService.recordScriptAuthorization(logId, audit)) {
       throw new Error('CRON_AUDIT_UNAVAILABLE');
     }
@@ -385,10 +386,11 @@ export class CronManager {
     let result: { success: boolean; columns?: string[]; rows?: any[]; rowCount?: number; duration_ms?: number; error?: string };
 
     if (config.target_instance_id !== null) {
+      if (binding.targetDatabase !== undefined) await assertCronMysqlTarget(config.target_instance_id);
       // Per Pitfall 3: Set timeout guard before execution
       const timeoutMs = (config.timeout_seconds || 300) * 1000;
       result = await sqlExecutor.executeSql(config.target_instance_id, binding.content, {
-        timeoutMs,
+        timeoutMs, ...(binding.targetDatabase === undefined ? {} : { database: binding.targetDatabase, requiredDbType: 'mysql' }),
       });
     } else {
       const pool = dbConnection.getPool();

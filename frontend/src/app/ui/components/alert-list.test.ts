@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 
+import type { AlertList } from "./alert-list.js";
 import "./alert-list.js";
 
 async function settle(element: HTMLElement & { updateComplete: Promise<unknown> }) {
@@ -39,5 +40,25 @@ describe("alert-list network-device targets", () => {
     expect(target).toBeTruthy();
     target?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
     expect(detail).toEqual({ id: 9 });
+  });
+
+  it("keeps pagination and the selected resource on a page with no local matches", async () => {
+    const element = document.createElement("alert-list") as AlertList;
+    element.total = 54;
+    element.filterTargetType = "server";
+    element.filterServerId = 7;
+    element.servers = [{ id: 7, host: "fixture.invalid" }];
+    let newPage: number | undefined;
+    element.addEventListener("alert-page-change", (event) => { newPage = (event as CustomEvent<{ page: number }>).detail.page; });
+    document.body.append(element);
+    await settle(element);
+
+    expect(element.shadowRoot?.querySelector('[aria-label="告警列表范围"]')?.textContent).toContain("本页匹配 0 条");
+    expect(element.shadowRoot?.querySelector<HTMLSelectElement>('[aria-label="服务器"]')?.value).toBe("7");
+    const next = [...(element.shadowRoot?.querySelectorAll<HTMLButtonElement>(".pagination button") ?? [])]
+      .find((button) => button.textContent?.includes("下一页"));
+    expect(next?.disabled).toBe(false);
+    next?.click();
+    expect(newPage).toBe(1);
   });
 });

@@ -1,4 +1,4 @@
-import { maintenanceBlocksDelivery } from '../maintenance-notification.js';
+import { notificationSuppressionReason } from '../maintenance-notification.js';
 import type { JobRegistry } from './job-registry.js';
 import type { notificationDatabaseService as NotificationDatabase } from '../notification-database-service.js';
 import type { NotificationService } from '../notification-service.js';
@@ -75,8 +75,9 @@ export function registerNotificationHandlers(
       try {
         signal.throwIfAborted();
         const publish = async () => {
-          if (identity.kind === 'notification' && await maintenanceBlocksDelivery(identity.sourceId,identity.transition?.at)) {
-            throw new Error('MAINTENANCE_SUPPRESSED');
+          if (identity.kind === 'notification') {
+            const suppression = await notificationSuppressionReason(identity.sourceId, identity.transition?.at);
+            if (suppression) throw new Error(suppression);
           }
           // One transport invocation only. SMTP and ordinary webhooks have no receiver deduplication contract.
           const sendSignal = claim.retryDeadline === undefined ? signal
@@ -96,8 +97,10 @@ export function registerNotificationHandlers(
         }
         await gate.finish(job, context, claim, 'sent');
       } catch (error) {
-        if (error instanceof Error && error.message === 'MAINTENANCE_SUPPRESSED') {
-          await gate.finish(job, context, claim, 'skipped', 'MAINTENANCE_SUPPRESSED');
+        if (error instanceof Error && (error.message === 'MAINTENANCE_SUPPRESSED' || error.message === 'MANUAL_SILENCE_SUPPRESSED')) {
+          // Suppressing a retry cannot settle an earlier unconfirmed transport.
+          const state = error.message === 'MANUAL_SILENCE_SUPPRESSED' && claim.retryDeadline !== undefined ? 'unknown' : 'skipped';
+          await gate.finish(job, context, claim, state, error.message);
           return;
         }
         // Persist only safe codes, and use the same preparation error in the job and delivery audit.

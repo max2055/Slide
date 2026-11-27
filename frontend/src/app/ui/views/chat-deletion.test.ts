@@ -38,6 +38,26 @@ it('MAX-638 storage events immediately refresh the real message list including r
   window.dispatchEvent(new StorageEvent('storage', { key: 'slide:deleted:one', newValue: '["stale"]' }));
   expect(root.querySelectorAll('.chat-group')).toHaveLength(1);
 });
+it('C04 can undo the local hide after another tab hides a different message', () => {
+  props.messages.push({ id: 'answer', role: 'assistant', content: '另一条消息' });
+  render(renderChat(props), root);
+  const buttons = root.querySelectorAll<HTMLButtonElement>('.chat-group-delete');
+  buttons[1].click();
+  root.querySelector<HTMLButtonElement>('.chat-delete-confirm__yes')!.click();
+
+  // Another tab hides the user message while the local Undo is still displayed.
+  const otherTab = new DeletedMessages('one');
+  otherTab.delete('group:user:msg:a');
+  storage('slide:deleted-message:one:group:user:msg:a');
+  expect(root.querySelectorAll('.chat-group')).toHaveLength(0);
+
+  const undo = [...root.querySelectorAll<HTMLButtonElement>('button')].find(button => button.textContent?.trim() === '撤销');
+  expect(undo).toBeDefined();
+  undo!.click();
+  expect(root.querySelector('.chat-group')?.textContent).toContain('另一条消息');
+  expect(root.querySelectorAll('.chat-group')).toHaveLength(1);
+  expect(new DeletedMessages('one').has('group:user:msg:a')).toBe(true);
+});
 it('MAX-638 filters sessions, updates the active callback once, and detaches on cache clear', () => {
   const previous = props.onRequestUpdate;
   props.sessionKey = 'two'; props.onRequestUpdate = vi.fn();

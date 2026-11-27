@@ -409,9 +409,11 @@ class DatabaseLogService {
    * 触发日志 AI 分析
    */
   async triggerLogAnalysis(logs: DatabaseLog[], instanceId: number, existingAnalysisId?: number): Promise<void> {
-    // 筛选 error 或 critical 级别日志
-    const errorLogs = logs.filter((l) => l.log_level === 'error' || l.log_level === 'critical');
-    if (errorLogs.length === 0) return;
+    // 自动分析仅取高严重性日志。手动分析使用调用者明确选中的日志。
+    const selectedLogs = existingAnalysisId !== undefined
+      ? logs
+      : logs.filter(log => log.log_level === 'error' || log.log_level === 'critical');
+    if (selectedLogs.length === 0) return;
 
     let analysisId: number;
     if (existingAnalysisId) {
@@ -440,7 +442,7 @@ class DatabaseLogService {
       await aiAnalysisDatabaseService.updateStatus(analysisId, 'running');
 
       // 构建 prompt
-      const logContent = errorLogs
+      const logContent = selectedLogs
         .slice(0, 20)
         .map((log) => {
           let line = `[${projectDatabaseLogForModel(log.log_level)}] [${projectDatabaseLogForModel(log.source)}] ${projectDatabaseLogForModel(log.message)}`;
@@ -455,9 +457,9 @@ class DatabaseLogService {
         })
         .join('\n\n');
 
-      const prompt = `请分析以下数据库错误日志，给出根因分析和处理建议：
+      const prompt = `请分析以下数据库日志，给出根因分析和处理建议：
 
-## 错误日志（共 ${errorLogs.length} 条，展示前 20 条）
+## 日志（共 ${selectedLogs.length} 条，展示前 20 条）
 
 日志已执行保守脱敏：仅保留诊断词、标准错误码及 SQL 结构，标识符、字面量和自由文本已遮蔽。请勿猜测被遮蔽的值；信息不足时说明限制。
 
@@ -497,8 +499,8 @@ ${logContent}
         await aiAnalysisDatabaseService.completeAnalysis(analysisId, {
           result: {
             raw_content: llmResult.content,
-            log_count: errorLogs.length,
-            log_summary: errorLogs.slice(0, 5).map((l) => ({
+            log_count: selectedLogs.length,
+            log_summary: selectedLogs.slice(0, 5).map((l) => ({
               level: l.log_level,
               source: l.source,
               message: l.message,

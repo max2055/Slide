@@ -16,7 +16,7 @@ import './template-trigger-editor.js';
 
 const resourceLabels: Record<string, string> = { instance: '数据库', server: '服务器', network_device: '网络设备' };
 const messages: Record<string, string> = {
-  TEMPLATE_TRIGGER_ITEM_REFERENCED: '组合触发器仍引用已移除的监控项。请恢复该监控项，或先修改引用它的触发器。',
+  TEMPLATE_TRIGGER_ITEM_REFERENCED: '触发器仍引用该监控项。请保留该监控项，或先解除触发器引用。',
   TRIGGER_DEPENDENCY_UNKNOWN: '要移除的监控项仍有触发器被依赖。请取消未保存的移除，先在已发布模板中解除触发器依赖，再移除监控项。',
   TEMPLATE_NAME_EMPTY: '请输入模板名称',
   TEMPLATE_INVALID_PERIOD: '请输入 1 到 86400 之间的整数秒',
@@ -43,6 +43,10 @@ const sections: ReadonlyArray<{ id: Section; label: string }> = [
 
 function itemLabel(item: Item) {
   return item.display_name === item.canonical_metric.id ? metricDisplayName(item.canonical_metric.id) : item.display_name;
+}
+
+function publicationLabel(version?: number | null) {
+  return version ? `已发布 · v${version}` : '草稿';
 }
 
 function duration(ms: number) {
@@ -301,10 +305,13 @@ export class TemplateLibraryPage extends LitElement {
   private removeItem(id: string) {
     const editor = this.editor!;
     const aggregate = editor.draft.aggregate;
+    if (aggregate.triggers.some(ref => ref.scope === `item:${id}`)) {
+      this.error = messages.TEMPLATE_TRIGGER_ITEM_REFERENCED;
+      return;
+    }
     this.editor = { ...editor, draft: { ...editor.draft, aggregate: {
       ...aggregate,
       items: aggregate.items.filter(ref => ref.item_id !== id),
-      triggers: aggregate.triggers.filter(ref => ref.scope !== `item:${id}`),
       ...(aggregate.discovery_rules ? { discovery_rules: aggregate.discovery_rules
         .map(rule => ({ ...rule, item_ids: rule.item_ids.filter(item => item !== id) })).filter(rule => rule.item_ids.length) } : {}),
     } } };
@@ -552,7 +559,7 @@ export class TemplateLibraryPage extends LitElement {
             type: row.resource_types.map(type => resourceLabels[type]).join(' / ') || '待配置',
             items: count(row.item_count, 'items'), triggers: count(row.trigger_count, 'triggers'),
             discovery: count(row.discovery_count, 'discovery'),
-            state: row.template.current_published_version ? '已发布' : '草稿' };
+            state: publicationLabel(row.template.current_published_version) };
         })}></app-data-table>
         ${library ? html`<div class="table-foot">${rows.length === library.templates.length
           ? `共 ${rows.length} 个模板` : `显示 ${rows.length} / ${library.templates.length} 个模板`}</div>` : nothing}</div>` : nothing}`;
@@ -567,7 +574,7 @@ export class TemplateLibraryPage extends LitElement {
     return html`<button class="btn-ghost trail" ?disabled=${this.busy || !!this.retry} @click=${this.leave}>‹ 返回监控模板</button>
       <header class="page-head"><div><h1 tabindex="-1">${editor.template.name}</h1>
         <div class="title-meta"><app-badge>${editor.builtin ? '内置' : '自定义'}</app-badge>
-          <span class="muted">${this.editing ? '编辑模板' : editor.current ? '已发布' : '草稿'}</span></div></div>
+          <span class="muted">${this.editing ? '编辑模板' : publicationLabel(editor.current?.version)}</span></div></div>
         ${!this.editing && !this.triggerEditing && editor.can_manage ? html`<div class="actions">
           <button class="btn" ?disabled=${blocked} @click=${() => this.openNaming('copy')}>克隆</button>
           ${!editor.builtin ? html`<button class="btn-primary" ?disabled=${blocked}
@@ -587,7 +594,7 @@ export class TemplateLibraryPage extends LitElement {
         ${this.section === 'items' ? this.renderItems(blocked)
           : this.section === 'triggers' ? this.renderTriggers(blocked)
           : html`<template-discovery .aggregate=${aggregate} .items=${this.items} .version=${this.published ?? editor.current}
-              .resourceTools=${false} .capabilities=${this.capabilities} .editable=${this.editing && !blocked}
+              .resourceTools=${!this.editing} .capabilities=${this.capabilities} .editable=${this.editing && !blocked}
               @discovery-change=${(event: CustomEvent) => {
                 this.editor = { ...editor, draft: { ...editor.draft, aggregate: { ...editor.draft.aggregate, discovery_rules: event.detail } } };
                 this.dirty = true;

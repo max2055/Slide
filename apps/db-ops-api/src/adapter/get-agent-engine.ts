@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { checkChatExecution } from '../auth/chat-execution.js';
 import { actorContextService } from '../auth/actor-context.js';
+import { assertChatPermission, ChatForbiddenError } from '../auth/chat-authorization.js';
 /**
  * getAgentEngine() — IAgentEngine factory, DirectAdapter-only.
  *
@@ -32,6 +33,7 @@ import { skillRegistry } from '../skills/loader.js';
 import { filterRuntimeSkills } from '../skills/runtime-policy.js';
 import { TrustedSkillsLoader } from '../skills/trusted-skills-loader.js';
 import { DEFAULT_AGENT_ID, agentSecurityPolicyService } from '../security/agent-security-policy-service.js';
+import { agentToolAuditService } from '../security/agent-tool-audit-service.js';
 
 let directEngine: IAgentEngine | null = null;
 let creatingEngine: Promise<IAgentEngine> | undefined;
@@ -237,13 +239,18 @@ export async function createCronToolRegistry(authority: CronToolAuthority): Prom
   return registry;
 }
 
+function discoverablePlatformTools(actor: ActorContext, agentId: string): AnyAgentTool[] {
+  return platformTools.filter(tool => {
+    const security = getToolSecurityDefinition(tool.name);
+    return Boolean(security && isActorFacingTool(tool.name) && canActorDiscoverTool(actor, tool)
+      && agentSecurityPolicyService.evaluateTool(agentId, tool.name, security.effect).allowed);
+  });
+}
+
 /** Build the per-actor registry used by the production DirectAdapter. */
 export function createActorBoundToolRegistry(actor: ActorContext, agentId = DEFAULT_AGENT_ID): ToolRegistry {
   const registry = new ToolRegistry();
-  for (const anyTool of platformTools) {
-    const security = getToolSecurityDefinition(anyTool.name);
-    if (!security || !isActorFacingTool(anyTool.name) || !canActorDiscoverTool(actor, anyTool)
-      || !agentSecurityPolicyService.evaluateTool(agentId, anyTool.name, security.effect).allowed) continue;
+  for (const anyTool of discoverablePlatformTools(actor, agentId)) {
     registry.register({
       name: anyTool.name,
       description: anyTool.description,
@@ -297,10 +304,16 @@ export async function createLLMProvider(purpose?: string): Promise<import('@slid
   return createConfiguredAgentProvider(llmDatabaseService, purpose ?? 'chat', true, purpose === undefined);
 }
 
+export async function createBootstrapLLMProvider(): Promise<import('@slide/agent-core').LLMProvider> {
+  const { llmDatabaseService } = await import('../llm-database-service.js');
+  const { createBootstrapAgentProvider } = await import('./llm-provider-factory.js');
+  return createBootstrapAgentProvider(llmDatabaseService);
+}
+
 async function createDirectAdapter(): Promise<DirectAdapter> {
   console.log('[getAgentEngine] Creating DirectAdapter...');
 
-  const provider = await createLLMProvider();
+  const provider = await createBootstrapLLMProvider();
   const tools = await loadPlatformTools();
   const skillsLoader = new TrustedSkillsLoader(() =>
     filterRuntimeSkills(DEFAULT_AGENT_ID, skillRegistry.getAll()),
@@ -309,6 +322,13 @@ async function createDirectAdapter(): Promise<DirectAdapter> {
   const adapter = new DirectAdapter({
     tools,
     toolsForActor: createActorBoundToolRegistry,
+    authorizeToolCatalog: async (actor, names) => {
+      const live = await actorContextService.revalidateActor(actor);
+      assertChatPermission(live);
+      const visible = new Set(discoverablePlatformTools(live, DEFAULT_AGENT_ID).map(tool => tool.name));
+      if (names.some(name => !visible.has(name))) throw new ChatForbiddenError();
+    },
+    recordToolDiscovery: (actor, names) => agentToolAuditService.recordDiscovery(actor, DEFAULT_AGENT_ID, names),
     llmProvider: provider,
     providerForPurpose: createLLMProvider,
     skillsLoader,

@@ -117,7 +117,7 @@ describe('Dameng same-instance ownership (MAX-367)', () => {
     const ok = await sqlExecutor.executeSql(3671, "UPDATE SLIDE_MAX367_DML SET NOTE = 'after' WHERE ID = 1", {
       approvalGrant: grant, timeoutMs: 1500,
     });
-    expect(ok).toMatchObject({ success: true, executionState: 'succeeded', operationId: grant.operationId, retryable: false });
+    expect(ok).toMatchObject({ success: true, rowCount: 1, executionState: 'succeeded', operationId: grant.operationId, retryable: false });
     expect(session.execute).toHaveBeenCalledWith(
       "UPDATE SLIDE_MAX367_DML SET NOTE = 'after' WHERE ID = 1",
       [],

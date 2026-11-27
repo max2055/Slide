@@ -87,6 +87,22 @@ export class DisplayStreamAuthority<Peer extends object> {
   end(sessionKey: string, runId: string): void {
     if (this.sources.get(sessionKey)?.runId === runId) this.sources.delete(sessionKey);
   }
+  markCancelled(sessionKey: string, runId: string): void {
+    const source = this.sources.get(sessionKey);
+    if (source && source.runId !== runId) return;
+
+    const run = this.runs.get(sessionKey);
+    const state = run?.runId === runId ? run.state : source?.get();
+    if (!state || state.terminal) return;
+
+    this.publish(sessionKey, {
+      version: 1, runId, attempt: state.attempt, sequence: state.sequence + 1,
+      operations: [
+        { type: 'stream.reset', anchor: { id: state.anchorId ?? runId, parts: [] } },
+        { type: 'run.terminal', outcome: 'cancelled' },
+      ],
+    });
+  }
   private recovery(run: Run): DisplayRecovery {
     return { truncated: run.truncated, omittedParts: run.omitted,
       detailRef: { kind: 'authorized-history', sessionKey: run.sessionKey, runId: run.runId } };

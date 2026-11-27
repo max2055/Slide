@@ -3576,6 +3576,12 @@
                 "type": "null"
               }
             ]
+          },
+          "target_database": {
+            "description": "Explicit database pinned to the MySQL Script binding.",
+            "maxLength": 64,
+            "minLength": 1,
+            "type": "string"
           }
         },
         "required": [
@@ -3616,6 +3622,12 @@
           "enabled": {
             "type": "boolean"
           },
+          "name": {
+            "maxLength": 100,
+            "minLength": 1,
+            "pattern": "\\S",
+            "type": "string"
+          },
           "owner_user_id": {
             "description": "Admin-only explicit rebinding of user tasks; never changes a user task to system maintenance.",
             "minimum": 1,
@@ -3628,6 +3640,19 @@
           "script_id": {
             "minimum": 1,
             "type": "integer"
+          },
+          "target_database": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "MySQL Script database. Omit to retain the existing selection for the same instance. Null clears it."
           },
           "target_instance_id": {
             "anyOf": [
@@ -9501,6 +9526,10 @@
           },
           {
             "const": "INVESTIGATION_ACTIVE_REQUEST",
+            "type": "string"
+          },
+          {
+            "const": "INVESTIGATION_SESSION_ALREADY_LINKED",
             "type": "string"
           },
           {
@@ -43946,6 +43975,31 @@
               "opening"
             ],
             "type": "object"
+          },
+          "source_availability": {
+            "additionalProperties": false,
+            "properties": {
+              "opening": {
+                "enum": [
+                  "available",
+                  "expired",
+                  "unknown"
+                ],
+                "type": "string"
+              },
+              "recovery": {
+                "enum": [
+                  "available",
+                  "expired",
+                  "unknown"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "opening"
+            ],
+            "type": "object"
           }
         },
         "required": [
@@ -47324,6 +47378,16 @@
             "items": {
               "additionalProperties": {},
               "properties": {
+                "dimensions": {
+                  "additionalProperties": {
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "propertyNames": {
+                    "type": "string"
+                  },
+                  "type": "object"
+                },
                 "item_id": {
                   "type": "string"
                 },
@@ -53722,13 +53786,16 @@
             "description": "Updated"
           },
           "400": {
-            "description": "Invalid binding or server-owned authority supplied"
+            "description": "Invalid name, binding or server-owned authority supplied"
           },
           "403": {
             "description": "Current target or owner rebinding permission denied"
           },
           "404": {
             "description": "Job absent or inaccessible"
+          },
+          "409": {
+            "description": "Job name already exists"
           }
         },
         "security": [
@@ -54118,7 +54185,7 @@
                 }
               }
             },
-            "description": "Active Linux hosts related to the database instance"
+            "description": "Active Linux host mappings within the actor’s current authorized server scope"
           },
           "400": {
             "content": {
@@ -54199,7 +54266,7 @@
                 }
               }
             },
-            "description": "Atomically replaced and enriched active host mappings"
+            "description": "Atomically replaces and returns enriched mappings within the actor’s authorized server scope while preserving mappings outside it"
           },
           "400": {
             "content": {
@@ -54229,7 +54296,7 @@
                 }
               }
             },
-            "description": "Instance unavailable or unauthorized"
+            "description": "Instance or requested server mapping unavailable or unauthorized"
           },
           "500": {
             "content": {
@@ -57222,7 +57289,7 @@
     },
     "/api/metrics/template-events/{eventId}": {
       "get": {
-        "description": "Live alert:view and resource read authority before and after the query. Returns existing event/alert ids, episode opening/latest evidence, immutable configuration/rule/template/sample/attempt snapshot, separate current binding revision, processing status and existing workflow delivery/receipt facts. No channel credentials. Acknowledgement additionally requires alert:manage and resource management; only processing status changes, never recovery, execution or notification admission. Private/no-store.",
+        "description": "Live alert:view and resource read authority before and after the query. Returns existing event/alert ids, episode opening/latest evidence, immutable configuration/rule/template/sample/attempt snapshot, separate current binding revision, processing status and existing workflow delivery/receipt facts. The current availability of raw sampling sources is separate from the snapshot. No raw payloads or channel credentials. Acknowledgement additionally requires alert:manage and resource management; only processing status changes, never recovery, execution or notification admission. Private/no-store.",
         "operationId": "getTemplateEventEvidence",
         "parameters": [
           {
@@ -57271,7 +57338,7 @@
     },
     "/api/metrics/template-events/{eventId}/acknowledge": {
       "post": {
-        "description": "Live alert:view and resource read authority before and after the query. Returns existing event/alert ids, episode opening/latest evidence, immutable configuration/rule/template/sample/attempt snapshot, separate current binding revision, processing status and existing workflow delivery/receipt facts. No channel credentials. Acknowledgement additionally requires alert:manage and resource management; only processing status changes, never recovery, execution or notification admission. Private/no-store.",
+        "description": "Live alert:view and resource read authority before and after the query. Returns existing event/alert ids, episode opening/latest evidence, immutable configuration/rule/template/sample/attempt snapshot, separate current binding revision, processing status and existing workflow delivery/receipt facts. The current availability of raw sampling sources is separate from the snapshot. No raw payloads or channel credentials. Acknowledgement additionally requires alert:manage and resource management; only processing status changes, never recovery, execution or notification admission. Private/no-store.",
         "operationId": "acknowledgeTemplateEvent",
         "parameters": [
           {
@@ -62152,6 +62219,7 @@
             }
           },
           {
+            "description": "Collect fresh evidence with server management permission. By default this operation only reads the latest snapshot.",
             "in": "query",
             "name": "refresh",
             "required": false,
@@ -62170,7 +62238,7 @@
                 }
               }
             },
-            "description": "Fixed-profile read-only server diagnostics"
+            "description": "Fixed-profile server diagnostic snapshot, with stale evidence identified by its quality and gaps"
           },
           "400": {
             "content": {
@@ -62200,7 +62268,7 @@
                 }
               }
             },
-            "description": "Server view permission required"
+            "description": "Server view permission required. An explicit refresh also requires server management permission."
           },
           "404": {
             "content": {
@@ -62210,7 +62278,7 @@
                 }
               }
             },
-            "description": "Server unavailable"
+            "description": "Server or diagnostic snapshot unavailable"
           },
           "422": {
             "content": {
@@ -62230,7 +62298,7 @@
                 }
               }
             },
-            "description": "Diagnostics unavailable or stale evidence returned by a later read"
+            "description": "Diagnostics unavailable"
           }
         },
         "security": [

@@ -77,6 +77,29 @@ describe("network-devices-page", () => {
     expect(showToast).toHaveBeenCalledWith("网络设备已删除", "success");
   });
 
+  it("shows refresh guidance for an unknown deletion receipt and keeps a known conflict explicit", async () => {
+    const device = { id: 7, name: "switch-01" };
+    authFetch.mockResolvedValue(response([]));
+    const element = document.createElement("network-devices-page") as any;
+    document.body.append(element);
+    await settle(element);
+    const open = () => { element.confirmDelete(device); return element.updateComplete; };
+    const notice = () => element.querySelector('app-dialog [role="alert"]')?.textContent;
+
+    await open();
+    authFetch.mockRejectedValueOnce(new TypeError("Failed to fetch"));
+    await element.deleteDevice(); await element.updateComplete;
+    expect(notice()).toContain("删除结果尚未确认，请刷新列表核对后再重试");
+    expect(authFetch.mock.calls.filter(([, options]) => options?.method === "DELETE")).toHaveLength(1);
+
+    element.closeDeleteDialog(); await open();
+    expect(notice()).toBeUndefined();
+    authFetch.mockResolvedValueOnce(response({ error: "NETWORK_DEVICE_HAS_RELATIONS" }, false, 409));
+    await element.deleteDevice(); await element.updateComplete;
+    expect(notice()).toContain("NETWORK_DEVICE_HAS_RELATIONS");
+    expect(notice()).not.toContain("结果尚未确认");
+  });
+
   it("uses POST for a read-only SNMPv3 probe and never exposes a write command", async () => {
     authFetch.mockImplementation(async (url: string) => {
       if (url === "/api/network-devices") return response([]);

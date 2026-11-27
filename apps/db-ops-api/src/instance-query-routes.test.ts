@@ -18,6 +18,42 @@ describe('instance query routes keep array success and unavailable distinct', ()
       expect(response.headers['x-slide-query-source']).toBe('mysql-slow-log');
     } finally { await app.close(); }
   });
+  it('returns successful arrays over an actual HTTP socket and limits topsql to ten', async () => {
+    const slow = vi.spyOn(databaseService, 'getSlowQueries').mockImplementation(async (_id, _limit, source) => {
+      source?.('mysql-performance-schema');
+      return [];
+    });
+    vi.spyOn(databaseService, 'getActiveSessions').mockResolvedValue([{ id: 7 }]);
+    const app = await appWithAccess();
+    await app.listen({ host: '127.0.0.1', port: 0 });
+    try {
+      const base = app.listeningOrigin + '/api/database/instances/991/';
+      const top = await fetch(base + 'topsql?limit=80');
+      expect(top.status).toBe(200);
+      expect(await top.json()).toEqual([]);
+      expect(top.headers.get('x-slide-query-source')).toBe('mysql-performance-schema');
+      expect(slow.mock.calls[0][1]).toBe(10);
+      const sessions = await fetch(base + 'sessions');
+      expect(sessions.status).toBe(200);
+      expect(await sessions.json()).toEqual([{ id: 7 }]);
+    } finally { await app.close(); }
+  });
+  it.each([
+    ['source-forbidden', 424, 'SOURCE_PERMISSION_DENIED'],
+    ['source-unavailable', 503, 'SOURCE_UNAVAILABLE'],
+    ['read-failed', 502, 'SOURCE_READ_FAILED'],
+  ] as const)('%s is distinct from no connection and from object permissions', async (issue, status, error) => {
+    vi.spyOn(databaseService, 'getSlowQueries').mockImplementation(async (_id, _limit, _source, report) => {
+      report?.(issue);
+      return null;
+    });
+    const app = await appWithAccess();
+    try {
+      const response = await app.inject('/api/database/instances/991/topsql');
+      expect(response.statusCode).toBe(status);
+      expect(response.json()).toEqual({ error });
+    } finally { await app.close(); }
+  });
   it.each(['topsql', 'sessions'])('%s unavailable does not return a successful empty array', async kind => {
     vi.spyOn(databaseService, kind === 'topsql' ? 'getSlowQueries' : 'getActiveSessions').mockResolvedValue(null);
     const app = await appWithAccess();

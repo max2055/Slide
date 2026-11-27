@@ -98,3 +98,53 @@ it.each([false, true])('reports manual closure separately from recovery in event
   }
   expect(root.textContent).toContain('操作者 #12');
 });
+
+it.each([
+  { source_availability: { opening: 'available', recovery: 'expired' }, opening: '原始采样来源可用', recovery: '原始采样来源已过期' },
+  { source_availability: undefined, opening: '原始采样来源状态未知', recovery: '原始采样来源状态未知' },
+])('shows current raw availability separately from both frozen observations %#', async ({ source_availability, opening, recovery }) => {
+  const at = '2026-11-01T00:00:00Z';
+  const recoveredAt = '2026-11-01T00:01:00Z';
+  const rule = {
+    rule_id: 'rule', version: 1, metric: { id: 'fixture.metric', semantic_version: '1.0.0' }, unit: 'count',
+    problem: { node: 'compare', select: { aggregation: 'last' }, operator: '>', threshold: { value: 90 } },
+    recovery: { node: 'compare', select: { aggregation: 'last' }, operator: '<', threshold: { value: 70 } },
+  };
+  authFetch.mockResolvedValueOnce(Response.json({
+    source_availability,
+    episode: {
+      rule_id: 'rule', state: 'closed', closed_at: recoveredAt, opened: { at, value: 95 },
+      last: { at: recoveredAt, value: 60, quality: 'good' }, resource: { type: 'instance', id: '5' },
+    },
+    snapshot: { configuration: { rules: [rule] }, opening: { sample_ids: ['frozen-sample'], samples: [] } },
+  }));
+  const record = document.createElement('event-investigation-record') as any;
+  record.full = true;
+  record.event = { id: 7, title: '模板事件', source_type: 'template-trigger', status: 'closed', created_at: at };
+  document.body.append(record);
+  const root = record.shadowRoot as ShadowRoot;
+  await vi.waitFor(() => expect(root.querySelectorAll('button.sample')).toHaveLength(2));
+  const [trigger, recovered] = root.querySelectorAll<HTMLButtonElement>('button.sample');
+  trigger.click();
+  await record.updateComplete;
+  const drawer = () => root.querySelector('app-dialog')!;
+  expect(drawer().textContent).toContain(opening);
+  expect(drawer().textContent).toContain('frozen-sample');
+  recovered.click();
+  await record.updateComplete;
+  expect(drawer().textContent).toContain(recovery);
+  expect(drawer().querySelector('.sample-value')?.textContent).toContain('60');
+});
+
+it('reports missing authorization without rendering protected frozen evidence', async () => {
+  authFetch.mockResolvedValueOnce(Response.json({ error: 'TRIGGER_FORBIDDEN' }, { status: 403 }));
+  const record = document.createElement('event-investigation-record') as any;
+  record.event = { id: 7, title: '模板事件', source_type: 'template-trigger', status: 'closed', created_at: '2026-11-01T00:00:00Z' };
+  document.body.append(record);
+  const root = record.shadowRoot as ShadowRoot;
+  await vi.waitFor(() => expect(root.textContent).toContain('没有此资源的查看权限'));
+  [...root.querySelectorAll('nav button')].find(button => button.textContent?.startsWith('证据'))!.dispatchEvent(new MouseEvent('click'));
+  await record.updateComplete;
+  expect(root.querySelector('[role=status]')?.textContent).toContain('没有此资源的查看权限');
+  expect(root.querySelector('button.sample')).toBeNull();
+});

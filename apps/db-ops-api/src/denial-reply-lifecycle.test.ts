@@ -13,7 +13,7 @@ import { ActorAuthenticationError, actorContextService, type ActorContext } from
 import { rbacApiRoutes } from './auth/rbac-api.js';
 import { RbacService } from './auth/rbac-service.js';
 import { getAccessibleInstanceIds, hasInstanceAccess, requireInstanceAccess } from './auth/require-instance-access.js';
-import { requirePermission } from './auth/require-permission.js';
+import { hasPermission, requirePermission } from './auth/require-permission.js';
 import { registerChatRoutes } from './chat-routes.js';
 import { databaseLogService } from './database-log-service.js';
 import { dbConnection } from './db-connection.js';
@@ -96,6 +96,29 @@ async function withBoundedHttp(fastify: FastifyInstance, run: (signal: AbortSign
 afterEach(() => vi.restoreAllMocks());
 
 const alertPage = { items: [], total: 0, unread: 0, critical: 0, warning: 0, resolved: 0, level_counts: {} };
+const completedAnalysis = { id: 9, instance_id: 25, status: 'completed', analysis_type: 'fault_diagnosis' };
+const completedSqlAudit = { ...completedAnalysis, analysis_type: 'sql_audit' };
+
+it('returns scoped dashboard capacity JSON and preserves zero coverage for an unknown sample', async () => {
+  const { fastify, send } = await setup();
+  const execute = vi.fn()
+    .mockResolvedValueOnce([[{ time_bucket: '2026-01-01 01:00:00', total_size_gb: null, observed_at: '2026-01-01 01:03:00', instance_count: 0 }]])
+    .mockResolvedValueOnce([[{ current_total: null }]]);
+  registerInline({ fastify, verifyToken, getAccessibleInstanceIds, hasInstanceAccess,
+    dbConnection: { getPool: () => ({ execute }) },
+  }, "  fastify.get('/api/dashboard/capacity-trend'");
+  await withBoundedHttp(fastify, async signal => {
+    const origin = await fastify.listen({ host: '127.0.0.1', port: 0 });
+    const response = await fetch(`${origin}/api/dashboard/capacity-trend?instance_id=25&hours=24`, { signal });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ current_total_gb: 0, trend: [{
+      time: '2026-01-01 01:00:00', total_size_gb: null, observed_at: '2026-01-01 01:03:00', instance_count: 0,
+    }] });
+    expect(execute).toHaveBeenCalledTimes(2);
+    expect(execute.mock.calls[0][1]).toEqual([24, 25]);
+    expect(send).toHaveBeenCalledTimes(1);
+  });
+});
 
 it.each([
   ['/api/version', { version: 'test-version' }],
@@ -110,12 +133,19 @@ it.each([
   ['/api/reports/stats', { total: 0 }],
   ['/api/reports/configs', []],
   ['/api/notification/channels', []],
+  ['/api/notification/records', [{ id: 5, status: 'suppressed' }], '/api/notification/records?status=suppressed'],
   ['/api/v1/rbac/roles', []],
   ['/api/llm/configs', []],
   ['/api/alerts', alertPage],
   ['/api/logs', { logs: [{ id: 9, source: 'mysql_error', message: 'fixture log' }], total: 1 }, '/api/logs?instanceId=25'],
   ['/api/logs/stats', { total: 1 }, '/api/logs/stats?instanceId=25'],
   ['/api/ai/analysis', [{ id: 1, related_id: 2, status: 'completed', trigger_type: 'manual' }], '/api/ai/analysis?analysis_type=alert_rca&limit=500'],
+  ['/api/ai/analysis/status/:id', { ok: true, record: completedAnalysis }, '/api/ai/analysis/status/9'],
+  ['/api/ai/analysis/:id/status', completedAnalysis, '/api/ai/analysis/9/status'],
+  ['/api/ai/analysis/:id', completedAnalysis, '/api/ai/analysis/9'],
+  ['/api/sql/audit/:id', completedSqlAudit, '/api/sql/audit/9'],
+  ['/api/sql/audit/:id/status', completedAnalysis, '/api/sql/audit/9/status'],
+  ['/api/sql/audit/instance/:instanceId', [completedSqlAudit], '/api/sql/audit/instance/25'],
   ['/api/models', [{ id: 'fixture-model', name: 'fixture-model', provider: 'fixture', reasoning: false }]],
   ['/api/schema/snapshots/:instanceId', [], '/api/schema/snapshots/25'],
   ['/api/schema/snapshot/:instanceId', { tables: [] }, '/api/schema/snapshot/25'],
@@ -141,7 +171,7 @@ it.each([
       await registerAlertListRoute(fastify, verifyAdmin);
     } else {
       registerInline({
-        fastify, verifyToken: verifyAdmin, requirePermission, getReportAccessScope,
+        fastify, verifyToken: verifyAdmin, requirePermission, hasPermission, getReportAccessScope,
         getAccessibleInstanceIds, requireInstanceAccess, hasInstanceAccess, publicLLMProvider,
         publicNotificationDto: publicDto.publicNotificationDto,
         dbConnection: { getPool: () => ({ query: async () => [[{ config_key: 'slide_version', config_value: 'test-version' }]] }) },
@@ -154,16 +184,19 @@ it.each([
         getAgentEngine: async () => ({ capabilities: () => ({ features: {} }) }),
         reportDatabaseService: { getReportsByFilters: async () => [], getReportStats: async () => ({ total: 0 }) },
         reportConfigService: { getConfigs: async () => [] },
-        notificationDatabaseService: { getChannels: async () => [] },
+        notificationDatabaseService: { getChannels: async () => [], getRecords: async () => [{ id: 5, status: 'suppressed' }] },
         llmDatabaseService: {
           getAllProviders: async () => [],
           getEnabledProviders: async () => [{ name: 'fixture', default_model: 'fixture-model' }],
         },
         aiAnalysisDatabaseService: {
           getAnalysisList: async () => [{ id: 1, related_id: 2, status: 'completed', trigger_type: 'manual' }],
+          getAnalysisById: async () => completedAnalysis,
         },
+        canReadAnalysis: () => true,
+        sqlAuditService: { getAuditResult: async () => completedSqlAudit, getAuditHistory: async () => [completedSqlAudit] },
         aiAnalysisConfigService: { getConfig: async () => ({ enabled: false }) },
-        scoringConfigService: { getWeights: async () => ({ cpu: 1 }) },
+        scoringConfigService: { getConfiguredWeights: async () => ({ cpu: 1 }) },
         authDatabaseService: { getAllUsers: async () => [] },
         schemaDatabaseService: { getSnapshotTimes: async () => [], getTableList: async () => [] },
         schemaService: { detectChanges: async () => [] },
@@ -175,6 +208,41 @@ it.each([
     expect(response.headers.get('content-type')).toMatch(/^application\/json/);
     expect(await response.json()).toEqual(expected);
     expect(send).toHaveBeenCalledExactlyOnceWith(expected);
+  });
+});
+
+const usersRoute = '/api/users';
+it.each([
+  ['post', usersRoute, usersRoute, { username: 'fixture-new', password: randomUUID() }, 201, { success: true, userId: 2 }],
+  ['put', `${usersRoute}/:id`, `${usersRoute}/2`, { status: 'inactive' }, 200, { success: true }],
+  ['post', `${usersRoute}/:id/password`, `${usersRoute}/2/password`, { password: randomUUID() }, 200, { success: true }],
+  ['delete', `${usersRoute}/:id`, `${usersRoute}/2`, null, 200, { success: true }],
+] as const)('completes %s %s user management with one JSON reply', async (method, route, path, payload, status, body) => {
+  const { fastify, send } = await setup();
+  fastify.addHook('onSend', async (_request, _reply, response) => {
+    await new Promise<void>(resolve => setImmediate(resolve));
+    return response;
+  });
+  const writeUser = vi.fn(async () => body);
+  registerInline({
+    fastify, requirePermission, strictBody,
+    verifyToken: async (request: FastifyRequest) => {
+      Object.assign(request, { user: { ...actor, permissions: ['admin:*'] } });
+    },
+    authDatabaseService: {
+      createUser: writeUser, updateUserById: writeUser, changePassword: writeUser, deleteUserById: writeUser,
+    },
+  }, `  fastify.${method}('${route}',`);
+  await withBoundedHttp(fastify, async signal => {
+    await fastify.listen({ host: '127.0.0.1', port: 0 });
+    const response = await fetch(fastify.listeningOrigin + path, {
+      method: method.toUpperCase(), signal,
+      ...(payload && { headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload) }),
+    });
+    expect(response.status).toBe(status);
+    expect(await response.json()).toEqual(body);
+    expect(send).toHaveBeenCalledExactlyOnceWith(body);
+    expect(writeUser).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -315,6 +383,37 @@ it('MAX-717 separates log list and statistics failures from success and recovers
     execute.mockResolvedValueOnce([[{ total: 0 }]]).mockResolvedValueOnce([[]]).mockResolvedValueOnce([[]]);
     const emptyStats = await readStats();
     expect([emptyStats.status, await emptyStats.json()]).toEqual([200, stats(0)]);
+  });
+});
+
+it('completes schema capture with one JSON acknowledgement while preserving validation and scope', async () => {
+  const { fastify, send } = await setup();
+  const capture = { collected: 5, tables: 2, columns: 5 };
+  const collect = vi.spyOn(schemaService, 'collectSchema')
+    .mockResolvedValueOnce(capture)
+    .mockResolvedValueOnce({ error: '未找到任何表结构数据' })
+    .mockRejectedValueOnce(new Error('fixture storage failure'));
+  registerInline({
+    fastify, requirePermission, requireInstanceAccess, schemaService,
+    verifyToken: async (request: FastifyRequest) => {
+      Object.assign(request, { user: { ...actor, permissions: ['schema:manage'] } });
+    },
+  }, "  fastify.post('/api/schema/collect/:instanceId',");
+  await withBoundedHttp(fastify, async signal => {
+    const origin = await fastify.listen({ host: '127.0.0.1', port: 0 });
+    const post = (id: number) => fetch(`${origin}/api/schema/collect/${id}`, { method: 'POST', signal });
+    const forbidden = await post(26);
+    expect(forbidden.status).toBe(403);
+    await forbidden.json();
+    expect(collect).not.toHaveBeenCalled();
+    const recorded = await post(25);
+    expect([recorded.status, await recorded.json()]).toEqual([200, { success: true, data: capture }]);
+    const empty = await post(25);
+    expect([empty.status, await empty.json()]).toEqual([400, { success: false, error: '未找到任何表结构数据' }]);
+    const failed = await post(25);
+    expect([failed.status, await failed.json()]).toEqual([500, { error: 'INTERNAL_ERROR' }]);
+    expect(collect.mock.calls).toEqual([[25], [25], [25]]);
+    expect(send).toHaveBeenCalledTimes(4);
   });
 });
 

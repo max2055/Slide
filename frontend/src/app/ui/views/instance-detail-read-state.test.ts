@@ -18,6 +18,26 @@ async function text(el: any) {
 }
 afterEach(() => { vi.restoreAllMocks(); fetchMock.mockReset(); roots.forEach(r => r.remove()); roots.length = 0; });
 describe('instance query read states', () => {
+  it('shows a deleted identity without mounting live operations and keeps historical metrics readable', async () => {
+    const el = page('collection');
+    const diagnosis = vi.spyOn(el, 'loadDiagnosisHistory');
+    fetchMock.mockImplementation(async url => new Response(JSON.stringify(url === '/api/database/instances/1'
+      ? { name: 'removed instance', lifecycle_state: 'deleted', removed_at: '2026-11-25T03:00:00Z' }
+      : { items: [] })));
+    await el.loadData();
+
+    const root = document.createElement('div'); roots.push(root); document.body.append(root);
+    render(el.render(), root);
+    expect(root.textContent).toContain('实例已删除');
+    expect(root.textContent).toContain('removed instance');
+    expect(root.textContent).not.toContain('一键诊断');
+    expect(root.querySelector('resource-collection-section')).toBeNull();
+    expect(diagnosis).not.toHaveBeenCalled();
+
+    el.activeTab = 'metrics'; render(el.render(), root);
+    expect(root.querySelector('resource-metric-browser')).toBeTruthy();
+  });
+
   it('MAX-396 shows Oracle average 2000ms as slow and unknown maximum explicitly', async () => {
     fetchMock.mockResolvedValue(new Response(JSON.stringify([{ id: 'oracle', sql_text: 'SELECT fixture', avg_time_ms: 2000, max_time_ms: null, execution_count: 5, last_seen: new Date().toISOString() }])));
     const el = page(); await el.loadTabData();
@@ -44,7 +64,7 @@ describe('instance query read states', () => {
     fetchMock.mockResolvedValue(new Response('{}', { status }));
     const el = page(); await el.loadTabData();
     const content = await text(el);
-    expect(content).toContain(status === 403 ? '无权' : status === 404 ? '不可用' : '失败');
+    expect(content).toContain(status === 403 ? '无权' : status === 404 ? '实例未连接' : '失败');
     expect(content).not.toContain('暂无慢查询'); expect(content).not.toContain('数据库运行良好');
   });
   it.each(['null', '{}', '{"error":"unavailable"}'])('rejects malformed success %s', async body => {

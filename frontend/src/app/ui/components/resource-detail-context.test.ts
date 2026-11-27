@@ -1,5 +1,6 @@
-import { beforeEach, expect, it } from "vitest";
+import { beforeEach, expect, it, vi } from "vitest";
 import {
+  captureListReturn,
   detailWindow,
   resourceContextUrl,
   detailTabKeydown,
@@ -35,6 +36,22 @@ it("restores only the matching list token and rejects external return paths", ()
   expect(restoredListState("instance")).toBeNull();
   history.replaceState({}, "", "/?tab=servers&restoreList=https://evil.test");
   expect(restoredListState("server")).toBeNull();
+});
+it("preserves instance list context when Web Crypto has no randomUUID", () => {
+  const getRandomValues = vi.fn((bytes: Uint8Array) => bytes.fill(0x2a));
+  vi.stubGlobal("crypto", { getRandomValues });
+  try {
+    const state = { search: "Oracle", filter: "all" };
+    captureListReturn(document.createElement("div"), "instance", 41, state);
+    const url = new URL(location.href);
+    const token = "2a2a2a2a-2a2a-4a2a-aa2a-2a2a2a2a2a2a";
+    expect(getRandomValues).toHaveBeenCalledOnce();
+    expect(url.searchParams.get("listReturn")).toBe(token);
+    expect(url.searchParams.get("restoreList")).toBe(token);
+    expect(restoredListState("instance")).toMatchObject({ id: 41, state });
+  } finally {
+    vi.unstubAllGlobals();
+  }
 });
 it("roves tab focus and invokes the real click handler", () => {
   const root = document.createElement("div");

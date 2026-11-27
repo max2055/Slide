@@ -21,7 +21,7 @@ const latestRoute = routeSource(
 );
 const historyRoute = routeSource(
   "fastify.get('/api/servers/:id/metrics/history'",
-  '// Read-only fixed-profile diagnostics.',
+  "fastify.get('/api/servers/:id/diagnostics'",
 );
 const instanceLatestRoute = routeSource(
   "fastify.get('/api/database/instances/:id/metrics'",

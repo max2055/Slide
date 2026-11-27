@@ -11,7 +11,8 @@ import { displayTime } from '../views/diagnosis-presentation.ts';
 import type { TemplateEventEvidence } from '../../../api/generated/public-api.ts';
 import { metricDisplayName } from './metric-display.ts';
 import { resourceDetailUrl, type ResourceType } from './resource-investigation-links.ts';
-import { metricRequest } from './metric-api.ts';
+import { isMetricAccessError, metricReadError, metricRequest } from './metric-api.ts';
+import { templateEventSourceLabel } from './template-event-source.ts';
 import './app-dialog.ts';
 import './app-badge.ts';
 import './template-event-close.js';
@@ -38,6 +39,7 @@ interface Rule {
 }
 interface Telemetry {
   can_manual_close?: boolean;
+  source_availability?: TemplateEventEvidence['source_availability'];
   episode: {
     resource: {type: ResourceType; id: number | string};
     rule_id: string;
@@ -227,7 +229,10 @@ export class EventInvestigationRecord extends LitElement {
       if (!data?.episode?.opened || !data.episode.last || !data.episode.resource
         || !data.snapshot?.configuration?.rules?.some(rule => rule.rule_id === data.episode.rule_id && rule.metric)) throw new Error('INVALID_EVENT_EVIDENCE');
       if (!abort.signal.aborted) this.telemetry = data;
-    } catch { if (!abort.signal.aborted) this.telemetryError = '正式监控证据暂不可用。'; }
+    } catch (error) {
+      if (!abort.signal.aborted) this.telemetryError = isMetricAccessError(error)
+        ? metricReadError(error, '正式监控证据') : '正式监控证据暂不可用。';
+    }
     finally { if (!abort.signal.aborted) this.telemetryLoading = false; }
   }
   private get recovered() {
@@ -381,6 +386,8 @@ export class EventInvestigationRecord extends LitElement {
         <dt>判定时间</dt><dd>${displayTime(sample.at)}</dd><dt>观测值</dt><dd class="sample-value">${formattedValue(sample.value,rule.unit)}</dd>
         <dt>当时规则</dt><dd>${sample.key === 'recovery' && rule.recovery_mode === 'problem_expression' ? '问题条件转假：' : ''}${describeRule(sample.rule,rule.parameters)}</dd>
         <dt>指标</dt><dd>${metricDisplayName(rule.metric.id)}</dd>
+        <dt>原始采样来源</dt><dd>${templateEventSourceLabel(sample.key === 'trigger'
+          ? this.telemetry?.source_availability?.opening : this.telemetry?.source_availability?.recovery)}</dd>
         ${sample.key === 'recovery' ? html`<dt>证据质量</dt><dd>${qualityLabels[this.telemetry?.episode.last.quality ?? ''] ?? '待确认'}</dd>` : nothing}
         </dl>
         <details><summary>原始时间、规则版本与样本</summary>
@@ -450,7 +457,7 @@ export class EventInvestigationRecord extends LitElement {
       ${tabs.map(tab => html`<button type="button" aria-pressed=${String(this.tab === tab.id)} @click=${() => {this.tab = tab.id;}}>${tab.label}</button>`)}
       </nav>
       <div class="body">${this.tab === 'timeline' ? this.timeline(link) : this.tab === 'evidence'
-        ? this.samples().length ? this.summarySamples() : html`<p role="status">${this.telemetryLoading ? '正在读取正式监控证据…' : '正式监控证据暂不可用。'}</p>`
+        ? this.samples().length ? this.summarySamples() : html`<p role="status">${this.telemetryLoading ? '正在读取正式监控证据…' : this.telemetryError || '正式监控证据暂不可用。'}</p>`
         : this.overview(link)}</div>
       ${this.renderDrawer(link)}`;
   }

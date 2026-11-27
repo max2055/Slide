@@ -9,6 +9,11 @@ describe('strict Investigation entry context', () => {
     expect(parseEntryContext({ ...c, returnTo: '/slide/instance-detail?id=1' }).returnTo).toBe('/slide/instance-detail?id=1');
     expect(result).toEqual(c); c.resourceRefs[0].id = 4; expect(result.resourceRefs[0].id).toBe(1);
   });
+  it('accepts the overview return path with its original search, filters and page', () => {
+    const query = new URLSearchParams({ scope: 'instance', q: '订单 / 支付 #1', engine: 'mysql', state: 'risk', page: '2' });
+    const returnTo = `/dashboard?${query}`;
+    expect(parseEntryContext({ ...context(), returnTo }).returnTo).toBe(returnTo);
+  });
   it.each([
     { resourceRefs: [] }, { resourceRefs: [{ type: 'instance', id: 0, role: 'primary' }] },
     { resourceRefs: [{ type: 'instance', id: 1, role: 'related' }] },
@@ -18,5 +23,6 @@ describe('strict Investigation entry context', () => {
     { metric: { id: 'unknown', semantic_version: '' } }, { metric: undefined, dimensions: { fs: '/' } },
     { returnTo: '//evil.invalid' }, { returnTo: '/servers\\evil' }, { returnTo: '/servers/%2f%2fevil' },
     { returnTo: '/servers\n' }, { returnTo: 'https://evil.invalid' },
+    { returnTo: '/dashboard/another-page' }, { returnTo: '/other/dashboard' }, { returnTo: '/dashboard%2Fother' },
   ])('rejects invalid or widening input %j', patch => expect(() => parseEntryContext({ ...context(), ...patch })).toThrow('INVESTIGATION_INPUT_INVALID'));
 });

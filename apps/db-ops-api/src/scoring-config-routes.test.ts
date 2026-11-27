@@ -18,16 +18,53 @@ function setup() {
   const execute = vi.fn().mockResolvedValue([{}]);
   vi.mocked(dbConnection.getPool).mockReturnValue({ execute } as any);
   const source = readFileSync(new URL('../server.ts', import.meta.url), 'utf8');
-  const start = source.indexOf("  fastify.put('/api/scoring/config'");
+  const start = source.indexOf("  fastify.get('/api/scoring/config'");
   const route = source.slice(start, source.indexOf('  // 获取品牌配置', start));
   const compiled = ts.transpileModule(route, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
   new Function('fastify', 'verifyToken', 'requirePermission', 'scoringConfigService', compiled)(
-    app, async (request: any) => { request.user = { permissions: ['metric:manage'] }; }, requirePermission, scoringConfigService,
+    app, async (request: any) => { request.user = { permissions: ['metric:view', 'metric:manage'] }; }, requirePermission, scoringConfigService,
   );
   const put = (payload: unknown) => app.inject({ method: 'PUT', url: '/api/scoring/config',
     headers: { 'content-type': 'application/json' }, payload: JSON.stringify(payload) });
-  return { execute, put };
+  return { execute, put, get: () => app.inject({ method: 'GET', url: '/api/scoring/config' }) };
 }
+
+describe('S08 scoring configuration HTTP read', () => {
+  it('returns intentional defaults for a missing persisted row', async () => {
+    const { get, execute } = setup();
+    execute.mockResolvedValueOnce([[]]);
+    const response = await get();
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual(DEFAULT_WEIGHTS);
+  });
+
+  it('returns complete persisted weights without rounding', async () => {
+    const { get, execute } = setup();
+    const weights = { availability: .355, performance: .345, capacity: .25, security: .05 };
+    execute.mockResolvedValueOnce([[{ config_value: JSON.stringify(weights) }]]);
+    const response = await get();
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual(weights);
+  });
+
+  it.each([null, 'null', 'BROKEN_PRIVATE_JSON', JSON.stringify({ availability: .35 }),
+    JSON.stringify({ ...DEFAULT_WEIGHTS, security: '0.10' }), JSON.stringify({ ...DEFAULT_WEIGHTS, capacity: .25 })
+  ])('fails closed for present invalid stored weights %s', async raw => {
+    const { get, execute } = setup();
+    execute.mockResolvedValueOnce([[{ config_value: raw }]]);
+    const response = await get();
+    expect(response.statusCode).toBe(500);
+    expect(response.json()).toEqual({ error: '无法读取有效的评分权重，请检查配置后重试' });
+  });
+
+  it('conceals the SQL read exception instead of returning fallback weights', async () => {
+    const { get, execute } = setup();
+    execute.mockRejectedValueOnce(new Error('SQL READ INTERNAL SENTINEL'));
+    const response = await get();
+    expect(response.statusCode).toBe(500);
+    expect(response.json()).toEqual({ error: '无法读取有效的评分权重，请检查配置后重试' });
+  });
+});
 
 describe('#369 scoring configuration HTTP input', () => {
   it.each([null, false, true, 1, 'text', [], [DEFAULT_WEIGHTS], {}, { availability: .35 },

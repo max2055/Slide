@@ -338,6 +338,8 @@ export class SqlAuditTab extends LitElement {
   @state() private currentAnalysisId: number | null = null;
   @state() private currentPreAudit: PreAuditRisk[] = [];
   @state() private currentResult: any = null;
+  @state() private resultReadError: string | null = null;
+  @state() private resultReading = false;
   @state() private currentStatus: "pending" | "running" | "completed" | "failed" = "pending";
   @state() private history: AuditHistoryItem[] = [];
   @state() private historyLoading = true;
@@ -348,17 +350,21 @@ export class SqlAuditTab extends LitElement {
   @state() private historyDetailError: string | null = null;
   private historyRequest = 0;
   private detailRequest = 0;
+  private currentRequest = 0;
 
   private pollTimer: ReturnType<typeof setInterval> | null = null;
   private historyPollTimer: ReturnType<typeof setTimeout> | null = null;
 
   protected override willUpdate(changed: PropertyValues) {
-    if (changed.has('instanceId')) void this._loadHistory();
+    if (changed.has('instanceId')) {
+      if (changed.get('instanceId') !== undefined) this._clearCurrentAudit();
+      void this._loadHistory();
+    }
   }
 
   override disconnectedCallback() {
     super.disconnectedCallback();
-    this._stopPolling();
+    this._clearCurrentAudit();
     this.historyRequest++;
     this._clearHistoryDetail();
   }
@@ -368,6 +374,19 @@ export class SqlAuditTab extends LitElement {
       clearInterval(this.pollTimer);
       this.pollTimer = null;
     }
+  }
+
+  private _clearCurrentAudit() {
+    this.currentRequest++;
+    this._stopPolling();
+    this.loading = false;
+    this.submitError = null;
+    this.currentAnalysisId = null;
+    this.currentPreAudit = [];
+    this.currentResult = null;
+    this.resultReadError = null;
+    this.resultReading = false;
+    this.currentStatus = 'pending';
   }
 
   private async _loadHistory() {
@@ -415,11 +434,10 @@ export class SqlAuditTab extends LitElement {
   async _submitAudit() {
     if (!this.sqlText.trim() || this.loading) return;
 
+    this._clearCurrentAudit();
+    const request = this.currentRequest;
+    const instanceId = this.instanceId;
     this.loading = true;
-    this.submitError = null;
-    this.currentPreAudit = [];
-    this.currentResult = null;
-    this.currentAnalysisId = null;
 
     try {
       const token = getToken();
@@ -431,26 +449,31 @@ export class SqlAuditTab extends LitElement {
         },
         body: JSON.stringify({
           sql_text: this.sqlText.trim(),
-          instance_id: this.instanceId,
+          instance_id: instanceId,
         }),
       });
 
       if (!res.ok) {
         const errBody = await res.json().catch(() => null);
+        if (res.status === 422 && errBody?.error === 'SQL_AUDIT_MODEL_UNAVAILABLE') {
+          throw new Error('没有可用于 SQL 审核的模型，请检查 SQL 分析场景的模型配置。');
+        }
         throw new Error(errBody?.error || "提交审核失败");
       }
 
       const data = await res.json();
+      if (request !== this.currentRequest || instanceId !== this.instanceId) return;
       this.currentAnalysisId = data.analysis_id;
       this.currentPreAudit = data.pre_audit_results || [];
       this.currentStatus = "pending";
 
       // Start polling for LLM result
-      this._startPolling(data.analysis_id);
+      this._startPolling(data.analysis_id, request, instanceId);
 
       // Reload history
       this._loadHistory();
     } catch (err: any) {
+      if (request !== this.currentRequest || instanceId !== this.instanceId) return;
       this.submitError = err.message || "提交审核失败";
       this.loading = false;
     }
@@ -461,7 +484,7 @@ export class SqlAuditTab extends LitElement {
     await this._submitAudit();
   }
 
-  private _startPolling(analysisId: number) {
+  private _startPolling(analysisId: number, request: number, instanceId: number) {
     this._stopPolling();
     this.pollTimer = setInterval(async () => {
       try {
@@ -471,19 +494,13 @@ export class SqlAuditTab extends LitElement {
         });
         if (!res.ok) return;
         const data = await res.json();
+        if (request !== this.currentRequest || instanceId !== this.instanceId || !this.loading) return;
         this.currentStatus = data.status;
 
         if (data.status === "completed") {
           this._stopPolling();
           this.loading = false;
-          // Fetch full result
-          const fullRes = await authFetch(`${API_BASE}/api/sql/audit/${analysisId}`, {
-            headers: token ? { Authorization: `Bearer ${token}` } : {},
-          });
-          if (fullRes.ok) {
-            const fullData = await fullRes.json();
-            this.currentResult = fullData.result || fullData;
-          }
+          void this._readCurrentResult();
           // Reload history to show completed status
           this._loadHistory();
         } else if (data.status === "failed") {
@@ -495,6 +512,32 @@ export class SqlAuditTab extends LitElement {
         // Ignore polling errors, next poll will retry
       }
     }, 3000);
+  }
+
+  private async _readCurrentResult() {
+    const analysisId = this.currentAnalysisId;
+    if (analysisId === null || this.currentStatus !== 'completed' || this.resultReading) return;
+    const request = this.currentRequest;
+    const instanceId = this.instanceId;
+    this.resultReading = true;
+    this.resultReadError = null;
+    const current = () => request === this.currentRequest && instanceId === this.instanceId;
+    try {
+      const token = getToken();
+      const response = await authFetch(`${API_BASE}/api/sql/audit/${analysisId}`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      if (!response.ok) throw new Error('AUDIT_RESULT_UNAVAILABLE');
+      const data = await response.json();
+      if (Number(data?.id) !== analysisId || Number(data?.instance_id) !== instanceId || data?.status !== 'completed' || !data.result) {
+        throw new Error('AUDIT_RESULT_UNAVAILABLE');
+      }
+      if (current()) this.currentResult = data.result;
+    } catch {
+      if (current()) this.resultReadError = '审核已完成，但读取结果失败，请重试。';
+    } finally {
+      if (current()) this.resultReading = false;
+    }
   }
 
   private _clearHistoryDetail() {
@@ -710,6 +753,10 @@ export class SqlAuditTab extends LitElement {
               ${this.loading ? html`<div class="spinner"></div><span style="font-size:13px;color:var(--muted);">提交中...</span>` : ""}
             </div>
             ${this.submitError ? html`<div class="error-msg">${this.submitError}</div>` : ""}
+            ${this.resultReading ? html`<p role="status">正在读取审核结果…</p>` : ""}
+            ${this.resultReadError ? html`<div class="error-msg" role="alert">${this.resultReadError}
+              <button class="btn" @click=${this._readCurrentResult}>重试读取审核结果</button>
+            </div>` : ""}
 
             <!-- Pre-audit results -->
             ${this.currentPreAudit.length > 0 ? html`
@@ -740,12 +787,7 @@ export class SqlAuditTab extends LitElement {
               <div class="pre-audit-section">
                 <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
                   <span style="font-size:13px;font-weight:600;color:var(--text-strong);">LLM 审核结果</span>
-                  <button class="btn" @click=${() => {
-                    this.currentAnalysisId = null;
-                    this.currentResult = null;
-                    this.currentPreAudit = [];
-                    this.currentStatus = "pending";
-                  }}>关闭</button>
+                  <button class="btn" @click=${this._clearCurrentAudit}>关闭</button>
                 </div>
                 ${this._renderAnalysisResult()}
               </div>

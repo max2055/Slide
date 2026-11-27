@@ -364,11 +364,13 @@ test.describe('without cached grants', () => {
       await page.goto(`${env.url}/attention`);
       await request;
       const view = page.locator('event-center-page');
-      await expect(view.getByRole('status')).toContainText('正在确认访问权限');
+      await expect(page.locator('main app-empty-state[title="正在确认页面访问权限"]')).toBeVisible();
+      await expect(view).toHaveCount(0);
       await noEmpty(page);
       await capture(page, 'permission-loading-controlled');
       release();
-      await expect(view.locator('app-empty-state[title="无访问权限"]')).toBeVisible();
+      await expect(page.locator('main app-empty-state[title="当前账号无权访问此页面"]')).toBeVisible();
+      await expect(view).toHaveCount(0);
       await noEmpty(page);
       expect(eventReads).toEqual([]);
       await capture(page, 'permission-denied-controlled');
@@ -376,4 +378,39 @@ test.describe('without cached grants', () => {
       release();
     }
   });
+});
+
+test('isolated event center denies reads before grants and after revocation', async ({ page }) => {
+  const context = `${env.url}/events?view=aggregate`;
+  const reads: string[] = [];
+  await page.route(eventsPath, route => {
+    reads.push(route.request().method());
+    return route.fulfill({ json: { items: [], total: 0 } });
+  });
+  // The application shell owns its permission hydration. Mount this controlled
+  // component directly so an unrelated shell refresh cannot replace the test state.
+  await page.route(context, route => route.fulfill({
+    contentType: 'text/html',
+    body: `<!doctype html><html lang="zh-CN"><body>
+      <event-center-page></event-center-page>
+      <script type="module">import '/src/app/ui/views/event-center.ts';</script>
+    </body></html>`,
+  }));
+  const applyPermissions = (permissions: string[]) => page.evaluate(values => {
+    window.dispatchEvent(new CustomEvent('slide-permissions-loaded', { detail: { permissions: values } }));
+  }, permissions);
+  await page.goto(context); const view = page.locator('event-center-page');
+  await expect(view.getByRole('status')).toContainText('正在确认访问权限'); await noEmpty(page);
+  expect(reads).toEqual([]);
+  await applyPermissions([]);
+  await expect(view.locator('app-empty-state[title="无访问权限"]')).toBeVisible(); await noEmpty(page);
+  expect(reads).toEqual([]);
+
+  await applyPermissions(['alert:view']);
+  await expect(view.locator('event-management-page .empty-state')).toBeVisible();
+  expect(reads).toEqual(['GET']);
+  await applyPermissions([]);
+  await expect(view.locator('app-empty-state[title="无访问权限"]')).toBeVisible(); await noEmpty(page);
+  expect(reads).toEqual(['GET']);
+  await capture(page, 'permission-revoked-controlled');
 });

@@ -59,8 +59,11 @@ describe.skipIf(!enabled)('immediate collection on a real platform, queue and re
   let app: ReturnType<typeof Fastify>;
   let platform: OwnedDatabase;
   let target: OwnedDatabase;
+  let unboundTarget: OwnedDatabase;
+  let recoveryTarget: OwnedDatabase;
   let instanceId = 0;
   let unboundId = 0;
+  let recoveryId = 0;
   let templateId = '';
   let templateVersion = 0;
   let contentHash = '';
@@ -106,10 +109,14 @@ describe.skipIf(!enabled)('immediate collection on a real platform, queue and re
     try {
       platform = await createOwnedDatabase(root, { nonce: NONCE, purpose: 'collect', handleDir: HANDLE_DIR });
       target = await createOwnedDatabase(root, { nonce: NONCE, purpose: 'collecttarget', handleDir: HANDLE_DIR });
-      await root.query(`CREATE TABLE \`${target.database}\`.probe (id INT PRIMARY KEY)`);
-      await root.query(`INSERT INTO \`${target.database}\`.probe VALUES (1)`);
+      unboundTarget = await createOwnedDatabase(root, { nonce: NONCE, purpose: 'collectunbound', handleDir: HANDLE_DIR });
+      recoveryTarget = await createOwnedDatabase(root, { nonce: NONCE, purpose: 'collectrecovery', handleDir: HANDLE_DIR });
       await root.query(`CREATE USER '${TARGET_USER}'@'%' IDENTIFIED BY ?`, [TARGET_PASSWORD]);
-      await root.query(`GRANT SELECT ON \`${target.database}\`.* TO '${TARGET_USER}'@'%'`);
+      for (const database of [target.database, unboundTarget.database, recoveryTarget.database]) {
+        await root.query(`CREATE TABLE \`${database}\`.probe (id INT PRIMARY KEY)`);
+        await root.query(`INSERT INTO \`${database}\`.probe VALUES (1)`);
+        await root.query(`GRANT SELECT ON \`${database}\`.* TO '${TARGET_USER}'@'%'`);
+      }
       await root.query(`GRANT PROCESS ON *.* TO '${TARGET_USER}'@'%'`);
     } catch (error) { await root.end(); throw error; }
     await root.end();
@@ -131,25 +138,28 @@ describe.skipIf(!enabled)('immediate collection on a real platform, queue and re
     (actor as unknown as { userId: number }).userId = 1;
 
     const now = new Date().toISOString();
-    const insertInstance = async (name: string): Promise<number> => {
+    const insertInstance = async (name: string, database: string): Promise<number> => {
       await pool.execute(`INSERT INTO database_instances
         (name, environment, db_type, db_version, host, port, username, password_encrypted, database_name, status,
          lifecycle_state, max_connections, connection_timeout_ms, created_by, created_at, updated_at)
         VALUES (?, 'testing', 'mysql', '8.4', '127.0.0.1', ?, ?, ?, ?, 'active', 'available', 10, 5000, 1, ?, ?)`,
-      [name, PORT, TARGET_USER, encryptData(TARGET_PASSWORD), target.database,
+      [name, PORT, TARGET_USER, encryptData(TARGET_PASSWORD), database,
         now.replace('T', ' ').replace('Z', ''), now.replace('T', ' ').replace('Z', '')]);
       return Number((await pool.query<RowDataPacket[]>('SELECT id FROM database_instances WHERE name = ?', [name]))[0][0].id);
     };
-    instanceId = await insertInstance('max238-collect-bound');
-    unboundId = await insertInstance('max238-collect-unbound');
+    instanceId = await insertInstance('max238-collect-bound', target.database);
+    unboundId = await insertInstance('max238-collect-unbound', unboundTarget.database);
+    recoveryId = await insertInstance('max238-collect-recovery', recoveryTarget.database);
     const targetConfig = { host: '127.0.0.1', port: PORT, user: TARGET_USER, password: TARGET_PASSWORD,
       database: target.database, db_type: 'mysql' as const };
     expect(await databaseService.addConnection(instanceId, 'max238-collect-bound', targetConfig)).toBe(true);
-    expect(await databaseService.addConnection(unboundId, 'max238-collect-unbound', targetConfig)).toBe(true);
+    expect(await databaseService.addConnection(unboundId, 'max238-collect-unbound', { ...targetConfig, database: unboundTarget.database })).toBe(true);
+    expect(await databaseService.addConnection(recoveryId, 'max238-collect-recovery', { ...targetConfig, database: recoveryTarget.database })).toBe(true);
     await pool.execute("INSERT IGNORE INTO instance_permissions (user_id, instance_id, access_level) VALUES (1, ?, 'admin')", [instanceId]);
     await pool.execute("INSERT IGNORE INTO instance_permissions (user_id, instance_id, access_level) VALUES (1, ?, 'admin')", [unboundId]);
+    await pool.execute("INSERT IGNORE INTO instance_permissions (user_id, instance_id, access_level) VALUES (1, ?, 'admin')", [recoveryId]);
     (actor as unknown as { instanceScopes: Record<number, string> }).instanceScopes = {
-      [instanceId]: 'admin', [unboundId]: 'admin',
+      [instanceId]: 'admin', [unboundId]: 'admin', [recoveryId]: 'admin',
     };
 
     // One real immutable template with the metric the accepted probe can read.
@@ -223,12 +233,15 @@ describe.skipIf(!enabled)('immediate collection on a real platform, queue and re
 
   afterAll(async () => {
     await app?.close();
-    await pool?.end();
-    const root = await mysql.createConnection({ host: '127.0.0.1', port: PORT, user: 'root', password: PASSWORD });
     const errors: unknown[] = [];
+    for (const id of [instanceId, unboundId, recoveryId]) if (id) await databaseService.removeConnection(id).catch(error => errors.push(error));
+    await pool?.end().catch(error => errors.push(error));
+    const root = await mysql.createConnection({ host: '127.0.0.1', port: PORT, user: 'root', password: PASSWORD });
     try {
       await root.query(`DROP USER IF EXISTS '${TARGET_USER}'@'%'`).catch(error => errors.push(error));
       await dropOwnedDatabase(root, { nonce: NONCE, purpose: 'collecttarget', handleDir: HANDLE_DIR }).catch(error => errors.push(error));
+      await dropOwnedDatabase(root, { nonce: NONCE, purpose: 'collectunbound', handleDir: HANDLE_DIR }).catch(error => errors.push(error));
+      await dropOwnedDatabase(root, { nonce: NONCE, purpose: 'collectrecovery', handleDir: HANDLE_DIR }).catch(error => errors.push(error));
       await dropOwnedDatabase(root, { nonce: NONCE, purpose: 'collect', handleDir: HANDLE_DIR }).catch(error => errors.push(error));
     } finally { await root.end(); }
     if (errors.length) throw errors[0];
@@ -237,7 +250,7 @@ describe.skipIf(!enabled)('immediate collection on a real platform, queue and re
   it.skipIf(process.env.MAX238_OPERATION_MYSQL_TEST !== '1')('operation recovery isolates the same-key interleaving on real MySQL without duplicate publication', async () => {
     if (!Number.isSafeInteger(PORT) || PORT === 3306) throw new Error('owned non3306 required');
     const key = `operation-race-${process.pid}`;
-    const url = `/api/metrics/template-bindings/instance/${unboundId}`;
+    const url = `/api/metrics/template-bindings/instance/${recoveryId}`;
     const candidate = body();
     expect((await call('POST', `${url}/probe`, candidate)).status).toBe(200);
     const receipt = `operation-trial-${process.pid}`;
@@ -334,6 +347,10 @@ describe.skipIf(!enabled)('immediate collection on a real platform, queue and re
 
   it('admits exactly one queryable task and commits the samples of that task alone', async () => {
     const before = await counts();
+    const publishingAudits = async () => Number((await pool.execute<RowDataPacket[]>(`SELECT COUNT(*) c
+      FROM metric_policy_audit WHERE target=? AND JSON_UNQUOTE(JSON_EXTRACT(payload,'$.action'))='template_binding.apply'`,
+      [`instance:${instanceId}`]))[0][0].c);
+    const beforePublication = await publishingAudits();
     const request = await call('POST', `/api/metrics/template-bindings/instance/${instanceId}/collect`,
       { caller_key: `collect-one-${process.pid}`, expected_revision: 1 });
     expect(request.status, JSON.stringify(request.data)).toBe(200);
@@ -376,7 +393,7 @@ describe.skipIf(!enabled)('immediate collection on a real platform, queue and re
     // Collection is not a configuration publication.
     const after = await counts();
     expect(after.operations).toBe(before.operations);
-    expect(after.audits).toBe(before.audits);
+    expect(await publishingAudits()).toBe(beforePublication);
   }, 120_000);
 
   it('replays the same key without a second job, request or sample', async () => {

@@ -72,16 +72,17 @@ export function normalizeConnectionTestMessage(message: unknown): string {
   return text;
 }
 
-function hasStoredPermission(required: string): boolean {
+function hasStoredPermission(required: string, includeActionWildcard = false): boolean {
   try {
     const raw = localStorage.getItem("permissions");
     if (!raw) return false;
     const permissions = JSON.parse(raw) as unknown;
     if (!Array.isArray(permissions)) return false;
-    const resource = required.split(":", 1)[0];
+    const [resource, action] = required.split(":");
     return permissions.includes("*")
       || permissions.includes(required)
-      || permissions.includes(`${resource}:*`);
+      || permissions.includes(`${resource}:*`)
+      || (includeActionWildcard && permissions.includes(`*:${action}`));
   } catch {
     return false;
   }
@@ -549,6 +550,14 @@ export class InstancesPage extends LitElement {
     return hasStoredPermission("servers:view");
   }
 
+  private get canCreateInstance(): boolean {
+    return hasStoredPermission('instance:create', true);
+  }
+
+  private get canEditInstance(): boolean {
+    return hasStoredPermission('instance:update', true);
+  }
+
   private get canManageHostRelations(): boolean {
     return hasStoredPermission("instance:manage")
       && this.canViewHostRelations
@@ -627,9 +636,13 @@ export class InstancesPage extends LitElement {
       this.metricRefreshVersion++;
       const url = new URL(window.location.href), editId = Number(url.searchParams.get('edit'));
       const edit = this.instances.find(i => i.id === editId);
-      if (edit && !this.showEditDialog) {
-        this._editInstance(edit); this.editorTab = 'collection';
-        url.searchParams.delete('edit'); window.history.replaceState({}, '', url);
+      if (url.searchParams.has('edit') && !this.showEditDialog) {
+        url.searchParams.delete('edit');
+        window.history.replaceState(window.history.state, '', url);
+        if (edit && this.canEditInstance) {
+          this._editInstance(edit);
+          this.editorTab = 'collection';
+        }
       }
     } catch {
       if (request !== this.instancesRequest) return;
@@ -772,7 +785,7 @@ export class InstancesPage extends LitElement {
               <button aria-busy=${String(this.loading || this.refreshing || this.metricsLoading)} class="btn btn-refresh resource-action resource-action--refresh" type="button" .disabled=${this.loading || this.refreshing || this.metricsLoading} @click=${this.refreshInstances}>
                  刷新
               </button>
-              <button class="btn-primary resource-action resource-action--add" type="button" @click=${() => this._addInstance()}>
+              <button class="btn-primary resource-action resource-action--add" type="button" .disabled=${!this.canCreateInstance} title=${this.canCreateInstance ? '添加实例' : '需要实例创建权限'} @click=${() => this.canCreateInstance && this._addInstance()}>
                 ${icons['plus']} 添加实例
               </button>
             </div>

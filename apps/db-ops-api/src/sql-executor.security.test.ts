@@ -105,6 +105,46 @@ describe('SqlExecutor security controls', () => {
     expect(result).toMatchObject({ success: true, rowCount: 1000, truncated: true });
   });
 
+  it.each([
+    { database: undefined, restore: undefined },
+    { database: 'saved_catalog', restore: 'USE `saved_catalog`' },
+  ])('isolates the explicit MySQL catalog from the next request (default: $database)', async ({ database, restore }) => {
+    const connection = {
+      query: vi.fn(async (sql: string) => sql === 'SELECT id FROM marker' ? [[{ id: 1 }], []] : [[], []]),
+      release: vi.fn(),
+      destroy: vi.fn(),
+    };
+    const pool = { getConnection: vi.fn(async () => connection) };
+    mocks.getConnection.mockReturnValue({ id: 8, name: 'mysql', db_type: 'mysql', pool, config: { database } });
+
+    const result = await sqlExecutor.executeSql(8, 'SELECT id FROM marker', { database: 'selected_catalog' });
+
+    expect(result).toMatchObject({ success: true, rows: [{ id: 1 }] });
+    const commands = connection.query.mock.calls.map(([sql]) => sql);
+    expect(commands).toContain('USE `selected_catalog`');
+    if (restore) {
+      expect(commands.at(-1)).toBe(restore);
+      expect(connection.release).toHaveBeenCalledOnce();
+      expect(connection.destroy).not.toHaveBeenCalled();
+    } else {
+      expect(connection.destroy).toHaveBeenCalledOnce();
+      expect(connection.release).not.toHaveBeenCalled();
+    }
+  });
+
+  it('rejects a bound MySQL catalog when the final connection has changed dialect', async () => {
+    const query = vi.fn();
+    mocks.getConnection
+      .mockReturnValueOnce({ id: 8, name: 'before reconnect', db_type: 'mysql' })
+      .mockReturnValueOnce({ id: 8, name: 'after reconnect', db_type: 'postgresql', pgClient: { query } });
+
+    await expect(sqlExecutor.executeSql(8, 'SELECT 1', {
+      database: 'selected_catalog',
+      requiredDbType: 'mysql',
+    })).resolves.toEqual({ success: false, error: 'SQL_TARGET_DB_TYPE_CHANGED' });
+    expect(query).not.toHaveBeenCalled();
+  });
+
   it('clamps a caller-supplied timeout to the security maximum', async () => {
     const query = vi.fn(async () => ({ rows: [{ value: 1 }], fields: [{ name: 'value' }] }));
     mocks.getConnection.mockReturnValue({
@@ -170,13 +210,19 @@ describe('durable mutation boundary', () => {
       .toMatchObject({ executionState: 'unknown', retryable: false });
     expect(query).not.toHaveBeenCalled();
   });
-  it('persists intent and result even without userId', async () => {
+  it('persists the MySQL driver affected-row count across the result, audit and intent even without userId', async () => {
     const result = await sqlExecutor.executeSql(1, 'DELETE FROM users', { approvalGrant: grant });
-    expect(result.success).toBe(true);
+    expect(result).toMatchObject({ success: true, rowCount: 1, rows: [], executionState: 'succeeded' });
     expect(mocks.beginIntent).toHaveBeenCalledOnce();
-    expect(mocks.finishIntent).toHaveBeenCalledOnce();
-    expect(mocks.auditSql).toHaveBeenCalledOnce();
+    expect(mocks.finishIntent).toHaveBeenCalledExactlyOnceWith(grant.operationId, 'succeeded', expect.objectContaining({ rowCount: 1 }));
+    expect(mocks.auditSql).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ rowCount: 1 }));
     expect(query).not.toHaveBeenCalledWith(expect.stringContaining('max_execution_time'));
+  });
+  it('preserves a real zero affected-row count', async () => {
+    query.mockResolvedValue([{ affectedRows: 0 }, []]);
+    const result = await sqlExecutor.executeSql(1, 'DELETE FROM users WHERE id = 1', { approvalGrant: grant });
+    expect(result).toMatchObject({ success: true, rowCount: 0, rows: [] });
+    expect(mocks.auditSql).toHaveBeenCalledWith(expect.objectContaining({ rowCount: 0 }));
   });
   it('keeps an acknowledged mutation succeeded when the audit log fails', async () => {
     mocks.auditSql.mockRejectedValue(new Error('audit down'));

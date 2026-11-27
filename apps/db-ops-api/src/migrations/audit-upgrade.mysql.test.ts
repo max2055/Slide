@@ -52,7 +52,7 @@ describe.skipIf(!container)('W14 audited baseline upgrade and snapshot rollback'
       await pool.query("INSERT INTO cron_job_logs (job_id,status,started_at,result_summary) VALUES (4242,'success',NOW(),'old runner ended')");
       await pool.query("INSERT INTO metric_v2_observations (id,series_hash,stage,observed_at,stored_at,valid_value,payload,payload_hash) VALUES ('old-raw',REPEAT('a',64),'raw',NOW(),NOW(),1,'{\"value\":7}',REPEAT('b',64))");
       const before = await old.inspect();
-      const dump = execFileSync('docker', ['exec', '-e', `MYSQL_PWD=${options.password}`, container!, 'mysqldump', '-uroot', '--single-transaction', database], { maxBuffer: 16 * 1024 * 1024 });
+      const dump = execFileSync('docker', ['exec', '-e', `MYSQL_PWD=${options.password}`, container!, 'mysqldump', '-uroot', '--single-transaction', '--set-gtid-purged=OFF', database], { maxBuffer: 16 * 1024 * 1024 });
 
       const runner = new MigrationRunner(pool as any);
       await runner.run();

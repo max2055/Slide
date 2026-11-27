@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { CronManager } from './cron-manager.js';
 import { dbConnection } from '../db-connection.js';
-import { bindScript, CONTROL_MAINTENANCE, hashScript, validateBinding } from './script-policy.js';
+import { bindScript, CONTROL_MAINTENANCE, hashScript, rebindScriptDatabase, validateBinding } from './script-policy.js';
 import { cronAuthorityService } from './cron-authority.js';
 import * as controlSql from './control-sql-executor.js';
 import type { CronScript } from './types.js';
@@ -64,6 +64,20 @@ describe('Cron control-plane SQL regression (audit R3)', () => {
   it('does not convert a deleted managed target into control-plane authority', () => {
     const binding = bindScript(script('SELECT 1'), 9, undefined, '7');
     expect(() => validateBinding(binding, 3, null)).toThrow('CRON_SCRIPT_BINDING_REQUIRED');
+  });
+
+  it('round-trips the selected MySQL database within the approved instance binding', () => {
+    const selected = bindScript(script('SELECT 1'), 9, undefined, '7', '另一个库');
+    expect(validateBinding(JSON.stringify(selected), 3, 9).targetDatabase).toBe('另一个库');
+    const legacy = bindScript(script('SELECT 1'), 9, undefined, '7');
+    expect(validateBinding(legacy, 3, 9).targetDatabase).toBeUndefined();
+    const changed = rebindScriptDatabase(selected, 'updated', '8');
+    expect(changed).toEqual({ ...selected, targetDatabase: 'updated', authorizedBy: '8' });
+    expect(rebindScriptDatabase(changed, null, '8').targetDatabase).toBeUndefined();
+    expect(() => bindScript(script('SELECT 1'), null, undefined, '7', 'data')).toThrow('CRON_TARGET_DATABASE_UNSUPPORTED');
+    expect(() => bindScript({ ...script('SELECT 1'), target_db_type: 'oracle' }, 9, undefined, '7', 'data'))
+      .toThrow('CRON_TARGET_DATABASE_UNSUPPORTED');
+    expect(() => validateBinding({ ...selected, targetDatabase: '\0' }, 3, 9)).toThrow('CRON_INVALID_TARGET_DATABASE');
   });
 
   it('fails closed if durable authorization audit cannot be written', async () => {

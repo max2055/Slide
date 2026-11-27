@@ -103,6 +103,11 @@ export async function registerSystemAuditRoutes(
     const limit = parseInteger(query.limit, 25, 1, 200);
     const offset = parseInteger(query.offset, 0, 0, Number.MAX_SAFE_INTEGER);
     const keyword = typeof query.keyword === 'string' ? query.keyword.trim() : '';
+    const hasApprovalScope = query.approvalRequestId !== undefined || query.operationId !== undefined;
+    const approvalRequestId = typeof query.approvalRequestId === 'string' && /^[1-9]\d*$/.test(query.approvalRequestId)
+      ? Number(query.approvalRequestId) : NaN;
+    const operationId = typeof query.operationId === 'string' && /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(query.operationId)
+      ? query.operationId : undefined;
 
     if ((eventType !== undefined && (typeof eventType !== 'string' || !QUERYABLE_EVENT_TYPES.has(eventType as AuditEventType)))
       || (result !== undefined && result !== 'success' && result !== 'failure' && result !== 'pending')
@@ -118,12 +123,22 @@ export async function registerSystemAuditRoutes(
       const parsed=RefSchema.safeParse(match?{type:match[1],id:Number(match[2])}:null);
       if(!parsed.success)return reply.code(400).send({error:'审计资源参数无效'});
       resource=parsed.data;
-      const actor=await actorContextService.revalidateActor((request as any).user,request.id);
-      if(!hasPermission(new Set(actor.permissions),'audit:view')||!canReadResource(actor,resource))return reply.code(403).send({error:'无权访问该资源审计'});
     }
+    if (hasApprovalScope && (resource?.type !== 'instance' || !Number.isSafeInteger(approvalRequestId) || !operationId || eventType !== undefined)) {
+      return reply.code(400).send({ error: '审批审计范围无效' });
+    }
+    const canReadAuditScope = async () => {
+      if (!resource) return true;
+      const actor = await actorContextService.revalidateActor((request as any).user, request.id);
+      const permissions = new Set(actor.permissions);
+      return hasPermission(permissions, 'audit:view') && (!hasApprovalScope || hasPermission(permissions, 'approval:view'))
+        && canReadResource(actor, resource);
+    };
+    if (!await canReadAuditScope()) return reply.code(403).send({ error: '无权访问该资源审计' });
     const filters: AuditLogQuery = {
       ...(resource?{resourceType:resource.type,resourceId:String(resource.id)}:{}),
-      eventType: eventType as AuditEventType | undefined,
+      ...(operationId ? { approvedSql: { requestId: approvalRequestId, operationId } } : {}),
+      eventType: hasApprovalScope ? 'sql_execution' : eventType as AuditEventType | undefined,
       result: result as AuditLogQuery['result'],
       requestCategory: requestCategory as AuditLogQuery['requestCategory'],
       startTime,
@@ -133,7 +148,7 @@ export async function registerSystemAuditRoutes(
       offset,
     };
     const { entries, total } = await manager.query(filters);
-    if(resource){const actor=await actorContextService.revalidateActor((request as any).user,request.id);if(!hasPermission(new Set(actor.permissions),'audit:view')||!canReadResource(actor,resource))return reply.code(403).send({error:'无权访问该资源审计'});}
+    if (!await canReadAuditScope()) return reply.code(403).send({ error: '无权访问该资源审计' });
     return reply.send({ items: entries, total, limit, offset });
   });
 }

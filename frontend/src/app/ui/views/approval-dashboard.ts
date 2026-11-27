@@ -4,6 +4,7 @@ import { LitElement, html, css, nothing } from "lit";
 import { sharedBtnStyles } from "../../styles/shared-btn-styles.ts";
 import { sharedSkeletonStyles } from "../../styles/shared-skeleton-styles.js";
 import { retryReadWithFocus } from '../controllers/retry-read-focus.js';
+import { hasListPermission } from '../components/resource-list-access.js';
 import { customElement, state } from "lit/decorators.js";
 import "../components/app-dialog.js";
 import "../components/app-card.js";
@@ -42,6 +43,7 @@ interface AgentApproval {
 
 type HistoryItem = { kind: 'sql'; record: ApprovalRequest } | { kind: 'agent'; record: AgentApproval };
 type ExecutionState = 'none' | 'success' | 'failed' | 'running' | 'unconfirmed' | 'unknown' | 'conflict';
+type BatchReviewResult = { id: number; success: boolean; error?: string };
 
 export function approvalValue(value: unknown): any {
   if (typeof value !== 'string') return value;
@@ -230,6 +232,7 @@ export class ApprovalDashboard extends LitElement {
   @state() private evidenceWarning = '';
   private listGeneration = 0;
   private detailGeneration = 0;
+  private batchRequest: AbortController | null = null;
   private detailTrigger: HTMLElement | null = null;
   private accessChanged = () => this.clearApprovalReads('权限已变更，请重新读取审批列表。');
 
@@ -239,7 +242,7 @@ export class ApprovalDashboard extends LitElement {
     this.agentApprovals = [];
     this.agentApprovalsError = null;
     this.clearSelection();
-    this._closeBatchDialog();
+    this.resetBatchDialog();
     this.executeAfterApprove = {};
     this.loading = false;
     this.listError = message;
@@ -254,12 +257,15 @@ export class ApprovalDashboard extends LitElement {
   @state() private executeAfterApprove: Record<number, boolean> = {};
   @state() private loading: boolean = false;
   @state() private selectedRequest: ApprovalRequest | null = null;
+  @state() private linkedApprovalId: number | null = null;
   @state() private batchDialogOpen: boolean = false;
   @state() private batchIds: number[] = [];
   @state() private batchAction: 'approve' | 'reject' = 'approve';
   @state() private batchNote: string = '';
   @state() private batchLoading: boolean = false;
   @state() private batchError: string | null = null;
+  @state() private batchResults: BatchReviewResult[] = [];
+  @state() private batchUnknown = false;
 
   // --- Detail view state ---
   @state() private events: ApprovalEvent[] = [];
@@ -268,6 +274,11 @@ export class ApprovalDashboard extends LitElement {
   @state() private operationDetail: unknown = null;
   @state() private operationEvents: OperationEvent[] = [];
   @state() private operationState: string | null = null;
+  @state() private operationRetrying = false;
+  @state() private operationRetryError = '';
+  @state() private operationRetryUnknown = false;
+  @state() private operationRetryEvidenceReady = false;
+  @state() private operationRetryReceipt: { approvalId: number; attempt: number } | null = null;
 
   private _codeMirrorView: EditorView | null = null;
   private _codeMirrorContainer: HTMLElement | null = null;
@@ -296,7 +307,7 @@ export class ApprovalDashboard extends LitElement {
     this.listGeneration++;
     this.detailGeneration++;
     this._destroyCodeMirror();
-    document.removeEventListener('keydown', this._handleEscapeKey);
+    if (this.batchDialogOpen) this.resetBatchDialog();
   }
 
   private async loadRequests() {
@@ -345,6 +356,7 @@ export class ApprovalDashboard extends LitElement {
   }
 
   private switchFilter(filter: 'pending' | 'processed') {
+    this.resetBatchDialog();
     this.filter = filter;
     this.clearSelection();
     this.saveHistoryContext();
@@ -397,11 +409,22 @@ export class ApprovalDashboard extends LitElement {
     this._loadDetail(request.id);
   }
 
+  private openAgentDetail(record: AgentApproval, trigger: HTMLElement) {
+    this.detailTrigger = trigger;
+    this.selectedAgent = record;
+  }
+
   private async backToList() {
     const generation = ++this.detailGeneration;
     const trigger = this.detailTrigger;
     this.detailTrigger = null;
     this.selectedAgent = null;
+    this.linkedApprovalId = null;
+    const url = new URL(location.href);
+    if (url.searchParams.has('auditApproval')) {
+      url.searchParams.delete('auditApproval');
+      history.replaceState(history.state, '', url);
+    }
     this._destroyCodeMirror();
     this.events = [];
     this.operationEvents = [];
@@ -435,6 +458,11 @@ export class ApprovalDashboard extends LitElement {
     this.operationDetail = null;
     this.operationEvents = [];
     this.operationState = null;
+    this.operationRetrying = false;
+    this.operationRetryError = '';
+    this.operationRetryUnknown = false;
+    this.operationRetryEvidenceReady = false;
+    this.operationRetryReceipt = null;
     this._destroyCodeMirror();
     try {
       const [detailRes, eventsRes] = await Promise.all([
@@ -459,12 +487,17 @@ export class ApprovalDashboard extends LitElement {
           authFetch(`/api/operations/${detail.operation_id}/events`),
         ]);
         const operation = operationRes.ok ? await operationRes.json() : null;
-        const operationEvents = operationEventsRes.ok ? (await operationEventsRes.json()).events ?? [] : [];
+        const operationEvents = operationEventsRes.ok ? (await operationEventsRes.json()).events : null;
         if (generation !== this.detailGeneration) return;
-        if (!operationRes.ok || !operationEventsRes.ok) this.evidenceWarning = 'Operation 证据读取失败，不能据此推断执行状态';
+        this.operationRetryEvidenceReady = !!operation && Array.isArray(operationEvents);
+        if (!this.operationRetryEvidenceReady) this.evidenceWarning = 'Operation 证据读取失败，不能据此推断执行状态';
         this.operationDetail = operation;
         this.operationState = operation?.state ?? null;
-        this.operationEvents = operationEvents;
+        this.operationEvents = Array.isArray(operationEvents) ? operationEvents : [];
+        const retry = this.operationEvents.find(event => event.reasonCode === 'RETRY_CREATED')?.metadata;
+        if (typeof retry?.retryApprovalId === 'number' && typeof retry.retryAttempt === 'number') {
+          this.operationRetryReceipt = { approvalId: retry.retryApprovalId, attempt: retry.retryAttempt };
+        }
       }
       if (generation !== this.detailGeneration) return;
       this.detailLoading = false;
@@ -520,11 +553,48 @@ export class ApprovalDashboard extends LitElement {
   }
 
   private async _retryOperation() {
-    const operationId = this.selectedRequest?.operation_id;
-    if (!operationId || !this.selectedRequest) return;
-    const response = await authFetch(`/api/operations/${operationId}/retry`, { method: 'POST' });
-    if (!response.ok) { this.detailError = '当前状态不允许重试'; return; }
-    await this._loadDetail(this.selectedRequest.id);
+    const request = this.selectedRequest;
+    if (!request?.operation_id || this.operationRetrying || this.operationRetryUnknown || this.operationRetryReceipt || !this.canRetryOperation(request)) return;
+    const generation = this.detailGeneration;
+    this.operationRetrying = true;
+    this.operationRetryError = '';
+    try {
+      const response = await authFetch(`/api/operations/${request.operation_id}/retry`, { method: 'POST' });
+      if (generation !== this.detailGeneration) return;
+      if (response.status === 403 || response.status === 404 || response.status === 409) {
+        this.operationRetryError = '当前状态或权限不允许创建重试审批。';
+        return;
+      }
+      if (!response.ok) throw new Error('RETRY_OUTCOME_UNKNOWN');
+      const { operation } = await response.json();
+      if (generation !== this.detailGeneration) return;
+      if (!Number.isSafeInteger(operation?.approvalId) || operation.approvalId <= 0 || !Number.isSafeInteger(operation.attempt) || operation.attempt < 2) {
+        throw new Error('RETRY_RECEIPT_INVALID');
+      }
+      this.operationRetryReceipt = { approvalId: operation.approvalId, attempt: operation.attempt };
+    } catch {
+      if (generation === this.detailGeneration) {
+        this.operationRetryUnknown = true;
+        this.operationRetryError = '重试审批回执待确认。重新打开本记录可核对原尝试。';
+      }
+    } finally {
+      if (generation === this.detailGeneration) this.operationRetrying = false;
+    }
+  }
+
+  private canRetryOperation(request: ApprovalRequest) {
+    return this.operationRetryEvidenceReady && !!request.operation_id && this.operationState === 'failed' && request.status === 'execution_failed'
+      && approvalValue(request.execution_result)?.executionState === 'rolled_back';
+  }
+
+  private renderOperationRetry(request: ApprovalRequest) {
+    if (!this.canRetryOperation(request)) return nothing;
+    const receipt = this.operationRetryReceipt;
+    return html`<div class="actions">
+      ${receipt ? html`<p role="status">已创建审批 #${receipt.approvalId} · 第 ${receipt.attempt} 次尝试。请在待审批列表查看。</p>`
+        : !this.operationRetryUnknown ? html`<button class="btn-primary" ?disabled=${this.operationRetrying} @click=${this._retryOperation}>创建重试尝试</button>` : nothing}
+      ${this.operationRetryError ? html`<p role="alert">${this.operationRetryError}</p>` : nothing}
+    </div>`;
   }
 
   // --- CodeMirror mount/destroy ---
@@ -591,11 +661,10 @@ export class ApprovalDashboard extends LitElement {
   };
 
   private _openBatchDialog(ids: number[], action: 'approve' | 'reject') {
+    this.resetBatchDialog();
     this.batchIds = ids;
     this.batchAction = action;
     this.batchNote = '';
-    this.batchLoading = false;
-    this.batchError = null;
     this.batchDialogOpen = true;
     // Add Escape key handler per UI-SPEC requirement (checker fix)
     document.addEventListener('keydown', this._handleEscapeKey);
@@ -603,42 +672,70 @@ export class ApprovalDashboard extends LitElement {
 
   private _closeBatchDialog() {
     if (this.batchLoading) return;
+    const reconcile = this.batchUnknown;
+    this.resetBatchDialog();
+    if (reconcile) void this.loadRequests();
+  }
+
+  private resetBatchDialog() {
+    this.batchRequest?.abort();
+    this.batchRequest = null;
+    this.batchLoading = false;
     this.batchDialogOpen = false;
     this.batchIds = [];
     this.batchError = null;
+    this.batchResults = [];
+    this.batchUnknown = false;
     document.removeEventListener('keydown', this._handleEscapeKey);
   }
 
   private async _confirmBatch() {
+    if (!this.batchDialogOpen || this.batchLoading || this.batchResults.length || this.batchUnknown) return;
+    const request = new AbortController();
+    this.batchRequest = request;
     this.batchLoading = true;
     this.batchError = null;
     try {
-      const body: any = {
+      const body = {
         ids: this.batchIds,
         action: this.batchAction,
         notes: this.batchNote || undefined,
+        ...(this.batchAction === 'approve' && { execute_ids: this.batchIds.filter(id => this.executeAfterApprove[id] !== false) }),
       };
-      if (this.batchAction === 'approve') {
-        body.execute_ids = this.batchIds.filter(id => this.executeAfterApprove[id] !== false);
-      }
       const res = await authFetch('/api/approval/batch-review', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
+        signal: request.signal,
       });
+      if (this.batchRequest !== request) return;
       const data = await res.json();
-      if (!res.ok || (Array.isArray(data) ? data : data?.results)?.some((item: { success: boolean }) => !item.success)) {
-        this.batchError = data?.error || (Array.isArray(data) ? data : data?.results)?.filter((item: { success: boolean }) => !item.success).map((item: { id: number; error?: string }) => `#${item.id}: ${item.error || '未完成'}`).join('；') || '操作失败，请重试';
-        this.batchLoading = false;
+      if (this.batchRequest !== request) return;
+      if (!res.ok) {
+        // These rejections happen before the approval handler can dispatch an item.
+        if (![400, 401, 403, 404, 429].includes(res.status)) throw new Error('APPROVAL_BATCH_OUTCOME_UNKNOWN');
+        this.batchError = data?.error || '操作失败，请重试';
         return;
       }
-      this.batchLoading = false;
-      this._closeBatchDialog();
+      const results: BatchReviewResult[] | undefined = Array.isArray(data) ? data : data?.results;
+      if (!Array.isArray(results) || results.length !== body.ids.length
+        || !body.ids.every(id => results.some(item => item?.id === id && typeof item.success === 'boolean'))) {
+        throw new Error('APPROVAL_BATCH_RESULT_INVALID');
+      }
       this.clearSelection();
-      this.loadRequests();
+      if (results.some(item => !item.success)) this.batchResults = results;
+      else this.resetBatchDialog();
+      void this.loadRequests();
     } catch {
-      this.batchError = '操作失败，请重试';
-      this.batchLoading = false;
+      if (this.batchRequest === request) {
+        this.batchUnknown = true;
+        this.clearSelection();
+      }
+    } finally {
+      if (this.batchRequest === request) {
+        this.batchRequest = null;
+        this.batchLoading = false;
+      }
     }
   }
 
@@ -698,11 +795,16 @@ export class ApprovalDashboard extends LitElement {
         ${agentItems.map((approval) => html`
           <app-card class="approval-card">
             <div class="card-header"><div><app-badge variant="info">Agent</app-badge> <strong>${approval.tool_name}</strong>${this.actionLink(approval)}</div><span class="ai-badge">#${approval.id}</span></div>
-            <div class="sql-preview pending-preview">${JSON.stringify({ args: approval.args_redacted, resource: approval.resource_json }, null, 2)}</div>
+            <p class="caption">申请人 ${approval.requester_id ?? '未提供'} · 目标 ${this.historyTarget({ kind: 'agent', record: approval })}</p>
+            <button type="button" class="btn-ghost pending-detail" aria-label=${`查看完整证据：Agent #${approval.id} ${approval.tool_name}`}
+              @click=${(event: Event) => this.openAgentDetail(approval, event.currentTarget as HTMLElement)}>查看完整证据</button>
+            ${approvalValue(approval.args_redacted) == null || approval.args_redacted === ''
+              ? html`<p class="caption">未提供脱敏参数</p>`
+              : html`<div class="sql-preview pending-preview">${evidenceText(approvalValue(approval.args_redacted))}</div>`}
             <div style="margin-top:var(--space-sm);font-size:var(--text-sm);color:var(--muted)">状态：${this._statusLabel(approval.status)}</div>
             ${approval.status === 'pending' ? html`
             <div class="actions">
-              <span class="ai-badge">风险：${approval.risk_level || 'high'} / ${approval.scope || 'once'}</span>
+              <span class="ai-badge">风险：${approval.risk_level || '未提供'} / ${approval.scope || '未提供范围'}</span>
               <button class="btn-primary btn-success" @click=${() => this.reviewAgentApproval(approval.id, 'approve', approval.risk_level === 'high' ? 'once' : approval.scope || 'window')}>通过</button>
               ${approval.risk_level !== 'high' ? html`<button class="btn" @click=${() => this.reviewAgentApproval(approval.id, 'approve', 'window')}>允许 5 分钟</button>` : nothing}
               ${(pendingAgentToolCounts.get(approval.tool_name) ?? 0) > 1
@@ -781,9 +883,9 @@ export class ApprovalDashboard extends LitElement {
         </app-card>
       `)}
       ${agentItems.length === 0 && sqlItems.length === 0 ? html`<app-empty-state title="暂无待审批请求"></app-empty-state>` : nothing}
-
-      ${this._renderBatchDialog()}
       `}
+      ${this.renderEvidenceDialog()}
+      ${this._renderBatchDialog()}
       </section>
     `;
   }
@@ -806,7 +908,8 @@ export class ApprovalDashboard extends LitElement {
   private historyTarget(item: HistoryItem): string {
     if (item.kind === 'sql') return `${(item.record as ApprovalRequest & { instance_name?: string }).instance_name || `实例 #${item.record.instance_id}`} / ${item.record.target_database || '默认数据库'}`;
     const resource = approvalValue(item.record.resource_json);
-    return shortText(resource?.name || resource?.label || (resource?.type ? `${resource.type}${resource.id != null ? ` #${resource.id}` : ''}` : '未提供目标资源'));
+    const id = resource?.id ?? resource?.instanceId ?? resource?.serverId ?? resource?.networkDeviceId;
+    return shortText(resource?.name || resource?.label || (resource?.type ? `${resource.type}${id != null ? ` #${id}` : ''}` : '未提供目标资源'));
   }
 
   private sqlEvidenceExecution(record: ApprovalRequest): ExecutionState {
@@ -835,12 +938,52 @@ export class ApprovalDashboard extends LitElement {
   }
 
   private restoredActionPosition = false;
+  private restoredLinkedApproval = false;
   protected updated() {
-    if(this.loading || this.restoredActionPosition) return;
-    const id=new URL(location.href).searchParams.get('focusApproval');
+    if (!this.isConnected || this.loading) return;
+    const parameters = new URL(location.href).searchParams;
+    const linked = parameters.get('auditApproval');
+    if (!this.restoredLinkedApproval && !this.listError && linked && /^[1-9]\d*$/.test(linked) && Number.isSafeInteger(Number(linked))) {
+      this.restoredLinkedApproval = true;
+      this.linkedApprovalId = Number(linked);
+      this.detailTrigger = this.renderRoot.querySelector(`[data-sql-approval-id="${linked}"]`);
+      this.selectedRequest = this.requests.find(request => request.id === this.linkedApprovalId) ?? null;
+      this.view = 'detail';
+      if (this.filter !== 'processed') {
+        this.filter = 'processed';
+        this.saveHistoryContext();
+        void this.loadRequests();
+      }
+      void this._loadDetail(this.linkedApprovalId);
+      return;
+    }
+    if (this.restoredActionPosition) return;
+    const id=parameters.get('focusApproval');
     if(!id || !/^[1-9]\d{0,19}$/.test(id)) return;
-    const link=this.renderRoot.querySelector<HTMLElement>(`#action-approval-${id}`);
-    if(link) { this.restoredActionPosition=true; link.scrollIntoView({block:'center'}); link.focus({preventScroll:true}); }
+    // The approval card renders its slot after the dashboard's update.
+    requestAnimationFrame(() => {
+      if (!this.isConnected || this.loading || this.restoredActionPosition
+        || new URL(location.href).searchParams.get('focusApproval') !== id) return;
+      const link = this.renderRoot.querySelector<HTMLElement>(`#action-approval-${id}`);
+      if (!link) return;
+      this.restoredActionPosition = true;
+      link.scrollIntoView({block:'center'});
+      link.focus({preventScroll:true});
+    });
+  }
+
+  private relatedAuditLink(record: ApprovalRequest) {
+    if (!record.operation_id || !Number.isSafeInteger(record.instance_id) || record.instance_id <= 0
+      || !hasListPermission('audit:view')) return nothing;
+    const query = new URLSearchParams({
+      view: 'system', resource: `instance:${record.instance_id}`, approvalRequestId: String(record.id), operationId: record.operation_id,
+    });
+    return html`<a class="btn" href=${`/audit?${query}`} @click=${() => {
+      const origin = new URL(location.href);
+      origin.searchParams.set('auditApproval', String(record.id));
+      history.replaceState(history.state, '', origin);
+      this.saveHistoryContext();
+    }}>查看关联审计</a>`;
   }
 
   private actionLink(record: AgentApproval) {
@@ -859,9 +1002,9 @@ export class ApprovalDashboard extends LitElement {
       risk: this._riskBadge(item.record.risk_level || 'unknown'),
       decision: html`<app-badge variant="muted">${this._statusLabel(approvalDecision(item.record.status))}</app-badge>`,
       execution: this.executionBadge(item),
-      detail: html`${item.kind === 'agent' ? this.actionLink(item.record) : nothing}<button class="btn-ghost history-detail" aria-label=${`查看证据：${this.historySummary(item)}`} @click=${(event: Event) => {
+      detail: html`${item.kind === 'agent' ? this.actionLink(item.record) : nothing}<button class="btn-ghost history-detail" data-sql-approval-id=${item.kind === 'sql' ? String(item.record.id) : nothing} aria-label=${`查看证据：${this.historySummary(item)}`} @click=${(event: Event) => {
         if (item.kind === 'sql') this.openDetail(item.record, event.currentTarget as HTMLElement);
-        else { this.detailTrigger = event.currentTarget as HTMLElement; this.selectedAgent = item.record; }
+        else this.openAgentDetail(item.record, event.currentTarget as HTMLElement);
       }}>查看证据</button>`,
     }));
     return html`
@@ -870,8 +1013,8 @@ export class ApprovalDashboard extends LitElement {
         <label>审批结果<select .value=${this.decisionFilter} @change=${(e: Event) => this.changeHistoryFilter('decisionFilter', (e.target as HTMLSelectElement).value)}>
           <option value="all">全部审批结果</option><option value="approved">已通过</option><option value="rejected">已驳回</option><option value="cancelled">已取消</option><option value="expired">已过期</option>
         </select></label>
-        <label>执行结果<select .value=${this.executionFilter} @change=${(e: Event) => this.changeHistoryFilter('executionFilter', (e.target as HTMLSelectElement).value)}>
-          <option value="all">全部执行结果</option>${Object.entries(executionLabels).map(([value, label]) => html`<option value=${value}>${label}</option>`)}
+        <label>执行结果<select @change=${(e: Event) => this.changeHistoryFilter('executionFilter', (e.target as HTMLSelectElement).value)}>
+          <option value="all" .selected=${this.executionFilter === 'all'}>全部执行结果</option>${Object.entries(executionLabels).map(([value, label]) => html`<option value=${value} .selected=${this.executionFilter === value}>${label}</option>`)}
         </select></label>
       </div>
       <p class="history-notice">仅筛选本次已读取记录：SQL 与 Agent 各最多 100 条，不代表全部历史。</p>
@@ -886,7 +1029,6 @@ export class ApprovalDashboard extends LitElement {
           <span>第 ${this.historyPage + 1} / ${pages} 页</span><button class="btn" ?disabled=${this.loading || this.historyPage + 1 >= pages} @click=${() => { this.historyPage++; this.saveHistoryContext(); }}>下一页</button>
         </div></div>
       </app-card>`}
-      ${this.renderEvidenceDialog()}
     `;
   }
 
@@ -912,11 +1054,13 @@ export class ApprovalDashboard extends LitElement {
 
   private renderEvidenceDialog() {
     const record = this.selectedAgent ?? this.selectedRequest;
-    if (!record) return nothing;
-    const item: HistoryItem = this.selectedAgent ? { kind: 'agent', record: this.selectedAgent } : { kind: 'sql', record: this.selectedRequest! };
-    const state = item.kind === 'sql' ? this.sqlEvidenceExecution(item.record) : undefined;
+    const approvalId = this.selectedRequest?.id ?? this.linkedApprovalId;
+    if (!record && approvalId === null) return nothing;
+    const item: HistoryItem | null = this.selectedAgent ? { kind: 'agent', record: this.selectedAgent }
+      : this.selectedRequest ? { kind: 'sql', record: this.selectedRequest } : null;
+    const state = item?.kind === 'sql' ? this.sqlEvidenceExecution(item.record) : undefined;
     return html`<app-dialog .open=${true} size="xl" title="审批与执行详情" @app-dialog-close=${this.backToList}>
-      ${this.detailLoading ? html`<p role="status">正在读取完整证据…</p>` : this.detailError ? html`<div role="alert" class="error-box">${this.detailError}</div><button class="btn" @click=${() => this._loadDetail(this.selectedRequest!.id)}>重试</button>` : html`
+      ${this.detailLoading ? html`<p role="status">正在读取完整证据…</p>` : this.detailError ? html`<div role="alert" class="error-box">${this.detailError}</div><button class="btn" @click=${() => approvalId !== null && this._loadDetail(approvalId)}>重试</button>` : record && item ? html`
         <p><strong>${this.historyTarget(item)}</strong> <span class="caption">· ${new Date(record.created_at).toLocaleString('zh-CN')}</span></p>
         <div class="evidence-meta"><span>审批</span><app-badge variant="muted">${this._statusLabel(approvalDecision(record.status))}</app-badge><span>执行</span>${this.executionBadge(item, state)}${this._riskBadge(record.risk_level || 'unknown')}</div>
         ${item.kind === 'sql' && approvalValue(item.record.execution_result)?.executionState === 'unknown'
@@ -924,6 +1068,8 @@ export class ApprovalDashboard extends LitElement {
         ${this.evidenceWarning ? html`<p class="history-notice" role="status">${this.evidenceWarning}</p>` : nothing}
         ${item.kind === 'sql' ? html`
           ${this.renderSqlEvidenceFacts(item.record)}
+          ${this.relatedAuditLink(item.record)}
+          ${this.renderOperationRetry(item.record)}
           ${this.evidenceSection('完整 SQL', item.record.sql_text)}
           <details><summary>原始审批与事件证据</summary>
             ${this.evidenceSection('完整 AI 分析', item.record.ai_recommendation)}
@@ -933,12 +1079,20 @@ export class ApprovalDashboard extends LitElement {
           </details>
         ` : html`
           <dl class="evidence-facts">
+            <dt>审批记录</dt><dd>Agent #${item.record.id}</dd>
             <dt>工具</dt><dd>${item.record.tool_name}</dd>
+            <dt>申请人</dt><dd>${item.record.requester_id ?? '未提供'}</dd>
             <dt>授权使用次数</dt><dd>${item.record.used_count ?? '未提供'}</dd>
+            <dt>关联 Operation</dt><dd>未提供</dd>
           </dl>
+          ${this.filter === 'pending'
+            ? this.evidenceSection('脱敏参数', approvalValue(item.record.args_redacted) || '未提供脱敏参数')
+            : nothing}
+          ${this.filter === 'processed' ? html`
           <details><summary>原始审批证据</summary>${this.evidenceSection('审批原值（参数已脱敏）', item.record)}</details>
+          ` : nothing}
         `}
-      `}
+      ` : nothing}
       <button slot="footer" class="btn" @click=${this.backToList}>关闭</button>
     </app-dialog>`;
   }
@@ -976,7 +1130,7 @@ export class ApprovalDashboard extends LitElement {
               <div class="meta-row"><span class="meta-label">当前状态</span><span class="meta-value">${this._statusLabel(r.status)}</span></div>
               ${r.operation_id ? html`<div class="meta-row"><span class="meta-label">Operation</span><span class="meta-value">${this.operationState ?? '加载中'}</span></div>` : ''}
               ${r.operation_id && ['queued', 'waiting_approval', 'claimed'].includes(this.operationState ?? '') ? html`<div class="actions"><button class="btn-danger-outline" @click=${this._cancelOperation}>取消 Operation</button></div>` : ''}
-              ${r.operation_id && ['failed', 'unknown', 'cancelled'].includes(this.operationState ?? '') ? html`<div class="actions"><button class="btn-primary" @click=${this._retryOperation}>创建重试尝试</button></div>` : ''}
+              ${this.renderOperationRetry(r)}
               ${r.ai_recommendation ? html`
                 <div class="meta-row"><span class="meta-label">AI 分析</span><span class="meta-value"><span class="ai-badge">AI: ${approvalValue(r.ai_recommendation)?.recommendation === 'approve' ? '建议通过' : approvalValue(r.ai_recommendation)?.recommendation === 'reject' ? '建议驳回' : '建议未知'}</span></span></div>
                 ${approvalValue(r.ai_recommendation)?.reasoning ? html`<div class="meta-row"><span class="meta-label">AI 理由</span><span class="meta-value" style="font-size:var(--text-sm);color:var(--muted);">${approvalValue(r.ai_recommendation)?.reasoning}</span></div>` : ''}
@@ -1012,6 +1166,22 @@ export class ApprovalDashboard extends LitElement {
 
   private _renderBatchDialog() {
     if (!this.batchDialogOpen) return nothing;
+    if (this.batchUnknown) return html`
+      <app-dialog .open=${true} .closeOnOverlay=${false} size="md" title="审批结果待确认" @app-dialog-close=${this._closeBatchDialog}>
+        <p role="alert">审批结果待确认。关闭后将重新读取待审批列表，请核对原请求的状态。</p>
+        <button slot="footer" class="btn" @click=${this._closeBatchDialog}>关闭并重新读取</button>
+      </app-dialog>
+    `;
+    if (this.batchResults.length) return html`
+      <app-dialog .open=${true} .closeOnOverlay=${false} size="md" title="批量审批结果" @app-dialog-close=${this._closeBatchDialog}>
+        <div role="status">
+          <ul>${this.batchResults.map(item => html`
+            <li>#${item.id} · ${item.success ? '已完成' : '未完成'}${!item.success && item.error ? ` · ${item.error}` : ''}</li>
+          `)}</ul>
+        </div>
+        <button slot="footer" class="btn" @click=${this._closeBatchDialog}>关闭</button>
+      </app-dialog>
+    `;
     return html`
       <app-dialog .open=${true} .closable=${!this.batchLoading} .closeOnOverlay=${false} size="md" title="${this.batchAction === 'approve' ? '批量通过' : '批量驳回'}" @app-dialog-close=${this._closeBatchDialog}>
         <div style="margin-bottom:var(--space-md);font-size:var(--text-md);color:var(--text);">

@@ -141,6 +141,41 @@ describe('mysql workflow store', () => {
     expect(statements[0].sql).toContain("state IN ('queued', 'retry', 'running')");
   });
 
+  it.each([
+    { rollbackFails: false, destroyFails: false },
+    { rollbackFails: true, destroyFails: false },
+    { rollbackFails: true, destroyFails: true },
+  ])('P06 preserves the claim error and disposes of the session (rollback fails: $rollbackFails, destroy fails: $destroyFails)', async ({
+    rollbackFails, destroyFails,
+  }) => {
+    const claimError = new Error('attempt write failed');
+    const connection = {
+      beginTransaction: vi.fn(),
+      commit: vi.fn(),
+      rollback: vi.fn(async () => {
+        if (rollbackFails) throw new Error('rollback could not be confirmed');
+      }),
+      execute: vi.fn()
+        .mockResolvedValueOnce([{ affectedRows: 1 }])
+        .mockResolvedValueOnce([{ affectedRows: 0 }])
+        .mockRejectedValueOnce(claimError),
+      release: vi.fn(),
+      destroy: vi.fn(() => {
+        if (destroyFails) throw new Error('failed to close session');
+      }),
+    };
+    const store = new MysqlWorkflowStore(() => ({
+      execute: vi.fn().mockResolvedValue([[{ id: 'report-job', type: 'report.occurrence' }]]),
+      getConnection: async () => connection,
+    }));
+
+    await expect(store.claim('report-worker', 30)).rejects.toBe(claimError);
+    expect(connection.rollback).toHaveBeenCalledTimes(1);
+    expect(connection.commit).not.toHaveBeenCalled();
+    expect(connection.destroy).toHaveBeenCalledTimes(rollbackFails ? 1 : 0);
+    expect(connection.release).toHaveBeenCalledTimes(rollbackFails ? 0 : 1);
+  });
+
   it('does not reselect an existing lease when the claim update affects no rows', async () => {
     const execute = vi.fn(async (sql: string) => [sql.startsWith('SELECT') ? [{
       id: 'still-leased', type: 'report.generate', payload: {}, attempts: 1, maxAttempts: 3, fencingToken: 7,

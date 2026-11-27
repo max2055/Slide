@@ -58,6 +58,32 @@ describe('migrated attention event states', () => {
     await page.updateComplete;
     expect(page.shadowRoot!.querySelector('a[href*="investigation="]')).toBeNull();
   });
+  it.each([
+    [{ assigned_to: 802 }, '用户 #802'],
+    [{ assignee: '张工', assigned_to: 802 }, '张工'],
+    [{ assignee: '  ', assigned_to: 802 }, '用户 #802'],
+    [{ assigned_to: null }, '未分配'],
+    [{ assigned_to: 0 }, '未分配'],
+    [{ assigned_to: 2.5 }, '未分配'],
+    [{ assigned_to: '802' }, '未分配'],
+  ])('renders the assignee from authorized event detail %j', async (assignment, expected) => {
+    vi.mocked(authFetch).mockImplementation(async url => {
+      const requestPath = String(url);
+      if (requestPath.endsWith('/events/42/logs')) return new Response('[]');
+      if (requestPath.endsWith('/events/42')) return new Response(JSON.stringify({
+        id: 42, title: '事件内容', severity: 'warning', status: 'open', alerts: [], ...assignment,
+      }));
+      return new Response(null, { status: 404 });
+    });
+    const page = new EventManagementPage();
+    page.eventId = 42;
+    document.body.append(page);
+    await vi.waitFor(() => {
+      const row = [...page.shadowRoot!.querySelectorAll('.detail-row')]
+        .find(item => item.querySelector('.label')?.textContent === '负责人');
+      expect(row?.querySelector('.value')?.textContent?.trim()).toBe(expected);
+    });
+  });
   it('clears previously rendered facts if the latest logs read denies access', async () => {
     let finishLogs!: (response: Response) => void;
     vi.mocked(authFetch).mockImplementation(async url => {
@@ -222,7 +248,7 @@ describe('event interaction recovery', () => {
     await page._loadEvents();
     expect(page.loadError).toBeNull();
   });
-  it.each([{}, { analysisIds: [] }, { analysisIds: 'bad', sessionKeys: [] }, { analysisIds: [1], sessionKeys: [null] }, { success: false, analysisIds: [], sessionKeys: [] }])('discards invalid persisted RCA %j', async value => {
+  it.each([{}, { analysisIds: [] }, { analysisIds: [], sessionKeys: [] }, { analysisIds: 'bad', sessionKeys: [] }, { analysisIds: [1], sessionKeys: [null] }, { success: false, analysisIds: [], sessionKeys: [] }])('discards invalid persisted RCA %j', async value => {
     localStorage.setItem('event_rca_result', JSON.stringify({ ...value, eventId: 1 }));
     const page = new EventManagementPage() as any;
     page._loadEvents = async () => {};
@@ -244,6 +270,16 @@ describe('event interaction recovery', () => {
     expect(page.error).toBeNull();
     expect(page.rcaResult.analysisIds).toEqual([7]);
     expect(JSON.parse(localStorage.getItem('event_rca_result')!).sessionKeys).toEqual(['session-7']);
+  });
+  it('accepts exact native investigation IDs and keeps them in the live receipt only', async () => {
+    const page = new EventManagementPage() as any;
+    const investigationId = 'b9f9b923-33f0-448c-a6f7-64d9b8e6e098';
+    page.selectedEvent = { id: '1' };
+    vi.mocked(authFetch).mockResolvedValue(response({ success: true, analysisIds: [], sessionKeys: [], investigationIds: [investigationId] }));
+    await page._triggerRCA();
+    expect(page.error).toBeNull();
+    expect(page.rcaResult.investigationIds).toEqual([investigationId]);
+    expect(localStorage.getItem('event_rca_result')).toBeNull();
   });
 });
 

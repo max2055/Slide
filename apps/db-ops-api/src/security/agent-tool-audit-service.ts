@@ -9,9 +9,11 @@ export interface AuditExecutor {
   execute(sql: string, values?: unknown[]): Promise<[any, unknown?]>;
 }
 
+export type AgentToolAuditPhase = 'decision' | 'result' | 'discovery';
+
 interface AuditRow {
   id: number | string;
-  phase: 'decision' | 'result';
+  phase: AgentToolAuditPhase;
   actor_id: number;
   actor_username?: string;
   agent_id: string;
@@ -31,7 +33,7 @@ export interface AgentToolAuditFilters {
   agentId?: string;
   actorId?: number;
   toolName?: string;
-  phase?: 'decision' | 'result';
+  phase?: AgentToolAuditPhase;
   allowed?: boolean;
   reasonCode?: string;
   from?: Date;
@@ -116,6 +118,24 @@ export class AgentToolAuditService {
     private readonly executorProvider: () => AuditExecutor | null = () => dbConnection.getPool() as AuditExecutor | null,
   ) {}
 
+  async recordDiscovery(actor: ActorContext, agentId: string, names: readonly string[]): Promise<void> {
+    const executor = this.executorProvider();
+    if (!executor) throw new Error('AGENT_TOOL_AUDIT_STORE_UNAVAILABLE');
+    const toolNames = [...new Set(names)].sort();
+    const [result] = await executor.execute(
+      `INSERT INTO agent_tool_audit
+         (phase, actor_id, agent_id, request_id, tool_name, allowed, reason_code, resource_json,
+          policy_snapshot, args_redacted, result_redacted)
+       VALUES ('discovery', ?, ?, ?, 'tool_catalog', TRUE, 'TOOL_CATALOG_DISCOVERED',
+               'null', ?, '{}', ?)`,
+      [actor.userId, agentId, actor.requestId,
+        JSON.stringify({ actorSessionVersion: actor.sessionVersion }), JSON.stringify({ toolNames })],
+    );
+    if (!result?.insertId && Number(result?.affectedRows) !== 1) {
+      throw new Error('AGENT_TOOL_AUDIT_WRITE_FAILED');
+    }
+  }
+
   async record(record: AgentToolAuditRecord, transaction?: AuditExecutor): Promise<void> {
     const executor = transaction ?? this.executorProvider();
     if (!executor) throw new Error('AGENT_TOOL_AUDIT_STORE_UNAVAILABLE');
@@ -172,7 +192,12 @@ export class AgentToolAuditService {
     const add = (sql: string, value: unknown) => { clauses.push(sql); values.push(value); };
     if (filters.agentId) add('a.agent_id = ?', filters.agentId);
     if (filters.actorId) add('a.actor_id = ?', filters.actorId);
-    if (filters.toolName) add('a.tool_name = ?', filters.toolName);
+    if (filters.toolName && filters.phase && filters.phase !== 'discovery') add('a.tool_name = ?', filters.toolName);
+    else if (filters.toolName) {
+      clauses.push(`((a.phase <> 'discovery' AND a.tool_name = ?) OR
+        (a.phase = 'discovery' AND JSON_CONTAINS(a.result_redacted, JSON_QUOTE(?), '$.toolNames')))`);
+      values.push(filters.toolName, filters.toolName);
+    }
     if (filters.phase) add('a.phase = ?', filters.phase);
     if (filters.allowed !== undefined) add('a.allowed = ?', filters.allowed);
     if (filters.reasonCode) add('a.reason_code = ?', filters.reasonCode);

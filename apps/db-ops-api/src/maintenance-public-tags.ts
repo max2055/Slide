@@ -5,7 +5,8 @@ export function publicMaintenanceTags(raw: any) {
   try { tags = typeof raw === 'string' ? JSON.parse(raw) : raw; }
   catch { return null; }
   if (!tags || typeof tags !== 'object') return tags;
-  return { ...tags, ...(tags.maintenance ? { maintenance: {
+  const { manual_silence_suppressed: _internalSilence, ...publicTags } = tags;
+  return { ...publicTags, ...(tags.maintenance ? { maintenance: {
     state: tags.maintenance.state, at: tags.maintenance.at,
   } } : {}) };
 }

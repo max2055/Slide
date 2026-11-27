@@ -89,6 +89,15 @@ describe('AuthSessionConfigService', () => {
       .toBe('2030-01-01T01:00:00.000Z');
   });
 
+  it.each([[5, 240], [60, 3540], [61, 3600], [10080, 3600]])(
+    'leaves renewal time without extending the idle window at %i minutes', async (idleMinutes, accessSeconds) => {
+      const service = new AuthSessionConfigService(() => ({
+        execute: vi.fn().mockResolvedValue([[{ config_value: String(idleMinutes) }]]),
+      }));
+      expect(service.accessTokenSeconds(await service.get())).toBe(accessSeconds);
+    },
+  );
+
   it('persists a validated timeout with actor attribution', async () => {
     const execute = vi.fn().mockResolvedValue([{ affectedRows: 1 }]);
     const service = new AuthSessionConfigService(() => ({ execute }));

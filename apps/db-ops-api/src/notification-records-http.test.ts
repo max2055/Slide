@@ -1,4 +1,7 @@
 import { readFileSync } from 'node:fs';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import Fastify from 'fastify';
 import jwt from 'jsonwebtoken';
 import mysql from 'mysql2/promise';
@@ -9,6 +12,7 @@ import { actorContextService, type ActorContext } from './auth/actor-context.js'
 import { requirePermission } from './auth/require-permission.js';
 import { dbConnection } from './db-connection.js';
 import { notificationDatabaseService } from './notification-database-service.js';
+import { loadMigrations, MigrationRunner } from './migrations/runner.js';
 
 const secret = 'max-595-isolated-test-secret';
 const actor: ActorContext = { userId: 595, username: 'records-reader', roles: [],
@@ -97,36 +101,49 @@ describe('MAX-595 / #541 production notification records HTTP registration', () 
   });
 });
 
-it.skipIf(!process.env.NOTIFICATION_RECORDS_TEST_MYSQL_PORT)('MAX-595 real MySQL rows through HTTP preserve all four statuses and empty results', async () => {
-    if (process.env.NOTIFICATION_RECORDS_TEST_MYSQL_PASSWORD === undefined) throw new Error('NOTIFICATION_RECORDS_TEST_MYSQL_PASSWORD must be explicitly injected; explicit empty is reserved for isolated targets');
+it.skipIf(!process.env.NOTIFICATION_RECORDS_TEST_MYSQL_PORT)('migrated notification records preserve existing rows and accept all statuses through HTTP', async () => {
+  if (process.env.NOTIFICATION_RECORDS_TEST_MYSQL_PASSWORD === undefined) throw new Error('NOTIFICATION_RECORDS_TEST_MYSQL_PASSWORD must be explicitly injected; explicit empty is reserved for isolated targets');
   authenticate();
   const options = { host: process.env.NOTIFICATION_RECORDS_TEST_MYSQL_HOST ?? '127.0.0.1',
     port: Number(process.env.NOTIFICATION_RECORDS_TEST_MYSQL_PORT), user: process.env.NOTIFICATION_RECORDS_TEST_MYSQL_USER ?? 'root',
     password: process.env.NOTIFICATION_RECORDS_TEST_MYSQL_PASSWORD! };
   const admin = mysql.createPool(options);
   const database = `max595_records_${process.pid}`;
+  const priorMigrations = await mkdtemp(join(tmpdir(), 'slide-notification-records-migrations-'));
   let pool: ReturnType<typeof mysql.createPool> | undefined;
   let created = false;
   const app = appForRecords();
   try {
     await admin.query(`CREATE DATABASE ${database}`);
     created = true;
-    pool = mysql.createPool({ ...options, database });
+    pool = mysql.createPool({ ...options, database, connectionLimit: 10 });
     vi.spyOn(dbConnection, 'getPool').mockReturnValue(pool);
-    // Minimal schema for this read-only query, not a migration qualification.
-    await pool.query('CREATE TABLE alerts (id INT PRIMARY KEY, instance_id INT, server_id INT, network_device_id INT)');
-    await pool.query("CREATE TABLE notification_records (id INT PRIMARY KEY, alert_id INT, channel_id INT, status ENUM('pending','sent','failed','suppressed'), error TEXT, sent_at DATETIME, created_at DATETIME)");
-    await pool.query('INSERT INTO alerts VALUES (1,1,NULL,NULL),(2,2,NULL,NULL)');
-    const statuses = ['pending', 'sent', 'failed', 'suppressed'];
-    for (const [i, status] of statuses.entries()) {
-      await pool.execute('INSERT INTO notification_records VALUES (?,?,3,?,NULL,NULL,NOW())', [i + 1, 1, status]);
+    for (const migration of await loadMigrations()) {
+      if (migration.id < '168_') await writeFile(join(priorMigrations, migration.id), migration.sql);
     }
-    await pool.query("INSERT INTO notification_records VALUES (5,2,3,'sent',NULL,NULL,NOW())");
+    await new MigrationRunner(pool, priorMigrations).run();
+    await pool.query(`INSERT INTO alerts (id, instance_id, alert_type, level, title, message)
+      VALUES (1, 1, 'performance', 'warning', 'allowed', 'fixture'), (2, 2, 'performance', 'warning', 'excluded', 'fixture')`);
+    const statuses = ['pending', 'sent', 'failed', 'suppressed'];
+    for (const [i, status] of statuses.slice(0, 3).entries()) {
+      await pool.execute('INSERT INTO notification_records (id, alert_id, channel_id, status) VALUES (?, 1, 3, ?)', [i + 1, status]);
+    }
+    await pool.query("INSERT INTO notification_records (id, alert_id, channel_id, status) VALUES (5, 2, 3, 'sent')");
+    const runner = new MigrationRunner(pool);
+    await runner.run();
+    const migrated = await runner.inspect();
+    await runner.run();
+    expect(await runner.inspect()).toEqual(migrated);
+    expect(await notificationDatabaseService.recordNotification({ alert_id: 1, channel_id: 3, status: 'suppressed' })).toEqual({ success: true });
+    const [column] = await pool.query<mysql.RowDataPacket[]>(`SELECT COLUMN_DEFAULT, COLUMN_TYPE, COLLATION_NAME, IS_NULLABLE, COLUMN_COMMENT
+      FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'notification_records' AND COLUMN_NAME = 'status'`);
+    expect(column).toEqual([{ COLUMN_DEFAULT: 'pending', COLUMN_TYPE: "enum('pending','sent','failed','suppressed')",
+      COLLATION_NAME: 'utf8mb4_unicode_ci', IS_NULLABLE: 'NO', COLUMN_COMMENT: '业务状态' }]);
     const address = await app.listen({ host: '127.0.0.1', port: 0 });
     for (const [i, status] of statuses.entries()) {
       const response = await fetch(`${address}/api/notification/records?status=${status}`, { headers });
       expect(response.status).toBe(200);
-      expect(await response.json()).toMatchObject([{ id: i + 1, status }]);
+      expect(await response.json()).toMatchObject([{ id: status === 'suppressed' ? 6 : i + 1, status }]);
     }
     const empty = await fetch(`${address}/api/notification/records?status=sent&channel_id=99`, { headers });
     expect(empty.status).toBe(200);
@@ -141,6 +158,6 @@ it.skipIf(!process.env.NOTIFICATION_RECORDS_TEST_MYSQL_PORT)('MAX-595 real MySQL
     await app.close();
     await pool?.end();
     try { if (created) await admin.query(`DROP DATABASE ${database}`); }
-    finally { await admin.end(); }
+    finally { await admin.end(); await rm(priorMigrations, { recursive: true, force: true }); }
   }
-});
+}, 120_000);

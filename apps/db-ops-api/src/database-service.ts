@@ -14,6 +14,7 @@ import { withTimeout } from './promise-timeout.js';
 import { authorizeDatabaseTarget } from './security/database-target-policy.js';
 import { classifySql } from './sql-validator.js';
 import { ensureOracleClientReady, formatOracleConnectionError, initializeOracleClient } from './oracle-client.js';
+import { getDamengServerVersion, observeDamengServerVersions } from './dameng-server-version.js';
 import { collectDamengMemoryUsage } from './collectors/dameng-memory.js';
 import { calculateCounterRate } from './collectors/base-provider.js';
 import { withInstanceExecutionLock } from './instance-execution-lock.js';
@@ -41,6 +42,7 @@ export interface DatabaseConnection {
   oracleConnection: oracledb.Connection | null;  // Oracle 连接 (persistent from pool)
   oraclePool: oracledb.Pool | null;  // Oracle 连接池
   dmConnection: dmdb.Connection | null;  // 达梦数据库连接
+  damengServerVersion?: string;
   connected: boolean;
   db_type: string;  // 数据库类型
   deltaCounter?: {
@@ -69,6 +71,19 @@ export interface DatabaseConnection {
     timestamp: number;
   };
   collectorDeltaCounters?: Record<string, { value: number; timestamp: number }>;
+}
+
+export type QueryReadIssue = 'not-connected' | 'source-unavailable' | 'source-forbidden' | 'read-failed';
+
+function classifyQuerySourceIssue(error: unknown): QueryReadIssue {
+  const failure = error as { code?: unknown; errorNum?: number } | null;
+  const code = typeof failure?.code === 'string' ? failure.code : undefined;
+  if (code === 'ER_TABLEACCESS_DENIED_ERROR' || code === 'ER_DBACCESS_DENIED_ERROR' ||
+      code === 'ER_COLUMNACCESS_DENIED_ERROR' || code === '42501' || failure?.errorNum === 1031) return 'source-forbidden';
+  if (code === 'ER_NO_SUCH_TABLE' || code === '42P01' || code === '55000' || failure?.errorNum === 942) return 'source-unavailable';
+  if (code === 'ECONNREFUSED' || code === 'ECONNRESET' || code === 'PROTOCOL_CONNECTION_LOST' ||
+      code === 'EHOSTUNREACH' || code?.startsWith('08')) return 'not-connected';
+  return 'read-failed';
 }
 
 export interface RealtimeMetrics {
@@ -158,8 +173,8 @@ export interface SlowQuery {
   min_time_ms?: number | null;
   total_time_ms?: number;
   execution_count: number;
-  first_seen: string;
-  last_seen: string;
+  first_seen: string | null;
+  last_seen: string | null;
 }
 
 export interface HealthCheckResult {
@@ -313,7 +328,8 @@ class DatabaseService {
         // 达梦数据库连接 - 使用官方 dmdb 驱动
         // 强制 IPv4：Docker 容器通常只绑定 0.0.0.0，localhost 解析到 ::1 会导致 ETIMEDOUT
         const host = connectionConfig.host;
-        const dmConnection = instanceAccessLifecycle.guardDriver(id, await withTimeout(instanceAccessLifecycle.track(id, () => dmdb.getConnection({
+        observeDamengServerVersions();
+        const driverConnection = await withTimeout(instanceAccessLifecycle.track(id, () => dmdb.getConnection({
           user: config.user,
           password: config.password,
           connectString: `${host}:${config.port}`,
@@ -325,7 +341,8 @@ class DatabaseService {
         })), 10_000, `Dameng connection timed out after 10000ms`, (lateConnection) => {
           const close = instanceAccessLifecycle.ownTemporary(id, () => lateConnection.close());
           void instanceAccessLifecycle.track(id, close).catch(() => undefined);
-        }));
+        });
+        const dmConnection = instanceAccessLifecycle.guardDriver(id, driverConnection);
         candidate = { dmConnection };
 
         try {
@@ -345,6 +362,7 @@ class DatabaseService {
           oracleConnection: null,
           oraclePool: null,
           dmConnection,
+          damengServerVersion: getDamengServerVersion(driverConnection),
           connected: true,
           db_type: 'dameng',
         });
@@ -358,7 +376,7 @@ class DatabaseService {
           port: config.port,
           user: config.user,
           password: config.password,
-          database: config.database || 'mysql',
+          database: config.database || undefined,
           connectionLimit: 5,
           waitForConnections: true,
           timezone: '+08:00',
@@ -418,7 +436,10 @@ class DatabaseService {
    */
   async detectVersion(id: number): Promise<string | null> {
     const conn = this.getConnection(id);
-    if (!conn?.connected) return null;
+    return conn?.connected ? this.readVersion(conn) : null;
+  }
+
+  private async readVersion(conn: DatabaseConnection): Promise<string | null> {
     try {
       if (conn.db_type === 'mysql' && conn.pool) {
         const [rows] = await conn.pool.query<RowDataPacket[]>('SELECT VERSION() AS version');
@@ -430,6 +451,9 @@ class DatabaseService {
         const version = result.rows[0]?.version;
         return typeof version === 'string' && version.trim() ? version.trim() : null;
       }
+      const version = conn.db_type === 'oracle' ? conn.oracleConnection?.oracleServerVersionString : conn.damengServerVersion;
+      const normalized = version?.trim();
+      return normalized && normalized.length <= 64 && /^\d+(?:\.\d+)+$/.test(normalized) ? normalized : null;
     } catch { /* A metadata probe never fails the connection that just succeeded. */ }
     return null;
   }
@@ -1268,25 +1292,32 @@ class DatabaseService {
   /**
    * 获取慢查询列表
    */
-  async getSlowQueries(id: number, limit: number = 10, onSource?: (source: string) => void): Promise<SlowQuery[] | null> {
-    return this._withAutoReconnect(id, async (conn) => {
+  async getSlowQueries(id: number, limit: number = 10, onSource?: (source: string) => void,
+    onUnavailable?: (issue: QueryReadIssue) => void): Promise<SlowQuery[] | null> {
+    let issue: QueryReadIssue = 'not-connected';
+    const report = (failure: QueryReadIssue) => { issue = failure; };
+    const rows = await this._withAutoReconnect(id, async (conn) => {
+      report('source-unavailable');
       if (conn.db_type === 'postgresql' && conn.pgClient) {
-        return this.getPostgreSQLSlowQueries(conn, limit, onSource);
+        return this.getPostgreSQLSlowQueries(conn, limit, onSource, report);
       } else if (conn.db_type === 'mysql' && conn.pool) {
-        return this.getMySQLSlowQueries(conn, limit, onSource);
+        return this.getMySQLSlowQueries(conn, limit, onSource, report);
       } else if (conn.db_type === 'oracle' && conn.oraclePool) {
-        return this.getOracleSlowQueries(conn, limit, onSource);
+        return this.getOracleSlowQueries(conn, limit, onSource, report);
       } else if (conn.db_type === 'dameng' && conn.dmConnection) {
-        return this.getDamengSlowQueries(conn, limit, onSource);
+        return this.getDamengSlowQueries(conn, limit, onSource, report);
       }
       return null;
     }, 'getSlowQueries');
+    if (rows === null) onUnavailable?.(issue);
+    return rows;
   }
 
   /**
    * 获取 MySQL 慢查询
    */
-  private async getMySQLSlowQueries(conn: DatabaseConnection, limit: number, onSource?: (source: string) => void): Promise<SlowQuery[] | null> {
+  private async getMySQLSlowQueries(conn: DatabaseConnection, limit: number, onSource: ((source: string) => void) | undefined,
+    report: (issue: QueryReadIssue) => void): Promise<SlowQuery[] | null> {
     if (!conn.pool) return null;
 
     try {
@@ -1340,7 +1371,11 @@ class DatabaseService {
           first_seen: row.start_time,
           last_seen: row.start_time,
         }));
-      } catch (e) {
+      } catch (fallbackError) {
+        const primary = classifyQuerySourceIssue(error);
+        const fallback = classifyQuerySourceIssue(fallbackError);
+        // Missing primary stats make the fallback's failure the meaningful result.
+        report(primary === 'source-unavailable' ? fallback : primary);
         return null;
       }
     }
@@ -1349,7 +1384,8 @@ class DatabaseService {
   /**
    * 获取 PostgreSQL 慢查询
    */
-  private async getPostgreSQLSlowQueries(conn: DatabaseConnection, limit: number, onSource?: (source: string) => void): Promise<SlowQuery[] | null> {
+  private async getPostgreSQLSlowQueries(conn: DatabaseConnection, limit: number, onSource: ((source: string) => void) | undefined,
+    report: (issue: QueryReadIssue) => void): Promise<SlowQuery[] | null> {
     if (!conn.pgClient) return null;
 
     try {
@@ -1410,13 +1446,14 @@ class DatabaseService {
         min_time_ms: row.min_time_ms == null ? null : Number(row.min_time_ms),
         total_time_ms: Number(row.total_time_ms),
         execution_count: row.execution_count || 1,
-        first_seen: new Date().toISOString(),
-        last_seen: new Date().toISOString(),
+        first_seen: null,
+        last_seen: null,
         rows_examined: row.rows_examined || 0,
         rows_sent: row.rows_sent || 0,
       }));
     } catch (error) {
       console.error(`获取 PostgreSQL 慢查询失败：${conn.id}`, error);
+      report(classifyQuerySourceIssue(error));
       return null;
     }
   }
@@ -1424,7 +1461,8 @@ class DatabaseService {
   /**
    * 获取 Oracle 慢查询
    */
-  private async getOracleSlowQueries(conn: DatabaseConnection, limit: number, onSource?: (source: string) => void): Promise<SlowQuery[] | null> {
+  private async getOracleSlowQueries(conn: DatabaseConnection, limit: number, onSource: ((source: string) => void) | undefined,
+    report: (issue: QueryReadIssue) => void): Promise<SlowQuery[] | null> {
     if (!conn.oracleConnection) return null;
 
     try {
@@ -1461,6 +1499,7 @@ class DatabaseService {
       }));
     } catch (error) {
       console.error(`获取 Oracle 慢查询失败：${conn.id}`, error);
+      report(classifyQuerySourceIssue(error));
       return null;
     }
   }
@@ -1468,7 +1507,8 @@ class DatabaseService {
   /**
    * 获取达梦数据库慢查询
    */
-  private async getDamengSlowQueries(conn: DatabaseConnection, limit: number, onSource?: (source: string) => void): Promise<SlowQuery[] | null> {
+  private async getDamengSlowQueries(conn: DatabaseConnection, limit: number, onSource: ((source: string) => void) | undefined,
+    report: (issue: QueryReadIssue) => void): Promise<SlowQuery[] | null> {
     if (!conn.dmConnection) return null;
 
     try {
@@ -1502,6 +1542,7 @@ class DatabaseService {
       }));
     } catch (error) {
       console.error(`获取达梦慢查询失败：${conn.id}`, error);
+      report(classifyQuerySourceIssue(error));
       return null;
     }
   }
@@ -2059,16 +2100,7 @@ class DatabaseService {
 
       totalScore = Math.max(0, totalScore);
 
-      // 获取 Oracle 版本号
-      let dbVersion: string | null = null;
-      try {
-        const versionResult = await conn.oracleConnection.execute(
-          "SELECT VERSION FROM V$INSTANCE"
-        );
-        dbVersion = versionResult.rows[0]?.[0] as string || null;
-      } catch {
-        dbVersion = null;
-      }
+      const dbVersion = await this.readVersion(conn);
 
       let dataSizeGB: number | null = null;
       try {
@@ -2278,11 +2310,7 @@ class DatabaseService {
 
       totalScore = Math.max(0, totalScore);
 
-      let dbVersion: string | null = null;
-      try {
-        const verResult = await conn.dmConnection.execute("SELECT TRIM(REPLACE(SVR_VERSION, 'DM Database Server x64 ', '')) AS version FROM V$INSTANCE");
-        dbVersion = verResult.rows[0]?.[0] as string || null;
-      } catch { /* ignore */ }
+      const dbVersion = await this.readVersion(conn);
 
       let dataSizeGB: number | null = null;
       try {
@@ -2747,8 +2775,10 @@ class DatabaseService {
   /**
    * 获取活动会话列表
    */
-  async getActiveSessions(id: number): Promise<any[] | null> {
-    return this._withAutoReconnect(id, async (conn) => {
+  async getActiveSessions(id: number, onUnavailable?: (issue: QueryReadIssue) => void): Promise<any[] | null> {
+    let issue: QueryReadIssue = 'not-connected';
+    const rows = await this._withAutoReconnect(id, async (conn) => {
+      issue = 'source-unavailable';
       try {
         if (conn.db_type === 'mysql') {
           return await this.getMySQLActiveSessions(conn);
@@ -2762,9 +2792,12 @@ class DatabaseService {
         return null;
       } catch (error) {
         console.error(`获取活动会话失败：${id}`, error);
+        issue = classifyQuerySourceIssue(error);
         return null;
       }
     }, 'getActiveSessions');
+    if (rows === null) onUnavailable?.(issue);
+    return rows;
   }
 
   /**
@@ -2842,9 +2875,7 @@ class DatabaseService {
   private async getOracleActiveSessions(conn: DatabaseConnection): Promise<any[] | null> {
     if (!conn.oracleConnection) return null;
 
-    let result;
-    try {
-      result = await conn.oracleConnection.execute(`
+    const result = await conn.oracleConnection.execute(`
         SELECT * FROM (
           SELECT
             s.sid as id,
@@ -2861,10 +2892,7 @@ class DatabaseService {
             AND s.type = 'USER'
           ORDER BY s.last_call_et DESC
         ) WHERE ROWNUM <= 50
-      `);
-    } catch {
-      return null;
-    }
+    `);
 
     return (result.rows || []).map((row: any) => ({
       id: row[0],
@@ -2944,41 +2972,46 @@ class DatabaseService {
   private async getMySQLCapacity(conn: DatabaseConnection): Promise<any> {
     if (!conn.pool) return null;
 
-    // 获取数据库大小
-    const [dbSizeRows] = await conn.pool.execute<RowDataPacket[]>(`
-      SELECT
-        table_schema as db_name,
-        ROUND(SUM(data_length + index_length) / 1024 / 1024 / 1024, 2) as size_gb,
-        SUM(data_length + index_length) as size_bytes,
-        COUNT(*) as table_count
-      FROM information_schema.tables
-      WHERE table_schema NOT IN ('information_schema', 'mysql', 'performance_schema', 'sys')
-      GROUP BY table_schema
-      ORDER BY size_gb DESC
-    `);
+    let dbSizeRows: RowDataPacket[] | undefined;
+    try {
+      [dbSizeRows] = await conn.pool.execute<RowDataPacket[]>(`
+        SELECT table_schema AS db_name,
+               ROUND(SUM(data_length + index_length) / 1073741824, 2) AS size_gb,
+               SUM(data_length + index_length) AS size_bytes, COUNT(*) AS table_count
+        FROM information_schema.tables
+        WHERE table_schema NOT IN ('information_schema', 'mysql', 'performance_schema', 'sys')
+        GROUP BY table_schema
+        ORDER BY size_gb DESC
+      `);
+    } catch {
+      // Top tables are read separately so a failure does not erase successful details.
+    }
 
-    // 获取所有业务库的 Top 表
-    const [tableRows] = await conn.pool.execute<RowDataPacket[]>(`
-      SELECT
-        table_name as name,
-        table_schema as db_name,
-        ROUND((data_length + index_length) / 1024 / 1024 / 1024, 2) as size_gb,
-        table_rows as row_count
-      FROM information_schema.tables
-      WHERE table_schema NOT IN ('information_schema', 'mysql', 'performance_schema', 'sys')
-      ORDER BY (data_length + index_length) DESC
-      LIMIT 20
-    `);
+    let tableRows: RowDataPacket[] = [];
+    let detailsUnavailable = false;
+    try {
+      [tableRows] = await conn.pool.execute<RowDataPacket[]>(`
+        SELECT table_name AS name, table_schema AS db_name,
+               ROUND((data_length + index_length) / 1073741824, 2) AS size_gb, table_rows AS row_count
+        FROM information_schema.tables
+        WHERE table_schema NOT IN ('information_schema', 'mysql', 'performance_schema', 'sys')
+        ORDER BY (data_length + index_length) DESC
+        LIMIT 20
+      `);
+    } catch {
+      detailsUnavailable = true;
+    }
 
     // 获取最大的表
-    const totalBytes = dbSizeRows.reduce((sum: number, row: any) => sum + Number(row.size_bytes || 0), 0);
+    const totalBytes = dbSizeRows?.reduce((sum, row) => sum + Number(row.size_bytes || 0), 0);
 
     return {
       observed_at: new Date().toISOString(),
       source: 'MySQL information_schema.TABLES（实时读取，统计值可能为估算）',
       scope: '当前账号可见的全部非系统库；包含表/视图元数据；总量含数据与索引，Top 20 为子集',
-      total_size_gb: Math.round(totalBytes / 1024 / 1024 / 1024 * 100) / 100,
-      databases: dbSizeRows.map((row: any) => ({
+      ...(detailsUnavailable ? { details_unavailable: true } : {}),
+      ...(totalBytes === undefined ? {} : { total_size_gb: Math.round(totalBytes / 1073741824 * 100) / 100 }),
+      databases: (dbSizeRows ?? []).map((row: any) => ({
         name: row.db_name,
         size_gb: Number(row.size_gb),
         table_count: Number(row.table_count),
@@ -2997,54 +3030,57 @@ class DatabaseService {
   private async getPostgreSQLCapacity(conn: DatabaseConnection): Promise<any> {
     if (!conn.pgClient) return null;
 
-    // 获取数据库大小
-    const dbResult = await conn.pgClient.query(`
-      SELECT
-        datname as name,
-        pg_size_pretty(pg_database_size(datname)) as size,
-        ROUND(pg_database_size(datname) / 1024.0 / 1024.0 / 1024.0, 2) as size_gb
-      FROM pg_database
-      WHERE datistemplate = false
-      ORDER BY pg_database_size(datname) DESC
-    `);
-
-    // 获取表大小
-    const tableResult = await conn.pgClient.query(`
-      SELECT
-        schemaname || '.' || relname as name,
-        pg_size_pretty(pg_total_relation_size(relid)) as size,
-        ROUND(pg_total_relation_size(relid) / 1024.0 / 1024.0 / 1024.0, 2) as size_gb,
-        n_live_tup as row_count
-      FROM pg_stat_user_tables
-      ORDER BY pg_total_relation_size(relid) DESC
-      LIMIT 20
-    `);
-
-    const totalSize = dbResult.rows.reduce((sum: number, row: any) => sum + (parseFloat(row.size_gb) || 0), 0);
-
-    // 获取当前库的 Top 20 表（pg_stat_user_tables 只能查当前库）
-    const tcResult = await conn.pgClient.query(`
-      SELECT COUNT(*) as tc FROM pg_class c
-      JOIN pg_namespace n ON n.oid = c.relnamespace
-      WHERE n.nspname NOT IN ('pg_catalog', 'pg_toast', 'information_schema')
-        AND c.relkind = 'r'
-    `);
-    const currentDbTableCount = Number(tcResult.rows[0]?.tc) || 0;
-
+    const capacity = {
+      observed_at: new Date().toISOString(),
+      source: 'PostgreSQL pg_database_size(current_database())',
+      scope: '当前连接数据库的物理文件；最大表为当前库内观测子集',
+    };
+    let database: { name: string; size: string; size_gb: string } | undefined;
+    try {
+      const result = await conn.pgClient.query(`
+        SELECT current_database() AS name,
+               pg_size_pretty(pg_database_size(current_database())) AS size,
+               ROUND(pg_database_size(current_database()) / 1073741824.0, 2) AS size_gb
+      `);
+      database = result.rows[0];
+    } catch {
+      // Table details may still be readable independently.
+    }
+    let tableCount: number | undefined;
+    let tables: Array<{ name: string; size_gb: number; pretty_size: string; row_count: number }> = [];
+    let detailsUnavailable = false;
+    try {
+      const result = await conn.pgClient.query(`
+        SELECT COUNT(*) AS tc FROM pg_class c
+        JOIN pg_namespace n ON n.oid = c.relnamespace
+        WHERE n.nspname NOT IN ('pg_catalog', 'pg_toast', 'information_schema') AND c.relkind = 'r'
+      `);
+      tableCount = Number(result.rows[0]?.tc);
+    } catch {
+      detailsUnavailable = true;
+    }
+    try {
+      const result = await conn.pgClient.query(`
+        SELECT schemaname || '.' || relname AS name, pg_size_pretty(pg_total_relation_size(relid)) AS size,
+               ROUND(pg_total_relation_size(relid) / 1073741824.0, 2) AS size_gb, n_live_tup AS row_count
+        FROM pg_stat_user_tables
+        ORDER BY pg_total_relation_size(relid) DESC
+        LIMIT 20
+      `);
+      tables = result.rows.map(row => ({
+        name: row.name, size_gb: Number(row.size_gb), pretty_size: row.size, row_count: Number(row.row_count),
+      }));
+    } catch {
+      detailsUnavailable = true;
+    }
     return {
-      total_size_gb: Math.round(totalSize * 100) / 100,
-      databases: dbResult.rows.map((row: any) => ({
-        name: row.name,
-        size_gb: parseFloat(row.size_gb),
-        pretty_size: row.size,
-        table_count: row.name === conn.pgClient.database ? currentDbTableCount : 0,
-      })),
-      top_tables: tableResult.rows.map((row: any) => ({
-        name: row.name,
-        size_gb: parseFloat(row.size_gb),
-        pretty_size: row.size,
-        row_count: row.row_count,
-      })),
+      ...capacity,
+      ...(database ? { total_size_gb: Number(database.size_gb) } : {}),
+      ...(detailsUnavailable ? { details_unavailable: true } : {}),
+      databases: database ? [{
+        name: database.name, size_gb: Number(database.size_gb), pretty_size: database.size, table_count: tableCount,
+      }] : [],
+      top_tables: tables,
     };
   }
 
@@ -3076,120 +3112,68 @@ class DatabaseService {
   private async getOracleCapacity(conn: DatabaseConnection): Promise<any> {
     if (!conn.oracleConnection) return null;
 
-    // 获取表空间信息 (Pitfall 3: DBA 权限不足时降级)
-    let tablespaces: Array<{ name: any; size_gb: number; max_size_gb: number; usage_percent: number }> = [];
-    let segResult: any = null;
+    return this.getVendorCapacity(conn.oracleConnection, 'Oracle', false);
+  }
 
+  /** 达梦容量来自当前数据库的永久数据文件。 */
+  private async getDamengCapacity(conn: DatabaseConnection): Promise<any> {
+    if (!conn.dmConnection) return null;
+    return this.getVendorCapacity(conn.dmConnection, '达梦', true);
+  }
+
+  private async getVendorCapacity(
+    connection: { execute: (sql: string) => Promise<{ rows?: any[] }> },
+    engine: 'Oracle' | '达梦', ownedSegmentsOnly: boolean,
+  ) {
+    const toGiB = (bytes: number) => Math.round(bytes / 1073741824 * 100) / 100;
+    let tablespaces: Array<{ name: string; size_gb: number; max_size_gb: number; usage_percent: number; size_bytes: number }> = [];
+    let totalBytes: number | undefined;
     try {
-      const tsResult = await conn.oracleConnection.execute(`
-        SELECT
-          df.tablespace_name as name,
-          ROUND((SUM(df.bytes) - NVL(fs.free_bytes, 0)) / 1024 / 1024 / 1024, 2) as size_gb,
-          ROUND(SUM(df.bytes) / 1024 / 1024 / 1024, 2) as max_size_gb,
-          ROUND((1 - NVL(fs.free_bytes, 0) / NULLIF(SUM(df.bytes), 0)) * 100, 2) as usage_percent
-        FROM dba_data_files df
-        LEFT JOIN (
-          SELECT tablespace_name, SUM(bytes) as free_bytes
-          FROM dba_free_space
-          GROUP BY tablespace_name
-        ) fs ON fs.tablespace_name = df.tablespace_name
-        GROUP BY df.tablespace_name, fs.free_bytes
-        ORDER BY size_gb DESC
+      const result = await connection.execute(`
+        SELECT TABLESPACE_NAME, SUM(BYTES) AS allocated_bytes,
+               SUM(CASE WHEN AUTOEXTENSIBLE = 'YES' AND MAXBYTES > BYTES THEN MAXBYTES ELSE BYTES END) AS max_bytes
+        FROM DBA_DATA_FILES
+        GROUP BY TABLESPACE_NAME
+        ORDER BY allocated_bytes DESC
       `);
-
-      tablespaces = (tsResult.rows || []).map((row: any) => ({
-        name: row[0],
-        size_gb: Number(row[1]),
-        max_size_gb: Number(row[2]),
-        usage_percent: Number(row[3]),
-      }));
+      tablespaces = (result.rows ?? []).map(row => {
+        const allocated = Number(row[1]);
+        const maximum = Number(row[2]);
+        return {
+          name: row[0], size_bytes: allocated, size_gb: toGiB(allocated), max_size_gb: toGiB(maximum),
+          usage_percent: maximum > 0 ? Math.round(allocated / maximum * 1000) / 10 : 0,
+        };
+      });
+      totalBytes = tablespaces.reduce((sum, row) => sum + row.size_bytes, 0);
     } catch {
-      console.warn(`[OracleCapacity] DBA_DATA_FILES 权限不足，表空间信息不可用 (instance ${conn.id})`);
-      tablespaces = [];
+      // Missing file metadata means unknown even if segment details are readable.
     }
 
-    // 获取最大的段（表/索引）
+    let topTables: Array<{ name: string; size_gb: number; type: string }> = [];
+    let detailsUnavailable = false;
     try {
-      segResult = await conn.oracleConnection.execute(`
-        SELECT
-          owner || '.' || segment_name as name,
-          segment_type as type,
-          ROUND(SUM(bytes) / 1024 / 1024 / 1024, 2) as size_gb
-        FROM dba_segments
-        WHERE segment_type IN ('TABLE', 'INDEX')
-        GROUP BY owner, segment_name, segment_type
+      const result = await connection.execute(`
+        SELECT OWNER || '.' || SEGMENT_NAME, SEGMENT_TYPE,
+               ROUND(SUM(BYTES) * 1.0 / 1073741824, 2) AS size_gb
+        FROM DBA_SEGMENTS
+        WHERE SEGMENT_TYPE IN ('TABLE','INDEX') ${ownedSegmentsOnly ? 'AND OWNER = USER' : ''}
+        GROUP BY OWNER, SEGMENT_NAME, SEGMENT_TYPE
         ORDER BY size_gb DESC
         FETCH FIRST 20 ROWS ONLY
       `);
+      topTables = (result.rows ?? []).map(row => ({ name: row[0], type: row[1], size_gb: Number(row[2]) }));
     } catch {
-      console.warn(`[OracleCapacity] DBA_SEGMENTS 权限不足，段信息不可用 (instance ${conn.id})`);
-      segResult = { rows: [] };
+      detailsUnavailable = true;
     }
-
-    const totalSize = tablespaces.reduce((sum: number, ts: any) => sum + (ts.size_gb || 0), 0);
-
     return {
-      total_size_gb: Math.round(totalSize * 100) / 100,
+      observed_at: new Date().toISOString(),
+      source: `${engine} DBA_DATA_FILES 永久数据文件分配空间`,
+      scope: ownedSegmentsOnly ? '当前数据库，含系统表空间；段明细限当前账号所属对象'
+        : '当前连接容器，含系统表空间；段明细为账号可见的表或索引',
+      ...(totalBytes === undefined ? {} : { total_size_gb: toGiB(totalBytes) }),
+      ...(detailsUnavailable ? { details_unavailable: true } : {}),
       tablespaces,
-      top_tables: (segResult?.rows || []).map((row: any) => ({
-        name: row[0],
-        type: row[1],
-        size_gb: Number(row[2]),
-      })),
-    };
-  }
-
-  /**
-   * 获取达梦容量信息 - 使用 conn.dmConnection 查询 DBA_DATA_FILES / DBA_SEGMENTS
-   */
-  private async getDamengCapacity(conn: DatabaseConnection): Promise<any> {
-    if (!conn.dmConnection) return null;
-
-    // 获取表空间信息 — 使用 * 1.0 避免 Dameng 整数除法截断
-    const tsResult = await conn.dmConnection.execute(`
-      SELECT
-        TABLESPACE_NAME as name,
-        ROUND(SUM(BYTES) * 1.0 / 1024 / 1024 / 1024, 2) as size_gb,
-        ROUND(SUM(DECODE(AUTOEXTENSIBLE, 'YES', MAXBYTES, BYTES)) * 1.0 / 1024 / 1024 / 1024, 2) as max_size_gb,
-        ROUND((SUM(BYTES) * 1.0 / SUM(DECODE(AUTOEXTENSIBLE, 'YES', MAXBYTES, BYTES))) * 100, 2) as usage_percent,
-        SUM(BYTES) as size_bytes
-      FROM DBA_DATA_FILES
-      GROUP BY TABLESPACE_NAME
-      ORDER BY size_gb DESC
-    `);
-
-    // 获取最大的段（表/索引）
-    const segResult = await conn.dmConnection.execute(`
-      SELECT
-        OWNER || '.' || SEGMENT_NAME as name,
-        SEGMENT_TYPE as type,
-        ROUND(SUM(BYTES) * 1.0 / 1024 / 1024 / 1024, 2) as size_gb
-      FROM DBA_SEGMENTS
-      WHERE OWNER = USER
-        AND SEGMENT_TYPE IN ('TABLE', 'INDEX')
-      GROUP BY OWNER, SEGMENT_NAME, SEGMENT_TYPE
-      ORDER BY size_gb DESC
-      FETCH FIRST 20 ROWS ONLY
-    `);
-
-    const tablespaces = (tsResult.rows || []).map((row: any) => ({
-      name: row[0],
-      size_gb: Number(row[1]),
-      max_size_gb: Number(row[2]),
-      usage_percent: Number(row[3]),
-      size_bytes: Number(row[4]),
-    }));
-
-    const totalBytes = tablespaces.reduce((sum: number, ts: any) => sum + ts.size_bytes, 0);
-
-    return {
-      total_size_gb: Math.round(totalBytes / 1024 / 1024 / 1024 * 100) / 100,
-      tablespaces,
-      top_tables: (segResult.rows || []).map((row: any) => ({
-        name: row[0],
-        type: row[1],
-        size_gb: Number(row[2]),
-      })),
+      top_tables: topTables,
     };
   }
 

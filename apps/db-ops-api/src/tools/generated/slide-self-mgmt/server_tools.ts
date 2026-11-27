@@ -151,7 +151,7 @@ export const analyzeServerHealthTool: AnyAgentTool = {
 
 export const getServerDiagnosticsTool: AnyAgentTool = {
   name: 'get_server_diagnostics',
-  description: '读取固定 profile 服务器诊断证据，可按 section 过滤；不会执行用户提供的命令。',
+  description: '读取已有的固定 profile 服务器诊断快照，可按 section 过滤。采集请使用服务器详情的诊断入口。',
   parameters: {
     type: 'object',
     properties: {
@@ -172,13 +172,17 @@ export const getServerDiagnosticsTool: AnyAgentTool = {
     if (id === null) return { success: false, error: 'serverId 必须为正整数', errorCode: 'INVALID_PARAMETER' };
     if (maxRows === null) return { success: false, error: 'maxRows 必须是 1-100 的整数', errorCode: 'INVALID_PARAMETER' };
     if (args.section !== undefined && !(SECTIONS as readonly string[]).includes(String(args.section))) return { success: false, error: 'section 无效', errorCode: 'SECTION_INVALID' };
+    if (args.refresh === true) {
+      return { success: false, error: '请通过服务器详情的诊断入口采集快照', errorCode: 'DIAGNOSTIC_REFRESH_REQUIRES_COLLECTION' };
+    }
     try {
-      const diagnostics = await serverDiagnosticService.getDiagnostics(id, { refresh: args.refresh === true });
+      const diagnostics = await serverDiagnosticService.readDiagnosticsSnapshot(id);
       const sectionName = args.section as string | undefined;
       const data = capDiagnosticRows(diagnostics, sectionName, maxRows!);
       return { success: true, data, summary: `服务器 #${id} 诊断证据`, details: { server_id: id, expiresAt: diagnostics.expiresAt, gaps: diagnostics.gaps } };
     } catch (error: any) {
-      return { success: false, error: error.message, errorCode: error.message === 'SERVER_NOT_FOUND' ? 'SERVER_NOT_FOUND' : 'GET_DIAGNOSTICS_FAILED' };
+      const code = error.message;
+      return { success: false, error: code, errorCode: code === 'SERVER_NOT_FOUND' || code === 'DIAGNOSTIC_SNAPSHOT_NOT_FOUND' ? code : 'GET_DIAGNOSTICS_FAILED' };
     }
   },
 };

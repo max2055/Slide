@@ -5,13 +5,14 @@ import { CronJob } from 'cron';
 import { cronJobService } from './cron-job-service.js';
 import { scriptService } from './script-service.js';
 import type { CronManager } from './cron-manager.js';
-import { bindScript } from './script-policy.js';
+import { bindScript, readScriptTargetDatabase, rebindScriptDatabase, validateBinding } from './script-policy.js';
+import type { CronJobConfig } from './types.js';
 import { sqlExecutor } from '../sql-executor.js';
 import { requirePermission } from '../auth/require-permission.js';
 import { getAccessibleInstanceIds, hasInstanceAccess, hasUnrestrictedInstanceAccess } from '../auth/require-instance-access.js';
 import { actorContextService } from '../auth/actor-context.js';
 import { dbConnection } from '../db-connection.js';
-import { assertCronActorAccess } from './cron-authority.js';
+import { assertCronActorAccess, assertCronMysqlTarget } from './cron-authority.js';
 import { expensiveOperationRateLimitConfig } from '../security/http-security.js';
 import { validateCronTimeoutSeconds } from '../adapter/runtime-policy.js';
 
@@ -19,7 +20,7 @@ function cronErrorStatus(error: Error): number {
   if (error.message?.startsWith('Invalid cron timeout:')) return 400;
   if (error.message === 'CRON_STORAGE_UNAVAILABLE') return 503;
   if (error.message?.startsWith('WORKER_LEASE') || error.message === 'WORKER_STOPPED') return 503;
-  if (error.message === 'CRON_IDEMPOTENCY_CONFLICT') return 409;
+  if (error.message === 'CRON_IDEMPOTENCY_CONFLICT' || error.message === 'CRON_JOB_NAME_CONFLICT') return 409;
   if (['CRON_RUN_STORE_UNAVAILABLE', 'CRON_AUDIT_UNAVAILABLE', 'CRON_AUTHORITY_UNAVAILABLE', 'WORKFLOW_RUNTIME_UNAVAILABLE'].includes(error.message)) return 503;
   if (['CRON_SCRIPT_ACCESS_DENIED', 'CRON_TRIGGER_SCOPE_DENIED', 'CRON_TARGET_ACCESS_REVOKED',
     'CRON_OWNER_PERMISSION_REVOKED', 'CRON_OWNER_REBIND_DENIED', 'CRON_OWNER_UNAVAILABLE'].includes(error.message)) return 403;
@@ -27,20 +28,38 @@ function cronErrorStatus(error: Error): number {
 }
 
 export function registerCronRoutes(fastify: FastifyInstance, verifyToken: preHandlerHookHandler, getCronManager: () => CronManager | undefined) {
-  async function bindJobScript(request: any, body: any, existing?: any) {
+  const jobResponse = (job: CronJobConfig) => {
+    const targetDatabase = readScriptTargetDatabase(job.script_binding);
+    return targetDatabase === undefined ? job : { ...job, target_database: targetDatabase };
+  };
+
+  async function bindJobScript(request: any, body: any, existing?: CronJobConfig) {
     const target = body.target_instance_id === undefined ? existing?.target_instance_id ?? null : body.target_instance_id;
     if (target !== null && (!Number.isSafeInteger(target) || target <= 0)) throw new Error('CRON_INVALID_TARGET');
     const taskType = body.task_type ?? existing?.task_type ?? 'agent';
     if (!['agent', 'script'].includes(taskType)) throw new Error('CRON_INVALID_TASK_TYPE');
-    if (taskType !== 'script') return null;
+    if (taskType !== 'script') {
+      if (body.target_database != null) throw new Error('CRON_TARGET_DATABASE_UNSUPPORTED');
+      return null;
+    }
+    const actorId = String(request.user.userId ?? request.user.id ?? request.user.username);
     if (existing?.script_binding && body.script_id === undefined && body.target_instance_id === undefined &&
-        body.task_type === undefined && body.control_sql_capability === undefined) return existing.script_binding;
+        body.task_type === undefined && body.control_sql_capability === undefined) {
+      if (body.target_database === undefined) return undefined;
+      const binding = rebindScriptDatabase(validateBinding(existing.script_binding, existing.script_id, target), body.target_database, actorId);
+      if (binding.targetDatabase !== undefined && target !== null) await assertCronMysqlTarget(target);
+      return binding;
+    }
     const scriptId = body.script_id === undefined ? existing?.script_id : body.script_id;
     if (!Number.isSafeInteger(scriptId) || scriptId <= 0) throw new Error('CRON_SCRIPT_REQUIRED');
     const script = await scriptService.getScriptById(scriptId);
     if (!script) throw new Error('CRON_SCRIPT_NOT_FOUND');
     // Only server-authorized actor identity is persisted; request bindings are ignored.
-    return bindScript(script, target, body.control_sql_capability, String(request.user.userId ?? request.user.id ?? request.user.username));
+    const requestedDatabase = body.target_database === undefined && existing && existing.target_instance_id === target
+      ? readScriptTargetDatabase(existing.script_binding) : body.target_database;
+    const binding = bindScript(script, target, body.control_sql_capability, actorId, requestedDatabase);
+    if (binding.targetDatabase !== undefined && target !== null) await assertCronMysqlTarget(target);
+    return binding;
   }
 
   async function bindJobIdentity(request: any, body: any, existing?: any) {
@@ -49,7 +68,7 @@ export function registerCronRoutes(fastify: FastifyInstance, verifyToken: preHan
     const rebinding = body.owner_user_id !== undefined;
     if (rebinding && !(request.user.permissions?.includes('*') || request.user.roles?.includes('admin'))) throw new Error('CRON_OWNER_REBIND_DENIED');
     if (existing?.principal_type === 'system-maintenance') {
-      if (rebinding || ['task_type', 'task_description', 'target_instance_id', 'script_id'].some(key => body[key] !== undefined)) throw new Error('CRON_MAINTENANCE_IMMUTABLE');
+      if (rebinding || ['task_type', 'task_description', 'target_instance_id', 'target_database', 'script_id'].some(key => body[key] !== undefined)) throw new Error('CRON_MAINTENANCE_IMMUTABLE');
       return {};
     }
     const ownerId = rebinding ? body.owner_user_id : existing?.owner_user_id ?? request.user.userId;
@@ -95,7 +114,7 @@ export function registerCronRoutes(fastify: FastifyInstance, verifyToken: preHan
     handler: async (request, reply) => {
       try {
         const jobs = await cronJobService.getJobs(getAccessibleInstanceIds((request as any).user));
-        return reply.send(jobs);
+        return reply.send(jobs.map(jobResponse));
       } catch (error: any) {
         return reply.code(cronErrorStatus(error)).send({ error: error.message });
       }
@@ -109,10 +128,10 @@ export function registerCronRoutes(fastify: FastifyInstance, verifyToken: preHan
       try {
         const { id } = request.params as any;
         const job = await requireCronJobAccess(request, reply, Number(id));
-        if (!job) return;
-        reply.send(job);
+        if (!job) return reply;
+        return reply.send(jobResponse(job));
       } catch (error: any) {
-        reply.code(cronErrorStatus(error)).send({ error: error.message });
+        return reply.code(cronErrorStatus(error)).send({ error: error.message });
       }
     }
   });
@@ -178,7 +197,7 @@ export function registerCronRoutes(fastify: FastifyInstance, verifyToken: preHan
         const body = request.body as any;
 
         const existing = await requireCronJobAccess(request, reply, Number(id), 'read-write');
-        if (!existing) return;
+        if (!existing) return reply;
         if (body.target_instance_id !== undefined) {
           if (body.target_instance_id == null) {
             if (!hasUnrestrictedInstanceAccess((request as any).user)) {
@@ -203,6 +222,7 @@ export function registerCronRoutes(fastify: FastifyInstance, verifyToken: preHan
         const scriptBinding = await bindJobScript(request, body, existing);
         const updated = await cronJobService.updateJob(Number(id), {
           ...identity,
+          name: body.name,
           task_description: body.task_description,
           cron_expr: body.cron_expr,
           enabled: body.enabled,
@@ -223,9 +243,9 @@ export function registerCronRoutes(fastify: FastifyInstance, verifyToken: preHan
         // Reload CronManager to apply changes
         await getCronManager()?.reload();
 
-        reply.send({ message: '更新成功' });
+        return reply.send({ message: '更新成功' });
       } catch (error: any) {
-        reply.code(cronErrorStatus(error)).send({ error: error.message });
+        return reply.code(cronErrorStatus(error)).send({ error: error.message });
       }
     }
   });
@@ -243,7 +263,7 @@ export function registerCronRoutes(fastify: FastifyInstance, verifyToken: preHan
         }
 
         const existing = await requireCronJobAccess(request, reply, Number(id), 'read-write');
-        if (!existing) return;
+        if (!existing) return reply;
 
         if (body.enabled && existing.identity_status !== 'bound') throw new Error('CRON_OWNER_REQUIRED');
         await cronJobService.toggleJob(Number(id), body.enabled);
@@ -251,9 +271,9 @@ export function registerCronRoutes(fastify: FastifyInstance, verifyToken: preHan
         // Reload CronManager to apply changes
         await getCronManager()?.reload();
 
-        reply.send({ message: body.enabled ? '已启用' : '已停用' });
+        return reply.send({ message: body.enabled ? '已启用' : '已停用' });
       } catch (error: any) {
-        reply.code(cronErrorStatus(error)).send({ error: error.message });
+        return reply.code(cronErrorStatus(error)).send({ error: error.message });
       }
     }
   });
@@ -319,16 +339,16 @@ export function registerCronRoutes(fastify: FastifyInstance, verifyToken: preHan
         const { id } = request.params as any;
 
         const existing = await requireCronJobAccess(request, reply, Number(id), 'read-write');
-        if (!existing) return;
+        if (!existing) return reply;
 
         const deleted = await cronJobService.deleteJob(Number(id));
         if (!deleted) {
           return reply.code(500).send({ error: '删除失败，数据库操作未生效' });
         }
         await getCronManager()?.reload();
-        reply.send({ message: '删除成功' });
+        return reply.send({ message: '删除成功' });
       } catch (error: any) {
-        reply.code(cronErrorStatus(error)).send({ error: error.message });
+        return reply.code(cronErrorStatus(error)).send({ error: error.message });
       }
     }
   });
@@ -380,9 +400,9 @@ export function registerCronRoutes(fastify: FastifyInstance, verifyToken: preHan
     handler: async (request, reply) => {
       try {
         const scripts = await scriptService.getAllScripts();
-        reply.send(scripts);
+        return reply.send(scripts);
       } catch (error: any) {
-        reply.code(cronErrorStatus(error)).send({ error: error.message });
+        return reply.code(cronErrorStatus(error)).send({ error: error.message });
       }
     }
   });
@@ -395,9 +415,9 @@ export function registerCronRoutes(fastify: FastifyInstance, verifyToken: preHan
         const { id } = request.params as any;
         const script = await scriptService.getScriptById(Number(id));
         if (!script) return reply.code(404).send({ error: '脚本不存在' });
-        reply.send(script);
+        return reply.send(script);
       } catch (error: any) {
-        reply.code(cronErrorStatus(error)).send({ error: error.message });
+        return reply.code(cronErrorStatus(error)).send({ error: error.message });
       }
     }
   });

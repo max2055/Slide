@@ -77,6 +77,17 @@ describe('system audit routes', () => {
       expect(response.statusCode).toBe(400);
     },
   );
+  it.each([
+    'eventType=sql_execution',
+    'approvalRequestId=1',
+    'approvalRequestId=1&operationId=8813c4f4-871a-40ee-829a-36d59eb2240f',
+    'resource=server:1&approvalRequestId=1&operationId=8813c4f4-871a-40ee-829a-36d59eb2240f',
+    'resource=instance:1&approvalRequestId=1&approvalRequestId=2&operationId=8813c4f4-871a-40ee-829a-36d59eb2240f',
+    'resource=instance:1&approvalRequestId=1&operationId=unbound',
+  ])('does not broaden an incomplete or invalid linked SQL scope (%s)', async query => {
+    const response = await app.inject({ method: 'GET', url: `/api/audit/logs?${query}` });
+    expect(response.statusCode).toBe(400);
+  });
 
   it('requires audit view permission', async () => {
     const restricted = Fastify();

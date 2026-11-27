@@ -81,3 +81,53 @@ test('permission revocation still hides restricted shell entries after breadcrum
   await expect(page.locator('.sidebar-nav a[href="/audit"]')).toHaveCount(0);
   await expect(page.locator('.sidebar-nav a[href="/dashboard"]')).toHaveClass(/nav-item--active/);
 });
+
+for (const [width, height] of [[1440, 900], [1366, 768], [1920, 1080]]) {
+  test(`investigation detail stays inside the shell when scrolling past the end at ${width}×${height}`, async ({ page }) => {
+    const detail = {
+      id: 'scroll-check', sessionId: 'scroll-session', title: '调查详情滚动验证', goal: '核对已保存的调查',
+      profileId: 'ops', version: 1, lifecycle: 'open', problemStatus: 'unconfirmed', activeRequestId: null,
+      resources: [], owner: { kind: 'user', id: 1 }, createdAt: '2026-11-20T00:00:00Z', updatedAt: '2026-11-20T00:00:00Z',
+    };
+    await page.route('**/api/investigations**', route => {
+      const path = new URL(route.request().url()).pathname;
+      const body = path === '/api/investigations' ? { items: [detail], authorizedCounts: { total: 1 }, nextCursor: null }
+        : path === `/api/investigations/${detail.id}` ? detail
+        : path.endsWith('/workflow') ? { receipts: [], resources: [], suggestions: [], nextBefore: null }
+        : path.endsWith('/facts') ? { documents: [], nextBefore: null }
+        : { items: [], nextBefore: null };
+      return route.fulfill({ json: body });
+    });
+    await page.route('**/api/operations/actions/plans**', route => route.fulfill({ json: { items: [], nextCursor: null } }));
+    await page.setViewportSize({ width, height });
+    await page.goto(`/workbench?investigation=${detail.id}`);
+    await expect(page.getByRole('heading', { name: detail.title })).toBeVisible();
+    const main = page.locator('main.content');
+    const lastButton = main.getByRole('button', { name: '提交新 Run' });
+    await expect(lastButton).not.toBeInViewport();
+    const scrollAmount = await main.evaluate(el => el.scrollHeight);
+    await main.hover({ position: { x: 10, y: 50 } });
+    await page.mouse.wheel(0, scrollAmount);
+    await expect.poll(() => main.evaluate(el => el.scrollHeight - el.clientHeight - el.scrollTop)).toBeLessThanOrEqual(1);
+    await expect(lastButton).toBeInViewport({ ratio: 1 });
+    const bottomGap = await lastButton.evaluate(button => {
+      const card = button.closest('app-card')!;
+      const main = card.closest('main')!;
+      return main.getBoundingClientRect().bottom - card.getBoundingClientRect().bottom
+        - parseFloat(getComputedStyle(main).paddingBottom);
+    });
+    expect(Math.abs(bottomGap)).toBeLessThanOrEqual(1);
+    for (const area of [main, page.locator('.shell-nav')]) {
+      await area.hover({ position: { x: 5, y: 10 } });
+      await page.mouse.wheel(0, scrollAmount);
+      // Wheel scrolling is composited asynchronously; sample after two presented frames.
+      await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+      const bounds = await page.locator('.shell').evaluate(el => ({
+        windowY: scrollY, shellTop: el.getBoundingClientRect().top, shellBottom: el.getBoundingClientRect().bottom,
+        documentHeight: document.scrollingElement!.scrollHeight, viewport: innerHeight,
+      }));
+      expect(bounds).toEqual({ windowY: 0, shellTop: 0, shellBottom: height, documentHeight: height, viewport: height });
+      await expect(lastButton).toBeInViewport({ ratio: 1 });
+    }
+  });
+}

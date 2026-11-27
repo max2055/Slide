@@ -25,6 +25,25 @@ it('explains read failure and offers refresh instead of claiming an empty librar
 const fixture=()=>({can_manage:true,builtin:false,template:{template_id:'custom',name:'原名称',revision:1},versions:[],
  items:[{item_id:'item',version:1,display_name:'原监控项',canonical_metric:{id:'metric',semantic_version:'1'},unit:'count',dimensions:[],collector_ref:{package_release:'pkg@1#hash'}}],
  draft:{revision:1,aggregate:{items:[{item_id:'item',version:1}],triggers:[],parameters:{defaults:{interval_ms:60000},schema:{}}}}});
+
+it('shows the current published version in the library and read-only detail', async () => {
+  const draft = fixture();
+  const template = { ...draft.template, current_published_version: 2 };
+  const current = { version: 2, items: draft.items, aggregate: draft.draft.aggregate };
+  authFetch.mockImplementation((path: string) => Promise.resolve(Response.json(path.endsWith('/library')
+    ? { can_manage: false, templates: [{ template, builtin: false, resource_types: ['instance'], item_count: 1 }] }
+    : { ...draft, can_manage: false, template, current })));
+  const element = document.createElement('template-library') as TemplateLibraryPage;
+  document.body.append(element);
+  await settle();
+  const root = element.shadowRoot!;
+  const name = root.querySelector<HTMLButtonElement>('button[data-template-id="custom"]')!;
+  expect(name.closest('tr')?.textContent).toContain('已发布 · v2');
+  name.click();
+  await settle();
+  expect(root.querySelector('.title-meta')?.textContent).toContain('已发布 · v2');
+});
+
 async function mounted(){
  authFetch.mockImplementation((path:string)=>Promise.resolve(new Response(JSON.stringify(path.endsWith('/library')?{can_manage:true,templates:[]}:path.endsWith('/capabilities')?{candidates:[],unavailable:[]}:fixture()))));
  const element:any=document.createElement('template-library');document.body.append(element);await settle();await element.open('custom');return element;
@@ -61,6 +80,23 @@ it('keeps edit fields out of the published view and confirms leaving an unsaved 
   expect(element.editor).not.toBeNull();
   await element.back();
   expect(element.editor).toBeNull();
+});
+
+it('preserves the monitoring item when it is the scope of a trigger', async () => {
+  const element = await mounted();
+  await element.open('custom', true);
+  const editor = element.editor;
+  const aggregate = {
+    ...editor.draft.aggregate,
+    triggers: [{ rule_id: 'threshold-rule', scope: 'item:item', version: 1 }],
+  };
+  element.editor = { ...editor, draft: { ...editor.draft, aggregate } };
+  await element.updateComplete;
+  const root: ShadowRoot = element.shadowRoot!;
+  root.querySelector<HTMLButtonElement>('button[aria-label="移除 原监控项"]')!.click();
+  await element.updateComplete;
+  expect(element.editor.draft.aggregate).toEqual(aggregate);
+  expect(root.querySelector('[role="alert"]')?.textContent).toContain('触发器仍引用该监控项');
 });
 
 it.each([false, true])('explains removed trigger dependencies when saving with publish=%s', async publish => {

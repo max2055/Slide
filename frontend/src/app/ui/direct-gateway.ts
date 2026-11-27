@@ -76,6 +76,7 @@ export type ConnectionState =
   | 'disconnected'
   | 'network_interrupted'
   | 'auth_failed'
+  | 'access_expired'
   | 'credentials_changed'
   | 'rate_limited'
   | 'service_restarting'
@@ -186,6 +187,21 @@ export class DirectGatewayClient {
   private devicePreparation?: AbortController;
   private deviceAuthProvider?: (signal: AbortSignal) => Promise<NonNullable<DirectGatewayClient['deviceAuth']>>;
   private deviceAuth: { deviceId: string; publicKey: string; signature: string; timestamp: number; nonce: string } | null = null;
+  private awaitingAccessRefresh = false;
+
+  private reconnectAfterTokenRefresh = (): void => {
+    const token = this._getToken();
+    if (!token || token === this.socketToken || this.closed) return;
+    this.awaitingAccessRefresh = false;
+    window.removeEventListener(ACCESS_TOKEN_REFRESHED_EVENT, this.reconnectAfterTokenRefresh);
+    window.removeEventListener('storage', this.reconnectAfterSharedRefresh);
+    this.onStateChange('credentials_changed');
+    this.connect();
+  };
+
+  private reconnectAfterSharedRefresh = (event: StorageEvent): void => {
+    if (event.key === 'refreshToken' && event.newValue) this.reconnectAfterTokenRefresh();
+  };
 
   constructor(opts: DirectGatewayClientOptions) {
     const timeout = opts.chatAcceptTimeoutMs ?? DEFAULT_CHAT_ACCEPT_TIMEOUT_MS;
@@ -211,7 +227,7 @@ export class DirectGatewayClient {
   }
 
   connect(): void {
-    if (this.closed || this.authFailed || this.ws || this.devicePreparation) {
+    if (this.closed || this.authFailed || this.awaitingAccessRefresh || this.ws || this.devicePreparation) {
       return;
     }
     this.clearReconnectTimer();
@@ -305,6 +321,18 @@ export class DirectGatewayClient {
           if (!this.closed) this.scheduleReconnect();
           return;
         }
+        if (ev.reason === 'Access credential expired' && currentToken && apiClient.getRefreshToken()) {
+          const error = new Error('原连接凭证已到期，请核对原消息状态；未自动重发。');
+          this.rejectPendingChatAcknowledgements(error);
+          this.unconfirmedChats.clear();
+          this.streamStates.clear(); this.recoveringSessions.clear();
+          // A passive socket close must not renew an idle login.
+          this.awaitingAccessRefresh = true;
+          window.addEventListener(ACCESS_TOKEN_REFRESHED_EVENT, this.reconnectAfterTokenRefresh);
+          window.addEventListener('storage', this.reconnectAfterSharedRefresh);
+          this.onStateChange('access_expired');
+          return;
+        }
         this.authFailed = true;
         this.stopServiceRecovery?.(); this.stopServiceRecovery = undefined;
         const error = new Error(SESSION_EXPIRED_MESSAGE);
@@ -344,6 +372,9 @@ export class DirectGatewayClient {
 
   disconnect(): void {
     this.devicePreparation?.abort();
+    this.awaitingAccessRefresh = false;
+    window.removeEventListener(ACCESS_TOKEN_REFRESHED_EVENT, this.reconnectAfterTokenRefresh);
+    window.removeEventListener('storage', this.reconnectAfterSharedRefresh);
     this.stopServiceRecovery?.(); this.stopServiceRecovery = undefined;
     this.notifyInvestigationObservers({ type: 'investigation.disconnected', revoked: true });
     this.investigationObservers.clear();
@@ -638,6 +669,12 @@ export class DirectGatewayClient {
   /** Manual reconnect — resets retry counter. Used after exhausted state. */
   reconnect(): void {
     if (this.ws) return;
+    if (this.awaitingAccessRefresh) {
+      this.reconnectAfterTokenRefresh();
+      if (!this.awaitingAccessRefresh) return;
+      void apiClient.fetchResponseWithAuth('/api/auth/permissions').catch(() => undefined);
+      return;
+    }
     this.closed = false;
     this.reconnectAttempts = 0;
     this.clearReconnectTimer();
@@ -959,6 +996,7 @@ export class DirectGatewayClient {
 // wires a DirectGatewayClient to the app host component.
 
 import {
+  ACCESS_TOKEN_REFRESHED_EVENT,
   apiClient,
   isSessionExpiryInProgress,
   notifySessionExpired,
@@ -1449,6 +1487,9 @@ export function initChatClient(host: Record<string, unknown>): void {
         clearExpiredChatState(host);
         notifySessionExpired();
         host.lastError = SESSION_EXPIRED_MESSAGE;
+      } else if (state === 'access_expired') {
+        clearExpiredChatState(host);
+        host.connectionError = '实时连接凭证已到期，刷新当前页面数据后可重新连接。';
       } else if (state === 'credentials_changed') {
         clearExpiredChatState(host);
         host.connectionError = '登录凭证已更新，正在重新核对会话访问。';

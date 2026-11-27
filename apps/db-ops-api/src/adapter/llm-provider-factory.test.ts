@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createConfiguredAgentProvider, configuredModelCapabilities } from './llm-provider-factory.js';
+import { createBootstrapAgentProvider, createConfiguredAgentProvider, configuredModelCapabilities } from './llm-provider-factory.js';
 import { resolveContextConfig, AgentRunner, NoopHook, ToolRegistry } from '@slide/agent-core';
 import { createServiceProviderClient } from '../llm/provider-connection.js';
 import { llmService } from '../llm-service.js';
@@ -66,10 +66,11 @@ describe('configured provider consistency', () => {
   });
   it('supports a keyless local provider and its OpenAI-compatible endpoint', async () => {
     const key = vi.fn().mockResolvedValue(null);
-    const agent = await createConfiguredAgentProvider({ getSceneBindings: async () => [], getAllProviders: async () => [{ ...config, api_format: null, deployment_type: 'local', api_base_url: 'http://localhost:11434/' }], getProviderApiKey: key });
+    const local = { ...config, api_format: null, deployment_type: 'local', api_base_url: 'http://localhost:11434/' };
+    const agent = await createConfiguredAgentProvider({ getSceneBindings: async () => [], getAllProviders: async () => [local], getProviderApiKey: key });
     expect((agent as any).client.baseURL).toBe('http://localhost:11434/v1');
     expect((agent as any).client.apiKey).toBe('ollama');
-    expect(key).toHaveBeenCalledWith(config.name);
+    expect(key).toHaveBeenCalledWith(config.name, local);
   });
   it.each(['openai-completions', 'anthropic-messages'])('preserves stored local credentials for %s across agent, service and connection tests', async api_format => {
     const provider = { ...config, deployment_type: 'local', api_format };
@@ -103,6 +104,19 @@ describe('configured provider consistency', () => {
   });
   it('does not skip a misconfigured selected provider in favor of another', async () => {
     await expect(createConfiguredAgentProvider({ getSceneBindings: async () => [], getAllProviders: async () => [config, { ...config, name: 'other' }], getProviderApiKey: async () => null })).rejects.toThrow('LLM_CREDENTIAL_NOT_CONFIGURED');
+  });
+  it('keeps bootstrap available after a restore without replacing the bound provider', async () => {
+    const store = {
+      getSceneBindings: async () => [{ scene: 'chat' as const, provider_id: 42, model: config.default_model }],
+      getAllProviders: async () => [{ ...config, id: 42, is_default: false }, { ...config, id: 43, name: 'other' }],
+      getProviderApiKey: vi.fn(async (name: string) => name === 'other' ? 'fallback-fixture-key' : null),
+    };
+    const provider = await createBootstrapAgentProvider(store);
+    expect(provider.getDefaultModel()).toBe('unconfigured');
+    await expect(provider.chat([], [])).rejects.toThrow('LLM_CREDENTIAL_NOT_CONFIGURED');
+    await expect(provider.chatStream([], [], { onContentDelta: vi.fn() })).rejects.toThrow('LLM_CREDENTIAL_NOT_CONFIGURED');
+    await expect(createConfiguredAgentProvider(store, 'chat', true, false)).rejects.toThrow('LLM_CREDENTIAL_NOT_CONFIGURED');
+    expect(store.getProviderApiKey.mock.calls.map(([name]) => name)).toEqual(['proxy', 'proxy']);
   });
   it('does not select another protocol for an unsupported format', () => {
     expect(() => createServiceProviderClient({ ...config, api_format: 'google-generative-ai' }, 'key')).toThrow('LLM_API_FORMAT_UNSUPPORTED');

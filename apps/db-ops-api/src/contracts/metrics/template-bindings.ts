@@ -14,6 +14,7 @@ import {
   TemplateParametersSchema, TemplatePinSchema, TemplateVersionStatusSchema, VersionNumberSchema,
 } from './templates.js';
 import { RefSchema } from '../../metrics/policy/model.js';
+import { DimensionsSchema } from './definitions.js';
 
 const Timestamp = z.iso.datetime();
 const ResourceTypeSchema = z.enum(['instance', 'server', 'network_device']);
@@ -244,7 +245,7 @@ export const TemplateTrialResponseSchema = z.looseObject({
   })),
   samples: z.array(z.looseObject({
     template_id: z.string(), item_id: z.string(), item_version: VersionNumberSchema,
-    metric: MetricRefOutSchema, value: z.unknown(), unit: z.string(), observed_at: Timestamp,
+    metric: MetricRefOutSchema, dimensions: DimensionsSchema.optional(), value: z.unknown(), unit: z.string(), observed_at: Timestamp,
     quality: z.unknown(),
     read: z.looseObject({ collector_id: z.string(), attempt_ids: z.array(z.string()), status: z.string() }),
     transform: z.looseObject({ version: z.string() }),

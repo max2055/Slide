@@ -165,6 +165,13 @@ describe.skipIf(!port)('approval dispatch: real MySQL transactions', () => {
     expect(await state()).toEqual({ status: 'approved', used_count: 0, intents: [] });
   });
 
+  it('reports expiry before review without creating an execution intent', async () => {
+    await pool.query("UPDATE agent_tool_approvals SET status = 'pending', expires_at = NOW() - INTERVAL 1 SECOND");
+    expect((await execute()).result.errorCode).toBe('APPROVAL_EXPIRED');
+    expect(handler).not.toHaveBeenCalled();
+    expect(await state()).toEqual({ status: 'pending', used_count: 0, intents: [] });
+  });
+
   it('cancellation during audit rolls back; cancellation after commit refunds before dispatch', async () => {
     const controller = new AbortController();
     const cancellingAudit = new AgentToolAuditService(() => store);

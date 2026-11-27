@@ -69,6 +69,81 @@ it('saves a ref and shows incomplete unbound HTTP snapshots without implying dep
   const manifestView = view.shadowRoot!.querySelector('source-manifest') as any; await manifestView.browse('skipped'); await settle();
   expect(manifestView.shadowRoot.textContent).toContain('src/config.json');
 });
+
+it.each([
+  { manifestStatus: 200, credentialStatus: 503 },
+  { manifestStatus: 503, credentialStatus: 200 },
+])('X04 keeps the saved repository current when the old manifest returns $manifestStatus and credential refresh returns $credentialStatus', async ({ manifestStatus, credentialStatus }) => {
+  localStorage.setItem('permissions', JSON.stringify(['admin:*']));
+  const original = { provider: 'github', baseUrl: 'https://github.com', repositoryPath: 'owner/original', ref: 'main', allowedPaths: [], allowModelContent: false };
+  const current = { ...original, repositoryPath: 'owner/current', ref: 'release' };
+  const originalCredential = { identity: 'a'.repeat(64), hasSavedToken: true };
+  const currentCredential = { identity: 'b'.repeat(64), hasSavedToken: false };
+  const response = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status });
+  let finishOldManifest!: (result: Response) => void;
+  let finishCredentialRefresh!: (result: Response) => void;
+  const oldManifest = new Promise<Response>(resolve => { finishOldManifest = resolve; });
+  const credentialRefresh = new Promise<Response>(resolve => { finishCredentialRefresh = resolve; });
+  let saved = false;
+  let refreshing = false;
+  authFetch.mockImplementation(async (url: string, options?: RequestInit) => {
+    if (url.endsWith('/manifest')) return saved ? response({ releaseId: 'current-snapshot', files: [] }) : oldManifest;
+    if (url.endsWith('/sync')) return response({ completeness: 'complete' });
+    if (options?.method === 'PUT') {
+      expect(JSON.parse(String(options.body))).toEqual(current);
+      saved = true;
+      return response({ config: current });
+    }
+    if (!saved) return response({ config: original, credential: originalCredential });
+    if (refreshing) return response({ config: current, credential: currentCredential });
+    refreshing = true;
+    return credentialRefresh;
+  });
+
+  const view = document.createElement('source-settings'); document.body.append(view); await settle();
+  const root = view.shadowRoot!;
+  const manifest = root.querySelector('source-manifest')!.shadowRoot!;
+  const repo = root.querySelector<HTMLInputElement>('[aria-label="仓库路径"]')!;
+  const ref = root.querySelector<HTMLInputElement>('[aria-label="分支、标签或 Commit"]')!;
+  const sync = root.querySelector<HTMLButtonElement>('[data-action="sync"]')!;
+  expect(sync.disabled).toBe(false);
+  repo.value = current.repositoryPath; repo.dispatchEvent(new Event('input'));
+  ref.value = current.ref; ref.dispatchEvent(new Event('input'));
+  root.querySelector('form')!.dispatchEvent(new Event('submit', { cancelable: true })); await settle();
+  expect(refreshing).toBe(true);
+
+  finishOldManifest(manifestStatus === 200
+    ? response({ releaseId: 'old-snapshot', files: [] })
+    : response({ error: 'SOURCE_STORAGE_UNAVAILABLE' }, manifestStatus));
+  await settle();
+  expect(manifest.textContent).toContain('current-snapshot');
+  expect(manifest.textContent).not.toContain('old-snapshot');
+  expect(manifest.querySelector('[role="alert"]')).toBeNull();
+
+  finishCredentialRefresh(credentialStatus === 200
+    ? response({ config: current, credential: currentCredential })
+    : response({ error: 'SOURCE_STORAGE_UNAVAILABLE' }, credentialStatus));
+  await settle();
+  expect(repo.value).toBe(current.repositoryPath);
+  expect(ref.value).toBe(current.ref);
+  expect(manifest.textContent).toContain('current-snapshot');
+  expect(sync.disabled).toBe(true);
+  const token = root.querySelector<HTMLInputElement>('[aria-label="同步令牌"]')!;
+  token.value = 'one-time-current'; token.dispatchEvent(new Event('input')); await settle();
+  if (credentialStatus === 503) {
+    expect(root.querySelector('[role="alert"]')?.textContent).toContain('服务端源码存储不可用');
+    expect(sync.disabled).toBe(true);
+    root.querySelector<HTMLButtonElement>('.btn-refresh')!.click(); await settle();
+    expect(root.querySelector('[role="alert"]')).toBeNull();
+  }
+  expect(sync.disabled).toBe(false);
+  sync.click(); await settle();
+  expect(authFetch).toHaveBeenCalledWith('/api/platform/source/sync', expect.objectContaining({
+    body: JSON.stringify({ token: 'one-time-current', expectedIdentity: currentCredential.identity }),
+  }));
+  expect(token.value).toBe('');
+});
+
 it('shows advisory files as retained without marking a complete snapshot partial', async () => {
   authFetch.mockImplementation(async (url: string) => ({ ok: true, text: async () => JSON.stringify(url.endsWith('/config') ? { config: null } : {
     releaseId: 'source-advisory', files: [{ path: 'src/config.json', bytes: 100 }], completeness: 'complete', skippedFiles: [],

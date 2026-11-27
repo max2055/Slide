@@ -7,6 +7,8 @@ export const MIN_SESSION_IDLE_TIMEOUT_MINUTES = 5;
 export const MAX_SESSION_IDLE_TIMEOUT_MINUTES = 30 * 24 * 60;
 
 const CONFIG_DESCRIPTION = '登录会话无操作超时时间（分钟）；每次刷新令牌轮换后重新计时';
+const MAX_ACCESS_TOKEN_SECONDS = 60 * 60;
+const SESSION_REFRESH_WINDOW_SECONDS = 60;
 
 interface ConfigExecutor {
   execute(sql: string, values?: unknown[]): Promise<[any, unknown?]>;
@@ -85,6 +87,11 @@ export class AuthSessionConfigService {
 
   expiresAt(config: AuthSessionConfig, now = Date.now()): Date {
     return new Date(now + config.idleTimeoutMinutes * 60_000);
+  }
+
+  accessTokenSeconds(config: AuthSessionConfig): number {
+    // An active client can renew after access expires but before idle expiry.
+    return Math.min(MAX_ACCESS_TOKEN_SECONDS, config.idleTimeoutMinutes * 60 - SESSION_REFRESH_WINDOW_SECONDS);
   }
 }
 

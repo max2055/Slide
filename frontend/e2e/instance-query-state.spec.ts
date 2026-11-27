@@ -120,8 +120,11 @@ test('real JWT -> live permissions -> production routes -> MySQL: empty, populat
   const deniedPool = mysql.createPool({ host: '127.0.0.1', port: Number(process.env.MAX163_TEST_MYSQL_PORT), user: deniedUser, password: deniedPassword });
   try {
     connections.get(991).pool = deniedPool;
+    const sourceRefused = page.waitForResponse(r => r.url().endsWith('/api/database/instances/991/topsql') && r.status() === 424);
     await view.getByRole('tab', { name: /^慢查询/ }).click();
-    await expect(view).toContainText('数据不可用'); await expect(view.locator('tbody')).toHaveCount(0);
+    expect(await (await sourceRefused).json()).toEqual({ error: 'SOURCE_PERMISSION_DENIED' });
+    await expect(view.getByRole('alert')).toContainText('数据库账号无权读取慢查询统计');
+    await expect(view.locator('tbody')).toHaveCount(0);
     await capture(page, 'real-mysql-query-denied');
   } finally { connections.get(991).pool = pool; await deniedPool.end(); await admin.query("DROP USER ?@'%'", [deniedUser]); }
   await pool.query('DELETE FROM instance_permissions WHERE user_id=991');
@@ -142,14 +145,25 @@ for (const kind of ['topsql', 'sessions'] as const) for (const [width, theme] of
   await page.route(`**/api/database/instances/991/${kind}`, async route => {
     if (mode === 'loading') await new Promise<void>(resolve => release = resolve);
     if (mode === 'network') return route.abort('failed');
-    const status = mode === 'failed' ? 500 : mode === 'forbidden' ? 403 : mode === 'unavailable' ? 404 : 200;
-    await route.fulfill({ status, contentType: 'application/json', body: mode === 'malformed' ? '{}' : '[]' });
+    const responses: Record<string, { status: number; json: unknown }> = {
+      failed: { status: 500, json: { error: 'UPSTREAM_ERROR' } },
+      forbidden: { status: 403, json: { error: 'FORBIDDEN' } },
+      unavailable: { status: 404, json: { error: 'NOT_CONNECTED' } },
+      'source-unavailable': { status: 503, json: { error: 'SOURCE_UNAVAILABLE' } },
+      'source-forbidden': { status: 424, json: { error: 'SOURCE_PERMISSION_DENIED' } },
+      malformed: { status: 200, json: {} },
+    };
+    await route.fulfill(responses[mode] ?? { status: 200, json: [] });
   });
   const view = await open(page, theme, width);
   const tab = view.getByRole('tab', { name: kind === 'topsql' ? '慢查询' : '会话', exact: true }); await tab.focus(); await page.keyboard.press('Enter');
   await expect(view).toContainText(kind === 'topsql' ? '加载慢查询数据' : '加载会话数据'); await capture(page, `controlled-${kind}-loading-${width}-${theme}`);
   mode = 'empty'; release(); await expect(view).toContainText('本次查询未返回'); await capture(page, `controlled-${kind}-empty-${width}-${theme}`);
-  for (const [next, expected] of [['failed','读取失败'],['forbidden','无权读取'],['unavailable','数据不可用'],['malformed','读取失败'],['network','读取失败']]) {
+  for (const [next, expected] of [
+    ['failed', '读取失败'], ['forbidden', '无权读取'], ['unavailable', '实例未连接'],
+    ['source-unavailable', '统计来源未就绪'], ['source-forbidden', '数据库账号无权读取'],
+    ['malformed', '读取失败'], ['network', '读取失败'],
+  ]) {
     mode = next; await tab.click(); await expect(view).toContainText(expected); await expect(view.locator('tbody')).toHaveCount(0);
     await capture(page, `controlled-${kind}-${next}-${width}-${theme}`);
   }

@@ -271,17 +271,17 @@ export function renderApp(state: AppViewState) {
   const toolsPanelUsesActiveSession = Boolean(
     resolvedAgentId && activeSessionAgentId && resolvedAgentId === activeSessionAgentId,
   );
+  const canAccessTab = (tab: import("./navigation.ts").Tab) => {
+    if (tab === 'investigations') {
+      return hasSlidePermission(legacyPermissions, 'chat:view') || hasSlidePermission(legacyPermissions, 'operations:actions:view');
+    }
+    const required = TAB_REQUIRED_PERMISSIONS[tab];
+    return !required || hasSlidePermission(legacyPermissions, required);
+  };
   const isNavigationTabVisible = (tab: import("./navigation.ts").Tab) => {
     const visibleTabs = state.settings.visibleTabs;
     if (visibleTabs && (state.settings.visibleTabsConfigured || visibleTabs.length > 0) && !visibleTabs.includes(tab)) return false;
-    if (tab === 'investigations') {
-      const p = state.userPermissions || loadPermissionsFromStorage();
-      return hasSlidePermission(p, 'chat:view') || hasSlidePermission(p, 'operations:actions:view');
-    }
-    const required = TAB_REQUIRED_PERMISSIONS[tab];
-    if (!required) return true;
-    const permissions = state.userPermissions || loadPermissionsFromStorage();
-    return hasSlidePermission(permissions, required);
+    return canAccessTab(tab);
   };
   const getCurrentConfigValue = () =>
     state.configForm ?? (state.configSnapshot?.config as Record<string, unknown> | null);
@@ -538,7 +538,6 @@ export function renderApp(state: AppViewState) {
         </aside>
       </${navTag}>`}
       <main class="content ${isChat ? "content--chat" : ""}">
-        ${heavyView && heavyModule === null ? lazyStatus(heavyView) : nothing}
         ${renderPermissionsError(state)}
         ${state.updateAvailable &&
         state.updateAvailable.latestVersion !== state.updateAvailable.currentVersion &&
@@ -567,6 +566,8 @@ export function renderApp(state: AppViewState) {
               </button>
             </div>`
           : nothing}
+        ${canAccessTab(state.tab) ? html`
+        ${heavyView && heavyModule === null ? lazyStatus(heavyView) : nothing}
         ${isChat
           ? html`<section class="content-header">
               <div>
@@ -980,6 +981,8 @@ export function renderApp(state: AppViewState) {
               },
             })
           : nothing}
+        ` : html`<app-empty-state icon="info" title=${legacyPermissions
+          ? "当前账号无权访问此页面" : "正在确认页面访问权限"}></app-empty-state>`}
       </main>
       ${renderGatewayUrlConfirmation(state)} ${nothing}
       <app-toast-container></app-toast-container>

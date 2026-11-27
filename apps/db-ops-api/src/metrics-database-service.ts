@@ -47,6 +47,11 @@ export interface SlowQueryRecord {
   updated_at: Date;
 }
 
+export type SlowQueryReportRecord = Omit<SlowQueryRecord, 'avg_time_ms' | 'total_time_ms'> & {
+  avg_time_ms: number | null;
+  total_time_ms: number | null;
+};
+
 interface StrictReadOptions {
   strict?: boolean;
 }
@@ -284,10 +289,14 @@ class MetricsDatabaseService {
    * 获取慢查询列表
    */
   async getSlowQueries(
+    instanceId: number, limit: number, options: StrictReadOptions & { preserveUnknownDurations: true },
+  ): Promise<SlowQueryReportRecord[]>;
+  async getSlowQueries(instanceId: number, limit?: number, options?: StrictReadOptions): Promise<SlowQueryRecord[]>;
+  async getSlowQueries(
     instanceId: number,
     limit: number = 20,
-    options: StrictReadOptions = {},
-  ): Promise<SlowQueryRecord[]> {
+    options: StrictReadOptions & { preserveUnknownDurations?: true } = {},
+  ): Promise<SlowQueryReportRecord[]> {
     const pool = this.getPool();
     if (!pool) {
       if (options.strict) throw new Error('SLOW_QUERIES_UNAVAILABLE');
@@ -307,14 +316,14 @@ class MetricsDatabaseService {
         [instanceId, limit]
       ) as any;
 
-      // mysql2 returns DECIMAL columns as strings by default. Keep report and
-      // threshold consumers numeric while preserving SQL NULL as unknown.
-      return rows.map((row: SlowQueryRecord) => ({
+      // mysql2 returns DECIMAL strings. Reports distinguish unknown durations
+      // from measured zero while existing consumers keep their numeric reads.
+      return rows.map((row: SlowQueryReportRecord) => ({
         ...row,
-        avg_time_ms: Number(row.avg_time_ms),
+        avg_time_ms: options.preserveUnknownDurations && row.avg_time_ms == null ? null : Number(row.avg_time_ms),
         max_time_ms: row.max_time_ms == null ? null : Number(row.max_time_ms),
         min_time_ms: row.min_time_ms == null ? null : Number(row.min_time_ms),
-        total_time_ms: Number(row.total_time_ms),
+        total_time_ms: options.preserveUnknownDurations && row.total_time_ms == null ? null : Number(row.total_time_ms),
       }));
     } catch (error) {
       console.error('获取慢查询失败:', error);
@@ -572,7 +581,7 @@ class MetricsDatabaseService {
   ): Promise<Array<{ total_size_gb: number; db_count: number; table_count: number; recorded_at: Date }>> {
     const pool = this.getPool();
     if (!pool) {
-      return [];
+      throw new Error('SOURCE_CAPACITY_HISTORY_READ_FAILED');
     }
 
     try {
@@ -597,7 +606,7 @@ class MetricsDatabaseService {
       }));
     } catch (error) {
       console.error('获取容量历史失败:', error);
-      return [];
+      throw new Error('SOURCE_CAPACITY_HISTORY_READ_FAILED');
     }
   }
 
@@ -610,7 +619,7 @@ class MetricsDatabaseService {
   ): Promise<Array<{ db_name: string; size_gb: number; table_count: number }>> {
     const pool = this.getPool();
     if (!pool) {
-      return [];
+      throw new Error('SOURCE_CAPACITY_DETAILS_READ_FAILED');
     }
 
     try {
@@ -641,7 +650,7 @@ class MetricsDatabaseService {
       }));
     } catch (error) {
       console.error('获取容量明细失败:', error);
-      return [];
+      throw new Error('SOURCE_CAPACITY_DETAILS_READ_FAILED');
     }
   }
 }

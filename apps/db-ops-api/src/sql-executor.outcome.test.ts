@@ -51,6 +51,7 @@ function pgDouble(fail?: (sql: string) => Error | undefined) {
       const error = fail?.(sql);
       if (error) throw error;
       if (sql.startsWith('SELECT')) return { rows: [{ id: 1 }], fields: [{ name: 'id' }] };
+      if (sql === update) return { rows: [], fields: [], rowCount: 1 };
       return { rows: [], fields: [] };
     }),
   };
@@ -72,6 +73,13 @@ describe('MAX-374 mutation outcome receipts', () => {
     mocks.beginIntent.mockResolvedValue(undefined);
     mocks.finishIntent.mockResolvedValue(undefined);
     mocks.auditSql.mockResolvedValue(undefined);
+  });
+
+  it('reports the PostgreSQL command row count after COMMIT', async () => {
+    const client = pgDouble();
+    expect(await run()).toMatchObject({ success: true, rowCount: 1, rows: [], executionState: 'succeeded' });
+    expect(client.calls.at(-1)).toBe('COMMIT');
+    expect(mocks.auditSql).toHaveBeenCalledWith(expect.objectContaining({ rowCount: 1 }));
   });
 
   it('records a PostgreSQL statement failure as rolled back only after ROLLBACK completes', async () => {

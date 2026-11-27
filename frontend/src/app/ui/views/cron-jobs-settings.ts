@@ -36,6 +36,7 @@ interface CronJobConfig {
   task_type?: "script" | "agent";
   script_id?: number | null;
   target_instance_id?: number | null;
+  target_database?: string | null;
 }
 
 interface CronJobLog {
@@ -55,6 +56,15 @@ interface CronJobLog {
   tools_used: string[] | null;
   tool_events: any[] | null;
   usage: Record<string, number> | null;
+  execution_authority?: { triggered_by?: number | null } | null;
+}
+
+interface CronCancellationReceipt {
+  runId: string;
+  triggeredBy: number | null;
+  startedAt: string | null;
+  runnerFinishedAt: string | null;
+  errorCode: string | null;
 }
 
 interface CronScript {
@@ -164,8 +174,10 @@ export class CronJobsSettings extends LitElement {
 
   @state() private logViewerJob: CronJobConfig | null = null;
   @state() private viewerLogs: CronJobLog[] = [];
+  @state() private viewerCancellations: CronCancellationReceipt[] = [];
   @state() private viewerLoading = false;
   @state() private viewerError: string | null = null;
+  private viewerRead?: AbortController;
 
   @state() private triggerDialogOpen = false;
   @state() private triggerJobId: number | null = null;
@@ -176,7 +188,6 @@ export class CronJobsSettings extends LitElement {
   private runTracker = new CronRunTracker(() => this.requestUpdate());
   private _refreshInterval: ReturnType<typeof setInterval> | null = null;
   private jobsGeneration = 0;
-  private viewerGeneration = 0;
 
   @state() private formTaskType: "agent" | "script" = "agent";
   @state() private formScriptId: number | null = null;
@@ -196,6 +207,7 @@ export class CronJobsSettings extends LitElement {
   private readonly permissionsChanged = () => {
     this.permissions = readCachedPermissions();
     if (!this.canManage) this.closeFormDialog();
+    if (!hasSlidePermission(this.permissions, "cron:view")) this.closeLogViewer();
   };
   private readonly sessionExpired = () => {
     this.permissions = new Set<string>();
@@ -350,8 +362,8 @@ export class CronJobsSettings extends LitElement {
     }
   }
 
-  private async fetchCronJobs(): Promise<CronJobConfig[]> {
-    const res = await authFetch("/api/cron/jobs");
+  private async fetchCronJobs(refreshAccess = true): Promise<CronJobConfig[]> {
+    const res = await authFetch("/api/cron/jobs", refreshAccess ? undefined : { refreshAccess: false });
     if (!res.ok) throw new Error(res.status === 403 ? "当前用户没有定时任务查看权限" : `HTTP ${res.status}`);
     const jobs = await res.json().catch(() => undefined);
     if (!Array.isArray(jobs)) throw new Error("定时任务列表响应无效");
@@ -363,7 +375,7 @@ export class CronJobsSettings extends LitElement {
     if (this.loading || this.error) return;
     const generation = ++this.jobsGeneration;
     try {
-      const jobs = await this.fetchCronJobs();
+      const jobs = await this.fetchCronJobs(false);
       if (generation === this.jobsGeneration) this.jobs = jobs;
     } catch {
       // 静默失败，下次刷新重试
@@ -441,6 +453,7 @@ export class CronJobsSettings extends LitElement {
     this.formTaskType = job.task_type || "agent";
     this.formScriptId = job.script_id ?? null;
     this.formTargetInstanceId = job.target_instance_id ?? null;
+    this.formTargetDatabase = job.target_database ?? "";
     this.testResult = null;
     this.showCreateDialog = true;
     // Load scripts list and instance list for dropdowns
@@ -563,8 +576,9 @@ export class CronJobsSettings extends LitElement {
 
   private onInstanceChange(e: Event) {
     const select = e.target as HTMLSelectElement;
-    const id = parseInt(select.value, 10);
-    this.formTargetInstanceId = id || null;
+    const id = parseInt(select.value, 10) || null;
+    if (id !== this.formTargetInstanceId) this.formTargetDatabase = "";
+    this.formTargetInstanceId = id;
     const inst = this.instances.find((i) => i.id === id);
     if (inst) {
       this.scriptEditorDbType = inst.db_type;
@@ -662,25 +676,34 @@ export class CronJobsSettings extends LitElement {
   private async openLogViewer(job: CronJobConfig) {
     this.closeLogViewer();
     this.logViewerJob = job;
-    await this.loadViewerLogs();
+    await this.loadLogViewer();
   }
 
-  private async loadViewerLogs() {
+  private async loadLogViewer() {
     const job = this.logViewerJob;
-    if (!job || this.viewerLoading) return;
-    const generation = ++this.viewerGeneration;
+    if (!job || this.viewerRead) return;
+    const request = new AbortController();
+    this.viewerRead = request;
+    this.viewerLogs = [];
+    this.viewerCancellations = [];
     this.viewerLoading = true;
     this.viewerError = null;
     try {
-      const res = await authFetch(`/api/cron/jobs/${job.id}/logs?limit=100`);
+      const res = await authFetch(`/api/cron/jobs/${job.id}/logs?limit=100`, { signal: request.signal });
       if (!res.ok) throw new Error("加载日志失败");
-      const result = await res.json() as { logs?: CronJobLog[] } | null;
-      if (!Array.isArray(result?.logs)) throw new Error("日志响应无效");
-      if (generation === this.viewerGeneration) this.viewerLogs = result.logs;
+      const { logs, cancellations = [] } = await res.json() as { logs: CronJobLog[]; cancellations?: CronCancellationReceipt[] };
+      if (!Array.isArray(logs) || !Array.isArray(cancellations)) throw new Error("加载日志失败");
+      if (this.viewerRead === request) {
+        this.viewerLogs = logs;
+        this.viewerCancellations = cancellations;
+      }
     } catch {
-      if (generation === this.viewerGeneration) this.viewerError = "加载日志失败";
+      if (this.viewerRead === request) this.viewerError = "加载日志失败";
     } finally {
-      if (generation === this.viewerGeneration) this.viewerLoading = false;
+      if (this.viewerRead === request) {
+        this.viewerRead = undefined;
+        this.viewerLoading = false;
+      }
     }
   }
 
@@ -689,13 +712,15 @@ export class CronJobsSettings extends LitElement {
     if (this.shadowRoot?.activeElement === button) {
       button.closest<HTMLElement>(".log-viewer-results")?.focus();
     }
-    void this.loadViewerLogs();
+    void this.loadLogViewer();
   }
 
   private closeLogViewer() {
-    this.viewerGeneration++;
+    this.viewerRead?.abort();
+    this.viewerRead = undefined;
     this.logViewerJob = null;
     this.viewerLogs = [];
+    this.viewerCancellations = [];
     this.viewerLoading = false;
     this.viewerError = null;
   }
@@ -703,6 +728,12 @@ export class CronJobsSettings extends LitElement {
   private renderBadge(result: string | null) {
     const key = result || "na";
     return html`<app-badge variant=${STATUS_VARIANT[key] || "muted"}>${STATUS_LABEL[key] || "未执行"}</app-badge>`;
+  }
+
+  private renderTriggerType(triggeredBy: unknown) {
+    const label = triggeredBy === null ? "计划触发"
+      : Number.isSafeInteger(triggeredBy) ? "手动触发" : "触发方式未知";
+    return html`<span class="log-entry__time">${label}</span>`;
   }
 
   private renderStructuredResult(sr: Record<string, unknown> | null) {
@@ -945,18 +976,33 @@ export class CronJobsSettings extends LitElement {
       <!-- Log Viewer Dialog -->
       ${this.logViewerJob ? html`
         <app-dialog .open=${true} size="xl" title="执行记录 — ${this.logViewerJob.name}" @app-dialog-close=${this.closeLogViewer}>
-          <div class="log-viewer-results" tabindex="-1">
+          <section class="log-viewer-results" aria-label="执行记录" aria-busy=${String(this.viewerLoading)} tabindex="-1">
           ${this.viewerLoading ? html`<div class="log-empty" role="status">加载中...</div>` : nothing}
           ${this.viewerError ? html`<app-notice severity="error">
             <div role="alert">${this.viewerError}</div>
             <button type="button" class="btn btn-refresh" @click=${this.retryViewerLogs}>重试</button>
           </app-notice>` : nothing}
-          ${!this.viewerLoading && !this.viewerError && this.viewerLogs.length === 0 ? html`<div class="log-empty">暂无执行记录</div>` : nothing}
+          ${!this.viewerLoading && !this.viewerError && this.viewerLogs.length === 0 && this.viewerCancellations.length === 0
+            ? html`<div class="log-empty">暂无执行记录</div>` : nothing}
+          ${this.viewerCancellations.map(receipt => html`
+            <div class="log-entry">
+              <div class="log-entry__header">
+                ${this.renderBadge("cancelled")}
+                ${this.renderTriggerType(receipt.triggeredBy)}
+                ${receipt.startedAt ? html`<span class="log-entry__time">开始 ${formatDateTime(receipt.startedAt)}</span>` : nothing}
+                ${receipt.runnerFinishedAt ? html`<span class="log-entry__time">结束 ${formatDateTime(receipt.runnerFinishedAt)}</span>` : nothing}
+              </div>
+              <div class="log-entry__summary">运行编号 ${receipt.runId}</div>
+              ${receipt.errorCode ? html`<div class="log-entry__error">${receipt.errorCode}</div>` : nothing}
+            </div>
+          `)}
           ${this.viewerLogs.map(log => html`
             <div class="log-entry">
               <div class="log-entry__header">
                 ${!log.run_id && log.status === "success" ? html`<app-badge variant="warn">旧成功（仅 runner 结束）</app-badge>` : this.renderBadge(log.status)}
-                <span class="log-entry__time">${formatDateTime(log.started_at)}</span>
+                ${this.renderTriggerType(log.execution_authority?.triggered_by)}
+                <span class="log-entry__time">开始 ${formatDateTime(log.started_at)}</span>
+                ${log.finished_at ? html`<span class="log-entry__time">结束 ${formatDateTime(log.finished_at)}</span>` : nothing}
                 <span class="log-entry__duration">耗时 ${formatDuration(log.started_at, log.finished_at)}${log.duration_ms ? ' (' + log.duration_ms + 'ms)' : ''}</span>
               </div>
               ${log.error_message ? html`<div class="log-entry__error">${log.error_message}</div>` : nothing}
@@ -965,7 +1011,7 @@ export class CronJobsSettings extends LitElement {
               ${log.result ? html`<pre class="log-entry__result">${log.result}</pre>` : log.result_summary && !log.structured_result ? html`<div class="log-entry__summary">${log.result_summary}</div>` : !log.structured_result ? html`<div class="log-empty" style="padding:8px">无输出</div>` : nothing}
             </div>
           `)}
-          </div>
+          </section>
         </app-dialog>
       ` : nothing}
 
@@ -1023,7 +1069,7 @@ export class CronJobsSettings extends LitElement {
               <div class="form-group">
                 <div>
                   <label class="form-label" for="cron-target-database">目标数据库</label>
-                  <span id="cron-target-database-hint" style="color:var(--muted);font-size:12px;">（MySQL 需要指定库名）</span>
+                  <span id="cron-target-database-hint" style="color:var(--muted);font-size:12px;">（未填写时使用实例默认库，或在 SQL 中写明库名）</span>
                 </div>
                 <input id="cron-target-database" aria-describedby="cron-target-database-hint" class="form-input" placeholder="例如：information_schema" .value=${this.formTargetDatabase} @input=${(e: any) => { this.formTargetDatabase = e.target.value; }} />
               </div>

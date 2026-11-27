@@ -3,7 +3,7 @@ const { authFetch } = vi.hoisted(() => ({ authFetch: vi.fn() }));
 vi.mock('../../../api/index.js', () => ({ authFetch }));
 import './sql-audit-tab.js';
 
-type View = HTMLElement & { instanceId: number; updateComplete: Promise<boolean>; _loadHistory(): Promise<void> };
+type View = HTMLElement & { instanceId: number; sqlText: string; updateComplete: Promise<boolean>; _loadHistory(): Promise<void>; _submitAudit(): Promise<void> };
 const response = (body: unknown, status = 200) => ({ ok: status < 400, status, json: async () => body });
 const deferred = () => { let resolve!: (value: any) => void; const promise = new Promise(done => { resolve = done; }); return { promise, resolve }; };
 const item = (id = 101, status = 'completed') => ({ id, status, created_at: '2026-10-15T01:00:00Z' });
@@ -24,6 +24,65 @@ async function open(view: View, index = 0) {
 describe('SQL audit history compatibility and read failures', () => {
   beforeEach(() => authFetch.mockReset());
   afterEach(() => { document.body.replaceChildren(); vi.useRealTimers(); });
+
+  it('explains an unavailable audit model without claiming an analysis was accepted', async () => {
+    const view = await mount([]);
+    authFetch.mockResolvedValueOnce(response({ error: 'SQL_AUDIT_MODEL_UNAVAILABLE' }, 422));
+    view.sqlText = 'SELECT 1';
+    await view._submitAudit();
+    await view.updateComplete;
+    expect(text(view)).toContain('没有可用于 SQL 审核的模型');
+    expect(text(view)).not.toContain('LLM 深度分析进行中');
+  });
+
+  it('reports a failed current result read and retries the same analysis without resubmission', async () => {
+    const view = await mount([]);
+    vi.useFakeTimers();
+    authFetch.mockImplementation(async (path: string) => {
+      if (path === '/api/sql/audit') return response({ analysis_id: 101 });
+      if (path?.endsWith('/status')) return response({ id: 101, status: 'completed' });
+      if (path === '/api/sql/audit/101') return response({}, 503);
+      return response([]);
+    });
+    view.sqlText = 'SELECT 1';
+    await view._submitAudit();
+    await vi.advanceTimersByTimeAsync(3_000);
+    await view.updateComplete;
+    expect(text(view)).toContain('审核已完成，但读取结果失败');
+    const retry = [...root(view).querySelectorAll('button')].find(button => button.textContent?.trim() === '重试读取审核结果');
+    expect(retry).toBeDefined();
+    authFetch.mockImplementation(async () => response({ id: 101, instance_id: 1, status: 'completed', result: { summary: '读取原审核结果' } }));
+    retry!.click();
+    await vi.advanceTimersByTimeAsync(0);
+    await view.updateComplete;
+    expect(text(view)).toContain('读取原审核结果');
+    expect(authFetch.mock.calls.filter(([path]) => path === '/api/sql/audit')).toHaveLength(1);
+    expect(authFetch.mock.calls.filter(([path]) => path === '/api/sql/audit/101')).toHaveLength(2);
+  });
+
+  it('ignores a current result that arrives after switching instances', async () => {
+    const view = await mount([]);
+    const result = deferred();
+    vi.useFakeTimers();
+    authFetch.mockImplementation(async (path: string) => {
+      if (path === '/api/sql/audit') return response({ analysis_id: 101 });
+      if (path?.endsWith('/status')) return response({ id: 101, status: 'completed' });
+      if (path === '/api/sql/audit/101') return result.promise;
+      return response([]);
+    });
+    view.sqlText = 'SELECT 1';
+    await view._submitAudit();
+    await vi.advanceTimersByTimeAsync(3_000);
+    expect(text(view)).toContain('正在读取审核结果');
+    view.instanceId = 2;
+    await view.updateComplete;
+    result.resolve(response({ id: 101, instance_id: 1, status: 'completed', result: { summary: '上一实例审核结果' } }));
+    await vi.advanceTimersByTimeAsync(0);
+    await view.updateComplete;
+    expect(text(view)).not.toContain('上一实例审核结果');
+    expect(text(view)).not.toContain('正在读取审核结果');
+    expect(authFetch.mock.calls.some(([path]) => path === '/api/sql/audit/instance/2?limit=20')).toBe(true);
+  });
 
   it('shows list fields actually returned by ai_analysis without inventing SQL or risk', async () => {
     const view = await mount([item(), { id: 102, status: 'unknown', created_at: null }, { id: 103, status: 'future-state', risk_level: 'future-risk', created_at: 'invalid' }]);

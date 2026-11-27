@@ -3,7 +3,9 @@ import { authFetch } from '../../../api/index.ts';
 import { AlertsPage } from './alerts.ts';
 import '../components/alert-detail-modal.ts';
 
-vi.mock('../../../api/index.ts', () => ({ authFetch: vi.fn() }));
+vi.mock('../../../api/index.ts', async (importOriginal) => ({
+  ...await importOriginal<typeof import('../../../api/index.ts')>(), authFetch: vi.fn(),
+}));
 vi.mock('../components/app-toast-container.js', () => ({ showToast: vi.fn() }));
 afterEach(() => { document.body.replaceChildren(); vi.resetAllMocks(); });
 const alert = (severity: string) => ({ id: 7, severity, title: '历史升级告警', message: 'test', status: 'acknowledged', created_at: '2026-10-15T00:00:00Z' });

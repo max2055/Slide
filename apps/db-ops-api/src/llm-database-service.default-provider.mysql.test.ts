@@ -60,6 +60,18 @@ describe.skipIf(process.env.MAX493_MYSQL !== '1')('default Provider real MySQL (
     return rows.map(row => row.name);
   }
 
+  it('clears a disabled default and refuses to select a disabled provider', async () => {
+    expect(await llmDatabaseService.toggleProvider('alpha', false)).toEqual({ success: true });
+    expect(await defaults()).toEqual([]);
+    expect(await llmDatabaseService.setDefaultProvider('beta')).toEqual({ success: true });
+    expect((await llmDatabaseService.setDefaultProvider('alpha')).success).toBe(false);
+    expect(await defaults()).toEqual(['beta']);
+    expect(await llmDatabaseService.toggleProvider('alpha', true)).toEqual({ success: true });
+    expect(await defaults()).toEqual(['beta']);
+    expect(await llmDatabaseService.configureProvider({ name: 'beta', enabled: false })).toMatchObject({ success: true });
+    expect(await defaults()).toEqual([]);
+  });
+
   async function waitForLock(connection: mysql.PoolConnection) {
     const deadline = Date.now() + 5000;
     while (Date.now() < deadline) {

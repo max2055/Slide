@@ -19,14 +19,17 @@ const fixtureEntries = Array.from({ length: 25 }, (_, i) => ({
   os_type: 'linux', os_version: i === 1 ? null : 'Ubuntu 24.04 LTS', model: i === 1 ? null : 'C9300-48T',
   status: 'online', health_status: 'healthy', hasCredential: true, username: 'readonly', snmp_port: 161, ssh_port: 22, vendor: 'cisco', site: '测试站点',
 }));
+const listViewPermissions = ['instance:view', 'servers:view', 'network_devices:view'];
 async function listResponses(page: Page, restricted = false) {
-  await page.addInitScript(restricted => {
+  const permissions = restricted ? listViewPermissions : ['*'];
+  await page.addInitScript(permissions => {
     localStorage.setItem('token', 'fixture.' + btoa(JSON.stringify({ userId: 1, sessionVersion: 1 })) + '.fixture');
-    localStorage.setItem('permissions', JSON.stringify(restricted ? ['instance:view', 'servers:view', 'network_devices:view'] : ['*']));
-  }, restricted);
+    localStorage.setItem('permissions', JSON.stringify(permissions));
+  }, permissions);
   await page.route('**/api/**', route => {
     const p = new URL(route.request().url()).pathname;
     if (!p.startsWith('/api/')) return route.fallback();
+    if (p === '/api/auth/permissions') return route.fulfill({ json: permissions });
     if (lists.some(list => list[2] === p)) return route.fulfill({ json: fixtureEntries });
     if (p === '/api/metrics/templates') return route.fulfill({ json: { templates: [], next_cursor: null } });
     if (p === '/api/metrics/template-governance/resources') return route.fulfill({ json: [] });
@@ -294,7 +297,11 @@ for (const [tag, file, , type] of lists) test(`${type} four direct actions and p
     await expect(actions().getByRole('button', { name: '测试', exact: true })).toBeFocused();
   } else await expect(page.locator('app-toast-container')).toContainText('隔离测试：目标暂不可达');
   expect(writes.filter(path => !path.endsWith('/query'))).toEqual([probe]);
-  await page.evaluate(() => { localStorage.setItem('permissions', JSON.stringify(['instance:view', 'servers:view', 'network_devices:view'])); window.dispatchEvent(new Event('slide-permissions-loaded')); });
+  await page.route('**/api/auth/permissions', route => route.fulfill({ json: listViewPermissions }));
+  await page.evaluate(permissions => {
+    localStorage.setItem('permissions', JSON.stringify(permissions));
+    window.dispatchEvent(new Event('slide-permissions-loaded'));
+  }, listViewPermissions);
   await expect(actions().getByRole('button', { name: '编辑', exact: true })).toBeDisabled();
   await expect(actions().getByRole('button', { name: '删除', exact: true })).toBeDisabled();
   await expect(actions().getByRole('button', { name: '测试', exact: true })).toBeEnabled({ enabled: type === 'network_device' });

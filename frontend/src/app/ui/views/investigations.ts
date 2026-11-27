@@ -74,10 +74,13 @@ export class InvestigationsPage extends LitElement {
   private restoringList = false;
   private listRestoreGeneration = 0;
   private loadedPages = 1;
+  private restoreListFocus = true;
   private popState = () => {
     const url = new URL(location.href); this.query = url.searchParams.get('query') ?? ''; this.lifecycle = url.searchParams.get('state') ?? '';
     this.profile = url.searchParams.get('profile') ?? ''; this.resources = url.searchParams.getAll('resource'); this.resource = '';
-    void this.filter(false); const id = url.searchParams.get('investigation');
+    const id = url.searchParams.get('investigation');
+    this.restoreListFocus = !id;
+    void this.filter(false);
     if (id) void this.openInvestigation(id, false); else { this.controller.deselect(); this.draft = ''; this.evidenceOpen = false; }
   };
   private permissionsChanged = (e: Event) => {
@@ -103,7 +106,11 @@ export class InvestigationsPage extends LitElement {
     super.disconnectedCallback();
   }
   protected updated(changed: Map<string, unknown>) {
-    if(!this.restoringList && this.controller.listLoaded && !this.controller.loading && !this.controller.detail && !this.controller.detailLoading) restoreWorkbenchPosition(this);
+    if (this.restoreListFocus && !this.restoringList && this.controller.listLoaded && !this.controller.loading
+      && !this.controller.detail && !this.controller.detailLoading) {
+      this.restoreListFocus = false;
+      void restoreWorkbenchPosition(this, undefined, { preserveHistory: true });
+    }
     if (changed.has('client')) {
       this.controller.dispose(); this.controller = new InvestigationsController(() => this.refreshControllerView(), this.client);
       if (this.canView) this.reload();

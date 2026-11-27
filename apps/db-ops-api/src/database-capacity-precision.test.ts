@@ -18,13 +18,14 @@ describe('capacity total precision', () => {
   it('sums raw Dameng bytes instead of rounded per-tablespace GB values', async () => {
     const execute = vi.fn()
       .mockResolvedValueOnce({ rows: [
-        ['A', 0.20, 1, 20, 209_379_655],
-        ['B', 0.20, 1, 20, 209_379_655],
+        ['A', 210_000_000, 1_073_741_824],
+        ['B', 210_000_000, 1_073_741_824],
       ] })
       .mockResolvedValueOnce({ rows: [] });
 
     const result = await (databaseService as any).getDamengCapacity({ dmConnection: { execute } });
 
+    expect(result.tablespaces.map((row: { size_gb: number }) => row.size_gb)).toEqual([0.20, 0.20]);
     expect(result.total_size_gb).toBe(0.39);
   });
 });

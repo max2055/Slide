@@ -424,6 +424,13 @@ describe.skipIf(!port)('Cron API + isolated MySQL security', () => {
     expect((await cronRunStore.get(overlapping.runId))!.status).toBe('cancelled');
     release();
     await execution;
+    const history = await request('GET', `jobs/${id}/logs`);
+    expect(history.statusCode).toBe(200);
+    expect(history.json()).toMatchObject({ total: 1, cancellations: [{
+      runId: overlapping.runId, triggeredBy: 7, startedAt: expect.any(String),
+      runnerFinishedAt: expect.any(String), errorCode: 'CRON_JOB_BUSY',
+    }] });
+    expect(history.json().logs.map((log: { run_id: string }) => log.run_id)).toEqual([runId]);
     expect(await cronRunStore.get(runId)).toMatchObject({ status: 'success', completion: { result: { handler: 'baseline.cleanup' } } });
   });
 

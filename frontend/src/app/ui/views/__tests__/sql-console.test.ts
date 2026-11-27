@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { CompletionContext } from '@codemirror/autocomplete';
 import { EditorState } from '@codemirror/state';
+import { PostgreSQL } from '@codemirror/lang-sql';
 import '../sql-console.js';
 import type { SqlConsolePage } from '../sql-console.js';
 
@@ -33,6 +34,37 @@ describe('SQL Console', () => {
   });
 
   describe('SQLC-01: Schema-driven autocomplete', () => {
+    it('uses the PostgreSQL dialect for a selected PostgreSQL database', () => {
+      const subject = page();
+      subject.instances = [{ id: 9, db_type: 'postgresql' }];
+      subject.selectedId = 9;
+      expect(subject._sqlLanguage().language).toBe(PostgreSQL.language);
+    });
+
+    it('uses a quoted schema and alias to disambiguate tables with the same name', () => {
+      const subject = page();
+      subject.instances = [{ id: 9, db_type: 'postgresql' }];
+      subject.selectedId = 9;
+      subject.schemas = ['sales', 'ops'].map(schema => ({ schema, tables: [{
+        name: 'orders', columns: [{ name: `${schema}_only`, type: 'bigint', nullable: false }],
+      }] }));
+      const doc = 'SELECT 1 FROM "sales"."orders" AS "q" WHERE "q".';
+      const state = EditorState.create({ doc, extensions: [subject._sqlLanguage()] });
+      const completion = subject._sqlCompletions(new CompletionContext(state, doc.length, true));
+      expect(completion.options.map((option: any) => option.label)).toEqual(['sales_only']);
+    });
+
+    it('clears table expansion when another instance has the same schema and table', async () => {
+      const subject = page();
+      subject.instances = [{ id: 1, db_type: 'oracle' }, { id: 2, db_type: 'dameng' }];
+      subject.selectedId = 1;
+      subject.expandedTables = new Set(['same-schema-and-table']);
+      vi.spyOn(globalThis, 'fetch').mockImplementation(async () => Response.json([]));
+
+      await subject._selectInstance(2);
+      expect(subject.expandedTables.size).toBe(0);
+    });
+
     it('provides table names and completes only the column prefix after a qualifier', () => {
       const subject = page();
       subject.schemas = [{ schema: 'app', tables: [{ name: 'orders', columns: [{ name: 'id', type: 'bigint', nullable: false }] }] }];

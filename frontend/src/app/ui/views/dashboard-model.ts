@@ -18,7 +18,7 @@ export const resourceTypes: ResourceType[] = ['instance', 'server', 'network_dev
 export const metricConfig: Record<ResourceType, string[]> = {
   instance: ['cpu_usage', 'memory_usage', 'disk_usage', 'connections', 'qps'],
   server: ['cpu_usage', 'memory_usage', 'disk_usage'],
-  network_device: ['device_cpu_percent', 'device_memory_percent', 'device_temperature_celsius'],
+  network_device: ['device_uptime_seconds', 'device_cpu_percent', 'device_memory_percent', 'device_temperature_celsius'],
 };
 export function latestMetric(item: OverviewItem, id: string): Metric | undefined {
   return item.observations?.filter(metric => metric.metricId === id)
